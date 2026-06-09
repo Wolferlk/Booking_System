@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { extractBookingFromText } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
-import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
+import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -42,10 +42,13 @@ export async function POST(req: NextRequest) {
 
   let parsedData: Record<string, unknown> = {}
 
-  if (type === 'booking') {
+  if (type === 'pnl' && (fileName.endsWith('.xlsx') || fileName.endsWith('.xls'))) {
+    // Parse P&L spreadsheet directly — no AI needed, column format is known
+    const result = parsePNLXlsx(buffer)
+    parsedData = result as unknown as Record<string, unknown>
+  } else if (type === 'booking') {
     parsedData = await extractBookingFromText(extractedText)
   } else {
-    // For PNL, return the raw text for further processing
     parsedData = { rawText: extractedText.slice(0, 5000) }
   }
 

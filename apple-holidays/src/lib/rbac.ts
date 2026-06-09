@@ -71,8 +71,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'agenda:create', 'agenda:read', 'agenda:edit',
   ],
   GT_USER: [
-    'booking:read', 'booking:ground_review', 'booking:verify',
-    'agenda:read',
+    'booking:read', 'booking:edit', 'booking:ground_review', 'booking:verify',
+    'agenda:create', 'agenda:read', 'agenda:edit',
     'assignment:create', 'assignment:edit',
     'ticket:create', 'ticket:read', 'ticket:purchase',
     'pnl:read', // only after T-5
@@ -89,7 +89,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'recheck:confirm',
   ],
   AC_USER: [
-    'booking:read',
+    'booking:read', 'booking:edit',
     'agenda:read',
     'ticket:read',
     'pnl:create', 'pnl:read', 'pnl:edit', 'pnl:confirm_payment', 'pnl:view_profit',
@@ -161,6 +161,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Bookings', href: '/dashboard/bookings', icon: 'FileText' },
     { label: 'P&L', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Profit Dashboard', href: '/dashboard/accounts/profit', icon: 'TrendingUp' },
+    { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
   ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
@@ -168,6 +169,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
   SUPER_ADMIN: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
+    { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
     { label: 'Users', href: '/dashboard/admin/users', icon: 'Users' },
     { label: 'Audit Log', href: '/dashboard/admin/audit', icon: 'Shield' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },

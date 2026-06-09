@@ -172,7 +172,11 @@ export default function PNLPage() {
         otherRate: String(l.otherRate || 0),
         notes: '',
       })))
-      toast.success('P&L lines extracted from spreadsheet!')
+      if (data.paxAdults) setPaxAdults(String(data.paxAdults))
+      if (data.paxChildren !== undefined) setPaxChildren(String(data.paxChildren))
+      toast.success(`${items.length} P&L lines imported from spreadsheet!`)
+    } else {
+      toast.error('No line items found in the spreadsheet')
     }
   }
 

@@ -39,6 +39,15 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
   const [savingAccom, setSavingAccom] = useState(false)
+  const [editBookingModal, setEditBookingModal] = useState(false)
+  const [bookingForm, setBookingForm] = useState({
+    agent: '', fileHandler: '', agentBookingId: '',
+    arrivalDate: '', departureDate: '',
+    paxAdults: '2', paxChildren: '0',
+    quotedTotal: '', currency: 'USD',
+    terms: '', exclusions: '', policyNotes: '', amendmentNote: '',
+  })
+  const [savingBooking, setSavingBooking] = useState(false)
 
   async function load() {
     try {
@@ -104,7 +113,49 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const emergencyContacts: any[] = booking.emergencyContacts ?? []
   const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
+  const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)
+
+  function openEditBooking() {
+    setBookingForm({
+      agent: String(booking.agent ?? ''),
+      fileHandler: String(booking.fileHandler ?? ''),
+      agentBookingId: String(booking.agentBookingId ?? ''),
+      arrivalDate: booking.arrivalDate ? String(booking.arrivalDate).slice(0, 10) : '',
+      departureDate: booking.departureDate ? String(booking.departureDate).slice(0, 10) : '',
+      paxAdults: String(booking.paxAdults ?? 2),
+      paxChildren: String(booking.paxChildren ?? 0),
+      quotedTotal: String(booking.quotedTotal ?? ''),
+      currency: String(booking.currency ?? 'USD'),
+      terms: String(booking.terms ?? ''),
+      exclusions: String(booking.exclusions ?? ''),
+      policyNotes: String(booking.policyNotes ?? ''),
+      amendmentNote: String(booking.amendmentNote ?? ''),
+    })
+    setEditBookingModal(true)
+  }
+
+  async function saveBookingEdits() {
+    setSavingBooking(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...bookingForm,
+          paxAdults: Number(bookingForm.paxAdults),
+          paxChildren: Number(bookingForm.paxChildren),
+          quotedTotal: Number(bookingForm.quotedTotal),
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Booking updated')
+      setEditBookingModal(false)
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setSavingBooking(false) }
+  }
 
   async function saveAccomEdits() {
     setSavingAccom(true)
@@ -237,6 +288,16 @@ export default function BookingDetailPage() {
               <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
                 <Ticket className="w-3.5 h-3.5" /> Tickets
               </Link>
+              {canEditBooking && (
+                <button onClick={openEditBooking} className="btn btn-secondary btn-sm">
+                  <Edit2 className="w-3.5 h-3.5" /> Edit
+                </button>
+              )}
+              {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
+                <Link href={`/dashboard/bookings/${ref}/print`} target="_blank" className="btn btn-secondary btn-sm">
+                  <FileText className="w-3.5 h-3.5" /> PDF
+                </Link>
+              )}
             </div>
           </div>
 
@@ -494,6 +555,88 @@ export default function BookingDetailPage() {
             onChange={e => setNote(e.target.value)}
             placeholder="Describe the change required..."
           />
+        </div>
+      </Modal>
+
+      {/* Edit Booking Modal */}
+      <Modal
+        open={editBookingModal}
+        onClose={() => setEditBookingModal(false)}
+        title="Edit Booking Details"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditBookingModal(false)}>Cancel</Button>
+            <Button loading={savingBooking} onClick={saveBookingEdits}>Save Changes</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 sm:col-span-1">
+              <label className="form-label">Agent / Company</label>
+              <input className="form-input" value={bookingForm.agent}
+                onChange={e => setBookingForm(f => ({ ...f, agent: e.target.value }))} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className="form-label">File Handler</label>
+              <input className="form-input" value={bookingForm.fileHandler}
+                onChange={e => setBookingForm(f => ({ ...f, fileHandler: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Agent Booking ID</label>
+              <input className="form-input" value={bookingForm.agentBookingId}
+                onChange={e => setBookingForm(f => ({ ...f, agentBookingId: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Currency</label>
+              <select className="form-select" value={bookingForm.currency}
+                onChange={e => setBookingForm(f => ({ ...f, currency: e.target.value }))}>
+                {['USD', 'AUD', 'SGD', 'GBP', 'EUR', 'INR', 'VND'].map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Arrival Date</label>
+              <input type="date" className="form-input" value={bookingForm.arrivalDate}
+                onChange={e => setBookingForm(f => ({ ...f, arrivalDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Departure Date</label>
+              <input type="date" className="form-input" value={bookingForm.departureDate}
+                onChange={e => setBookingForm(f => ({ ...f, departureDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Adults</label>
+              <input type="number" min="0" className="form-input" value={bookingForm.paxAdults}
+                onChange={e => setBookingForm(f => ({ ...f, paxAdults: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Children</label>
+              <input type="number" min="0" className="form-input" value={bookingForm.paxChildren}
+                onChange={e => setBookingForm(f => ({ ...f, paxChildren: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Quoted Total</label>
+              <input type="number" className="form-input" value={bookingForm.quotedTotal}
+                onChange={e => setBookingForm(f => ({ ...f, quotedTotal: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Terms & Conditions</label>
+              <textarea rows={3} className="form-textarea" value={bookingForm.terms}
+                onChange={e => setBookingForm(f => ({ ...f, terms: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Exclusions</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.exclusions}
+                onChange={e => setBookingForm(f => ({ ...f, exclusions: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Amendment Note</label>
+              <input className="form-input" placeholder="e.g. Room upgrade requested"
+                value={bookingForm.amendmentNote}
+                onChange={e => setBookingForm(f => ({ ...f, amendmentNote: e.target.value }))} />
+            </div>
+          </div>
         </div>
       </Modal>
 
