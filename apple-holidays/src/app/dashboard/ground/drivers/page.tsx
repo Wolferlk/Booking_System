@@ -6,24 +6,28 @@ import { toast } from 'sonner'
 import {
   Plus, Loader2, Car, Truck, User, Phone, Mail,
   CreditCard, Wallet, ChevronDown, ChevronRight,
-  CheckCircle2, XCircle, Edit2, Trash2, DollarSign,
-  Building2, Hash, ArrowUpCircle, ArrowDownCircle,
-  BadgeCheck, Clock, RefreshCw,
+  CheckCircle2, Edit2, Trash2, DollarSign,
+  Building2, ArrowUpCircle, ArrowDownCircle, Camera,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
-import { Card, CardHeader, CardBody } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
 import { formatCurrency, formatDate } from '@/lib/utils'
 
-interface Vehicle { id: string; type: string; plateNo: string; capacity: number; description: string | null }
+interface Vehicle {
+  id: string; type: string; plateNo: string; capacity: number
+  brand: string | null; model: string | null
+  photoOutside: string | null; photoInside: string | null
+  description: string | null
+  vendor: { id: string; name: string } | null
+}
 interface DriverPayment {
   id: string; amount: number; type: string; description: string | null;
   refNumber: string | null; createdAt: string; paidBy: { name: string }
 }
 interface Driver {
   id: string; name: string; phone: string; email: string | null
-  licenseNo: string | null; isActive: boolean
+  licenseNo: string | null; isActive: boolean; photoUrl: string | null
   vehicleId: string | null; vehicle: Vehicle | null
   bankName: string | null; bankAccountNo: string | null
   bankHolder: string | null; bankBranch: string | null; bankCode: string | null
@@ -36,6 +40,7 @@ const VN_BANKS = [
   'ACB', 'Sacombank', 'VPBank', 'TPBank', 'VIB', 'SHB', 'Agribank',
   'HDBank', 'Eximbank', 'OCB', 'MSB', 'LienVietPostBank', 'Other',
 ]
+const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
 
 const PAY_TYPE_COLORS: Record<string, string> = {
   ADVANCE: 'bg-blue-50 text-blue-700 border-blue-100',
@@ -49,32 +54,33 @@ export default function DriversPage() {
   const isAdmin = session?.user?.role === 'SUPER_ADMIN'
 
   const [drivers, setDrivers] = useState<Driver[]>([])
-  const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [detailLoading, setDetailLoading] = useState<string | null>(null)
   const [editDriver, setEditDriver] = useState<Driver | null>(null)
   const [showAdd, setShowAdd] = useState(false)
-  const [showPayModal, setShowPayModal] = useState<string | null>(null) // driverId
+  const [showPayModal, setShowPayModal] = useState<string | null>(null)
 
-  // Form states
   const [form, setForm] = useState({
-    name: '', phone: '', email: '', licenseNo: '', isActive: true, vehicleId: '',
+    name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '',
+    vehicleId: '',
     bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '',
   })
+  const [vehForm, setVehForm] = useState({
+    plateNo: '', type: 'van', brand: '', model: '', capacity: '4',
+    photoOutside: '', photoInside: '',
+  })
+  const [showNewVehicle, setShowNewVehicle] = useState(false)
+  const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null) // 'driver' | 'outside' | 'inside'
   const [payForm, setPayForm] = useState({ amount: '', type: 'ADVANCE', description: '', refNumber: '' })
   const [saving, setSaving] = useState(false)
 
   async function loadDrivers() {
     setLoading(true)
     try {
-      const [dRes, vRes] = await Promise.all([
-        fetch('/api/ground/drivers'),
-        fetch('/api/ground/vehicles'),
-      ])
-      const [dData, vData] = await Promise.all([dRes.json(), vRes.json()])
-      if (dData.success) setDrivers(dData.data)
-      if (vData.success) setVehicles(vData.data)
+      const res = await fetch('/api/ground/drivers')
+      const data = await res.json()
+      if (data.success) setDrivers(data.data)
     } finally { setLoading(false) }
   }
 
@@ -93,6 +99,22 @@ export default function DriversPage() {
     } finally { setDetailLoading(null) }
   }
 
+  async function uploadPhoto(file: File, field: 'driver' | 'outside' | 'inside') {
+    const fd = new FormData()
+    fd.append('file', file)
+    setUploadingPhoto(field)
+    try {
+      const res = await fetch('/api/upload/photo', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (data.success) {
+        if (field === 'driver') setForm(f => ({ ...f, photoUrl: data.data.url }))
+        else if (field === 'outside') setVehForm(f => ({ ...f, photoOutside: data.data.url }))
+        else setVehForm(f => ({ ...f, photoInside: data.data.url }))
+      } else toast.error('Photo upload failed')
+    } catch { toast.error('Photo upload failed') }
+    finally { setUploadingPhoto(null) }
+  }
+
   function openEdit(driver: Driver) {
     setForm({
       name: driver.name,
@@ -100,6 +122,7 @@ export default function DriversPage() {
       email: driver.email ?? '',
       licenseNo: driver.licenseNo ?? '',
       isActive: driver.isActive,
+      photoUrl: driver.photoUrl ?? '',
       vehicleId: driver.vehicleId ?? '',
       bankName: driver.bankName ?? '',
       bankAccountNo: driver.bankAccountNo ?? '',
@@ -107,28 +130,80 @@ export default function DriversPage() {
       bankBranch: driver.bankBranch ?? '',
       bankCode: driver.bankCode ?? '',
     })
+    if (driver.vehicle) {
+      setVehForm({
+        plateNo: driver.vehicle.plateNo,
+        type: driver.vehicle.type,
+        brand: driver.vehicle.brand ?? '',
+        model: driver.vehicle.model ?? '',
+        capacity: String(driver.vehicle.capacity),
+        photoOutside: driver.vehicle.photoOutside ?? '',
+        photoInside: driver.vehicle.photoInside ?? '',
+      })
+      setShowNewVehicle(true)
+    } else {
+      setVehForm({ plateNo: '', type: 'van', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '' })
+      setShowNewVehicle(false)
+    }
     setEditDriver(driver)
   }
 
   function openAdd() {
-    setForm({ name: '', phone: '', email: '', licenseNo: '', isActive: true, vehicleId: '', bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '' })
+    setForm({ name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '', vehicleId: '', bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '' })
+    setVehForm({ plateNo: '', type: 'van', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '' })
+    setShowNewVehicle(false)
     setShowAdd(true)
   }
 
   async function saveDriver() {
     setSaving(true)
     try {
+      let vehicleId = form.vehicleId
+
+      if (showNewVehicle && vehForm.plateNo) {
+        const vPayload = {
+          plateNo: vehForm.plateNo,
+          type: vehForm.type,
+          brand: vehForm.brand || null,
+          model: vehForm.model || null,
+          capacity: Number(vehForm.capacity),
+          photoOutside: vehForm.photoOutside || null,
+          photoInside: vehForm.photoInside || null,
+        }
+        if (editDriver?.vehicleId) {
+          // Update existing vehicle
+          const vRes = await fetch(`/api/ground/vehicles/${editDriver.vehicleId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(vPayload),
+          })
+          const vData = await vRes.json()
+          if (!vData.success) { toast.error('Failed to update vehicle'); return }
+          vehicleId = editDriver.vehicleId
+        } else {
+          // Create new vehicle
+          const vRes = await fetch('/api/ground/vehicles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(vPayload),
+          })
+          const vData = await vRes.json()
+          if (!vData.success) { toast.error('Failed to create vehicle'); return }
+          vehicleId = vData.data.id
+        }
+      }
+
       const url = editDriver ? `/api/ground/drivers/${editDriver.id}` : '/api/ground/drivers'
       const method = editDriver ? 'PUT' : 'POST'
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, vehicleId: form.vehicleId || null }),
+        body: JSON.stringify({ ...form, vehicleId: vehicleId || null }),
       })
       const data = await res.json()
       if (data.success) {
         toast.success(editDriver ? 'Driver updated' : 'Driver added')
-        setEditDriver(null); setShowAdd(false)
+        setEditDriver(null); setShowAdd(false); setShowNewVehicle(false)
         loadDrivers()
       } else toast.error(data.error ?? 'Failed')
     } finally { setSaving(false) }
@@ -161,15 +236,11 @@ export default function DriversPage() {
     } finally { setSaving(false) }
   }
 
-  const availableVehicles = vehicles.filter(v =>
-    !drivers.some(d => d.vehicleId === v.id && d.id !== editDriver?.id)
-  )
-
   return (
     <div>
       <Header
         title="Drivers & Vehicles"
-        subtitle="Manage drivers, vehicle assignments, bank details and payment history"
+        subtitle="Manage drivers, their vehicles, bank details and payment history"
         actions={
           <button onClick={openAdd} className="btn-primary btn">
             <Plus className="w-4 h-4" /> Add Driver
@@ -191,11 +262,14 @@ export default function DriversPage() {
               const isExpanded = expandedId === driver.id
               return (
                 <Card key={driver.id} className={`overflow-hidden transition-all ${isExpanded ? 'ring-2 ring-brand-500/20' : ''}`}>
-                  {/* Driver header row */}
                   <div className="p-5 flex items-center gap-4">
                     {/* Avatar */}
-                    <div className="w-12 h-12 rounded-xl bg-brand-500/10 flex items-center justify-center flex-shrink-0">
-                      <User className="w-6 h-6 text-brand-500" />
+                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-brand-500/10 flex items-center justify-center">
+                      {driver.photoUrl ? (
+                        <img src={driver.photoUrl} alt={driver.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <User className="w-6 h-6 text-brand-500" />
+                      )}
                     </div>
 
                     {/* Info */}
@@ -224,13 +298,15 @@ export default function DriversPage() {
                             <Truck className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
                             <div>
                               <p className="text-sm font-semibold text-slate-900">{driver.vehicle.plateNo}</p>
-                              <p className="text-xs text-slate-500">{driver.vehicle.type} · {driver.vehicle.capacity} seats</p>
-                              {driver.vehicle.description && <p className="text-xs text-slate-400">{driver.vehicle.description}</p>}
+                              <p className="text-xs text-slate-500">
+                                {[driver.vehicle.brand, driver.vehicle.model].filter(Boolean).join(' ') || driver.vehicle.type}
+                                {' · '}{driver.vehicle.capacity} seats
+                              </p>
                             </div>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 text-xs text-slate-400">
-                            <Truck className="w-4 h-4" /> No vehicle assigned
+                            <Truck className="w-4 h-4" /> No vehicle
                           </div>
                         )}
                       </div>
@@ -281,7 +357,6 @@ export default function DriversPage() {
                   {/* Expanded detail panel */}
                   {isExpanded && driver.driverPayments !== undefined && (
                     <div className="border-t border-slate-100 bg-slate-50/50 p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Bank details */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
                           <Building2 className="w-4 h-4 text-brand-500" />
@@ -307,7 +382,6 @@ export default function DriversPage() {
                         )}
                       </div>
 
-                      {/* Payment history */}
                       <div>
                         <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
                           <CreditCard className="w-4 h-4 text-brand-500" />
@@ -355,11 +429,39 @@ export default function DriversPage() {
       {/* Add/Edit Driver Modal */}
       <Modal
         open={!!(editDriver || showAdd)}
-        onClose={() => { setEditDriver(null); setShowAdd(false) }}
+        onClose={() => { setEditDriver(null); setShowAdd(false); setShowNewVehicle(false) }}
         title={editDriver ? `Edit Driver — ${editDriver.name}` : 'Add New Driver'}
         size="lg"
       >
         <div className="space-y-6">
+          {/* Driver Photo */}
+          <div>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+              <Camera className="w-4 h-4 text-brand-500" /> Driver Photo
+            </h3>
+            <div className="flex items-center gap-4">
+              <div className="w-16 h-16 rounded-full overflow-hidden bg-brand-50 border-2 border-dashed border-brand-200 flex items-center justify-center flex-shrink-0">
+                {form.photoUrl ? (
+                  <img src={form.photoUrl} alt="Driver" className="w-full h-full object-cover" />
+                ) : (
+                  <User className="w-7 h-7 text-brand-300" />
+                )}
+              </div>
+              <div className="flex gap-2">
+                <label className="btn-secondary btn btn-sm cursor-pointer">
+                  {uploadingPhoto === 'driver' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                  {form.photoUrl ? 'Change' : 'Upload Photo'}
+                  <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                    onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'driver')} />
+                </label>
+                {form.photoUrl && (
+                  <button type="button" onClick={() => setForm(f => ({ ...f, photoUrl: '' }))}
+                    className="text-xs text-red-400 hover:text-red-600 px-2">Remove</button>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Basic info */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
@@ -389,25 +491,98 @@ export default function DriversPage() {
             </div>
           </div>
 
-          {/* Vehicle assignment */}
+          {/* Vehicle Details (driver is vehicle owner) */}
           <div>
-            <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-              <Truck className="w-4 h-4 text-emerald-500" /> Vehicle Assignment
-            </h3>
-            <select value={form.vehicleId} onChange={e => setForm(f => ({ ...f, vehicleId: e.target.value }))}
-              className="form-select">
-              <option value="">— No Vehicle —</option>
-              {availableVehicles.map(v => (
-                <option key={v.id} value={v.id}>
-                  {v.plateNo} · {v.type} · {v.capacity} seats{v.description ? ` (${v.description})` : ''}
-                </option>
-              ))}
-              {editDriver?.vehicle && !availableVehicles.find(v => v.id === editDriver.vehicleId) && (
-                <option value={editDriver.vehicleId!}>
-                  {editDriver.vehicle.plateNo} (currently assigned)
-                </option>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                <Truck className="w-4 h-4 text-emerald-500" /> Vehicle Details
+              </h3>
+              {!showNewVehicle && (
+                <button type="button" onClick={() => setShowNewVehicle(true)}
+                  className="text-xs text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1">
+                  <Plus className="w-3 h-3" /> Add Vehicle
+                </button>
               )}
-            </select>
+            </div>
+            {showNewVehicle ? (
+              <div className="space-y-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="form-label">Plate Number *</label>
+                    <input className="form-input font-mono" placeholder="51A-12345"
+                      value={vehForm.plateNo} onChange={e => setVehForm(f => ({ ...f, plateNo: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="form-label">Vehicle Type *</label>
+                    <select className="form-select" value={vehForm.type} onChange={e => setVehForm(f => ({ ...f, type: e.target.value }))}>
+                      {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Brand</label>
+                    <input className="form-input" placeholder="Toyota"
+                      value={vehForm.brand} onChange={e => setVehForm(f => ({ ...f, brand: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="form-label">Model</label>
+                    <input className="form-input" placeholder="Hiace"
+                      value={vehForm.model} onChange={e => setVehForm(f => ({ ...f, model: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="form-label">Capacity (seats)</label>
+                    <input type="number" className="form-input" min="1" max="60"
+                      value={vehForm.capacity} onChange={e => setVehForm(f => ({ ...f, capacity: e.target.value }))} />
+                  </div>
+                </div>
+
+                {/* Vehicle photos */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="form-label">Outside Photo</label>
+                    <div className="flex flex-col gap-2">
+                      <div className="h-20 rounded-lg overflow-hidden bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center">
+                        {vehForm.photoOutside ? (
+                          <img src={vehForm.photoOutside} alt="Outside" className="w-full h-full object-cover" />
+                        ) : (
+                          <Car className="w-6 h-6 text-slate-300" />
+                        )}
+                      </div>
+                      <label className="btn-secondary btn btn-sm cursor-pointer text-center">
+                        {uploadingPhoto === 'outside' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                        Upload
+                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                          onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'outside')} />
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="form-label">Inside Photo</label>
+                    <div className="flex flex-col gap-2">
+                      <div className="h-20 rounded-lg overflow-hidden bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center">
+                        {vehForm.photoInside ? (
+                          <img src={vehForm.photoInside} alt="Inside" className="w-full h-full object-cover" />
+                        ) : (
+                          <Car className="w-6 h-6 text-slate-300" />
+                        )}
+                      </div>
+                      <label className="btn-secondary btn btn-sm cursor-pointer text-center">
+                        {uploadingPhoto === 'inside' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                        Upload
+                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                          onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'inside')} />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <button type="button" onClick={() => setShowNewVehicle(false)}
+                  className="text-xs text-slate-400 hover:text-red-500">
+                  Remove vehicle section
+                </button>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400 italic">No vehicle attached — click &quot;Add Vehicle&quot; above</p>
+            )}
           </div>
 
           {/* Vietnamese Bank Details */}
@@ -461,7 +636,7 @@ export default function DriversPage() {
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               {editDriver ? 'Save Changes' : 'Add Driver'}
             </button>
-            <button onClick={() => { setEditDriver(null); setShowAdd(false) }} className="btn-secondary btn">
+            <button onClick={() => { setEditDriver(null); setShowAdd(false); setShowNewVehicle(false) }} className="btn-secondary btn">
               Cancel
             </button>
           </div>

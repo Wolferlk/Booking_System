@@ -31,7 +31,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'My Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'Tickets', href: '/dashboard/ground/tickets', icon: 'Ticket' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
-    { label: 'Vehicles', href: '/dashboard/ground/vehicles', icon: 'Truck' },
+    { label: 'Vendors', href: '/dashboard/ground/vendors', icon: 'Truck' },
   ],
   TE_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
@@ -56,7 +56,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Users', href: '/dashboard/admin/users', icon: 'Users' },
     { label: 'Audit Log', href: '/dashboard/admin/audit', icon: 'Shield' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
-    { label: 'Vehicles', href: '/dashboard/ground/vehicles', icon: 'Truck' },
+    { label: 'Vendors', href: '/dashboard/ground/vendors', icon: 'Truck' },
     { label: 'Settings', href: '/dashboard/admin/config', icon: 'Settings' },
   ],
 }

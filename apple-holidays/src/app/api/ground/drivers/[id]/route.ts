@@ -43,7 +43,7 @@ export async function PUT(
 
   const body = await req.json()
   const {
-    name, phone, email, licenseNo, isActive,
+    name, phone, email, licenseNo, isActive, photoUrl,
     vehicleId,
     bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
   } = body
@@ -56,6 +56,7 @@ export async function PUT(
       ...(email !== undefined && { email }),
       ...(licenseNo !== undefined && { licenseNo }),
       ...(isActive !== undefined && { isActive }),
+      ...(photoUrl !== undefined && { photoUrl }),
       ...(vehicleId !== undefined && { vehicleId: vehicleId || null }),
       ...(bankName !== undefined && { bankName }),
       ...(bankAccountNo !== undefined && { bankAccountNo }),
@@ -63,7 +64,7 @@ export async function PUT(
       ...(bankBranch !== undefined && { bankBranch }),
       ...(bankCode !== undefined && { bankCode }),
     },
-    include: { vehicle: true },
+    include: { vehicle: { include: { vendor: true } } },
   })
 
   await logActivity({

@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
 
   const drivers = await prisma.driver.findMany({
     where: showAll ? {} : {},
-    include: { vehicle: true },
+    include: { vehicle: { include: { vendor: true } } },
     orderBy: { name: 'asc' },
   })
 
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!['GT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { name, phone, email, licenseNo, vehicleId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive } = body
+  const { name, phone, email, licenseNo, vehicleId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive, photoUrl } = body
   if (!name || !phone) return buildApiError('name and phone are required')
 
   const driver = await prisma.driver.create({
@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       email: email || null,
       licenseNo: licenseNo || null,
       isActive: isActive ?? true,
+      photoUrl: photoUrl || null,
       vehicleId: vehicleId || null,
       bankName: bankName || null,
       bankAccountNo: bankAccountNo || null,
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
       bankBranch: bankBranch || null,
       bankCode: bankCode || null,
     },
-    include: { vehicle: true },
+    include: { vehicle: { include: { vendor: true } } },
   })
 
   await logActivity({

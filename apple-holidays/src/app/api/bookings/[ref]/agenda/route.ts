@@ -102,21 +102,54 @@ export async function PUT(
   }
 
   const body = await req.json()
-  const { itemId, ...updateData } = body
+  const { itemId, assignment } = body
 
   if (!itemId) return buildApiError('itemId is required')
+
+  // If assignment provided, upsert it
+  if (assignment !== undefined) {
+    const agendaItem = await prisma.agendaItem.findUnique({ where: { id: itemId } })
+    if (!agendaItem) return buildApiError('Agenda item not found', 404)
+
+    if (assignment === null) {
+      await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
+    } else {
+      await prisma.assignment.upsert({
+        where: { agendaItemId: itemId },
+        create: {
+          agendaItemId: itemId,
+          driverId: assignment.driverId || null,
+          driverName: assignment.driverName || null,
+          driverPhone: assignment.driverPhone || null,
+          vehicleType: assignment.vehicleType || null,
+          vehiclePlate: assignment.vehiclePlate || null,
+          notes: assignment.notes || null,
+        },
+        update: {
+          driverId: assignment.driverId || null,
+          driverName: assignment.driverName || null,
+          driverPhone: assignment.driverPhone || null,
+          vehicleType: assignment.vehicleType || null,
+          vehiclePlate: assignment.vehiclePlate || null,
+          notes: assignment.notes || null,
+        },
+      })
+    }
+    const updated = await prisma.agendaItem.findUnique({ where: { id: itemId }, include: { assignment: true } })
+    return buildApiSuccess(updated, 'Assignment saved')
+  }
 
   const updated = await prisma.agendaItem.update({
     where: { id: itemId },
     data: {
-      ...(updateData.date && { date: new Date(updateData.date) }),
-      ...(updateData.location !== undefined && { location: updateData.location }),
-      ...(updateData.fromPoint !== undefined && { fromPoint: updateData.fromPoint }),
-      ...(updateData.toPoint !== undefined && { toPoint: updateData.toPoint }),
-      ...(updateData.details !== undefined && { details: updateData.details }),
-      ...(updateData.mealPlan !== undefined && { mealPlan: updateData.mealPlan }),
-      ...(updateData.meetingTime !== undefined && { meetingTime: updateData.meetingTime }),
-      ...(updateData.serviceType && { serviceType: updateData.serviceType }),
+      ...(body.date && { date: new Date(body.date) }),
+      ...(body.location !== undefined && { location: body.location }),
+      ...(body.fromPoint !== undefined && { fromPoint: body.fromPoint }),
+      ...(body.toPoint !== undefined && { toPoint: body.toPoint }),
+      ...(body.details !== undefined && { details: body.details }),
+      ...(body.mealPlan !== undefined && { mealPlan: body.mealPlan }),
+      ...(body.meetingTime !== undefined && { meetingTime: body.meetingTime }),
+      ...(body.serviceType && { serviceType: body.serviceType }),
     },
     include: { assignment: true },
   })

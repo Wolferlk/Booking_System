@@ -304,6 +304,8 @@ model Assignment {
   id            String     @id @default(cuid())
   agendaItemId  String     @unique
   agendaItem    AgendaItem @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+  driverId      String?
+  driver        Driver?    @relation(fields: [driverId], references: [id])
   driverName    String?
   driverPhone   String?
   vehicleType   String?
@@ -505,22 +507,24 @@ model Driver {
   email           String?
   licenseNo       String?
   isActive        Boolean   @default(true)
+  photoUrl        String?   @db.Text
 
-  // Vehicle link (1:1)
+  // Vehicle link (1:1) — driver owns/uses this vehicle
   vehicle         Vehicle?  @relation(fields: [vehicleId], references: [id])
   vehicleId       String?   @unique
 
   // Vietnamese bank account details
-  bankName        String?   // e.g. Vietcombank, Techcombank, BIDV
+  bankName        String?
   bankAccountNo   String?
-  bankHolder      String?   // account holder full name
-  bankBranch      String?   // branch name/city
-  bankCode        String?   // SWIFT / Napas code (optional)
+  bankHolder      String?
+  bankBranch      String?
+  bankCode        String?
 
   // Advance balance tracking
   advanceBalance  Decimal   @default(0) @db.Decimal(10, 2)
 
   driverPayments  DriverPayment[]
+  assignments     Assignment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -529,18 +533,38 @@ model Driver {
 }
 
 model Vehicle {
-  id          String   @id @default(cuid())
-  type        String   // van | bus | car | minibus
-  plateNo     String   @unique
-  capacity    Int
-  description String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  type         String   // van | bus | car | minibus
+  plateNo      String   @unique
+  brand        String?  // Toyota, Ford, Mercedes etc.
+  model        String?  // Hiace, Transit, Fortuner etc.
+  capacity     Int
+  description  String?
+  photoOutside String?  @db.Text
+  photoInside  String?  @db.Text
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  driver      Driver?  // reverse of Driver.vehicleId
+  driver       Driver?  // reverse of Driver.vehicleId
+  vendor       VehicleVendor? @relation(fields: [vendorId], references: [id])
+  vendorId     String?
 
   @@map("vehicles")
+}
+
+model VehicleVendor {
+  id        String    @id @default(cuid())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  isActive  Boolean   @default(true)
+  vehicles  Vehicle[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("vehicle_vendors")
 }
 
 model DriverPayment {

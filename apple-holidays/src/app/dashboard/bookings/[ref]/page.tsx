@@ -8,6 +8,7 @@ import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2, CheckCircle, XCircle,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
+  Phone, Shield, Edit2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -34,6 +35,10 @@ export default function BookingDetailPage() {
   const [cancelModal, setCancelModal] = useState(false)
   const [note, setNote] = useState('')
   const [cancelReason, setCancelReason] = useState('')
+  const [editAccomModal, setEditAccomModal] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
+  const [savingAccom, setSavingAccom] = useState(false)
 
   async function load() {
     try {
@@ -96,6 +101,30 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const statusEvents: any[] = booking.statusEvents ?? []
   const pnl = booking.pnl ?? null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const emergencyContacts: any[] = booking.emergencyContacts ?? []
+  const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
+  const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
+
+  async function saveAccomEdits() {
+    setSavingAccom(true)
+    try {
+      const accommodationUpdates = Object.entries(accomEdits).map(([id, fields]) => ({ id, ...fields }))
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accommodationUpdates }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Accommodation updated')
+      setEditAccomModal(false)
+      setAccomEdits({})
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setSavingAccom(false) }
+  }
 
   return (
     <div>
@@ -288,7 +317,18 @@ export default function BookingDetailPage() {
 
           {/* Hotels */}
           <Card>
-            <CardHeader>
+            <CardHeader
+              action={canEditBooking ? (
+                <button onClick={() => {
+                  const edits: Record<string, unknown> = {}
+                  accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' } })
+                  setAccomEdits(edits)
+                  setEditAccomModal(true)
+                }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
+                  <Edit2 className="w-3 h-3" /> Edit
+                </button>
+              ) : undefined}
+            >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Hotel className="w-4 h-4 text-slate-400" /> Accommodation
               </h3>
@@ -298,12 +338,43 @@ export default function BookingDetailPage() {
                 <div key={a.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
                   <p className="text-sm font-semibold text-slate-900">{a.hotel as string}</p>
                   <p className="text-xs text-slate-500">{a.city as string} · {a.nights as number} nights</p>
+                  {a.roomType && <p className="text-xs text-brand-600 font-medium">{a.roomType as string}</p>}
                   <p className="text-xs text-slate-400">{formatDate(a.checkIn as string)} → {formatDate(a.checkOut as string)}</p>
+                  {a.contact && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{a.contact as string}</p>}
                 </div>
               ))}
             </CardBody>
           </Card>
         </div>
+
+        {/* Emergency Contacts (visible to staff, not clients) */}
+        {canViewClientDetails && emergencyContacts.length > 0 && (
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-red-400" /> Emergency Contacts
+              </h3>
+            </CardHeader>
+            <CardBody className="p-0">
+              <div className="divide-y divide-slate-100">
+                {emergencyContacts.map((c) => (
+                  <div key={c.id as string} className="flex items-center gap-4 px-4 py-3">
+                    <div className="w-8 h-8 rounded-full bg-red-50 flex items-center justify-center flex-shrink-0">
+                      <Phone className="w-4 h-4 text-red-400" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-slate-900">{c.name as string}</p>
+                      <p className="text-xs text-slate-500">{c.relationship as string}</p>
+                    </div>
+                    <a href={`tel:${c.phone as string}`} className="text-sm font-mono text-brand-600 hover:underline">
+                      {c.phone as string}
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+        )}
 
         {/* Itinerary */}
         {itinerary.length > 0 && (
@@ -423,6 +494,60 @@ export default function BookingDetailPage() {
             onChange={e => setNote(e.target.value)}
             placeholder="Describe the change required..."
           />
+        </div>
+      </Modal>
+
+      {/* Edit Accommodation Modal */}
+      <Modal
+        open={editAccomModal}
+        onClose={() => setEditAccomModal(false)}
+        title="Edit Accommodation Details"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditAccomModal(false)}>Cancel</Button>
+            <Button loading={savingAccom} onClick={saveAccomEdits}>Save Changes</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <p className="text-xs text-slate-500 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+            Use this for critical room or hotel changes only. P&L is not automatically updated.
+          </p>
+          {accommodations.map((a) => (
+            <div key={a.id as string} className="border border-slate-200 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                {a.city as string} · {formatDate(a.checkIn as string)} – {formatDate(a.checkOut as string)}
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="form-label">Hotel Name</label>
+                  <input className="form-input"
+                    value={(accomEdits[a.id as string]?.hotel ?? a.hotel) as string}
+                    onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], hotel: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="form-label">Room Type</label>
+                  <input className="form-input" placeholder="e.g. Deluxe Twin"
+                    value={(accomEdits[a.id as string]?.roomType ?? a.roomType ?? '') as string}
+                    onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], roomType: e.target.value } }))} />
+                </div>
+                <div>
+                  <label className="form-label">Contact Number</label>
+                  <input className="form-input" placeholder="+84 ..."
+                    value={(accomEdits[a.id as string]?.contact ?? a.contact ?? '') as string}
+                    onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], contact: e.target.value } }))} />
+                </div>
+                <div className="col-span-2">
+                  <label className="form-label">Address</label>
+                  <input className="form-input"
+                    value={(accomEdits[a.id as string]?.address ?? a.address ?? '') as string}
+                    onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], address: e.target.value } }))} />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </Modal>
 

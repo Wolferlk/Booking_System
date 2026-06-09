@@ -79,16 +79,17 @@ export async function PUT(
 
   const role = session.user.role as UserRole
   const isSuperAdmin = role === 'SUPER_ADMIN'
+  // GT, BT, TE can edit accommodation/vehicle fields during change requests
+  const canEdit = isSuperAdmin || hasPermission(role, 'booking:edit') ||
+    ['GT_USER', 'BT_USER', 'TE_USER'].includes(role)
 
-  if (!isSuperAdmin && !hasPermission(role, 'booking:edit')) {
-    return buildApiError('Forbidden', 403)
-  }
+  if (!canEdit) return buildApiError('Forbidden', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  if (!isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED'].includes(booking.status)) {
-    return buildApiError('Booking can only be edited in DRAFT or CHANGE_REQUESTED state')
+  if (!isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
+    return buildApiError('Booking cannot be edited in current state')
   }
 
   const body = await req.json()
@@ -99,6 +100,8 @@ export async function PUT(
     amendmentNote,
     // Super Admin can also update passengers, flights, accommodations
     passengers, flights, accommodations,
+    // GT/BT/TE can update accommodation room types and vehicle changes
+    accommodationUpdates,
   } = body
 
   const updated = await prisma.booking.update({
@@ -154,6 +157,22 @@ export async function PUT(
           checkIn: a.checkIn ? new Date(a.checkIn as string) : new Date(),
           checkOut: a.checkOut ? new Date(a.checkOut as string) : new Date(),
         })),
+      })
+    }
+  }
+
+  // GT/BT/TE can update individual accommodation rooms (partial update by id)
+  if (accommodationUpdates && Array.isArray(accommodationUpdates)) {
+    for (const upd of accommodationUpdates as Record<string, unknown>[]) {
+      if (!upd.id) continue
+      await prisma.accommodation.update({
+        where: { id: upd.id as string },
+        data: {
+          ...(upd.hotel !== undefined && { hotel: upd.hotel as string }),
+          ...(upd.roomType !== undefined && { roomType: upd.roomType as string }),
+          ...(upd.address !== undefined && { address: upd.address as string }),
+          ...(upd.contact !== undefined && { contact: upd.contact as string }),
+        },
       })
     }
   }
