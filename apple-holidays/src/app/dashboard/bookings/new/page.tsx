@@ -1,0 +1,469 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { toast } from 'sonner'
+import { Plus, Trash2, Wand2, Loader2, Save } from 'lucide-react'
+import Header from '@/components/layout/header'
+import { Card, CardHeader, CardBody } from '@/components/ui/card'
+import Button from '@/components/ui/button'
+import FileUpload from '@/components/shared/file-upload'
+import { generateBookingRef } from '@/lib/utils'
+
+interface Passenger { name: string; type: string; age: string; isLead: boolean; passport: string; nationality: string }
+interface Flight { flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string }
+interface Hotel { city: string; hotel: string; checkIn: string; checkOut: string; nights: string; roomType: string; mealType: string; address: string }
+interface ItineraryItem { dayNo: string; date: string; title: string; description: string }
+interface EmergencyContact { name: string; phone: string; role: string }
+
+export default function NewBookingPage() {
+  const router = useRouter()
+  const [saving, setSaving] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+
+  // Form state
+  const [form, setForm] = useState({
+    bookingRef: generateBookingRef(),
+    agentBookingId: '',
+    agent: 'Make My Trip',
+    fileHandler: '',
+    arrivalDate: '',
+    departureDate: '',
+    paxAdults: '2',
+    paxChildren: '0',
+    quotedTotal: '',
+    currency: 'USD',
+    terms: '',
+    exclusions: '',
+    policyNotes: '',
+    amendmentNote: '',
+  })
+
+  const [passengers, setPassengers] = useState<Passenger[]>([
+    { name: '', type: 'ADULT', age: '', isLead: true, passport: '', nationality: '' },
+  ])
+  const [flights, setFlights] = useState<Flight[]>([
+    { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '' },
+  ])
+  const [hotels, setHotels] = useState<Hotel[]>([
+    { city: '', hotel: '', checkIn: '', checkOut: '', nights: '', roomType: '', mealType: '', address: '' },
+  ])
+  const [itinerary, setItinerary] = useState<ItineraryItem[]>([
+    { dayNo: '1', date: '', title: '', description: '' },
+  ])
+  const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([
+    { name: '', phone: '', role: '' },
+  ])
+
+  function handleAIParsed(data: Record<string, unknown>) {
+    if (!data) return
+    setForm(prev => ({
+      ...prev,
+      bookingRef: (data.bookingRef as string) || prev.bookingRef,
+      agentBookingId: (data.agentBookingId as string) || prev.agentBookingId,
+      agent: (data.agent as string) || prev.agent,
+      fileHandler: (data.fileHandler as string) || prev.fileHandler,
+      arrivalDate: (data.arrivalDate as string)?.slice(0, 10) || prev.arrivalDate,
+      departureDate: (data.departureDate as string)?.slice(0, 10) || prev.departureDate,
+      paxAdults: String(data.paxAdults ?? prev.paxAdults),
+      paxChildren: String(data.paxChildren ?? prev.paxChildren),
+      quotedTotal: String(data.quotedTotal ?? prev.quotedTotal),
+      currency: (data.currency as string) || prev.currency,
+      terms: (data.terms as string) || prev.terms,
+      exclusions: (data.exclusions as string) || prev.exclusions,
+      policyNotes: (data.policyNotes as string) || prev.policyNotes,
+      amendmentNote: (data.amendmentNote as string) || prev.amendmentNote,
+    }))
+
+    const pax = data.passengers as Passenger[] | undefined
+    if (pax?.length) setPassengers(pax.map(p => ({ ...p, age: String(p.age ?? ''), isLead: Boolean(p.isLead) })))
+
+    const fl = data.flights as Flight[] | undefined
+    if (fl?.length) setFlights(fl.map(f => ({ ...f, date: (f.date as string)?.slice(0, 10) || '' })))
+
+    const ac = data.accommodations as Hotel[] | undefined
+    if (ac?.length) setHotels(ac.map(h => ({ ...h, nights: String((h as Record<string, unknown>).nights ?? '') })))
+
+    const it = data.itineraryItems as ItineraryItem[] | undefined
+    if (it?.length) setItinerary(it.map(i => ({ ...i, dayNo: String(i.dayNo), date: (i.date as string)?.slice(0, 10) || '' })))
+
+    const ec = data.emergencyContacts as EmergencyContact[] | undefined
+    if (ec?.length) setEmergencyContacts(ec)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          paxAdults: Number(form.paxAdults),
+          paxChildren: Number(form.paxChildren),
+          quotedTotal: Number(form.quotedTotal),
+          passengers: passengers.filter(p => p.name),
+          flights: flights.filter(f => f.flightNo),
+          accommodations: hotels.filter(h => h.hotel).map(h => ({ ...h, nights: Number(h.nights) })),
+          itineraryItems: itinerary.filter(i => i.title).map(i => ({ ...i, dayNo: Number(i.dayNo) })),
+          emergencyContacts: emergencyContacts.filter(e => e.name),
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Booking created successfully!')
+      router.push(`/dashboard/bookings/${json.data.bookingRef}`)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create booking')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold text-slate-900">{title}</h3></CardHeader>
+      <CardBody>{children}</CardBody>
+    </Card>
+  )
+
+  return (
+    <div>
+      <Header title="New Booking" subtitle="Create a booking from quotation or enter manually" />
+      <div className="p-8 space-y-6 max-w-5xl">
+
+        {/* AI Upload */}
+        <Section title="🤖 AI Document Parser">
+          <p className="text-sm text-slate-500 mb-4">
+            Upload a tour confirmation (.docx, .pdf) to auto-fill the form using OpenAI.
+          </p>
+          <FileUpload
+            uploadType="booking"
+            onParsed={handleAIParsed}
+            label="Upload Tour Confirmation"
+            description="Drag & drop a .docx or .pdf file — AI will extract all booking details"
+          />
+        </Section>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Booking header */}
+          <Section title="Booking Details">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="form-label">Booking Ref *</label>
+                <input className="form-input font-mono" required value={form.bookingRef}
+                  onChange={e => setForm(p => ({ ...p, bookingRef: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">MMT / Agent Booking ID</label>
+                <input className="form-input" value={form.agentBookingId}
+                  onChange={e => setForm(p => ({ ...p, agentBookingId: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Agent</label>
+                <input className="form-input" value={form.agent}
+                  onChange={e => setForm(p => ({ ...p, agent: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">File Handler</label>
+                <input className="form-input" value={form.fileHandler}
+                  onChange={e => setForm(p => ({ ...p, fileHandler: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Arrival Date *</label>
+                <input type="date" className="form-input" required value={form.arrivalDate}
+                  onChange={e => setForm(p => ({ ...p, arrivalDate: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Departure Date *</label>
+                <input type="date" className="form-input" required value={form.departureDate}
+                  onChange={e => setForm(p => ({ ...p, departureDate: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Adults *</label>
+                <input type="number" min="1" className="form-input" required value={form.paxAdults}
+                  onChange={e => setForm(p => ({ ...p, paxAdults: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Children</label>
+                <input type="number" min="0" className="form-input" value={form.paxChildren}
+                  onChange={e => setForm(p => ({ ...p, paxChildren: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Quoted Total *</label>
+                <div className="flex gap-2">
+                  <select className="form-select w-24" value={form.currency}
+                    onChange={e => setForm(p => ({ ...p, currency: e.target.value }))}>
+                    <option>USD</option><option>INR</option><option>VND</option><option>SGD</option>
+                  </select>
+                  <input type="number" step="0.01" min="0" className="form-input flex-1" required
+                    value={form.quotedTotal}
+                    onChange={e => setForm(p => ({ ...p, quotedTotal: e.target.value }))} />
+                </div>
+              </div>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="form-label">Amendment Note</label>
+                <input className="form-input" placeholder="e.g. 02. AMENDED — Cruise Lunch Changed"
+                  value={form.amendmentNote}
+                  onChange={e => setForm(p => ({ ...p, amendmentNote: e.target.value }))} />
+              </div>
+            </div>
+          </Section>
+
+          {/* Passengers */}
+          <Section title="Passengers">
+            <div className="space-y-3">
+              {passengers.map((p, i) => (
+                <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 p-3 bg-slate-50 rounded-lg relative">
+                  <div>
+                    <label className="form-label text-xs">Name</label>
+                    <input className="form-input text-sm" placeholder="Full name" value={p.name}
+                      onChange={e => setPassengers(ps => ps.map((px, j) => j === i ? { ...px, name: e.target.value } : px))} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Type</label>
+                    <select className="form-select text-sm" value={p.type}
+                      onChange={e => setPassengers(ps => ps.map((px, j) => j === i ? { ...px, type: e.target.value } : px))}>
+                      <option value="ADULT">Adult</option>
+                      <option value="CHILD">Child</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Age</label>
+                    <input type="number" className="form-input text-sm" value={p.age}
+                      onChange={e => setPassengers(ps => ps.map((px, j) => j === i ? { ...px, age: e.target.value } : px))} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Passport No</label>
+                    <input className="form-input text-sm" value={p.passport}
+                      onChange={e => setPassengers(ps => ps.map((px, j) => j === i ? { ...px, passport: e.target.value } : px))} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Nationality</label>
+                    <input className="form-input text-sm" value={p.nationality}
+                      onChange={e => setPassengers(ps => ps.map((px, j) => j === i ? { ...px, nationality: e.target.value } : px))} />
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer mb-2">
+                      <input type="checkbox" checked={p.isLead}
+                        onChange={() => setPassengers(ps => ps.map((px, j) => ({ ...px, isLead: j === i })))} />
+                      Lead
+                    </label>
+                    {passengers.length > 1 && (
+                      <button type="button" onClick={() => setPassengers(ps => ps.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600 mb-2">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="ghost" size="sm"
+                icon={<Plus className="w-3 h-3" />}
+                onClick={() => setPassengers(ps => [...ps, { name: '', type: 'ADULT', age: '', isLead: false, passport: '', nationality: '' }])}>
+                Add Passenger
+              </Button>
+            </div>
+          </Section>
+
+          {/* Flights */}
+          <Section title="Flights">
+            <div className="space-y-3">
+              {flights.map((f, i) => (
+                <div key={i} className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 p-3 bg-slate-50 rounded-lg">
+                  {[
+                    { label: 'Flight No', key: 'flightNo', type: 'text', placeholder: 'VJ517' },
+                    { label: 'Date', key: 'date', type: 'date', placeholder: '' },
+                    { label: 'From', key: 'fromApt', type: 'text', placeholder: 'HAN' },
+                    { label: 'Dep', key: 'depTime', type: 'time', placeholder: '' },
+                    { label: 'To', key: 'toApt', type: 'text', placeholder: 'SGN' },
+                    { label: 'Arr', key: 'arrTime', type: 'time', placeholder: '' },
+                  ].map(field => (
+                    <div key={field.key}>
+                      <label className="form-label text-xs">{field.label}</label>
+                      <input type={field.type} className="form-input text-sm" placeholder={field.placeholder}
+                        value={(f as Record<string, string>)[field.key]}
+                        onChange={e => setFlights(fs => fs.map((fx, j) => j === i ? { ...fx, [field.key]: e.target.value } : fx))} />
+                    </div>
+                  ))}
+                  <div className="flex items-end pb-0.5">
+                    {flights.length > 1 && (
+                      <button type="button" onClick={() => setFlights(fs => fs.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
+                onClick={() => setFlights(fs => [...fs, { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '' }])}>
+                Add Flight
+              </Button>
+            </div>
+          </Section>
+
+          {/* Hotels */}
+          <Section title="Accommodation">
+            <div className="space-y-3">
+              {hotels.map((h, i) => (
+                <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 p-3 bg-slate-50 rounded-lg">
+                  {[
+                    { label: 'City', key: 'city', placeholder: 'Hanoi' },
+                    { label: 'Hotel Name', key: 'hotel', placeholder: 'Hotel Name' },
+                    { label: 'Room Type', key: 'roomType', placeholder: 'Deluxe' },
+                    { label: 'Meal Plan', key: 'mealType', placeholder: 'BB' },
+                  ].map(field => (
+                    <div key={field.key}>
+                      <label className="form-label text-xs">{field.label}</label>
+                      <input className="form-input text-sm" placeholder={field.placeholder}
+                        value={(h as Record<string, string>)[field.key]}
+                        onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [field.key]: e.target.value } : hx))} />
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-3 gap-2 col-span-2 lg:col-span-1">
+                    {[
+                      { label: 'Check-in', key: 'checkIn', type: 'date' },
+                      { label: 'Check-out', key: 'checkOut', type: 'date' },
+                      { label: 'Nights', key: 'nights', type: 'number' },
+                    ].map(f => (
+                      <div key={f.key}>
+                        <label className="form-label text-xs">{f.label}</label>
+                        <input type={f.type} className="form-input text-sm"
+                          value={(h as Record<string, string>)[f.key]}
+                          onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [f.key]: e.target.value } : hx))} />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex items-end">
+                    {hotels.length > 1 && (
+                      <button type="button" onClick={() => setHotels(hs => hs.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
+                onClick={() => setHotels(hs => [...hs, { city: '', hotel: '', checkIn: '', checkOut: '', nights: '', roomType: '', mealType: '', address: '' }])}>
+                Add Hotel
+              </Button>
+            </div>
+          </Section>
+
+          {/* Itinerary */}
+          <Section title="Itinerary">
+            <div className="space-y-3">
+              {itinerary.map((it, i) => (
+                <div key={i} className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-slate-50 rounded-lg">
+                  <div>
+                    <label className="form-label text-xs">Day</label>
+                    <input type="number" className="form-input text-sm" min="1" value={it.dayNo}
+                      onChange={e => setItinerary(its => its.map((ix, j) => j === i ? { ...ix, dayNo: e.target.value } : ix))} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Date</label>
+                    <input type="date" className="form-input text-sm" value={it.date}
+                      onChange={e => setItinerary(its => its.map((ix, j) => j === i ? { ...ix, date: e.target.value } : ix))} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Activity Title</label>
+                    <input className="form-input text-sm" value={it.title}
+                      onChange={e => setItinerary(its => its.map((ix, j) => j === i ? { ...ix, title: e.target.value } : ix))} />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="form-label text-xs">Description</label>
+                      <input className="form-input text-sm" value={it.description}
+                        onChange={e => setItinerary(its => its.map((ix, j) => j === i ? { ...ix, description: e.target.value } : ix))} />
+                    </div>
+                    {itinerary.length > 1 && (
+                      <button type="button" onClick={() => setItinerary(its => its.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600 self-end pb-0.5">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
+                onClick={() => setItinerary(its => [...its, { dayNo: String(its.length + 1), date: '', title: '', description: '' }])}>
+                Add Day
+              </Button>
+            </div>
+          </Section>
+
+          {/* Terms */}
+          <Section title="Terms & Policy">
+            <div className="grid gap-4">
+              <div>
+                <label className="form-label">Terms & Conditions</label>
+                <textarea className="form-textarea" rows={3} value={form.terms}
+                  onChange={e => setForm(p => ({ ...p, terms: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Exclusions</label>
+                <textarea className="form-textarea" rows={2} value={form.exclusions}
+                  onChange={e => setForm(p => ({ ...p, exclusions: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Policy Notes</label>
+                <textarea className="form-textarea" rows={2} value={form.policyNotes}
+                  onChange={e => setForm(p => ({ ...p, policyNotes: e.target.value }))} />
+              </div>
+            </div>
+          </Section>
+
+          {/* Emergency Contacts */}
+          <Section title="Emergency Contacts">
+            <div className="space-y-3">
+              {emergencyContacts.map((ec, i) => (
+                <div key={i} className="grid grid-cols-3 gap-3 p-3 bg-slate-50 rounded-lg">
+                  <div>
+                    <label className="form-label text-xs">Name</label>
+                    <input className="form-input text-sm" value={ec.name}
+                      onChange={e => setEmergencyContacts(ecs => ecs.map((c, j) => j === i ? { ...c, name: e.target.value } : c))} />
+                  </div>
+                  <div>
+                    <label className="form-label text-xs">Phone</label>
+                    <input className="form-input text-sm" value={ec.phone}
+                      onChange={e => setEmergencyContacts(ecs => ecs.map((c, j) => j === i ? { ...c, phone: e.target.value } : c))} />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <label className="form-label text-xs">Role</label>
+                      <input className="form-input text-sm" placeholder="e.g. Operations Manager" value={ec.role}
+                        onChange={e => setEmergencyContacts(ecs => ecs.map((c, j) => j === i ? { ...c, role: e.target.value } : c))} />
+                    </div>
+                    {emergencyContacts.length > 1 && (
+                      <button type="button" onClick={() => setEmergencyContacts(ecs => ecs.filter((_, j) => j !== i))}
+                        className="text-red-400 hover:text-red-600 self-end pb-0.5">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
+                onClick={() => setEmergencyContacts(ecs => [...ecs, { name: '', phone: '', role: '' }])}>
+                Add Contact
+              </Button>
+            </div>
+          </Section>
+
+          {/* Submit */}
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <Button type="button" variant="secondary" onClick={() => router.back()}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={saving} icon={<Save className="w-4 h-4" />}>
+              Create Booking
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,466 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import { useSession } from 'next-auth/react'
+import { toast } from 'sonner'
+import {
+  Users, Plane, Hotel, MapPin, FileText, CreditCard,
+  AlertCircle, Clock, Loader2, CheckCircle, XCircle,
+  ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
+} from 'lucide-react'
+import Header from '@/components/layout/header'
+import { Card, CardHeader, CardBody } from '@/components/ui/card'
+import { StatusBadge } from '@/components/ui/badge'
+import Button from '@/components/ui/button'
+import BookingLifecycle from '@/components/bookings/booking-lifecycle'
+import Modal from '@/components/ui/modal'
+import { formatDate, formatCurrency, getDaysUntilTrip, parseJsonSafe } from '@/lib/utils'
+import { getAvailableTransitions } from '@/lib/state-machine'
+import type { UserRole, BookingStatus } from '@prisma/client'
+import Link from 'next/link'
+
+export default function BookingDetailPage() {
+  const { ref } = useParams<{ ref: string }>()
+  const router = useRouter()
+  const { data: session } = useSession()
+  const role = (session?.user?.role ?? '') as UserRole
+
+  const [booking, setBooking] = useState<Record<string, unknown> | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [changeModal, setChangeModal] = useState(false)
+  const [cancelModal, setCancelModal] = useState(false)
+  const [note, setNote] = useState('')
+  const [cancelReason, setCancelReason] = useState('')
+
+  async function load() {
+    try {
+      const res = await fetch(`/api/bookings/${ref}`)
+      const json = await res.json()
+      if (json.success) setBooking(json.data)
+      else toast.error('Booking not found')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { load() }, [ref])
+
+  async function doTransition(endpoint: string, body: Record<string, unknown> = {}) {
+    setActionLoading(endpoint)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(json.message ?? 'Action completed')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Action failed')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-screen">
+      <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+    </div>
+  )
+
+  if (!booking) return (
+    <div className="flex flex-col items-center justify-center h-screen">
+      <p className="text-slate-500">Booking not found</p>
+      <button onClick={() => router.back()} className="mt-4 text-brand-600 hover:underline text-sm">Go back</button>
+    </div>
+  )
+
+  const status = booking.status as BookingStatus
+  const transitions = getAvailableTransitions(status, role)
+  const daysUntil = getDaysUntilTrip(booking.arrivalDate as string)
+  const passengers = (booking.passengers as Record<string, unknown>[]) ?? []
+  const flights = (booking.flights as Record<string, unknown>[]) ?? []
+  const accommodations = (booking.accommodations as Record<string, unknown>[]) ?? []
+  const itinerary = (booking.itineraryItems as Record<string, unknown>[]) ?? []
+  const changeRequests = (booking.changeRequests as Record<string, unknown>[]) ?? []
+  const statusEvents = (booking.statusEvents as Record<string, unknown>[]) ?? []
+  const pnl = booking.pnl as Record<string, unknown> | null
+
+  return (
+    <div>
+      <Header
+        title={`Booking ${ref}`}
+        subtitle={(booking.agent as string) ?? ''}
+        actions={
+          <button onClick={() => router.back()} className="btn-ghost btn text-sm">
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
+        }
+      />
+
+      <div className="p-8 space-y-6 max-w-7xl">
+
+        {/* Lifecycle + status */}
+        <Card className="p-6">
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+                <StatusBadge status={status} />
+                {booking.amendmentNote && (
+                  <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                    {booking.amendmentNote as string}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-4 text-sm text-slate-500">
+                <span className="flex items-center gap-1">
+                  <Calendar className="w-4 h-4" />
+                  {formatDate(booking.arrivalDate as string)} → {formatDate(booking.departureDate as string)}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Users className="w-4 h-4" />
+                  {booking.paxAdults as number} adults, {booking.paxChildren as number} children
+                </span>
+                <span className="flex items-center gap-1">
+                  <CreditCard className="w-4 h-4" />
+                  {formatCurrency(booking.quotedTotal as string, booking.currency as string)}
+                </span>
+                {daysUntil > 0 && (
+                  <span className={`flex items-center gap-1 font-medium ${daysUntil <= 7 ? 'text-red-600' : daysUntil <= 21 ? 'text-orange-600' : 'text-slate-500'}`}>
+                    <Clock className="w-4 h-4" />
+                    T−{daysUntil} days
+                  </span>
+                )}
+              </div>
+              {daysUntil <= 21 && daysUntil > 0 && (
+                <p className="mt-2 text-xs text-red-600 font-medium">
+                  ⚠ Cancellation penalty window active (100% charge applies)
+                </p>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2">
+              {transitions.map(t => {
+                const endpoint = {
+                  'BT_CONFIRMED': 'confirm',
+                  'GT_REVIEW': 'submit-ground',
+                  'GT_VERIFIED': 'verify',
+                  'CHANGE_REQUESTED': 'change-request',
+                  'BT_CONFIRMED_RESUBMIT': 'resubmit',
+                  'OPERATIONS_READY': 'recheck',
+                }
+                const key = t.to === 'CHANGE_REQUESTED' ? 'change-request'
+                  : t.from === 'CHANGE_REQUESTED' && t.to === 'BT_CONFIRMED' ? 'resubmit'
+                  : t.to === 'GT_REVIEW' ? 'submit-ground'
+                  : t.to === 'BT_CONFIRMED' ? 'confirm'
+                  : t.to === 'GT_VERIFIED' ? 'verify'
+                  : ''
+
+                if (!key) return null
+
+                const needsNote = ['change-request', 'resubmit'].includes(key)
+
+                return (
+                  <Button
+                    key={t.to}
+                    variant={t.to === 'CHANGE_REQUESTED' ? 'danger' : 'primary'}
+                    size="sm"
+                    loading={actionLoading === key}
+                    onClick={() => {
+                      if (needsNote) { setChangeModal(true) }
+                      else doTransition(key)
+                    }}
+                  >
+                    {t.label}
+                  </Button>
+                )
+              })}
+
+              {/* Cancel */}
+              {!['COMPLETED', 'CANCELLED'].includes(status) && ['BT_USER', 'SUPER_ADMIN', 'TE_USER'].includes(role) && (
+                <Button variant="danger" size="sm" onClick={() => setCancelModal(true)}>
+                  Cancel Booking
+                </Button>
+              )}
+
+              {/* Links to sub-pages */}
+              <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
+                <MapPin className="w-3.5 h-3.5" /> Agenda
+              </Link>
+              {['AC_USER', 'SUPER_ADMIN'].includes(role) && (
+                <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
+                  <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
+                </Link>
+              )}
+              <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
+                <Ticket className="w-3.5 h-3.5" /> Tickets
+              </Link>
+            </div>
+          </div>
+
+          {/* Lifecycle */}
+          <div className="mt-6 pt-5 border-t border-slate-100">
+            <BookingLifecycle status={status} />
+          </div>
+        </Card>
+
+        {/* Open change requests */}
+        {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
+          <div className="flex items-start gap-3 px-5 py-4 bg-orange-50 border border-orange-200 rounded-xl">
+            <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-orange-800">Open Change Requests</p>
+              {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').map((cr) => (
+                <p key={cr.id as string} className="text-xs text-orange-700 mt-1">
+                  • {(cr as Record<string, unknown>).notes as string}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Three-column detail grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+          {/* Passengers */}
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-slate-400" /> Passengers
+              </h3>
+            </CardHeader>
+            <CardBody className="p-0">
+              {passengers.map((p) => (
+                <div key={p.id as string} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-0">
+                  <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0">
+                    {(p.name as string).slice(0, 1)}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">
+                      {p.name as string}
+                      {p.isLead && <span className="ml-2 text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">Lead</span>}
+                    </p>
+                    <p className="text-xs text-slate-500">{p.type as string} · {p.age ? `Age ${p.age}` : 'Age N/A'}</p>
+                  </div>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+
+          {/* Flights */}
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Plane className="w-4 h-4 text-slate-400" /> Flights
+              </h3>
+            </CardHeader>
+            <CardBody className="p-0">
+              {flights.map((f) => (
+                <div key={f.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-900 font-mono">{f.flightNo as string}</span>
+                    <span className="text-xs text-slate-400">{formatDate(f.date as string)}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-slate-500">
+                    <span className="font-medium">{f.fromApt as string}</span>
+                    <span>{f.depTime as string}</span>
+                    <ChevronRight className="w-3 h-3" />
+                    <span className="font-medium">{f.toApt as string}</span>
+                    <span>{f.arrTime as string}</span>
+                  </div>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+
+          {/* Hotels */}
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Hotel className="w-4 h-4 text-slate-400" /> Accommodation
+              </h3>
+            </CardHeader>
+            <CardBody className="p-0">
+              {accommodations.map((a) => (
+                <div key={a.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
+                  <p className="text-sm font-semibold text-slate-900">{a.hotel as string}</p>
+                  <p className="text-xs text-slate-500">{a.city as string} · {a.nights as number} nights</p>
+                  <p className="text-xs text-slate-400">{formatDate(a.checkIn as string)} → {formatDate(a.checkOut as string)}</p>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* Itinerary */}
+        {itinerary.length > 0 && (
+          <Card>
+            <CardHeader><h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-slate-400" /> Itinerary ({itinerary.length} days)
+            </h3></CardHeader>
+            <CardBody className="p-0">
+              <div className="divide-y divide-slate-100">
+                {itinerary.map((item) => (
+                  <div key={item.id as string} className="flex gap-4 px-6 py-4">
+                    <div className="flex-shrink-0 text-center">
+                      <div className="w-9 h-9 rounded-full bg-brand-50 border-2 border-brand-200 flex items-center justify-center">
+                        <span className="text-brand-700 text-xs font-bold">D{item.dayNo as number}</span>
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900">{item.title as string}</p>
+                        <span className="text-xs text-slate-400">{formatDate(item.date as string)}</span>
+                      </div>
+                      {item.description && <p className="text-xs text-slate-500 mt-1">{item.description as string}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
+        )}
+
+        {/* P&L Summary (if available + permitted) */}
+        {pnl && (
+          <Card>
+            <CardHeader
+              action={
+                <Link href={`/dashboard/bookings/${ref}/pnl`} className="text-xs text-brand-600 hover:underline flex items-center gap-1">
+                  Full P&L <ChevronRight className="w-3 h-3" />
+                </Link>
+              }
+            >
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-slate-400" /> P&L Summary
+              </h3>
+            </CardHeader>
+            <CardBody>
+              <div className="grid grid-cols-3 gap-6 text-center">
+                <div>
+                  <p className="text-xs text-slate-500">Revenue</p>
+                  <p className="text-xl font-bold text-slate-900 mt-1">{formatCurrency(pnl.totalRevenue as number)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Cost</p>
+                  <p className="text-xl font-bold text-slate-900 mt-1">{formatCurrency(pnl.totalCost as number)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500">Profit</p>
+                  <p className={`text-xl font-bold mt-1 ${(pnl.profit as number) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatCurrency(pnl.profit as number)}
+                  </p>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        )}
+
+        {/* Status history */}
+        <Card>
+          <CardHeader><h3 className="text-sm font-semibold text-slate-900">Activity Log</h3></CardHeader>
+          <CardBody className="p-0">
+            <div className="divide-y divide-slate-100">
+              {statusEvents.slice(0, 8).map((e) => {
+                const ev = e as Record<string, unknown>
+                return (
+                  <div key={ev.id as string} className="flex items-start gap-3 px-6 py-3">
+                    <div className="w-2 h-2 rounded-full bg-brand-400 mt-1.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-xs text-slate-700">
+                        <span className="font-medium">{(ev.actor as Record<string, unknown>)?.name as string}</span>
+                        {' '}{ev.toState as string}
+                        {ev.note && <span className="text-slate-500"> — {ev.note as string}</span>}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(ev.createdAt as string, 'dd MMM yyyy, HH:mm')}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </CardBody>
+        </Card>
+      </div>
+
+      {/* Change request modal */}
+      <Modal
+        open={changeModal}
+        onClose={() => setChangeModal(false)}
+        title={status === 'CHANGE_REQUESTED' ? 'Resubmit with Correction Note' : 'Request Changes from Booking Team'}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setChangeModal(false)}>Cancel</Button>
+            <Button
+              loading={!!actionLoading}
+              onClick={() => {
+                const endpoint = status === 'CHANGE_REQUESTED' ? 'resubmit' : 'change-request'
+                doTransition(endpoint, { notes: note, note }).then(() => { setChangeModal(false); setNote('') })
+              }}
+            >
+              {status === 'CHANGE_REQUESTED' ? 'Resubmit' : 'Send Request'}
+            </Button>
+          </>
+        }
+      >
+        <div>
+          <label className="form-label">
+            {status === 'CHANGE_REQUESTED' ? 'Correction note (what was fixed)' : 'What needs to be changed?'}
+          </label>
+          <textarea
+            className="form-textarea"
+            rows={4}
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Describe the change required..."
+          />
+        </div>
+      </Modal>
+
+      {/* Cancel modal */}
+      <Modal
+        open={cancelModal}
+        onClose={() => setCancelModal(false)}
+        title="Cancel Booking"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setCancelModal(false)}>Keep Booking</Button>
+            <Button
+              variant="danger"
+              loading={actionLoading === 'cancel'}
+              onClick={() => {
+                if (!cancelReason) { toast.error('Please provide a reason'); return }
+                doTransition('cancel', { reason: cancelReason }).then(() => { setCancelModal(false); setCancelReason('') })
+              }}
+            >
+              Confirm Cancellation
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {daysUntil <= 21 && daysUntil > 0 && (
+            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-red-700 font-medium">
+                Warning: 100% cancellation penalty applies (within 21-day window)
+              </p>
+            </div>
+          )}
+          <div>
+            <label className="form-label">Cancellation Reason *</label>
+            <textarea className="form-textarea" rows={3}
+              value={cancelReason}
+              onChange={e => setCancelReason(e.target.value)}
+              placeholder="Reason for cancellation..." />
+          </div>
+        </div>
+      </Modal>
+    </div>
+  )
+}

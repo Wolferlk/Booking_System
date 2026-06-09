@@ -1,0 +1,199 @@
+'use client'
+
+import { useRouter } from 'next/navigation'
+import { MapPin, ArrowRight, Lock, Plane, Globe2 } from 'lucide-react'
+
+const DESTINATIONS = [
+  {
+    id: 'vietnam',
+    name: 'Vietnam',
+    code: 'MMT_VN',
+    flag: '🇻🇳',
+    description: 'Ho Chi Minh · Hanoi · Da Nang · Hoi An',
+    active: true,
+    href: '/vietnam',
+    tag: 'Live',
+    gradient: 'from-red-600/20 via-red-500/10 to-yellow-500/15',
+    border: 'border-red-500/40 hover:border-red-400/60',
+    glow: 'hover:shadow-red-500/10',
+    accent: 'text-red-400',
+    dot: 'bg-emerald-400',
+    tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  },
+  {
+    id: 'srilanka',
+    name: 'Sri Lanka',
+    code: 'MMT_LK',
+    flag: '🇱🇰',
+    description: 'Colombo · Kandy · Sigiriya · Galle',
+    active: false,
+    href: null,
+    tag: 'Coming Soon',
+    gradient: 'from-yellow-700/10 via-yellow-600/8 to-red-800/10',
+    border: 'border-yellow-700/20',
+    glow: '',
+    accent: 'text-yellow-600',
+    dot: 'bg-slate-600',
+    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+  },
+  {
+    id: 'malaysia',
+    name: 'Malaysia',
+    code: 'MMT_MY',
+    flag: '🇲🇾',
+    description: 'Kuala Lumpur · Penang · Langkawi · Malacca',
+    active: false,
+    href: null,
+    tag: 'Coming Soon',
+    gradient: 'from-blue-600/10 via-blue-500/8 to-red-500/10',
+    border: 'border-blue-600/20',
+    glow: '',
+    accent: 'text-blue-500',
+    dot: 'bg-slate-600',
+    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+  },
+  {
+    id: 'singapore',
+    name: 'Singapore',
+    code: 'MMT_SG',
+    flag: '🇸🇬',
+    description: 'Marina Bay · Sentosa · Orchard · Clarke Quay',
+    active: false,
+    href: null,
+    tag: 'Coming Soon',
+    gradient: 'from-red-600/10 via-slate-600/8 to-white/5',
+    border: 'border-red-600/20',
+    glow: '',
+    accent: 'text-red-500',
+    dot: 'bg-slate-600',
+    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+  },
+]
+
+export default function HomePage() {
+  const router = useRouter()
+
+  return (
+    <div className="min-h-screen bg-[#060a14] flex flex-col overflow-hidden">
+      {/* Ambient background */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-[-100px] left-1/2 -translate-x-1/2 w-[900px] h-[500px] bg-brand-500/6 rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 left-[-100px] w-[600px] h-[500px] bg-blue-600/5 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 right-[-100px] w-[600px] h-[500px] bg-purple-600/5 rounded-full blur-[100px]" />
+        {/* Grid overlay */}
+        <div
+          className="absolute inset-0 opacity-[0.03]"
+          style={{
+            backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
+            backgroundSize: '60px 60px',
+          }}
+        />
+      </div>
+
+      {/* Header */}
+      <header className="relative z-10 border-b border-white/5">
+        <div className="max-w-7xl mx-auto px-8 py-5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30">
+              <span className="text-white font-black text-sm">AH</span>
+            </div>
+            <div>
+              <p className="text-white font-bold text-base leading-tight tracking-tight">AppleHolidays</p>
+              <p className="text-slate-500 text-[11px] tracking-wider uppercase">Travel Management System</p>
+            </div>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-6 text-xs text-slate-500">
+            <div className="flex items-center gap-1.5">
+              <Globe2 className="w-3.5 h-3.5 text-brand-500" />
+              <span>Multi-Destination Platform</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Plane className="w-3.5 h-3.5 text-brand-500" />
+              <span>v1.0 Production</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 py-16">
+        <div className="text-center mb-14">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-500/10 border border-brand-500/25 text-brand-400 text-[11px] font-semibold tracking-widest uppercase mb-7">
+            <MapPin className="w-3.5 h-3.5" />
+            Select Your Destination
+          </div>
+
+          <h1 className="text-[52px] sm:text-[64px] font-black text-white mb-5 leading-[1.05] tracking-tight">
+            Where are you
+            <br />
+            <span className="text-brand-500 relative">
+              heading today?
+              <span className="absolute -bottom-1 left-0 right-0 h-0.5 bg-gradient-to-r from-brand-500/0 via-brand-500/60 to-brand-500/0 rounded-full" />
+            </span>
+          </h1>
+
+          <p className="text-slate-400 text-lg max-w-md mx-auto leading-relaxed">
+            Select a destination to access the booking and operations management portal.
+          </p>
+        </div>
+
+        {/* Destination Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 w-full max-w-5xl">
+          {DESTINATIONS.map(dest => (
+            <button
+              key={dest.id}
+              onClick={() => dest.active && dest.href && router.push(dest.href)}
+              disabled={!dest.active}
+              className={`
+                group relative rounded-2xl border p-7 text-left transition-all duration-300 outline-none
+                bg-gradient-to-br ${dest.gradient} bg-slate-900/70 backdrop-blur-sm
+                ${dest.border}
+                ${dest.active
+                  ? `cursor-pointer hover:scale-[1.03] hover:shadow-2xl ${dest.glow} focus:ring-2 focus:ring-brand-500/50`
+                  : 'cursor-not-allowed opacity-50'
+                }
+              `}
+            >
+              {/* Flag & tag row */}
+              <div className="flex items-start justify-between mb-5">
+                <span className="text-5xl filter drop-shadow-sm">{dest.flag}</span>
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wider uppercase ${dest.tagBg} flex items-center gap-1`}>
+                  {dest.active && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dest.dot} animate-pulse`} />}
+                  {dest.tag}
+                </span>
+              </div>
+
+              {/* Name */}
+              <h2 className="text-2xl font-black text-white mb-0.5 tracking-tight">{dest.name}</h2>
+              <p className={`text-xs font-bold uppercase tracking-widest ${dest.accent} mb-2`}>{dest.code}</p>
+              <p className="text-xs text-slate-500 leading-relaxed mb-6">{dest.description}</p>
+
+              {/* CTA */}
+              {dest.active ? (
+                <div className={`flex items-center gap-2 text-sm font-bold ${dest.accent} group-hover:gap-3 transition-all`}>
+                  Enter System
+                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
+                  <Lock className="w-3.5 h-3.5" />
+                  Not yet available
+                </div>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Sub-info */}
+        <p className="mt-10 text-slate-600 text-xs text-center">
+          Only Vietnam (MMT_VN) is currently operational. Other destinations launch soon.
+        </p>
+      </main>
+
+      <footer className="relative z-10 border-t border-white/5 py-5 text-center text-slate-600 text-xs">
+        © {new Date().getFullYear()} AppleHolidays — All rights reserved &nbsp;·&nbsp; Travel Management System
+      </footer>
+    </div>
+  )
+}

@@ -1,0 +1,205 @@
+import OpenAI from 'openai'
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+})
+
+export default openai
+
+// ─── System prompts ──────────────────────────────────────────────────────
+
+const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
+Extract structured booking data from the provided tour confirmation document text.
+Return ONLY valid JSON matching the schema below. If a field is not found, use null.
+
+Schema:
+{
+  "bookingRef": "string (e.g. VN19005)",
+  "agentBookingId": "string or null",
+  "agent": "string (e.g. Make My Trip)",
+  "fileHandler": "string or null",
+  "arrivalDate": "ISO date string YYYY-MM-DD",
+  "departureDate": "ISO date string YYYY-MM-DD",
+  "paxAdults": "number",
+  "paxChildren": "number",
+  "quotedTotal": "number",
+  "currency": "string (default USD)",
+  "amendmentNote": "string or null",
+  "terms": "string or null",
+  "exclusions": "string or null",
+  "policyNotes": "string or null",
+  "passengers": [
+    {
+      "name": "string",
+      "type": "ADULT or CHILD",
+      "age": "number or null",
+      "isLead": "boolean",
+      "passport": "string or null",
+      "nationality": "string or null",
+      "contact": "string or null"
+    }
+  ],
+  "flights": [
+    {
+      "flightNo": "string",
+      "date": "ISO date string YYYY-MM-DD",
+      "fromApt": "string",
+      "depTime": "string HH:MM",
+      "toApt": "string",
+      "arrTime": "string HH:MM",
+      "airline": "string or null"
+    }
+  ],
+  "accommodations": [
+    {
+      "city": "string",
+      "hotel": "string",
+      "checkIn": "ISO date string YYYY-MM-DD",
+      "checkOut": "ISO date string YYYY-MM-DD",
+      "address": "string or null",
+      "contact": "string or null",
+      "nights": "number",
+      "roomType": "string or null",
+      "mealType": "string or null"
+    }
+  ],
+  "itineraryItems": [
+    {
+      "dayNo": "number",
+      "date": "ISO date string YYYY-MM-DD",
+      "title": "string",
+      "description": "string or null",
+      "inclusions": ["array of strings"],
+      "exclusions": ["array of strings"]
+    }
+  ],
+  "emergencyContacts": [
+    {
+      "name": "string",
+      "phone": "string or null",
+      "role": "string or null"
+    }
+  ]
+}
+
+Be precise and complete. Do not invent data.`
+
+const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.
+Extract P&L (profit & loss) data from the provided Excel/CSV content.
+Return ONLY valid JSON matching the schema below.
+
+Schema:
+{
+  "paxAdults": "number",
+  "paxChildren": "number",
+  "lineItems": [
+    {
+      "activity": "string (activity/service name)",
+      "category": "one of: HOTEL, TICKETS, GUIDES, MEALS, CRUISE, WATER, TRANSPORT, TAX_FEES, FLIGHT_TICKETS, OTHER",
+      "mmtRate": "number (revenue per person, what was sold to agent)",
+      "sicRate": "number (SIC/shared cost per person)",
+      "pvtRatePP": "number (private transfer cost per person)",
+      "adEntrance": "number (adult entrance fee)",
+      "chEntrance": "number (child entrance fee)",
+      "otherRate": "number",
+      "notes": "string or null"
+    }
+  ]
+}`
+
+// ─── Extraction functions ────────────────────────────────────────────────
+
+export async function extractBookingFromText(documentText: string): Promise<Record<string, unknown>> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: BOOKING_EXTRACTION_PROMPT },
+      {
+        role: 'user',
+        content: `Extract booking data from this document:\n\n${documentText.slice(0, 12000)}`,
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('OpenAI returned empty response')
+  return JSON.parse(content)
+}
+
+export async function extractPNLFromText(sheetText: string): Promise<Record<string, unknown>> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: PNL_EXTRACTION_PROMPT },
+      {
+        role: 'user',
+        content: `Extract P&L data from this spreadsheet content:\n\n${sheetText.slice(0, 12000)}`,
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('OpenAI returned empty response')
+  return JSON.parse(content)
+}
+
+export async function generateAgendaFromBooking(bookingData: Record<string, unknown>): Promise<unknown[]> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a travel operations assistant. Generate a day-by-day tour agenda from the booking data.
+For each day/activity return JSON array items with:
+{
+  "date": "ISO date",
+  "location": "city name",
+  "fromPoint": "pickup location or null",
+  "toPoint": "destination or activity name",
+  "details": "timing and operational details",
+  "mealPlan": "B/L/D/BD/BL/BLD or null",
+  "meetingTime": "HH:MM or null",
+  "serviceType": "PVT_TRANSFER or SIC_TRANSFER or OWN_ARRANGEMENT"
+}
+Return ONLY a JSON array.`,
+      },
+      {
+        role: 'user',
+        content: `Generate agenda from:\n${JSON.stringify(bookingData, null, 2).slice(0, 8000)}`,
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.2,
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) return []
+  const parsed = JSON.parse(content)
+  return Array.isArray(parsed) ? parsed : parsed.items ?? parsed.agenda ?? []
+}
+
+export async function getBookingAISuggestion(
+  question: string,
+  bookingContext: string,
+): Promise<string> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a helpful travel booking assistant for AppleHolidays.
+Answer questions about bookings concisely and helpfully.
+Booking context: ${bookingContext.slice(0, 4000)}`,
+      },
+      { role: 'user', content: question },
+    ],
+    temperature: 0.3,
+    max_tokens: 500,
+  })
+
+  return response.choices[0]?.message?.content ?? 'Unable to generate response.'
+}

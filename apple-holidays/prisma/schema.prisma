@@ -1,0 +1,560 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ──────────────────────────────────────────────────────────────
+
+enum UserRole {
+  BT_USER
+  GT_USER
+  TE_USER
+  AC_USER
+  CLIENT
+  SUPER_ADMIN
+}
+
+enum BookingStatus {
+  DRAFT
+  BT_CONFIRMED
+  GT_REVIEW
+  CHANGE_REQUESTED
+  GT_VERIFIED
+  AWAITING_PAYMENT_CONFIRM
+  OPERATIONS_READY
+  CLIENT_LIVE
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  AMENDED
+}
+
+enum ServiceType {
+  PVT_TRANSFER
+  SIC_TRANSFER
+  OWN_ARRANGEMENT
+}
+
+enum TicketStatus {
+  DRAFT
+  PURCHASED
+  PAID
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum ChangeRequestStatus {
+  OPEN
+  RESOLVED
+}
+
+enum PassengerType {
+  ADULT
+  CHILD
+}
+
+enum PNLCategory {
+  HOTEL
+  TICKETS
+  GUIDES
+  MEALS
+  CRUISE
+  WATER
+  TRANSPORT
+  TAX_FEES
+  FLIGHT_TICKETS
+  OTHER
+}
+
+enum DriverPaymentType {
+  ADVANCE
+  SALARY
+  REIMBURSEMENT
+  DEDUCTION
+}
+
+// ─── User ────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  password      String    @db.Text
+  role          UserRole
+  phone         String?
+  avatar        String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  bookingsCreated   Booking[]       @relation("CreatedBy")
+  statusEvents      StatusEvent[]
+  changeRequests    ChangeRequest[] @relation("RaisedBy")
+  payments          Payment[]       @relation("ProcessedBy")
+  clientBookings    Booking[]       @relation("ClientUser")
+  contactLogs       ContactLog[]
+  reminders         Reminder[]
+  activityLogs      ActivityLog[]
+  driverPayments    DriverPayment[] @relation("ProcessedByUser")
+
+  @@map("users")
+}
+
+// ─── Activity Log ─────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  action      String   // BOOKING_CREATED | BOOKING_UPDATED | BOOKING_DELETED | STATUS_CHANGED | PAYMENT_CONFIRMED | TICKET_PURCHASED | LOGIN | etc.
+  entityType  String?  // Booking | Payment | Ticket | Driver | User
+  entityId    String?  // booking ref or entity id
+  details     String?  @db.Text  // JSON with context
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+// ─── Booking ─────────────────────────────────────────────────────────────
+
+model Booking {
+  id                    String        @id @default(cuid())
+  bookingRef            String        @unique
+  agentBookingId        String?
+  agent                 String?
+  fileHandler           String?
+  version               Int           @default(1)
+  amendmentNote         String?       @db.Text
+  status                BookingStatus @default(DRAFT)
+
+  arrivalDate           DateTime
+  departureDate         DateTime
+  paxAdults             Int           @default(0)
+  paxChildren           Int           @default(0)
+
+  quotedTotal           Decimal       @db.Decimal(10, 2)
+  currency              String        @default("USD")
+  cancellationDeadline  DateTime?
+
+  terms                 String?       @db.Text
+  exclusions            String?       @db.Text
+  policyNotes           String?       @db.Text
+
+  sourceDocUrl          String?       @db.Text
+  sourceDocName         String?
+
+  clientPortalUnlockedAt DateTime?
+  recheckCompletedAt    DateTime?
+  recheckCompletedBy    String?
+
+  createdById           String
+  createdBy             User          @relation("CreatedBy", fields: [createdById], references: [id])
+  clientUserId          String?
+  clientUser            User?         @relation("ClientUser", fields: [clientUserId], references: [id])
+
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  passengers            Passenger[]
+  flights               Flight[]
+  accommodations        Accommodation[]
+  itineraryItems        ItineraryItem[]
+  tourAgenda            TourAgenda?
+  pnl                   PNL?
+  payments              Payment[]
+  changeRequests        ChangeRequest[]
+  statusEvents          StatusEvent[]
+  versions              BookingVersion[]
+  emergencyContacts     EmergencyContact[]
+  tickets               Ticket[]
+
+  @@index([status])
+  @@index([arrivalDate])
+  @@map("bookings")
+}
+
+// ─── Passengers ──────────────────────────────────────────────────────────
+
+model Passenger {
+  id          String        @id @default(cuid())
+  bookingId   String
+  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  name        String
+  type        PassengerType @default(ADULT)
+  age         Int?
+  isLead      Boolean       @default(false)
+  passport    String?
+  nationality String?
+  contact     String?
+
+  @@map("passengers")
+}
+
+model EmergencyContact {
+  id        String  @id @default(cuid())
+  bookingId String
+  booking   Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String?
+  role      String?
+
+  @@map("emergency_contacts")
+}
+
+// ─── Flights ─────────────────────────────────────────────────────────────
+
+model Flight {
+  id          String   @id @default(cuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  flightNo    String
+  date        DateTime
+  fromApt     String
+  depTime     String
+  toApt       String
+  arrTime     String
+  airline     String?
+  notes       String?
+
+  @@map("flights")
+}
+
+// ─── Accommodation ───────────────────────────────────────────────────────
+
+model Accommodation {
+  id          String   @id @default(cuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  city        String
+  hotel       String
+  checkIn     DateTime
+  checkOut    DateTime
+  address     String?  @db.Text
+  contact     String?
+  nights      Int
+  roomType    String?
+  mealType    String?
+
+  @@map("accommodations")
+}
+
+// ─── Itinerary Items ─────────────────────────────────────────────────────
+
+model ItineraryItem {
+  id            String   @id @default(cuid())
+  bookingId     String
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  dayNo         Int
+  date          DateTime
+  title         String
+  description   String?  @db.Text
+  inclusions    String?  @db.Text
+  exclusions    String?  @db.Text
+
+  @@map("itinerary_items")
+}
+
+// ─── Tour Agenda ─────────────────────────────────────────────────────────
+
+model TourAgenda {
+  id        String       @id @default(cuid())
+  bookingId String       @unique
+  booking   Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  items     AgendaItem[]
+
+  @@map("tour_agendas")
+}
+
+model AgendaItem {
+  id           String      @id @default(cuid())
+  agendaId     String
+  agenda       TourAgenda  @relation(fields: [agendaId], references: [id], onDelete: Cascade)
+  date         DateTime
+  location     String
+  fromPoint    String?
+  toPoint      String?
+  details      String?     @db.Text
+  mealPlan     String?
+  meetingTime  String?
+  serviceType  ServiceType @default(OWN_ARRANGEMENT)
+  sortOrder    Int         @default(0)
+
+  assignment   Assignment?
+  tickets      Ticket[]
+
+  @@map("agenda_items")
+}
+
+model Assignment {
+  id            String     @id @default(cuid())
+  agendaItemId  String     @unique
+  agendaItem    AgendaItem @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+  driverName    String?
+  driverPhone   String?
+  vehicleType   String?
+  vehiclePlate  String?
+  notes         String?    @db.Text
+  assignedAt    DateTime   @default(now())
+
+  @@map("assignments")
+}
+
+// ─── Tickets ─────────────────────────────────────────────────────────────
+
+model Ticket {
+  id            String       @id @default(cuid())
+  bookingId     String
+  booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  agendaItemId  String?
+  agendaItem    AgendaItem?  @relation(fields: [agendaItemId], references: [id])
+  pnlLineId     String?
+  pnlLine       PNLLineItem? @relation(fields: [pnlLineId], references: [id])
+
+  type          String
+  qty           Int          @default(1)
+  supplier      String?
+  costPerUnit   Decimal?     @db.Decimal(10, 2)
+  totalCost     Decimal?     @db.Decimal(10, 2)
+  currency      String       @default("USD")
+  status        TicketStatus @default(DRAFT)
+  purchasedAt   DateTime?
+  reference     String?
+  notes         String?      @db.Text
+
+  // Ticket file upload (PDF or image)
+  fileUrl       String?      @db.Text
+  fileName      String?
+  fileType      String?      // pdf | image
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@map("tickets")
+}
+
+// ─── P&L ─────────────────────────────────────────────────────────────────
+
+model PNL {
+  id          String        @id @default(cuid())
+  bookingId   String        @unique
+  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  paxAdults   Int           @default(0)
+  paxChildren Int           @default(0)
+  sourceDocUrl String?      @db.Text
+  lockedAt    DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  lineItems   PNLLineItem[]
+
+  @@map("pnl")
+}
+
+model PNLLineItem {
+  id              String      @id @default(cuid())
+  pnlId           String
+  pnl             PNL         @relation(fields: [pnlId], references: [id], onDelete: Cascade)
+  activity        String
+  category        PNLCategory @default(OTHER)
+  mmtRate         Decimal     @db.Decimal(10, 2)
+  sicRate         Decimal     @db.Decimal(10, 2) @default(0)
+  pvtRatePP       Decimal     @db.Decimal(10, 2) @default(0)
+  adEntrance      Decimal     @db.Decimal(10, 2) @default(0)
+  chEntrance      Decimal     @db.Decimal(10, 2) @default(0)
+  otherRate       Decimal     @db.Decimal(10, 2) @default(0)
+  paymentStatus   PaymentStatus @default(PENDING)
+  paymentRefNumber String?    // ref number added by Accounts when confirming
+  paymentConfirmedAt DateTime?
+  paymentConfirmedBy String?
+  sortOrder       Int         @default(0)
+  notes           String?     @db.Text
+
+  tickets         Ticket[]
+
+  @@map("pnl_line_items")
+}
+
+// ─── Payments ────────────────────────────────────────────────────────────
+
+model Payment {
+  id              String        @id @default(cuid())
+  bookingId       String
+  booking         Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  type            String        // customer_payment | supplier_payment | advance | ticket_payment
+  label           String?       // e.g. "Air Ticket - VN005 → SIN"
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("USD")
+  method          String?       // bank_transfer | card | cash | etc.
+  status          PaymentStatus @default(PENDING)
+  reference       String?       // internal ref
+  refNumber       String?       // accounts-team-assigned ref number on confirmation
+  notes           String?       @db.Text
+  dueDate         DateTime?     // for scheduled payments
+  paidAt          DateTime?
+  processedById   String?
+  processedBy     User?         @relation("ProcessedBy", fields: [processedById], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("payments")
+}
+
+// ─── Change Requests ─────────────────────────────────────────────────────
+
+model ChangeRequest {
+  id          String              @id @default(cuid())
+  bookingId   String
+  booking     Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  raisedById  String
+  raisedBy    User                @relation("RaisedBy", fields: [raisedById], references: [id])
+  targetField String?
+  notes       String              @db.Text
+  status      ChangeRequestStatus @default(OPEN)
+  resolvedAt  DateTime?
+  resolvedNote String?            @db.Text
+  createdAt   DateTime            @default(now())
+
+  @@map("change_requests")
+}
+
+// ─── Status Events ───────────────────────────────────────────────────────
+
+model StatusEvent {
+  id          String        @id @default(cuid())
+  bookingId   String
+  booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromState   BookingStatus?
+  toState     BookingStatus
+  actorId     String
+  actor       User          @relation(fields: [actorId], references: [id])
+  note        String?       @db.Text
+  createdAt   DateTime      @default(now())
+
+  @@index([bookingId])
+  @@map("status_events")
+}
+
+// ─── Booking Versions ────────────────────────────────────────────────────
+
+model BookingVersion {
+  id            String   @id @default(cuid())
+  bookingId     String
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  versionNo     Int
+  docSnapshot   String?  @db.LongText
+  amendmentNote String?  @db.Text
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  @@map("booking_versions")
+}
+
+// ─── Contact Log & Reminders ──────────────────────────────────────────────
+
+model ContactLog {
+  id          String   @id @default(cuid())
+  bookingId   String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  type        String
+  subject     String
+  notes       String?  @db.Text
+  contactedAt DateTime @default(now())
+
+  @@map("contact_logs")
+}
+
+model Reminder {
+  id          String   @id @default(cuid())
+  bookingId   String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  type        String
+  title       String
+  message     String?  @db.Text
+  scheduledAt DateTime
+  sentAt      DateTime?
+  isDone      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@map("reminders")
+}
+
+// ─── Drivers & Vehicles ───────────────────────────────────────────────────
+// 1 Vehicle ↔ 1 Driver
+
+model Driver {
+  id              String    @id @default(cuid())
+  name            String
+  phone           String
+  email           String?
+  licenseNo       String?
+  isActive        Boolean   @default(true)
+
+  // Vehicle link (1:1)
+  vehicle         Vehicle?  @relation(fields: [vehicleId], references: [id])
+  vehicleId       String?   @unique
+
+  // Vietnamese bank account details
+  bankName        String?   // e.g. Vietcombank, Techcombank, BIDV
+  bankAccountNo   String?
+  bankHolder      String?   // account holder full name
+  bankBranch      String?   // branch name/city
+  bankCode        String?   // SWIFT / Napas code (optional)
+
+  // Advance balance tracking
+  advanceBalance  Decimal   @default(0) @db.Decimal(10, 2)
+
+  driverPayments  DriverPayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("drivers")
+}
+
+model Vehicle {
+  id          String   @id @default(cuid())
+  type        String   // van | bus | car | minibus
+  plateNo     String   @unique
+  capacity    Int
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  driver      Driver?  // reverse of Driver.vehicleId
+
+  @@map("vehicles")
+}
+
+model DriverPayment {
+  id          String            @id @default(cuid())
+  driverId    String
+  driver      Driver            @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  amount      Decimal           @db.Decimal(10, 2)
+  type        DriverPaymentType @default(ADVANCE)
+  description String?
+  refNumber   String?
+  paidById    String
+  paidBy      User              @relation("ProcessedByUser", fields: [paidById], references: [id])
+  createdAt   DateTime          @default(now())
+
+  @@index([driverId])
+  @@map("driver_payments")
+}
