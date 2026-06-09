@@ -82,7 +82,7 @@ export default function NewBookingPage() {
     if (fl?.length) setFlights(fl.map(f => ({ ...f, date: (f.date as string)?.slice(0, 10) || '' })))
 
     const ac = data.accommodations as Hotel[] | undefined
-    if (ac?.length) setHotels(ac.map(h => ({ ...h, nights: String((h as Record<string, unknown>).nights ?? '') })))
+    if (ac?.length) setHotels(ac.map(h => ({ ...h, nights: String((h as unknown as Record<string, unknown>).nights ?? '') })))
 
     const it = data.itineraryItems as ItineraryItem[] | undefined
     if (it?.length) setItinerary(it.map(i => ({ ...i, dayNo: String(i.dayNo), date: (i.date as string)?.slice(0, 10) || '' })))
@@ -283,7 +283,7 @@ export default function NewBookingPage() {
                     <div key={field.key}>
                       <label className="form-label text-xs">{field.label}</label>
                       <input type={field.type} className="form-input text-sm" placeholder={field.placeholder}
-                        value={(f as Record<string, string>)[field.key]}
+                        value={(f as unknown as Record<string, string>)[field.key]}
                         onChange={e => setFlights(fs => fs.map((fx, j) => j === i ? { ...fx, [field.key]: e.target.value } : fx))} />
                     </div>
                   ))}
@@ -318,7 +318,7 @@ export default function NewBookingPage() {
                     <div key={field.key}>
                       <label className="form-label text-xs">{field.label}</label>
                       <input className="form-input text-sm" placeholder={field.placeholder}
-                        value={(h as Record<string, string>)[field.key]}
+                        value={(h as unknown as Record<string, string>)[field.key]}
                         onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [field.key]: e.target.value } : hx))} />
                     </div>
                   ))}
@@ -331,7 +331,7 @@ export default function NewBookingPage() {
                       <div key={f.key}>
                         <label className="form-label text-xs">{f.label}</label>
                         <input type={f.type} className="form-input text-sm"
-                          value={(h as Record<string, string>)[f.key]}
+                          value={(h as unknown as Record<string, string>)[f.key]}
                           onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [f.key]: e.target.value } : hx))} />
                       </div>
                     ))}

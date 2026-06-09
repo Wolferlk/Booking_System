@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload } from 'lucide-react'
+import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash } from 'lucide-react'
+import Modal from '@/components/ui/modal'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
@@ -42,6 +43,8 @@ export default function PNLPage() {
   const [saving, setSaving] = useState(false)
   const [confirmingLine, setConfirmingLine] = useState<string | null>(null)
   const [showUpload, setShowUpload] = useState(false)
+  const [confirmModal, setConfirmModal] = useState<{ lineId: string; action: 'CONFIRMED' | 'REJECTED'; activity: string } | null>(null)
+  const [refInput, setRefInput] = useState('')
 
   const canEdit = ['AC_USER', 'SUPER_ADMIN'].includes(role)
 
@@ -54,7 +57,8 @@ export default function PNLPage() {
         setPnl(data)
         setPaxAdults(String(data.paxAdults ?? 2))
         setPaxChildren(String(data.paxChildren ?? 0))
-        setLines((data.lineItems as Line[] ?? []).map((l: Record<string, unknown>) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setLines(((data.lineItems ?? []) as any[]).map((l: any) => ({
           id: l.id as string,
           activity: l.activity as string,
           category: l.category as string,
@@ -127,17 +131,23 @@ export default function PNLPage() {
     }
   }
 
-  async function confirmPayment(lineId: string, action: 'CONFIRMED' | 'REJECTED') {
-    setConfirmingLine(lineId)
+  async function confirmPayment() {
+    if (!confirmModal) return
+    if (confirmModal.action === 'CONFIRMED' && !refInput.trim()) {
+      toast.error('Reference number is required when confirming payment')
+      return
+    }
+    setConfirmingLine(confirmModal.lineId)
     try {
-      const res = await fetch(`/api/pnl-lines/${lineId}/confirm`, {
+      const res = await fetch(`/api/pnl-lines/${confirmModal.lineId}/confirm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action: confirmModal.action, refNumber: refInput.trim() }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success(`Payment ${action.toLowerCase()}`)
+      toast.success(confirmModal.action === 'CONFIRMED' ? `Payment confirmed — Ref: ${refInput}` : 'Payment rejected')
+      setConfirmModal(null); setRefInput('')
       await loadPNL()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Action failed')
@@ -146,18 +156,20 @@ export default function PNLPage() {
     }
   }
 
-  function handleAIParsed(data: Record<string, unknown>) {
-    const items = (data as Record<string, unknown>).lineItems as Line[] | undefined
-    if (items?.length) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function handleAIParsed(data: any) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const items: any[] = data?.lineItems ?? []
+    if (items.length) {
       setLines(items.map(l => ({
-        activity: (l as Record<string, unknown>).activity as string || '',
-        category: (l as Record<string, unknown>).category as string || 'OTHER',
-        mmtRate: String((l as Record<string, unknown>).mmtRate || 0),
-        sicRate: String((l as Record<string, unknown>).sicRate || 0),
-        pvtRatePP: String((l as Record<string, unknown>).pvtRatePP || 0),
-        adEntrance: String((l as Record<string, unknown>).adEntrance || 0),
-        chEntrance: String((l as Record<string, unknown>).chEntrance || 0),
-        otherRate: String((l as Record<string, unknown>).otherRate || 0),
+        activity: l.activity || '',
+        category: l.category || 'OTHER',
+        mmtRate: String(l.mmtRate || 0),
+        sicRate: String(l.sicRate || 0),
+        pvtRatePP: String(l.pvtRatePP || 0),
+        adEntrance: String(l.adEntrance || 0),
+        chEntrance: String(l.chEntrance || 0),
+        otherRate: String(l.otherRate || 0),
         notes: '',
       })))
       toast.success('P&L lines extracted from spreadsheet!')
@@ -299,10 +311,10 @@ export default function PNLPage() {
                           {canEdit ? (
                             <input type="number" step="0.01" min="0"
                               className="form-input text-xs py-1 w-16 text-right"
-                              value={(line as Record<string, string>)[field]}
+                              value={(line as unknown as Record<string, string>)[field]}
                               onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, [field]: e.target.value } : l))} />
                           ) : (
-                            <span className="text-xs">{Number((line as Record<string, string>)[field]).toFixed(2)}</span>
+                            <span className="text-xs">{Number((line as unknown as Record<string, string>)[field]).toFixed(2)}</span>
                           )}
                         </td>
                       ))}
@@ -321,16 +333,18 @@ export default function PNLPage() {
                             {canEdit && line.paymentStatus === 'PENDING' && (
                               <div className="flex gap-1 ml-1">
                                 <button
-                                  onClick={() => confirmPayment(line.id!, 'CONFIRMED')}
+                                  onClick={() => { setConfirmModal({ lineId: line.id!, action: 'CONFIRMED', activity: line.activity }); setRefInput('') }}
                                   disabled={confirmingLine === line.id}
                                   className="text-green-600 hover:text-green-800"
+                                  title="Confirm payment (requires ref number)"
                                 >
                                   <CheckCircle className="w-4 h-4" />
                                 </button>
                                 <button
-                                  onClick={() => confirmPayment(line.id!, 'REJECTED')}
+                                  onClick={() => { setConfirmModal({ lineId: line.id!, action: 'REJECTED', activity: line.activity }); setRefInput('') }}
                                   disabled={confirmingLine === line.id}
                                   className="text-red-500 hover:text-red-700"
+                                  title="Reject payment"
                                 >
                                   <XCircle className="w-4 h-4" />
                                 </button>
@@ -371,6 +385,69 @@ export default function PNLPage() {
           </div>
         </Card>
       </div>
+
+      {/* Payment Confirmation Modal */}
+      <Modal
+        open={!!confirmModal}
+        onClose={() => { setConfirmModal(null); setRefInput('') }}
+        title={confirmModal?.action === 'CONFIRMED' ? 'Confirm Payment' : 'Reject Payment'}
+      >
+        {confirmModal && (
+          <div className="space-y-4">
+            <div className="p-3 bg-slate-50 rounded-lg">
+              <p className="text-sm text-slate-500">P&L Line</p>
+              <p className="font-semibold text-slate-900">{confirmModal.activity}</p>
+            </div>
+
+            {confirmModal.action === 'CONFIRMED' ? (
+              <>
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-sm text-emerald-700">
+                  A reference number is required to confirm this payment. This ref will be visible to the Ground Team before purchasing tickets.
+                </div>
+                <div>
+                  <label className="form-label flex items-center gap-1.5">
+                    <Hash className="w-3.5 h-3.5 text-brand-500" /> Reference Number *
+                  </label>
+                  <input
+                    value={refInput}
+                    onChange={e => setRefInput(e.target.value)}
+                    className="form-input font-mono"
+                    placeholder="e.g. PAY-2026-0142"
+                    autoFocus
+                  />
+                  <p className="text-xs text-slate-400 mt-1">Bank transfer ref, voucher number, or internal payment ID</p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={confirmPayment}
+                    disabled={!refInput.trim() || !!confirmingLine}
+                    className="btn-primary btn flex-1"
+                  >
+                    {confirmingLine ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                    Confirm Payment
+                  </button>
+                  <button onClick={() => { setConfirmModal(null); setRefInput('') }} className="btn-secondary btn">
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700">
+                  This will mark the payment as rejected. The Ground Team will not be able to purchase tickets linked to this line.
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={confirmPayment} disabled={!!confirmingLine} className="btn-danger btn flex-1">
+                    {confirmingLine ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                    Reject Payment
+                  </button>
+                  <button onClick={() => setConfirmModal(null)} className="btn-secondary btn">Cancel</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

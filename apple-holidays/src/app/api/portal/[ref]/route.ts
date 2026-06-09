@@ -81,11 +81,13 @@ export async function GET(
     payments: booking.payments.map(p => ({
       id: p.id,
       type: p.type,
+      label: p.label ?? null,
       amount: p.amount,
       currency: p.currency,
       status: p.status,
       method: p.method,
       paidAt: p.paidAt,
+      refNumber: p.refNumber ?? null,
     })),
   }
 

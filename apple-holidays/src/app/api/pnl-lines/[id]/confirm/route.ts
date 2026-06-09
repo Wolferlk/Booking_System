@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
+import { logActivity, ACTION } from '@/lib/activity'
 import type { UserRole } from '@prisma/client'
 
 export async function POST(
@@ -32,16 +33,30 @@ export async function POST(
 
   if (!line) return buildApiError('PNL line not found', 404)
 
-  const { action = 'CONFIRMED' } = await req.json()
+  const body = await req.json()
+  const { action = 'CONFIRMED', refNumber } = body
   const status = action === 'REJECTED' ? 'REJECTED' : 'CONFIRMED'
+
+  if (status === 'CONFIRMED' && !refNumber?.trim()) {
+    return buildApiError('Reference number is required when confirming payment')
+  }
 
   const updated = await prisma.pNLLineItem.update({
     where: { id: params.id },
     data: {
       paymentStatus: status,
+      paymentRefNumber: status === 'CONFIRMED' ? refNumber?.trim() : null,
       paymentConfirmedAt: new Date(),
       paymentConfirmedBy: session.user.id,
     },
+  })
+
+  await logActivity({
+    userId: session.user.id,
+    action: status === 'CONFIRMED' ? ACTION.PNL_LINE_CONFIRMED : ACTION.PNL_LINE_REJECTED,
+    entityType: 'Payment',
+    entityId: params.id,
+    details: { activity: line.activity, refNumber, bookingRef: line.pnl.booking.bookingRef },
   })
 
   // Check if all lines are confirmed — if so, advance booking to OPERATIONS_READY

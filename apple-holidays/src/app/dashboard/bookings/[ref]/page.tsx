@@ -26,7 +26,8 @@ export default function BookingDetailPage() {
   const { data: session } = useSession()
   const role = (session?.user?.role ?? '') as UserRole
 
-  const [booking, setBooking] = useState<Record<string, unknown> | null>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [booking, setBooking] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [changeModal, setChangeModal] = useState(false)
@@ -82,13 +83,19 @@ export default function BookingDetailPage() {
   const status = booking.status as BookingStatus
   const transitions = getAvailableTransitions(status, role)
   const daysUntil = getDaysUntilTrip(booking.arrivalDate as string)
-  const passengers = (booking.passengers as Record<string, unknown>[]) ?? []
-  const flights = (booking.flights as Record<string, unknown>[]) ?? []
-  const accommodations = (booking.accommodations as Record<string, unknown>[]) ?? []
-  const itinerary = (booking.itineraryItems as Record<string, unknown>[]) ?? []
-  const changeRequests = (booking.changeRequests as Record<string, unknown>[]) ?? []
-  const statusEvents = (booking.statusEvents as Record<string, unknown>[]) ?? []
-  const pnl = booking.pnl as Record<string, unknown> | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const passengers: any[] = booking.passengers ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const flights: any[] = booking.flights ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const accommodations: any[] = booking.accommodations ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const itinerary: any[] = booking.itineraryItems ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const changeRequests: any[] = booking.changeRequests ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const statusEvents: any[] = booking.statusEvents ?? []
+  const pnl = booking.pnl ?? null
 
   return (
     <div>
@@ -111,9 +118,9 @@ export default function BookingDetailPage() {
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
                 <StatusBadge status={status} />
-                {booking.amendmentNote && (
+                {Boolean(booking.amendmentNote) && (
                   <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
-                    {booking.amendmentNote as string}
+                    {String(booking.amendmentNote)}
                   </span>
                 )}
               </div>
@@ -367,22 +374,19 @@ export default function BookingDetailPage() {
           <CardHeader><h3 className="text-sm font-semibold text-slate-900">Activity Log</h3></CardHeader>
           <CardBody className="p-0">
             <div className="divide-y divide-slate-100">
-              {statusEvents.slice(0, 8).map((e) => {
-                const ev = e as Record<string, unknown>
-                return (
-                  <div key={ev.id as string} className="flex items-start gap-3 px-6 py-3">
-                    <div className="w-2 h-2 rounded-full bg-brand-400 mt-1.5 flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-xs text-slate-700">
-                        <span className="font-medium">{(ev.actor as Record<string, unknown>)?.name as string}</span>
-                        {' '}{ev.toState as string}
-                        {ev.note && <span className="text-slate-500"> — {ev.note as string}</span>}
-                      </p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(ev.createdAt as string, 'dd MMM yyyy, HH:mm')}</p>
-                    </div>
+              {statusEvents.slice(0, 8).map((ev) => (
+                <div key={ev.id} className="flex items-start gap-3 px-6 py-3">
+                  <div className="w-2 h-2 rounded-full bg-brand-400 mt-1.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-xs text-slate-700">
+                      <span className="font-medium">{ev.actor?.name}</span>
+                      {' '}{ev.toState}
+                      {Boolean(ev.note) && <span className="text-slate-500"> — {String(ev.note)}</span>}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{formatDate(ev.createdAt, 'dd MMM yyyy, HH:mm')}</p>
                   </div>
-                )
-              })}
+                </div>
+              ))}
             </div>
           </CardBody>
         </Card>

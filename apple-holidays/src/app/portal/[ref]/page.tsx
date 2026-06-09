@@ -1,20 +1,19 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
   Globe, Calendar, Users, Plane, Hotel, MapPin, CreditCard,
   Phone, Car, MessageCircle, Loader2, ChevronRight, Clock,
-  CheckCircle2, AlertCircle, Lock,
+  CheckCircle2, AlertCircle, Lock, ArrowLeft, Star,
+  Send, Home,
 } from 'lucide-react'
-import { StatusBadge, Badge } from '@/components/ui/badge'
-import { Card, CardHeader, CardBody } from '@/components/ui/card'
-import Button from '@/components/ui/button'
-import Modal from '@/components/ui/modal'
+import { StatusBadge } from '@/components/ui/badge'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import type { BookingStatus } from '@prisma/client'
+import { differenceInDays, format } from 'date-fns'
 
 interface PortalData {
   bookingRef: string
@@ -25,8 +24,14 @@ interface PortalData {
   paxChildren: number
   agent: string | null
   passengers: { id: string; name: string; type: string; isLead: boolean }[]
-  flights: { id: string; flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string }[]
-  accommodations: { id: string; city: string; hotel: string; checkIn: string; checkOut: string; nights: number; roomType?: string }[]
+  flights: {
+    id: string; flightNo: string; date: string; airline?: string
+    fromApt: string; depTime: string; toApt: string; arrTime: string
+  }[]
+  accommodations: {
+    id: string; city: string; hotel: string; checkIn: string; checkOut: string; nights: number
+    roomType?: string; address?: string; contact?: string
+  }[]
   agenda: {
     items: {
       id: string; date: string; location: string; fromPoint?: string; toPoint?: string
@@ -34,16 +39,28 @@ interface PortalData {
       assignment?: { driverName?: string; driverPhone?: string; vehicleType?: string; vehiclePlate?: string } | null
     }[]
   } | null
-  payments: { id: string; type: string; amount: string; currency: string; status: string; method?: string; paidAt?: string }[]
+  payments: {
+    id: string; type: string; label?: string; amount: string; currency: string
+    status: string; method?: string; paidAt?: string; refNumber?: string
+  }[]
+}
+
+type Tab = 'trip' | 'itinerary' | 'payments' | 'contact'
+
+const STATUS_COLOR: Record<string, string> = {
+  CONFIRMED: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
+  PENDING: 'bg-amber-500/15 text-amber-400 border-amber-500/20',
+  REJECTED: 'bg-red-500/15 text-red-400 border-red-500/20',
 }
 
 export default function ClientPortalPage() {
   const { ref } = useParams<{ ref: string }>()
+  const router = useRouter()
   const { data: session } = useSession()
   const [data, setData] = useState<PortalData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'trip' | 'payments' | 'contact'>('trip')
+  const [activeTab, setActiveTab] = useState<Tab>('trip')
   const [requestModal, setRequestModal] = useState(false)
   const [requestNote, setRequestNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -51,10 +68,7 @@ export default function ClientPortalPage() {
   useEffect(() => {
     fetch(`/api/portal/${ref}`)
       .then(r => r.json())
-      .then(j => {
-        if (j.success) setData(j.data)
-        else setError(j.error ?? 'Unable to load trip')
-      })
+      .then(j => { if (j.success) setData(j.data); else setError(j.error ?? 'Unable to load trip') })
       .catch(() => setError('Network error'))
       .finally(() => setLoading(false))
   }, [ref])
@@ -70,242 +84,350 @@ export default function ClientPortalPage() {
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('Your request has been sent to our team!')
-      setRequestModal(false)
-      setRequestNote('')
+      toast.success('Your request has been sent!')
+      setRequestModal(false); setRequestNote('')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to send')
-    } finally {
-      setSubmitting(false)
-    }
+    } finally { setSubmitting(false) }
   }
 
   if (loading) return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-      <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+      <div className="text-center">
+        <Loader2 className="w-10 h-10 text-brand-500 animate-spin mx-auto mb-3" />
+        <p className="text-slate-400 text-sm">Loading your trip…</p>
+      </div>
     </div>
   )
 
   if (error || !data) return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-8 text-center">
-      <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mb-4">
-        <Lock className="w-8 h-8 text-red-400" />
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-8 text-center">
+      <div className="w-20 h-20 rounded-full bg-red-500/10 flex items-center justify-center mb-5">
+        <Lock className="w-10 h-10 text-red-400" />
       </div>
-      <h2 className="text-white font-bold text-xl mb-2">Portal Unavailable</h2>
-      <p className="text-slate-400 text-sm max-w-sm">
-        {error ?? 'Your trip portal will be available 5 days before departure.'}
+      <h2 className="text-white font-bold text-2xl mb-2">Portal Unavailable</h2>
+      <p className="text-slate-400 max-w-sm">
+        {error ?? 'Your trip portal will be unlocked 5 days before your arrival date.'}
       </p>
+      <button onClick={() => router.push('/portal')} className="mt-6 flex items-center gap-2 text-brand-400 hover:text-brand-300 text-sm">
+        <ArrowLeft className="w-4 h-4" /> Back to My Trips
+      </button>
     </div>
   )
 
-  const TABS = [
-    { key: 'trip', label: 'My Trip', icon: Globe },
+  const daysUntil = differenceInDays(new Date(data.arrivalDate), new Date())
+  const totalNights = data.accommodations.reduce((s, a) => s + a.nights, 0)
+  const cities = Array.from(new Set(data.accommodations.map(a => a.city)))
+  const totalPaid = data.payments.filter(p => p.status === 'CONFIRMED').reduce((s, p) => s + Number(p.amount), 0)
+  const pendingPayments = data.payments.filter(p => p.status === 'PENDING')
+
+  const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { key: 'trip', label: 'Overview', icon: Home },
+    { key: 'itinerary', label: 'Itinerary', icon: MapPin },
     { key: 'payments', label: 'Payments', icon: CreditCard },
     { key: 'contact', label: 'Contacts', icon: Phone },
   ]
 
-  const totalPaid = data.payments.filter(p => p.status === 'COMPLETE').reduce((s, p) => s + Number(p.amount), 0)
-
   return (
-    <div className="min-h-screen bg-slate-900 text-white">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-white/10">
-        <div className="max-w-4xl mx-auto px-6 py-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-10 h-10 rounded-xl bg-brand-500 flex items-center justify-center">
-                  <span className="font-bold text-white text-sm">AH</span>
-                </div>
-                <div>
-                  <p className="text-white font-bold">AppleHolidays</p>
-                  <p className="text-slate-400 text-xs">Your Trip Portal</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 mt-4">
-                <span className="text-2xl font-bold font-mono">{data.bookingRef}</span>
-                <StatusBadge status={data.status} />
-              </div>
-              <div className="flex flex-wrap gap-4 mt-2 text-sm text-slate-300">
-                <span className="flex items-center gap-1.5">
-                  <Calendar className="w-4 h-4" />
-                  {formatDate(data.arrivalDate)} → {formatDate(data.departureDate)}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Users className="w-4 h-4" />
-                  {data.paxAdults} adults{data.paxChildren > 0 ? `, ${data.paxChildren} children` : ''}
-                </span>
-              </div>
+    <div className="min-h-screen bg-slate-950 text-white">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-slate-950/95 backdrop-blur border-b border-white/8">
+        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
+          <button onClick={() => router.push('/portal')} className="text-slate-500 hover:text-white transition-colors p-1">
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2.5 flex-1 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center flex-shrink-0">
+              <span className="text-white font-black text-xs">AH</span>
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<MessageCircle className="w-4 h-4" />}
+            <div className="min-w-0">
+              <p className="font-bold text-sm leading-tight truncate">
+                {data.bookingRef}
+                <span className="ml-2 text-xs font-normal text-slate-400">{data.agent ? `via ${data.agent}` : ''}</span>
+              </p>
+              <p className="text-xs text-slate-500 truncate">
+                {format(new Date(data.arrivalDate), 'dd MMM')} → {format(new Date(data.departureDate), 'dd MMM yyyy')}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <StatusBadge status={data.status} />
+            <button
               onClick={() => setRequestModal(true)}
-              className="flex-shrink-0"
+              className="p-2 rounded-xl bg-brand-500/15 border border-brand-500/25 text-brand-400 hover:bg-brand-500/25 transition-colors"
             >
-              Request Update
-            </Button>
+              <MessageCircle className="w-4 h-4" />
+            </button>
           </div>
+        </div>
 
-          {/* Tabs */}
-          <div className="flex gap-0 mt-6">
-            {TABS.map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key as typeof activeTab)}
-                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-all ${
-                  activeTab === tab.key
-                    ? 'border-brand-500 text-brand-400'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            ))}
-          </div>
+        {/* Tab bar */}
+        <div className="max-w-2xl mx-auto px-4 flex gap-0 overflow-x-auto scrollbar-hide">
+          {TABS.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-all whitespace-nowrap ${
+                activeTab === tab.key
+                  ? 'border-brand-500 text-brand-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <tab.icon className="w-3.5 h-3.5" />
+              {tab.label}
+              {tab.key === 'payments' && pendingPayments.length > 0 && (
+                <span className="w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center ml-0.5">
+                  {pendingPayments.length}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Content */}
-      <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+      {/* Hero banner */}
+      {activeTab === 'trip' && (
+        <div className="bg-gradient-to-r from-slate-900 via-brand-900/20 to-slate-900 border-b border-white/5 py-6">
+          <div className="max-w-2xl mx-auto px-4">
+            {/* Countdown */}
+            <div className="flex items-center justify-center mb-5">
+              {daysUntil > 0 ? (
+                <div className="text-center">
+                  <div className="flex items-end gap-2 justify-center">
+                    <span className="text-5xl font-black text-brand-400">{daysUntil}</span>
+                    <span className="text-slate-400 pb-2">days to go</span>
+                  </div>
+                  <p className="text-slate-500 text-sm">until your trip begins</p>
+                </div>
+              ) : daysUntil === 0 ? (
+                <div className="text-center">
+                  <p className="text-3xl font-black text-emerald-400">Today's the day! 🎉</p>
+                  <p className="text-slate-400 text-sm mt-1">Have an amazing trip</p>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <p className="text-xl font-bold text-slate-300">Trip completed</p>
+                  <p className="text-slate-500 text-sm">We hope you had a great time!</p>
+                </div>
+              )}
+            </div>
 
-        {/* TRIP TAB */}
-        {activeTab === 'trip' && (
-          <>
             {/* Quick stats */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-4 gap-2">
               {[
-                { label: 'Arrival', value: formatDate(data.arrivalDate, 'dd MMM') },
-                { label: 'Nights', value: data.accommodations.reduce((s, a) => s + a.nights, 0) },
-                { label: 'Cities', value: [...new Set(data.accommodations.map(a => a.city))].length },
+                { label: 'Adults', value: data.paxAdults, icon: Users },
+                { label: 'Nights', value: totalNights, icon: Hotel },
+                { label: 'Cities', value: cities.length, icon: MapPin },
+                { label: 'Flights', value: data.flights.length, icon: Plane },
               ].map(s => (
-                <div key={s.label} className="bg-white/5 border border-white/10 rounded-xl p-4 text-center">
-                  <p className="text-slate-400 text-xs">{s.label}</p>
-                  <p className="text-white font-bold text-xl mt-1">{s.value}</p>
+                <div key={s.label} className="bg-white/5 border border-white/8 rounded-xl p-3 text-center">
+                  <s.icon className="w-4 h-4 text-slate-400 mx-auto mb-1" />
+                  <p className="text-lg font-bold">{s.value}</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">{s.label}</p>
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main content */}
+      <div className="max-w-2xl mx-auto px-4 py-5 pb-24 space-y-4">
+
+        {/* ── OVERVIEW TAB ── */}
+        {activeTab === 'trip' && (
+          <>
+            {/* Payment alert */}
+            {pendingPayments.length > 0 && (
+              <button
+                onClick={() => setActiveTab('payments')}
+                className="w-full flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl text-left"
+              >
+                <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-amber-300">{pendingPayments.length} Payment{pendingPayments.length > 1 ? 's' : ''} Pending</p>
+                  <p className="text-xs text-amber-500/80">Tap to view and confirm</p>
+                </div>
+                <ChevronRight className="w-4 h-4 text-amber-400" />
+              </button>
+            )}
 
             {/* Passengers */}
-            <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-              <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10">
+            <section>
+              <div className="flex items-center gap-2 mb-3">
                 <Users className="w-4 h-4 text-brand-400" />
-                <span className="text-sm font-semibold">Travellers</span>
+                <h3 className="text-sm font-bold text-white">Travellers</h3>
               </div>
-              <div className="divide-y divide-white/5">
+              <div className="space-y-2">
                 {data.passengers.map(p => (
-                  <div key={p.id} className="flex items-center gap-3 px-5 py-3">
-                    <div className="w-8 h-8 rounded-full bg-brand-500/20 flex items-center justify-center text-brand-300 text-xs font-bold">
-                      {p.name.slice(0, 1)}
+                  <div key={p.id} className="flex items-center gap-3 p-4 bg-white/5 border border-white/8 rounded-2xl">
+                    <div className="w-10 h-10 rounded-full bg-brand-500/20 flex items-center justify-center text-brand-300 text-sm font-bold flex-shrink-0">
+                      {p.name.slice(0, 2).toUpperCase()}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium">{p.name}
-                        {p.isLead && <span className="ml-2 text-[10px] bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full">Lead</span>}
-                      </p>
-                      <p className="text-xs text-slate-400">{p.type}</p>
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm">{p.name}</p>
+                      <p className="text-xs text-slate-400 capitalize">{p.type.toLowerCase()}</p>
                     </div>
+                    {p.isLead && (
+                      <span className="text-[10px] bg-brand-500/20 text-brand-400 px-2 py-0.5 rounded-full font-bold border border-brand-500/20">
+                        Lead
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
 
             {/* Flights */}
             {data.flights.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10">
+              <section>
+                <div className="flex items-center gap-2 mb-3">
                   <Plane className="w-4 h-4 text-brand-400" />
-                  <span className="text-sm font-semibold">Flights</span>
+                  <h3 className="text-sm font-bold text-white">Flights</h3>
                 </div>
-                {data.flights.map(f => (
-                  <div key={f.id} className="flex items-center justify-between px-5 py-3 border-b border-white/5 last:border-0">
-                    <div>
-                      <span className="font-semibold font-mono text-brand-300">{f.flightNo}</span>
-                      <span className="text-slate-400 text-xs ml-3">{formatDate(f.date)}</span>
+                <div className="space-y-2">
+                  {data.flights.map(f => (
+                    <div key={f.id} className="p-4 bg-white/5 border border-white/8 rounded-2xl">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-mono font-bold text-brand-300">{f.flightNo}</span>
+                        {f.airline && <span className="text-xs text-slate-400">{f.airline}</span>}
+                        <span className="text-xs text-slate-500">{format(new Date(f.date), 'dd MMM yyyy')}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="text-center">
+                          <p className="text-lg font-black">{f.fromApt}</p>
+                          <p className="text-xs text-slate-400">{f.depTime}</p>
+                        </div>
+                        <div className="flex-1 flex items-center gap-1">
+                          <div className="h-px flex-1 bg-white/20" />
+                          <Plane className="w-3.5 h-3.5 text-slate-500" />
+                          <div className="h-px flex-1 bg-white/20" />
+                        </div>
+                        <div className="text-center">
+                          <p className="text-lg font-black">{f.toApt}</p>
+                          <p className="text-xs text-slate-400">{f.arrTime}</p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-medium">{f.fromApt}</span>
-                      <span className="text-slate-500 text-xs">{f.depTime}</span>
-                      <ChevronRight className="w-3 h-3 text-slate-500" />
-                      <span className="font-medium">{f.toApt}</span>
-                      <span className="text-slate-500 text-xs">{f.arrTime}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </section>
             )}
 
-            {/* Accommodation */}
+            {/* Hotels */}
             {data.accommodations.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10">
+              <section>
+                <div className="flex items-center gap-2 mb-3">
                   <Hotel className="w-4 h-4 text-brand-400" />
-                  <span className="text-sm font-semibold">Accommodation</span>
+                  <h3 className="text-sm font-bold text-white">Accommodation</h3>
                 </div>
-                {data.accommodations.map(a => (
-                  <div key={a.id} className="px-5 py-3 border-b border-white/5 last:border-0">
-                    <p className="text-sm font-semibold">{a.hotel}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      {a.city} · {a.nights} nights · {formatDate(a.checkIn)} → {formatDate(a.checkOut)}
-                    </p>
-                    {a.roomType && <p className="text-xs text-slate-500">{a.roomType}</p>}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Agenda */}
-            {data.agenda && data.agenda.items.length > 0 && (
-              <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-                <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10">
-                  <MapPin className="w-4 h-4 text-brand-400" />
-                  <span className="text-sm font-semibold">Day-by-Day Itinerary</span>
-                </div>
-                <div className="divide-y divide-white/5">
-                  {data.agenda.items.map((item, i) => (
-                    <div key={item.id} className="px-5 py-4">
-                      <div className="flex items-start gap-4">
-                        <div className="flex-shrink-0">
-                          <div className="w-8 h-8 rounded-full bg-brand-500/20 flex items-center justify-center">
-                            <span className="text-brand-300 text-xs font-bold">{i + 1}</span>
-                          </div>
+                <div className="space-y-2">
+                  {data.accommodations.map(a => (
+                    <div key={a.id} className="p-4 bg-white/5 border border-white/8 rounded-2xl">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center flex-shrink-0">
+                          <Hotel className="w-5 h-5 text-slate-400" />
                         </div>
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-semibold">{item.location}</span>
-                            <span className="text-slate-400 text-xs">{formatDate(item.date)}</span>
+                          <p className="font-semibold">{a.hotel}</p>
+                          <p className="text-xs text-brand-400 mt-0.5">{a.city}</p>
+                          <div className="flex items-center gap-3 mt-2 text-xs text-slate-400">
+                            <span>{format(new Date(a.checkIn), 'dd MMM')} → {format(new Date(a.checkOut), 'dd MMM')}</span>
+                            <span className="text-slate-600">·</span>
+                            <span>{a.nights} night{a.nights !== 1 ? 's' : ''}</span>
+                            {a.roomType && <><span className="text-slate-600">·</span><span>{a.roomType}</span></>}
+                          </div>
+                          {a.contact && (
+                            <div className="mt-2 flex items-center gap-1.5 text-xs text-cyan-400">
+                              <Phone className="w-3 h-3" /> {a.contact}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+
+        {/* ── ITINERARY TAB ── */}
+        {activeTab === 'itinerary' && (
+          <section>
+            {!data.agenda || data.agenda.items.length === 0 ? (
+              <div className="text-center py-16">
+                <MapPin className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+                <p className="text-slate-500">Itinerary not yet available</p>
+                <p className="text-slate-600 text-xs mt-1">Your day-by-day plan will appear here once confirmed</p>
+              </div>
+            ) : (
+              <div className="relative">
+                {/* Timeline line */}
+                <div className="absolute left-5 top-5 bottom-5 w-px bg-white/10" />
+
+                <div className="space-y-4">
+                  {data.agenda.items.map((item, i) => (
+                    <div key={item.id} className="flex gap-4">
+                      {/* Day number */}
+                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-brand-500/15 border border-brand-500/25 flex items-center justify-center z-10">
+                        <span className="text-brand-400 text-xs font-black">{i + 1}</span>
+                      </div>
+
+                      {/* Content */}
+                      <div className="flex-1 min-w-0 pb-2">
+                        <div className="bg-white/5 border border-white/8 rounded-2xl p-4">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div>
+                              <p className="font-bold text-sm">{item.location}</p>
+                              <p className="text-xs text-slate-400 mt-0.5">{format(new Date(item.date), 'EEEE, dd MMM')}</p>
+                            </div>
                             {item.mealPlan && (
-                              <span className="text-[10px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full font-medium">
+                              <span className="text-[10px] bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded-full font-semibold border border-amber-500/20 flex-shrink-0">
                                 {item.mealPlan}
                               </span>
                             )}
                           </div>
-                          {item.toPoint && (
-                            <p className="text-sm text-slate-300 mt-0.5">
-                              {item.fromPoint && <span className="text-slate-500">{item.fromPoint} → </span>}
-                              {item.toPoint}
-                            </p>
-                          )}
-                          {item.details && <p className="text-xs text-slate-400 mt-1">{item.details}</p>}
-                          {item.meetingTime && (
-                            <p className="text-xs text-brand-400 mt-1 flex items-center gap-1">
-                              <Clock className="w-3 h-3" /> Meet at {item.meetingTime}
-                            </p>
+
+                          {(item.fromPoint || item.toPoint) && (
+                            <div className="flex items-center gap-2 text-xs text-slate-300 mb-2">
+                              {item.fromPoint && <span className="text-slate-500">{item.fromPoint}</span>}
+                              {item.fromPoint && <ChevronRight className="w-3 h-3 text-slate-600" />}
+                              {item.toPoint && <span>{item.toPoint}</span>}
+                            </div>
                           )}
 
-                          {/* Driver info */}
+                          {item.details && (
+                            <p className="text-xs text-slate-400 leading-relaxed mb-2">{item.details}</p>
+                          )}
+
+                          {item.meetingTime && (
+                            <div className="flex items-center gap-1.5 text-xs text-brand-400 mb-2">
+                              <Clock className="w-3 h-3" />
+                              Meet at <span className="font-semibold">{item.meetingTime}</span>
+                            </div>
+                          )}
+
+                          {/* Driver card */}
                           {item.assignment?.driverName && (
-                            <div className="mt-2 flex items-center gap-3 bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2">
-                              <Car className="w-4 h-4 text-blue-400 flex-shrink-0" />
-                              <div>
+                            <div className="mt-3 flex items-center gap-3 bg-blue-500/8 border border-blue-500/20 rounded-xl p-3">
+                              <div className="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0">
+                                <Car className="w-4 h-4 text-blue-400" />
+                              </div>
+                              <div className="flex-1 min-w-0">
                                 <p className="text-xs font-semibold text-blue-300">{item.assignment.driverName}</p>
-                                <p className="text-xs text-slate-400">
-                                  {item.assignment.vehicleType} {item.assignment.vehiclePlate}
-                                  {item.assignment.driverPhone && ` · ${item.assignment.driverPhone}`}
+                                <p className="text-[11px] text-slate-400">
+                                  {[item.assignment.vehicleType, item.assignment.vehiclePlate].filter(Boolean).join(' · ')}
                                 </p>
                               </div>
+                              {item.assignment.driverPhone && (
+                                <a
+                                  href={`tel:${item.assignment.driverPhone}`}
+                                  className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-500/20 flex items-center justify-center flex-shrink-0"
+                                >
+                                  <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                                </a>
+                              )}
                             </div>
                           )}
                         </div>
@@ -315,133 +437,173 @@ export default function ClientPortalPage() {
                 </div>
               </div>
             )}
-          </>
+          </section>
         )}
 
-        {/* PAYMENTS TAB */}
+        {/* ── PAYMENTS TAB ── */}
         {activeTab === 'payments' && (
           <>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white/5 border border-white/10 rounded-xl p-5 text-center">
-                <p className="text-slate-400 text-xs">Total Paid</p>
-                <p className="text-2xl font-bold text-green-400 mt-1">{formatCurrency(totalPaid)}</p>
+            {/* Summary */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-5 bg-emerald-500/8 border border-emerald-500/20 rounded-2xl text-center">
+                <p className="text-xs text-slate-400 mb-1">Confirmed Paid</p>
+                <p className="text-2xl font-black text-emerald-400">{formatCurrency(totalPaid)}</p>
               </div>
-              <div className="bg-white/5 border border-white/10 rounded-xl p-5 text-center">
-                <p className="text-slate-400 text-xs">Transactions</p>
-                <p className="text-2xl font-bold mt-1">{data.payments.length}</p>
+              <div className="p-5 bg-white/5 border border-white/8 rounded-2xl text-center">
+                <p className="text-xs text-slate-400 mb-1">Transactions</p>
+                <p className="text-2xl font-black">{data.payments.length}</p>
               </div>
             </div>
 
-            <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-white/10">
-                <p className="text-sm font-semibold">Payment History</p>
+            {data.payments.length === 0 ? (
+              <div className="text-center py-12">
+                <CreditCard className="w-10 h-10 text-slate-700 mx-auto mb-3" />
+                <p className="text-slate-500">No payments recorded yet</p>
               </div>
-              {data.payments.length === 0 ? (
-                <div className="text-center py-10 text-slate-500">
-                  <CreditCard className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">No payments recorded</p>
-                </div>
-              ) : (
-                <div className="divide-y divide-white/5">
-                  {data.payments.map(p => (
-                    <div key={p.id} className="flex items-center justify-between px-5 py-3">
-                      <div>
-                        <p className="text-sm font-medium capitalize">{p.type.replace('_', ' ')}</p>
-                        {p.paidAt && <p className="text-xs text-slate-400">{formatDate(p.paidAt)}</p>}
-                        {p.method && <p className="text-xs text-slate-500">{p.method}</p>}
+            ) : (
+              <div className="space-y-3">
+                {data.payments.map(p => (
+                  <div key={p.id} className="p-4 bg-white/5 border border-white/8 rounded-2xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm">
+                          {p.label ?? p.type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${STATUS_COLOR[p.status] ?? 'bg-slate-700 text-slate-300 border-slate-600'}`}>
+                            {p.status}
+                          </span>
+                          {p.method && <span className="text-xs text-slate-500">{p.method}</span>}
+                          {p.refNumber && (
+                            <span className="text-xs font-mono text-slate-400">Ref: {p.refNumber}</span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold">{formatCurrency(p.amount, p.currency)}</p>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          p.status === 'COMPLETE' ? 'bg-green-500/20 text-green-400' :
-                          p.status === 'REJECTED' ? 'bg-red-500/20 text-red-400' :
-                          'bg-yellow-500/20 text-yellow-400'
-                        }`}>
-                          {p.status}
-                        </span>
+                      <div className="text-right flex-shrink-0 ml-4">
+                        <p className="font-bold">{formatCurrency(Number(p.amount), p.currency)}</p>
+                        {p.paidAt && (
+                          <p className="text-xs text-slate-500">{format(new Date(p.paidAt), 'dd MMM yyyy')}</p>
+                        )}
                       </div>
+                    </div>
+                    {p.status === 'CONFIRMED' && (
+                      <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-500">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Payment confirmed by accounts team
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ── CONTACTS TAB ── */}
+        {activeTab === 'contact' && (
+          <>
+            <div className="p-4 bg-brand-500/8 border border-brand-500/20 rounded-2xl">
+              <p className="text-sm font-semibold text-brand-300 mb-1">Need Help?</p>
+              <p className="text-xs text-slate-400">Contact your dedicated travel experience team for any questions or changes to your booking.</p>
+            </div>
+
+            {/* Drivers from itinerary */}
+            {data.agenda?.items.some(i => i.assignment?.driverName) && (
+              <section>
+                <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                  <Car className="w-4 h-4 text-brand-400" /> Your Drivers
+                </h3>
+                <div className="space-y-2">
+                  {data.agenda.items.filter(i => i.assignment?.driverName).map(item => (
+                    <div key={item.id} className="flex items-center gap-3 p-4 bg-white/5 border border-white/8 rounded-2xl">
+                      <div className="w-11 h-11 rounded-full bg-blue-500/15 flex items-center justify-center flex-shrink-0">
+                        <Car className="w-5 h-5 text-blue-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold">{item.assignment!.driverName}</p>
+                        <p className="text-xs text-slate-400 truncate">
+                          {item.location} · {format(new Date(item.date), 'dd MMM')}
+                          {item.assignment!.vehiclePlate && ` · ${item.assignment!.vehiclePlate}`}
+                        </p>
+                      </div>
+                      {item.assignment!.driverPhone && (
+                        <a
+                          href={`tel:${item.assignment!.driverPhone}`}
+                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/20 text-emerald-400 text-xs font-semibold flex-shrink-0"
+                        >
+                          <Phone className="w-3.5 h-3.5" /> Call
+                        </a>
+                      )}
                     </div>
                   ))}
                 </div>
-              )}
+              </section>
+            )}
+
+            {/* Emergency info */}
+            <div className="p-4 bg-white/5 border border-white/8 rounded-2xl">
+              <h4 className="text-sm font-bold text-white mb-3">Emergency Information</h4>
+              <div className="space-y-2 text-xs text-slate-400">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                  Vietnam Emergency: <span className="text-white font-mono">113 / 114 / 115</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                  Tourist Police: <span className="text-white font-mono">+84 28 3822 6228</span>
+                </div>
+              </div>
             </div>
           </>
-        )}
-
-        {/* CONTACT TAB */}
-        {activeTab === 'contact' && (
-          <div className="space-y-4">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-brand-500/20 flex items-center justify-center">
-                  <Phone className="w-5 h-5 text-brand-400" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">Travel Experience Team</p>
-                  <p className="text-xs text-slate-400">Your point of contact for queries</p>
-                </div>
-              </div>
-              <p className="text-slate-300 text-sm">
-                Our Travel Experience team is here to help. For urgent matters during your trip, use the contact below.
-              </p>
-              <div className="mt-4 flex gap-3">
-                <Button variant="outline" size="sm" icon={<MessageCircle className="w-4 h-4" />}
-                  onClick={() => setRequestModal(true)}>
-                  Send Message
-                </Button>
-              </div>
-            </div>
-
-            {/* Driver contacts from agenda */}
-            {data.agenda?.items.filter(i => i.assignment?.driverName).map(item => (
-              <div key={item.id} className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-5">
-                <div className="flex items-center gap-3 mb-3">
-                  <Car className="w-5 h-5 text-blue-400" />
-                  <div>
-                    <p className="text-sm font-semibold">{item.assignment!.driverName}</p>
-                    <p className="text-xs text-slate-400">{formatDate(item.date)} · {item.location}</p>
-                  </div>
-                </div>
-                <div className="text-xs text-slate-300 space-y-1">
-                  {item.assignment!.vehicleType && <p>Vehicle: {item.assignment!.vehicleType} {item.assignment!.vehiclePlate}</p>}
-                  {item.assignment!.driverPhone && (
-                    <a href={`tel:${item.assignment!.driverPhone}`} className="flex items-center gap-1 text-brand-400 hover:text-brand-300">
-                      <Phone className="w-3 h-3" /> {item.assignment!.driverPhone}
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
         )}
       </div>
 
-      {/* Request update modal */}
-      <Modal
-        open={requestModal}
-        onClose={() => setRequestModal(false)}
-        title="Request an Update"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setRequestModal(false)}>Cancel</Button>
-            <Button loading={submitting} onClick={submitRequest}>Send Request</Button>
-          </>
-        }
-      >
-        <div>
-          <p className="text-sm text-slate-500 mb-4">
-            Describe what you need and our team will get back to you shortly.
-          </p>
-          <label className="form-label">Your request *</label>
-          <textarea
-            className="form-textarea"
-            rows={4}
-            value={requestNote}
-            onChange={e => setRequestNote(e.target.value)}
-            placeholder="e.g. Can we change the airport pickup time to 10:00 AM?"
-          />
+      {/* Bottom action button — mobile floating */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 p-4 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent pointer-events-none">
+        <div className="max-w-2xl mx-auto pointer-events-auto">
+          <button
+            onClick={() => setRequestModal(true)}
+            className="w-full flex items-center justify-center gap-2.5 py-3.5 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-bold text-sm transition-all shadow-2xl shadow-brand-500/30"
+          >
+            <MessageCircle className="w-4 h-4" />
+            Request a Change or Help
+          </button>
         </div>
-      </Modal>
+      </div>
+
+      {/* Request Modal */}
+      {requestModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setRequestModal(false)} />
+          <div className="relative w-full sm:max-w-lg bg-slate-900 border border-white/10 rounded-t-3xl sm:rounded-2xl p-6 pb-8 sm:pb-6">
+            <div className="w-10 h-1 rounded-full bg-slate-700 mx-auto mb-5 sm:hidden" />
+            <h3 className="text-lg font-bold mb-1">Request Update or Change</h3>
+            <p className="text-slate-400 text-sm mb-4">Describe your request and our team will get back to you shortly.</p>
+            <textarea
+              value={requestNote}
+              onChange={e => setRequestNote(e.target.value)}
+              rows={4}
+              placeholder="e.g. Can we change the check-in date for Hanoi hotel? Or I need a vehicle upgrade…"
+              className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+            />
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={submitRequest}
+                disabled={submitting || !requestNote.trim()}
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-semibold text-sm disabled:opacity-50 transition-all"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Send Request
+              </button>
+              <button
+                onClick={() => setRequestModal(false)}
+                className="px-5 rounded-xl bg-white/8 border border-white/10 text-slate-400 hover:text-white text-sm font-medium transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

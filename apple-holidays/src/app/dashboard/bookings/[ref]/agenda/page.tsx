@@ -298,7 +298,7 @@ export default function AgendaPage() {
                         <div key={f.key}>
                           <label className="form-label text-xs">{f.label}</label>
                           <input className="form-input text-sm py-1.5"
-                            value={(assignmentForm as Record<string, string>)[f.key]}
+                            value={(assignmentForm as unknown as Record<string, string>)[f.key]}
                             onChange={e => setAssignmentForm(a => ({ ...a, [f.key]: e.target.value }))} />
                         </div>
                       ))}
