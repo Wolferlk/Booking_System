@@ -56,8 +56,9 @@ export default function PNLPage() {
   const [billName, setBillName]   = useState<string | null>(null)
   const [uploadingBill, setUploadingBill] = useState(false)
 
-  const canEdit    = ['AC_USER', 'SUPER_ADMIN'].includes(role)
-  const isCreditBk = isCreditAgent(bookingAgent)
+  const canEdit           = ['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
+  const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN'].includes(role)
+  const isCreditBk        = isCreditAgent(bookingAgent)
 
   async function loadPNL() {
     try {
@@ -269,6 +270,21 @@ export default function PNLPage() {
 
       <div className="p-8 space-y-6 max-w-7xl">
 
+        {/* BT_USER info banner */}
+        {role === 'BT_USER' && (
+          <div className="flex items-start gap-3 p-4 bg-brand-50 border border-brand-200 rounded-xl">
+            <Info className="w-5 h-5 text-brand-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-brand-800">Upload P&L with your booking</p>
+              <p className="text-xs text-brand-600 mt-0.5">
+                Import the Excel spreadsheet or add lines manually, then click <strong>Save P&L</strong>.
+                Tickets and vouchers will be auto-created from Hotel, Cruise, Tickets, and other service lines —
+                the Ground Team will activate them before the trip.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Credit agent notice */}
         {isCreditBk && (
           <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
@@ -432,7 +448,7 @@ export default function PNLPage() {
                                   <Paperclip className="w-3.5 h-3.5" />
                                 </a>
                               )}
-                              {canEdit && line.paymentStatus === 'PENDING' && (
+                              {canConfirmPayment && line.paymentStatus === 'PENDING' && (
                                 <div className="flex gap-1 ml-1">
                                   <button
                                     onClick={() => openConfirm(line.id!, 'CONFIRMED', line.activity)}
@@ -490,9 +506,9 @@ export default function PNLPage() {
         </Card>
       </div>
 
-      {/* Payment Confirmation Modal — only for non-credit agents */}
+      {/* Payment Confirmation Modal — AC_USER only, non-credit agents */}
       <Modal
-        open={!!confirmModal && !isCreditBk}
+        open={!!confirmModal && !isCreditBk && canConfirmPayment}
         onClose={() => { setConfirmModal(null); setRefInput('') }}
         title={confirmModal?.action === 'CONFIRMED' ? 'Confirm Payment' : 'Reject Payment'}
       >

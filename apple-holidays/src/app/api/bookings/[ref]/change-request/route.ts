@@ -3,9 +3,9 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
 
+// TE_USER requests changes from Booking Team (GT_REVIEW → CHANGE_REQUESTED)
 export async function POST(
   req: NextRequest,
   { params }: { params: { ref: string } },
@@ -14,16 +14,11 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!hasPermission(role, 'booking:ground_review')) {
-    return buildApiError('Forbidden', 403)
-  }
+  if (!['TE_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
-
-  if (booking.status !== 'GT_REVIEW') {
-    return buildApiError('Can only request changes during GT_REVIEW state')
-  }
+  if (booking.status !== 'GT_REVIEW') return buildApiError('Can only request changes during Travel Experience Review')
 
   const { notes, targetField } = await req.json()
   if (!notes) return buildApiError('Change request notes are required')

@@ -3,9 +3,9 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
 
+// TE_USER: confirms with client → GT_REVIEW → GT_VERIFIED ("Client Confirmed")
 export async function POST(
   req: NextRequest,
   { params }: { params: { ref: string } },
@@ -14,18 +14,13 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!hasPermission(role, 'booking:verify')) {
-    return buildApiError('Forbidden', 403)
-  }
+  if (!['TE_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
+  if (booking.status !== 'GT_REVIEW') return buildApiError('Booking must be in Travel Experience Review state')
 
-  if (booking.status !== 'GT_REVIEW') {
-    return buildApiError('Only GT_REVIEW bookings can be verified')
-  }
-
-  const { note } = await req.json()
+  const { note } = await req.json().catch(() => ({ note: '' }))
 
   const [updated] = await Promise.all([
     prisma.booking.update({
@@ -38,10 +33,10 @@ export async function POST(
         fromState: 'GT_REVIEW',
         toState: 'GT_VERIFIED',
         actorId: session.user.id,
-        note: note ?? 'Verified by Ground Team',
+        note: note || 'Client confirmed by Travel Experience Team',
       },
     }),
   ])
 
-  return buildApiSuccess(updated, 'Booking verified by Ground Team')
+  return buildApiSuccess(updated, 'Client confirmed — booking ready for operations')
 }

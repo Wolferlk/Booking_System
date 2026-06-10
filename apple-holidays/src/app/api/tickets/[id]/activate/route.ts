@@ -6,7 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   const session = await getServerSession(authOptions)
@@ -22,17 +22,26 @@ export async function POST(
   if (!ticket) return buildApiError('Ticket not found', 404)
   if (ticket.activated) return buildApiError('Ticket already activated')
 
+  // GT can provide reference number, supplier, and notes when activating
+  const body = await req.json().catch(() => ({}))
+  const { reference, supplier, notes } = body as { reference?: string; supplier?: string; notes?: string }
+
   const updated = await prisma.ticket.update({
     where: { id: params.id },
-    data: { activated: true },
+    data: {
+      activated: true,
+      ...(reference ? { reference } : {}),
+      ...(supplier  ? { supplier  } : {}),
+      ...(notes     ? { notes     } : {}),
+    },
   })
 
   await logActivity({
     userId: session.user.id,
-    action: ACTION.TICKET_FILE_UPLOADED, // reuse closest action; or add a new one
+    action: ACTION.TICKET_FILE_UPLOADED,
     entityType: 'Ticket',
     entityId: params.id,
-    details: { type: ticket.type, bookingRef: ticket.booking.bookingRef, action: 'activated' },
+    details: { type: ticket.type, bookingRef: ticket.booking.bookingRef, action: 'activated', reference },
   })
 
   return buildApiSuccess(updated, 'Ticket activated')

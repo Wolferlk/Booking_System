@@ -69,20 +69,20 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'booking:create', 'booking:read', 'booking:edit', 'booking:confirm',
     'booking:submit_ground', 'booking:resubmit',
     'agenda:create', 'agenda:read', 'agenda:edit',
+    'pnl:create', 'pnl:read', 'pnl:edit',
   ],
   GT_USER: [
-    'booking:read', 'booking:edit', 'booking:ground_review', 'booking:verify',
+    'booking:read', 'booking:edit',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'assignment:create', 'assignment:edit',
     'ticket:create', 'ticket:read', 'ticket:purchase',
-    'pnl:read', // only after T-5
-    'pnl:view_profit', // only after T-5
+    'pnl:read',
   ],
   TE_USER: [
-    'booking:read',
+    'booking:read', 'booking:edit', 'booking:ground_review', 'booking:verify', 'booking:cancel',
     'agenda:read',
     'ticket:read',
-    'pnl:read',
+    'pnl:create', 'pnl:read', 'pnl:edit',
     'payment:create', 'payment:read',
     'contact:create',
     'reminder:create',

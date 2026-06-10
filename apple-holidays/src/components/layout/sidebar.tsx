@@ -24,10 +24,10 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
     { label: 'New Booking', href: '/dashboard/bookings/new', icon: 'PlusCircle' },
     { label: 'Change Requests', href: '/dashboard/change-requests', icon: 'AlertCircle' },
+    { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
   ],
   GT_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
-    { label: 'Review Queue', href: '/dashboard/ground/review', icon: 'ClipboardCheck' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'Tickets', href: '/dashboard/ground/tickets', icon: 'Ticket' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
@@ -35,10 +35,10 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ],
   TE_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
+    { label: 'Review Queue', href: '/dashboard/te/review', icon: 'ClipboardCheck' },
     { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
     { label: 'Contact Log', href: '/dashboard/te/contacts', icon: 'Phone' },
     { label: 'Reminders', href: '/dashboard/te/reminders', icon: 'Bell' },
-    { label: 'Payments', href: '/dashboard/te/payments', icon: 'CreditCard' },
   ],
   AC_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },

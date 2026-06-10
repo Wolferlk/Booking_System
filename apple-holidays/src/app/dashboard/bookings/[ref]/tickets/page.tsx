@@ -8,7 +8,7 @@ import {
   Plus, Loader2, ShoppingCart, AlertCircle,
   Upload, FileText, Image as ImageIcon, ExternalLink, CheckCircle2,
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
-  Anchor, Activity, MapPin, Plane,
+  Anchor, Activity, MapPin, Plane, Printer,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import Modal from '@/components/ui/modal'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
+import Link from 'next/link'
 
 interface Ticket {
   id: string
@@ -66,6 +67,8 @@ export default function TicketsPage() {
   const [loading, setLoading] = useState(true)
   const [newModal, setNewModal] = useState(false)
   const [activating, setActivating] = useState<string | null>(null)
+  const [activateModal, setActivateModal] = useState<Ticket | null>(null)
+  const [activateForm, setActivateForm] = useState({ reference: '', supplier: '', notes: '' })
   const [purchaseModal, setPurchaseModal] = useState<string | null>(null)
   const [purchaseRef, setPurchaseRef] = useState('')
   const [uploadingId, setUploadingId] = useState<string | null>(null)
@@ -89,13 +92,18 @@ export default function TicketsPage() {
 
   useEffect(() => { load() }, [ref])
 
-  async function activateTicket(id: string) {
+  async function activateTicket(id: string, data: { reference: string; supplier: string; notes: string }) {
     setActivating(id)
     try {
-      const res  = await fetch(`/api/tickets/${id}/activate`, { method: 'POST' })
+      const res  = await fetch(`/api/tickets/${id}/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('Ticket activated — ready for purchase')
+      toast.success('Ticket activated — client can now view it')
+      setActivateModal(null)
       load()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed')
@@ -107,13 +115,22 @@ export default function TicketsPage() {
     setActivating('all')
     try {
       await Promise.all(inactiveIds.map(id =>
-        fetch(`/api/tickets/${id}/activate`, { method: 'POST' }),
+        fetch(`/api/tickets/${id}/activate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        }),
       ))
       toast.success(`${inactiveIds.length} tickets activated`)
       load()
     } catch {
       toast.error('Some activations failed')
     } finally { setActivating(null) }
+  }
+
+  function openActivateModal(t: Ticket) {
+    setActivateForm({ reference: t.reference ?? '', supplier: t.supplier ?? '', notes: t.notes ?? '' })
+    setActivateModal(t)
   }
 
   async function createTicket() {
@@ -187,11 +204,18 @@ export default function TicketsPage() {
         title={`Tickets & Vouchers — ${ref}`}
         subtitle={`${active.length} active · ${purchased} purchased · ${pending} pending · ${inactive.length} pending activation`}
         actions={
-          canCreate ? (
-            <button onClick={() => setNewModal(true)} className="btn-primary btn">
-              <Plus className="w-4 h-4" /> Add Ticket
-            </button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {active.length > 0 && (
+              <Link href={`/print/tickets/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
+                <Printer className="w-4 h-4" /> Print Tickets
+              </Link>
+            )}
+            {canCreate && (
+              <button onClick={() => setNewModal(true)} className="btn-primary btn">
+                <Plus className="w-4 h-4" /> Add Ticket
+              </button>
+            )}
+          </div>
         }
       />
 
@@ -266,14 +290,10 @@ export default function TicketsPage() {
                     </div>
                     {canCreate && (
                       <button
-                        onClick={() => activateTicket(t.id)}
-                        disabled={activating === t.id}
+                        onClick={() => openActivateModal(t)}
                         className="btn btn-primary btn-sm text-xs flex-shrink-0"
                       >
-                        {activating === t.id
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <Zap className="w-3.5 h-3.5" />}
-                        Activate
+                        <Zap className="w-3.5 h-3.5" /> Activate
                       </button>
                     )}
                   </div>
@@ -416,6 +436,67 @@ export default function TicketsPage() {
         )}
 
       </div>
+
+      {/* Activate Ticket Modal */}
+      <Modal
+        open={!!activateModal}
+        onClose={() => setActivateModal(null)}
+        title={`Activate — ${activateModal?.type ?? ''}`}
+        footer={
+          <>
+            <button onClick={() => setActivateModal(null)} className="btn btn-secondary">Cancel</button>
+            <button
+              onClick={() => activateModal && activateTicket(activateModal.id, activateForm)}
+              disabled={activating === activateModal?.id}
+              className="btn btn-primary"
+            >
+              {activating === activateModal?.id
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Zap className="w-4 h-4" />}
+              Activate Ticket
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="bg-teal-50 border border-teal-100 rounded-lg p-3 text-sm text-teal-700">
+            Once activated, this ticket becomes visible to the client in their portal.
+          </div>
+          {activateModal?.pnlLine?.category === 'FLIGHT_TICKETS' && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+              ✈ Flight ticket — please add ticket details and upload the PDF/photo after activating.
+            </div>
+          )}
+          <div>
+            <label className="form-label">Reference / Confirmation Number</label>
+            <input
+              className="form-input font-mono"
+              placeholder="e.g. TKT-2026-001, HALONGG-456"
+              value={activateForm.reference}
+              onChange={e => setActivateForm(f => ({ ...f, reference: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="form-label">Supplier / Provider</label>
+            <input
+              className="form-input"
+              placeholder="e.g. Heritage Cruises, Vietnam Airlines"
+              value={activateForm.supplier}
+              onChange={e => setActivateForm(f => ({ ...f, supplier: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="form-label">Notes (optional)</label>
+            <textarea
+              className="form-textarea"
+              rows={2}
+              placeholder="Meeting point, dress code, what to bring..."
+              value={activateForm.notes}
+              onChange={e => setActivateForm(f => ({ ...f, notes: e.target.value }))}
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* New Ticket Modal */}
       <Modal open={newModal} onClose={() => setNewModal(false)} title="Add Ticket / Voucher">

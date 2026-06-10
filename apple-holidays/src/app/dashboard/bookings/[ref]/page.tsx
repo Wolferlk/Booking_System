@@ -35,6 +35,7 @@ export default function BookingDetailPage() {
   const [cancelModal, setCancelModal] = useState(false)
   const [note, setNote] = useState('')
   const [cancelReason, setCancelReason] = useState('')
+  const [pendingAction, setPendingAction] = useState<string>('')
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
@@ -239,8 +240,7 @@ export default function BookingDetailPage() {
                   : t.to === 'GT_REVIEW' ? 'submit-ground'
                   : t.to === 'BT_CONFIRMED' ? 'confirm'
                   : t.to === 'GT_VERIFIED' ? 'verify'
-                  : t.to === 'AWAITING_PAYMENT_CONFIRM' ? 'pnl-redirect'
-                  : t.from === 'AWAITING_PAYMENT_CONFIRM' && t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
+                  : t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
                   : t.to === 'CLIENT_LIVE' ? 'client-live'
                   : t.to === 'IN_PROGRESS' ? 'in-progress'
                   : t.to === 'COMPLETED' ? 'complete'
@@ -248,17 +248,8 @@ export default function BookingDetailPage() {
 
                 if (!key) return null
 
-                // AC_USER at GT_VERIFIED → redirect to P&L page to upload P&L
-                if (key === 'pnl-redirect') {
-                  return (
-                    <Link key={t.to} href={`/dashboard/bookings/${ref}/pnl`}
-                      className="btn btn-primary btn-sm">
-                      <TrendingUp className="w-3.5 h-3.5" /> {t.label}
-                    </Link>
-                  )
-                }
-
-                const needsNote = ['change-request', 'resubmit'].includes(key)
+                // Keys that open the note modal before calling their endpoint
+                const needsNote = ['change-request', 'resubmit', 'verify'].includes(key)
 
                 return (
                   <Button
@@ -267,7 +258,7 @@ export default function BookingDetailPage() {
                     size="sm"
                     loading={actionLoading === key}
                     onClick={() => {
-                      if (needsNote) { setChangeModal(true) }
+                      if (needsNote) { setPendingAction(key); setNote(''); setChangeModal(true) }
                       else doTransition(key)
                     }}
                   >
@@ -303,7 +294,7 @@ export default function BookingDetailPage() {
                   <UserCheck className="w-3.5 h-3.5" /> Drivers
                 </Link>
               )}
-              {['AC_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>
@@ -558,37 +549,54 @@ export default function BookingDetailPage() {
         </Card>
       </div>
 
-      {/* Change request modal */}
+      {/* Change request / Client Confirm modal */}
       <Modal
         open={changeModal}
         onClose={() => setChangeModal(false)}
-        title={status === 'CHANGE_REQUESTED' ? 'Resubmit with Correction Note' : 'Request Changes from Booking Team'}
+        title={
+          pendingAction === 'verify' ? 'Confirm Client Confirmation' :
+          pendingAction === 'resubmit' ? 'Resubmit with Correction Note' :
+          'Request Changes from Booking Team'
+        }
         footer={
           <>
             <Button variant="secondary" onClick={() => setChangeModal(false)}>Cancel</Button>
             <Button
               loading={!!actionLoading}
+              variant={pendingAction === 'change-request' ? 'danger' : 'primary'}
               onClick={() => {
-                const endpoint = status === 'CHANGE_REQUESTED' ? 'resubmit' : 'change-request'
-                doTransition(endpoint, { notes: note, note }).then(() => { setChangeModal(false); setNote('') })
+                doTransition(pendingAction, { notes: note, note }).then(() => { setChangeModal(false); setNote('') })
               }}
             >
-              {status === 'CHANGE_REQUESTED' ? 'Resubmit' : 'Send Request'}
+              {pendingAction === 'verify' ? 'Confirm' : pendingAction === 'resubmit' ? 'Resubmit' : 'Send Request'}
             </Button>
           </>
         }
       >
-        <div>
-          <label className="form-label">
-            {status === 'CHANGE_REQUESTED' ? 'Correction note (what was fixed)' : 'What needs to be changed?'}
-          </label>
-          <textarea
-            className="form-textarea"
-            rows={4}
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            placeholder="Describe the change required..."
-          />
+        <div className="space-y-3">
+          {pendingAction === 'verify' && (
+            <p className="text-sm text-slate-600 bg-teal-50 border border-teal-100 rounded-lg px-4 py-3">
+              Confirm that you have spoken with the agent/client and they have confirmed the booking details.
+            </p>
+          )}
+          <div>
+            <label className="form-label">
+              {pendingAction === 'verify' ? 'Confirmation notes (optional)' :
+               pendingAction === 'resubmit' ? 'What was corrected?' :
+               'What needs to be changed?'}
+            </label>
+            <textarea
+              className="form-textarea"
+              rows={4}
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder={
+                pendingAction === 'verify' ? 'e.g. Spoke with Vikas, all details confirmed, reconfirm call on Day-1...' :
+                pendingAction === 'resubmit' ? 'Describe the correction made...' :
+                'Describe the change required...'
+              }
+            />
+          </div>
         </div>
       </Modal>
 
