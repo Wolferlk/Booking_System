@@ -136,6 +136,16 @@ export function buildApiError(message: string, status = 400) {
   return Response.json({ success: false, error: message }, { status })
 }
 
-export function buildApiSuccess<T>(data: T, message?: string) {
-  return Response.json({ success: true, data, message })
+export function buildApiSuccess<T>(data: T, statusOrMessage?: number | string) {
+  const status = typeof statusOrMessage === 'number' ? statusOrMessage : 200
+  return Response.json({ success: true, data }, { status })
+}
+
+// Credit-based agents pay in bulk on 15th & 30th — no per-booking payment approval needed
+const CREDIT_AGENT_NAMES = ['make my trip', 'makemytrip', 'mmt', '30sundays', 'thirty sundays']
+
+export function isCreditAgent(agentName: string | null | undefined): boolean {
+  if (!agentName) return false
+  const lower = agentName.toLowerCase().trim()
+  return CREDIT_AGENT_NAMES.some(n => lower.includes(n))
 }

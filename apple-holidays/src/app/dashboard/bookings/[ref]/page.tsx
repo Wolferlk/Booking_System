@@ -6,7 +6,7 @@ import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
-  AlertCircle, Clock, Loader2, CheckCircle, XCircle,
+  AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2,
 } from 'lucide-react'
@@ -16,7 +16,7 @@ import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import BookingLifecycle from '@/components/bookings/booking-lifecycle'
 import Modal from '@/components/ui/modal'
-import { formatDate, formatCurrency, getDaysUntilTrip, parseJsonSafe } from '@/lib/utils'
+import { formatDate, formatCurrency, getDaysUntilTrip } from '@/lib/utils'
 import { getAvailableTransitions } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
@@ -234,14 +234,6 @@ export default function BookingDetailPage() {
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
               {transitions.map(t => {
-                const endpoint = {
-                  'BT_CONFIRMED': 'confirm',
-                  'GT_REVIEW': 'submit-ground',
-                  'GT_VERIFIED': 'verify',
-                  'CHANGE_REQUESTED': 'change-request',
-                  'BT_CONFIRMED_RESUBMIT': 'resubmit',
-                  'OPERATIONS_READY': 'recheck',
-                }
                 const key = t.to === 'CHANGE_REQUESTED' ? 'change-request'
                   : t.from === 'CHANGE_REQUESTED' && t.to === 'BT_CONFIRMED' ? 'resubmit'
                   : t.to === 'GT_REVIEW' ? 'submit-ground'
@@ -294,9 +286,23 @@ export default function BookingDetailPage() {
                 </button>
               )}
               {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
-                <Link href={`/dashboard/bookings/${ref}/print`} target="_blank" className="btn btn-secondary btn-sm">
+                <Link href={`/print/booking/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
+              )}
+              {role === 'SUPER_ADMIN' && !['COMPLETED'].includes(status) && (
+                <button
+                  onClick={async () => {
+                    if (!confirm(`Permanently delete booking ${ref}? This cannot be undone.`)) return
+                    const res = await fetch(`/api/bookings/${ref}`, { method: 'DELETE' })
+                    const json = await res.json()
+                    if (json.success) { toast.success('Booking deleted'); router.push('/dashboard/bookings') }
+                    else toast.error(json.error ?? 'Delete failed')
+                  }}
+                  className="btn btn-sm bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
+                >
+                  Delete
+                </button>
               )}
             </div>
           </div>

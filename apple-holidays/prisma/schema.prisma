@@ -81,6 +81,13 @@ enum DriverPaymentType {
   DEDUCTION
 }
 
+enum CreditPaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
 // ─── User ────────────────────────────────────────────────────────────────
 
 model User {
@@ -103,7 +110,8 @@ model User {
   contactLogs       ContactLog[]
   reminders         Reminder[]
   activityLogs      ActivityLog[]
-  driverPayments    DriverPayment[] @relation("ProcessedByUser")
+  driverPayments        DriverPayment[]       @relation("ProcessedByUser")
+  creditAgentPayments   CreditAgentPayment[]  @relation("CreditPaymentProcessor")
 
   @@map("users")
 }
@@ -581,4 +589,60 @@ model DriverPayment {
 
   @@index([driverId])
   @@map("driver_payments")
+}
+
+// ─── Credit Agents ───────────────────────────────────────────────────────
+// Agents (e.g. MMT, MakeMyTrip, 30sundays) who pay in bulk on the 15th & 30th
+
+model CreditAgent {
+  id            String               @id @default(cuid())
+  name          String               @unique
+  aliases       String?              @db.Text  // JSON array of alternative names
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  creditLimit   Decimal?             @db.Decimal(10, 2)
+  currency      String               @default("USD")
+  notes         String?              @db.Text
+  isActive      Boolean              @default(true)
+
+  payments      CreditAgentPayment[]
+
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@map("credit_agents")
+}
+
+model CreditAgentPayment {
+  id            String              @id @default(cuid())
+  agentId       String
+  agent         CreditAgent         @relation(fields: [agentId], references: [id])
+
+  // Period this payment covers
+  periodStart   DateTime
+  periodEnd     DateTime
+  dueDate       DateTime            // the 15th or 30th it is due
+
+  // Booking refs this payment settles (JSON array)
+  bookingRefs   String?             @db.Text
+
+  amountDue     Decimal             @db.Decimal(10, 2)
+  amountPaid    Decimal             @default(0)             @db.Decimal(10, 2)
+  currency      String              @default("USD")
+
+  status        CreditPaymentStatus @default(PENDING)
+
+  paidAt        DateTime?
+  reference     String?
+  notes         String?             @db.Text
+
+  processedById String?
+  processedBy   User?               @relation("CreditPaymentProcessor", fields: [processedById], references: [id])
+
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([agentId])
+  @@map("credit_agent_payments")
 }

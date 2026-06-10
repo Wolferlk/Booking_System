@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { buildApiError, buildApiSuccess, isCreditAgent } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { differenceInDays } from 'date-fns'
 
@@ -18,7 +18,7 @@ export async function POST(
 
   const payment = await prisma.payment.findUnique({
     where: { id: params.id },
-    include: { booking: { select: { arrivalDate: true, bookingRef: true } } },
+    include: { booking: { select: { arrivalDate: true, bookingRef: true, agent: true } } },
   })
   if (!payment) return buildApiError('Payment not found', 404)
   if (payment.status === 'CONFIRMED') return buildApiError('Payment already confirmed')
@@ -41,8 +41,12 @@ export async function POST(
     return buildApiSuccess(updated, 'Payment rejected')
   }
 
-  // Confirm — ref number required
-  if (!refNumber?.trim()) return buildApiError('Reference number is required when confirming payment')
+  // Credit-based agents (MMT, MakeMyTrip, 30sundays) don't need a ref number — they settle in bulk
+  const creditAgent = isCreditAgent(payment.booking.agent)
+  if (!creditAgent && !refNumber?.trim()) {
+    return buildApiError('Reference number is required when confirming payment')
+  }
+  const finalRef = refNumber?.trim() || `CREDIT-${payment.booking.agent?.toUpperCase().replace(/\s+/g, '')}-AUTO`
 
   // T-7 check for initial/basic customer payments
   if (payment.type === 'customer_payment') {
@@ -57,7 +61,7 @@ export async function POST(
     where: { id: params.id },
     data: {
       status: 'CONFIRMED',
-      refNumber: refNumber.trim(),
+      refNumber: finalRef,
       processedById: session.user.id,
       paidAt: new Date(),
     },
@@ -75,5 +79,5 @@ export async function POST(
     },
   })
 
-  return buildApiSuccess(updated, `Payment confirmed with ref: ${refNumber}`)
+  return buildApiSuccess(updated, `Payment confirmed with ref: ${finalRef}`)
 }

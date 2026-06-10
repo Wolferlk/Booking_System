@@ -161,6 +161,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Bookings', href: '/dashboard/bookings', icon: 'FileText' },
     { label: 'P&L', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Profit Dashboard', href: '/dashboard/accounts/profit', icon: 'TrendingUp' },
+    { label: 'Credit Agents', href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
   ],
   CLIENT: [
