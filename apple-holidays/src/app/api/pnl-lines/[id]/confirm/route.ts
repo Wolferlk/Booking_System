@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { buildApiError, buildApiSuccess, isCreditAgent } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { logActivity, ACTION } from '@/lib/activity'
 import type { UserRole } from '@prisma/client'
@@ -33,8 +33,13 @@ export async function POST(
 
   if (!line) return buildApiError('PNL line not found', 404)
 
+  // Credit agents never need per-line payment confirmation
+  if (isCreditAgent(line.pnl.booking.agent)) {
+    return buildApiError('Credit agent bookings do not require per-line payment approval', 400)
+  }
+
   const body = await req.json()
-  const { action = 'CONFIRMED', refNumber } = body
+  const { action = 'CONFIRMED', refNumber, billUrl, billName } = body
   const status = action === 'REJECTED' ? 'REJECTED' : 'CONFIRMED'
 
   if (status === 'CONFIRMED' && !refNumber?.trim()) {
@@ -46,6 +51,8 @@ export async function POST(
     data: {
       paymentStatus: status,
       paymentRefNumber: status === 'CONFIRMED' ? refNumber?.trim() : null,
+      paymentBillUrl:  status === 'CONFIRMED' ? (billUrl ?? null) : null,
+      paymentBillName: status === 'CONFIRMED' ? (billName ?? null) : null,
       paymentConfirmedAt: new Date(),
       paymentConfirmedBy: session.user.id,
     },
@@ -59,7 +66,7 @@ export async function POST(
     details: { activity: line.activity, refNumber, bookingRef: line.pnl.booking.bookingRef },
   })
 
-  // Check if all lines are confirmed — if so, advance booking to OPERATIONS_READY
+  // If all lines confirmed → advance booking to OPERATIONS_READY
   const pnl = line.pnl
   const allConfirmed = pnl.lineItems.every(
     l => l.id === params.id ? status === 'CONFIRMED' : l.paymentStatus === 'CONFIRMED',

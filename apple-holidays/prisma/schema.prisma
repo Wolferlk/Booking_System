@@ -388,7 +388,9 @@ model PNLLineItem {
   chEntrance      Decimal     @db.Decimal(10, 2) @default(0)
   otherRate       Decimal     @db.Decimal(10, 2) @default(0)
   paymentStatus   PaymentStatus @default(PENDING)
-  paymentRefNumber String?    // ref number added by Accounts when confirming
+  paymentRefNumber String?
+  paymentBillUrl  String?
+  paymentBillName String?
   paymentConfirmedAt DateTime?
   paymentConfirmedBy String?
   sortOrder       Int         @default(0)

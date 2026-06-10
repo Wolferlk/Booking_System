@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess, computePNLTotals, isClientPortalUnlocked } from '@/lib/utils'
+import { buildApiError, buildApiSuccess, computePNLTotals, isClientPortalUnlocked, isCreditAgent } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
@@ -33,7 +33,7 @@ export async function GET(
 
   if (!pnl) return buildApiSuccess(null)
 
-  return buildApiSuccess(computePNLTotals(pnl))
+  return buildApiSuccess({ ...computePNLTotals(pnl), bookingAgent: booking.agent })
 }
 
 export async function POST(
@@ -75,20 +75,24 @@ export async function POST(
       },
     })
 
-    // Move to AWAITING_PAYMENT_CONFIRM if in GT_VERIFIED
+    // Credit agents skip payment approval — go straight to OPERATIONS_READY
     if (booking.status === 'GT_VERIFIED') {
+      const creditAgent = isCreditAgent(booking.agent)
+      const nextStatus = creditAgent ? 'OPERATIONS_READY' : 'AWAITING_PAYMENT_CONFIRM'
       await Promise.all([
         prisma.booking.update({
           where: { id: booking.id },
-          data: { status: 'AWAITING_PAYMENT_CONFIRM' },
+          data: { status: nextStatus },
         }),
         prisma.statusEvent.create({
           data: {
             bookingId: booking.id,
             fromState: 'GT_VERIFIED',
-            toState: 'AWAITING_PAYMENT_CONFIRM',
+            toState: nextStatus,
             actorId: session.user.id,
-            note: 'P&L uploaded by Accounts Team',
+            note: creditAgent
+              ? 'P&L uploaded — credit agent, no payment approval required'
+              : 'P&L uploaded by Accounts Team',
           },
         }),
       ])
