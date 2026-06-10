@@ -239,9 +239,24 @@ export default function BookingDetailPage() {
                   : t.to === 'GT_REVIEW' ? 'submit-ground'
                   : t.to === 'BT_CONFIRMED' ? 'confirm'
                   : t.to === 'GT_VERIFIED' ? 'verify'
+                  : t.to === 'AWAITING_PAYMENT_CONFIRM' ? 'pnl-redirect'
+                  : t.from === 'AWAITING_PAYMENT_CONFIRM' && t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
+                  : t.to === 'CLIENT_LIVE' ? 'client-live'
+                  : t.to === 'IN_PROGRESS' ? 'in-progress'
+                  : t.to === 'COMPLETED' ? 'complete'
                   : ''
 
                 if (!key) return null
+
+                // AC_USER at GT_VERIFIED → redirect to P&L page to upload P&L
+                if (key === 'pnl-redirect') {
+                  return (
+                    <Link key={t.to} href={`/dashboard/bookings/${ref}/pnl`}
+                      className="btn btn-primary btn-sm">
+                      <TrendingUp className="w-3.5 h-3.5" /> {t.label}
+                    </Link>
+                  )
+                }
 
                 const needsNote = ['change-request', 'resubmit'].includes(key)
 

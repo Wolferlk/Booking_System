@@ -306,6 +306,7 @@ export default function AgendaPage() {
 
                 <div className="flex-1 p-5">
                   {canEdit ? (
+                    <>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                       <div>
                         <label className="form-label text-xs">Date</label>
@@ -356,6 +357,33 @@ export default function AgendaPage() {
                         </button>
                       </div>
                     </div>
+
+                    {/* Driver assignment row — visible in edit mode too */}
+                    {canAssign && (
+                      <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+                        {item.assignment?.driverName ? (
+                          <div className="flex items-center gap-3 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                            <Car className="w-3.5 h-3.5 text-blue-500" />
+                            <span className="font-medium text-blue-700">{item.assignment.driverName}</span>
+                            {item.assignment.driverPhone && (
+                              <a href={`tel:${item.assignment.driverPhone}`} className="text-slate-500 flex items-center gap-1 hover:text-blue-600">
+                                <Phone className="w-3 h-3" />{item.assignment.driverPhone}
+                              </a>
+                            )}
+                            {item.assignment.vehiclePlate && (
+                              <span className="font-mono text-slate-600">{item.assignment.vehicleType} {item.assignment.vehiclePlate}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">No driver assigned</span>
+                        )}
+                        <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
+                          onClick={() => openAssignPanel(i)}>
+                          {item.assignment?.driverName ? 'Re-assign' : 'Assign Driver'}
+                        </Button>
+                      </div>
+                    )}
+                    </>
                   ) : (
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1">
