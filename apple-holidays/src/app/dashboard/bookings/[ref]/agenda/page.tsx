@@ -6,19 +6,19 @@ import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, Save, Loader2, Wand2, Car, MapPin, Upload,
-  Search, X, CheckCircle2, Phone,
+  Search, X, CheckCircle2, Phone, AlertTriangle,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
-import { Card, CardBody } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
 const SERVICE_TYPES = [
-  { value: 'PVT_TRANSFER', label: 'PVT Transfer', color: 'blue' as const },
-  { value: 'SIC_TRANSFER', label: 'SIC Transfer', color: 'green' as const },
-  { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement', color: 'gray' as const },
+  { value: 'PVT_TRANSFER',    label: 'PVT Transfer',     color: 'blue'  as const },
+  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',     color: 'green' as const },
+  { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement',  color: 'gray'  as const },
 ]
 
 interface AgendaItem {
@@ -45,6 +45,8 @@ interface Driver {
   name: string
   phone: string
   isActive: boolean
+  isBusyOnDate?: boolean
+  busyBookings?: string[]
   vehicle: { plateNo: string; type: string; brand?: string | null; model?: string | null } | null
 }
 
@@ -53,44 +55,56 @@ export default function AgendaPage() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole
 
-  const [items, setItems] = useState<AgendaItem[]>([])
-  const [drivers, setDrivers] = useState<Driver[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const [items,      setItems]      = useState<AgendaItem[]>([])
+  const [drivers,    setDrivers]    = useState<Driver[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [saving,     setSaving]     = useState(false)
   const [generating, setGenerating] = useState(false)
   const [showUpload, setShowUpload] = useState(false)
   const [assigningIdx, setAssigningIdx] = useState<number | null>(null)
   const [driverSearch, setDriverSearch] = useState('')
+  const [loadingDrivers, setLoadingDrivers] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const canEdit = ['BT_USER', 'GT_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit   = ['BT_USER', 'GT_USER', 'SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'SUPER_ADMIN'].includes(role)
 
   async function loadAgenda() {
     try {
-      const [agendaRes, driverRes] = await Promise.all([
-        fetch(`/api/bookings/${ref}/agenda`),
-        fetch('/api/ground/drivers'),
-      ])
-      const [agendaJson, driverJson] = await Promise.all([agendaRes.json(), driverRes.json()])
+      const agendaRes  = await fetch(`/api/bookings/${ref}/agenda`)
+      const agendaJson = await agendaRes.json()
       if (agendaJson.success && agendaJson.data) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         setItems((agendaJson.data.items ?? []).map((i: any) => ({
-          id: i.id,
-          date: (i.date as string)?.slice(0, 10) ?? '',
-          location: i.location ?? '',
-          fromPoint: i.fromPoint ?? '',
-          toPoint: i.toPoint ?? '',
-          details: i.details ?? '',
-          mealPlan: i.mealPlan ?? '',
+          id:          i.id,
+          date:        (i.date as string)?.slice(0, 10) ?? '',
+          location:    i.location ?? '',
+          fromPoint:   i.fromPoint ?? '',
+          toPoint:     i.toPoint ?? '',
+          details:     i.details ?? '',
+          mealPlan:    i.mealPlan ?? '',
           meetingTime: i.meetingTime ?? '',
           serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
-          assignment: i.assignment,
+          assignment:  i.assignment,
         })))
       }
-      if (driverJson.success) setDrivers(driverJson.data)
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Load drivers with availability for a specific date
+  async function loadDriversForDate(date: string) {
+    setLoadingDrivers(true)
+    try {
+      const url     = date
+        ? `/api/ground/drivers?date=${date}&excludeRef=${ref}`
+        : '/api/ground/drivers'
+      const res     = await fetch(url)
+      const json    = await res.json()
+      if (json.success) setDrivers(json.data)
+    } finally {
+      setLoadingDrivers(false)
     }
   }
 
@@ -102,20 +116,17 @@ export default function AgendaPage() {
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const res = await fetch(`/api/bookings/${ref}/agenda/generate`, {
-        method: 'POST',
-        body: formData,
-      })
+      const res  = await fetch(`/api/bookings/${ref}/agenda/generate`, { method: 'POST', body: formData })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       const generated = json.data.items as AgendaItem[]
       setItems(generated.map(item => ({
         ...item,
-        date: (item.date as string)?.slice(0, 10) ?? '',
-        fromPoint: item.fromPoint ?? '',
-        toPoint: item.toPoint ?? '',
-        details: item.details ?? '',
-        mealPlan: item.mealPlan ?? '',
+        date:        (item.date as string)?.slice(0, 10) ?? '',
+        fromPoint:   item.fromPoint   ?? '',
+        toPoint:     item.toPoint     ?? '',
+        details:     item.details     ?? '',
+        mealPlan:    item.mealPlan    ?? '',
         meetingTime: item.meetingTime ?? '',
         serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
       })))
@@ -130,17 +141,17 @@ export default function AgendaPage() {
   async function generateFromBooking() {
     setGenerating(true)
     try {
-      const res = await fetch(`/api/bookings/${ref}/agenda/generate`, { method: 'POST' })
+      const res  = await fetch(`/api/bookings/${ref}/agenda/generate`, { method: 'POST' })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       const generated = json.data.items as AgendaItem[]
       setItems(generated.map(item => ({
         ...item,
-        date: (item.date as string)?.slice(0, 10) ?? '',
-        fromPoint: item.fromPoint ?? '',
-        toPoint: item.toPoint ?? '',
-        details: item.details ?? '',
-        mealPlan: item.mealPlan ?? '',
+        date:        (item.date as string)?.slice(0, 10) ?? '',
+        fromPoint:   item.fromPoint   ?? '',
+        toPoint:     item.toPoint     ?? '',
+        details:     item.details     ?? '',
+        mealPlan:    item.mealPlan    ?? '',
         meetingTime: item.meetingTime ?? '',
         serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
       })))
@@ -155,7 +166,7 @@ export default function AgendaPage() {
   async function saveAgenda() {
     setSaving(true)
     try {
-      const res = await fetch(`/api/bookings/${ref}/agenda`, {
+      const res  = await fetch(`/api/bookings/${ref}/agenda`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items }),
@@ -175,7 +186,7 @@ export default function AgendaPage() {
     const item = items[idx]
     if (!item) return
     try {
-      const res = await fetch(`/api/bookings/${ref}/agenda`, {
+      const res  = await fetch(`/api/bookings/${ref}/agenda`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemId, assignment: item.assignment }),
@@ -184,9 +195,18 @@ export default function AgendaPage() {
       if (!json.success) throw new Error(json.error)
       toast.success('Driver assigned!')
       setAssigningIdx(null)
+      // Refresh drivers to reflect new busy state for this date
+      if (item.date) loadDriversForDate(item.date)
     } catch {
       toast.error('Failed to save assignment')
     }
+  }
+
+  function openAssignPanel(idx: number) {
+    setAssigningIdx(idx)
+    setDriverSearch('')
+    const itemDate = items[idx]?.date
+    loadDriversForDate(itemDate ?? '')
   }
 
   const filteredDrivers = drivers.filter(d =>
@@ -197,7 +217,11 @@ export default function AgendaPage() {
     )
   )
 
-  if (loading) return <div className="flex justify-center h-48"><Loader2 className="w-6 h-6 text-brand-500 animate-spin mt-12" /></div>
+  if (loading) return (
+    <div className="flex justify-center h-48">
+      <Loader2 className="w-6 h-6 text-brand-500 animate-spin mt-12" />
+    </div>
+  )
 
   return (
     <div>
@@ -248,8 +272,7 @@ export default function AgendaPage() {
                     </div>
                   )}
                 </div>
-                <Button size="sm" loading={saving}
-                  icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
+                <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
                   Save Agenda
                 </Button>
               </>
@@ -270,7 +293,7 @@ export default function AgendaPage() {
         )}
 
         {items.map((item, i) => {
-          const svcType = SERVICE_TYPES.find(s => s.value === item.serviceType)
+          const svcType   = SERVICE_TYPES.find(s => s.value === item.serviceType)
           const isAssigning = assigningIdx === i
 
           return (
@@ -372,7 +395,7 @@ export default function AgendaPage() {
 
                       {canAssign && (
                         <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
-                          onClick={() => { setAssigningIdx(i); setDriverSearch('') }}>
+                          onClick={() => openAssignPanel(i)}>
                           {item.assignment?.driverName ? 'Re-assign' : 'Assign Driver'}
                         </Button>
                       )}
@@ -383,7 +406,14 @@ export default function AgendaPage() {
                   {isAssigning && (
                     <div className="mt-4 pt-4 border-t border-slate-100">
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-semibold text-slate-700">Select Driver</p>
+                        <div>
+                          <p className="text-sm font-semibold text-slate-700">Select Driver</p>
+                          {item.date && (
+                            <p className="text-xs text-slate-400 mt-0.5">
+                              Checking availability for <strong>{formatDate(item.date)}</strong>
+                            </p>
+                          )}
+                        </div>
                         <button onClick={() => setAssigningIdx(null)} className="text-slate-400 hover:text-slate-600">
                           <X className="w-4 h-4" />
                         </button>
@@ -395,55 +425,77 @@ export default function AgendaPage() {
                         <input
                           value={driverSearch}
                           onChange={e => setDriverSearch(e.target.value)}
-                          placeholder="Search driver by name, phone, or plate..."
+                          placeholder="Search by name, phone, or plate…"
                           className="form-input pl-9 text-sm py-2"
                         />
                       </div>
 
                       {/* Driver list */}
-                      <div className="space-y-1.5 max-h-64 overflow-y-auto">
-                        {filteredDrivers.length === 0 ? (
-                          <p className="text-sm text-slate-400 text-center py-4">No active drivers found</p>
-                        ) : (
-                          filteredDrivers.map(d => {
-                            const isSelected = items[i]?.assignment?.driverId === d.id
-                            return (
-                              <button
-                                key={d.id}
-                                onClick={() => {
-                                  setItems(is => is.map((x, j) => j === i ? {
-                                    ...x,
-                                    assignment: {
-                                      driverId: d.id,
-                                      driverName: d.name,
-                                      driverPhone: d.phone,
-                                      vehicleType: d.vehicle?.type ?? '',
-                                      vehiclePlate: d.vehicle?.plateNo ?? '',
-                                    },
-                                  } : x))
-                                }}
-                                className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
-                                  isSelected
-                                    ? 'bg-brand-50 border-2 border-brand-300'
-                                    : 'bg-slate-50 hover:bg-slate-100 border border-transparent'
-                                }`}
-                              >
-                                <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                                  <span className="text-blue-700 font-bold text-sm">{d.name.slice(0, 1)}</span>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="font-semibold text-sm text-slate-800">{d.name}</p>
-                                  <p className="text-xs text-slate-500">
-                                    {d.phone}
-                                    {d.vehicle && ` · ${d.vehicle.brand ?? ''} ${d.vehicle.model ?? ''} ${d.vehicle.plateNo}`.trim()}
-                                  </p>
-                                </div>
-                                {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
-                              </button>
-                            )
-                          })
-                        )}
-                      </div>
+                      {loadingDrivers ? (
+                        <div className="flex justify-center py-6">
+                          <Loader2 className="w-5 h-5 text-brand-400 animate-spin" />
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                          {filteredDrivers.length === 0 ? (
+                            <p className="text-sm text-slate-400 text-center py-4">No active drivers found</p>
+                          ) : (
+                            filteredDrivers.map(d => {
+                              const isSelected = items[i]?.assignment?.driverId === d.id
+                              const isBusy     = d.isBusyOnDate ?? false
+
+                              return (
+                                <button
+                                  key={d.id}
+                                  onClick={() => {
+                                    setItems(is => is.map((x, j) => j === i ? {
+                                      ...x,
+                                      assignment: {
+                                        driverId:    d.id,
+                                        driverName:  d.name,
+                                        driverPhone: d.phone,
+                                        vehicleType: d.vehicle?.type  ?? '',
+                                        vehiclePlate: d.vehicle?.plateNo ?? '',
+                                      },
+                                    } : x))
+                                  }}
+                                  className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                                    isSelected
+                                      ? 'bg-brand-50 border-2 border-brand-300'
+                                      : isBusy
+                                        ? 'bg-red-50 border border-red-200 hover:bg-red-100'
+                                        : 'bg-slate-50 hover:bg-slate-100 border border-transparent'
+                                  }`}
+                                >
+                                  <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${
+                                    isBusy ? 'bg-red-100' : 'bg-blue-100'
+                                  }`}>
+                                    <span className={`font-bold text-sm ${isBusy ? 'text-red-700' : 'text-blue-700'}`}>
+                                      {d.name.slice(0, 1)}
+                                    </span>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <p className="font-semibold text-sm text-slate-800">{d.name}</p>
+                                      {isBusy && (
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">
+                                          <AlertTriangle className="w-3 h-3" />
+                                          BUSY {d.busyBookings?.join(', ')}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-slate-500">
+                                      {d.phone}
+                                      {d.vehicle && ` · ${d.vehicle.brand ?? ''} ${d.vehicle.model ?? ''} ${d.vehicle.plateNo}`.trim()}
+                                    </p>
+                                  </div>
+                                  {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      )}
 
                       {item.assignment?.driverName && (
                         <div className="mt-3 flex gap-2">

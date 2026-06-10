@@ -10,15 +10,63 @@ export async function GET(req: NextRequest) {
   if (!session) return buildApiError('Unauthorized', 401)
 
   const { searchParams } = new URL(req.url)
-  const showAll = searchParams.get('all') === '1'
+  const date           = searchParams.get('date')          // YYYY-MM-DD — check availability for this date
+  const excludeBooking = searchParams.get('excludeRef')    // booking ref to exclude from busy check
 
   const drivers = await prisma.driver.findMany({
-    where: showAll ? {} : {},
     include: { vehicle: { include: { vendor: true } } },
     orderBy: { name: 'asc' },
   })
 
-  return buildApiSuccess(drivers)
+  if (!date) return buildApiSuccess(drivers)
+
+  // Find all assignments on this date, optionally excluding a specific booking
+  const dayStart = new Date(date)
+  dayStart.setHours(0, 0, 0, 0)
+  const dayEnd = new Date(date)
+  dayEnd.setHours(23, 59, 59, 999)
+
+  const busyAssignments = await prisma.assignment.findMany({
+    where: {
+      driverId: { not: null },
+      agendaItem: {
+        date: { gte: dayStart, lte: dayEnd },
+        ...(excludeBooking
+          ? {
+              agenda: {
+                booking: { bookingRef: { not: excludeBooking } },
+              },
+            }
+          : {}),
+      },
+    },
+    select: {
+      driverId:  true,
+      agendaItem: {
+        select: {
+          date: true,
+          agenda: { select: { booking: { select: { bookingRef: true } } } },
+        },
+      },
+    },
+  })
+
+  const busyDriverIds = new Set(busyAssignments.map(a => a.driverId!))
+  const busyBookingMap: Record<string, string[]> = {}
+  for (const a of busyAssignments) {
+    const did = a.driverId!
+    const bRef = a.agendaItem.agenda?.booking?.bookingRef ?? 'another booking'
+    if (!busyBookingMap[did]) busyBookingMap[did] = []
+    if (!busyBookingMap[did].includes(bRef)) busyBookingMap[did].push(bRef)
+  }
+
+  const enriched = drivers.map(d => ({
+    ...d,
+    isBusyOnDate: busyDriverIds.has(d.id),
+    busyBookings: busyBookingMap[d.id] ?? [],
+  }))
+
+  return buildApiSuccess(enriched)
 }
 
 export async function POST(req: NextRequest) {
@@ -33,16 +81,16 @@ export async function POST(req: NextRequest) {
   const driver = await prisma.driver.create({
     data: {
       name, phone,
-      email: email || null,
-      licenseNo: licenseNo || null,
-      isActive: isActive ?? true,
-      photoUrl: photoUrl || null,
-      vehicleId: vehicleId || null,
-      bankName: bankName || null,
+      email:        email        || null,
+      licenseNo:    licenseNo    || null,
+      isActive:     isActive     ?? true,
+      photoUrl:     photoUrl     || null,
+      vehicleId:    vehicleId    || null,
+      bankName:     bankName     || null,
       bankAccountNo: bankAccountNo || null,
-      bankHolder: bankHolder || null,
-      bankBranch: bankBranch || null,
-      bankCode: bankCode || null,
+      bankHolder:   bankHolder   || null,
+      bankBranch:   bankBranch   || null,
+      bankCode:     bankCode     || null,
     },
     include: { vehicle: { include: { vendor: true } } },
   })

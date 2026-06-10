@@ -6,6 +6,17 @@ import { buildApiError, buildApiSuccess, computePNLTotals, isClientPortalUnlocke
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
+// Categories that should generate an auto-ticket for the ground team
+const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
+  HOTEL:          'Hotel Voucher',
+  TICKETS:        'Entrance Ticket',
+  GUIDES:         'Guide Service',
+  CRUISE:         'Cruise Ticket',
+  WATER:          'Water Activity',
+  FLIGHT_TICKETS: 'Flight Ticket',
+  OTHER:          'Service',
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { ref: string } },
@@ -21,7 +32,6 @@ export async function GET(
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  // Ground Team can only see P&L from T-5
   if (role === 'GT_USER' && !isClientPortalUnlocked(booking.arrivalDate)) {
     return buildApiError('P&L not available until T−5', 403)
   }
@@ -53,32 +63,36 @@ export async function POST(
 
   const { paxAdults, paxChildren, lineItems = [] } = await req.json()
 
-  // Upsert PNL
   const existingPnl = await prisma.pNL.findUnique({ where: { bookingId: booking.id } })
 
   let pnl
   if (existingPnl) {
+    // Delete old lines; existing tickets linked to those lines lose pnlLineId but stay
+    await prisma.ticket.updateMany({
+      where: { bookingId: booking.id, activated: false },
+      data: { pnlLineId: null },
+    })
     await prisma.pNLLineItem.deleteMany({ where: { pnlId: existingPnl.id } })
     pnl = await prisma.pNL.update({
       where: { id: existingPnl.id },
       data: {
-        paxAdults: Number(paxAdults ?? booking.paxAdults),
+        paxAdults:  Number(paxAdults  ?? booking.paxAdults),
         paxChildren: Number(paxChildren ?? booking.paxChildren),
       },
     })
   } else {
     pnl = await prisma.pNL.create({
       data: {
-        bookingId: booking.id,
-        paxAdults: Number(paxAdults ?? booking.paxAdults),
+        bookingId:  booking.id,
+        paxAdults:  Number(paxAdults  ?? booking.paxAdults),
         paxChildren: Number(paxChildren ?? booking.paxChildren),
       },
     })
 
-    // Credit agents skip payment approval — go straight to OPERATIONS_READY
+    // Credit agents skip payment approval — advance straight to OPERATIONS_READY
     if (booking.status === 'GT_VERIFIED') {
       const creditAgent = isCreditAgent(booking.agent)
-      const nextStatus = creditAgent ? 'OPERATIONS_READY' : 'AWAITING_PAYMENT_CONFIRM'
+      const nextStatus  = creditAgent ? 'OPERATIONS_READY' : 'AWAITING_PAYMENT_CONFIRM'
       await Promise.all([
         prisma.booking.update({
           where: { id: booking.id },
@@ -88,8 +102,8 @@ export async function POST(
           data: {
             bookingId: booking.id,
             fromState: 'GT_VERIFIED',
-            toState: nextStatus,
-            actorId: session.user.id,
+            toState:   nextStatus,
+            actorId:   session.user.id,
             note: creditAgent
               ? 'P&L uploaded — credit agent, no payment approval required'
               : 'P&L uploaded by Accounts Team',
@@ -99,25 +113,48 @@ export async function POST(
     }
   }
 
+  // Create P&L line items
   const createdLines = await Promise.all(
-    lineItems.map((line: Record<string, unknown>, index: number) =>
+    (lineItems as Record<string, unknown>[]).map((line, index) =>
       prisma.pNLLineItem.create({
         data: {
-          pnlId: pnl.id,
-          activity: line.activity as string,
-          category: (line.category as PNLCategory) || 'OTHER',
-          mmtRate: Number(line.mmtRate ?? 0),
-          sicRate: Number(line.sicRate ?? 0),
-          pvtRatePP: Number(line.pvtRatePP ?? 0),
+          pnlId:      pnl.id,
+          activity:   line.activity as string,
+          category:   (line.category as PNLCategory) || 'OTHER',
+          mmtRate:    Number(line.mmtRate    ?? 0),
+          sicRate:    Number(line.sicRate    ?? 0),
+          pvtRatePP:  Number(line.pvtRatePP  ?? 0),
           adEntrance: Number(line.adEntrance ?? 0),
           chEntrance: Number(line.chEntrance ?? 0),
-          otherRate: Number(line.otherRate ?? 0),
-          notes: line.notes as string | undefined,
-          sortOrder: index,
+          otherRate:  Number(line.otherRate  ?? 0),
+          notes:      line.notes as string | undefined,
+          sortOrder:  index,
         },
       }),
     ),
   )
+
+  // Auto-create inactive tickets for ticketable categories
+  // Delete stale auto-generated (not yet activated) tickets first
+  await prisma.ticket.deleteMany({
+    where: { bookingId: booking.id, activated: false },
+  })
+
+  const ticketableLines = createdLines.filter(l => TICKETABLE_CATEGORIES[l.category as PNLCategory])
+  if (ticketableLines.length > 0) {
+    await prisma.ticket.createMany({
+      data: ticketableLines.map(l => ({
+        bookingId: booking.id,
+        pnlLineId: l.id,
+        type:      `${TICKETABLE_CATEGORIES[l.category as PNLCategory]} — ${l.activity}`,
+        qty:       1,
+        currency:  booking.currency ?? 'USD',
+        activated: false,   // GT must activate before purchasing
+        status:    'DRAFT' as const,
+        notes:     `Auto-generated from P&L line: ${l.activity}`,
+      })),
+    })
+  }
 
   const fullPnl = await prisma.pNL.findUnique({
     where: { id: pnl.id },

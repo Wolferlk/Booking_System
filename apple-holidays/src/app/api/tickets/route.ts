@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     include: {
       booking: { select: { bookingRef: true, arrivalDate: true } },
       agendaItem: { select: { date: true, location: true, toPoint: true } },
-      pnlLine: { select: { activity: true, paymentStatus: true } },
+      pnlLine: { select: { activity: true, paymentStatus: true, paymentRefNumber: true, category: true } },
     },
     orderBy: { createdAt: 'desc' },
   })

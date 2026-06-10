@@ -342,6 +342,7 @@ model Ticket {
   totalCost     Decimal?     @db.Decimal(10, 2)
   currency      String       @default("USD")
   status        TicketStatus @default(DRAFT)
+  activated     Boolean      @default(true)   // false = auto-generated from P&L, pending GT activation
   purchasedAt   DateTime?
   reference     String?
   notes         String?      @db.Text

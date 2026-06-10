@@ -28,6 +28,11 @@ export async function GET(
         },
       },
       payments: { orderBy: { createdAt: 'desc' } },
+      tickets: {
+        where: { activated: true },
+        orderBy: { createdAt: 'asc' },
+        include: { agendaItem: { select: { date: true, location: true } } },
+      },
     },
   })
 
@@ -78,6 +83,26 @@ export async function GET(
           })),
         }
       : null,
+    // Only share file-uploaded (purchased) tickets with clients — no cost data
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tickets: (booking as any).tickets
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((t: any) => t.status === 'PURCHASED' || t.status === 'PAID' || t.fileUrl)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((t: any) => ({
+        id:        t.id,
+        type:      t.type,
+        qty:       t.qty,
+        supplier:  t.supplier,
+        reference: t.reference,
+        status:    t.status,
+        fileUrl:   t.fileUrl,
+        fileName:  t.fileName,
+        fileType:  t.fileType,
+        agendaItem: t.agendaItem
+          ? { date: t.agendaItem.date, location: t.agendaItem.location }
+          : null,
+      })),
     payments: booking.payments.map(p => ({
       id: p.id,
       type: p.type,

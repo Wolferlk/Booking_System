@@ -8,7 +8,7 @@ import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
-  Phone, Shield, Edit2,
+  Phone, Shield, Edit2, UserCheck,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -272,14 +272,27 @@ export default function BookingDetailPage() {
               <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
                 <MapPin className="w-3.5 h-3.5" /> Agenda
               </Link>
+              <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
+                <Ticket className="w-3.5 h-3.5" /> Tickets
+              </Link>
+              {/* Drivers — GT can assign drivers from the Agenda page */}
+              {['GT_USER', 'SUPER_ADMIN'].includes(role) && (
+                <Link
+                  href={`/dashboard/bookings/${ref}/agenda`}
+                  className={`btn btn-sm ${
+                    ['OPERATIONS_READY', 'CLIENT_LIVE', 'IN_PROGRESS'].includes(status)
+                      ? 'bg-blue-600 text-white hover:bg-blue-700 border border-blue-700'
+                      : 'btn-secondary'
+                  }`}
+                >
+                  <UserCheck className="w-3.5 h-3.5" /> Drivers
+                </Link>
+              )}
               {['AC_USER', 'SUPER_ADMIN'].includes(role) && (
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>
               )}
-              <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
-                <Ticket className="w-3.5 h-3.5" /> Tickets
-              </Link>
               {canEditBooking && (
                 <button onClick={openEditBooking} className="btn btn-secondary btn-sm">
                   <Edit2 className="w-3.5 h-3.5" /> Edit
