@@ -88,29 +88,38 @@ export async function POST(
         paxChildren: Number(paxChildren ?? booking.paxChildren),
       },
     })
+  }
 
-    // Credit agents skip payment approval — advance straight to OPERATIONS_READY
-    if (booking.status === 'GT_VERIFIED') {
-      const creditAgent = isCreditAgent(booking.agent)
-      const nextStatus  = creditAgent ? 'OPERATIONS_READY' : 'AWAITING_PAYMENT_CONFIRM'
-      await Promise.all([
-        prisma.booking.update({
-          where: { id: booking.id },
-          data: { status: nextStatus },
-        }),
-        prisma.statusEvent.create({
-          data: {
-            bookingId: booking.id,
-            fromState: 'GT_VERIFIED',
-            toState:   nextStatus,
-            actorId:   session.user.id,
-            note: creditAgent
-              ? 'P&L uploaded — credit agent, no payment approval required'
-              : 'P&L uploaded by Accounts Team',
-          },
-        }),
-      ])
-    }
+  // State advancement — run on every save (new or update)
+  // Non-credit agents: GT_VERIFIED → AWAITING_PAYMENT_CONFIRM (first upload only)
+  // Credit agents: GT_VERIFIED or AWAITING_PAYMENT_CONFIRM → OPERATIONS_READY (always)
+  const creditAgent = isCreditAgent(booking.agent)
+  if (creditAgent && ['GT_VERIFIED', 'AWAITING_PAYMENT_CONFIRM'].includes(booking.status)) {
+    await Promise.all([
+      prisma.booking.update({ where: { id: booking.id }, data: { status: 'OPERATIONS_READY' } }),
+      prisma.statusEvent.create({
+        data: {
+          bookingId: booking.id,
+          fromState: booking.status,
+          toState:   'OPERATIONS_READY',
+          actorId:   session.user.id,
+          note: 'P&L saved — credit agent, advanced directly to Operations Ready',
+        },
+      }),
+    ])
+  } else if (!creditAgent && booking.status === 'GT_VERIFIED' && !existingPnl) {
+    await Promise.all([
+      prisma.booking.update({ where: { id: booking.id }, data: { status: 'AWAITING_PAYMENT_CONFIRM' } }),
+      prisma.statusEvent.create({
+        data: {
+          bookingId: booking.id,
+          fromState: 'GT_VERIFIED',
+          toState:   'AWAITING_PAYMENT_CONFIRM',
+          actorId:   session.user.id,
+          note: 'P&L uploaded by Accounts Team — awaiting payment confirmation',
+        },
+      }),
+    ])
   }
 
   // Create P&L line items

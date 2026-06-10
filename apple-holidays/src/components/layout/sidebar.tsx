@@ -6,7 +6,7 @@ import { useSession, signOut } from 'next-auth/react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home,
+  Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -15,7 +15,7 @@ import type { UserRole } from '@prisma/client'
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, Truck, Home,
+  Users, Shield, Settings, Globe, Truck, Home, Download,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string }[]> = {
@@ -45,6 +45,8 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Profit Dashboard', href: '/dashboard/accounts/profit', icon: 'TrendingUp' },
+    { label: 'Credit Agents', href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
+    { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
   ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
@@ -53,6 +55,11 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
     { label: 'New Booking', href: '/dashboard/bookings/new', icon: 'PlusCircle' },
+    { label: 'Ground Review', href: '/dashboard/ground/review', icon: 'ClipboardCheck' },
+    { label: 'Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
+    { label: 'Credit Agents', href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
+    { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
+    { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
     { label: 'Users', href: '/dashboard/admin/users', icon: 'Users' },
     { label: 'Audit Log', href: '/dashboard/admin/audit', icon: 'Shield' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },

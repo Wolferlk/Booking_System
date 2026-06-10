@@ -48,7 +48,7 @@ export const TRANSITIONS: Transition[] = [
     from: 'GT_VERIFIED',
     to: 'AWAITING_PAYMENT_CONFIRM',
     allowedRoles: ['AC_USER', 'SUPER_ADMIN'],
-    label: 'Upload P&L / Await Payment',
+    label: 'Upload P&L',
   },
   {
     from: 'AWAITING_PAYMENT_CONFIRM',
@@ -61,8 +61,7 @@ export const TRANSITIONS: Transition[] = [
     from: 'OPERATIONS_READY',
     to: 'CLIENT_LIVE',
     allowedRoles: ['GT_USER', 'TE_USER', 'SUPER_ADMIN'],
-    label: 'Open Client Portal (T−5)',
-    guard: 'G4',
+    label: 'Open Client Portal',
   },
   {
     from: 'CLIENT_LIVE',
