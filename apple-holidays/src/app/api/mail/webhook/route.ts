@@ -82,12 +82,11 @@ async function processNotifications(notifications: GraphNotification[], secret: 
     console.log('[Webhook] processing:', email.subject, '| type:', email.type)
 
     try {
-      await autoProcessEmail(email)
-      // Mark as processed so retries don't create duplicate bookings
+      const bookingRef = await autoProcessEmail(email)
       await prisma.systemSetting.upsert({
-        where: { key: dedupKey },
-        update: { value: new Date().toISOString() },
-        create: { key: dedupKey, value: new Date().toISOString() },
+        where:  { key: dedupKey },
+        update: { value: `${bookingRef}|${new Date().toISOString()}` },
+        create: { key: dedupKey, value: `${bookingRef}|${new Date().toISOString()}` },
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -116,7 +115,7 @@ function generateRef(base: string | null): string {
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
 }
 
-async function autoProcessEmail(email: { subject: string; rawBody: string; type: 'TOUR_CONFIRMATION' | 'PNL' | 'UNKNOWN' }) {
+async function autoProcessEmail(email: { subject: string; rawBody: string; type: 'TOUR_CONFIRMATION' | 'PNL' | 'UNKNOWN' }): Promise<string> {
   const { extractBookingFromEmail } = await import('@/lib/mail-processor')
   const openai = (await import('@/lib/openai')).default
 
@@ -131,7 +130,7 @@ async function autoProcessEmail(email: { subject: string; rawBody: string; type:
   } else {
     if (!extracted.arrivalDate || !extracted.departureDate) {
       console.warn('[Webhook] missing dates for', bookingRef)
-      return
+      return bookingRef
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -237,17 +236,8 @@ async function autoProcessEmail(email: { subject: string; rawBody: string; type:
     }
   }
 
-  //   await logActivity({
-  //   userId: 'SYSTEM',
-  //   action: ACTION.BOOKING_CREATED,
-  //   entityType: 'Booking',
-  //   entityId: bookingId,
-  //   details: { source: 'webhook', subject: email.subject, bookingRef },
-  // })
-
-
-
   console.log('[Webhook] ✓ auto-processed booking', bookingRef)
+  return bookingRef
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────

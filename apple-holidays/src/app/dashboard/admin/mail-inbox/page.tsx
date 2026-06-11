@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
-  Mail, RefreshCw, Zap, CheckCircle, AlertCircle, Loader2,
+  Mail, Zap, CheckCircle, AlertCircle, Loader2,
   ExternalLink, Clock, Paperclip, Eye,
-  ChevronUp, FolderOpen, WifiOff, Wifi,
+  ChevronUp, FolderOpen, WifiOff, Wifi, RefreshCw,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -27,19 +27,27 @@ interface ProcessResult {
 
 const TYPE_COLOR = { TOUR_CONFIRMATION: 'blue', PNL: 'green', UNKNOWN: 'gray' } as const
 const TYPE_LABEL = { TOUR_CONFIRMATION: 'Tour Confirmation', PNL: 'P&L', UNKNOWN: 'Unknown' }
+const POLL_INTERVAL = 30_000
 
 export default function MailInboxPage() {
-  const router  = useRouter()
+  const router = useRouter()
   const [emails, setEmails]           = useState<ProcessedEmail[]>([])
-  const [fetching, setFetching]       = useState(false)
-  const [processing, setProcessing]   = useState<number | null>(null)
+  const [fetching, setFetching]       = useState(true)
+  const [polling, setPolling]         = useState(false)
+  const [processing, setProcessing]   = useState<string | null>(null)
   const [processingAll, setProcessingAll] = useState(false)
-  const [results, setResults]         = useState<Map<number, { success: boolean; data?: ProcessResult; error?: string }>>(new Map())
-  const [expandedUid, setExpandedUid] = useState<number | null>(null)
-  const [limit,  setLimit]            = useState(50)
+  // keyed by graphId
+  const [results, setResults] = useState<Map<string, { success: boolean; data?: ProcessResult; error?: string }>>(new Map())
+  const [expandedId, setExpandedId]   = useState<string | null>(null)
+  const [limit, setLimit]             = useState(50)
   const [folder, setFolder]           = useState<'all' | 'inbox'>('all')
-  const [subStatus, setSubStatus] = useState<SubStatus | null>(null)
+  const [subStatus, setSubStatus]     = useState<SubStatus | null>(null)
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
+  const [newIds, setNewIds]           = useState<Set<string>>(new Set())
 
+  const knownIdsRef = useRef<Set<string>>(new Set())
+
+  // Load subscription status once
   useEffect(() => {
     fetch('/api/mail/subscribe')
       .then(r => r.json())
@@ -47,42 +55,87 @@ export default function MailInboxPage() {
       .catch(() => {})
   }, [])
 
-  async function fetchEmails() {
-    setFetching(true)
-    setEmails([])
-    setResults(new Map())
+  const loadEmails = useCallback(async (silent = false) => {
+    if (!silent) setFetching(true)
+    else setPolling(true)
+
     try {
       const res  = await fetch(`/api/mail/fetch?limit=${limit}&folder=${folder}`)
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      setEmails(json.data)
-      toast.success(`Loaded ${json.data.length} emails`)
+      const loaded: ProcessedEmail[] = json.data
+
+      // Detect newly arrived emails vs last known set
+      const freshIds = loaded.map(e => e.graphId).filter(id => !knownIdsRef.current.has(id))
+      if (freshIds.length > 0 && silent) {
+        setNewIds(prev => new Set(Array.from(prev).concat(freshIds)))
+        toast.success(`${freshIds.length} new email${freshIds.length > 1 ? 's' : ''} arrived`)
+      }
+      // Update known set
+      knownIdsRef.current = new Set(loaded.map(e => e.graphId))
+
+      setEmails(loaded)
+      setLastRefresh(new Date())
+
+      // Check which are already processed
+      if (loaded.length > 0) {
+        const checkRes = await fetch('/api/mail/check-processed', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ graphIds: loaded.map(e => e.graphId) }),
+        })
+        const checkJson = await checkRes.json()
+        if (checkJson.success && Array.isArray(checkJson.data)) {
+          setResults(prev => {
+            const next = new Map(prev)
+            for (const { graphId, bookingRef } of checkJson.data as { graphId: string; bookingRef: string }[]) {
+              if (!next.has(graphId)) {
+                next.set(graphId, {
+                  success: true,
+                  data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing' },
+                })
+              }
+            }
+            return next
+          })
+        }
+      }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to connect')
+      if (!silent) toast.error(err instanceof Error ? err.message : 'Failed to load emails')
     } finally {
       setFetching(false)
+      setPolling(false)
     }
-  }
+  }, [limit, folder])
+
+  // Initial load + polling
+  useEffect(() => {
+    loadEmails(false)
+    const id = setInterval(() => loadEmails(true), POLL_INTERVAL)
+    return () => clearInterval(id)
+  }, [loadEmails])
 
   async function processEmail(email: ProcessedEmail) {
-    setProcessing(email.uid)
+    setProcessing(email.graphId)
+    setNewIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
     try {
       const res  = await fetch('/api/mail/process', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rawBody:   email.rawBody,
           subject:   email.subject,
           emailType: email.type === 'PNL' ? 'PNL' : 'TOUR_CONFIRMATION',
+          graphId:   email.graphId,
         }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      setResults(m => new Map(m).set(email.uid, { success: true, data: json.data }))
+      setResults(m => new Map(m).set(email.graphId, { success: true, data: json.data }))
       toast.success(json.message)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Processing failed'
-      setResults(m => new Map(m).set(email.uid, { success: false, error: msg }))
+      setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
       toast.error(msg)
     } finally {
       setProcessing(null)
@@ -90,7 +143,7 @@ export default function MailInboxPage() {
   }
 
   async function processAll() {
-    const eligible = emails.filter(e => e.type !== 'UNKNOWN' && !results.has(e.uid))
+    const eligible = emails.filter(e => e.type !== 'UNKNOWN' && !results.has(e.graphId))
     if (!eligible.length) { toast.info('No eligible emails to process'); return }
     setProcessingAll(true)
     for (const email of eligible) await processEmail(email)
@@ -98,7 +151,8 @@ export default function MailInboxPage() {
     toast.success('All emails processed')
   }
 
-  const unread = emails.filter(e => !e.isRead).length
+  const unread    = emails.filter(e => !e.isRead).length
+  const processed = Array.from(results.values()).filter(r => r.success).length
 
   return (
     <div>
@@ -107,7 +161,6 @@ export default function MailInboxPage() {
         subtitle={`confirm.booking@aahaas.com — ${emails.length} emails${unread > 0 ? ` · ${unread} unread` : ''}`}
         actions={
           <div className="flex gap-2 items-center flex-wrap">
-            {/* Folder selector */}
             <select
               value={folder}
               onChange={e => setFolder(e.target.value as 'all' | 'inbox')}
@@ -116,7 +169,6 @@ export default function MailInboxPage() {
               <option value="all">All Folders</option>
               <option value="inbox">Inbox Only</option>
             </select>
-            {/* Limit selector */}
             <select
               value={limit}
               onChange={e => setLimit(Number(e.target.value))}
@@ -136,12 +188,14 @@ export default function MailInboxPage() {
                 Process All
               </Button>
             )}
-            <Button
-              size="sm" loading={fetching}
-              icon={<RefreshCw className="w-4 h-4" />} onClick={fetchEmails}
+            <button
+              onClick={() => loadEmails(false)}
+              disabled={fetching}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40"
+              title="Refresh now"
             >
-              {fetching ? 'Loading…' : 'Load Emails'}
-            </Button>
+              <RefreshCw className={`w-4 h-4 ${fetching || polling ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         }
       />
@@ -163,27 +217,16 @@ export default function MailInboxPage() {
                 <p className={`text-xs mt-0.5 ${subStatus?.active ? 'text-green-600' : 'text-amber-600'}`}>
                   {subStatus?.active
                     ? `New emails are processed automatically as they arrive. Webhook expires ${subStatus.expiry ? new Date(subStatus.expiry).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}`
-                    : 'Enable webhook to automatically create bookings when emails arrive — no manual processing needed.'
+                    : 'Auto-activates on deploy.'
                   }
                 </p>
               </div>
             </div>
-            {!subStatus?.active && (
-              <span className="text-xs text-amber-600 font-medium">Auto-activates on deploy</span>
-            )}
-          </div>
-        </Card>
-
-        {/* Info */}
-        <Card className="p-4 bg-blue-50 border-blue-200">
-          <div className="flex items-start gap-3">
-            <Mail className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-blue-800">Microsoft Graph — Full Mail Access</p>
-              <p className="text-xs text-blue-600 mt-1">
-                Reads all folders including Inbox, Sent, Focused, and sub-folders.
-                Tour Confirmation and P&amp;L emails are auto-detected. Click an email to preview the full body before processing.
-              </p>
+            <div className="flex items-center gap-2 text-xs text-slate-400 flex-shrink-0">
+              {polling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {lastRefresh && (
+                <span>Updated {lastRefresh.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+              )}
             </div>
           </div>
         </Card>
@@ -192,10 +235,10 @@ export default function MailInboxPage() {
         {emails.length > 0 && (
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: 'Total',             value: emails.length,                                      color: 'text-slate-700' },
-              { label: 'Tour Confirmations', value: emails.filter(e => e.type === 'TOUR_CONFIRMATION').length, color: 'text-blue-600' },
-              { label: 'P&L',               value: emails.filter(e => e.type === 'PNL').length,         color: 'text-green-600' },
-              { label: 'Processed',          value: Array.from(results.values()).filter(r => r.success).length, color: 'text-brand-600' },
+              { label: 'Total',              value: emails.length,                                                  color: 'text-slate-700' },
+              { label: 'Tour Confirmations', value: emails.filter(e => e.type === 'TOUR_CONFIRMATION').length,     color: 'text-blue-600'  },
+              { label: 'P&L',                value: emails.filter(e => e.type === 'PNL').length,                   color: 'text-green-600' },
+              { label: 'Processed',          value: processed,                                                      color: 'text-brand-600' },
             ].map(s => (
               <Card key={s.label} className="p-3 text-center">
                 <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
@@ -205,28 +248,29 @@ export default function MailInboxPage() {
           </div>
         )}
 
-        {/* Empty state */}
-        {!fetching && emails.length === 0 && (
-          <Card className="p-12 text-center">
-            <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">No emails loaded</p>
-            <p className="text-slate-400 text-sm mt-1">Select folder and limit, then click "Load Emails"</p>
-          </Card>
+        {/* Loading state */}
+        {fetching && (
+          <div className="flex items-center justify-center py-12 gap-3">
+            <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
+            <span className="text-sm text-slate-500">Connecting to Microsoft Graph…</span>
+          </div>
         )}
 
         {/* Email list */}
         {emails.map(email => {
-          const result      = results.get(email.uid)
-          const isProcessing = processing === email.uid
-          const isExpanded  = expandedUid === email.uid
+          const result       = results.get(email.graphId)
+          const isProcessing = processing === email.graphId
+          const isExpanded   = expandedId === email.graphId
+          const isNew        = newIds.has(email.graphId)
 
           return (
             <Card
-              key={email.uid}
+              key={email.graphId}
               className={`overflow-hidden transition-all ${
-                result?.success ? 'border-green-200' :
-                result?.error   ? 'border-red-200' :
-                !email.isRead   ? 'border-brand-200 bg-brand-50/30' : ''
+                isNew            ? 'border-brand-400 ring-1 ring-brand-300' :
+                result?.success  ? 'border-green-200' :
+                result?.error    ? 'border-red-200'   :
+                !email.isRead    ? 'border-brand-200 bg-brand-50/30' : ''
               }`}
             >
               <div className="p-4">
@@ -240,7 +284,8 @@ export default function MailInboxPage() {
                           <FolderOpen className="w-3 h-3 mr-1" />{email.folder}
                         </Badge>
                       )}
-                      {!email.isRead && <Badge color="indigo">Unread</Badge>}
+                      {isNew && <Badge color="indigo">New</Badge>}
+                      {!isNew && !email.isRead && <Badge color="indigo">Unread</Badge>}
                       {email.hasAttachments && (
                         <Badge color="amber"><Paperclip className="w-3 h-3 mr-1" />Attachment</Badge>
                       )}
@@ -267,7 +312,7 @@ export default function MailInboxPage() {
                   {/* Actions */}
                   <div className="flex gap-1.5 flex-shrink-0">
                     <button
-                      onClick={() => setExpandedUid(isExpanded ? null : email.uid)}
+                      onClick={() => setExpandedId(isExpanded ? null : email.graphId)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
                       title={isExpanded ? 'Collapse' : 'Preview body'}
                     >
@@ -313,9 +358,9 @@ export default function MailInboxPage() {
                   <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-4 gap-3">
                     {[
                       { label: 'Booking Ref', value: result.data.bookingRef },
-                      { label: 'Status',       value: result.data.isNew ? 'New booking' : 'Updated' },
-                      { label: 'P&L Lines',    value: String(result.data.pnlLines) },
-                      { label: 'Chart Items',  value: String(result.data.agendaItems) },
+                      { label: 'Status',      value: result.data.status === 'existing' ? 'Already created' : result.data.isNew ? 'New booking' : 'Updated' },
+                      { label: 'P&L Lines',   value: result.data.status === 'existing' ? '—' : String(result.data.pnlLines) },
+                      { label: 'Chart Items', value: result.data.status === 'existing' ? '—' : String(result.data.agendaItems) },
                     ].map(item => (
                       <div key={item.label}>
                         <p className="text-[10px] text-slate-400 uppercase tracking-wide">{item.label}</p>
@@ -335,11 +380,13 @@ export default function MailInboxPage() {
           )
         })}
 
-        {fetching && (
-          <div className="flex items-center justify-center py-12 gap-3">
-            <Loader2 className="w-5 h-5 text-brand-500 animate-spin" />
-            <span className="text-sm text-slate-500">Connecting to Microsoft Graph…</span>
-          </div>
+        {/* Empty state */}
+        {!fetching && emails.length === 0 && (
+          <Card className="p-12 text-center">
+            <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-500 font-medium">No emails found</p>
+            <p className="text-slate-400 text-sm mt-1">Checking confirm.booking@aahaas.com…</p>
+          </Card>
         )}
       </div>
     </div>

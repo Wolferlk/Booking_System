@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { rawBody, subject, emailType } = body as { rawBody: string; subject: string; emailType?: string }
+  const { rawBody, subject, emailType, graphId } = body as { rawBody: string; subject: string; emailType?: string; graphId?: string }
   if (!rawBody) return buildApiError('rawBody is required')
 
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
@@ -274,7 +274,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 5. Activity log ───────────────────────────────────────────────────────
+  // ── 5. Mark as processed (dedup key for mail inbox) ──────────────────────
+  if (graphId) {
+    await prisma.systemSetting.upsert({
+      where:  { key: `processed_email_${graphId}` },
+      update: { value: `${bookingRef}|${new Date().toISOString()}` },
+      create: { key: `processed_email_${graphId}`, value: `${bookingRef}|${new Date().toISOString()}` },
+    }).catch(() => {})
+  }
+
+  // ── 6. Activity log ───────────────────────────────────────────────────────
   await logActivity({
     userId:     session.user.id,
     action:     ACTION.BOOKING_CREATED,
