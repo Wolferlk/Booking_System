@@ -28,26 +28,31 @@ export async function POST(
   if (!notifySecret) return buildApiError('WHATSAPP_NOTIFY_SECRET not configured', 500)
 
   const appUrl = (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? '').replace(/\/+$/, '')
+  // Only attach PDF when running on a real public HTTPS URL — localhost URLs cause the server to return 403
+  const canAttach = attachPdf && appUrl.startsWith('https://')
 
-  const payload: Record<string, unknown> = { to, name, message }
+  const form = new URLSearchParams()
+  form.append('to',      to)
+  form.append('name',    name)
+  form.append('message', message)
 
-  if (attachPdf && appUrl) {
-    payload.files = [
+  if (canAttach) {
+    form.append('files', JSON.stringify([
       {
         url:      `${appUrl}/print/booking/${params.ref}`,
         filename: `AppleHolidays-${params.ref}-TourDetails.pdf`,
         caption:  'Your tour details from Apple Holidays',
       },
-    ]
+    ]))
   }
 
   const res = await fetch(WHATSAPP_API, {
     method:  'POST',
     headers: {
-      'Content-Type':    'application/json',
+      'Content-Type':    'application/x-www-form-urlencoded',
       'x-notify-secret': notifySecret,
     },
-    body: JSON.stringify(payload),
+    body: form.toString(),
   })
 
   const text = await res.text()
