@@ -6,9 +6,7 @@ import { logActivity, ACTION } from '@/lib/activity'
 import fs from 'fs'
 import path from 'path'
 
-// Force Node.js runtime — required for IMAP/Graph libs
 export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
 
 // ── Validation helper ─────────────────────────────────────────────────────────
 function validationResponse(token: string) {
