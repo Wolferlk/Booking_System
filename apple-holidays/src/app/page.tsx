@@ -26,15 +26,15 @@ const DESTINATIONS = [
     code: 'MMT_LK',
     flag: '🇱🇰',
     description: 'Colombo · Kandy · Sigiriya · Galle',
-    active: false,
-    href: null,
-    tag: 'Coming Soon',
-    gradient: 'from-yellow-700/10 via-yellow-600/8 to-red-800/10',
-    border: 'border-yellow-700/20',
-    glow: '',
-    accent: 'text-yellow-600',
-    dot: 'bg-slate-600',
-    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+    active: true,
+    href: '/srilanka',
+    tag: 'Live',
+    gradient: 'from-amber-600/20 via-amber-500/10 to-yellow-600/15',
+    border: 'border-amber-500/40 hover:border-amber-400/60',
+    glow: 'hover:shadow-amber-500/10',
+    accent: 'text-amber-400',
+    dot: 'bg-emerald-400',
+    tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
   {
     id: 'malaysia',
@@ -187,7 +187,7 @@ export default function HomePage() {
 
         {/* Sub-info */}
         <p className="mt-10 text-slate-600 text-xs text-center">
-          Only Vietnam (MMT_VN) is currently operational. Other destinations launch soon.
+          Vietnam (MMT_VN) and Sri Lanka (MMT_LK) are live. Malaysia and Singapore launch soon.
         </p>
       </main>
 

@@ -131,7 +131,7 @@ export default function NewBookingPage() {
   return (
     <div>
       <Header title="New Booking" subtitle="Create a booking from quotation or enter manually" />
-      <div className="p-8 space-y-6 max-w-5xl">
+      <div className="p-8 space-y-6 ">
 
         {/* AI Upload */}
         <Section title="🤖 AI Document Parser">

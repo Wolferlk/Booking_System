@@ -73,6 +73,7 @@ export default function Sidebar() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
   const navItems = role ? NAV_ITEMS[role] ?? [] : []
+  const destLabel = session?.user?.destination === 'SRI_LANKA' ? 'MMT Sri Lanka' : 'MMT Vietnam'
 
   return (
     <aside className="fixed left-0 top-0 h-full w-[260px] bg-slate-900 flex flex-col z-30 border-r border-slate-800">
@@ -84,7 +85,7 @@ export default function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-sm leading-tight">AppleHolidays</p>
-            <p className="text-slate-500 text-[10px] uppercase tracking-wider">MMT Vietnam</p>
+            <p className="text-slate-500 text-[10px] uppercase tracking-wider">{destLabel}</p>
           </div>
           <Home className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors flex-shrink-0" />
         </Link>

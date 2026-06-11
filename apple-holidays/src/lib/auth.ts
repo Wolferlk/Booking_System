@@ -2,7 +2,7 @@ import { NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
-import type { UserRole } from '@prisma/client'
+import type { Destination, UserRole } from '@prisma/client'
 
 declare module 'next-auth' {
   interface Session {
@@ -12,6 +12,7 @@ declare module 'next-auth' {
       name: string
       role: UserRole
       avatar?: string | null
+      destination: Destination
     }
   }
   interface User {
@@ -20,6 +21,7 @@ declare module 'next-auth' {
     name: string
     role: UserRole
     avatar?: string | null
+    destination: Destination
   }
 }
 
@@ -28,6 +30,7 @@ declare module 'next-auth/jwt' {
     id: string
     role: UserRole
     avatar?: string | null
+    destination: Destination
   }
 }
 
@@ -57,6 +60,7 @@ export const authOptions: NextAuthOptions = {
           name: user.name,
           role: user.role,
           avatar: user.avatar,
+          destination: user.destination,
         }
       },
     }),
@@ -67,6 +71,7 @@ export const authOptions: NextAuthOptions = {
         token.id = user.id
         token.role = user.role
         token.avatar = user.avatar
+        token.destination = user.destination
       }
       return token
     },
@@ -75,6 +80,7 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.id
         session.user.role = token.role
         session.user.avatar = token.avatar
+        session.user.destination = token.destination
       }
       return session
     },

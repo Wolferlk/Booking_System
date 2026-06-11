@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import { Eye, EyeOff, Loader2, ChevronLeft, FileText, Truck, MapPin, BarChart2, Globe, Shield } from 'lucide-react'
 
-const ROLE_META: Record<string, {
+type RoleMeta = {
   label: string
   email: string
   icon: React.ComponentType<{ className?: string }>
@@ -15,68 +15,68 @@ const ROLE_META: Record<string, {
   bg: string
   border: string
   description: string
-}> = {
-  BT_USER: {
-    label: 'Booking Team',
-    email: 'bt@apple.com',
-    icon: FileText,
-    color: 'text-blue-400',
-    bg: 'bg-blue-500/10',
-    border: 'border-blue-500/30',
-    description: 'Bookings, change requests & lifecycle management',
+}
+
+const ROLE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  BT_USER: FileText,
+  GT_USER: Truck,
+  TE_USER: MapPin,
+  AC_USER: BarChart2,
+  CLIENT: Globe,
+  SUPER_ADMIN: Shield,
+}
+
+const ROLE_STYLES: Record<string, Pick<RoleMeta, 'label' | 'color' | 'bg' | 'border' | 'description'>> = {
+  BT_USER: { label: 'Booking Team', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/30', description: 'Bookings, change requests & lifecycle management' },
+  GT_USER: { label: 'Ground Team', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', description: 'Ground logistics, drivers & vehicle assignments' },
+  TE_USER: { label: 'Travel Experiences', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/30', description: 'Guest communication, reminders & payments' },
+  AC_USER: { label: 'Accounts Team', color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/30', description: 'P&L management, payment confirmation & profit reports' },
+  CLIENT: { label: 'Client View', color: 'text-cyan-400', bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', description: 'Traveller & agent portal — your trip itinerary' },
+  SUPER_ADMIN: { label: 'Super Admin', color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/30', description: 'Full system access — all modules and audit log' },
+}
+
+const DEMO_EMAILS: Record<string, Record<string, string>> = {
+  vietnam: {
+    BT_USER: 'bt@apple.com',
+    GT_USER: 'gt@apple.com',
+    TE_USER: 'te@apple.com',
+    AC_USER: 'ac@apple.com',
+    CLIENT: 'client@apple.com',
+    SUPER_ADMIN: 'admin@apple.com',
   },
-  GT_USER: {
-    label: 'Ground Team',
-    email: 'gt@apple.com',
-    icon: Truck,
-    color: 'text-emerald-400',
-    bg: 'bg-emerald-500/10',
-    border: 'border-emerald-500/30',
-    description: 'Ground logistics, drivers & vehicle assignments',
+  srilanka: {
+    BT_USER: 'bt-sl@apple.com',
+    GT_USER: 'gt-sl@apple.com',
+    TE_USER: 'te-sl@apple.com',
+    AC_USER: 'ac-sl@apple.com',
+    CLIENT: 'client-sl@apple.com',
+    SUPER_ADMIN: 'admin@apple.com',
   },
-  TE_USER: {
-    label: 'Travel Experiences',
-    email: 'te@apple.com',
-    icon: MapPin,
-    color: 'text-purple-400',
-    bg: 'bg-purple-500/10',
-    border: 'border-purple-500/30',
-    description: 'Guest communication, reminders & payments',
-  },
-  AC_USER: {
-    label: 'Accounts Team',
-    email: 'ac@apple.com',
-    icon: BarChart2,
-    color: 'text-amber-400',
-    bg: 'bg-amber-500/10',
-    border: 'border-amber-500/30',
-    description: 'P&L management, payment confirmation & profit reports',
-  },
-  CLIENT: {
-    label: 'Client View',
-    email: 'client@apple.com',
-    icon: Globe,
-    color: 'text-cyan-400',
-    bg: 'bg-cyan-500/10',
-    border: 'border-cyan-500/30',
-    description: 'Traveller & agent portal — your trip itinerary',
-  },
-  SUPER_ADMIN: {
-    label: 'Super Admin',
-    email: 'admin@apple.com',
-    icon: Shield,
-    color: 'text-red-400',
-    bg: 'bg-red-500/10',
-    border: 'border-red-500/30',
-    description: 'Full system access — all modules and audit log',
-  },
+}
+
+const DEST_META: Record<string, { label: string; backHref: string }> = {
+  vietnam: { label: 'MMT Vietnam', backHref: '/vietnam' },
+  srilanka: { label: 'MMT Sri Lanka', backHref: '/srilanka' },
+}
+
+function buildRoleMeta(roleId: string, from: string): RoleMeta | null {
+  const styles = ROLE_STYLES[roleId]
+  if (!styles) return null
+  const emails = DEMO_EMAILS[from] ?? DEMO_EMAILS.vietnam
+  return {
+    ...styles,
+    icon: ROLE_ICONS[roleId] ?? FileText,
+    email: emails[roleId] ?? '',
+  }
 }
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const roleParam = searchParams.get('role') ?? ''
-  const roleMeta = ROLE_META[roleParam] ?? null
+  const fromParam = searchParams.get('from') ?? 'vietnam'
+  const destMeta = DEST_META[fromParam] ?? DEST_META.vietnam
+  const roleMeta = buildRoleMeta(roleParam, fromParam)
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -128,7 +128,7 @@ function LoginForm() {
         {/* Back nav */}
         <div className="flex items-center gap-4 mb-8">
           <Link
-            href="/vietnam"
+            href={destMeta.backHref}
             className="flex items-center gap-1.5 text-slate-500 hover:text-white transition-colors text-sm group"
           >
             <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
@@ -144,7 +144,7 @@ function LoginForm() {
             </div>
             <div className="text-left">
               <p className="text-white font-bold text-xl leading-tight">AppleHolidays</p>
-              <p className="text-slate-500 text-xs tracking-wider">MMT Vietnam</p>
+              <p className="text-slate-500 text-xs tracking-wider">{destMeta.label}</p>
             </div>
           </div>
 
@@ -239,7 +239,7 @@ function LoginForm() {
           {!roleMeta && (
             <div className="mt-6 pt-5 border-t border-white/8">
               <p className="text-xs text-slate-600 text-center mb-3">Or sign in as a specific role</p>
-              <Link href="/vietnam" className="w-full flex items-center justify-center gap-2 py-2 text-sm text-slate-400 hover:text-white transition-colors">
+              <Link href={destMeta.backHref} className="w-full flex items-center justify-center gap-2 py-2 text-sm text-slate-400 hover:text-white transition-colors">
                 View all role portals
               </Link>
             </div>
@@ -247,7 +247,7 @@ function LoginForm() {
         </div>
 
         <p className="text-center text-slate-700 text-xs mt-6">
-          © {new Date().getFullYear()} AppleHolidays MMT Vietnam
+          © {new Date().getFullYear()} AppleHolidays {destMeta.label}
         </p>
       </div>
     </div>

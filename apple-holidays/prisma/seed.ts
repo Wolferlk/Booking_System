@@ -18,31 +18,60 @@ async function main() {
     prisma.user.upsert({
       where: { email: 'bt@apple.com' },
       update: {},
-      create: { email: 'bt@apple.com', name: 'Esther Booking', password, role: 'BT_USER', phone: '+1-555-0002' },
+      create: { email: 'bt@apple.com', name: 'Esther Booking', password, role: 'BT_USER', destination: 'VIETNAM', phone: '+1-555-0002' },
     }),
     prisma.user.upsert({
       where: { email: 'gt@apple.com' },
       update: {},
-      create: { email: 'gt@apple.com', name: 'Ground Ops', password, role: 'GT_USER', phone: '+1-555-0003' },
+      create: { email: 'gt@apple.com', name: 'Ground Ops', password, role: 'GT_USER', destination: 'VIETNAM', phone: '+1-555-0003' },
     }),
     prisma.user.upsert({
       where: { email: 'te@apple.com' },
       update: {},
-      create: { email: 'te@apple.com', name: 'Travel Experience', password, role: 'TE_USER', phone: '+1-555-0004' },
+      create: { email: 'te@apple.com', name: 'Travel Experience', password, role: 'TE_USER', destination: 'VIETNAM', phone: '+1-555-0004' },
     }),
     prisma.user.upsert({
       where: { email: 'ac@apple.com' },
       update: {},
-      create: { email: 'ac@apple.com', name: 'Accounts Manager', password, role: 'AC_USER', phone: '+1-555-0005' },
+      create: { email: 'ac@apple.com', name: 'Accounts Manager', password, role: 'AC_USER', destination: 'VIETNAM', phone: '+1-555-0005' },
     }),
     prisma.user.upsert({
       where: { email: 'client@apple.com' },
       update: {},
-      create: { email: 'client@apple.com', name: 'Vikas Arora', password, role: 'CLIENT', phone: '+91-98765-43210' },
+      create: { email: 'client@apple.com', name: 'Vikas Arora', password, role: 'CLIENT', destination: 'VIETNAM', phone: '+91-98765-43210' },
     }),
   ])
 
-  console.log('✅ Users created')
+  // ─── Sri Lanka Users ─────────────────────────────────────────────────
+  await Promise.all([
+    prisma.user.upsert({
+      where: { email: 'bt-sl@apple.com' },
+      update: {},
+      create: { email: 'bt-sl@apple.com', name: 'SL Booking Team', password, role: 'BT_USER', destination: 'SRI_LANKA', phone: '+94-77-123-0001' },
+    }),
+    prisma.user.upsert({
+      where: { email: 'gt-sl@apple.com' },
+      update: {},
+      create: { email: 'gt-sl@apple.com', name: 'SL Ground Ops', password, role: 'GT_USER', destination: 'SRI_LANKA', phone: '+94-77-123-0002' },
+    }),
+    prisma.user.upsert({
+      where: { email: 'te-sl@apple.com' },
+      update: {},
+      create: { email: 'te-sl@apple.com', name: 'SL Travel Experience', password, role: 'TE_USER', destination: 'SRI_LANKA', phone: '+94-77-123-0003' },
+    }),
+    prisma.user.upsert({
+      where: { email: 'ac-sl@apple.com' },
+      update: {},
+      create: { email: 'ac-sl@apple.com', name: 'SL Accounts Manager', password, role: 'AC_USER', destination: 'SRI_LANKA', phone: '+94-77-123-0004' },
+    }),
+    prisma.user.upsert({
+      where: { email: 'client-sl@apple.com' },
+      update: {},
+      create: { email: 'client-sl@apple.com', name: 'Rajiv Perera', password, role: 'CLIENT', destination: 'SRI_LANKA', phone: '+94-71-234-5678' },
+    }),
+  ])
+
+  console.log('✅ Users created (Vietnam + Sri Lanka)')
 
   // ─── Drivers ────────────────────────────────────────────────────────
   const [driver1, driver2] = await Promise.all([

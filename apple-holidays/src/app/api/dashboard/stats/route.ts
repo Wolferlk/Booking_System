@@ -4,10 +4,14 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { addDays } from 'date-fns'
+import type { UserRole } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
+
+  const role = session.user.role as UserRole
+  const destFilter = role !== 'SUPER_ADMIN' ? { destination: session.user.destination } : {}
 
   const now = new Date()
   const next30Days = addDays(now, 30)
@@ -21,24 +25,27 @@ export async function GET(req: NextRequest) {
     byStatusRaw,
     pnlAggregate,
   ] = await Promise.all([
-    prisma.booking.count(),
+    prisma.booking.count({ where: destFilter }),
     prisma.booking.count({
       where: {
+        ...destFilter,
         status: {
           notIn: ['COMPLETED', 'CANCELLED'],
         },
       },
     }),
-    prisma.booking.count({ where: { status: 'GT_REVIEW' } }),
-    prisma.booking.count({ where: { status: 'AWAITING_PAYMENT_CONFIRM' } }),
+    prisma.booking.count({ where: { ...destFilter, status: 'GT_REVIEW' } }),
+    prisma.booking.count({ where: { ...destFilter, status: 'AWAITING_PAYMENT_CONFIRM' } }),
     prisma.booking.count({
       where: {
+        ...destFilter,
         arrivalDate: { gte: now, lte: next30Days },
         status: { notIn: ['CANCELLED'] },
       },
     }),
     prisma.booking.groupBy({
       by: ['status'],
+      where: destFilter,
       _count: { _all: true },
     }),
     prisma.pNLLineItem.aggregate({
@@ -51,8 +58,9 @@ export async function GET(req: NextRequest) {
     byStatus[s.status] = s._count._all
   })
 
-  // Simplified profit calculation
+  // Simplified profit calculation — filtered by destination
   const allPnl = await prisma.pNL.findMany({
+    where: { booking: destFilter },
     include: { lineItems: true },
   })
 

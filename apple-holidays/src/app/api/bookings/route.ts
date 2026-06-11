@@ -20,6 +20,11 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = {}
 
+  // Filter by destination — SUPER_ADMIN sees all destinations
+  if (role !== 'SUPER_ADMIN') {
+    where.destination = session.user.destination
+  }
+
   // Clients can only see their own booking
   if (role === 'CLIENT') {
     where.clientUserId = session.user.id
@@ -102,6 +107,7 @@ export async function POST(req: NextRequest) {
       agentBookingId,
       agent,
       fileHandler,
+      destination: session.user.destination,
       arrivalDate: new Date(arrivalDate),
       departureDate: new Date(departureDate),
       paxAdults: Number(paxAdults),

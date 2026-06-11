@@ -25,10 +25,33 @@ export default function TEReviewPage() {
       router.replace('/dashboard')
       return
     }
-    fetch('/api/bookings?status=GT_REVIEW,GT_VERIFIED,CHANGE_REQUESTED&limit=100')
-      .then(r => r.json())
-      .then(j => { if (j.success) setBookings(j.data?.bookings ?? j.data ?? []) })
-      .finally(() => setLoading(false))
+    let mounted = true
+    setLoading(true)
+    ;(async () => {
+      try {
+        const r = await fetch('/api/bookings?status=GT_REVIEW,GT_VERIFIED,CHANGE_REQUESTED&limit=100')
+        const text = await r.text()
+        if (!r.ok) {
+          console.error('Bookings fetch failed', r.status, text)
+          return
+        }
+        if (!text) {
+          console.warn('Bookings API returned empty body')
+          return
+        }
+        let j
+        try { j = JSON.parse(text) } catch (e) {
+          console.error('Invalid JSON from bookings API', text.slice(0, 200))
+          return
+        }
+        if (mounted && j?.success) setBookings(j.data?.bookings ?? j.data ?? [])
+      } catch (err) {
+        console.error('Fetch bookings error', err)
+      } finally {
+        if (mounted) setLoading(false)
+      }
+    })()
+    return () => { mounted = false }
   }, [role])
 
   const filtered = filter === 'all'

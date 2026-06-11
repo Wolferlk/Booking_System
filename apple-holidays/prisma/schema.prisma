@@ -56,6 +56,11 @@ enum ChangeRequestStatus {
   RESOLVED
 }
 
+enum Destination {
+  VIETNAM
+  SRI_LANKA
+}
+
 enum PassengerType {
   ADULT
   CHILD
@@ -98,7 +103,8 @@ model User {
   role          UserRole
   phone         String?
   avatar        String?
-  isActive      Boolean   @default(true)
+  isActive      Boolean     @default(true)
+  destination   Destination @default(VIETNAM)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -162,6 +168,8 @@ model Booking {
 
   sourceDocUrl          String?       @db.Text
   sourceDocName         String?
+
+  destination           Destination   @default(VIETNAM)
 
   clientPortalUnlockedAt DateTime?
   recheckCompletedAt    DateTime?
