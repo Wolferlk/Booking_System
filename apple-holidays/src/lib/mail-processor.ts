@@ -5,11 +5,21 @@ import openai from '@/lib/openai'
 
 export interface ProcessedEmail {
   uid: number
+  graphId: string
   subject: string
   from: string
+  fromName: string
+  to: string[]
+  cc: string[]
   date: string
   type: 'TOUR_CONFIRMATION' | 'PNL' | 'UNKNOWN'
   rawBody: string
+  bodyHtml: string
+  folder: string
+  isRead: boolean
+  hasAttachments: boolean
+  importance: string
+  conversationId: string
   parsed: Record<string, unknown> | null
   error?: string
 }
@@ -46,7 +56,7 @@ export interface ExtractedBooking {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function detectEmailType(subject: string, body: string): 'TOUR_CONFIRMATION' | 'PNL' | 'UNKNOWN' {
+export function detectEmailType(subject: string, body: string): 'TOUR_CONFIRMATION' | 'PNL' | 'UNKNOWN' {
   const s = subject.toLowerCase()
   const b = body.toLowerCase().slice(0, 2000)
 
@@ -176,7 +186,7 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
 
 // ── Microsoft Graph API email reader ─────────────────────────────────────────
 
-async function getGraphToken(): Promise<string> {
+export async function getGraphToken(): Promise<string> {
   const tenantId     = process.env.Azure_TENANT_ID
   const clientId     = process.env.Azure_CLIENT_ID
   const clientSecret = process.env.Azure_CLIENT_SECRET
@@ -206,70 +216,228 @@ async function getGraphToken(): Promise<string> {
   return json.access_token
 }
 
-export async function fetchUnprocessedEmails(limit = 10): Promise<ProcessedEmail[]> {
-  const user = process.env.Outlookmail_USERNAME
-  if (!user) throw new Error('Outlookmail_USERNAME not set')
-
-  const token = await getGraphToken()
-
-  // Fetch latest `limit` messages from inbox
-  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}/mailFolders/inbox/messages` +
-    `?$top=${limit}&$orderby=receivedDateTime desc` +
-    `&$select=id,subject,from,receivedDateTime,body,bodyPreview`
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-  })
-
-  if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Graph API error ${res.status}: ${err}`)
-  }
-
-  const json = await res.json() as { value: GraphMessage[] }
-  const messages = json.value ?? []
-
-  const results: ProcessedEmail[] = []
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i]
-    const subject  = msg.subject ?? ''
-    const fromAddr = msg.from?.emailAddress?.address ?? ''
-    const date     = msg.receivedDateTime ?? new Date().toISOString()
-    const rawBody  = msg.body?.contentType === 'text'
-      ? (msg.body.content ?? msg.bodyPreview ?? '')
-      : (msg.bodyPreview ?? '')
-
-    // Get full plain-text body if HTML
-    let bodyText = rawBody
-    if (msg.body?.contentType === 'html' && msg.body.content) {
-      try {
-        const parsed = await simpleParser(msg.body.content)
-        bodyText = parsed.text || rawBody
-      } catch {
-        bodyText = rawBody
-      }
-    }
-
-    results.push({
-      uid:     i + 1,
-      subject,
-      from:    fromAddr,
-      date,
-      type:    detectEmailType(subject, bodyText),
-      rawBody: bodyText.slice(0, 20000),
-      parsed:  null,
-    })
-  }
-
-  return results
-}
-
 interface GraphMessage {
   id: string
   subject?: string
   from?: { emailAddress?: { address?: string; name?: string } }
+  toRecipients?: { emailAddress?: { address?: string; name?: string } }[]
+  ccRecipients?:  { emailAddress?: { address?: string; name?: string } }[]
   receivedDateTime?: string
   bodyPreview?: string
   body?: { contentType?: string; content?: string }
+  isRead?: boolean
+  hasAttachments?: boolean
+  importance?: string
+  conversationId?: string
+  parentFolderId?: string
+  inferenceClassification?: string
+}
+
+interface GraphFolder { id: string; displayName: string }
+
+async function graphGet<T>(token: string, url: string): Promise<T> {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Graph ${res.status}: ${err.slice(0, 300)}`)
+  }
+  return res.json() as Promise<T>
+}
+
+async function graphGetAllPages<T>(token: string, url: string): Promise<T[]> {
+  const items: T[] = []
+  let nextUrl: string | undefined = url
+  while (nextUrl) {
+    const page: { value: T[]; '@odata.nextLink'?: string } = await graphGet(token, nextUrl)
+    items.push(...(page.value ?? []))
+    nextUrl = page['@odata.nextLink']
+  }
+  return items
+}
+
+function parseBody(msg: GraphMessage): { text: string; html: string } {
+  const content = msg.body?.content ?? ''
+  const type = msg.body?.contentType ?? 'text'
+  if (type === 'html') {
+    // Strip tags for plain text
+    const stripped = content
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+    return { text: stripped, html: content }
+  }
+  return { text: content, html: '' }
+}
+
+export async function fetchUnprocessedEmails(
+  limit = 50,
+  folder: 'inbox' | 'all' = 'all',
+): Promise<ProcessedEmail[]> {
+  const user = process.env.Outlookmail_USERNAME
+  if (!user) throw new Error('Outlookmail_USERNAME not set')
+
+  const token = await getGraphToken()
+  const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
+  const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
+
+  // Build folder ID → name map
+  const folderMap = new Map<string, string>()
+  if (folder === 'all') {
+    try {
+      const folders = await graphGetAllPages<GraphFolder>(token, `${base}/mailFolders?$top=50`)
+      folders.forEach(f => folderMap.set(f.id, f.displayName))
+      // Also fetch child folders
+      for (const f of folders) {
+        try {
+          const children = await graphGetAllPages<GraphFolder>(token, `${base}/mailFolders/${f.id}/childFolders?$top=50`)
+          children.forEach(c => folderMap.set(c.id, `${f.displayName} / ${c.displayName}`))
+        } catch { /* skip */ }
+      }
+    } catch { /* folder map is optional */ }
+  }
+
+  const url = folder === 'inbox'
+    ? `${base}/mailFolders/inbox/messages?$top=${Math.min(limit, 999)}&$orderby=receivedDateTime desc&$select=${select}`
+    : `${base}/messages?$top=${Math.min(limit, 999)}&$orderby=receivedDateTime desc&$select=${select}`
+
+  const messages = await graphGetAllPages<GraphMessage>(token, url)
+  const limited  = messages.slice(0, limit)
+
+  const results: ProcessedEmail[] = limited.map((msg, i) => {
+    const { text, html } = parseBody(msg)
+    const subject  = msg.subject ?? ''
+    const bodyText = text || msg.bodyPreview || ''
+
+    return {
+      uid:            i + 1,
+      graphId:        msg.id,
+      subject,
+      from:           msg.from?.emailAddress?.address ?? '',
+      fromName:       msg.from?.emailAddress?.name ?? '',
+      to:             (msg.toRecipients ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
+      cc:             (msg.ccRecipients  ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
+      date:           msg.receivedDateTime ?? new Date().toISOString(),
+      type:           detectEmailType(subject, bodyText),
+      rawBody:        bodyText.slice(0, 30000),
+      bodyHtml:       html.slice(0, 100000),
+      folder:         folderMap.get(msg.parentFolderId ?? '') ?? (msg.inferenceClassification === 'focused' ? 'Focused' : 'Inbox'),
+      isRead:         msg.isRead ?? true,
+      hasAttachments: msg.hasAttachments ?? false,
+      importance:     msg.importance ?? 'normal',
+      conversationId: msg.conversationId ?? '',
+      parsed:         null,
+    }
+  })
+
+  return results
+}
+
+// Fetch a single message by Graph message ID (used by webhook)
+export async function fetchMessageById(graphMessageId: string): Promise<ProcessedEmail | null> {
+  const user = process.env.Outlookmail_USERNAME
+  if (!user) return null
+
+  const token = await getGraphToken()
+  const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
+  const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}/messages/${graphMessageId}?$select=${select}`
+
+  try {
+    const msg: GraphMessage = await graphGet(token, url)
+    const { text, html } = parseBody(msg)
+    const subject = msg.subject ?? ''
+    const bodyText = text || msg.bodyPreview || ''
+
+    return {
+      uid:            0,
+      graphId:        msg.id,
+      subject,
+      from:           msg.from?.emailAddress?.address ?? '',
+      fromName:       msg.from?.emailAddress?.name ?? '',
+      to:             (msg.toRecipients ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
+      cc:             (msg.ccRecipients  ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
+      date:           msg.receivedDateTime ?? new Date().toISOString(),
+      type:           detectEmailType(subject, bodyText),
+      rawBody:        bodyText.slice(0, 30000),
+      bodyHtml:       html.slice(0, 100000),
+      folder:         'Inbox',
+      isRead:         msg.isRead ?? false,
+      hasAttachments: msg.hasAttachments ?? false,
+      importance:     msg.importance ?? 'normal',
+      conversationId: msg.conversationId ?? '',
+      parsed:         null,
+    }
+  } catch {
+    return null
+  }
+}
+
+// ── Webhook subscription management ──────────────────────────────────────────
+
+// In-memory cache (recreated on server restart — acceptable for webhook subs)
+let cachedSubId: string | null = null
+let cachedSubExpiry: Date | null = null
+
+export async function ensureWebhookSubscription(notificationUrl: string): Promise<string> {
+  const now = new Date()
+
+  // Renew if expiring within 1 hour
+  if (cachedSubId && cachedSubExpiry && cachedSubExpiry.getTime() - now.getTime() > 3600_000) {
+    return cachedSubId
+  }
+
+  const token  = await getGraphToken()
+  const user   = process.env.Outlookmail_USERNAME!
+  const secret = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
+
+  // Expiry: 3 days from now (Graph max for mail)
+  const expiry = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+
+  if (cachedSubId) {
+    // Try to renew existing subscription
+    try {
+      await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${cachedSubId}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expirationDateTime: expiry.toISOString() }),
+      })
+      cachedSubExpiry = expiry
+      return cachedSubId
+    } catch { /* fall through to create new */ }
+  }
+
+  // Create new subscription
+  const res = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      changeType:          'created',
+      notificationUrl,
+      resource:            `users/${user}/mailFolders/inbox/messages`,
+      expirationDateTime:  expiry.toISOString(),
+      clientState:         secret,
+    }),
+  })
+
+  const json = await res.json() as { id?: string; error?: { message?: string } }
+  if (!json.id) throw new Error(`Subscription failed: ${json.error?.message ?? JSON.stringify(json)}`)
+
+  cachedSubId     = json.id
+  cachedSubExpiry = expiry
+  return json.id
+}
+
+export function getSubscriptionStatus(): { active: boolean; id: string | null; expiry: string | null } {
+  const now = new Date()
+  const active = !!(cachedSubId && cachedSubExpiry && cachedSubExpiry > now)
+  return {
+    active,
+    id:     cachedSubId,
+    expiry: cachedSubExpiry?.toISOString() ?? null,
+  }
 }
