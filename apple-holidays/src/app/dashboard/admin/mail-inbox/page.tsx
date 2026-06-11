@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import {
   Mail, RefreshCw, Zap, CheckCircle, AlertCircle, Loader2,
   ExternalLink, Clock, Paperclip, Eye,
-  ChevronUp, FolderOpen, Webhook, WifiOff, Wifi,
+  ChevronUp, FolderOpen, WifiOff, Wifi,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -38,11 +38,13 @@ export default function MailInboxPage() {
   const [expandedUid, setExpandedUid] = useState<number | null>(null)
   const [limit,  setLimit]            = useState(50)
   const [folder, setFolder]           = useState<'all' | 'inbox'>('all')
-  const [subStatus, setSubStatus]     = useState<SubStatus | null>(null)
-  const [subscribing, setSubscribing] = useState(false)
+  const [subStatus, setSubStatus] = useState<SubStatus | null>(null)
 
   useEffect(() => {
-    fetch('/api/mail/subscribe').then(r => r.json()).then(j => { if (j.success) setSubStatus(j.data) }).catch(() => {})
+    fetch('/api/mail/subscribe')
+      .then(r => r.json())
+      .then(j => { if (j.success) setSubStatus(j.data) })
+      .catch(() => {})
   }, [])
 
   async function fetchEmails() {
@@ -84,21 +86,6 @@ export default function MailInboxPage() {
       toast.error(msg)
     } finally {
       setProcessing(null)
-    }
-  }
-
-  async function enableWebhook() {
-    setSubscribing(true)
-    try {
-      const res  = await fetch('/api/mail/subscribe', { method: 'POST' })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      setSubStatus(json.data)
-      toast.success('Auto-process webhook active — emails will be processed automatically')
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Failed to enable webhook')
-    } finally {
-      setSubscribing(false)
     }
   }
 
@@ -182,14 +169,7 @@ export default function MailInboxPage() {
               </div>
             </div>
             {!subStatus?.active && (
-              <Button
-                size="sm"
-                loading={subscribing}
-                icon={<Webhook className="w-4 h-4" />}
-                onClick={enableWebhook}
-              >
-                Enable Auto-Process
-              </Button>
+              <span className="text-xs text-amber-600 font-medium">Auto-activates on deploy</span>
             )}
           </div>
         </Card>

@@ -377,67 +377,120 @@ export async function fetchMessageById(graphMessageId: string): Promise<Processe
   }
 }
 
-// ── Webhook subscription management ──────────────────────────────────────────
+// ── Webhook subscription — DB-persisted, always-on ───────────────────────────
 
-// In-memory cache (recreated on server restart — acceptable for webhook subs)
-let cachedSubId: string | null = null
-let cachedSubExpiry: Date | null = null
+import { prisma } from '@/lib/prisma'
 
-export async function ensureWebhookSubscription(notificationUrl: string): Promise<string> {
-  const now = new Date()
+const SK_ID     = 'webhook_subscription_id'
+const SK_EXPIRY = 'webhook_subscription_expiry'
+const SK_URL    = 'webhook_subscription_url'
 
-  // Renew if expiring within 1 hour
-  if (cachedSubId && cachedSubExpiry && cachedSubExpiry.getTime() - now.getTime() > 3600_000) {
-    return cachedSubId
-  }
+async function dbGet(key: string): Promise<string | null> {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key } })
+    return row?.value ?? null
+  } catch { return null }
+}
 
+async function dbSet(key: string, value: string) {
+  await prisma.systemSetting.upsert({
+    where:  { key },
+    update: { value },
+    create: { key, value },
+  })
+}
+
+function notificationUrl(): string {
+  const raw = (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? '').replace(/\/+$/, '')
+  return `${raw.replace(/^http:\/\//i, 'https://')}/api/mail/webhook`
+}
+
+export async function ensureWebhookSubscription(): Promise<string> {
+  const url    = notificationUrl()
   const token  = await getGraphToken()
   const user   = process.env.Outlookmail_USERNAME!
   const secret = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
 
-  // Expiry: 3 days from now (Graph max for mail)
-  const expiry = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+  // Load persisted state
+  const [savedId, savedExpiryStr, savedUrl] = await Promise.all([
+    dbGet(SK_ID), dbGet(SK_EXPIRY), dbGet(SK_URL),
+  ])
 
-  if (cachedSubId) {
-    // Try to renew existing subscription
+  const now    = new Date()
+  const expiry = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 days
+
+  // Renew if still valid, URL unchanged, and not expiring within 12 h
+  if (
+    savedId &&
+    savedExpiryStr &&
+    savedUrl === url &&
+    new Date(savedExpiryStr).getTime() - now.getTime() > 12 * 3600_000
+  ) {
+    // Patch to extend expiry
     try {
-      await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${cachedSubId}`, {
-        method: 'PATCH',
+      const r = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${savedId}`, {
+        method:  'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expirationDateTime: expiry.toISOString() }),
+        body:    JSON.stringify({ expirationDateTime: expiry.toISOString() }),
       })
-      cachedSubExpiry = expiry
-      return cachedSubId
-    } catch { /* fall through to create new */ }
+      if (r.ok) {
+        await dbSet(SK_EXPIRY, expiry.toISOString())
+        console.log('[Webhook] subscription renewed:', savedId)
+        return savedId
+      }
+    } catch { /* fall through */ }
   }
 
   // Create new subscription
   const res = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
-    method: 'POST',
+    method:  'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      changeType:          'created',
-      notificationUrl,
-      resource:            `users/${user}/mailFolders/inbox/messages`,
-      expirationDateTime:  expiry.toISOString(),
-      clientState:         secret,
+      changeType:         'created',
+      notificationUrl:    url,
+      resource:           `users/${user}/mailFolders/inbox/messages`,
+      expirationDateTime: expiry.toISOString(),
+      clientState:        secret,
     }),
   })
 
-  const json = await res.json() as { id?: string; error?: { message?: string } }
-  if (!json.id) throw new Error(`Subscription failed: ${json.error?.message ?? JSON.stringify(json)}`)
+  const json = await res.json() as { id?: string; error?: { message?: string; code?: string } }
+  if (!json.id) {
+    throw new Error(
+      `Subscription failed [url: ${url}]: ` +
+      (json.error?.message ?? JSON.stringify(json)),
+    )
+  }
 
-  cachedSubId     = json.id
-  cachedSubExpiry = expiry
+  await Promise.all([
+    dbSet(SK_ID,     json.id),
+    dbSet(SK_EXPIRY, expiry.toISOString()),
+    dbSet(SK_URL,    url),
+  ])
+
+  console.log('[Webhook] subscription created:', json.id)
   return json.id
 }
 
-export function getSubscriptionStatus(): { active: boolean; id: string | null; expiry: string | null } {
-  const now = new Date()
-  const active = !!(cachedSubId && cachedSubExpiry && cachedSubExpiry > now)
+export async function getSubscriptionStatus(): Promise<{ active: boolean; id: string | null; expiry: string | null; url: string }> {
+  const [id, expiryStr] = await Promise.all([dbGet(SK_ID), dbGet(SK_EXPIRY)])
+  const now    = new Date()
+  const expiry = expiryStr ? new Date(expiryStr) : null
   return {
-    active,
-    id:     cachedSubId,
-    expiry: cachedSubExpiry?.toISOString() ?? null,
+    active: !!(id && expiry && expiry > now),
+    id,
+    expiry: expiryStr,
+    url:    notificationUrl(),
+  }
+}
+
+// Called on startup and by cron — silently auto-registers/renews
+export async function autoSubscribe(): Promise<void> {
+  const url = notificationUrl()
+  if (url.includes('localhost') || url.includes('127.0.0.1')) return // skip in local dev
+  try {
+    await ensureWebhookSubscription()
+  } catch (err) {
+    console.error('[Webhook] auto-subscribe failed:', err instanceof Error ? err.message : err)
   }
 }
