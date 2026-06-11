@@ -6,7 +6,7 @@ import { useSession, signOut } from 'next-auth/react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download,
+  Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download, Mail,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -15,7 +15,7 @@ import type { UserRole } from '@prisma/client'
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, Truck, Home, Download,
+  Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string }[]> = {
@@ -25,6 +25,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking', href: '/dashboard/bookings/new', icon: 'PlusCircle' },
     { label: 'Change Requests', href: '/dashboard/change-requests', icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
+    { label: 'Mail Inbox', href: '/dashboard/admin/mail-inbox', icon: 'Mail' },
   ],
   GT_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
@@ -60,6 +61,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Credit Agents', href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
+    { label: 'Mail Inbox', href: '/dashboard/admin/mail-inbox', icon: 'Mail' },
     { label: 'Users', href: '/dashboard/admin/users', icon: 'Users' },
     { label: 'Audit Log', href: '/dashboard/admin/audit', icon: 'Shield' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
