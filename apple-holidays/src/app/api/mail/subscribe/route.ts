@@ -1,32 +1,40 @@
-import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { ensureWebhookSubscription, getSubscriptionStatus } from '@/lib/mail-processor'
+
+function buildNotificationUrl(): string | null {
+  const raw = process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? ''
+  if (!raw) return null
+  // Ensure HTTPS and no trailing slash
+  const url = raw.replace(/\/+$/, '').replace(/^http:\/\//i, 'https://')
+  if (url.includes('localhost') || url.includes('127.0.0.1')) return null
+  return `${url}/api/mail/webhook`
+}
 
 // GET — current subscription status
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
-  return buildApiSuccess(getSubscriptionStatus())
+  return buildApiSuccess({ ...getSubscriptionStatus(), notificationUrl: buildNotificationUrl() })
 }
 
 // POST — create or renew webhook subscription
-export async function POST(req: NextRequest) {
+export async function POST() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
-  const appUrl = process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? ''
-  if (!appUrl || appUrl.includes('localhost')) {
+  const notificationUrl = buildNotificationUrl()
+  if (!notificationUrl) {
     return buildApiError(
-      'Webhooks require a public HTTPS URL. Update APP_URL in .env to your deployed domain (e.g. https://yourapp.vercel.app). For local testing, use ngrok to expose localhost.',
+      'APP_URL must be a public HTTPS domain (e.g. https://yourapp.vercel.app). ' +
+      'For local testing install ngrok → run: ngrok http 3000 → set APP_URL to the https:// ngrok URL.',
       400,
     )
   }
 
-  const notificationUrl = `${appUrl}/api/mail/webhook`
   try {
     await ensureWebhookSubscription(notificationUrl)
     return buildApiSuccess({ notificationUrl, ...getSubscriptionStatus() }, 'Auto-process webhook is active')

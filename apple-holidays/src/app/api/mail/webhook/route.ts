@@ -6,31 +6,35 @@ import { logActivity, ACTION } from '@/lib/activity'
 import fs from 'fs'
 import path from 'path'
 
-// ── Microsoft Graph webhook validation (GET) ──────────────────────────────────
-// Graph sends GET with ?validationToken=... — must echo it back as text/plain
+// Force Node.js runtime — required for IMAP/Graph libs
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
+// ── Validation helper ─────────────────────────────────────────────────────────
+function validationResponse(token: string) {
+  // Microsoft requires: 200, Content-Type: text/plain, body = plain token (no encoding)
+  return new NextResponse(decodeURIComponent(token), {
+    status: 200,
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  })
+}
+
+// GET — Microsoft Graph sends GET for lifecycle/validation in some configurations
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('validationToken')
-  if (token) {
-    return new NextResponse(token, {
-      status: 200,
-      headers: { 'Content-Type': 'text/plain' },
-    })
-  }
-  return new NextResponse('OK', { status: 200 })
+  if (token) return validationResponse(token)
+  return new NextResponse('Webhook OK', { status: 200 })
 }
 
 // ── Notification handler (POST) ───────────────────────────────────────────────
+// Microsoft ALWAYS POSTs the validation with ?validationToken=... first
+// Then POSTs actual notifications as JSON
 export async function POST(req: NextRequest) {
   const secret = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
 
-  // Microsoft validation challenge (also sent as POST in some scenarios)
+  // Step 1: Subscription validation challenge
   const validationToken = req.nextUrl.searchParams.get('validationToken')
-  if (validationToken) {
-    return new NextResponse(validationToken, {
-      status: 200,
-      headers: { 'Content-Type': 'text/plain' },
-    })
-  }
+  if (validationToken) return validationResponse(validationToken)
 
   let body: GraphNotificationPayload
   try {
