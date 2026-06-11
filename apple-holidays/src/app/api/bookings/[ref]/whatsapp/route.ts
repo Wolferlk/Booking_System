@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { prisma } from '@/lib/prisma'
+import { generateBookingPdf } from '@/lib/generate-booking-pdf'
 
 const WHATSAPP_API = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 
@@ -27,32 +29,46 @@ export async function POST(
   const notifySecret = process.env.WHATSAPP_NOTIFY_SECRET
   if (!notifySecret) return buildApiError('WHATSAPP_NOTIFY_SECRET not configured', 500)
 
-  const appUrl = (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? '').replace(/\/+$/, '')
-  // Only attach PDF when running on a real public HTTPS URL — localhost URLs cause the server to return 403
-  const canAttach = attachPdf && appUrl.startsWith('https://')
+  const formData = new FormData()
+  formData.append('to', to)
+  if (name) formData.append('name', name)
+  formData.append('message', message)
 
-  const form = new URLSearchParams()
-  form.append('to',      to)
-  form.append('name',    name)
-  form.append('message', message)
+  if (attachPdf) {
+    try {
+      const booking = await prisma.booking.findUnique({
+        where: { bookingRef: params.ref },
+        include: {
+          passengers:        { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
+          flights:           { orderBy: { date: 'asc' } },
+          accommodations:    { orderBy: { checkIn: 'asc' } },
+          emergencyContacts: true,
+          tourAgenda: {
+            include: {
+              items: { orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }] },
+            },
+          },
+        },
+      })
 
-  if (canAttach) {
-    form.append('files', JSON.stringify([
-      {
-        url:      `${appUrl}/print/booking/${params.ref}`,
-        filename: `AppleHolidays-${params.ref}-TourDetails.pdf`,
-        caption:  'Your tour details from Apple Holidays',
-      },
-    ]))
+      if (booking) {
+        const pdfBuffer = await generateBookingPdf(booking)
+        const filename = `AppleHolidays-${params.ref}-TourDetails.pdf`
+        formData.append(
+          'file',
+          new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' }),
+          filename,
+        )
+      }
+    } catch (err) {
+      console.error('[WhatsApp] PDF generation failed (sending without PDF):', err)
+    }
   }
 
   const res = await fetch(WHATSAPP_API, {
     method:  'POST',
-    headers: {
-      'Content-Type':    'application/x-www-form-urlencoded',
-      'x-notify-secret': notifySecret,
-    },
-    body: form.toString(),
+    headers: { 'x-notify-secret': notifySecret },
+    body:    formData,
   })
 
   const text = await res.text()
