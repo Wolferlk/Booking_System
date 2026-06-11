@@ -419,14 +419,8 @@ export async function ensureWebhookSubscription(): Promise<string> {
   const now    = new Date()
   const expiry = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 days
 
-  // Renew if still valid, URL unchanged, and not expiring within 12 h
-  if (
-    savedId &&
-    savedExpiryStr &&
-    savedUrl === url &&
-    new Date(savedExpiryStr).getTime() - now.getTime() > 12 * 3600_000
-  ) {
-    // Patch to extend expiry
+  // If we have a saved subscription and URL hasn't changed, try to PATCH (extend) it
+  if (savedId && savedExpiryStr && savedUrl === url && new Date(savedExpiryStr) > now) {
     try {
       const r = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${savedId}`, {
         method:  'PATCH',
@@ -438,7 +432,11 @@ export async function ensureWebhookSubscription(): Promise<string> {
         console.log('[Webhook] subscription renewed:', savedId)
         return savedId
       }
-    } catch { /* fall through */ }
+      const errText = await r.text().catch(() => '')
+      console.warn('[Webhook] PATCH failed, recreating. Status:', r.status, errText.slice(0, 200))
+    } catch (e) {
+      console.warn('[Webhook] PATCH error, recreating:', e)
+    }
   }
 
   // Create new subscription

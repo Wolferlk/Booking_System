@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { fetchMessageById, detectEmailType } from '@/lib/mail-processor'
+import { fetchMessageById } from '@/lib/mail-processor'
+//import { fetchMessageById, detectEmailType } from '@/lib/mail-processor'
 import { classifyPNLCategories } from '@/lib/openai'
 import { prisma } from '@/lib/prisma'
-import { logActivity, ACTION } from '@/lib/activity'
+import { waitUntil } from '@vercel/functions'
+//import { logActivity, ACTION } from '@/lib/activity'
 import fs from 'fs'
 import path from 'path'
+import { logActivity } from '@/lib/activity'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,9 +44,11 @@ export async function POST(req: NextRequest) {
     return new NextResponse('Bad Request', { status: 400 })
   }
 
-  // Must respond 202 quickly — process async
-  processNotifications(body.value ?? [], secret).catch(err =>
-    console.error('[Webhook] processing error:', err),
+  // waitUntil keeps the Vercel function alive after the 202 is sent
+  waitUntil(
+    processNotifications(body.value ?? [], secret).catch(err =>
+      console.error('[Webhook] processing error:', err),
+    ),
   )
 
   return new NextResponse(null, { status: 202 })
@@ -65,6 +70,11 @@ async function processNotifications(notifications: GraphNotification[], secret: 
 
     console.log('[Webhook] new email arrived, graphId:', graphId)
 
+    // Dedup — skip if already processed
+    const dedupKey = `processed_email_${graphId}`
+    const already = await prisma.systemSetting.findUnique({ where: { key: dedupKey } })
+    if (already) { console.log('[Webhook] already processed, skipping', graphId); continue }
+
     const email = await fetchMessageById(graphId)
     if (!email) { console.warn('[Webhook] could not fetch message', graphId); continue }
     if (email.type === 'UNKNOWN') { console.log('[Webhook] unknown type, skipping'); continue }
@@ -73,8 +83,20 @@ async function processNotifications(notifications: GraphNotification[], secret: 
 
     try {
       await autoProcessEmail(email)
+      // Mark as processed so retries don't create duplicate bookings
+      await prisma.systemSetting.upsert({
+        where: { key: dedupKey },
+        update: { value: new Date().toISOString() },
+        create: { key: dedupKey, value: new Date().toISOString() },
+      })
     } catch (err) {
-      console.error('[Webhook] autoProcess failed:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[Webhook] autoProcess failed:', msg)
+      await prisma.systemSetting.upsert({
+        where:  { key: 'webhook_last_error' },
+        update: { value: `${new Date().toISOString()} | ${graphId} | ${msg.slice(0, 500)}` },
+        create: { key: 'webhook_last_error', value: `${new Date().toISOString()} | ${graphId} | ${msg.slice(0, 500)}` },
+      })
     }
   }
 }
@@ -215,13 +237,15 @@ async function autoProcessEmail(email: { subject: string; rawBody: string; type:
     }
   }
 
-  await logActivity({
-    userId: 'SYSTEM',
-    action: ACTION.BOOKING_CREATED,
-    entityType: 'Booking',
-    entityId: bookingId,
-    details: { source: 'webhook', subject: email.subject, bookingRef },
-  })
+  //   await logActivity({
+  //   userId: 'SYSTEM',
+  //   action: ACTION.BOOKING_CREATED,
+  //   entityType: 'Booking',
+  //   entityId: bookingId,
+  //   details: { source: 'webhook', subject: email.subject, bookingRef },
+  // })
+
+
 
   console.log('[Webhook] ✓ auto-processed booking', bookingRef)
 }
