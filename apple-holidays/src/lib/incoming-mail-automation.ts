@@ -66,7 +66,7 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
 RULES: ${conditions}
 Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM — required for PVT/SIC","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
       },
-      { role: 'user', content: `Generate for ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
+      { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
@@ -74,8 +74,88 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
 
   const content = response.choices[0]?.message?.content
   if (!content) return []
-  const parsed = JSON.parse(content) as { items?: any[] }
-  return Array.isArray(parsed) ? parsed : (parsed.items ?? [])
+  try {
+    const parsed = JSON.parse(content) as { items?: any[] }
+    return Array.isArray(parsed) ? parsed : (parsed.items ?? [])
+  } catch {
+    return []
+  }
+}
+
+// Builds a minimal fallback agenda from raw booking data when OpenAI returns nothing.
+function buildSkeletonAgenda(data: Awaited<ReturnType<typeof extractBookingFromEmail>>): any[] {
+  if (!data.arrivalDate || !data.departureDate) return []
+
+  const items: any[] = []
+
+  // Arrival transfer
+  const firstHotel = data.accommodations[0]?.hotel ?? 'Hotel'
+  items.push({
+    date:        data.arrivalDate,
+    location:    'Arrival',
+    fromPoint:   'Airport',
+    toPoint:     firstHotel,
+    details:     `Airport → ${firstHotel} transfer${data.paxAdults > 0 ? ` · ${data.paxAdults} Adults${data.paxChildren > 0 ? ` ${data.paxChildren} Children` : ''}` : ''}`,
+    mealPlan:    null,
+    meetingTime: null,
+    serviceType: 'PVT_TRANSFER',
+  })
+
+  // One item per accommodation stay
+  for (const acc of data.accommodations) {
+    if (!acc.checkIn) continue
+    items.push({
+      date:        acc.checkIn,
+      location:    acc.city ?? acc.hotel,
+      fromPoint:   null,
+      toPoint:     acc.hotel,
+      details:     `Check-in ${acc.hotel}${acc.nights ? ` · ${acc.nights} night${acc.nights > 1 ? 's' : ''}` : ''}${acc.mealType ? ` · ${acc.mealType}` : ''}`,
+      mealPlan:    acc.mealType ?? null,
+      meetingTime: null,
+      serviceType: 'OWN_ARRANGEMENT',
+    })
+  }
+
+  // Flights as transfer items
+  for (const flight of data.flights) {
+    if (!flight.date) continue
+    const depM = flight.depTime ? (() => {
+      const [h, m] = flight.depTime!.split(':').map(Number)
+      const total = h * 60 + m - 180
+      const nh = Math.max(0, Math.floor(total / 60))
+      const nm = ((total % 60) + 60) % 60
+      return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`
+    })() : null
+    items.push({
+      date:        flight.date,
+      location:    flight.fromApt,
+      fromPoint:   flight.fromApt,
+      toPoint:     flight.toApt,
+      details:     `Flight ${flight.flightNo}${flight.depTime ? ` dep ${flight.depTime}` : ''}${flight.arrTime ? ` arr ${flight.arrTime}` : ''}`,
+      mealPlan:    null,
+      meetingTime: depM,
+      serviceType: 'PVT_TRANSFER',
+    })
+  }
+
+  // Departure transfer
+  const lastHotel = data.accommodations.at(-1)?.hotel ?? 'Hotel'
+  if (data.departureDate !== data.arrivalDate) {
+    items.push({
+      date:        data.departureDate,
+      location:    'Departure',
+      fromPoint:   lastHotel,
+      toPoint:     'Airport',
+      details:     `${lastHotel} → Airport transfer`,
+      mealPlan:    null,
+      meetingTime: null,
+      serviceType: 'PVT_TRANSFER',
+    })
+  }
+
+  // Sort by date then location
+  items.sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
+  return items
 }
 
 async function getAutomationUserId(): Promise<string> {
@@ -166,11 +246,30 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
   }
 }
 
-async function upsertAgenda(bookingId: string, bookingRef: string, extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>) {
+export async function upsertAgenda(
+  bookingId: string,
+  bookingRef: string,
+  extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
+  skipIfExists = false,
+) {
   if (!extracted.arrivalDate || !extracted.departureDate) return 0
 
+  // If the caller wants to preserve an already-generated agenda, skip
+  if (skipIfExists) {
+    const existing = await prisma.tourAgenda.findUnique({ where: { bookingId } })
+    if (existing) return 0
+  }
+
   try {
-    const agendaItems = await buildAgendaItems(extracted, bookingRef)
+    // 1st attempt: AI-generated movement chart
+    let agendaItems = await buildAgendaItems(extracted, bookingRef)
+
+    // 2nd attempt (fallback): build a minimal skeleton from raw booking data
+    if (!agendaItems.length) {
+      console.warn(`[Automation] OpenAI returned no agenda items for ${bookingRef} — using skeleton fallback`)
+      agendaItems = buildSkeletonAgenda(extracted)
+    }
+
     if (!agendaItems.length) return 0
 
     let agenda = await prisma.tourAgenda.findUnique({ where: { bookingId } })
@@ -182,24 +281,28 @@ async function upsertAgenda(bookingId: string, bookingRef: string, extracted: Aw
 
     for (const item of agendaItems as any[]) {
       if (!item.date) continue
-      await prisma.agendaItem.create({
-        data: {
-          agendaId: agenda.id,
-          date: new Date(item.date),
-          location: item.location ?? '',
-          fromPoint: item.fromPoint ?? null,
-          toPoint: item.toPoint ?? null,
-          details: item.details ?? null,
-          mealPlan: item.mealPlan ?? null,
-          meetingTime: item.meetingTime ?? null,
-          serviceType: (item.serviceType ?? 'OWN_ARRANGEMENT') as 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT',
-        },
-      })
+      try {
+        await prisma.agendaItem.create({
+          data: {
+            agendaId:    agenda.id,
+            date:        new Date(item.date),
+            location:    item.location ?? '',
+            fromPoint:   item.fromPoint ?? null,
+            toPoint:     item.toPoint ?? null,
+            details:     item.details ?? null,
+            mealPlan:    item.mealPlan ?? null,
+            meetingTime: item.meetingTime ?? null,
+            serviceType: (item.serviceType ?? 'OWN_ARRANGEMENT') as 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT',
+          },
+        })
+      } catch (itemErr) {
+        console.error(`[Automation] Failed to save agenda item for ${bookingRef}:`, itemErr)
+      }
     }
 
     return agendaItems.length
   } catch (err) {
-    console.error('[Automation] agenda generation failed:', err)
+    console.error(`[Automation] Agenda generation failed for ${bookingRef}:`, err)
     return 0
   }
 }

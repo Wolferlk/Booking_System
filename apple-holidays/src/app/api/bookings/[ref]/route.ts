@@ -88,10 +88,6 @@ export async function PUT(
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  if (!isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
-    return buildApiError('Booking cannot be edited in current state')
-  }
-
   const body = await req.json()
   const {
     agentBookingId, agent, fileHandler,
@@ -102,7 +98,19 @@ export async function PUT(
     passengers, flights, accommodations,
     // GT/BT/TE can update accommodation room types and vehicle changes
     accommodationUpdates,
+    // TE/BT/SUPER_ADMIN can update individual flights (cancellations, reschedules)
+    flightUpdates, flightAdds, flightDeletes,
   } = body
+
+  // Flight updates are allowed at any booking status for emergency situations (cancelled/missing flights)
+  const isFlightOnlyUpdate = (flightUpdates || flightAdds || flightDeletes) &&
+    !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
+    !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
+    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
+
+  if (!isFlightOnlyUpdate && !isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
+    return buildApiError('Booking cannot be edited in current state')
+  }
 
   const updated = await prisma.booking.update({
     where: { bookingRef: params.ref },
@@ -175,6 +183,48 @@ export async function PUT(
         },
       })
     }
+  }
+
+  // TE/BT/SUPER_ADMIN: update individual flights (reschedule, cancellation, missing flights)
+  if (flightDeletes && Array.isArray(flightDeletes)) {
+    for (const id of flightDeletes as string[]) {
+      await prisma.flight.deleteMany({ where: { id, bookingId: booking.id } })
+    }
+  }
+
+  if (flightUpdates && Array.isArray(flightUpdates)) {
+    for (const upd of flightUpdates as Record<string, unknown>[]) {
+      if (!upd.id) continue
+      await prisma.flight.update({
+        where: { id: upd.id as string },
+        data: {
+          ...(upd.flightNo !== undefined && { flightNo: upd.flightNo as string }),
+          ...(upd.date !== undefined && { date: new Date(upd.date as string) }),
+          ...(upd.fromApt !== undefined && { fromApt: upd.fromApt as string }),
+          ...(upd.depTime !== undefined && { depTime: upd.depTime as string }),
+          ...(upd.toApt !== undefined && { toApt: upd.toApt as string }),
+          ...(upd.arrTime !== undefined && { arrTime: upd.arrTime as string }),
+          ...(upd.airline !== undefined && { airline: upd.airline as string }),
+          ...(upd.notes !== undefined && { notes: upd.notes as string }),
+        },
+      })
+    }
+  }
+
+  if (flightAdds && Array.isArray(flightAdds) && flightAdds.length > 0) {
+    await prisma.flight.createMany({
+      data: (flightAdds as Record<string, unknown>[]).map(f => ({
+        bookingId: booking.id,
+        flightNo: f.flightNo as string,
+        date: f.date ? new Date(f.date as string) : new Date(),
+        fromApt: f.fromApt as string,
+        depTime: f.depTime as string,
+        toApt: f.toApt as string,
+        arrTime: f.arrTime as string,
+        airline: (f.airline as string) ?? null,
+        notes: (f.notes as string) ?? null,
+      })),
+    })
   }
 
   await logActivity({

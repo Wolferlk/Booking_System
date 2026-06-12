@@ -8,7 +8,7 @@ import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
-  Phone, Shield, Edit2, UserCheck, MessageCircle, Send,
+  Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -49,6 +49,17 @@ export default function BookingDetailPage() {
     terms: '', exclusions: '', policyNotes: '', amendmentNote: '',
   })
   const [savingBooking, setSavingBooking] = useState(false)
+
+  type FlightEntry = {
+    _key: string; _isNew: boolean; _deleted: boolean
+    id: string; flightNo: string; date: string
+    fromApt: string; depTime: string; toApt: string; arrTime: string
+    airline: string; notes: string
+  }
+  const [editFlightModal, setEditFlightModal] = useState(false)
+  const [flightEditList, setFlightEditList] = useState<FlightEntry[]>([])
+  const [flightChangeReason, setFlightChangeReason] = useState('')
+  const [savingFlights, setSavingFlights] = useState(false)
 
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
@@ -121,6 +132,82 @@ export default function BookingDetailPage() {
   const emergencyContacts: any[] = booking.emergencyContacts ?? []
   const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
   const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)
+
+  const canEditFlights = ['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role)
+
+  function openEditFlight() {
+    setFlightEditList(
+      (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
+        _key: String(f.id ?? i),
+        _isNew: false,
+        _deleted: false,
+        id: String(f.id ?? ''),
+        flightNo: String(f.flightNo ?? ''),
+        date: f.date ? String(f.date).slice(0, 10) : '',
+        fromApt: String(f.fromApt ?? ''),
+        depTime: String(f.depTime ?? ''),
+        toApt: String(f.toApt ?? ''),
+        arrTime: String(f.arrTime ?? ''),
+        airline: String(f.airline ?? ''),
+        notes: String(f.notes ?? ''),
+      }))
+    )
+    setFlightChangeReason('')
+    setEditFlightModal(true)
+  }
+
+  function updateFlight(key: string, field: string, value: string) {
+    setFlightEditList(prev => prev.map(f => f._key === key ? { ...f, [field]: value } : f))
+  }
+
+  function addNewFlight() {
+    const key = `new-${Date.now()}`
+    setFlightEditList(prev => [...prev, {
+      _key: key, _isNew: true, _deleted: false,
+      id: '', flightNo: '', date: '', fromApt: '', depTime: '',
+      toApt: '', arrTime: '', airline: '', notes: '',
+    }])
+  }
+
+  function removeFlight(key: string) {
+    setFlightEditList(prev => prev.map(f => f._key === key ? { ...f, _deleted: true } : f))
+  }
+
+  async function saveFlightEdits() {
+    if (!flightChangeReason.trim()) { toast.error('Please provide a reason for the change'); return }
+    setSavingFlights(true)
+    try {
+      const active = flightEditList.filter(f => !f._deleted)
+      const deleted = flightEditList.filter(f => f._deleted && !f._isNew)
+
+      const flightUpdates = active.filter(f => !f._isNew).map(({ id, flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes }) => ({
+        id, flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes,
+      }))
+      const flightAdds = active.filter(f => f._isNew).map(({ flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes }) => ({
+        flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes,
+      }))
+      const flightDeletes = deleted.map(f => f.id)
+
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          flightUpdates,
+          flightAdds,
+          flightDeletes,
+          amendmentNote: flightChangeReason,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Flight details updated')
+      setEditFlightModal(false)
+      setFlightChangeReason('')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setSavingFlights(false) }
+  }
 
   function openEditBooking() {
     setBookingForm({
@@ -442,12 +529,21 @@ Thank you!`,
 
           {/* Flights */}
           <Card>
-            <CardHeader>
+            <CardHeader
+              action={canEditFlights ? (
+                <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
+                  <Edit2 className="w-3 h-3" /> Edit
+                </button>
+              ) : undefined}
+            >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Plane className="w-4 h-4 text-slate-400" /> Flights
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              {flights.length === 0 && (
+                <p className="px-4 py-3 text-xs text-slate-400">No flights recorded</p>
+              )}
               {flights.map((f) => (
                 <div key={f.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
                   <div className="flex items-center justify-between">
@@ -461,6 +557,8 @@ Thank you!`,
                     <span className="font-medium">{f.toApt as string}</span>
                     <span>{f.arrTime as string}</span>
                   </div>
+                  {f.airline && <p className="text-xs text-slate-400 mt-0.5">{f.airline as string}</p>}
+                  {f.notes && <p className="text-xs text-amber-600 mt-0.5">{f.notes as string}</p>}
                 </div>
               ))}
             </CardBody>
@@ -838,6 +936,118 @@ Thank you!`,
               onChange={e => setCancelReason(e.target.value)}
               placeholder="Reason for cancellation..." />
           </div>
+        </div>
+      </Modal>
+
+      {/* ── Edit Flight Details Modal ────────────────────────────────── */}
+      <Modal
+        open={editFlightModal}
+        onClose={() => setEditFlightModal(false)}
+        title="Update Flight Details"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditFlightModal(false)}>Cancel</Button>
+            <Button loading={savingFlights} onClick={saveFlightEdits}>Save Changes</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700">
+              Use for emergency flight changes only — cancellations, reschedules, or missing flights.
+              This change will be recorded in the activity log.
+            </p>
+          </div>
+
+          <div>
+            <label className="form-label">Reason for change *</label>
+            <textarea
+              className="form-textarea"
+              rows={2}
+              placeholder="e.g. Flight VN123 cancelled — replaced with VN456 departing 14:30"
+              value={flightChangeReason}
+              onChange={e => setFlightChangeReason(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-4">
+            {flightEditList.filter(f => !f._deleted).map((f) => (
+              <div key={f._key} className={`border rounded-xl p-4 space-y-3 ${f._isNew ? 'border-brand-300 bg-brand-50/30' : 'border-slate-200'}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    {f._isNew ? 'New Flight' : `Flight ${f.flightNo || '—'}`}
+                  </span>
+                  <button
+                    onClick={() => removeFlight(f._key)}
+                    className="text-red-400 hover:text-red-600 flex items-center gap-1 text-xs"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {f._isNew ? 'Remove' : 'Delete'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="form-label">Flight No *</label>
+                    <input className="form-input font-mono" placeholder="e.g. VN123"
+                      value={f.flightNo}
+                      onChange={e => updateFlight(f._key, 'flightNo', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">Date *</label>
+                    <input type="date" className="form-input"
+                      value={f.date}
+                      onChange={e => updateFlight(f._key, 'date', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">From Airport *</label>
+                    <input className="form-input uppercase" placeholder="e.g. CMB"
+                      value={f.fromApt}
+                      onChange={e => updateFlight(f._key, 'fromApt', e.target.value.toUpperCase())} />
+                  </div>
+                  <div>
+                    <label className="form-label">Departure Time *</label>
+                    <input className="form-input" placeholder="e.g. 08:30"
+                      value={f.depTime}
+                      onChange={e => updateFlight(f._key, 'depTime', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">To Airport *</label>
+                    <input className="form-input uppercase" placeholder="e.g. HAN"
+                      value={f.toApt}
+                      onChange={e => updateFlight(f._key, 'toApt', e.target.value.toUpperCase())} />
+                  </div>
+                  <div>
+                    <label className="form-label">Arrival Time *</label>
+                    <input className="form-input" placeholder="e.g. 14:45"
+                      value={f.arrTime}
+                      onChange={e => updateFlight(f._key, 'arrTime', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">Airline</label>
+                    <input className="form-input" placeholder="e.g. Vietnam Airlines"
+                      value={f.airline}
+                      onChange={e => updateFlight(f._key, 'airline', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">Notes</label>
+                    <input className="form-input" placeholder="e.g. Rescheduled due to cancellation"
+                      value={f.notes}
+                      onChange={e => updateFlight(f._key, 'notes', e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={addNewFlight}
+            className="w-full flex items-center justify-center gap-2 py-2.5 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Add Replacement Flight
+          </button>
         </div>
       </Modal>
 

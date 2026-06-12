@@ -7,13 +7,7 @@ import { classifyPNLCategories } from '@/lib/openai'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { prisma } from '@/lib/prisma'
 import { logActivity, ACTION } from '@/lib/activity'
-import fs from 'fs'
-import path from 'path'
-
-const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
-function loadConditions() {
-  try { return fs.readFileSync(CONDITIONS_PATH, 'utf-8') } catch { return '' }
-}
+import { upsertAgenda } from '@/lib/incoming-mail-automation'
 
 function generateRef(base: string | null): string {
   if (base) {
@@ -21,44 +15,6 @@ function generateRef(base: string | null): string {
     if (clean.length >= 4) return clean
   }
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function buildAgendaItems(data: ExtractedBooking, bookingRef: string): Promise<any[]> {
-  const openai = (await import('@/lib/openai')).default
-  const conditions = loadConditions()
-
-  const docText = JSON.stringify({
-    bookingRef,
-    arrivalDate:    data.arrivalDate,
-    departureDate:  data.departureDate,
-    paxAdults:      data.paxAdults,
-    paxChildren:    data.paxChildren,
-    flights:        data.flights,
-    accommodations: data.accommodations,
-    itineraryItems: data.itineraryItems,
-  }, null, 2)
-
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      {
-        role: 'system',
-        content: `Vietnam tour operations expert. Generate movement chart from booking data.
-RULES: ${conditions}
-Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM — required for PVT/SIC","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
-      },
-      { role: 'user', content: `Generate for ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
-    ],
-    response_format: { type: 'json_object' },
-    temperature: 0.1,
-  })
-
-  const content = response.choices[0]?.message?.content
-  if (!content) return []
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const parsed = JSON.parse(content) as { items?: any[] }
-  return Array.isArray(parsed) ? parsed : (parsed.items ?? [])
 }
 
 export async function POST(req: NextRequest) {
@@ -296,42 +252,11 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 4. Movement chart (agenda) ────────────────────────────────────────────
+  // Run for every TQ booking that doesn't have an agenda yet.
+  // upsertAgenda uses AI generation with a skeleton fallback, so there is always output.
   let agendaCount = 0
-  if (!existingBooking && extracted.arrivalDate && extracted.departureDate) {
-    try {
-      const agendaItems = await buildAgendaItems(extracted, bookingRef)
-
-      if (agendaItems.length > 0) {
-        // Upsert TourAgenda
-        let agenda = await prisma.tourAgenda.findUnique({ where: { bookingId } })
-        if (!agenda) {
-          agenda = await prisma.tourAgenda.create({ data: { bookingId } })
-        } else {
-          await prisma.agendaItem.deleteMany({ where: { agendaId: agenda.id } })
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        for (const item of agendaItems as any[]) {
-          if (!item.date) continue
-          await prisma.agendaItem.create({
-            data: {
-              agendaId:    agenda.id,
-              date:        new Date(item.date),
-              location:    item.location ?? '',
-              fromPoint:   item.fromPoint ?? null,
-              toPoint:     item.toPoint ?? null,
-              details:     item.details ?? null,
-              mealPlan:    item.mealPlan ?? null,
-              meetingTime: item.meetingTime ?? null,
-              serviceType: (item.serviceType ?? 'OWN_ARRANGEMENT') as 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT',
-            },
-          })
-        }
-        agendaCount = agendaItems.length
-      }
-    } catch (err) {
-      console.error('Agenda generation failed (non-fatal):', err)
-    }
+  if (type === 'TOUR_CONFIRMATION') {
+    agendaCount = await upsertAgenda(bookingId, bookingRef, extracted, /* skipIfExists */ true)
   }
 
   // ── 5. Mark as processed (dedup key for mail inbox) ──────────────────────
