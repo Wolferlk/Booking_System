@@ -1,17 +1,10 @@
 import { NextRequest } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import bcrypt from 'bcryptjs'
 import type { UserRole } from '@prisma/client'
 
-export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return buildApiError('Unauthorized', 401)
-
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
-
+export async function GET() {
   const users = await prisma.user.findMany({
     select: {
       id: true, email: true, name: true, role: true,
@@ -24,11 +17,6 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return buildApiError('Unauthorized', 401)
-
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
-
   const { email, name, password, role, phone } = await req.json()
 
   if (!email || !name || !password || !role) {

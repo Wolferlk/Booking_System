@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { generateBookingPdf } from '@/lib/generate-booking-pdf'
+import { mkdir, writeFile } from 'fs/promises'
+import path from 'path'
 
 const WHATSAPP_API = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 
@@ -29,10 +31,17 @@ export async function POST(
   const notifySecret = process.env.WHATSAPP_NOTIFY_SECRET
   if (!notifySecret) return buildApiError('WHATSAPP_NOTIFY_SECRET not configured', 500)
 
-  const formData = new FormData()
-  formData.append('to', to)
-  if (name) formData.append('name', name)
-  formData.append('message', message)
+  const payload: {
+    to: string
+    name?: string
+    message: string
+    files?: Array<{ url: string; filename: string; caption?: string }>
+  } = {
+    to,
+    message,
+  }
+
+  if (name) payload.name = name
 
   console.log('[WhatsApp] attachPdf:', attachPdf, '| ref:', params.ref)
 
@@ -58,13 +67,21 @@ export async function POST(
       if (booking) {
         const pdfBuffer = await generateBookingPdf(booking)
         console.log('[WhatsApp] PDF generated, size:', pdfBuffer.length)
-        const filename = `AppleHolidays-${params.ref}-TourDetails.pdf`
-        formData.append(
-          'file',
-          new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' }),
-          filename,
-        )
-        console.log('[WhatsApp] file appended to FormData')
+        const filename = `AppleHolidays-${params.ref}-TourDetails-${Date.now()}.pdf`
+        const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'whatsapp')
+        await mkdir(uploadDir, { recursive: true })
+        await writeFile(path.join(uploadDir, filename), pdfBuffer)
+
+        const origin = req.nextUrl.origin
+        const fileUrl = `${origin}/uploads/whatsapp/${encodeURIComponent(filename)}`
+        payload.files = [
+          {
+            url: fileUrl,
+            filename,
+            caption: 'Tour confirmation PDF',
+          },
+        ]
+        console.log('[WhatsApp] PDF saved and public URL prepared:', fileUrl)
       }
     } catch (err) {
       console.error('[WhatsApp] PDF generation failed:', err)
@@ -73,8 +90,11 @@ export async function POST(
 
   const res = await fetch(WHATSAPP_API, {
     method:  'POST',
-    headers: { 'x-notify-secret': notifySecret },
-    body:    formData,
+    headers: {
+      'x-notify-secret': notifySecret,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
   })
 
   const text = await res.text()
