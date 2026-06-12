@@ -308,8 +308,13 @@ async function syncPnL(
   const bookingRef = booking?.bookingRef ?? rawBookingRef
 
   if (!booking) {
+    // PNL emails never contain travel dates — they only carry cost data.
+    // We cannot create a booking from PNL alone; the TQ must arrive first.
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      throw new Error(`PNL arrived for ${bookingRef} but no matching TQ booking found and no dates to create a stub`)
+      throw new Error(
+        `PNL received for IS Number "${bookingRef}" but no matching TQ booking found. ` +
+        `Process the Travel Quotation email first.`,
+      )
     }
 
     const created = await prisma.booking.create({

@@ -110,15 +110,38 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const bookingRef = generateRef(extracted.bookingRef)
+  const rawBookingRef = generateRef(extracted.bookingRef)
 
   // ── 2. Find or create booking ─────────────────────────────────────────────
-  const existingBooking = await prisma.booking.findUnique({ where: { bookingRef } })
+  // Try exact match first, then numeric-suffix fallback
+  // (handles "IS48369" vs "IS 48369", or PNL giving "48369" vs TQ stored "IS48369")
+  let existingBooking = await prisma.booking.findUnique({ where: { bookingRef: rawBookingRef } })
+  if (!existingBooking) {
+    const numericPart = rawBookingRef.replace(/[^0-9]/g, '')
+    if (numericPart.length >= 4) {
+      existingBooking = await prisma.booking.findFirst({
+        where: { bookingRef: { endsWith: numericPart } },
+        orderBy: { createdAt: 'desc' },
+      }) ?? null
+    }
+  }
+
+  // Use the booking's actual ref (may differ via fallback), or fall back to rawBookingRef for new creation
+  const bookingRef = existingBooking?.bookingRef ?? rawBookingRef
+
   let bookingId: string
 
   if (existingBooking) {
     bookingId = existingBooking.id
   } else {
+    // PNL emails never contain arrival/departure dates — they only carry cost data.
+    // If no matching TQ booking is found, we cannot create a stub.
+    if (type === 'PNL') {
+      return buildApiError(
+        `No booking found for IS Number "${bookingRef}". Please process the Travel Quotation email first so the booking exists before the PNL is linked.`,
+      )
+    }
+
     if (!extracted.arrivalDate || !extracted.departureDate) {
       return buildApiError('Could not extract arrival/departure dates from email')
     }

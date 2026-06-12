@@ -75,7 +75,18 @@ export interface ExtractedBooking {
 
 export function detectEmailType(subject: string, body: string): 'TOUR_CONFIRMATION' | 'PNL' | 'UNKNOWN' {
   const s = subject.toLowerCase()
-  const b = body.toLowerCase().slice(0, 2000)
+  const b = body.toLowerCase().slice(0, 3000)
+
+  // Check PNL signals FIRST — PNL emails also contain "is number" so TQ check must come after
+  if (
+    s.includes('pnl') || s.includes('costing') || s.includes('pricing') ||
+    b.includes('mmt rate') || b.includes('sic rate') || b.includes('cost per person') ||
+    b.includes('pvt rate') || b.includes('hotels/cruises') || b.includes('room night') ||
+    b.includes('driver accomodation') || b.includes('bata') || b.includes('quotation_no') ||
+    (b.includes('transport') && b.includes('is number'))
+  ) {
+    return 'PNL'
+  }
 
   if (
     s.includes('quotation') || s.includes('tour confirmation') || s.includes('confirmation') ||
@@ -83,14 +94,6 @@ export function detectEmailType(subject: string, body: string): 'TOUR_CONFIRMATI
     b.includes('arrival date') || b.includes('no. of guests') || b.includes('itinerary:')
   ) {
     return 'TOUR_CONFIRMATION'
-  }
-
-  if (
-    s.includes('pnl') || s.includes('costing') || s.includes('pricing') ||
-    b.includes('mmt rate') || b.includes('sic rate') || b.includes('cost per person') ||
-    b.includes('pvt rate') || b.includes('profit')
-  ) {
-    return 'PNL'
   }
 
   return 'UNKNOWN'
@@ -153,42 +156,58 @@ For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, 
 Date format must be YYYY-MM-DD strictly.`
 
 const PNL_PROMPT = `You are a P&L extraction expert for AppleHolidays (MMT Vietnam).
-Extract cost line items from this email/attachment. Focus on the pricing/costing table.
+Extract the booking IS Number and all cost line items from this email/document.
+
+The data may come from TWO formats — handle both:
+
+FORMAT A — HTML email body (sections like "Hotels/Cruises", "Transport", "Meals", etc.)
+- Header area contains: Tour No, IS Number, Agent, No. Pax, No. Night, Currency
+- Each section (Hotels/Cruises / Transport / Meals / Tickets etc.) is a table
+- Use the "Total" or rightmost numeric column as the cost → put it in mmtRate
+- Skip rows where Total is 0 or empty
+
+FORMAT B — XLSX/CSV spreadsheet
+- Columns: Activity | MMT Rate | SIC Rate | PVT Rate PP | AD Entrance | CH Entrance | Other Rate
+- Use each column value directly
 
 CRITICAL — Booking Reference:
-- Look for the IS Number (format: VN##### e.g. VN19679) in the email subject, body, or XLSX/CSV data.
-- ALWAYS remove every space: "VN 19679", "VN 19 679" or "VN- 19679" must all become "VN19679".
-- Return ONLY the alphanumeric characters, no spaces, no dashes, no slashes.
+1. Look for "IS Number:" or "IS:" label in the body (e.g. "IS Number: IS 48369")
+2. Also check the subject line (e.g. "PNL:#464045" → quotation_no is 464045, but IS Number is the linking field)
+3. STRIP ALL SPACES from the IS number: "IS 48369" → "IS48369", "VN 19679" → "VN19679"
+4. Return only alphanumeric characters — no spaces, dashes, or slashes
 
-Return ONLY valid JSON:
+Return ONLY valid JSON (no markdown):
 {
-  "bookingRef": "IS Number with ALL spaces/dashes removed — e.g. VN19679 not VN 19679",
+  "bookingRef": "IS Number with ALL spaces removed (e.g. IS48369, VN19679)",
   "paxAdults": number,
   "paxChildren": number,
   "pnlLines": [
     {
-      "activity": "service/activity name",
-      "category": "one of: HOTEL, TICKETS, GUIDES, MEALS, CRUISE, WATER, TRANSPORT, TAX_FEES, FLIGHT_TICKETS, OTHER",
-      "mmtRate": number (rate charged to agent per person),
-      "sicRate": number (SIC cost per person, 0 if not applicable),
-      "pvtRatePP": number (private vehicle cost per person, 0 if not applicable),
-      "adEntrance": number (adult entrance fee, 0 if not applicable),
-      "chEntrance": number (child entrance fee, 0 if not applicable),
-      "otherRate": number (any other cost, 0 if not applicable)
+      "activity": "item/expense name",
+      "category": "HOTEL|TICKETS|GUIDES|MEALS|CRUISE|WATER|TRANSPORT|TAX_FEES|FLIGHT_TICKETS|OTHER",
+      "mmtRate": number (agent charge OR total cost from HTML — use Total column),
+      "sicRate": 0,
+      "pvtRatePP": 0,
+      "adEntrance": 0,
+      "chEntrance": 0,
+      "otherRate": 0
     }
   ]
 }
 
-Category rules for Vietnam:
-- Airport/hotel transfers → TRANSPORT
-- Ha Long cruise, boat trips → CRUISE
-- Hotel stays → HOTEL
-- Ba Na Hills, entrance tickets, cable car → TICKETS
-- Walking tours, guided tours, city tours → GUIDES
-- Kayaking, water sports → WATER
-- Flights → FLIGHT_TICKETS
-- Meals at restaurants → MEALS
-- Visa, tax, service charge → TAX_FEES`
+Category mapping:
+- Hotels, resorts, accommodation, Best Western, check-in/out → HOTEL
+- Ha Long cruise, junk, boat, yacht → CRUISE
+- Airport transfer, travel km, vehicle, Bata, Paging, highway, driver → TRANSPORT
+- Ba Na Hills, entrance, cable car, tickets, night show → TICKETS
+- Guide fee, walking tour, city tour, sightseeing → GUIDES
+- Kayaking, water sports, snorkelling → WATER
+- Domestic/international flight, air ticket → FLIGHT_TICKETS
+- Meals, lunch, dinner, breakfast, restaurant, water bottles → MEALS
+- Visa, tax, insurance, service charge → TAX_FEES
+- Profit, margin, commission, overhead, other cost → OTHER
+
+IMPORTANT: pnlLines must NOT be empty if the email contains a cost table.`
 
 export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL'): Promise<ExtractedBooking> {
   const prompt = emailType === 'TOUR_CONFIRMATION' ? TOUR_CONFIRMATION_PROMPT : PNL_PROMPT
