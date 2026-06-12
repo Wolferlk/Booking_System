@@ -288,12 +288,28 @@ async function syncPnL(
   }
 
   // Prefer the ref embedded in the XLSX (row 1, col 1) over the OpenAI extraction
-  const bookingRef = generateRef(xlsxParsed?.bookingRef ?? extracted.bookingRef)
-  const booking = await prisma.booking.findUnique({ where: { bookingRef } })
+  const rawBookingRef = generateRef(xlsxParsed?.bookingRef ?? extracted.bookingRef)
+
+  // Try exact match first, then fallback to numeric-suffix search.
+  // This handles edge cases where the PNL gives "19679" but TQ was stored as "VN19679",
+  // or where spaces/dashes caused a slightly different normalization.
+  let booking = await prisma.booking.findUnique({ where: { bookingRef: rawBookingRef } })
+  if (!booking) {
+    const numericPart = rawBookingRef.replace(/[^0-9]/g, '')
+    if (numericPart.length >= 4) {
+      booking = await prisma.booking.findFirst({
+        where: { bookingRef: { endsWith: numericPart } },
+        orderBy: { createdAt: 'desc' },
+      }) ?? null
+    }
+  }
+
+  // Use the ref from the found booking (may differ from rawBookingRef via fallback)
+  const bookingRef = booking?.bookingRef ?? rawBookingRef
 
   if (!booking) {
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      throw new Error(`PNL arrived before booking was created for ${bookingRef}`)
+      throw new Error(`PNL arrived for ${bookingRef} but no matching TQ booking found and no dates to create a stub`)
     }
 
     const created = await prisma.booking.create({

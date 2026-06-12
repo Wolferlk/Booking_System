@@ -153,11 +153,16 @@ For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, 
 Date format must be YYYY-MM-DD strictly.`
 
 const PNL_PROMPT = `You are a P&L extraction expert for AppleHolidays (MMT Vietnam).
-Extract cost line items from this email. Focus on the pricing/costing table.
+Extract cost line items from this email/attachment. Focus on the pricing/costing table.
+
+CRITICAL — Booking Reference:
+- Look for the IS Number (format: VN##### e.g. VN19679) in the email subject, body, or XLSX/CSV data.
+- ALWAYS remove every space: "VN 19679", "VN 19 679" or "VN- 19679" must all become "VN19679".
+- Return ONLY the alphanumeric characters, no spaces, no dashes, no slashes.
 
 Return ONLY valid JSON:
 {
-  "bookingRef": "IS Number or reference number",
+  "bookingRef": "IS Number with ALL spaces/dashes removed — e.g. VN19679 not VN 19679",
   "paxAdults": number,
   "paxChildren": number,
   "pnlLines": [

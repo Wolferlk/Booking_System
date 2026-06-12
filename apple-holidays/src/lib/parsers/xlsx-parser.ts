@@ -60,6 +60,31 @@ export interface PNLImportResult {
   }[]
 }
 
+// Matches patterns like VN19679, AH12345, 19679, etc.
+const REF_PATTERN = /^[A-Z]{0,4}[0-9]{4,8}$/
+
+function extractRefFromCell(raw: unknown): string | null {
+  const val = String(raw ?? '').replace(/\s+/g, '').toUpperCase().trim()
+  if (val.length >= 4 && REF_PATTERN.test(val)) return val
+  return null
+}
+
+function scanForBookingRef(rows: (string | number)[][]): string | null {
+  // Primary: row 1, col 1 (known XLSX layout)
+  if (rows[1]) {
+    const ref = extractRefFromCell(rows[1][1])
+    if (ref) return ref
+  }
+  // Fallback: scan first 6 rows × first 6 cols for anything matching the ref pattern
+  for (let r = 0; r < Math.min(6, rows.length); r++) {
+    for (let c = 0; c < Math.min(6, (rows[r] ?? []).length); c++) {
+      const ref = extractRefFromCell(rows[r][c])
+      if (ref) return ref
+    }
+  }
+  return null
+}
+
 export function parsePNLXlsx(buffer: Buffer): PNLImportResult {
   const workbook = XLSX.read(buffer, { type: 'buffer' })
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
@@ -69,10 +94,10 @@ export function parsePNLXlsx(buffer: Buffer): PNLImportResult {
   let paxAdults = 2
   let paxChildren = 0
 
-  // Row 1: col[1] = booking reference (e.g. "VN19005"), col[9] = adults, col[10] = children
+  bookingRef = scanForBookingRef(rows)
+
+  // Row 1: col[9] = adults, col[10] = children
   if (rows[1]) {
-    const rawRef = String(rows[1][1] ?? '').trim()
-    if (rawRef && rawRef.length >= 4) bookingRef = rawRef.toUpperCase()
     const adults = Number(rows[1][9] ?? 0)
     const children = Number(rows[1][10] ?? 0)
     if (adults > 0) paxAdults = adults
