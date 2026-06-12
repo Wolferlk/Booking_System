@@ -34,6 +34,8 @@ export async function POST(
   if (name) formData.append('name', name)
   formData.append('message', message)
 
+  console.log('[WhatsApp] attachPdf:', attachPdf, '| ref:', params.ref)
+
   if (attachPdf) {
     try {
       const booking = await prisma.booking.findUnique({
@@ -51,17 +53,21 @@ export async function POST(
         },
       })
 
+      console.log('[WhatsApp] booking found:', !!booking)
+
       if (booking) {
         const pdfBuffer = await generateBookingPdf(booking)
+        console.log('[WhatsApp] PDF generated, size:', pdfBuffer.length)
         const filename = `AppleHolidays-${params.ref}-TourDetails.pdf`
         formData.append(
           'file',
           new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' }),
           filename,
         )
+        console.log('[WhatsApp] file appended to FormData')
       }
     } catch (err) {
-      console.error('[WhatsApp] PDF generation failed (sending without PDF):', err)
+      console.error('[WhatsApp] PDF generation failed:', err)
     }
   }
 
