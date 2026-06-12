@@ -4,11 +4,12 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
-  Mail, Zap, CheckCircle, AlertCircle, Loader2, ExternalLink,
-  Clock, Paperclip, Eye, ChevronUp, FolderOpen, WifiOff, Wifi,
-  RefreshCw, ArrowRight, FileText, BarChart3, Users, ClipboardCheck,
-  Inbox, Plane, Hotel, MapPin, Phone, FileSpreadsheet, Link2,
-  ChevronDown, Info,
+  Mail, CheckCircle, AlertCircle, Loader2, ExternalLink,
+  Clock, Paperclip, FolderOpen, WifiOff, Wifi,
+  RefreshCw, ArrowRight, FileText, BarChart3, Users,
+  ClipboardCheck, Inbox, Plane, Hotel, Phone,
+  FileSpreadsheet, Link2, ChevronDown, ChevronUp,
+  Eye, Info, Zap,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -26,135 +27,125 @@ interface EmailWithMailbox extends ProcessedEmail {
 }
 
 interface MailboxSubStatus {
-  user: string
-  kind: 'TOUR_CONFIRMATION' | 'PNL'
-  active: boolean
-  id: string | null
-  expiry: string | null
+  user: string; kind: 'TOUR_CONFIRMATION' | 'PNL'
+  active: boolean; id: string | null; expiry: string | null
 }
 
 interface SubStatus {
-  active: boolean
-  id: string | null
-  expiry: string | null
-  url: string
-  mailboxes: MailboxSubStatus[]
+  active: boolean; id: string | null; expiry: string | null
+  url: string; mailboxes: MailboxSubStatus[]
 }
 
 interface ExtractedPassenger { name: string; type: string; isLead: boolean }
-interface ExtractedFlight    { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string }
-interface ExtractedHotel     { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string; mealType?: string }
-interface ExtractedItinerary { dayNo: number; date: string; title: string; description?: string }
+interface ExtractedFlight    { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string }
+interface ExtractedHotel     { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; mealType?: string }
 interface ExtractedContact   { name: string; phone?: string; role?: string }
-interface ExtractedPnlLine   { activity: string; category: string; mmtRate: number; sicRate: number; pvtRatePP: number; adEntrance: number; chEntrance: number; otherRate: number }
+interface ExtractedPnlLine   {
+  activity: string; category: string
+  mmtRate: number; sicRate: number; pvtRatePP: number
+  adEntrance: number; chEntrance: number; otherRate: number
+}
 
 interface ExtractedData {
-  agent: string | null
-  fileHandler: string | null
-  agentBookingId: string | null
-  arrivalDate: string | null
-  departureDate: string | null
-  paxAdults: number
-  paxChildren: number
-  quotedTotal: number | null
-  currency: string
-  passengers: ExtractedPassenger[]
-  flights: ExtractedFlight[]
-  accommodations: ExtractedHotel[]
-  itineraryItems: ExtractedItinerary[]
-  emergencyContacts: ExtractedContact[]
+  agent: string | null; fileHandler: string | null; agentBookingId: string | null
+  arrivalDate: string | null; departureDate: string | null
+  paxAdults: number; paxChildren: number
+  quotedTotal: number | null; currency: string
+  passengers: ExtractedPassenger[]; flights: ExtractedFlight[]
+  accommodations: ExtractedHotel[]; emergencyContacts: ExtractedContact[]
   pnlLines: ExtractedPnlLine[]
 }
 
 interface ProcessResult {
-  bookingRef: string
-  bookingId: string
-  isNew: boolean
-  pnlLines: number
-  agendaItems: number
-  status: string
-  xlsxUsed?: boolean
-  extracted?: ExtractedData
+  bookingRef: string; bookingId: string
+  isNew: boolean; pnlLines: number; agendaItems: number
+  status: string; xlsxUsed?: boolean; extracted?: ExtractedData
 }
+
+interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL = 30_000
-const TQ_EMAIL      = 'confirm.booking@aahaas.com'
-const PNL_EMAIL     = 'accounts.payable@aahaas.com'
-
-const TYPE_COLOR = { TOUR_CONFIRMATION: 'blue', PNL: 'green', UNKNOWN: 'gray' } as const
-const TYPE_LABEL = { TOUR_CONFIRMATION: 'Tour Confirmation', PNL: 'P&L', UNKNOWN: 'Unknown' }
+const POLL_INTERVAL   = 30_000
+const PROCESS_DELAY   = 1500   // ms between auto-processes
+const TQ_EMAIL        = 'confirm.booking@aahaas.com'
+const PNL_EMAIL       = 'accounts.payable@aahaas.com'
 
 const CAT_COLOR: Record<string, string> = {
-  HOTEL:          'bg-blue-100 text-blue-700',
-  FLIGHT_TICKETS: 'bg-indigo-100 text-indigo-700',
-  CRUISE:         'bg-cyan-100 text-cyan-700',
-  TICKETS:        'bg-purple-100 text-purple-700',
-  GUIDES:         'bg-orange-100 text-orange-700',
-  WATER:          'bg-teal-100 text-teal-700',
-  TRANSPORT:      'bg-amber-100 text-amber-700',
-  MEALS:          'bg-rose-100 text-rose-700',
-  TAX_FEES:       'bg-slate-100 text-slate-600',
-  OTHER:          'bg-gray-100 text-gray-600',
+  HOTEL: 'bg-blue-100 text-blue-700', FLIGHT_TICKETS: 'bg-indigo-100 text-indigo-700',
+  CRUISE: 'bg-cyan-100 text-cyan-700', TICKETS: 'bg-purple-100 text-purple-700',
+  GUIDES: 'bg-orange-100 text-orange-700', WATER: 'bg-teal-100 text-teal-700',
+  TRANSPORT: 'bg-amber-100 text-amber-700', MEALS: 'bg-rose-100 text-rose-700',
+  TAX_FEES: 'bg-slate-100 text-slate-600', OTHER: 'bg-gray-100 text-gray-600',
 }
 
-function fmt(d: string | null | undefined) {
+function fmt(d?: string | null) {
   if (!d) return '—'
   try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) } catch { return d }
 }
-
 function usd(n: number) { return n > 0 ? `$${n.toFixed(2)}` : '—' }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+function PnlPill({ status }: { status: PnlStatus | undefined }) {
+  if (!status || status.checking) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">
+        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Checking PNL…
+      </span>
+    )
+  }
+  if (status.hasPNL) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">
+        <CheckCircle className="w-2.5 h-2.5" /> PNL Added · {status.lineCount} lines
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 animate-pulse">
+      <Clock className="w-2.5 h-2.5" /> PNL Pending
+    </span>
+  )
+}
+
 function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems: number }) {
   return (
-    <div className="space-y-4 mt-4">
-      {/* Booking summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    <div className="space-y-3 mt-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: 'Agent',          value: data.agent ?? '—' },
-          { label: 'File Handler',   value: data.fileHandler ?? '—' },
-          { label: 'Arrival',        value: fmt(data.arrivalDate) },
-          { label: 'Departure',      value: fmt(data.departureDate) },
-          { label: 'Adults',         value: String(data.paxAdults) },
-          { label: 'Children',       value: String(data.paxChildren) },
-          { label: 'Quoted Total',   value: data.quotedTotal ? `${data.currency} ${data.quotedTotal.toLocaleString()}` : '—' },
-          { label: 'Agent Ref',      value: data.agentBookingId ?? '—' },
+          { label: 'Agent',        value: data.agent ?? '—' },
+          { label: 'File Handler', value: data.fileHandler ?? '—' },
+          { label: 'Arrival',      value: fmt(data.arrivalDate) },
+          { label: 'Departure',    value: fmt(data.departureDate) },
+          { label: 'Adults',       value: String(data.paxAdults) },
+          { label: 'Children',     value: String(data.paxChildren) },
+          { label: 'Quoted Total', value: data.quotedTotal ? `${data.currency} ${data.quotedTotal.toLocaleString()}` : '—' },
+          { label: 'Agent Ref',    value: data.agentBookingId ?? '—' },
         ].map(item => (
-          <div key={item.label} className="bg-slate-50 rounded-lg p-2.5">
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider">{item.label}</p>
-            <p className="text-sm font-semibold text-slate-800 truncate mt-0.5">{item.value}</p>
+          <div key={item.label} className="bg-slate-50 rounded-lg p-2">
+            <p className="text-[9px] text-slate-400 uppercase tracking-wider">{item.label}</p>
+            <p className="text-xs font-semibold text-slate-800 truncate mt-0.5">{item.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Passengers */}
       {data.passengers.length > 0 && (
         <div>
-          <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mb-2">
-            <Users className="w-3.5 h-3.5 text-blue-500" /> Passengers ({data.passengers.length})
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+            <Users className="w-3 h-3 text-blue-500" /> Passengers ({data.passengers.length})
           </p>
           <div className="rounded-lg border border-slate-200 overflow-hidden">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold">Name</th>
-                  <th className="px-3 py-2 text-left font-semibold">Type</th>
-                  <th className="px-3 py-2 text-left font-semibold">Lead</th>
-                </tr>
+              <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
+                <tr><th className="px-3 py-1.5 text-left">Name</th><th className="px-3 py-1.5 text-left">Type</th><th className="px-3 py-1.5 text-left">Lead</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.passengers.map((p, i) => (
                   <tr key={i} className="bg-white">
-                    <td className="px-3 py-2 font-medium text-slate-800">{p.name}</td>
-                    <td className="px-3 py-2">
-                      <Badge color={p.type === 'CHILD' ? 'amber' : 'blue'}>{p.type}</Badge>
-                    </td>
-                    <td className="px-3 py-2">
-                      {p.isLead && <Badge color="green">Lead</Badge>}
-                    </td>
+                    <td className="px-3 py-1.5 font-medium text-slate-800">{p.name}</td>
+                    <td className="px-3 py-1.5"><Badge color={p.type === 'CHILD' ? 'amber' : 'blue'}>{p.type}</Badge></td>
+                    <td className="px-3 py-1.5">{p.isLead && <Badge color="green">Lead</Badge>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -163,33 +154,27 @@ function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems:
         </div>
       )}
 
-      {/* Flights */}
       {data.flights.length > 0 && (
         <div>
-          <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mb-2">
-            <Plane className="w-3.5 h-3.5 text-indigo-500" /> Flights ({data.flights.length})
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+            <Plane className="w-3 h-3 text-indigo-500" /> Flights
           </p>
           <div className="rounded-lg border border-slate-200 overflow-hidden">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold">Flight</th>
-                  <th className="px-3 py-2 text-left font-semibold">Date</th>
-                  <th className="px-3 py-2 text-left font-semibold">Route</th>
-                  <th className="px-3 py-2 text-left font-semibold">Times</th>
-                </tr>
+              <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
+                <tr><th className="px-3 py-1.5 text-left">Flight</th><th className="px-3 py-1.5 text-left">Date</th><th className="px-3 py-1.5 text-left">Route</th><th className="px-3 py-1.5 text-left">Times</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.flights.map((f, i) => (
                   <tr key={i} className="bg-white">
-                    <td className="px-3 py-2 font-mono font-bold text-slate-800">{f.flightNo}</td>
-                    <td className="px-3 py-2 text-slate-600">{fmt(f.date)}</td>
-                    <td className="px-3 py-2">
-                      <span className="font-semibold text-slate-800">{f.fromApt}</span>
+                    <td className="px-3 py-1.5 font-mono font-bold text-slate-800">{f.flightNo}</td>
+                    <td className="px-3 py-1.5 text-slate-600">{fmt(f.date)}</td>
+                    <td className="px-3 py-1.5">
+                      <span className="font-semibold">{f.fromApt}</span>
                       <ArrowRight className="w-3 h-3 inline mx-1 text-slate-400" />
-                      <span className="font-semibold text-slate-800">{f.toApt}</span>
+                      <span className="font-semibold">{f.toApt}</span>
                     </td>
-                    <td className="px-3 py-2 text-slate-500">{f.depTime ?? '—'} → {f.arrTime ?? '—'}</td>
+                    <td className="px-3 py-1.5 text-slate-500">{f.depTime ?? '—'} → {f.arrTime ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -198,31 +183,24 @@ function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems:
         </div>
       )}
 
-      {/* Hotels */}
       {data.accommodations.length > 0 && (
         <div>
-          <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mb-2">
-            <Hotel className="w-3.5 h-3.5 text-purple-500" /> Accommodations ({data.accommodations.length})
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+            <Hotel className="w-3 h-3 text-purple-500" /> Hotels
           </p>
           <div className="rounded-lg border border-slate-200 overflow-hidden">
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left font-semibold">Hotel</th>
-                  <th className="px-3 py-2 text-left font-semibold">City</th>
-                  <th className="px-3 py-2 text-left font-semibold">Check In → Out</th>
-                  <th className="px-3 py-2 text-left font-semibold">Nights</th>
-                  <th className="px-3 py-2 text-left font-semibold">Meal</th>
-                </tr>
+              <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
+                <tr><th className="px-3 py-1.5 text-left">Hotel</th><th className="px-3 py-1.5 text-left">City</th><th className="px-3 py-1.5 text-left">Check In → Out</th><th className="px-3 py-1.5">N</th><th className="px-3 py-1.5">Meal</th></tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {data.accommodations.map((a, i) => (
                   <tr key={i} className="bg-white">
-                    <td className="px-3 py-2 font-medium text-slate-800 max-w-[200px] truncate">{a.hotel}</td>
-                    <td className="px-3 py-2 text-slate-600">{a.city}</td>
-                    <td className="px-3 py-2 text-slate-600">{fmt(a.checkIn)} → {fmt(a.checkOut)}</td>
-                    <td className="px-3 py-2 font-semibold text-slate-700">{a.nights}N</td>
-                    <td className="px-3 py-2">{a.mealType ? <Badge color="teal">{a.mealType}</Badge> : '—'}</td>
+                    <td className="px-3 py-1.5 font-medium text-slate-800 max-w-[180px] truncate">{a.hotel}</td>
+                    <td className="px-3 py-1.5 text-slate-600">{a.city}</td>
+                    <td className="px-3 py-1.5 text-slate-600">{fmt(a.checkIn)} → {fmt(a.checkOut)}</td>
+                    <td className="px-3 py-1.5 font-semibold text-center">{a.nights}</td>
+                    <td className="px-3 py-1.5">{a.mealType ? <Badge color="teal">{a.mealType}</Badge> : '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -231,125 +209,105 @@ function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems:
         </div>
       )}
 
-      {/* Emergency Contacts */}
       {data.emergencyContacts.length > 0 && (
-        <div>
-          <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mb-2">
-            <Phone className="w-3.5 h-3.5 text-red-500" /> Emergency Contacts
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {data.emergencyContacts.map((c, i) => (
-              <div key={i} className="bg-red-50 border border-red-100 rounded-lg px-3 py-2 text-xs">
-                <span className="font-semibold text-slate-800">{c.name}</span>
-                {c.role && <span className="text-slate-500 ml-1">({c.role})</span>}
-                {c.phone && <span className="text-red-600 ml-2 font-mono">{c.phone}</span>}
-              </div>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-2">
+          {data.emergencyContacts.map((c, i) => (
+            <div key={i} className="bg-red-50 border border-red-100 rounded-lg px-3 py-1.5 text-xs flex items-center gap-2">
+              <Phone className="w-3 h-3 text-red-400" />
+              <span className="font-semibold text-slate-800">{c.name}</span>
+              {c.role && <span className="text-slate-500">({c.role})</span>}
+              {c.phone && <span className="text-red-600 font-mono">{c.phone}</span>}
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Agenda generated */}
       {agendaItems > 0 && (
         <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-          <MapPin className="w-3.5 h-3.5 flex-shrink-0" />
-          <span><strong>{agendaItems} movement chart items</strong> auto-generated from booking itinerary</span>
+          <ClipboardCheck className="w-3.5 h-3.5 flex-shrink-0" />
+          <span><strong>{agendaItems} movement chart items</strong> auto-generated</span>
         </div>
       )}
     </div>
   )
 }
 
-function PNLExtraction({
-  data, bookingRef, isNew, xlsxUsed,
-}: {
-  data: ExtractedData
-  bookingRef: string
-  isNew: boolean
-  xlsxUsed: boolean
+function PNLExtraction({ data, bookingRef, isNew, xlsxUsed }: {
+  data: ExtractedData; bookingRef: string; isNew: boolean; xlsxUsed: boolean
 }) {
-  const totalMMT   = data.pnlLines.reduce((s, l) => s + l.mmtRate, 0)
-  const totalSIC   = data.pnlLines.reduce((s, l) => s + l.sicRate, 0)
-  const totalPVT   = data.pnlLines.reduce((s, l) => s + l.pvtRatePP, 0)
+  const totalMMT = data.pnlLines.reduce((s, l) => s + l.mmtRate, 0)
+  const totalSIC = data.pnlLines.reduce((s, l) => s + l.sicRate, 0)
+  const totalPVT = data.pnlLines.reduce((s, l) => s + l.pvtRatePP, 0)
 
   return (
-    <div className="space-y-4 mt-4">
-      {/* Link banner */}
-      <div className={`flex items-center gap-3 rounded-lg px-4 py-3 border ${
+    <div className="space-y-3 mt-3">
+      <div className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border text-xs ${
         isNew ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'
       }`}>
-        <Link2 className={`w-4 h-4 flex-shrink-0 ${isNew ? 'text-blue-500' : 'text-green-500'}`} />
+        <Link2 className={`w-3.5 h-3.5 flex-shrink-0 ${isNew ? 'text-blue-500' : 'text-green-500'}`} />
         <div>
-          <p className={`text-xs font-bold ${isNew ? 'text-blue-800' : 'text-green-800'}`}>
-            {isNew ? 'New booking created' : `Linked to booking`}
+          <p className={`font-bold ${isNew ? 'text-blue-800' : 'text-green-800'}`}>
+            {isNew ? 'New booking created' : 'PNL merged into booking'}
             {' '}<span className="font-mono">{bookingRef}</span>
           </p>
-          <p className={`text-[11px] ${isNew ? 'text-blue-600' : 'text-green-600'}`}>
-            {isNew
-              ? 'Booking was created from this PNL (TQ not yet received)'
-              : 'PNL data merged into the existing booking — both are now linked'}
+          <p className={`text-[11px] mt-0.5 ${isNew ? 'text-blue-600' : 'text-green-600'}`}>
+            {isNew ? 'Booking stub created from PNL — TQ not yet received' : 'Cost data linked — booking is now complete'}
           </p>
         </div>
       </div>
 
-      {/* Source badge */}
-      {xlsxUsed && (
-        <div className="flex items-center gap-2 text-xs text-teal-700 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
-          <FileSpreadsheet className="w-3.5 h-3.5 flex-shrink-0" />
-          <span>PNL line items extracted from <strong>XLSX attachment</strong> — direct cell parsing (no AI guessing)</span>
-        </div>
-      )}
-      {!xlsxUsed && data.pnlLines.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          <Info className="w-3.5 h-3.5 flex-shrink-0" />
-          <span>PNL lines extracted from <strong>email body via GPT-4o</strong>. For best accuracy attach the .xlsx file.</span>
-        </div>
-      )}
+      {xlsxUsed
+        ? <div className="flex items-center gap-2 text-xs text-teal-700 bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
+            <FileSpreadsheet className="w-3.5 h-3.5 flex-shrink-0" />
+            XLSX attachment parsed — <strong>direct cell extraction</strong>, no AI required
+          </div>
+        : <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <Info className="w-3.5 h-3.5 flex-shrink-0" />
+            Extracted from email body via GPT-4o. Attach .xlsx for precise rates.
+          </div>
+      }
 
-      {/* PNL lines table */}
       {data.pnlLines.length > 0 ? (
         <div>
-          <p className="text-xs font-bold text-slate-600 flex items-center gap-1.5 mb-2">
-            <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
-            P&L Line Items ({data.pnlLines.length}) — {data.paxAdults}A {data.paxChildren > 0 ? `${data.paxChildren}C` : ''}
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+            <BarChart3 className="w-3 h-3 text-teal-500" />
+            {data.pnlLines.length} Line Items — {data.paxAdults}A{data.paxChildren > 0 ? ` ${data.paxChildren}C` : ''}
           </p>
           <div className="rounded-lg border border-slate-200 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead className="bg-slate-50 text-slate-500">
+                <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
                   <tr>
-                    <th className="px-3 py-2 text-left font-semibold min-w-[200px]">Activity</th>
-                    <th className="px-3 py-2 text-left font-semibold">Category</th>
-                    <th className="px-3 py-2 text-right font-semibold">MMT Rate</th>
-                    <th className="px-3 py-2 text-right font-semibold">SIC Rate</th>
-                    <th className="px-3 py-2 text-right font-semibold">PVT PP</th>
-                    <th className="px-3 py-2 text-right font-semibold">AD Entr.</th>
-                    <th className="px-3 py-2 text-right font-semibold">CH Entr.</th>
+                    <th className="px-3 py-1.5 text-left min-w-[180px]">Activity</th>
+                    <th className="px-3 py-1.5 text-left">Category</th>
+                    <th className="px-3 py-1.5 text-right">MMT</th>
+                    <th className="px-3 py-1.5 text-right">SIC</th>
+                    <th className="px-3 py-1.5 text-right">PVT PP</th>
+                    <th className="px-3 py-1.5 text-right">AD Ent.</th>
+                    <th className="px-3 py-1.5 text-right">CH Ent.</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {data.pnlLines.map((l, i) => (
                     <tr key={i} className="bg-white hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-slate-800">{l.activity}</td>
-                      <td className="px-3 py-2">
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${CAT_COLOR[l.category] ?? CAT_COLOR.OTHER}`}>
-                          {l.category}
-                        </span>
+                      <td className="px-3 py-1.5 font-medium text-slate-800">{l.activity}</td>
+                      <td className="px-3 py-1.5">
+                        <span className={`inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold ${CAT_COLOR[l.category] ?? CAT_COLOR.OTHER}`}>{l.category}</span>
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-700">{usd(l.mmtRate)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-500">{usd(l.sicRate)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-500">{usd(l.pvtRatePP)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-500">{usd(l.adEntrance)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-slate-500">{usd(l.chEntrance)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-700">{usd(l.mmtRate)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{usd(l.sicRate)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{usd(l.pvtRatePP)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{usd(l.adEntrance)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-slate-500">{usd(l.chEntrance)}</td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-slate-50 border-t border-slate-200">
+                <tfoot className="bg-slate-50 border-t-2 border-slate-200">
                   <tr>
-                    <td className="px-3 py-2 font-bold text-slate-700 text-xs" colSpan={2}>Totals</td>
-                    <td className="px-3 py-2 text-right font-bold font-mono text-slate-800">{usd(totalMMT)}</td>
-                    <td className="px-3 py-2 text-right font-bold font-mono text-slate-600">{usd(totalSIC)}</td>
-                    <td className="px-3 py-2 text-right font-bold font-mono text-slate-600">{usd(totalPVT)}</td>
+                    <td className="px-3 py-1.5 font-bold text-slate-700 text-xs" colSpan={2}>Totals</td>
+                    <td className="px-3 py-1.5 text-right font-bold font-mono text-slate-800">{usd(totalMMT)}</td>
+                    <td className="px-3 py-1.5 text-right font-bold font-mono text-slate-600">{usd(totalSIC)}</td>
+                    <td className="px-3 py-1.5 text-right font-bold font-mono text-slate-600">{usd(totalPVT)}</td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
@@ -358,9 +316,9 @@ function PNLExtraction({
           </div>
         </div>
       ) : (
-        <div className="text-center py-6 text-slate-400 text-sm border border-dashed border-slate-200 rounded-lg">
-          <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
-          No PNL lines extracted. Please ensure the .xlsx file is attached.
+        <div className="text-center py-5 text-slate-400 text-sm border border-dashed border-slate-200 rounded-lg">
+          <FileText className="w-7 h-7 mx-auto mb-1 opacity-40" />
+          No PNL lines found. Ensure the .xlsx file is attached.
         </div>
       )}
     </div>
@@ -375,20 +333,118 @@ export default function MailInboxPage() {
   const [emails, setEmails]               = useState<EmailWithMailbox[]>([])
   const [fetching, setFetching]           = useState(true)
   const [polling, setPolling]             = useState(false)
-  const [processing, setProcessing]       = useState<string | null>(null)
-  const [processingAll, setProcessingAll] = useState(false)
   const [results, setResults]             = useState<Map<string, { success: boolean; data?: ProcessResult; error?: string }>>(new Map())
   const [expandedId, setExpandedId]       = useState<string | null>(null)
-  const [extractedId, setExtractedId]     = useState<string | null>(null)
   const [rawBodyId, setRawBodyId]         = useState<string | null>(null)
   const [limit, setLimit]                 = useState(50)
   const [folder, setFolder]               = useState<'all' | 'inbox'>('all')
   const [mailboxFilter, setMailboxFilter] = useState<MailboxFilter>('all')
   const [subStatus, setSubStatus]         = useState<SubStatus | null>(null)
   const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
-  const [newIds, setNewIds]               = useState<Set<string>>(new Set())
+  const [pnlStatusMap, setPnlStatusMap]   = useState<Map<string, PnlStatus>>(new Map())
+  const [autoProcessingIds, setAutoProcessingIds] = useState<Set<string>>(new Set())
 
-  const knownIdsRef = useRef<Set<string>>(new Set())
+  // Refs for queue management (avoid stale closures)
+  const resultsRef         = useRef(results)
+  const autoQueuedRef      = useRef<Set<string>>(new Set())
+  const autoRunningRef     = useRef(false)
+  const autoQueueRef       = useRef<EmailWithMailbox[]>([])
+  const pnlStatusMapRef    = useRef(pnlStatusMap)
+
+  useEffect(() => { resultsRef.current = results }, [results])
+  useEffect(() => { pnlStatusMapRef.current = pnlStatusMap }, [pnlStatusMap])
+
+  // ── PNL status check ─────────────────────────────────────────────────────
+
+  const checkBookingPnl = useCallback(async (bookingRef: string) => {
+    setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: true }))
+    try {
+      const res  = await fetch(`/api/bookings/${bookingRef}`)
+      const json = await res.json()
+      if (json.success) {
+        const pnl = json.data?.pnl
+        setPnlStatusMap(prev => new Map(prev).set(bookingRef, {
+          hasPNL:    !!pnl,
+          lineCount: Array.isArray(pnl?.lineItems) ? (pnl.lineItems as unknown[]).length : 0,
+          checking:  false,
+        }))
+      } else {
+        setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: false }))
+      }
+    } catch {
+      setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: false }))
+    }
+  }, [])
+
+  // ── Auto-process queue ───────────────────────────────────────────────────
+
+  const processOne = useCallback(async (email: EmailWithMailbox) => {
+    setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
+    try {
+      const res  = await fetch('/api/mail/process', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawBody:     email.rawBody,
+          subject:     email.subject,
+          emailType:   email.mailboxKind === 'PNL' ? 'PNL' : 'TOUR_CONFIRMATION',
+          graphId:     email.graphId,
+          mailboxUser: email.mailboxUser,
+        }),
+      })
+      const json = await res.json()
+      if (json.success) {
+        const data = json.data as ProcessResult
+        setResults(m => new Map(m).set(email.graphId, { success: true, data }))
+        // Check / refresh PNL status
+        if (email.mailboxKind === 'TOUR_CONFIRMATION') {
+          checkBookingPnl(data.bookingRef)
+        } else {
+          // PNL email processed — refresh PNL status on the linked TQ booking
+          setPnlStatusMap(prev => new Map(prev).set(data.bookingRef, {
+            hasPNL: data.pnlLines > 0, lineCount: data.pnlLines, checking: false,
+          }))
+          if (data.pnlLines > 0) {
+            toast.success(`PNL added to booking ${data.bookingRef} — ${data.pnlLines} lines`, { duration: 4000 })
+          }
+        }
+      } else {
+        setResults(m => new Map(m).set(email.graphId, { success: false, error: json.error as string }))
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Auto-process failed'
+      setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
+    } finally {
+      setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
+    }
+  }, [checkBookingPnl])
+
+  const drainQueue = useCallback(async () => {
+    if (autoRunningRef.current) return
+    autoRunningRef.current = true
+    while (autoQueueRef.current.length > 0) {
+      const email = autoQueueRef.current.shift()!
+      await processOne(email)
+      if (autoQueueRef.current.length > 0) {
+        await new Promise(r => setTimeout(r, PROCESS_DELAY))
+      }
+    }
+    autoRunningRef.current = false
+  }, [processOne])
+
+  // Trigger auto-process when emails change
+  useEffect(() => {
+    const toProcess = emails.filter(e =>
+      !resultsRef.current.has(e.graphId) &&
+      e.type !== 'UNKNOWN' &&
+      !autoQueuedRef.current.has(e.graphId),
+    )
+    if (!toProcess.length) return
+    toProcess.forEach(e => autoQueuedRef.current.add(e.graphId))
+    autoQueueRef.current.push(...toProcess)
+    drainQueue()
+  }, [emails, drainQueue])
+
+  // ── Load emails ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     fetch('/api/mail/subscribe')
@@ -405,32 +461,37 @@ export default function MailInboxPage() {
       const json = await res.json()
       if (!json.success) throw new Error(json.error as string)
       const loaded = json.data as EmailWithMailbox[]
-
-      const freshIds = loaded.map(e => e.graphId).filter(id => !knownIdsRef.current.has(id))
-      if (freshIds.length > 0 && silent) {
-        setNewIds(prev => new Set(Array.from(prev).concat(freshIds)))
-        toast.success(`${freshIds.length} new email${freshIds.length > 1 ? 's' : ''} arrived`)
-      }
-      knownIdsRef.current = new Set(loaded.map(e => e.graphId))
       setEmails(loaded)
       setLastRefresh(new Date())
 
       if (loaded.length > 0) {
-        const ck   = await fetch('/api/mail/check-processed', {
+        const ck  = await fetch('/api/mail/check-processed', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ graphIds: loaded.map(e => e.graphId) }),
         })
-        const ckj  = await ck.json()
+        const ckj = await ck.json()
         if (ckj.success && Array.isArray(ckj.data)) {
+          const alreadyProcessed = ckj.data as { graphId: string; bookingRef: string }[]
+
           setResults(prev => {
             const next = new Map(prev)
-            for (const { graphId, bookingRef } of ckj.data as { graphId: string; bookingRef: string }[]) {
+            for (const { graphId, bookingRef } of alreadyProcessed) {
               if (!next.has(graphId)) {
                 next.set(graphId, { success: true, data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing' } })
               }
+              // Mark as queued so auto-process skips them
+              autoQueuedRef.current.add(graphId)
             }
             return next
           })
+
+          // Check PNL status for already-processed TQ bookings
+          for (const { graphId, bookingRef } of alreadyProcessed) {
+            const email = loaded.find(e => e.graphId === graphId)
+            if (email?.mailboxKind === 'TOUR_CONFIRMATION' && bookingRef && !pnlStatusMapRef.current.has(bookingRef)) {
+              checkBookingPnl(bookingRef)
+            }
+          }
         }
       }
     } catch (err: unknown) {
@@ -439,7 +500,7 @@ export default function MailInboxPage() {
       setFetching(false)
       setPolling(false)
     }
-  }, [limit, folder, mailboxFilter])
+  }, [limit, folder, mailboxFilter, checkBookingPnl])
 
   useEffect(() => {
     loadEmails(false)
@@ -447,61 +508,41 @@ export default function MailInboxPage() {
     return () => clearInterval(id)
   }, [loadEmails])
 
-  async function processEmail(email: EmailWithMailbox) {
-    setProcessing(email.graphId)
-    setNewIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
-    try {
-      const res  = await fetch('/api/mail/process', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawBody:     email.rawBody,
-          subject:     email.subject,
-          emailType:   email.mailboxKind === 'PNL' ? 'PNL' : 'TOUR_CONFIRMATION',
-          graphId:     email.graphId,
-          mailboxUser: email.mailboxUser,
-        }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error as string)
-      const data = json.data as ProcessResult
-      setResults(m => new Map(m).set(email.graphId, { success: true, data }))
-      setExtractedId(email.graphId)   // auto-open extraction panel
-      toast.success(json.message as string)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Processing failed'
-      setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
-      toast.error(msg)
-    } finally {
-      setProcessing(null)
-    }
-  }
+  // Also re-check PNL when a PNL email result appears for the first time
+  useEffect(() => {
+    results.forEach((result, graphId) => {
+      if (!result.success || !result.data) return
+      const email = emails.find(e => e.graphId === graphId)
+      if (email?.mailboxKind !== 'PNL') return
+      const ref = result.data.bookingRef
+      if (!ref) return
+      // Re-check the TQ booking's PNL status whenever PNL result changes
+      const current = pnlStatusMapRef.current.get(ref)
+      if (!current?.checking && result.data.pnlLines > 0 && !current?.hasPNL) {
+        checkBookingPnl(ref)
+      }
+    })
+  }, [results, emails, checkBookingPnl])
 
-  async function processAll() {
-    const eligible = emails.filter(e => e.type !== 'UNKNOWN' && !results.has(e.graphId))
-    if (!eligible.length) { toast.info('No eligible emails to process'); return }
-    setProcessingAll(true)
-    for (const email of eligible) await processEmail(email)
-    setProcessingAll(false)
-    toast.success('All emails processed')
-  }
+  // ── Derived state ────────────────────────────────────────────────────────
 
   const tqEmails       = emails.filter(e => e.mailboxKind === 'TOUR_CONFIRMATION')
   const pnlEmails      = emails.filter(e => e.mailboxKind === 'PNL')
   const processedCount = Array.from(results.values()).filter(r => r.success).length
+  const autoCount      = autoProcessingIds.size
 
   const tqSub  = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
   const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL')
-
-  const mailboxLabel =
-    mailboxFilter === 'tq'  ? `TQ — ${TQ_EMAIL}`  :
-    mailboxFilter === 'pnl' ? `PNL — ${PNL_EMAIL}` :
-    `${TQ_EMAIL}  +  ${PNL_EMAIL}`
 
   return (
     <div>
       <Header
         title="Mail Inbox"
-        subtitle={mailboxLabel}
+        subtitle={
+          mailboxFilter === 'tq'  ? `TQ — ${TQ_EMAIL}`  :
+          mailboxFilter === 'pnl' ? `PNL — ${PNL_EMAIL}` :
+          `${TQ_EMAIL}  +  ${PNL_EMAIL}`
+        }
         actions={
           <div className="flex gap-2 items-center flex-wrap">
             <select value={folder} onChange={e => setFolder(e.target.value as 'all' | 'inbox')}
@@ -511,14 +552,8 @@ export default function MailInboxPage() {
             </select>
             <select value={limit} onChange={e => setLimit(Number(e.target.value))}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
-              {[20, 50, 100, 200, 500].map(n => <option key={n} value={n}>{n} emails</option>)}
+              {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n} emails</option>)}
             </select>
-            {emails.length > 0 && (
-              <Button variant="secondary" size="sm" loading={processingAll}
-                icon={<Zap className="w-4 h-4" />} onClick={processAll}>
-                Process All
-              </Button>
-            )}
             <button onClick={() => loadEmails(false)} disabled={fetching}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40">
               <RefreshCw className={`w-4 h-4 ${fetching || polling ? 'animate-spin' : ''}`} />
@@ -529,121 +564,89 @@ export default function MailInboxPage() {
 
       <div className="p-6 max-w-5xl space-y-4">
 
-        {/* ── Process Flow ──────────────────────────────────────────────── */}
-        <Card className="p-5 bg-gradient-to-r from-slate-50 to-blue-50/30 border-slate-200">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">
-            Automated Processing Pipeline
-          </p>
-          <div className="flex items-stretch gap-2 flex-wrap">
+        {/* ── Pipeline ──────────────────────────────────────────────────── */}
+        <Card className="p-4 bg-gradient-to-r from-slate-50 to-blue-50/30">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Automated Pipeline</p>
+          <div className="flex items-center gap-2 flex-wrap text-xs">
             {[
-              {
-                n: 1, bg: 'bg-blue-50 border-blue-200', num: 'bg-blue-500',
-                title: 'TQ Email', titleColor: 'text-blue-800',
-                body: (<><p className="text-[11px] text-blue-700">Arrives at <span className="font-mono font-semibold">confirm.booking@</span></p><p className="text-[10px] text-blue-500 mt-1.5 flex items-center gap-1"><Mail className="w-3 h-3" /> Webhook · Cron (5 min)</p></>),
-              },
-              {
-                n: 2, bg: 'bg-indigo-50 border-indigo-200', num: 'bg-indigo-500',
-                title: 'Extract Booking', titleColor: 'text-indigo-800',
-                body: (<><p className="text-[11px] text-indigo-700">GPT-4o extracts: agent, passengers, flights, hotels, itinerary</p><p className="text-[10px] text-indigo-500 mt-1.5 flex items-center gap-1"><Users className="w-3 h-3" /> Status: GT_REVIEW</p></>),
-              },
-              {
-                n: 3, bg: 'bg-teal-50 border-teal-200', num: 'bg-teal-500',
-                title: 'PNL Email + XLSX', titleColor: 'text-teal-800',
-                body: (<><p className="text-[11px] text-teal-700">Arrives at <span className="font-mono font-semibold">accounts.payable@</span></p><p className="text-[10px] text-teal-500 mt-1.5 flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" /> Linked via booking ref (XLSX row 1)</p></>),
-              },
-              {
-                n: 4, bg: 'bg-green-50 border-green-200', num: 'bg-green-500',
-                title: 'Merge PNL Data', titleColor: 'text-green-800',
-                body: (<><p className="text-[11px] text-green-700">PNL rates + categories added to existing booking. Tickets auto-created.</p><p className="text-[10px] text-green-500 mt-1.5 flex items-center gap-1"><BarChart3 className="w-3 h-3" /> Costs + Tickets generated</p></>),
-              },
-              {
-                n: 5, bg: 'bg-amber-50 border-amber-200', num: 'bg-amber-500',
-                title: 'Ground Review', titleColor: 'text-amber-800',
-                body: (<><p className="text-[11px] text-amber-700">Ground team verifies the complete booking with PNL costs attached.</p><p className="text-[10px] text-amber-500 mt-1.5 flex items-center gap-1"><ClipboardCheck className="w-3 h-3" /> GT_REVIEW → GT_VERIFIED</p></>),
-              },
-            ].map((step, idx, arr) => (
-              <div key={step.n} className="flex items-center gap-2">
-                <div className={`flex-1 min-w-[140px] max-w-[165px] rounded-xl border p-3 h-full ${step.bg}`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={`w-6 h-6 rounded-full ${step.num} text-white flex items-center justify-center text-[11px] font-bold flex-shrink-0`}>{step.n}</div>
-                    <span className={`text-xs font-bold leading-tight ${step.titleColor}`}>{step.title}</span>
-                  </div>
-                  {step.body}
-                </div>
-                {idx < arr.length - 1 && <ArrowRight className="w-4 h-4 text-slate-300 flex-shrink-0" />}
+              { bg: 'bg-blue-100 border-blue-300 text-blue-800',    icon: <Mail className="w-3 h-3" />,           label: 'TQ Email arrives' },
+              { bg: 'bg-indigo-100 border-indigo-300 text-indigo-800', icon: <Zap className="w-3 h-3" />,         label: 'Booking created' },
+              { bg: 'bg-teal-100 border-teal-300 text-teal-800',    icon: <FileSpreadsheet className="w-3 h-3" />, label: 'PNL Email + XLSX' },
+              { bg: 'bg-green-100 border-green-300 text-green-800', icon: <BarChart3 className="w-3 h-3" />,       label: 'PNL merged' },
+              { bg: 'bg-amber-100 border-amber-300 text-amber-800', icon: <ClipboardCheck className="w-3 h-3" />, label: 'Ground Review' },
+            ].map((s, i, a) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border font-semibold ${s.bg}`}>
+                  {s.icon}{s.label}
+                </span>
+                {i < a.length - 1 && <ArrowRight className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />}
               </div>
             ))}
           </div>
         </Card>
 
-        {/* ── Mailbox Status Cards ───────────────────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* ── Mailbox Status ─────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-3">
           {[
-            { label: 'Travel Quotation Mailbox', email: TQ_EMAIL,  sub: tqSub  },
-            { label: 'P&L Mailbox',              email: PNL_EMAIL, sub: pnlSub },
+            { label: 'Travel Quotation', email: TQ_EMAIL, sub: tqSub },
+            { label: 'P&L Mailbox',      email: PNL_EMAIL, sub: pnlSub },
           ].map(({ label, email, sub }) => (
-            <Card key={email}
-              className={`p-4 border ${sub?.active ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-              <div className="flex items-start gap-3">
-                {sub?.active
-                  ? <Wifi className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
-                  : <WifiOff className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                }
+            <Card key={email} className={`p-3 border ${sub?.active ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+              <div className="flex items-center gap-2.5">
+                {sub?.active ? <Wifi className="w-3.5 h-3.5 text-green-500 flex-shrink-0" /> : <WifiOff className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
+                  <div className="flex items-center gap-1.5">
                     <span className={`text-xs font-bold ${sub?.active ? 'text-green-800' : 'text-amber-800'}`}>{label}</span>
-                    <Badge color={sub?.active ? 'green' : 'amber'} className="text-[10px]">
-                      {sub?.active ? 'Webhook Live' : 'Cron Active'}
-                    </Badge>
+                    <Badge color={sub?.active ? 'green' : 'amber'} className="text-[9px]">{sub?.active ? 'Webhook Live' : 'Cron 5min'}</Badge>
                   </div>
-                  <p className="text-[11px] font-mono text-slate-500 truncate">{email}</p>
-                  <p className={`text-[10px] mt-0.5 ${sub?.active ? 'text-green-600' : 'text-amber-600'}`}>
-                    {sub?.active
-                      ? `Renews ${sub.expiry ? new Date(sub.expiry).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}`
-                      : 'Cron polls every 5 min — webhook auto-activates on deploy'}
-                  </p>
+                  <p className="text-[10px] font-mono text-slate-500 truncate">{email}</p>
                 </div>
               </div>
             </Card>
           ))}
         </div>
 
-        {/* ── Mailbox Tabs ───────────────────────────────────────────────── */}
+        {/* ── Tabs ──────────────────────────────────────────────────────── */}
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
           {([
-            { key: 'all', label: 'All Mailboxes', count: emails.length },
-            { key: 'tq',  label: 'Travel Quotation', count: tqEmails.length },
-            { key: 'pnl', label: 'P&L',              count: pnlEmails.length },
+            { key: 'all', label: 'All',                 count: emails.length    },
+            { key: 'tq',  label: 'Travel Quotation',    count: tqEmails.length  },
+            { key: 'pnl', label: 'P&L',                 count: pnlEmails.length },
           ] as { key: MailboxFilter; label: string; count: number }[]).map(tab => (
             <button key={tab.key} onClick={() => setMailboxFilter(tab.key)}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
                 mailboxFilter === tab.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}>
               <Inbox className="w-3.5 h-3.5" />
               {tab.label}
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${
-                mailboxFilter === tab.key ? 'bg-slate-100 text-slate-700' : 'bg-slate-200 text-slate-500'
-              }`}>{tab.count}</span>
+              <span className={`text-xs px-1.5 py-0.5 rounded-full font-bold ${mailboxFilter === tab.key ? 'bg-slate-100 text-slate-700' : 'bg-slate-200 text-slate-500'}`}>
+                {tab.count}
+              </span>
             </button>
           ))}
         </div>
 
         {/* ── Stats ─────────────────────────────────────────────────────── */}
-        {emails.length > 0 && (
-          <div className="grid grid-cols-4 gap-3">
-            {[
-              { label: 'Total',      value: emails.length,      color: 'text-slate-700' },
-              { label: 'TQ Emails',  value: tqEmails.length,    color: 'text-blue-600'  },
-              { label: 'PNL Emails', value: pnlEmails.length,   color: 'text-teal-600'  },
-              { label: 'Processed',  value: processedCount,     color: 'text-green-600' },
-            ].map(s => (
-              <Card key={s.label} className="p-3 text-center">
-                <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                <p className="text-xs text-slate-500 mt-0.5">{s.label}</p>
-              </Card>
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-4 gap-3">
+          {[
+            { label: 'Total',                value: emails.length,      color: 'text-slate-700' },
+            { label: 'TQ Emails',            value: tqEmails.length,    color: 'text-blue-600'  },
+            { label: 'PNL Emails',           value: pnlEmails.length,   color: 'text-teal-600'  },
+            { label: autoCount > 0 ? `Processing (${autoCount})` : 'Processed',
+              value: autoCount > 0 ? autoCount : processedCount,
+              color: autoCount > 0 ? 'text-amber-500' : 'text-green-600' },
+          ].map(s => (
+            <Card key={s.label} className="p-3 text-center">
+              <p className={`text-2xl font-bold ${s.color}`}>
+                {autoCount > 0 && s.label.startsWith('Processing')
+                  ? <span className="flex items-center justify-center gap-1"><Loader2 className="w-5 h-5 animate-spin" />{s.value}</span>
+                  : s.value
+                }
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">{s.label}</p>
+            </Card>
+          ))}
+        </div>
 
         {/* ── Loading ───────────────────────────────────────────────────── */}
         {fetching && (
@@ -656,57 +659,56 @@ export default function MailInboxPage() {
         {/* ── Email Cards ───────────────────────────────────────────────── */}
         {!fetching && emails.map(email => {
           const result       = results.get(email.graphId)
-          const isProcessing = processing === email.graphId
-          const isExpanded   = extractedId === email.graphId
+          const isAutoProc   = autoProcessingIds.has(email.graphId)
+          const isExpanded   = expandedId === email.graphId
           const showRaw      = rawBodyId === email.graphId
-          const isNew        = newIds.has(email.graphId)
           const isPnl        = email.mailboxKind === 'PNL'
+          const bookingRef   = result?.data?.bookingRef
+          const pnlSt        = !isPnl && bookingRef ? pnlStatusMap.get(bookingRef) : undefined
 
           return (
             <Card key={email.graphId} className={`overflow-hidden transition-all ${
-              isNew           ? 'border-brand-400 ring-1 ring-brand-300' :
-              result?.success ? 'border-green-200' :
-              result?.error   ? 'border-red-200'   :
-              !email.isRead   ? 'border-brand-200 bg-brand-50/30' : ''
+              isAutoProc        ? 'border-amber-300 ring-1 ring-amber-200' :
+              result?.success   ? 'border-green-200 bg-green-50/20'        :
+              result?.error     ? 'border-red-200'                          :
+              !email.isRead     ? 'border-blue-200 bg-blue-50/20'           : ''
             }`}>
 
               {/* Mailbox strip */}
-              <div className={`px-4 py-1.5 flex items-center gap-2 border-b ${
-                isPnl ? 'bg-teal-50 border-teal-100' : 'bg-blue-50 border-blue-100'
-              }`}>
+              <div className={`px-4 py-1.5 flex items-center gap-2 border-b ${isPnl ? 'bg-teal-50 border-teal-100' : 'bg-blue-50 border-blue-100'}`}>
                 <Mail className={`w-3 h-3 ${isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
-                <span className={`text-[11px] font-mono font-semibold ${isPnl ? 'text-teal-700' : 'text-blue-700'}`}>
-                  {email.mailboxUser}
-                </span>
-                <Badge color={isPnl ? 'teal' : 'blue'} className="text-[10px]">
-                  {isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}
-                </Badge>
+                <span className={`text-[10px] font-mono font-semibold ${isPnl ? 'text-teal-700' : 'text-blue-700'}`}>{email.mailboxUser}</span>
+                <Badge color={isPnl ? 'teal' : 'blue'} className="text-[9px]">{isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}</Badge>
+                {isAutoProc && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-600 font-semibold">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Auto-processing…
+                  </span>
+                )}
+                {result?.success && !isAutoProc && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-green-600 font-semibold">
+                    <CheckCircle className="w-3 h-3" /> Processed
+                  </span>
+                )}
               </div>
 
               <div className="p-4">
-                {/* Header row */}
+                {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <Badge color={TYPE_COLOR[email.type]}>{TYPE_LABEL[email.type]}</Badge>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
                       {email.folder && <Badge color="gray"><FolderOpen className="w-3 h-3 mr-1" />{email.folder}</Badge>}
-                      {isNew && <Badge color="indigo">New</Badge>}
-                      {!isNew && !email.isRead && <Badge color="indigo">Unread</Badge>}
+                      {!email.isRead && <Badge color="indigo">Unread</Badge>}
                       {email.hasAttachments && <Badge color="amber"><Paperclip className="w-3 h-3 mr-1" />Attachment</Badge>}
-                      {email.importance === 'high' && <Badge color="red">High Priority</Badge>}
-                      {result?.success && <Badge color="green"><CheckCircle className="w-3 h-3 mr-1" />Processed</Badge>}
-                      {result?.error   && <Badge color="red"><AlertCircle className="w-3 h-3 mr-1" />Failed</Badge>}
+                      {result?.error && <Badge color="red"><AlertCircle className="w-3 h-3 mr-1" />Error</Badge>}
                     </div>
-
                     <p className={`text-sm truncate ${!email.isRead ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>
                       {email.subject || '(no subject)'}
                     </p>
-
                     <div className="flex items-center gap-3 mt-1 text-xs text-slate-400 flex-wrap">
                       <span className="font-medium text-slate-600">{email.fromName || email.from}</span>
                       {email.fromName && <span>{email.from}</span>}
                       {email.to.length > 0 && <span>→ {email.to.slice(0, 2).join(', ')}{email.to.length > 2 ? ` +${email.to.length - 2}` : ''}</span>}
-                      <span className="flex items-center gap-1 ml-auto">
+                      <span className="flex items-center gap-1 ml-auto flex-shrink-0">
                         <Clock className="w-3 h-3" />
                         {new Date(email.date).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </span>
@@ -714,106 +716,106 @@ export default function MailInboxPage() {
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
-                    {/* View raw body */}
-                    <button
-                      onClick={() => setRawBodyId(showRaw ? null : email.graphId)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                      title="Preview email body"
-                    >
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    <button onClick={() => setRawBodyId(showRaw ? null : email.graphId)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors" title="Preview body">
                       {showRaw ? <ChevronUp className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-
-                    {/* Open booking */}
-                    {result?.success && result.data && result.data.bookingRef && (
-                      <Button size="sm" variant="secondary"
-                        icon={<ExternalLink className="w-3.5 h-3.5" />}
-                        onClick={() => router.push(`/dashboard/bookings/${result.data!.bookingRef}`)}>
-                        {result.data.bookingRef}
+                    {result?.success && bookingRef && (
+                      <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
+                        onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>
+                        {bookingRef}
                       </Button>
                     )}
-
-                    {/* Show extracted data toggle */}
                     {result?.success && result.data?.extracted && (
-                      <button
-                        onClick={() => setExtractedId(isExpanded ? null : email.graphId)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                          isExpanded ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600 hover:bg-green-50 hover:text-green-700'
-                        }`}
-                      >
+                      <button onClick={() => setExpandedId(isExpanded ? null : email.graphId)}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                          isExpanded ? 'bg-slate-200 text-slate-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}>
                         {isPnl ? <BarChart3 className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
-                        {isExpanded ? 'Hide Details' : 'View Extracted'}
+                        {isExpanded ? 'Hide' : 'Details'}
                         {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                       </button>
-                    )}
-
-                    {/* Process button */}
-                    {!result && email.type !== 'UNKNOWN' && (
-                      <Button size="sm" loading={isProcessing}
-                        icon={isProcessing ? undefined : <Zap className="w-3.5 h-3.5" />}
-                        onClick={() => processEmail(email)} disabled={processingAll}>
-                        {isProcessing ? 'Processing…' : 'Process'}
-                      </Button>
                     )}
                   </div>
                 </div>
 
-                {/* Quick result summary bar */}
-                {result?.success && result.data && !isExpanded && (
-                  <div className="mt-3 flex items-center gap-4 text-xs text-slate-500 border-t border-slate-100 pt-3">
-                    <span className="flex items-center gap-1 font-semibold text-slate-700">
+                {/* Result summary row */}
+                {result?.success && bookingRef && !isAutoProc && (
+                  <div className={`mt-3 flex items-center gap-3 flex-wrap text-xs pt-3 border-t ${isPnl ? 'border-teal-100' : 'border-blue-100'}`}>
+                    {/* Booking link */}
+                    <button
+                      onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}
+                      className="flex items-center gap-1.5 font-bold text-slate-800 hover:text-brand-600 transition-colors"
+                    >
                       <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                      {result.data.bookingRef}
-                    </span>
-                    <span>{result.data.status === 'existing' ? 'Already processed' : result.data.isNew ? 'New booking created' : 'Booking updated'}</span>
-                    {result.data.pnlLines > 0 && <span className="text-teal-600 font-medium">{result.data.pnlLines} PNL lines</span>}
-                    {result.data.agendaItems > 0 && <span className="text-indigo-600 font-medium">{result.data.agendaItems} agenda items</span>}
-                    {result.data.xlsxUsed && <span className="text-green-600 font-medium flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" />XLSX parsed</span>}
-                    {result.data.extracted && (
-                      <button
-                        onClick={() => setExtractedId(email.graphId)}
-                        className="ml-auto text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        View full extraction <ChevronDown className="w-3 h-3" />
+                      {bookingRef}
+                      <ExternalLink className="w-3 h-3 text-slate-400" />
+                    </button>
+
+                    {/* TQ-specific info */}
+                    {!isPnl && result.data?.status !== 'existing' && (
+                      <>
+                        <span className="text-slate-400">|</span>
+                        <span className="text-slate-500">{result.data?.isNew ? 'New booking' : 'Updated'}</span>
+                        {(result.data?.agendaItems ?? 0) > 0 && (
+                          <span className="text-indigo-600 font-medium">{result.data!.agendaItems} agenda items</span>
+                        )}
+                      </>
+                    )}
+
+                    {/* PNL-specific info */}
+                    {isPnl && (
+                      <>
+                        <span className="text-slate-400">|</span>
+                        {(result.data?.pnlLines ?? 0) > 0
+                          ? <span className="text-teal-600 font-medium flex items-center gap-1"><BarChart3 className="w-3 h-3" />{result.data!.pnlLines} lines added</span>
+                          : <span className="text-slate-500">PNL processed</span>
+                        }
+                        {result.data?.xlsxUsed && (
+                          <span className="text-green-600 font-medium flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" />XLSX</span>
+                        )}
+                      </>
+                    )}
+
+                    {/* PNL Pending/Added pill (TQ emails only) */}
+                    {!isPnl && <PnlPill status={pnlSt} />}
+
+                    {/* View details link */}
+                    {result.data?.extracted && (
+                      <button onClick={() => setExpandedId(email.graphId)}
+                        className="ml-auto text-blue-600 hover:underline flex items-center gap-1">
+                        View extraction <ChevronDown className="w-3 h-3" />
                       </button>
                     )}
                   </div>
                 )}
 
-                {/* Raw body preview */}
+                {/* Auto-processing placeholder */}
+                {isAutoProc && (
+                  <div className="mt-3 pt-3 border-t border-amber-100 flex items-center gap-2 text-xs text-amber-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
+                    Extracting booking data via GPT-4o and saving to database…
+                  </div>
+                )}
+
+                {/* Raw body */}
                 {showRaw && (
                   <div className="mt-3 pt-3 border-t border-slate-100">
-                    {email.cc.length > 0 && <p className="text-xs text-slate-400 mb-2">CC: {email.cc.join(', ')}</p>}
-                    <pre className="text-[11px] text-slate-600 bg-slate-50 rounded-lg p-3 max-h-52 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-slate-100">
+                    <pre className="text-[11px] text-slate-600 bg-slate-50 rounded-lg p-3 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed border border-slate-100">
                       {email.rawBody || '(empty body)'}
                     </pre>
                   </div>
                 )}
 
-                {/* Extraction preview panel */}
+                {/* Extraction detail panel */}
                 {isExpanded && result?.success && result.data?.extracted && (
                   <div className="mt-3 pt-3 border-t border-slate-200">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-xs font-bold text-slate-700 flex items-center gap-2">
-                        {isPnl
-                          ? <><BarChart3 className="w-3.5 h-3.5 text-teal-500" /> P&L Extraction &amp; Merge Result</>
-                          : <><FileText className="w-3.5 h-3.5 text-blue-500" /> Booking Extraction Result</>
-                        }
-                      </p>
-                    </div>
-
                     {isPnl ? (
-                      <PNLExtraction
-                        data={result.data.extracted}
-                        bookingRef={result.data.bookingRef}
-                        isNew={result.data.isNew}
-                        xlsxUsed={result.data.xlsxUsed ?? false}
-                      />
+                      <PNLExtraction data={result.data.extracted} bookingRef={result.data.bookingRef}
+                        isNew={result.data.isNew} xlsxUsed={result.data.xlsxUsed ?? false} />
                     ) : (
-                      <TQExtraction
-                        data={result.data.extracted}
-                        agendaItems={result.data.agendaItems}
-                      />
+                      <TQExtraction data={result.data.extracted} agendaItems={result.data.agendaItems} />
                     )}
                   </div>
                 )}
@@ -830,7 +832,7 @@ export default function MailInboxPage() {
           )
         })}
 
-        {/* Refresh status */}
+        {/* Footer timestamp */}
         {lastRefresh && (
           <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-1">
             {polling && <Loader2 className="w-3 h-3 animate-spin" />}
@@ -844,9 +846,8 @@ export default function MailInboxPage() {
             <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-500 font-medium">No emails found</p>
             <p className="text-slate-400 text-sm mt-1">
-              {mailboxFilter === 'tq'  ? `Checking ${TQ_EMAIL}…`  :
-               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL}…` :
-               'Checking both mailboxes…'}
+              {mailboxFilter === 'tq' ? `Checking ${TQ_EMAIL}…` :
+               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL}…` : 'Checking both mailboxes…'}
             </p>
           </Card>
         )}
