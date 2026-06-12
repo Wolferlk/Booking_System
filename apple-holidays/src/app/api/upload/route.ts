@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { extractBookingFromText } from '@/lib/openai'
+import { extractBookingFromText, classifyPNLCategories } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 
@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role
-  if (!['BT_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)) {
+  if (!['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)) {
     return buildApiError('Forbidden', 403)
   }
 
@@ -43,8 +43,24 @@ export async function POST(req: NextRequest) {
   let parsedData: Record<string, unknown> = {}
 
   if (type === 'pnl' && (fileName.endsWith('.xlsx') || fileName.endsWith('.xls'))) {
-    // Parse P&L spreadsheet directly — no AI needed, column format is known
+    // Step 1: Parse numerical data directly from xlsx (fast, accurate)
     const result = parsePNLXlsx(buffer)
+
+    // Step 2: Use OpenAI to intelligently classify each activity into the correct category
+    if (result.lineItems.length > 0 && process.env.OPENAI_API_KEY) {
+      try {
+        const activities = result.lineItems.map(l => l.activity)
+        const aiCategories = await classifyPNLCategories(activities)
+        result.lineItems = result.lineItems.map((item, i) => ({
+          ...item,
+          category: aiCategories[i] ?? item.category,
+        }))
+      } catch (err) {
+        // Fall back to keyword-based categories if AI fails — already set by parsePNLXlsx
+        console.error('OpenAI category classification failed, using keyword fallback:', err)
+      }
+    }
+
     parsedData = result as unknown as Record<string, unknown>
   } else if (type === 'booking') {
     parsedData = await extractBookingFromText(extractedText)

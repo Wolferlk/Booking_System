@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess, computePNLTotals, isClientPortalUnlocked, isCreditAgent } from '@/lib/utils'
+import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
@@ -32,9 +32,6 @@ export async function GET(
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  if (role === 'GT_USER' && !isClientPortalUnlocked(booking.arrivalDate)) {
-    return buildApiError('P&L not available until T−5', 403)
-  }
 
   const pnl = await prisma.pNL.findUnique({
     where: { bookingId: booking.id },
@@ -67,7 +64,7 @@ export async function POST(
 
   let pnl
   if (existingPnl) {
-    // Delete old lines; existing tickets linked to those lines lose pnlLineId but stay
+    // Delete old lines; unactivated auto-tickets lose their P&L link but keep ticket record
     await prisma.ticket.updateMany({
       where: { bookingId: booking.id, activated: false },
       data: { pnlLineId: null },
@@ -89,38 +86,7 @@ export async function POST(
       },
     })
   }
-
-  // State advancement — run on every save (new or update)
-  // Non-credit agents: GT_VERIFIED → AWAITING_PAYMENT_CONFIRM (first upload only)
-  // Credit agents: GT_VERIFIED or AWAITING_PAYMENT_CONFIRM → OPERATIONS_READY (always)
-  const creditAgent = isCreditAgent(booking.agent)
-  if (creditAgent && ['GT_VERIFIED', 'AWAITING_PAYMENT_CONFIRM'].includes(booking.status)) {
-    await Promise.all([
-      prisma.booking.update({ where: { id: booking.id }, data: { status: 'OPERATIONS_READY' } }),
-      prisma.statusEvent.create({
-        data: {
-          bookingId: booking.id,
-          fromState: booking.status,
-          toState:   'OPERATIONS_READY',
-          actorId:   session.user.id,
-          note: 'P&L saved — credit agent, advanced directly to Operations Ready',
-        },
-      }),
-    ])
-  } else if (!creditAgent && booking.status === 'GT_VERIFIED' && !existingPnl) {
-    await Promise.all([
-      prisma.booking.update({ where: { id: booking.id }, data: { status: 'AWAITING_PAYMENT_CONFIRM' } }),
-      prisma.statusEvent.create({
-        data: {
-          bookingId: booking.id,
-          fromState: 'GT_VERIFIED',
-          toState:   'AWAITING_PAYMENT_CONFIRM',
-          actorId:   session.user.id,
-          note: 'P&L uploaded by Accounts Team — awaiting payment confirmation',
-        },
-      }),
-    ])
-  }
+  // No automatic state advancement — P&L upload is decoupled from status transitions in new flow
 
   // Create P&L line items
   const createdLines = await Promise.all(

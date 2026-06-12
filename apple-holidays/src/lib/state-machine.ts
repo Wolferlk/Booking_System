@@ -9,7 +9,7 @@ export type Transition = {
   guard?: string
 }
 
-// All valid state transitions
+// All valid state transitions — Method 1: Manual Vietnam Credit-base Agents
 export const TRANSITIONS: Transition[] = [
   {
     from: 'DRAFT',
@@ -20,22 +20,15 @@ export const TRANSITIONS: Transition[] = [
   {
     from: 'BT_CONFIRMED',
     to: 'GT_REVIEW',
-    allowedRoles: ['BT_USER', 'SUPER_ADMIN'],
-    label: 'Submit to Ground Team',
+    allowedRoles: ['BT_USER', 'TE_USER', 'SUPER_ADMIN'],
+    label: 'Submit to Travel Experience',
   },
   {
     from: 'GT_REVIEW',
     to: 'CHANGE_REQUESTED',
-    allowedRoles: ['GT_USER', 'SUPER_ADMIN'],
+    allowedRoles: ['TE_USER', 'SUPER_ADMIN'],
     label: 'Request Changes',
     requiresNote: true,
-    guard: 'G1',
-  },
-  {
-    from: 'GT_REVIEW',
-    to: 'GT_VERIFIED',
-    allowedRoles: ['GT_USER', 'SUPER_ADMIN'],
-    label: 'Verify & Approve',
   },
   {
     from: 'CHANGE_REQUESTED',
@@ -45,17 +38,16 @@ export const TRANSITIONS: Transition[] = [
     requiresNote: true,
   },
   {
-    from: 'GT_VERIFIED',
-    to: 'AWAITING_PAYMENT_CONFIRM',
-    allowedRoles: ['AC_USER', 'SUPER_ADMIN'],
-    label: 'Upload P&L',
+    from: 'GT_REVIEW',
+    to: 'GT_VERIFIED',
+    allowedRoles: ['TE_USER', 'SUPER_ADMIN'],
+    label: 'Client Confirmed',
   },
   {
-    from: 'AWAITING_PAYMENT_CONFIRM',
+    from: 'GT_VERIFIED',
     to: 'OPERATIONS_READY',
-    allowedRoles: ['AC_USER', 'SUPER_ADMIN'],
-    label: 'Confirm All Payments',
-    guard: 'G2',
+    allowedRoles: ['GT_USER', 'TE_USER', 'SUPER_ADMIN'],
+    label: 'Mark Operations Ready',
   },
   {
     from: 'OPERATIONS_READY',
@@ -86,9 +78,9 @@ export const CANCELLABLE_STATES: BookingStatus[] = [
 export const STATUS_LABELS: Record<BookingStatus, string> = {
   DRAFT: 'Draft',
   BT_CONFIRMED: 'Booking Confirmed',
-  GT_REVIEW: 'Ground Review',
+  GT_REVIEW: 'Travel Experience Review',
   CHANGE_REQUESTED: 'Changes Requested',
-  GT_VERIFIED: 'Ground Verified',
+  GT_VERIFIED: 'Client Confirmed',
   AWAITING_PAYMENT_CONFIRM: 'Awaiting Payment',
   OPERATIONS_READY: 'Operations Ready',
   CLIENT_LIVE: 'Client Portal Live',
@@ -140,15 +132,14 @@ export function canTransition(
 
 // Booking lifecycle steps for the timeline UI
 export const LIFECYCLE_STEPS: { status: BookingStatus; label: string; step: number }[] = [
-  { status: 'DRAFT', label: 'Draft', step: 1 },
-  { status: 'BT_CONFIRMED', label: 'Booking Confirmed', step: 2 },
-  { status: 'GT_REVIEW', label: 'Ground Review', step: 3 },
-  { status: 'GT_VERIFIED', label: 'Verified', step: 4 },
-  { status: 'AWAITING_PAYMENT_CONFIRM', label: 'Payment Confirm', step: 5 },
-  { status: 'OPERATIONS_READY', label: 'Operations Ready', step: 6 },
-  { status: 'CLIENT_LIVE', label: 'Client Live', step: 7 },
-  { status: 'IN_PROGRESS', label: 'In Progress', step: 8 },
-  { status: 'COMPLETED', label: 'Completed', step: 9 },
+  { status: 'DRAFT',            label: 'Draft',              step: 1 },
+  { status: 'BT_CONFIRMED',     label: 'Booking Confirmed',  step: 2 },
+  { status: 'GT_REVIEW',        label: 'TE Review',          step: 3 },
+  { status: 'GT_VERIFIED',      label: 'Client Confirmed',   step: 4 },
+  { status: 'OPERATIONS_READY', label: 'Operations Ready',   step: 5 },
+  { status: 'CLIENT_LIVE',      label: 'Client Live',        step: 6 },
+  { status: 'IN_PROGRESS',      label: 'In Progress',        step: 7 },
+  { status: 'COMPLETED',        label: 'Completed',          step: 8 },
 ]
 
 export function getCurrentStep(status: BookingStatus): number {

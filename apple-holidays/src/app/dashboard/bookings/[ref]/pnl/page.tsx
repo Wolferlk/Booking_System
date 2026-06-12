@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info } from 'lucide-react'
+import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -56,8 +56,13 @@ export default function PNLPage() {
   const [billName, setBillName]   = useState<string | null>(null)
   const [uploadingBill, setUploadingBill] = useState(false)
 
-  const canEdit    = ['AC_USER', 'SUPER_ADMIN'].includes(role)
-  const isCreditBk = isCreditAgent(bookingAgent)
+  // AI category auto-classification: tracks which line indices are currently classifying
+  const [classifyingLines, setClassifyingLines] = useState<Set<number>>(new Set())
+  const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
+
+  const canEdit           = ['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
+  const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN'].includes(role)
+  const isCreditBk        = isCreditAgent(bookingAgent)
 
   async function loadPNL() {
     try {
@@ -112,6 +117,39 @@ export default function PNLPage() {
   const totalCost    = lines.reduce((sum, l) => sum + computeTotal(l), 0)
   const profit       = totalRevenue - totalCost
   const margin       = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0
+
+  const handleActivityChange = useCallback((idx: number, value: string) => {
+    setLines(ls => ls.map((l, j) => j === idx ? { ...l, activity: value } : l))
+
+    // Cancel any in-flight debounce for this row
+    const existing = debounceTimers.current.get(idx)
+    if (existing) clearTimeout(existing)
+
+    if (!value.trim()) return
+
+    // Debounce: wait 700ms after user stops typing, then classify
+    const timer = setTimeout(async () => {
+      setClassifyingLines(s => { const n = new Set(s); n.add(idx); return n })
+      try {
+        const res = await fetch('/api/ai/classify-category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activity: value }),
+        })
+        const json = await res.json()
+        if (json.success && json.data?.category) {
+          setLines(ls => ls.map((l, j) => j === idx ? { ...l, category: json.data.category } : l))
+        }
+      } catch {
+        // silently ignore — user can set manually
+      } finally {
+        setClassifyingLines(s => { const n = new Set(s); n.delete(idx); return n })
+        debounceTimers.current.delete(idx)
+      }
+    }, 700)
+
+    debounceTimers.current.set(idx, timer)
+  }, [])
 
   async function savePNL() {
     setSaving(true)
@@ -269,6 +307,21 @@ export default function PNLPage() {
 
       <div className="p-8 space-y-6 max-w-7xl">
 
+        {/* BT_USER info banner */}
+        {role === 'BT_USER' && (
+          <div className="flex items-start gap-3 p-4 bg-brand-50 border border-brand-200 rounded-xl">
+            <Info className="w-5 h-5 text-brand-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-brand-800">Upload P&L with your booking</p>
+              <p className="text-xs text-brand-600 mt-0.5">
+                Import the Excel spreadsheet or add lines manually, then click <strong>Save P&L</strong>.
+                Tickets and vouchers will be auto-created from Hotel, Cruise, Tickets, and other service lines —
+                the Ground Team will activate them before the trip.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Credit agent notice */}
         {isCreditBk && (
           <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl">
@@ -376,17 +429,22 @@ export default function PNLPage() {
                       <td>
                         {canEdit ? (
                           <input className="form-input text-xs py-1" value={line.activity}
-                            onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, activity: e.target.value } : l))} />
+                            onChange={e => handleActivityChange(i, e.target.value)} />
                         ) : (
                           <span className="text-xs font-medium">{line.activity}</span>
                         )}
                       </td>
                       <td>
                         {canEdit ? (
-                          <select className="form-select text-xs py-1 w-28" value={line.category}
-                            onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, category: e.target.value } : l))}>
-                            {CATEGORIES.map(c => <option key={c} value={c}>{c.replace('_', ' ')}</option>)}
-                          </select>
+                          <div className="relative inline-flex items-center">
+                            <select className="form-select text-xs py-1 w-28" value={line.category}
+                              onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, category: e.target.value } : l))}>
+                              {CATEGORIES.map(c => <option key={c} value={c}>{c.replace('_', ' ')}</option>)}
+                            </select>
+                            {classifyingLines.has(i) && (
+                              <Sparkles className="w-3 h-3 text-brand-500 animate-pulse absolute -right-4" aria-label="AI classifying…" />
+                            )}
+                          </div>
                         ) : (
                           <span className="text-xs text-slate-500">{line.category}</span>
                         )}
@@ -432,7 +490,7 @@ export default function PNLPage() {
                                   <Paperclip className="w-3.5 h-3.5" />
                                 </a>
                               )}
-                              {canEdit && line.paymentStatus === 'PENDING' && (
+                              {canConfirmPayment && line.paymentStatus === 'PENDING' && (
                                 <div className="flex gap-1 ml-1">
                                   <button
                                     onClick={() => openConfirm(line.id!, 'CONFIRMED', line.activity)}
@@ -490,9 +548,9 @@ export default function PNLPage() {
         </Card>
       </div>
 
-      {/* Payment Confirmation Modal — only for non-credit agents */}
+      {/* Payment Confirmation Modal — AC_USER only, non-credit agents */}
       <Modal
-        open={!!confirmModal && !isCreditBk}
+        open={!!confirmModal && !isCreditBk && canConfirmPayment}
         onClose={() => { setConfirmModal(null); setRefInput('') }}
         title={confirmModal?.action === 'CONFIRMED' ? 'Confirm Payment' : 'Reject Payment'}
       >

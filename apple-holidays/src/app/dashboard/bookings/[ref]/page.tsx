@@ -8,7 +8,7 @@ import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
-  Phone, Shield, Edit2, UserCheck,
+  Phone, Shield, Edit2, UserCheck, MessageCircle, Send,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -35,6 +35,7 @@ export default function BookingDetailPage() {
   const [cancelModal, setCancelModal] = useState(false)
   const [note, setNote] = useState('')
   const [cancelReason, setCancelReason] = useState('')
+  const [pendingAction, setPendingAction] = useState<string>('')
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
@@ -48,6 +49,12 @@ export default function BookingDetailPage() {
     terms: '', exclusions: '', policyNotes: '', amendmentNote: '',
   })
   const [savingBooking, setSavingBooking] = useState(false)
+
+  const [waModal, setWaModal] = useState(false)
+  const [waPhone, setWaPhone] = useState('')
+  const [waMessage, setWaMessage] = useState('')
+  const [waAttachPdf, setWaAttachPdf] = useState(true)
+  const [waSending, setWaSending] = useState(false)
 
   async function load() {
     try {
@@ -177,6 +184,57 @@ export default function BookingDetailPage() {
     } finally { setSavingAccom(false) }
   }
 
+  function openWhatsApp() {
+    const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
+    const leadName: string = lead?.name ?? 'Guest'
+    const firstName = leadName.split(' ')[0]
+    setWaPhone('')
+    setWaMessage(
+`Hello ${firstName},
+Greetings from Apple Holidays!
+
+We have shared the tour details for your upcoming trip. Kindly review the details and let us know if everything is in order. If you have any questions, notice any mismatch, or if there are changes related to your flight details, please feel free to call us or send a message to this number.
+
+We kindly request you to share the following information:
+1. Meal preference (Vegetarian or Non-Vegetarian)?
+2. If senior travelers or infants travelling with you, along with any specific assistance required for them?
+
+*Emergency contact number*
+1st level: Helen (+84 94 959 15 36)
+2nd level: Senthoor Pandian (+91 95852 22335)
+3rd level: Tina (+84 94 516 95 95)
+
+We look forward to your confirmation.
+Thank you!`,
+    )
+    setWaAttachPdf(true)
+    setWaModal(true)
+  }
+
+  async function sendWhatsApp() {
+    if (!waPhone.trim()) { toast.error('Enter the client phone number'); return }
+    setWaSending(true)
+    try {
+      const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
+      const res = await fetch(`/api/bookings/${ref}/whatsapp`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to:        waPhone.replace(/\D/g, ''),
+          name:      lead?.name ?? 'Guest',
+          message:   waMessage,
+          attachPdf: waAttachPdf,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('WhatsApp message sent!')
+      setWaModal(false)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally { setWaSending(false) }
+  }
+
   return (
     <div>
       <Header
@@ -239,8 +297,7 @@ export default function BookingDetailPage() {
                   : t.to === 'GT_REVIEW' ? 'submit-ground'
                   : t.to === 'BT_CONFIRMED' ? 'confirm'
                   : t.to === 'GT_VERIFIED' ? 'verify'
-                  : t.to === 'AWAITING_PAYMENT_CONFIRM' ? 'pnl-redirect'
-                  : t.from === 'AWAITING_PAYMENT_CONFIRM' && t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
+                  : t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
                   : t.to === 'CLIENT_LIVE' ? 'client-live'
                   : t.to === 'IN_PROGRESS' ? 'in-progress'
                   : t.to === 'COMPLETED' ? 'complete'
@@ -248,17 +305,8 @@ export default function BookingDetailPage() {
 
                 if (!key) return null
 
-                // AC_USER at GT_VERIFIED → redirect to P&L page to upload P&L
-                if (key === 'pnl-redirect') {
-                  return (
-                    <Link key={t.to} href={`/dashboard/bookings/${ref}/pnl`}
-                      className="btn btn-primary btn-sm">
-                      <TrendingUp className="w-3.5 h-3.5" /> {t.label}
-                    </Link>
-                  )
-                }
-
-                const needsNote = ['change-request', 'resubmit'].includes(key)
+                // Keys that open the note modal before calling their endpoint
+                const needsNote = ['change-request', 'resubmit', 'verify'].includes(key)
 
                 return (
                   <Button
@@ -267,7 +315,7 @@ export default function BookingDetailPage() {
                     size="sm"
                     loading={actionLoading === key}
                     onClick={() => {
-                      if (needsNote) { setChangeModal(true) }
+                      if (needsNote) { setPendingAction(key); setNote(''); setChangeModal(true) }
                       else doTransition(key)
                     }}
                   >
@@ -285,7 +333,7 @@ export default function BookingDetailPage() {
 
               {/* Links to sub-pages */}
               <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
-                <MapPin className="w-3.5 h-3.5" /> Agenda
+                <MapPin className="w-3.5 h-3.5" /> Movement Chart
               </Link>
               <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
                 <Ticket className="w-3.5 h-3.5" /> Tickets
@@ -303,7 +351,7 @@ export default function BookingDetailPage() {
                   <UserCheck className="w-3.5 h-3.5" /> Drivers
                 </Link>
               )}
-              {['AC_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>
@@ -317,6 +365,14 @@ export default function BookingDetailPage() {
                 <Link href={`/print/booking/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
+              )}
+              {['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+                <button
+                  onClick={openWhatsApp}
+                  className="btn btn-sm bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
+                </button>
               )}
               {role === 'SUPER_ADMIN' && !['COMPLETED'].includes(status) && (
                 <button
@@ -558,37 +614,54 @@ export default function BookingDetailPage() {
         </Card>
       </div>
 
-      {/* Change request modal */}
+      {/* Change request / Client Confirm modal */}
       <Modal
         open={changeModal}
         onClose={() => setChangeModal(false)}
-        title={status === 'CHANGE_REQUESTED' ? 'Resubmit with Correction Note' : 'Request Changes from Booking Team'}
+        title={
+          pendingAction === 'verify' ? 'Confirm Client Confirmation' :
+          pendingAction === 'resubmit' ? 'Resubmit with Correction Note' :
+          'Request Changes from Booking Team'
+        }
         footer={
           <>
             <Button variant="secondary" onClick={() => setChangeModal(false)}>Cancel</Button>
             <Button
               loading={!!actionLoading}
+              variant={pendingAction === 'change-request' ? 'danger' : 'primary'}
               onClick={() => {
-                const endpoint = status === 'CHANGE_REQUESTED' ? 'resubmit' : 'change-request'
-                doTransition(endpoint, { notes: note, note }).then(() => { setChangeModal(false); setNote('') })
+                doTransition(pendingAction, { notes: note, note }).then(() => { setChangeModal(false); setNote('') })
               }}
             >
-              {status === 'CHANGE_REQUESTED' ? 'Resubmit' : 'Send Request'}
+              {pendingAction === 'verify' ? 'Confirm' : pendingAction === 'resubmit' ? 'Resubmit' : 'Send Request'}
             </Button>
           </>
         }
       >
-        <div>
-          <label className="form-label">
-            {status === 'CHANGE_REQUESTED' ? 'Correction note (what was fixed)' : 'What needs to be changed?'}
-          </label>
-          <textarea
-            className="form-textarea"
-            rows={4}
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            placeholder="Describe the change required..."
-          />
+        <div className="space-y-3">
+          {pendingAction === 'verify' && (
+            <p className="text-sm text-slate-600 bg-teal-50 border border-teal-100 rounded-lg px-4 py-3">
+              Confirm that you have spoken with the agent/client and they have confirmed the booking details.
+            </p>
+          )}
+          <div>
+            <label className="form-label">
+              {pendingAction === 'verify' ? 'Confirmation notes (optional)' :
+               pendingAction === 'resubmit' ? 'What was corrected?' :
+               'What needs to be changed?'}
+            </label>
+            <textarea
+              className="form-textarea"
+              rows={4}
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder={
+                pendingAction === 'verify' ? 'e.g. Spoke with Vikas, all details confirmed, reconfirm call on Day-1...' :
+                pendingAction === 'resubmit' ? 'Describe the correction made...' :
+                'Describe the change required...'
+              }
+            />
+          </div>
         </div>
       </Modal>
 
@@ -764,6 +837,65 @@ export default function BookingDetailPage() {
               value={cancelReason}
               onChange={e => setCancelReason(e.target.value)}
               placeholder="Reason for cancellation..." />
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── WhatsApp modal ────────────────────────────────────────────── */}
+      <Modal
+        open={waModal}
+        onClose={() => setWaModal(false)}
+        title="Send Details via WhatsApp"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setWaModal(false)}>Cancel</Button>
+            <Button
+              loading={waSending}
+              icon={<Send className="w-4 h-4" />}
+              onClick={sendWhatsApp}
+              className="bg-green-600 hover:bg-green-700 text-white border-green-700"
+            >
+              {waSending ? 'Sending…' : 'Send WhatsApp'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="form-label">Client Phone Number *</label>
+            <input
+              type="tel"
+              className="form-input"
+              placeholder="e.g. 94771234567 (with country code, no +)"
+              value={waPhone}
+              onChange={e => setWaPhone(e.target.value)}
+            />
+            <p className="text-xs text-slate-400 mt-1">Include country code without + (e.g. 94 for Sri Lanka, 91 for India)</p>
+          </div>
+
+          <div>
+            <label className="form-label">Message</label>
+            <textarea
+              className="form-textarea font-mono text-xs"
+              rows={14}
+              value={waMessage}
+              onChange={e => setWaMessage(e.target.value)}
+            />
+          </div>
+
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              className="w-4 h-4 rounded accent-green-600"
+              checked={waAttachPdf}
+              onChange={e => setWaAttachPdf(e.target.checked)}
+            />
+            <span className="text-sm text-slate-700">Attach tour details PDF</span>
+          </label>
+
+          <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3 border border-slate-100">
+            Booking: <strong>{ref}</strong> · Lead passenger:{' '}
+            <strong>{(booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead)?.name ?? (booking.passengers?.[0]?.name ?? '—')}</strong>
           </div>
         </div>
       </Modal>

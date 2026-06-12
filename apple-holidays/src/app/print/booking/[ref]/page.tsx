@@ -6,6 +6,33 @@ import { useSession } from 'next-auth/react'
 import Image from 'next/image'
 import { formatDate, formatCurrency, computePNLTotals } from '@/lib/utils'
 
+// ── Ticket types & colours (mirrors /print/tickets/[ref]/page.tsx)
+interface PrintTicket {
+  id: string
+  type: string
+  qty: number
+  supplier: string | null
+  reference: string | null
+  notes: string | null
+  fileUrl: string | null
+  fileName: string | null
+  fileType: string | null
+  pnlLine: { activity: string; category: string } | null
+  agendaItem: { date: string; location: string; toPoint?: string } | null
+}
+
+const TICKET_LABEL: Record<string, string> = {
+  HOTEL: 'Hotel Voucher', TICKETS: 'Entrance Ticket', CRUISE: 'Cruise Ticket',
+  WATER: 'Water Activity Ticket', GUIDES: 'Guide Service Voucher',
+  FLIGHT_TICKETS: 'Flight Ticket', TRANSPORT: 'Transfer Voucher',
+  MEALS: 'Meal Voucher', OTHER: 'Service Voucher',
+}
+const TICKET_COLOR: Record<string, string> = {
+  HOTEL: '#2563eb', TICKETS: '#7c3aed', CRUISE: '#0891b2',
+  WATER: '#0284c7', GUIDES: '#16a34a', FLIGHT_TICKETS: '#dc2626',
+  TRANSPORT: '#ea580c', MEALS: '#d97706', OTHER: '#64748b',
+}
+
 type SectionKey =
   | 'header' | 'bookingSummary' | 'agentNames' | 'quotedTotal'
   | 'customerNames' | 'accommodation' | 'itinerary' | 'tourAgenda'
@@ -39,6 +66,7 @@ export default function PrintBookingPage() {
   const { data: session, status: authStatus } = useSession()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [booking, setBooking] = useState<any>(null)
+  const [printTickets, setPrintTickets] = useState<PrintTicket[]>([])
   const [loading, setLoading] = useState(true)
   const [phase, setPhase] = useState<'select' | 'preview'>('select')
   const [sel, setSel] = useState<Sel>(DEFAULT_SEL)
@@ -46,10 +74,13 @@ export default function PrintBookingPage() {
   useEffect(() => {
     if (authStatus === 'unauthenticated') return
     if (authStatus !== 'authenticated') return
-    fetch(`/api/bookings/${ref}`)
-      .then(r => r.json())
-      .then(j => { if (j.success) setBooking(j.data) })
-      .finally(() => setLoading(false))
+    Promise.all([
+      fetch(`/api/bookings/${ref}`).then(r => r.json()),
+      fetch(`/api/tickets?bookingRef=${ref}`).then(r => r.json()),
+    ]).then(([bj, tj]) => {
+      if (bj.success) setBooking(bj.data)
+      if (tj.success) setPrintTickets((tj.data as PrintTicket[]).filter(t => t.pnlLine !== null || t.fileUrl !== null || t.reference !== null))
+    }).finally(() => setLoading(false))
   }, [ref, authStatus])
 
   const role = session?.user?.role ?? ''
@@ -77,8 +108,6 @@ export default function PrintBookingPage() {
   const itinerary: any[] = booking.itineraryItems ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const agendaItems: any[] = booking.tourAgenda?.items ?? []
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tickets: any[] = booking.tickets ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const payments: any[] = booking.payments ?? []
   const pnl = booking.pnl && canSeePnl ? computePNLTotals(booking.pnl) : null
@@ -476,63 +505,149 @@ export default function PrintBookingPage() {
             <span>{booking.bookingRef} · {session?.user?.name}</span>
           </div>
 
-          {/* ── TICKETS — each on its own page ── */}
-          {show('tickets') && tickets.map(t => (
-            <div key={t.id} className="page-break">
-              <div className="px-0 py-0">
-                {/* Ticket header */}
-                <div className="flex items-center justify-between mb-6 pb-4 border-b-2 border-slate-200">
-                  <Image src="/png/aahaas.png" alt="Apple Holidays" width={120} height={44} className="object-contain" style={{ maxHeight: 44 }} />
-                  <div className="text-right">
-                    <div className="text-xs text-slate-400 uppercase tracking-wide">Ticket / Voucher</div>
-                    <div className="text-lg font-mono font-bold text-slate-900">{booking.bookingRef}</div>
-                  </div>
-                </div>
-
-                <div className="border-2 border-slate-200 rounded-xl p-6 space-y-4">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <div className="text-xl font-bold text-slate-900">{t.name ?? t.description ?? 'Ticket'}</div>
-                      <div className="text-sm text-slate-500 mt-1">{t.ticketType}</div>
-                    </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
-                      t.status === 'PAID' || t.status === 'PURCHASED' ? 'bg-green-100 text-green-700'
-                      : 'bg-yellow-100 text-yellow-700'
-                    }`}>{t.status}</span>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-4 text-xs border-t border-slate-100 pt-4">
-                    {t.date && <Field label="Date" value={formatDate(t.date)} />}
-                    {t.quantity && <Field label="Quantity" value={String(t.quantity)} />}
-                    {t.unitCost && <Field label="Unit Cost" value={formatCurrency(t.unitCost, booking.currency)} />}
-                    {t.totalCost && <Field label="Total Cost" value={formatCurrency(t.totalCost, booking.currency)} />}
-                    {t.reference && <Field label="Reference" value={t.reference} />}
-                    {t.supplier && <Field label="Supplier" value={t.supplier} />}
-                  </div>
-
-                  {t.notes && (
-                    <div className="text-xs text-slate-500 border-t border-slate-100 pt-3">
-                      <span className="font-medium">Notes: </span>{t.notes}
-                    </div>
-                  )}
-
-                  {/* Passengers reference */}
-                  <div className="border-t border-slate-100 pt-3 text-xs text-slate-500">
-                    <span className="font-medium">Passengers: </span>
-                    {passengers.filter(p => p.isLead).map(p => p.name).join(', ') || passengers.slice(0, 3).map(p => p.name).join(', ')}
-                    {booking.paxAdults > 0 && ` · ${booking.paxAdults} adults${booking.paxChildren > 0 ? `, ${booking.paxChildren} children` : ''}`}
-                  </div>
-                </div>
-
-                <div className="mt-4 text-[10px] text-slate-400 text-center">
-                  Apple Holidays — MMT Vietnam · {booking.bookingRef}
-                </div>
-              </div>
-            </div>
-          ))}
-
         </div>
       </div>
+
+      {/* ── TICKETS & VOUCHERS — full-detail A4 pages, one per ticket ── */}
+      {show('tickets') && printTickets.map(ticket => {
+        const cat     = ticket.pnlLine?.category ?? 'OTHER'
+        const label   = TICKET_LABEL[cat] ?? 'Voucher'
+        const color   = TICKET_COLOR[cat] ?? '#64748b'
+        const isImage = ticket.fileType === 'image' || (ticket.fileUrl ? /\.(jpe?g|png|webp|gif)$/i.test(ticket.fileUrl) : false)
+        const isPdf   = ticket.fileType === 'pdf'   || (ticket.fileUrl ? /\.pdf$/i.test(ticket.fileUrl) : false)
+
+        const leadPassenger = passengers.find((p: { isLead?: boolean }) => p.isLead) ?? passengers[0]
+
+        const detailRows = [
+          { label: 'Lead Passenger', value: leadPassenger?.name ?? '—' },
+          { label: 'Agent', value: booking.agent ?? '—' },
+          { label: 'Travel Dates', value: `${formatDate(booking.arrivalDate)} — ${formatDate(booking.departureDate)}` },
+          { label: 'Pax', value: `${booking.paxAdults} Adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? ` + ${booking.paxChildren} Child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}` },
+          ticket.agendaItem?.date ? { label: 'Service Date', value: formatDate(ticket.agendaItem.date) } : null,
+          ticket.agendaItem?.location ? { label: 'Location', value: ticket.agendaItem.location + (ticket.agendaItem.toPoint ? ` → ${ticket.agendaItem.toPoint}` : '') } : null,
+          { label: 'Quantity', value: `${ticket.qty} pax` },
+          ticket.supplier ? { label: 'Supplier / Provider', value: ticket.supplier } : null,
+        ].filter(Boolean) as { label: string; value: string }[]
+
+        return (
+          <div key={ticket.id} style={{
+            width: '210mm', minHeight: '297mm', padding: '12mm 14mm 10mm 14mm',
+            display: 'flex', flexDirection: 'column', background: '#fff',
+            pageBreakBefore: 'always', breakBefore: 'page',
+            margin: '0 auto', fontFamily: 'Arial, Helvetica, sans-serif',
+            boxSizing: 'border-box',
+          }}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingBottom: 10, borderBottom: `3px solid ${color}`, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 8, background: color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ color: '#fff', fontWeight: 900, fontSize: 15 }}>AH</span>
+                </div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>AppleHolidays</div>
+                  <div style={{ fontSize: 9, color: '#64748b', letterSpacing: 1.2, textTransform: 'uppercase' }}>MMT Vietnam</div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ display: 'inline-block', background: color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 4, letterSpacing: 0.5, marginBottom: 4, textTransform: 'uppercase' }}>
+                  {label}
+                </div>
+                <div style={{ fontSize: 11, color: '#475569' }}>
+                  Booking: <strong style={{ color: '#0f172a', fontFamily: 'monospace', fontSize: 12 }}>{booking.bookingRef}</strong>
+                </div>
+                {booking.agentBookingId && (
+                  <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 1 }}>Agent Ref: {booking.agentBookingId}</div>
+                )}
+              </div>
+            </div>
+
+            {/* Ticket title */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>{ticket.type}</div>
+              {ticket.pnlLine?.activity && ticket.pnlLine.activity !== ticket.type && (
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{ticket.pnlLine.activity}</div>
+              )}
+            </div>
+
+            {/* Reference number */}
+            {ticket.reference && (
+              <div style={{ border: `2px solid ${color}`, borderRadius: 8, padding: '10px 16px', marginBottom: 12, background: color + '15' }}>
+                <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 1.2, color, fontWeight: 700, marginBottom: 3 }}>Confirmation / Reference Number</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color, fontFamily: 'monospace', letterSpacing: 2 }}>{ticket.reference}</div>
+              </div>
+            )}
+
+            {/* Detail grid */}
+            <div style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
+                {detailRows.map((row, idx) => (
+                  <div key={idx} style={{ padding: '8px 12px', background: idx % 2 === 0 ? '#f8fafc' : '#ffffff', borderBottom: idx < detailRows.length - 2 ? '1px solid #e2e8f0' : 'none' }}>
+                    <div style={{ fontSize: 8, textTransform: 'uppercase', letterSpacing: 0.8, color: '#94a3b8', fontWeight: 700, marginBottom: 2 }}>{row.label}</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: '#0f172a' }}>{row.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* All passengers */}
+            {passengers.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.8, color: '#94a3b8', fontWeight: 700, marginBottom: 5 }}>All Passengers</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                  {passengers.map((p: any, i: number) => (
+                    <div key={i} style={{ background: '#f1f5f9', border: '1px solid #e2e8f0', borderRadius: 4, padding: '3px 9px', fontSize: 10, fontWeight: 600, color: '#334155' }}>
+                      {p.name}{p.isLead ? ' ★' : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Notes */}
+            {ticket.notes && (
+              <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, padding: '7px 11px', marginBottom: 12, fontSize: 10, color: '#92400e', lineHeight: 1.5 }}>
+                <strong>Notes: </strong>{ticket.notes}
+              </div>
+            )}
+
+            {/* Receipt image */}
+            {ticket.fileUrl && isImage && (
+              <div style={{ marginBottom: 10, breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+                <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.8, color: '#94a3b8', fontWeight: 700, marginBottom: 6 }}>Receipt / Confirmation Document</div>
+                <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, overflow: 'hidden', background: '#f8fafc', padding: 6, textAlign: 'center' }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={ticket.fileUrl} alt="Receipt" style={{ maxWidth: '100%', maxHeight: 320, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
+                  {ticket.fileName && <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 4 }}>{ticket.fileName}</div>}
+                </div>
+              </div>
+            )}
+
+            {/* PDF receipt note */}
+            {ticket.fileUrl && isPdf && (
+              <div style={{ border: '1px solid #e2e8f0', borderRadius: 6, padding: '14px 16px', marginBottom: 10, background: '#f8fafc', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.8, color: '#94a3b8', fontWeight: 700, marginBottom: 6 }}>Receipt Attached (PDF)</div>
+                <div style={{ fontSize: 28 }}>📄</div>
+                <div style={{ fontSize: 12, color: '#475569', marginTop: 6, fontWeight: 600 }}>{ticket.fileName ?? 'receipt.pdf'}</div>
+                <div style={{ fontSize: 9, color: '#94a3b8', marginTop: 3 }}>View digital copy for full document</div>
+              </div>
+            )}
+
+            <div style={{ flex: 1 }} />
+
+            {/* Footer */}
+            <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <div style={{ fontSize: 8, color: '#94a3b8' }}>
+                AppleHolidays · MMT Vietnam · {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+              </div>
+              <div style={{ fontSize: 8, color: '#94a3b8', fontFamily: 'monospace' }}>
+                {booking.bookingRef} · TKT-{ticket.id.slice(-8).toUpperCase()}
+              </div>
+            </div>
+          </div>
+        )
+      })}
     </>
   )
 }

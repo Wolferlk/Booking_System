@@ -23,9 +23,12 @@ export default withAuth(
       return NextResponse.redirect(new URL('/dashboard', req.url))
     }
 
-    // Admin-only routes
+    // Admin-only routes (mail-inbox is also accessible to BT_USER)
     if (pathname.startsWith('/dashboard/admin') && role !== 'SUPER_ADMIN') {
-      return NextResponse.redirect(new URL('/dashboard', req.url))
+      const allowedForBT = ['/dashboard/admin/mail-inbox']
+      if (role !== 'BT_USER' || !allowedForBT.some(p => pathname.startsWith(p))) {
+        return NextResponse.redirect(new URL('/dashboard', req.url))
+      }
     }
 
     return NextResponse.next()

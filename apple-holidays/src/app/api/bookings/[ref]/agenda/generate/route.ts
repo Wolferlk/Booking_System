@@ -81,32 +81,41 @@ export async function POST(
   const conditions = loadConditions()
 
   const systemPrompt = `You are a Vietnam tour operations expert for AppleHolidays (MMT Vietnam).
-Generate a detailed day-by-day tour agenda from the provided booking/document data.
+Generate a detailed day-by-day movement chart from the provided booking/document data.
 
-OPERATIONAL RULES (must follow exactly):
+OPERATIONAL RULES (follow exactly):
 ${conditions}
 
-Return a JSON object with key "items" containing an array. Each item:
+Return a JSON object with key "items" containing an array. Each item MUST have ALL fields:
 {
   "date": "YYYY-MM-DD",
-  "location": "city/area name",
-  "fromPoint": "departure point or null",
-  "toPoint": "destination or activity name",
-  "details": "full operational description with timing, instructions",
-  "mealPlan": "B (breakfast) | L (lunch) | D (dinner) | BL | BD | LD | BLD | null",
-  "meetingTime": "HH:MM or null",
+  "location": "city/area name (never empty)",
+  "fromPoint": "exact pickup — hotel name, airport code, pier name",
+  "toPoint": "exact destination — hotel name, airport code, attraction",
+  "details": "full operational description with timing, vehicle type, instructions",
+  "mealPlan": "B | L | D | BL | BD | LD | BLD | null",
+  "meetingTime": "HH:MM — REQUIRED for all transfers and tours, null only for ticket-only/OWN_ARRANGEMENT",
   "serviceType": "PVT_TRANSFER | SIC_TRANSFER | OWN_ARRANGEMENT"
 }
 
-Rules:
-- Airport transfer on arrival: international → +1 hour, domestic → +30 min after landing
-- Airport transfer on departure: 3 hours before flight
-- SIC service: set meetingTime to pickup window (e.g. "07:30")
-- Private service: meetingTime from itinerary details or null
-- Ticket-only days: mealPlan=null, meetingTime=null, serviceType=OWN_ARRANGEMENT
-- Include every day from arrival to departure
-- Split multi-city days into separate items
-- Be specific about locations (hotel, airport, pier, etc.)`
+MEETING TIME — CRITICAL RULES (always fill this field):
+- International arrival transfer: flight arrTime + 45 min (e.g. lands 14:20 → meetingTime "15:05")
+- Domestic arrival transfer: flight arrTime + 30 min (e.g. lands 10:00 → meetingTime "10:30")
+- Departure transfer: flight depTime − 3 hours (e.g. departs 09:30 → meetingTime "06:30")
+- SIC full-day tour: "07:30" (default)
+- SIC half-day morning: "08:00" (default)
+- SIC half-day afternoon: "13:00" (default)
+- SIC night show / evening: "18:30" (default)
+- SIC cruise embarkation: "07:30" (default)
+- Private full-day: "08:00" (use itinerary time if given, else this default)
+- Private half-day morning: "08:30" (default)
+- Ticket-only / OWN_ARRANGEMENT (no guide, no driver): null
+- NEVER leave meetingTime null for PVT_TRANSFER or SIC_TRANSFER items
+
+ADDITIONAL RULES:
+- Include every single day from arrival date to departure date
+- Split multi-city movement into separate items per leg
+- Meals: only set if explicitly included in the package for that day`
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',

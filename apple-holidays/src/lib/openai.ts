@@ -128,6 +128,57 @@ export async function extractBookingFromText(documentText: string): Promise<Reco
   return JSON.parse(content)
 }
 
+// Intelligently classify activity names into P&L categories using GPT
+export async function classifyPNLCategories(activities: string[]): Promise<string[]> {
+  if (!activities.length) return []
+
+  const prompt = `You are a Vietnam travel operations expert classifying P&L line items for AppleHolidays (MMT Vietnam).
+
+CATEGORIES (pick exactly one per activity):
+- HOTEL: hotel/resort stays, airport-to-hotel transfers, hotel check-in/check-out transfers, accommodation
+- TRANSPORT: pure ground transport NOT hotel-related (cab, private car between cities, day trip vehicle hire)
+- CRUISE: Ha Long Bay cruise, boat trips, yacht, river cruise, junk boat
+- GUIDES: guided walking tours, city tours, day tours with guide, sightseeing
+- TICKETS: entrance tickets, admission, cable car, theme park, night shows, "Ba Na", attraction passes
+- WATER: water sports, kayaking, snorkeling, diving, swimming, surfing
+- FLIGHT_TICKETS: airline/domestic flight tickets
+- MEALS: restaurant meals, food tours (NOT meals included in a package)
+- TAX_FEES: visa, tax, insurance, service fee, surcharge
+- OTHER: anything else
+
+IMPORTANT RULES:
+- "Airport to [Hotel name]" or "[Hotel] to Airport" → HOTEL (hotel-related transfer)
+- "Ha Long / Halong / cruise / boat" → CRUISE
+- "Fansipan / trekking / hiking" → GUIDES
+- "Ticket / entrance / Ba Na / cable car" → TICKETS
+- "Two-way transfer between cities" → TRANSPORT
+- "Cab service / Grab / taxi" → TRANSPORT
+
+Return JSON: { "categories": ["HOTEL", "CRUISE", ...] } — same order as input, one per activity.
+
+Activities:
+${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: 'Return only valid JSON object with a "categories" array. No explanations.' },
+      { role: 'user', content: prompt },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0,
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) return activities.map(() => 'OTHER')
+
+  const parsed = JSON.parse(content) as { categories?: string[] }
+  const result = parsed.categories ?? []
+  // Pad if OpenAI returns fewer items than expected
+  while (result.length < activities.length) result.push('OTHER')
+  return result
+}
+
 export async function extractPNLFromText(sheetText: string): Promise<Record<string, unknown>> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
