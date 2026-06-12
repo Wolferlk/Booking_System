@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import type { UserRole } from '@prisma/client'
 
 // TE_USER: confirms with client → GT_REVIEW → GT_VERIFIED ("Client Confirmed")
@@ -37,6 +38,11 @@ export async function POST(
       },
     }),
   ])
+
+  // Fire-and-forget — does not block the response
+  sendAgentConfirmationEmail(params.ref).catch(err =>
+    console.error('[verify] Agent confirmation email failed:', err),
+  )
 
   return buildApiSuccess(updated, 'Client confirmed — booking ready for operations')
 }

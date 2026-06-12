@@ -1,16 +1,27 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const PDFDocument = require('pdfkit')
+const _pdfkit = require('pdfkit')
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const PDFDocument: any = _pdfkit.default ?? _pdfkit
 
 function fmt(d: string | Date | null | undefined): string {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+export interface BookingPdfOptions {
+  /** Include passenger names & types. Default: true */
+  includePassengers?: boolean
+  /** Include quoted total in booking summary. Default: true */
+  includeQuotedTotal?: boolean
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function generateBookingPdf(booking: any): Promise<Buffer> {
+export async function generateBookingPdf(booking: any, options: BookingPdfOptions = {}): Promise<Buffer> {
+  const { includePassengers = true, includeQuotedTotal = true } = options
+
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
-    const doc = new PDFDocument({ margin: 50, size: 'A4' })
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true })
 
     doc.on('data', (chunk: Buffer) => chunks.push(chunk))
     doc.on('end', () => resolve(Buffer.concat(chunks)))
@@ -19,10 +30,10 @@ export async function generateBookingPdf(booking: any): Promise<Buffer> {
     const BRAND  = '#D97706'  // amber-600
     const DARK   = '#1E293B'  // slate-800
     const MUTED  = '#64748B'  // slate-500
-    const LIGHT  = '#F8FAFC'  // slate-50
     const LINE   = '#E2E8F0'  // slate-200
 
     function sectionHeader(title: string) {
+      if (doc.y > 720) doc.addPage()
       doc.moveDown(0.5)
       doc.rect(50, doc.y, 495, 20).fill(BRAND)
       doc.fillColor('white').fontSize(10).font('Helvetica-Bold')
@@ -30,8 +41,8 @@ export async function generateBookingPdf(booking: any): Promise<Buffer> {
       doc.fillColor(DARK).moveDown(0.8)
     }
 
-    function row(label: string, value: string, yOffset = 0) {
-      const y = doc.y + yOffset
+    function row(label: string, value: string) {
+      const y = doc.y
       doc.fontSize(9).font('Helvetica-Bold').fillColor(MUTED).text(label, 55, y, { width: 130 })
       doc.fontSize(9).font('Helvetica').fillColor(DARK).text(value || '—', 190, y, { width: 355 })
       doc.moveDown(0.5)
@@ -62,10 +73,12 @@ export async function generateBookingPdf(booking: any): Promise<Buffer> {
     row('Arrival',          fmt(booking.arrivalDate))
     row('Departure',        fmt(booking.departureDate))
     row('Pax',              `${booking.paxAdults ?? 0} Adults, ${booking.paxChildren ?? 0} Children`)
-    row('Total',            booking.quotedTotal ? `${booking.currency ?? 'USD'} ${Number(booking.quotedTotal).toLocaleString()}` : '—')
+    if (includeQuotedTotal) {
+      row('Total', booking.quotedTotal ? `${booking.currency ?? 'USD'} ${Number(booking.quotedTotal).toLocaleString()}` : '—')
+    }
 
     // ── Passengers ────────────────────────────────────────────────────────────
-    if ((booking.passengers ?? []).length > 0) {
+    if (includePassengers && (booking.passengers ?? []).length > 0) {
       sectionHeader('Passengers')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       booking.passengers.forEach((p: any, i: number) => {
@@ -154,6 +167,7 @@ export async function generateBookingPdf(booking: any): Promise<Buffer> {
     }
 
     if (booking.exclusions) {
+      if (doc.y > 600) doc.addPage()
       sectionHeader('Exclusions')
       doc.fontSize(8).font('Helvetica').fillColor(MUTED)
          .text(booking.exclusions, 55, doc.y, { width: 490, lineGap: 2 })

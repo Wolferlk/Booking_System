@@ -374,6 +374,19 @@ Thank you!`,
                   <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
                 </button>
               )}
+              {['TE_USER', 'SUPER_ADMIN'].includes(role) && (
+                <button
+                  onClick={async () => {
+                    const res = await fetch(`/api/bookings/${ref}/send-agent-email`, { method: 'POST' })
+                    const json = await res.json()
+                    if (json.success) toast.success('Confirmation email sent to agent')
+                    else toast.error(json.error ?? 'Failed to send email')
+                  }}
+                  className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" /> Send Email
+                </button>
+              )}
               {role === 'SUPER_ADMIN' && !['COMPLETED'].includes(status) && (
                 <button
                   onClick={async () => {
