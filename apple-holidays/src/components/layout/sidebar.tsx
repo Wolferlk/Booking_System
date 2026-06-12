@@ -6,7 +6,7 @@ import { useSession, signOut } from 'next-auth/react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download,
+  Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download, Mail,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -15,7 +15,7 @@ import type { UserRole } from '@prisma/client'
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, Truck, Home, Download,
+  Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string }[]> = {
@@ -25,6 +25,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking', href: '/dashboard/bookings/new', icon: 'PlusCircle' },
     { label: 'Change Requests', href: '/dashboard/change-requests', icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
+    { label: 'Mail Inbox', href: '/dashboard/admin/mail-inbox', icon: 'Mail' },
   ],
   GT_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
@@ -34,11 +35,13 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Vendors', href: '/dashboard/ground/vendors', icon: 'Truck' },
   ],
   TE_USER: [
-    { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
-    { label: 'Review Queue', href: '/dashboard/te/review', icon: 'ClipboardCheck' },
-    { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
-    { label: 'Contact Log', href: '/dashboard/te/contacts', icon: 'Phone' },
-    { label: 'Reminders', href: '/dashboard/te/reminders', icon: 'Bell' },
+    { label: 'Dashboard',        href: '/dashboard',              icon: 'LayoutDashboard' },
+    { label: 'Live Overview',    href: '/dashboard/te/live',      icon: 'Radio' },
+    { label: 'Analytics',        href: '/dashboard/te/analytics', icon: 'BarChart2' },
+    { label: 'Review Queue',     href: '/dashboard/te/review',    icon: 'ClipboardCheck' },
+    { label: 'All Bookings',     href: '/dashboard/bookings',     icon: 'FileText' },
+    { label: 'Contact Log',      href: '/dashboard/te/contacts',  icon: 'Phone' },
+    { label: 'Reminders',        href: '/dashboard/te/reminders', icon: 'Bell' },
   ],
   AC_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
@@ -52,14 +55,17 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
   ],
   SUPER_ADMIN: [
-    { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
-    { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
-    { label: 'New Booking', href: '/dashboard/bookings/new', icon: 'PlusCircle' },
+    { label: 'Dashboard',     href: '/dashboard',              icon: 'LayoutDashboard' },
+    { label: 'Live Overview', href: '/dashboard/te/live',      icon: 'Radio' },
+    { label: 'Analytics',     href: '/dashboard/te/analytics', icon: 'BarChart2' },
+    { label: 'All Bookings',  href: '/dashboard/bookings',     icon: 'FileText' },
+    { label: 'New Booking',   href: '/dashboard/bookings/new', icon: 'PlusCircle' },
     { label: 'Ground Review', href: '/dashboard/ground/review', icon: 'ClipboardCheck' },
     { label: 'Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'Credit Agents', href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
+    { label: 'Mail Inbox', href: '/dashboard/admin/mail-inbox', icon: 'Mail' },
     { label: 'Users', href: '/dashboard/admin/users', icon: 'Users' },
     { label: 'Audit Log', href: '/dashboard/admin/audit', icon: 'Shield' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
