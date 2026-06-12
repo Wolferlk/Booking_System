@@ -1,5 +1,7 @@
 import { simpleParser } from 'mailparser'
 import openai from '@/lib/openai'
+import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +24,21 @@ export interface ProcessedEmail {
   conversationId: string
   parsed: Record<string, unknown> | null
   error?: string
+}
+
+export type MailboxKind = 'TOUR_CONFIRMATION' | 'PNL'
+
+export interface MailboxConfig {
+  user: string
+  kind: MailboxKind
+  label: string
+}
+
+export interface EmailAttachment {
+  name: string
+  contentType: string
+  size?: number
+  buffer: Buffer
 }
 
 export interface ExtractedBooking {
@@ -77,6 +94,30 @@ export function detectEmailType(subject: string, body: string): 'TOUR_CONFIRMATI
   }
 
   return 'UNKNOWN'
+}
+
+export function getConfiguredMailboxes(): MailboxConfig[] {
+  const mailboxes: MailboxConfig[] = []
+
+  const tqUser = process.env.Outlookmail_USERNAME?.trim()
+  if (tqUser) {
+    mailboxes.push({
+      user: tqUser,
+      kind: 'TOUR_CONFIRMATION',
+      label: 'Travel Quotation',
+    })
+  }
+
+  const pnlUser = (process.env.GRAPH_PNL_USER ?? '').trim()
+  if (pnlUser && pnlUser !== tqUser) {
+    mailboxes.push({
+      user: pnlUser,
+      kind: 'PNL',
+      label: 'Travel P&L',
+    })
+  }
+
+  return mailboxes
 }
 
 // ── OpenAI extraction ────────────────────────────────────────────────────────
@@ -255,6 +296,50 @@ async function graphGetAllPages<T>(token: string, url: string): Promise<T[]> {
   return items
 }
 
+async function fetchAttachmentsForMessage(token: string, base: string, graphMessageId: string): Promise<EmailAttachment[]> {
+  type GraphAttachment = {
+    name?: string
+    contentType?: string
+    size?: number
+    contentBytes?: string
+    '@odata.type'?: string
+  }
+
+  const url = `${base}/messages/${graphMessageId}/attachments?$top=50`
+
+  try {
+    const attachments = await graphGetAllPages<GraphAttachment>(token, url)
+    return attachments
+      .filter(att => (att['@odata.type'] ?? '').includes('fileAttachment') && att.contentBytes)
+      .map(att => ({
+        name: att.name ?? 'attachment.bin',
+        contentType: att.contentType ?? 'application/octet-stream',
+        size: att.size ?? 0,
+        buffer: Buffer.from(att.contentBytes ?? '', 'base64'),
+      }))
+  } catch {
+    return []
+  }
+}
+
+async function buildAttachmentText(attachment: EmailAttachment): Promise<string> {
+  const fileName = attachment.name.toLowerCase()
+
+  if (fileName.endsWith('.docx')) {
+    return extractTextFromDocx(attachment.buffer)
+  }
+
+  if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+    return extractTextFromXlsx(attachment.buffer)
+  }
+
+  if (fileName.endsWith('.txt') || fileName.endsWith('.csv')) {
+    return attachment.buffer.toString('utf-8')
+  }
+
+  return ''
+}
+
 function parseBody(msg: GraphMessage): { text: string; html: string } {
   const content = msg.body?.content ?? ''
   const type = msg.body?.contentType ?? 'text'
@@ -281,6 +366,16 @@ export async function fetchUnprocessedEmails(
 ): Promise<ProcessedEmail[]> {
   const user = process.env.Outlookmail_USERNAME
   if (!user) throw new Error('Outlookmail_USERNAME not set')
+
+  return fetchUnprocessedEmailsForUser(user, limit, folder)
+}
+
+export async function fetchUnprocessedEmailsForUser(
+  user: string,
+  limit = 50,
+  folder: 'inbox' | 'all' = 'all',
+): Promise<ProcessedEmail[]> {
+  if (!user) throw new Error('Mailbox user not set')
 
   const token = await getGraphToken()
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
@@ -343,6 +438,15 @@ export async function fetchMessageById(graphMessageId: string): Promise<Processe
   const user = process.env.Outlookmail_USERNAME
   if (!user) return null
 
+  return fetchMessageByIdForUser(user, graphMessageId)
+}
+
+export async function fetchMessageByIdForUser(
+  user: string,
+  graphMessageId: string,
+): Promise<ProcessedEmail | null> {
+  if (!user) return null
+
   const token = await getGraphToken()
   const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
   const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}/messages/${graphMessageId}?$select=${select}`
@@ -377,13 +481,37 @@ export async function fetchMessageById(graphMessageId: string): Promise<Processe
   }
 }
 
-// ── Webhook subscription — DB-persisted, always-on ───────────────────────────
+export async function fetchMessageAttachmentsForUser(
+  user: string,
+  graphMessageId: string,
+): Promise<EmailAttachment[]> {
+  if (!user) return []
+
+  const token = await getGraphToken()
+  const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
+  return fetchAttachmentsForMessage(token, base, graphMessageId)
+}
+
+export async function extractEmailSourceTextForUser(
+  user: string,
+  email: ProcessedEmail,
+): Promise<{ rawText: string; attachments: EmailAttachment[] }> {
+  const attachments = email.hasAttachments
+    ? await fetchMessageAttachmentsForUser(user, email.graphId)
+    : []
+
+  const supportedText = await Promise.all(attachments.map(buildAttachmentText))
+  const attachmentText = supportedText.filter(Boolean).join('\n\n')
+
+  return {
+    rawText: [email.rawBody, attachmentText].filter(Boolean).join('\n\n'),
+    attachments,
+  }
+}
+
+// ── Webhook subscription — DB-persisted, multi-mailbox ───────────────────────
 
 import { prisma } from '@/lib/prisma'
-
-const SK_ID     = 'webhook_subscription_id'
-const SK_EXPIRY = 'webhook_subscription_expiry'
-const SK_URL    = 'webhook_subscription_url'
 
 async function dbGet(key: string): Promise<string | null> {
   try {
@@ -405,41 +533,38 @@ function notificationUrl(): string {
   return `${raw.replace(/^http:\/\//i, 'https://')}/api/mail/webhook`
 }
 
-export async function ensureWebhookSubscription(): Promise<string> {
-  const url    = notificationUrl()
-  const token  = await getGraphToken()
-  const user   = process.env.Outlookmail_USERNAME!
-  const secret = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
+// Per-user DB key helpers
+function skSubId(user: string)     { return `webhook_sub_id_${user}` }
+function skSubExpiry(user: string) { return `webhook_sub_expiry_${user}` }
+function skSubUser(subId: string)  { return `webhook_sub_user_${subId}` }
+function skSubKind(subId: string)  { return `webhook_sub_kind_${subId}` }
 
-  // Load persisted state
-  const [savedId, savedExpiryStr, savedUrl] = await Promise.all([
-    dbGet(SK_ID), dbGet(SK_EXPIRY), dbGet(SK_URL),
-  ])
+async function ensureWebhookSubscriptionForUser(
+  user: string,
+  kind: MailboxKind,
+  token: string,
+  url: string,
+  secret: string,
+): Promise<string> {
+  const savedId      = await dbGet(skSubId(user))
+  const savedExpiry  = await dbGet(skSubExpiry(user))
+  const now          = new Date()
+  const nextExpiry   = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
 
-  const now    = new Date()
-  const expiry = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000) // 3 days
-
-  // If we have a saved subscription and URL hasn't changed, try to PATCH (extend) it
-  if (savedId && savedExpiryStr && savedUrl === url && new Date(savedExpiryStr) > now) {
-    try {
-      const r = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${savedId}`, {
-        method:  'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ expirationDateTime: expiry.toISOString() }),
-      })
-      if (r.ok) {
-        await dbSet(SK_EXPIRY, expiry.toISOString())
-        console.log('[Webhook] subscription renewed:', savedId)
-        return savedId
-      }
-      const errText = await r.text().catch(() => '')
-      console.warn('[Webhook] PATCH failed, recreating. Status:', r.status, errText.slice(0, 200))
-    } catch (e) {
-      console.warn('[Webhook] PATCH error, recreating:', e)
+  if (savedId && savedExpiry && new Date(savedExpiry) > now) {
+    const r = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${savedId}`, {
+      method:  'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ expirationDateTime: nextExpiry.toISOString() }),
+    })
+    if (r.ok) {
+      await dbSet(skSubExpiry(user), nextExpiry.toISOString())
+      console.log(`[Webhook] renewed ${kind} subscription for ${user}:`, savedId)
+      return savedId
     }
+    console.warn(`[Webhook] PATCH failed for ${user} (${r.status}), recreating`)
   }
 
-  // Create new subscription
   const res = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
     method:  'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -447,7 +572,7 @@ export async function ensureWebhookSubscription(): Promise<string> {
       changeType:         'created',
       notificationUrl:    url,
       resource:           `users/${user}/mailFolders/inbox/messages`,
-      expirationDateTime: expiry.toISOString(),
+      expirationDateTime: nextExpiry.toISOString(),
       clientState:        secret,
     }),
   })
@@ -455,39 +580,95 @@ export async function ensureWebhookSubscription(): Promise<string> {
   const json = await res.json() as { id?: string; error?: { message?: string; code?: string } }
   if (!json.id) {
     throw new Error(
-      `Subscription failed [url: ${url}]: ` +
+      `Subscription failed for ${user} [url: ${url}]: ` +
       (json.error?.message ?? JSON.stringify(json)),
     )
   }
 
   await Promise.all([
-    dbSet(SK_ID,     json.id),
-    dbSet(SK_EXPIRY, expiry.toISOString()),
-    dbSet(SK_URL,    url),
+    dbSet(skSubId(user),      json.id),
+    dbSet(skSubExpiry(user),  nextExpiry.toISOString()),
+    dbSet(skSubUser(json.id), user),
+    dbSet(skSubKind(json.id), kind),
   ])
 
-  console.log('[Webhook] subscription created:', json.id)
+  console.log(`[Webhook] created ${kind} subscription for ${user}:`, json.id)
   return json.id
 }
 
-export async function getSubscriptionStatus(): Promise<{ active: boolean; id: string | null; expiry: string | null; url: string }> {
-  const [id, expiryStr] = await Promise.all([dbGet(SK_ID), dbGet(SK_EXPIRY)])
-  const now    = new Date()
-  const expiry = expiryStr ? new Date(expiryStr) : null
+// Subscribe all configured mailboxes and return their subscription IDs
+export async function ensureAllWebhookSubscriptions(): Promise<string[]> {
+  const url      = notificationUrl()
+  const secret   = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
+  const token    = await getGraphToken()
+  const mailboxes = getConfiguredMailboxes()
+
+  const ids: string[] = []
+  for (const mb of mailboxes) {
+    try {
+      const id = await ensureWebhookSubscriptionForUser(mb.user, mb.kind, token, url, secret)
+      ids.push(id)
+    } catch (err) {
+      console.error(`[Webhook] subscription failed for ${mb.user}:`, err instanceof Error ? err.message : err)
+    }
+  }
+  return ids
+}
+
+// Look up which mailbox user+kind a subscription ID belongs to
+export async function lookupSubscription(subscriptionId: string): Promise<{ user: string; kind: MailboxKind } | null> {
+  const [user, kind] = await Promise.all([
+    dbGet(skSubUser(subscriptionId)),
+    dbGet(skSubKind(subscriptionId)),
+  ])
+  if (!user || !kind) return null
+  return { user, kind: kind as MailboxKind }
+}
+
+// Backward-compat: subscribe only the TQ mailbox
+export async function ensureWebhookSubscription(): Promise<string> {
+  const url    = notificationUrl()
+  const secret = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
+  const token  = await getGraphToken()
+  const tqUser = process.env.Outlookmail_USERNAME
+  if (!tqUser) throw new Error('Outlookmail_USERNAME not set')
+  return ensureWebhookSubscriptionForUser(tqUser, 'TOUR_CONFIRMATION', token, url, secret)
+}
+
+export async function getSubscriptionStatus(): Promise<{
+  active: boolean
+  id: string | null
+  expiry: string | null
+  url: string
+  mailboxes: Array<{ user: string; kind: MailboxKind; active: boolean; id: string | null; expiry: string | null }>
+}> {
+  const url      = notificationUrl()
+  const now      = new Date()
+  const mailboxes = getConfiguredMailboxes()
+
+  const statuses = await Promise.all(mailboxes.map(async mb => {
+    const id        = await dbGet(skSubId(mb.user))
+    const expiryStr = await dbGet(skSubExpiry(mb.user))
+    const expiry    = expiryStr ? new Date(expiryStr) : null
+    return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null }
+  }))
+
+  const primary = statuses[0]
   return {
-    active: !!(id && expiry && expiry > now),
-    id,
-    expiry: expiryStr,
-    url:    notificationUrl(),
+    active:    statuses.some(s => s.active),
+    id:        primary?.id ?? null,
+    expiry:    primary?.expiry ?? null,
+    url,
+    mailboxes: statuses,
   }
 }
 
-// Called on startup and by cron — silently auto-registers/renews
+// Called on startup and by cron — silently registers/renews all mailboxes
 export async function autoSubscribe(): Promise<void> {
   const url = notificationUrl()
-  if (url.includes('localhost') || url.includes('127.0.0.1')) return // skip in local dev
+  if (url.includes('localhost') || url.includes('127.0.0.1')) return
   try {
-    await ensureWebhookSubscription()
+    await ensureAllWebhookSubscriptions()
   } catch (err) {
     console.error('[Webhook] auto-subscribe failed:', err instanceof Error ? err.message : err)
   }

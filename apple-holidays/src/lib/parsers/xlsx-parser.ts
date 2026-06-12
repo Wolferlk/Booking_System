@@ -45,6 +45,7 @@ export function detectCategory(activity: string): string {
 }
 
 export interface PNLImportResult {
+  bookingRef: string | null
   paxAdults: number
   paxChildren: number
   lineItems: {
@@ -64,11 +65,14 @@ export function parsePNLXlsx(buffer: Buffer): PNLImportResult {
   const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
   const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as (string | number)[][]
 
+  let bookingRef: string | null = null
   let paxAdults = 2
   let paxChildren = 0
 
-  // Row 1 (index 1) has pax counts in columns 9 and 10
+  // Row 1: col[1] = booking reference (e.g. "VN19005"), col[9] = adults, col[10] = children
   if (rows[1]) {
+    const rawRef = String(rows[1][1] ?? '').trim()
+    if (rawRef && rawRef.length >= 4) bookingRef = rawRef.toUpperCase()
     const adults = Number(rows[1][9] ?? 0)
     const children = Number(rows[1][10] ?? 0)
     if (adults > 0) paxAdults = adults
@@ -106,5 +110,5 @@ export function parsePNLXlsx(buffer: Buffer): PNLImportResult {
     })
   }
 
-  return { paxAdults, paxChildren, lineItems }
+  return { bookingRef, paxAdults, paxChildren, lineItems }
 }

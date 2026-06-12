@@ -17,7 +17,7 @@ Boath details need to get that mail cht
 
 Set Credintial :
 Outlookmail_USERNAME=confirm.booking@aahaas.com
-Outlookmail_PASSWORD=M(128496128549aj
+Outlookmail_PASSWORD=<redacted>
 
 in Tour Confirmation 
 Subject likr this : Re: Quotation | 402011305347 | 22/Jun/2026 - 27/Jun/2026 | Yogesh M - Vietnam - 280526 | Vietnam | 2 Adults

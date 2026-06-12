@@ -2,8 +2,9 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { extractBookingFromEmail, type ExtractedBooking } from '@/lib/mail-processor'
+import { extractBookingFromEmail, fetchMessageAttachmentsForUser, type ExtractedBooking } from '@/lib/mail-processor'
 import { classifyPNLCategories } from '@/lib/openai'
+import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { prisma } from '@/lib/prisma'
 import { logActivity, ACTION } from '@/lib/activity'
 import fs from 'fs'
@@ -66,13 +67,49 @@ export async function POST(req: NextRequest) {
   if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { rawBody, subject, emailType, graphId } = body as { rawBody: string; subject: string; emailType?: string; graphId?: string }
+  const { rawBody, subject, emailType, graphId, mailboxUser } = body as {
+    rawBody: string
+    subject: string
+    emailType?: string
+    graphId?: string
+    mailboxUser?: string
+  }
   if (!rawBody) return buildApiError('rawBody is required')
 
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
 
-  // ── 1. Extract via OpenAI ─────────────────────────────────────────────────
+  // ── 1. Extract via OpenAI (email body) ────────────────────────────────────
   const extracted: ExtractedBooking = await extractBookingFromEmail(rawBody, type)
+
+  // ── 1b. For PNL: also parse XLSX attachment if available ──────────────────
+  let xlsxParsed: ReturnType<typeof parsePNLXlsx> | null = null
+  if (type === 'PNL' && graphId && mailboxUser) {
+    try {
+      const atts = await fetchMessageAttachmentsForUser(mailboxUser, graphId)
+      const xlsx = atts.find(a => a.name.toLowerCase().endsWith('.xlsx') || a.name.toLowerCase().endsWith('.xls'))
+      if (xlsx) xlsxParsed = parsePNLXlsx(xlsx.buffer)
+    } catch { /* non-fatal */ }
+  }
+
+  // Merge XLSX data into extracted (XLSX wins for ref, pax, and line items)
+  if (xlsxParsed) {
+    if (xlsxParsed.bookingRef) extracted.bookingRef = xlsxParsed.bookingRef
+    if (xlsxParsed.paxAdults)  extracted.paxAdults  = xlsxParsed.paxAdults
+    if (xlsxParsed.paxChildren !== undefined) extracted.paxChildren = xlsxParsed.paxChildren
+    if (xlsxParsed.lineItems.length > 0) {
+      extracted.pnlLines = xlsxParsed.lineItems.map(l => ({
+        activity:   l.activity,
+        category:   l.category,
+        mmtRate:    l.mmtRate,
+        sicRate:    l.sicRate,
+        pvtRatePP:  l.pvtRatePP,
+        adEntrance: l.adEntrance,
+        chEntrance: l.chEntrance,
+        otherRate:  l.otherRate,
+      }))
+    }
+  }
+
   const bookingRef = generateRef(extracted.bookingRef)
 
   // ── 2. Find or create booking ─────────────────────────────────────────────
@@ -299,6 +336,24 @@ export async function POST(req: NextRequest) {
     pnlLines:    createdPnlLineCount,
     agendaItems: agendaCount,
     status:      'GT_REVIEW',
+    xlsxUsed:    !!xlsxParsed,
+    extracted: {
+      agent:           extracted.agent,
+      fileHandler:     extracted.fileHandler,
+      agentBookingId:  extracted.agentBookingId,
+      arrivalDate:     extracted.arrivalDate,
+      departureDate:   extracted.departureDate,
+      paxAdults:       extracted.paxAdults,
+      paxChildren:     extracted.paxChildren,
+      quotedTotal:     extracted.quotedTotal,
+      currency:        extracted.currency,
+      passengers:      extracted.passengers,
+      flights:         extracted.flights,
+      accommodations:  extracted.accommodations,
+      itineraryItems:  extracted.itineraryItems.slice(0, 10),
+      emergencyContacts: extracted.emergencyContacts,
+      pnlLines:        extracted.pnlLines,
+    },
   }, existingBooking
     ? `P&L updated for existing booking ${bookingRef}`
     : `Booking ${bookingRef} created → Travel Experience Review`)
