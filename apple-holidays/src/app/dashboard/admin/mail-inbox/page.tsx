@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
@@ -28,7 +28,7 @@ interface EmailWithMailbox extends ProcessedEmail {
 
 interface MailboxSubStatus {
   user: string; kind: 'TOUR_CONFIRMATION' | 'PNL'
-  active: boolean; id: string | null; expiry: string | null
+  active: boolean; id: string | null; expiry: string | null; source?: string
 }
 
 interface SubStatus {
@@ -87,18 +87,25 @@ function usd(n: number) { return n > 0 ? `$${n.toFixed(2)}` : '—' }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function PnlPill({ status }: { status: PnlStatus | undefined }) {
+function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; waitingTourNo?: string }) {
+  if (status?.hasPNL) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">
+        <CheckCircle className="w-2.5 h-2.5" /> PNL Added · {status.lineCount} lines
+      </span>
+    )
+  }
+  if (waitingTourNo) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-orange-100 text-orange-700">
+        <Clock className="w-2.5 h-2.5" /> PNL Waiting — Tour No {waitingTourNo}
+      </span>
+    )
+  }
   if (!status || status.checking) {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500">
         <Loader2 className="w-2.5 h-2.5 animate-spin" /> Checking PNL…
-      </span>
-    )
-  }
-  if (status.hasPNL) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">
-        <CheckCircle className="w-2.5 h-2.5" /> PNL Added · {status.lineCount} lines
       </span>
     )
   }
@@ -346,12 +353,14 @@ export default function MailInboxPage() {
 
   // Refs for queue management (avoid stale closures)
   const resultsRef         = useRef(results)
+  const emailsRef          = useRef(emails)
   const autoQueuedRef      = useRef<Set<string>>(new Set())
   const autoRunningRef     = useRef(false)
   const autoQueueRef       = useRef<EmailWithMailbox[]>([])
   const pnlStatusMapRef    = useRef(pnlStatusMap)
 
   useEffect(() => { resultsRef.current = results }, [results])
+  useEffect(() => { emailsRef.current  = emails  }, [emails])
   useEffect(() => { pnlStatusMapRef.current = pnlStatusMap }, [pnlStatusMap])
 
   // ── PNL status check ─────────────────────────────────────────────────────
@@ -380,13 +389,14 @@ export default function MailInboxPage() {
 
   const processOne = useCallback(async (email: EmailWithMailbox) => {
     setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
+    const isPnlEmail = email.mailboxKind === 'PNL' || email.type === 'PNL'
     try {
       const res  = await fetch('/api/mail/process', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           rawBody:     email.rawBody,
           subject:     email.subject,
-          emailType:   (email.mailboxKind === 'PNL' || email.type === 'PNL') ? 'PNL' : 'TOUR_CONFIRMATION',
+          emailType:   isPnlEmail ? 'PNL' : 'TOUR_CONFIRMATION',
           graphId:     email.graphId,
           mailboxUser: email.mailboxUser,
         }),
@@ -395,16 +405,43 @@ export default function MailInboxPage() {
       if (json.success) {
         const data = json.data as ProcessResult
         setResults(m => new Map(m).set(email.graphId, { success: true, data }))
-        // Check / refresh PNL status
-        if (email.mailboxKind === 'TOUR_CONFIRMATION') {
-          checkBookingPnl(data.bookingRef)
-        } else {
-          // PNL email processed — refresh PNL status on the linked TQ booking
+
+        if (data.status === 'PNL_WAITING') {
+          // PNL arrived before its TQ — show info toast, wait for TQ
+          toast.info(
+            `Tour No #${data.bookingRef} received — waiting for Travel Quotation`,
+            { duration: 5000 },
+          )
+        } else if (isPnlEmail) {
+          // PNL successfully linked to an existing booking
           setPnlStatusMap(prev => new Map(prev).set(data.bookingRef, {
             hasPNL: data.pnlLines > 0, lineCount: data.pnlLines, checking: false,
           }))
           if (data.pnlLines > 0) {
-            toast.success(`PNL added to booking ${data.bookingRef} — ${data.pnlLines} lines`, { duration: 4000 })
+            toast.success(`PNL added to ${data.bookingRef} — ${data.pnlLines} lines`, { duration: 4000 })
+          }
+        } else {
+          // TQ processed — check PNL status then auto-retry any waiting PNLs
+          checkBookingPnl(data.bookingRef)
+          const numericRef = data.bookingRef.replace(/[^0-9]/g, '')
+          if (numericRef.length >= 4) {
+            const waitingPnls = emailsRef.current.filter(e => {
+              const r = resultsRef.current.get(e.graphId)
+              return r?.success &&
+                     r.data?.status === 'PNL_WAITING' &&
+                     (r.data.bookingRef ?? '').replace(/[^0-9]/g, '') === numericRef
+            })
+            for (const pnlEmail of waitingPnls) {
+              setResults(m => { const n = new Map(m); n.delete(pnlEmail.graphId); return n })
+              autoQueuedRef.current.delete(pnlEmail.graphId)
+              autoQueueRef.current.unshift(pnlEmail)
+            }
+            if (waitingPnls.length > 0) {
+              toast.info(
+                `Linking ${waitingPnls.length} waiting PNL(s) to ${data.bookingRef}…`,
+                { duration: 3000 },
+              )
+            }
           }
         }
       } else {
@@ -528,11 +565,27 @@ export default function MailInboxPage() {
 
   const tqEmails       = emails.filter(e => e.mailboxKind === 'TOUR_CONFIRMATION' && e.type !== 'PNL')
   const pnlEmails      = emails.filter(e => e.mailboxKind === 'PNL' || e.type === 'PNL')
-  const processedCount = Array.from(results.values()).filter(r => r.success).length
+  const processedCount = Array.from(results.values()).filter(r => r.success && r.data?.status !== 'PNL_WAITING').length
+  const waitingCount   = Array.from(results.values()).filter(r => r.success && r.data?.status === 'PNL_WAITING').length
   const autoCount      = autoProcessingIds.size
 
+  // Map: TQ numeric ref → PNL Tour No display string ("#469083")
+  // Used to show "PNL Waiting — Tour No #469083" pill on TQ cards
+  const waitingPnlMap = useMemo(() => {
+    const map = new Map<string, string>()
+    Array.from(results.values()).forEach(result => {
+      if (result.success && result.data?.status === 'PNL_WAITING' && result.data.bookingRef) {
+        const num = result.data.bookingRef.replace(/[^0-9]/g, '')
+        if (num.length >= 4) map.set(num, `#${num}`)
+      }
+    })
+    return map
+  }, [results])
+
   const tqSub  = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
-  const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL')
+  // Prefer IMAP PNL mailbox status; fall back to Graph PNL if present
+  const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL' && m.source === 'imap')
+             ?? subStatus?.mailboxes?.find(m => m.kind === 'PNL')
 
   return (
     <div>
@@ -588,16 +641,18 @@ export default function MailInboxPage() {
         {/* ── Mailbox Status ─────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 gap-3">
           {[
-            { label: 'Travel Quotation', email: TQ_EMAIL, sub: tqSub },
-            { label: 'P&L Mailbox',      email: PNL_EMAIL, sub: pnlSub },
-          ].map(({ label, email, sub }) => (
+            { label: 'Travel Quotation', email: TQ_EMAIL,  sub: tqSub,  isImap: false },
+            { label: 'P&L Mailbox',      email: PNL_EMAIL, sub: pnlSub, isImap: true  },
+          ].map(({ label, email, sub, isImap }) => (
             <Card key={email} className={`p-3 border ${sub?.active ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
               <div className="flex items-center gap-2.5">
                 {sub?.active ? <Wifi className="w-3.5 h-3.5 text-green-500 flex-shrink-0" /> : <WifiOff className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className={`text-xs font-bold ${sub?.active ? 'text-green-800' : 'text-amber-800'}`}>{label}</span>
-                    <Badge color={sub?.active ? 'green' : 'amber'} className="text-[9px]">{sub?.active ? 'Webhook Live' : 'Cron 5min'}</Badge>
+                    <Badge color={sub?.active ? 'green' : 'amber'} className="text-[9px]">
+                      {isImap ? 'IMAP Poll' : sub?.active ? 'Webhook Live' : 'Cron 5min'}
+                    </Badge>
                   </div>
                   <p className="text-[10px] font-mono text-slate-500 truncate">{email}</p>
                 </div>
@@ -629,12 +684,12 @@ export default function MailInboxPage() {
         {/* ── Stats ─────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-4 gap-3">
           {[
-            { label: 'Total',                value: emails.length,      color: 'text-slate-700' },
-            { label: 'TQ Emails',            value: tqEmails.length,    color: 'text-blue-600'  },
-            { label: 'PNL Emails',           value: pnlEmails.length,   color: 'text-teal-600'  },
-            { label: autoCount > 0 ? `Processing (${autoCount})` : 'Processed',
-              value: autoCount > 0 ? autoCount : processedCount,
-              color: autoCount > 0 ? 'text-amber-500' : 'text-green-600' },
+            { label: 'Total',      value: emails.length,   color: 'text-slate-700'  },
+            { label: 'TQ Emails',  value: tqEmails.length, color: 'text-blue-600'   },
+            { label: 'PNL Emails', value: pnlEmails.length, color: 'text-teal-600'  },
+            { label: autoCount > 0 ? `Processing (${autoCount})` : waitingCount > 0 ? `PNL Waiting (${waitingCount})` : 'Processed',
+              value: autoCount > 0 ? autoCount : waitingCount > 0 ? waitingCount : processedCount,
+              color: autoCount > 0 ? 'text-amber-500' : waitingCount > 0 ? 'text-orange-500' : 'text-green-600' },
           ].map(s => (
             <Card key={s.label} className="p-3 text-center">
               <p className={`text-2xl font-bold ${s.color}`}>
@@ -664,29 +719,56 @@ export default function MailInboxPage() {
           const showRaw      = rawBodyId === email.graphId
           const isPnl        = email.mailboxKind === 'PNL' || email.type === 'PNL'
           const bookingRef   = result?.data?.bookingRef
+          const isWaiting    = result?.success && result.data?.status === 'PNL_WAITING'
+          // For TQ cards: numeric part of booking ref used to look up waiting PNL
+          const numericRef   = !isPnl && bookingRef ? bookingRef.replace(/[^0-9]/g, '') : ''
+          const waitingTourNo = !isPnl && numericRef ? waitingPnlMap.get(numericRef) : undefined
           const pnlSt        = !isPnl && bookingRef ? pnlStatusMap.get(bookingRef) : undefined
+          // Display Tour No for PNL cards: "#469083"
+          const pnlTourNo    = isPnl && bookingRef ? `#${bookingRef.replace(/[^0-9]/g, '')}` : undefined
 
           return (
             <Card key={email.graphId} className={`overflow-hidden transition-all ${
-              isAutoProc        ? 'border-amber-300 ring-1 ring-amber-200' :
-              result?.success   ? 'border-green-200 bg-green-50/20'        :
-              result?.error     ? 'border-red-200'                          :
-              !email.isRead     ? 'border-blue-200 bg-blue-50/20'           : ''
+              isAutoProc   ? 'border-amber-300 ring-1 ring-amber-200'  :
+              isWaiting    ? 'border-orange-300 bg-orange-50/20'        :
+              result?.success ? 'border-green-200 bg-green-50/20'      :
+              result?.error   ? 'border-red-200'                        :
+              !email.isRead   ? 'border-blue-200 bg-blue-50/20'         : ''
             }`}>
 
               {/* Mailbox strip */}
-              <div className={`px-4 py-1.5 flex items-center gap-2 border-b ${isPnl ? 'bg-teal-50 border-teal-100' : 'bg-blue-50 border-blue-100'}`}>
-                <Mail className={`w-3 h-3 ${isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
-                <span className={`text-[10px] font-mono font-semibold ${isPnl ? 'text-teal-700' : 'text-blue-700'}`}>{email.mailboxUser}</span>
-                <Badge color={isPnl ? 'teal' : 'blue'} className="text-[9px]">{isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}</Badge>
+              <div className={`px-4 py-1.5 flex items-center gap-2 border-b ${
+                isWaiting ? 'bg-orange-50 border-orange-100' :
+                isPnl ? 'bg-teal-50 border-teal-100' : 'bg-blue-50 border-blue-100'
+              }`}>
+                <Mail className={`w-3 h-3 ${isWaiting ? 'text-orange-500' : isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
+                <span className={`text-[10px] font-mono font-semibold ${isWaiting ? 'text-orange-700' : isPnl ? 'text-teal-700' : 'text-blue-700'}`}>
+                  {email.mailboxUser}
+                </span>
+                <Badge color={isWaiting ? 'amber' : isPnl ? 'teal' : 'blue'} className="text-[9px]">
+                  {isWaiting ? 'Awaiting TQ' : isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}
+                </Badge>
+                {isPnl && pnlTourNo && !isWaiting && (
+                  <span className="text-[10px] font-mono text-teal-600 font-semibold">Tour No: {pnlTourNo}</span>
+                )}
+                {isWaiting && result?.data?.bookingRef && (
+                  <span className="text-[10px] font-mono text-orange-700 font-semibold">
+                    Tour No: #{result.data.bookingRef}
+                  </span>
+                )}
                 {isAutoProc && (
                   <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-600 font-semibold">
                     <Loader2 className="w-3 h-3 animate-spin" /> Auto-processing…
                   </span>
                 )}
-                {result?.success && !isAutoProc && (
+                {result?.success && !isAutoProc && !isWaiting && (
                   <span className="ml-auto flex items-center gap-1 text-[10px] text-green-600 font-semibold">
                     <CheckCircle className="w-3 h-3" /> Processed
+                  </span>
+                )}
+                {isWaiting && !isAutoProc && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-orange-600 font-semibold">
+                    <Clock className="w-3 h-3" /> Waiting for TQ
                   </span>
                 )}
               </div>
@@ -721,7 +803,7 @@ export default function MailInboxPage() {
                       className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors" title="Preview body">
                       {showRaw ? <ChevronUp className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    {result?.success && bookingRef && (
+                    {result?.success && bookingRef && !isWaiting && (
                       <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
                         onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>
                         {bookingRef}
@@ -740,20 +822,68 @@ export default function MailInboxPage() {
                   </div>
                 </div>
 
-                {/* Result summary row */}
-                {result?.success && bookingRef && !isAutoProc && (
-                  <div className={`mt-3 flex items-center gap-3 flex-wrap text-xs pt-3 border-t ${isPnl ? 'border-teal-100' : 'border-blue-100'}`}>
-                    {/* Booking link */}
-                    <button
-                      onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}
-                      className="flex items-center gap-1.5 font-bold text-slate-800 hover:text-brand-600 transition-colors"
-                    >
-                      <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                      {bookingRef}
-                      <ExternalLink className="w-3 h-3 text-slate-400" />
-                    </button>
+                {/* ── PNL Waiting banner ──────────────────────────────── */}
+                {isWaiting && !isAutoProc && result?.data?.bookingRef && (
+                  <div className="mt-3 rounded-lg bg-orange-50 border border-orange-200 px-4 py-3">
+                    <div className="flex items-start gap-3">
+                      <Clock className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-orange-800">PNL Received — Waiting for Travel Quotation</p>
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 bg-orange-100 border border-orange-300 rounded px-2 py-0.5 text-[10px] font-mono font-bold text-orange-800">
+                            <BarChart3 className="w-2.5 h-2.5" />
+                            Tour No: #{result.data.bookingRef}
+                          </span>
+                          <ArrowRight className="w-3 h-3 text-orange-400 flex-shrink-0" />
+                          <span className="inline-flex items-center gap-1 bg-slate-100 border border-slate-300 rounded px-2 py-0.5 text-[10px] font-mono text-slate-500">
+                            <Mail className="w-2.5 h-2.5" />
+                            Tour Ref: {result.data.bookingRef}CNTL / VN{result.data.bookingRef} (expected)
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-orange-600 mt-1.5">
+                          Will auto-link when the matching Travel Quotation is processed.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
-                    {/* TQ-specific info */}
+                {/* ── Result summary row (non-waiting) ────────────────── */}
+                {result?.success && bookingRef && !isAutoProc && !isWaiting && (
+                  <div className={`mt-3 flex items-center gap-3 flex-wrap text-xs pt-3 border-t ${isPnl ? 'border-teal-100' : 'border-blue-100'}`}>
+
+                    {/* PNL: show Tour No → Tour Ref linkage */}
+                    {isPnl && pnlTourNo && (
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <span className="inline-flex items-center gap-1 bg-teal-50 border border-teal-200 rounded px-2 py-0.5 text-[10px] font-mono font-bold text-teal-700">
+                          <BarChart3 className="w-2.5 h-2.5" />
+                          Tour No: {pnlTourNo}
+                        </span>
+                        <Link2 className="w-3 h-3 text-slate-400" />
+                        <button
+                          onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}
+                          className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 rounded px-2 py-0.5 text-[10px] font-mono font-bold text-blue-700 hover:bg-blue-100 transition-colors"
+                        >
+                          <FileText className="w-2.5 h-2.5" />
+                          Tour Ref: {bookingRef}
+                          <ExternalLink className="w-2.5 h-2.5 text-blue-400" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* TQ: show Tour Ref prominently */}
+                    {!isPnl && (
+                      <button
+                        onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}
+                        className="flex items-center gap-1.5 font-bold text-slate-800 hover:text-brand-600 transition-colors"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                        Tour Ref: {bookingRef}
+                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                      </button>
+                    )}
+
+                    {/* TQ-specific extra info */}
                     {!isPnl && result.data?.status !== 'existing' && (
                       <>
                         <span className="text-slate-400">|</span>
@@ -764,13 +894,13 @@ export default function MailInboxPage() {
                       </>
                     )}
 
-                    {/* PNL-specific info */}
+                    {/* PNL line count */}
                     {isPnl && (
                       <>
                         <span className="text-slate-400">|</span>
                         {(result.data?.pnlLines ?? 0) > 0
                           ? <span className="text-teal-600 font-medium flex items-center gap-1"><BarChart3 className="w-3 h-3" />{result.data!.pnlLines} lines added</span>
-                          : <span className="text-slate-500">PNL processed</span>
+                          : <span className="text-slate-500">PNL merged</span>
                         }
                         {result.data?.xlsxUsed && (
                           <span className="text-green-600 font-medium flex items-center gap-1"><FileSpreadsheet className="w-3 h-3" />XLSX</span>
@@ -778,10 +908,10 @@ export default function MailInboxPage() {
                       </>
                     )}
 
-                    {/* PNL Pending/Added pill (TQ emails only) */}
-                    {!isPnl && <PnlPill status={pnlSt} />}
+                    {/* PNL pill — TQ cards only, shows Added / Waiting / Pending */}
+                    {!isPnl && <PnlPill status={pnlSt} waitingTourNo={waitingTourNo} />}
 
-                    {/* View details link */}
+                    {/* View extraction details */}
                     {result.data?.extracted && (
                       <button onClick={() => setExpandedId(email.graphId)}
                         className="ml-auto text-blue-600 hover:underline flex items-center gap-1">
@@ -795,7 +925,7 @@ export default function MailInboxPage() {
                 {isAutoProc && (
                   <div className="mt-3 pt-3 border-t border-amber-100 flex items-center gap-2 text-xs text-amber-700">
                     <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
-                    Extracting booking data via GPT-4o and saving to database…
+                    {isPnl ? 'Matching PNL to Travel Quotation via Tour No…' : 'Extracting booking data via GPT-4o and saving to database…'}
                   </div>
                 )}
 

@@ -400,10 +400,18 @@ async function syncPnL(
   if (!booking) {
     const numericPart = rawBookingRef.replace(/[^0-9]/g, '')
     if (numericPart.length >= 4) {
+      // endsWith handles "VN19679" prefix case (PNL gives "19679")
       booking = await prisma.booking.findFirst({
         where: { bookingRef: { endsWith: numericPart } },
         orderBy: { createdAt: 'desc' },
       }) ?? null
+      // startsWith handles "469083CNTL" suffix case (PNL gives "469083", TQ stored "469083CNTL")
+      if (!booking) {
+        booking = await prisma.booking.findFirst({
+          where: { bookingRef: { startsWith: numericPart } },
+          orderBy: { createdAt: 'desc' },
+        }) ?? null
+      }
     }
   }
 

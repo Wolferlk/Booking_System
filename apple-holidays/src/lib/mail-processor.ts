@@ -171,14 +171,17 @@ FORMAT B — XLSX/CSV spreadsheet
 - Use each column value directly
 
 CRITICAL — Booking Reference:
-1. Look for "IS Number:" or "IS:" label in the body (e.g. "IS Number: IS 48369")
-2. Also check the subject line (e.g. "PNL:#464045" → quotation_no is 464045, but IS Number is the linking field)
-3. STRIP ALL SPACES from the IS number: "IS 48369" → "IS48369", "VN 19679" → "VN19679"
-4. Return only alphanumeric characters — no spaces, dashes, or slashes
+1. Look for "Tour No" OR "IS Number:" OR "IS:" label in the body
+   - "Tour No= #469083" or "Tour No: #469083" → strip the "#" → bookingRef is "469083"
+   - "IS Number: IS 48369" → strip spaces → bookingRef is "IS48369"
+   - PREFER "Tour No" over "IS Number" when both exist
+2. Also check the subject line (e.g. "PNL:#464045" or "VN19579 P&L" → extract the number)
+3. Strip "#" prefix and ALL SPACES: "#469083" → "469083", "VN 19679" → "VN19679"
+4. Return only alphanumeric characters — no spaces, dashes, slashes, or "#"
 
 Return ONLY valid JSON (no markdown):
 {
-  "bookingRef": "IS Number with ALL spaces removed (e.g. IS48369, VN19679)",
+  "bookingRef": "Tour No or IS Number cleaned (e.g. 469083, IS48369, VN19679)",
   "paxAdults": number,
   "paxChildren": number,
   "pnlLines": [
@@ -511,6 +514,12 @@ export async function fetchMessageAttachmentsForUser(
 ): Promise<EmailAttachment[]> {
   if (!user) return []
 
+  // IMAP emails use a synthetic "imap_<uid>" graphId — route to IMAP fetcher
+  if (graphMessageId.startsWith('imap_')) {
+    const { fetchImapAttachments } = await import('@/lib/imap-pnl')
+    return fetchImapAttachments(graphMessageId)
+  }
+
   const token = await getGraphToken()
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
   return fetchAttachmentsForMessage(token, base, graphMessageId)
@@ -664,7 +673,7 @@ export async function getSubscriptionStatus(): Promise<{
   id: string | null
   expiry: string | null
   url: string
-  mailboxes: Array<{ user: string; kind: MailboxKind; active: boolean; id: string | null; expiry: string | null }>
+  mailboxes: Array<{ user: string; kind: MailboxKind; active: boolean; id: string | null; expiry: string | null; source?: string }>
 }> {
   const url      = notificationUrl()
   const now      = new Date()
@@ -674,8 +683,14 @@ export async function getSubscriptionStatus(): Promise<{
     const id        = await dbGet(skSubId(mb.user))
     const expiryStr = await dbGet(skSubExpiry(mb.user))
     const expiry    = expiryStr ? new Date(expiryStr) : null
-    return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null }
+    return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null, source: 'graph' as 'graph' | 'imap' }
   }))
+
+  // Add IMAP PNL mailbox (always active — polled, no webhook needed)
+  const imapUser = process.env.IMAP_USERNAME?.trim()
+  if (imapUser) {
+    statuses.push({ user: imapUser, kind: 'PNL', active: true, id: null, expiry: null, source: 'imap' as 'graph' | 'imap' })
+  }
 
   const primary = statuses[0]
   return {

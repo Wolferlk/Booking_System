@@ -75,10 +75,18 @@ export async function POST(req: NextRequest) {
   if (!existingBooking) {
     const numericPart = rawBookingRef.replace(/[^0-9]/g, '')
     if (numericPart.length >= 4) {
+      // endsWith handles "VN19679" prefix case (PNL gives "19679")
       existingBooking = await prisma.booking.findFirst({
         where: { bookingRef: { endsWith: numericPart } },
         orderBy: { createdAt: 'desc' },
       }) ?? null
+      // startsWith handles "469083CNTL" suffix case (PNL gives "469083", TQ stored "469083CNTL")
+      if (!existingBooking) {
+        existingBooking = await prisma.booking.findFirst({
+          where: { bookingRef: { startsWith: numericPart } },
+          orderBy: { createdAt: 'desc' },
+        }) ?? null
+      }
     }
   }
 
@@ -91,10 +99,19 @@ export async function POST(req: NextRequest) {
     bookingId = existingBooking.id
   } else {
     // PNL emails never contain arrival/departure dates — they only carry cost data.
-    // If no matching TQ booking is found, we cannot create a stub.
+    // Store as PNL_WAITING — when the TQ arrives, the UI will auto-retry linking.
     if (type === 'PNL') {
-      return buildApiError(
-        `No booking found for IS Number "${bookingRef}". Please process the Travel Quotation email first so the booking exists before the PNL is linked.`,
+      const numericRef = rawBookingRef.replace(/[^0-9]/g, '')
+      return buildApiSuccess(
+        {
+          status:      'PNL_WAITING',
+          bookingRef:  numericRef,   // Tour No numeric part, e.g. "469083"
+          bookingId:   '',
+          isNew:       false,
+          pnlLines:    0,
+          agendaItems: 0,
+        },
+        `PNL for Tour No #${numericRef} received — waiting for Travel Quotation`,
       )
     }
 
