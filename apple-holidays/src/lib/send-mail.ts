@@ -150,3 +150,79 @@ export function buildAgentConfirmationEmail(booking: {
 </html>
 `
 }
+
+export function buildOperationsReadyEmail(booking: {
+  bookingRef: string
+  agent?: string | null
+  fileHandler?: string | null
+  arrivalDate?: string | Date | null
+  departureDate?: string | Date | null
+  paxAdults?: number | null
+  paxChildren?: number | null
+  currency?: string | null
+}): string {
+  const fmt = (d: string | Date | null | undefined) =>
+    d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Operations Ready — ${booking.bookingRef}</title>
+  <style>
+    body { margin:0;padding:0;background:#f8fafc;font-family:Arial,Helvetica,sans-serif; }
+    .wrapper { max-width:600px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.1); }
+    .header { background:#1E293B;padding:28px 32px; }
+    .header h1 { margin:0;color:#fff;font-size:22px;font-weight:800; }
+    .header p { margin:4px 0 0;color:#94A3B8;font-size:12px; }
+    .ref-badge { display:inline-block;background:#D97706;color:#fff;font-weight:700;font-size:16px;padding:4px 14px;border-radius:4px;margin-top:10px;letter-spacing:1px;font-family:monospace; }
+    .body { padding:28px 32px; }
+    .status-banner { background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:12px 16px;margin-bottom:22px; }
+    .status-banner p { margin:0;color:#1e40af;font-size:14px;font-weight:600; }
+    .status-banner small { color:#1d4ed8;font-size:12px;font-weight:400; }
+    table { width:100%;border-collapse:collapse;margin-bottom:20px; }
+    th { text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.8px;color:#64748b;padding:6px 10px;background:#f1f5f9;border-bottom:1px solid #e2e8f0; }
+    td { font-size:13px;color:#1e293b;padding:8px 10px;border-bottom:1px solid #f1f5f9; }
+    td.label { font-weight:600;color:#475569;width:40%; }
+    .footer { background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 32px;text-align:center; }
+    .footer p { margin:0;font-size:11px;color:#94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="header">
+      <h1>Apple Holidays</h1>
+      <p>MMT Vietnam &mdash; Operations Ready</p>
+      <div class="ref-badge">${booking.bookingRef}</div>
+    </div>
+    <div class="body">
+      <div class="status-banner">
+        <p>&#9654; Operations Ready</p>
+        <small>Drivers have been allocated. The full booking package including ticket &amp; driver details is attached as a PDF.</small>
+      </div>
+      <table>
+        <tr><th colspan="2">Booking Details</th></tr>
+        <tr><td class="label">Agent / Operator</td><td>${booking.agent ?? '—'}</td></tr>
+        <tr><td class="label">File Handler</td><td>${booking.fileHandler ?? '—'}</td></tr>
+        <tr><td class="label">Arrival</td><td>${fmt(booking.arrivalDate)}</td></tr>
+        <tr><td class="label">Departure</td><td>${fmt(booking.departureDate)}</td></tr>
+        <tr><td class="label">Passengers</td><td>${booking.paxAdults ?? 0} Adults${(booking.paxChildren ?? 0) > 0 ? `, ${booking.paxChildren} Children` : ''}</td></tr>
+        <tr><td class="label">Currency</td><td>${booking.currency ?? '—'}</td></tr>
+      </table>
+      <p style="font-size:13px;color:#475569;line-height:1.6;margin:0 0 16px;">
+        The attached PDF contains the complete tour package including itinerary, accommodation, ticket &amp; voucher details, and driver assignments.
+      </p>
+      <p style="font-size:13px;color:#475569;line-height:1.6;margin:0;">
+        Thank you for choosing Apple Holidays.
+      </p>
+    </div>
+    <div class="footer">
+      <p>Apple Holidays &middot; MMT Vietnam &middot; confirm.booking@aahaas.com</p>
+      <p style="margin-top:4px;">Sent automatically when booking status changed to <em>Operations Ready</em>.</p>
+    </div>
+  </div>
+</body>
+</html>
+`
+}

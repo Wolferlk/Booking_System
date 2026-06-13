@@ -2,8 +2,13 @@
  * Generates the same HTML as the print page but as a server-side string.
  * Used by Puppeteer to produce a pixel-perfect PDF for email attachment.
  *
- * Intentionally excludes: quoted total, payments, P&L, tickets.
+ * Sections excluded by default: quoted total, payments, P&L.
+ * Tickets are excluded unless opts.includeTickets = true.
  */
+
+export interface BookingHtmlOptions {
+  includeTickets?: boolean
+}
 
 function fmt(d: string | Date | null | undefined): string {
   if (!d) return '—'
@@ -19,8 +24,20 @@ function esc(s: unknown): string {
     .replace(/"/g, '&quot;')
 }
 
+const TICKET_LABEL: Record<string, string> = {
+  HOTEL: 'Hotel Voucher', TICKETS: 'Entrance Ticket', CRUISE: 'Cruise Ticket',
+  WATER: 'Water Activity Ticket', GUIDES: 'Guide Service Voucher',
+  FLIGHT_TICKETS: 'Flight Ticket', TRANSPORT: 'Transfer Voucher',
+  MEALS: 'Meal Voucher', OTHER: 'Service Voucher',
+}
+const TICKET_COLOR: Record<string, string> = {
+  HOTEL: '#2563eb', TICKETS: '#7c3aed', CRUISE: '#0891b2',
+  WATER: '#0284c7', GUIDES: '#16a34a', FLIGHT_TICKETS: '#dc2626',
+  TRANSPORT: '#ea580c', MEALS: '#d97706', OTHER: '#64748b',
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function generateBookingHtml(booking: any): string {
+export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {}): string {
   const passengers     = booking.passengers     ?? []
   const flights        = booking.flights        ?? []
   const accommodations = booking.accommodations ?? []
@@ -28,6 +45,8 @@ export function generateBookingHtml(booking: any): string {
   const agendaItems    = booking.tourAgenda?.items ?? []
   const drivers        = getDrivers(agendaItems)
   const emergencyContacts = booking.emergencyContacts ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tickets: any[] = opts.includeTickets ? (booking.tickets ?? []).filter((t: any) => t.activated !== false) : []
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -235,6 +254,40 @@ export function generateBookingHtml(booking: any): string {
         </tr>`).join('')}
       </tbody>
     </table>
+  </div>` : ''}
+
+  <!-- TICKETS & VOUCHERS -->
+  ${tickets.length > 0 ? `
+  <div class="section">
+    <div class="section-title">Tickets &amp; Vouchers</div>
+    ${tickets.map((t: any) => {
+      const cat   = t.pnlLine?.category ?? 'OTHER'
+      const label = TICKET_LABEL[cat] ?? 'Voucher'
+      const color = TICKET_COLOR[cat] ?? '#64748b'
+      return `
+      <div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:10px;page-break-inside:avoid;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;border-bottom:2px solid ${color};padding-bottom:8px;">
+          <div>
+            <span style="display:inline-block;background:${color};color:#fff;font-size:9px;font-weight:700;padding:2px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">${label}</span>
+            <div style="font-size:14px;font-weight:800;color:#0f172a;">${esc(t.type)}</div>
+            ${t.pnlLine?.activity && t.pnlLine.activity !== t.type ? `<div style="font-size:11px;color:#94a3b8;margin-top:1px;">${esc(t.pnlLine.activity)}</div>` : ''}
+          </div>
+          <div style="text-align:right;">
+            ${t.reference ? `
+              <div style="font-size:9px;color:${color};font-weight:700;text-transform:uppercase;letter-spacing:0.8px;">Reference</div>
+              <div style="font-size:16px;font-weight:900;color:${color};font-family:monospace;letter-spacing:1px;">${esc(t.reference)}</div>
+            ` : ''}
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 16px;font-size:11px;">
+          ${t.supplier ? `<div><div style="font-size:8px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:1px;">Supplier</div><div style="font-weight:600;color:#1e293b;">${esc(t.supplier)}</div></div>` : ''}
+          <div><div style="font-size:8px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:1px;">Qty</div><div style="font-weight:600;color:#1e293b;">${esc(t.qty)} pax</div></div>
+          ${t.agendaItem?.date ? `<div><div style="font-size:8px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:1px;">Service Date</div><div style="font-weight:600;color:#1e293b;">${fmt(t.agendaItem.date)}</div></div>` : ''}
+          ${t.agendaItem?.location ? `<div><div style="font-size:8px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:1px;">Location</div><div style="font-weight:600;color:#1e293b;">${esc(t.agendaItem.location)}</div></div>` : ''}
+        </div>
+        ${t.notes ? `<div style="margin-top:8px;background:#fffbeb;border:1px solid #fde68a;border-radius:4px;padding:6px 10px;font-size:10px;color:#92400e;"><strong>Notes:</strong> ${esc(t.notes)}</div>` : ''}
+      </div>`
+    }).join('')}
   </div>` : ''}
 
   <!-- EMERGENCY CONTACTS -->

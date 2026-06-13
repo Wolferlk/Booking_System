@@ -1,13 +1,13 @@
 import { prisma } from '@/lib/prisma'
 import { generateBookingHtml } from '@/lib/generate-booking-html'
 import { htmlToPdf } from '@/lib/html-to-pdf'
-import { sendMailViaGraph, getAgentEmail, buildAgentConfirmationEmail } from '@/lib/send-mail'
+import { sendMailViaGraph, getAgentEmail, buildOperationsReadyEmail } from '@/lib/send-mail'
 
 /**
- * Generates the agent confirmation PDF and sends the email.
- * Shared by the auto-send (on GT_VERIFIED) and the manual send button.
+ * Generates the Operations Ready PDF (includes tickets + drivers) and sends the email.
+ * Triggered automatically when booking moves to OPERATIONS_READY.
  */
-export async function sendAgentConfirmationEmail(ref: string): Promise<void> {
+export async function sendOperationsReadyEmail(ref: string): Promise<void> {
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: ref },
     include: {
@@ -16,6 +16,13 @@ export async function sendAgentConfirmationEmail(ref: string): Promise<void> {
       accommodations:    { orderBy: { checkIn: 'asc' } },
       itineraryItems:    { orderBy: { dayNo: 'asc' } },
       emergencyContacts: true,
+      tickets: {
+        where:   { activated: true },
+        include: {
+          pnlLine:    { select: { activity: true, category: true } },
+          agendaItem: { select: { date: true, location: true } },
+        },
+      },
       tourAgenda: {
         include: {
           items: {
@@ -30,23 +37,23 @@ export async function sendAgentConfirmationEmail(ref: string): Promise<void> {
   if (!booking) throw new Error(`Booking not found: ${ref}`)
 
   const sentAt    = new Date()
-  const html      = generateBookingHtml(booking)
-  const filename  = `${ref}-confirmation.pdf`
+  const html      = generateBookingHtml(booking, { includeTickets: true })
+  const filename  = `${ref}-operations.pdf`
   const pdfBuffer = await htmlToPdf(html, filename, { bookingRef: ref, sentAt })
 
   const agentEmail = getAgentEmail(booking as { agentEmail?: string | null })
-  const bodyHtml   = buildAgentConfirmationEmail(booking)
+  const bodyHtml   = buildOperationsReadyEmail(booking)
 
   await sendMailViaGraph({
     to: agentEmail,
-    subject: `Booking Confirmed — ${ref} (${booking.agent ?? 'Apple Holidays'})`,
+    subject: `Operations Ready — ${ref} (${booking.agent ?? 'Apple Holidays'})`,
     bodyHtml,
     attachment: {
-      name: `AppleHolidays-${ref}-Confirmation.pdf`,
+      name: `AppleHolidays-${ref}-OperationsReady.pdf`,
       contentType: 'application/pdf',
       buffer: pdfBuffer,
     },
   })
 
-  console.log(`[email] Confirmation sent to ${agentEmail} for booking ${ref}`)
+  console.log(`[email] Operations Ready email sent to ${agentEmail} for booking ${ref}`)
 }
