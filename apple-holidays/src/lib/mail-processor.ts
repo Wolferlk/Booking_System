@@ -79,7 +79,7 @@ export function detectEmailType(subject: string, body: string): 'TOUR_CONFIRMATI
 
   // Check PNL signals FIRST — PNL emails also contain "is number" so TQ check must come after
   if (
-    s.includes('pnl') || s.includes('costing') || s.includes('pricing') ||
+    s.includes('pnl') || s.includes('p&l') || s.includes('costing') || s.includes('pricing') ||
     b.includes('mmt rate') || b.includes('sic rate') || b.includes('cost per person') ||
     b.includes('pvt rate') || b.includes('hotels/cruises') || b.includes('room night') ||
     b.includes('driver accomodation') || b.includes('bata') || b.includes('quotation_no') ||

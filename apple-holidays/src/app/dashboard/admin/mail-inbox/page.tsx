@@ -69,7 +69,7 @@ interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
 const POLL_INTERVAL   = 30_000
 const PROCESS_DELAY   = 1500   // ms between auto-processes
 const TQ_EMAIL        = 'confirm.booking@aahaas.com'
-const PNL_EMAIL       = 'accounts.payable@aahaas.com'
+const PNL_EMAIL       = 'confirm.booking.pnl@aahaas.com'
 
 const CAT_COLOR: Record<string, string> = {
   HOTEL: 'bg-blue-100 text-blue-700', FLIGHT_TICKETS: 'bg-indigo-100 text-indigo-700',
@@ -386,7 +386,7 @@ export default function MailInboxPage() {
         body: JSON.stringify({
           rawBody:     email.rawBody,
           subject:     email.subject,
-          emailType:   email.mailboxKind === 'PNL' ? 'PNL' : 'TOUR_CONFIRMATION',
+          emailType:   (email.mailboxKind === 'PNL' || email.type === 'PNL') ? 'PNL' : 'TOUR_CONFIRMATION',
           graphId:     email.graphId,
           mailboxUser: email.mailboxUser,
         }),
@@ -526,8 +526,8 @@ export default function MailInboxPage() {
 
   // ── Derived state ────────────────────────────────────────────────────────
 
-  const tqEmails       = emails.filter(e => e.mailboxKind === 'TOUR_CONFIRMATION')
-  const pnlEmails      = emails.filter(e => e.mailboxKind === 'PNL')
+  const tqEmails       = emails.filter(e => e.mailboxKind === 'TOUR_CONFIRMATION' && e.type !== 'PNL')
+  const pnlEmails      = emails.filter(e => e.mailboxKind === 'PNL' || e.type === 'PNL')
   const processedCount = Array.from(results.values()).filter(r => r.success).length
   const autoCount      = autoProcessingIds.size
 
@@ -662,7 +662,7 @@ export default function MailInboxPage() {
           const isAutoProc   = autoProcessingIds.has(email.graphId)
           const isExpanded   = expandedId === email.graphId
           const showRaw      = rawBodyId === email.graphId
-          const isPnl        = email.mailboxKind === 'PNL'
+          const isPnl        = email.mailboxKind === 'PNL' || email.type === 'PNL'
           const bookingRef   = result?.data?.bookingRef
           const pnlSt        = !isPnl && bookingRef ? pnlStatusMap.get(bookingRef) : undefined
 
