@@ -1,6 +1,6 @@
 import { ImapFlow } from 'imapflow'
 import { simpleParser, type ParsedMail, type AddressObject } from 'mailparser'
-import { detectEmailType, type ProcessedEmail, type EmailAttachment } from './mail-processor'
+import type { ProcessedEmail, EmailAttachment } from './mail-processor'
 
 const HOST = process.env.IMAP_HOST ?? 'outlook.office365.com'
 const PORT = Number(process.env.IMAP_PORT ?? '993')
@@ -65,7 +65,7 @@ function parsedToEmail(uid: number, parsed: ParsedMail, user: string): Processed
     to:             toAddrs,
     cc:             [],
     date:           (parsed.date ?? new Date()).toISOString(),
-    type:           detectEmailType(subject, bodyText),
+    type:           'PNL',
     rawBody:        bodyText.slice(0, 30_000),
     bodyHtml:       bodyHtml.slice(0, 100_000),
     folder:         'Inbox',

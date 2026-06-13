@@ -446,6 +446,14 @@ export async function fetchUnprocessedEmailsForUser(
   const messages = await graphGetAllPages<GraphMessage>(token, url)
   const limited  = messages.slice(0, limit)
 
+  // Mailbox identity is the authoritative source of email type —
+  // content-based detection is unreliable (TQ bodies contain PNL keywords like "transport"/"is number")
+  const tqUser  = (process.env.Outlookmail_USERNAME ?? '').trim()
+  const pnlUser = (process.env.GRAPH_PNL_USER ?? '').trim()
+  const forcedType: ProcessedEmail['type'] | null =
+    user === tqUser  && tqUser  ? 'TOUR_CONFIRMATION' :
+    user === pnlUser && pnlUser ? 'PNL'               : null
+
   const results: ProcessedEmail[] = limited.map((msg, i) => {
     const { text, html } = parseBody(msg)
     const subject  = msg.subject ?? ''
@@ -460,7 +468,7 @@ export async function fetchUnprocessedEmailsForUser(
       to:             (msg.toRecipients ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
       cc:             (msg.ccRecipients  ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
       date:           msg.receivedDateTime ?? new Date().toISOString(),
-      type:           detectEmailType(subject, bodyText),
+      type:           forcedType ?? detectEmailType(subject, bodyText),
       rawBody:        bodyText.slice(0, 30000),
       bodyHtml:       html.slice(0, 100000),
       folder:         folderMap.get(msg.parentFolderId ?? '') ?? (msg.inferenceClassification === 'focused' ? 'Focused' : 'Inbox'),

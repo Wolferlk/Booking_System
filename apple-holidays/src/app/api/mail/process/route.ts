@@ -294,14 +294,24 @@ export async function POST(req: NextRequest) {
     details:    { source: 'email', subject, emailType: type, bookingRef, agendaItems: agendaCount, pnlLines: createdPnlLineCount },
   })
 
+  // Fetch final booking timestamps
+  const finalBooking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    select: { createdAt: true, updatedAt: true },
+  }).catch(() => null)
+
+  const processedAt = new Date().toISOString()
+
   return buildApiSuccess({
     bookingRef,
     bookingId,
-    isNew:       !existingBooking,
-    pnlLines:    createdPnlLineCount,
-    agendaItems: agendaCount,
-    status:      'GT_REVIEW',
-    xlsxUsed:    !!xlsxParsed,
+    isNew:            !existingBooking,
+    pnlLines:         createdPnlLineCount,
+    agendaItems:      agendaCount,
+    status:           'GT_REVIEW',
+    xlsxUsed:         !!xlsxParsed,
+    bookingCreatedAt: finalBooking?.createdAt?.toISOString() ?? null,
+    processedAt,
     extracted: {
       agent:           extracted.agent,
       fileHandler:     extracted.fileHandler,

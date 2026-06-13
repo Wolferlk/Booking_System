@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
@@ -9,7 +9,7 @@ import {
   RefreshCw, ArrowRight, FileText, BarChart3, Users,
   ClipboardCheck, Inbox, Plane, Hotel, Phone,
   FileSpreadsheet, Link2, ChevronDown, ChevronUp,
-  Eye, Info, Zap,
+  Eye, Info, Zap, CalendarClock, Merge, HourglassIcon,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -60,6 +60,8 @@ interface ProcessResult {
   bookingRef: string; bookingId: string
   isNew: boolean; pnlLines: number; agendaItems: number
   status: string; xlsxUsed?: boolean; extracted?: ExtractedData
+  bookingCreatedAt?: string | null
+  processedAt?: string | null
 }
 
 interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
@@ -84,7 +86,22 @@ function fmt(d?: string | null) {
   if (!d) return '—'
   try { return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) } catch { return d }
 }
+function fmtTs(d?: string | null) {
+  if (!d) return null
+  try {
+    return new Date(d).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+  } catch { return null }
+}
 function usd(n: number) { return n > 0 ? `$${n.toFixed(2)}` : '—' }
+
+function mailboxLabel(user: string) {
+  if (user === TQ_EMAIL)        return { label: 'TQ',        color: 'bg-blue-100 text-blue-700 border-blue-200' }
+  if (user === PNL_EMAIL)       return { label: 'PNL·Pay',   color: 'bg-teal-100 text-teal-700 border-teal-200' }
+  if (user === PNL_IMAP_EMAIL)  return { label: 'PNL·Recv',  color: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
+  return                               { label: user.split('@')[0], color: 'bg-slate-100 text-slate-600 border-slate-200' }
+}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -390,7 +407,7 @@ export default function MailInboxPage() {
 
   const processOne = useCallback(async (email: EmailWithMailbox) => {
     setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
-    const isPnlEmail = email.mailboxKind === 'PNL' || email.type === 'PNL'
+    const isPnlEmail = email.mailboxKind === 'PNL'
     try {
       const res  = await fetch('/api/mail/process', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -509,15 +526,14 @@ export default function MailInboxPage() {
         })
         const ckj = await ck.json()
         if (ckj.success && Array.isArray(ckj.data)) {
-          const alreadyProcessed = ckj.data as { graphId: string; bookingRef: string }[]
+          const alreadyProcessed = ckj.data as { graphId: string; bookingRef: string; processedAt: string | null }[]
 
           setResults(prev => {
             const next = new Map(prev)
-            for (const { graphId, bookingRef } of alreadyProcessed) {
+            for (const { graphId, bookingRef, processedAt } of alreadyProcessed) {
               if (!next.has(graphId)) {
-                next.set(graphId, { success: true, data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing' } })
+                next.set(graphId, { success: true, data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing', processedAt } })
               }
-              // Mark as queued so auto-process skips them
               autoQueuedRef.current.add(graphId)
             }
             return next
@@ -570,8 +586,29 @@ export default function MailInboxPage() {
   const waitingCount   = Array.from(results.values()).filter(r => r.success && r.data?.status === 'PNL_WAITING').length
   const autoCount      = autoProcessingIds.size
 
+  // Merged = TQ bookings that also have a PNL attached
+  const mergedCount = useMemo(() => {
+    return Array.from(results.entries()).filter(([graphId, r]) => {
+      if (!r.success || !r.data?.bookingRef) return false
+      const email = emails.find(e => e.graphId === graphId)
+      if (email?.mailboxKind !== 'TOUR_CONFIRMATION') return false
+      const pnlSt = pnlStatusMap.get(r.data.bookingRef)
+      return pnlSt?.hasPNL === true
+    }).length
+  }, [results, emails, pnlStatusMap])
+
+  // TQ bookings waiting for PNL (processed TQ, no PNL yet)
+  const waitingForPnlCount = useMemo(() => {
+    return Array.from(results.entries()).filter(([graphId, r]) => {
+      if (!r.success || !r.data?.bookingRef) return false
+      const email = emails.find(e => e.graphId === graphId)
+      if (email?.mailboxKind !== 'TOUR_CONFIRMATION') return false
+      const pnlSt = pnlStatusMap.get(r.data.bookingRef)
+      return !pnlSt?.hasPNL
+    }).length
+  }, [results, emails, pnlStatusMap])
+
   // Map: TQ numeric ref → PNL Tour No display string ("#469083")
-  // Used to show "PNL Waiting — Tour No #469083" pill on TQ cards
   const waitingPnlMap = useMemo(() => {
     const map = new Map<string, string>()
     Array.from(results.values()).forEach(result => {
@@ -582,6 +619,21 @@ export default function MailInboxPage() {
     })
     return map
   }, [results])
+
+  // Map: bookingRef numeric → { mailboxUser, processedAt } for PNL emails
+  const pnlLinkMap = useMemo(() => {
+    const map = new Map<string, { mailboxUser: string; processedAt: string | null | undefined; pnlLines: number }>()
+    Array.from(results.entries()).forEach(([graphId, r]) => {
+      if (!r.success || !r.data?.bookingRef) return
+      const email = emails.find(e => e.graphId === graphId)
+      if (!email || (email.mailboxKind !== 'PNL' && email.type !== 'PNL')) return
+      const num = r.data.bookingRef.replace(/[^0-9]/g, '')
+      if (num.length >= 4) {
+        map.set(num, { mailboxUser: email.mailboxUser, processedAt: r.data.processedAt, pnlLines: r.data.pnlLines })
+      }
+    })
+    return map
+  }, [results, emails])
 
   const tqSub          = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
   const imapMailboxes  = subStatus?.mailboxes?.filter(m => m.source === 'imap') ?? []
@@ -701,26 +753,54 @@ export default function MailInboxPage() {
           ))}
         </div>
 
-        {/* ── Stats ─────────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-4 gap-3">
-          {[
-            { label: 'Total',      value: emails.length,   color: 'text-slate-700'  },
-            { label: 'TQ Emails',  value: tqEmails.length, color: 'text-blue-600'   },
-            { label: 'PNL Emails', value: pnlEmails.length, color: 'text-teal-600'  },
-            { label: autoCount > 0 ? `Processing (${autoCount})` : waitingCount > 0 ? `PNL Waiting (${waitingCount})` : 'Processed',
-              value: autoCount > 0 ? autoCount : waitingCount > 0 ? waitingCount : processedCount,
-              color: autoCount > 0 ? 'text-amber-500' : waitingCount > 0 ? 'text-orange-500' : 'text-green-600' },
-          ].map(s => (
-            <Card key={s.label} className="p-3 text-center">
-              <p className={`text-2xl font-bold ${s.color}`}>
-                {autoCount > 0 && s.label.startsWith('Processing')
-                  ? <span className="flex items-center justify-center gap-1"><Loader2 className="w-5 h-5 animate-spin" />{s.value}</span>
-                  : s.value
-                }
-              </p>
-              <p className="text-xs text-slate-500 mt-0.5">{s.label}</p>
-            </Card>
-          ))}
+        {/* ── Live Stats ────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+          {/* Total */}
+          <Card className="sm:col-span-1 p-3 text-center">
+            <p className="text-2xl font-bold text-slate-700">{emails.length}</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">Total Emails</p>
+          </Card>
+          {/* TQ */}
+          <Card className="sm:col-span-1 p-3 text-center border-blue-200 bg-blue-50/40">
+            <p className="text-2xl font-bold text-blue-600">{tqEmails.length}</p>
+            <p className="text-[10px] text-blue-400 uppercase tracking-wider mt-0.5">TQ Received</p>
+          </Card>
+          {/* PNL */}
+          <Card className="sm:col-span-1 p-3 text-center border-teal-200 bg-teal-50/40">
+            <p className="text-2xl font-bold text-teal-600">{pnlEmails.length}</p>
+            <p className="text-[10px] text-teal-400 uppercase tracking-wider mt-0.5">PNL Received</p>
+          </Card>
+          {/* Merged */}
+          <Card className="sm:col-span-1 p-3 text-center border-green-200 bg-green-50/40">
+            <div className="flex items-center justify-center gap-1">
+              <Merge className="w-4 h-4 text-green-500" />
+              <p className="text-2xl font-bold text-green-600">{mergedCount}</p>
+            </div>
+            <p className="text-[10px] text-green-500 uppercase tracking-wider mt-0.5">TQ + PNL Merged</p>
+          </Card>
+          {/* Waiting PNL */}
+          <Card className={`sm:col-span-1 p-3 text-center ${waitingForPnlCount > 0 ? 'border-amber-200 bg-amber-50/40' : 'border-slate-200'}`}>
+            <div className="flex items-center justify-center gap-1">
+              {waitingForPnlCount > 0 && <HourglassIcon className="w-4 h-4 text-amber-400 animate-pulse" />}
+              <p className={`text-2xl font-bold ${waitingForPnlCount > 0 ? 'text-amber-500' : 'text-slate-400'}`}>{waitingForPnlCount}</p>
+            </div>
+            <p className={`text-[10px] uppercase tracking-wider mt-0.5 ${waitingForPnlCount > 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+              Waiting PNL
+            </p>
+          </Card>
+          {/* Waiting TQ */}
+          <Card className={`sm:col-span-1 p-3 text-center ${waitingCount > 0 ? 'border-orange-200 bg-orange-50/40' : 'border-slate-200'}`}>
+            <div className="flex items-center justify-center gap-1">
+              {waitingCount > 0 && <Clock className="w-4 h-4 text-orange-400 animate-pulse" />}
+              {autoCount > 0
+                ? <span className="flex items-center gap-1"><Loader2 className="w-4 h-4 animate-spin text-amber-500" /><span className="text-2xl font-bold text-amber-500">{autoCount}</span></span>
+                : <p className={`text-2xl font-bold ${waitingCount > 0 ? 'text-orange-500' : 'text-slate-400'}`}>{waitingCount}</p>
+              }
+            </div>
+            <p className={`text-[10px] uppercase tracking-wider mt-0.5 ${autoCount > 0 ? 'text-amber-400' : waitingCount > 0 ? 'text-orange-400' : 'text-slate-400'}`}>
+              {autoCount > 0 ? 'Processing…' : 'Waiting TQ'}
+            </p>
+          </Card>
         </div>
 
         {/* ── Loading ───────────────────────────────────────────────────── */}
@@ -737,7 +817,7 @@ export default function MailInboxPage() {
           const isAutoProc   = autoProcessingIds.has(email.graphId)
           const isExpanded   = expandedId === email.graphId
           const showRaw      = rawBodyId === email.graphId
-          const isPnl        = email.mailboxKind === 'PNL' || email.type === 'PNL'
+          const isPnl        = email.mailboxKind === 'PNL'
           const bookingRef   = result?.data?.bookingRef
           const isWaiting    = result?.success && result.data?.status === 'PNL_WAITING'
           // For TQ cards: numeric part of booking ref used to look up waiting PNL
@@ -940,6 +1020,64 @@ export default function MailInboxPage() {
                     )}
                   </div>
                 )}
+
+                {/* ── Timestamp timeline ──────────────────────────────── */}
+                {result?.success && bookingRef && !isAutoProc && !isWaiting && (() => {
+                  const pnlLink = !isPnl && numericRef ? pnlLinkMap.get(numericRef) : null
+                  const mbInfo  = mailboxLabel(email.mailboxUser)
+                  const tsTQ    = fmtTs(email.date)
+                  const tsBook  = fmtTs(result.data?.bookingCreatedAt)
+                  const tsDone  = fmtTs(result.data?.processedAt)
+                  const tsPNL   = isPnl ? fmtTs(email.date) : fmtTs(pnlLink?.processedAt)
+                  return (
+                    <div className="mt-3 pt-2 border-t border-slate-100">
+                      {/* Which mailbox */}
+                      <div className="flex items-center gap-2 flex-wrap mb-2">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[9px] font-bold ${mbInfo.color}`}>
+                          <Mail className="w-2.5 h-2.5" />{mbInfo.label}
+                        </span>
+                        <span className="text-[9px] font-mono text-slate-400">{email.mailboxUser}</span>
+                        {/* TQ card: show which PNL mailbox linked */}
+                        {!isPnl && pnlLink && (
+                          <>
+                            <ArrowRight className="w-3 h-3 text-slate-300" />
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[9px] font-bold ${mailboxLabel(pnlLink.mailboxUser).color}`}>
+                              <BarChart3 className="w-2.5 h-2.5" />{mailboxLabel(pnlLink.mailboxUser).label}
+                            </span>
+                            <span className="text-[9px] font-mono text-slate-400">{pnlLink.mailboxUser}</span>
+                            {pnlLink.pnlLines > 0 && (
+                              <span className="text-[9px] font-semibold text-teal-600">{pnlLink.pnlLines} lines</span>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      {/* Timeline dots */}
+                      <div className="flex items-start gap-0 overflow-x-auto pb-1">
+                        {([
+                          { icon: <Mail className="w-3 h-3" />,          label: isPnl ? 'PNL Received' : 'TQ Received',  ts: isPnl ? tsPNL : tsTQ,   dot: 'bg-blue-500'  },
+                          { icon: <CalendarClock className="w-3 h-3" />, label: 'Booking Created',                        ts: tsBook,                   dot: 'bg-indigo-500' },
+                          ...(!isPnl ? [{ icon: <BarChart3 className="w-3 h-3" />, label: 'PNL Added',    ts: tsPNL,  dot: 'bg-teal-500'  }] : []),
+                          { icon: <CheckCircle className="w-3 h-3" />,   label: isPnl ? 'PNL Merged' : 'Processed',       ts: tsDone,                   dot: 'bg-green-500' },
+                        ] as { icon: React.ReactNode; label: string; ts: string | null; dot: string }[])
+                          .map((step, idx, arr) => (
+                            <div key={idx} className="flex items-center flex-shrink-0">
+                              <div className="flex flex-col items-center gap-0.5 min-w-[80px]">
+                                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-white ${step.ts ? step.dot : 'bg-slate-200'}`}>
+                                  {step.ts ? step.icon : <Clock className="w-3 h-3 text-slate-400" />}
+                                </div>
+                                <p className="text-[9px] font-semibold text-slate-500 text-center leading-tight mt-0.5">{step.label}</p>
+                                <p className="text-[8px] text-slate-400 text-center leading-tight">{step.ts ?? '—'}</p>
+                              </div>
+                              {idx < arr.length - 1 && (
+                                <div className={`h-0.5 w-6 flex-shrink-0 mb-4 ${step.ts ? 'bg-slate-300' : 'bg-slate-100'}`} />
+                              )}
+                            </div>
+                          ))
+                        }
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Auto-processing placeholder */}
                 {isAutoProc && (
