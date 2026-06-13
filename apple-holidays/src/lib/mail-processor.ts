@@ -141,7 +141,7 @@ Extract ALL booking details from this email thread. Focus on the MOST RECENT tou
 
 Return ONLY valid JSON matching this exact schema:
 {
-  "bookingRef": "IS Number or Tour Ref or internal booking reference (e.g. VN19730, 468600CNTL)",
+  "bookingRef": "Tour Ref / Tour No / internal booking reference (e.g. 469182CNTL, VN19730)",
   "agentBookingId": "Agent's booking ID (e.g. 402011138462)",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip)",
   "fileHandler": "File handler name (e.g. Yogi)",
@@ -171,7 +171,8 @@ Return ONLY valid JSON matching this exact schema:
   "pnlLines": []
 }
 
-IMPORTANT: Extract the IS Number as bookingRef (format: VN#####). If no IS Number, use Tour Ref.
+IMPORTANT: Prefer the Tour Ref / Tour No as bookingRef when it exists, because PNL emails link back to that value.
+If no Tour Ref is present, fall back to the best available booking reference such as IS Number or agent reference.
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, etc.).
 Date format must be YYYY-MM-DD strictly.
@@ -251,9 +252,12 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   if (!content) throw new Error('OpenAI returned empty response')
 
   const parsed = JSON.parse(content) as Partial<ExtractedBooking>
+  const tourRefOverride = emailType === 'TOUR_CONFIRMATION'
+    ? extractTourRefFromText(emailBody)
+    : extractPnlTourNoFromText(emailBody)
 
   return {
-    bookingRef:       parsed.bookingRef       ?? null,
+    bookingRef:       tourRefOverride ?? parsed.bookingRef ?? null,
     agentBookingId:   parsed.agentBookingId   ?? null,
     agent:            parsed.agent            ?? null,
     fileHandler:      parsed.fileHandler      ?? null,
@@ -282,6 +286,24 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     emergencyContacts: parsed.emergencyContacts ?? [],
     pnlLines:         parsed.pnlLines         ?? [],
   }
+}
+
+function cleanReference(value: string | null | undefined): string | null {
+  const cleaned = String(value ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase()
+  return cleaned.length >= 4 ? cleaned : null
+}
+
+function extractTourRefFromText(text: string): string | null {
+  const match = text.match(/tour\s*ref(?:erence)?\s*[:=#-]?\s*([A-Z0-9][A-Z0-9-]*)/i)
+  return cleanReference(match?.[1])
+}
+
+function extractPnlTourNoFromText(text: string): string | null {
+  const match = text.match(/tour\s*no(?:\.|:|=)?\s*#?\s*([A-Z0-9][A-Z0-9-]*)/i)
+  if (match?.[1]) return cleanReference(match[1])
+
+  const subjectMatch = text.match(/pnl\s*[:#-]?\s*#?\s*([A-Z0-9][A-Z0-9-]*)/i)
+  return cleanReference(subjectMatch?.[1])
 }
 
 // ── Microsoft Graph API email reader ─────────────────────────────────────────

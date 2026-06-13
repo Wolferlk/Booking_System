@@ -17,12 +17,11 @@ Using All Pnls come to here Use only this for Get pnl details
 IMAP_USERNAME=accounts.receivable@aahaas.com
 IMAP_PASSWORD='X(432920426304uz'
 
-Connect This mail also Here also comming all PNLS 
-But not connect with ISNUmber 
+Connect this mail too. PNLs should link to the TQ using the Tour Ref numeric part, not the IS Number.
 
-this is the way how to connect with tQ with PNL 
-Travel Qutations  : Tour Ref = 469083CNTL
-PNLS : Tour No= #469083
+This is the way to connect TQ with PNL:
+Travel Quotation: Tour Ref = 469083CNTL
+PNL: Tour No = #469083
 
 can Link QT and N&L 
 PNL processing not same as QT processing 

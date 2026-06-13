@@ -62,7 +62,7 @@ Booking created in DB          Match to booking via Tour No:
 |-------|-----------------------|---------------------|
 | Example | `Tour Ref = 469083CNTL` | `Tour No = #469083` |
 | Stored as | `bookingRef = 469083CNTL` | Extracted as `469083` |
-| Match logic | Strip non-numeric chars from PNL ref | Find booking where `bookingRef` starts with or ends with the numeric part |
+| Match logic | Keep the Tour Ref as the booking key | Find booking where `bookingRef` starts with or ends with the numeric part |
 
 **Fallback matching order:**
 1. Exact match: `bookingRef = "469083"`
