@@ -19,8 +19,8 @@ export async function POST(req: NextRequest) {
 
   const processed = rows.map(row => {
     const graphId = row.key.replace('processed_email_', '')
-    const [bookingRef] = row.value.split('|')
-    return { graphId, bookingRef }
+    const [bookingRef, processedAt] = row.value.split('|')
+    return { graphId, bookingRef, processedAt: processedAt ?? null }
   })
 
   return buildApiSuccess(processed)

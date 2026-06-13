@@ -15,12 +15,20 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get('search')
   const page = parseInt(searchParams.get('page') ?? '1')
   const limit = parseInt(searchParams.get('limit') ?? '20')
+  const dateFilter = searchParams.get('dateFilter') ?? ''
+  const rawSortBy = searchParams.get('sortBy') ?? 'arrivalDate'
+  const sortDir = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
+
+  const ALLOWED_SORT = ['arrivalDate', 'departureDate', 'createdAt', 'updatedAt'] as const
+  type SortField = typeof ALLOWED_SORT[number]
+  const sortBy: SortField = (ALLOWED_SORT as readonly string[]).includes(rawSortBy)
+    ? (rawSortBy as SortField)
+    : 'arrivalDate'
 
   const role = session.user.role as UserRole
 
   const where: Record<string, unknown> = {}
 
-  // Clients can only see their own booking
   if (role === 'CLIENT') {
     where.clientUserId = session.user.id
   }
@@ -36,11 +44,34 @@ export async function GET(req: NextRequest) {
     ]
   }
 
+  // Date period filter applied to arrivalDate
+  if (dateFilter) {
+    const now = new Date()
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    if (dateFilter === 'today') {
+      where.arrivalDate = {
+        gte: todayStart,
+        lt: new Date(todayStart.getTime() + 86_400_000),
+      }
+    } else if (dateFilter === 'this_week') {
+      const startOfWeek = new Date(todayStart)
+      startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
+      const endOfWeek = new Date(startOfWeek)
+      endOfWeek.setDate(startOfWeek.getDate() + 7)
+      where.arrivalDate = { gte: startOfWeek, lt: endOfWeek }
+    } else if (dateFilter === 'this_month') {
+      where.arrivalDate = {
+        gte: new Date(now.getFullYear(), now.getMonth(), 1),
+        lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+      }
+    }
+  }
+
   const [total, bookings] = await Promise.all([
     prisma.booking.count({ where }),
     prisma.booking.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
+      orderBy: { [sortBy]: sortDir },
       skip: (page - 1) * limit,
       take: limit,
       include: {

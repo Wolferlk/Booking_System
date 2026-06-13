@@ -1,4 +1,3 @@
-import { simpleParser } from 'mailparser'
 import openai from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
@@ -54,6 +53,18 @@ export interface ExtractedBooking {
   currency: string
   terms: string | null
   exclusions: string | null
+  // Agent contact details
+  agentEmail: string | null
+  agentPhone: string | null
+  agentWhatsapp: string | null
+  agentCountry: string | null
+  agentAddress: string | null
+  // Lead customer contact details
+  contactEmail: string | null
+  contactPhone: string | null
+  contactWhatsapp: string | null
+  contactCountry: string | null
+  contactAddress: string | null
   passengers: { name: string; type: string; isLead: boolean }[]
   flights: { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string }[]
   accommodations: { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string; mealType?: string }[]
@@ -130,7 +141,7 @@ Extract ALL booking details from this email thread. Focus on the MOST RECENT tou
 
 Return ONLY valid JSON matching this exact schema:
 {
-  "bookingRef": "IS Number or Tour Ref or internal booking reference (e.g. VN19730, 468600CNTL)",
+  "bookingRef": "Tour Ref / Tour No / internal booking reference (e.g. 469182CNTL, VN19730)",
   "agentBookingId": "Agent's booking ID (e.g. 402011138462)",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip)",
   "fileHandler": "File handler name (e.g. Yogi)",
@@ -142,6 +153,16 @@ Return ONLY valid JSON matching this exact schema:
   "currency": "USD",
   "terms": "full terms and conditions text or null",
   "exclusions": "exclusions text or null",
+  "agentEmail": "agent company email address or null",
+  "agentPhone": "agent company phone number (any format) or null",
+  "agentWhatsapp": "agent WhatsApp number or null",
+  "agentCountry": "agent country or null",
+  "agentAddress": "agent full office/mailing address or null",
+  "contactEmail": "lead customer/passenger email address or null",
+  "contactPhone": "lead customer/passenger phone number or null",
+  "contactWhatsapp": "lead customer/passenger WhatsApp number or null",
+  "contactCountry": "lead customer country or nationality or null",
+  "contactAddress": "lead customer home/mailing address or null",
   "emergencyContacts": [{ "name": "string", "phone": "string or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false }],
   "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "IATA code", "depTime": "HH:MM or null", "toApt": "IATA code", "arrTime": "HH:MM or null", "airline": "string or null" }],
@@ -150,10 +171,12 @@ Return ONLY valid JSON matching this exact schema:
   "pnlLines": []
 }
 
-IMPORTANT: Extract the IS Number as bookingRef (format: VN#####). If no IS Number, use Tour Ref.
+IMPORTANT: Prefer the Tour Ref / Tour No as bookingRef when it exists, because PNL emails link back to that value.
+If no Tour Ref is present, fall back to the best available booking reference such as IS Number or agent reference.
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, etc.).
-Date format must be YYYY-MM-DD strictly.`
+Date format must be YYYY-MM-DD strictly.
+For contact details: scan email headers (From/Reply-To), email signatures, and booking form fields for email addresses, phone numbers, WhatsApp numbers, countries, and addresses. Look for both agent (sender company) and customer (traveller) contact info separately.`
 
 const PNL_PROMPT = `You are a P&L extraction expert for AppleHolidays (MMT Vietnam).
 Extract the booking IS Number and all cost line items from this email/document.
@@ -171,14 +194,17 @@ FORMAT B — XLSX/CSV spreadsheet
 - Use each column value directly
 
 CRITICAL — Booking Reference:
-1. Look for "IS Number:" or "IS:" label in the body (e.g. "IS Number: IS 48369")
-2. Also check the subject line (e.g. "PNL:#464045" → quotation_no is 464045, but IS Number is the linking field)
-3. STRIP ALL SPACES from the IS number: "IS 48369" → "IS48369", "VN 19679" → "VN19679"
-4. Return only alphanumeric characters — no spaces, dashes, or slashes
+1. Look for "Tour No" OR "IS Number:" OR "IS:" label in the body
+   - "Tour No= #469083" or "Tour No: #469083" → strip the "#" → bookingRef is "469083"
+   - "IS Number: IS 48369" → strip spaces → bookingRef is "IS48369"
+   - PREFER "Tour No" over "IS Number" when both exist
+2. Also check the subject line (e.g. "PNL:#464045" or "VN19579 P&L" → extract the number)
+3. Strip "#" prefix and ALL SPACES: "#469083" → "469083", "VN 19679" → "VN19679"
+4. Return only alphanumeric characters — no spaces, dashes, slashes, or "#"
 
 Return ONLY valid JSON (no markdown):
 {
-  "bookingRef": "IS Number with ALL spaces removed (e.g. IS48369, VN19679)",
+  "bookingRef": "Tour No or IS Number cleaned (e.g. 469083, IS48369, VN19679)",
   "paxAdults": number,
   "paxChildren": number,
   "pnlLines": [
@@ -226,9 +252,12 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   if (!content) throw new Error('OpenAI returned empty response')
 
   const parsed = JSON.parse(content) as Partial<ExtractedBooking>
+  const tourRefOverride = emailType === 'TOUR_CONFIRMATION'
+    ? extractTourRefFromText(emailBody)
+    : extractPnlTourNoFromText(emailBody)
 
   return {
-    bookingRef:       parsed.bookingRef       ?? null,
+    bookingRef:       tourRefOverride ?? parsed.bookingRef ?? null,
     agentBookingId:   parsed.agentBookingId   ?? null,
     agent:            parsed.agent            ?? null,
     fileHandler:      parsed.fileHandler      ?? null,
@@ -240,6 +269,16 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     currency:         parsed.currency         ?? 'USD',
     terms:            parsed.terms            ?? null,
     exclusions:       parsed.exclusions       ?? null,
+    agentEmail:       parsed.agentEmail       ?? null,
+    agentPhone:       parsed.agentPhone       ?? null,
+    agentWhatsapp:    parsed.agentWhatsapp    ?? null,
+    agentCountry:     parsed.agentCountry     ?? null,
+    agentAddress:     parsed.agentAddress     ?? null,
+    contactEmail:     parsed.contactEmail     ?? null,
+    contactPhone:     parsed.contactPhone     ?? null,
+    contactWhatsapp:  parsed.contactWhatsapp  ?? null,
+    contactCountry:   parsed.contactCountry   ?? null,
+    contactAddress:   parsed.contactAddress   ?? null,
     passengers:       parsed.passengers       ?? [],
     flights:          parsed.flights          ?? [],
     accommodations:   parsed.accommodations   ?? [],
@@ -249,12 +288,40 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   }
 }
 
+function cleanReference(value: string | null | undefined): string | null {
+  const cleaned = String(value ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase()
+  return cleaned.length >= 4 ? cleaned : null
+}
+
+function extractTourRefFromText(text: string): string | null {
+  const match = text.match(/tour\s*ref(?:erence)?\s*[:=#-]?\s*([A-Z0-9][A-Z0-9-]*)/i)
+  return cleanReference(match?.[1])
+}
+
+function extractPnlTourNoFromText(text: string): string | null {
+  const match = text.match(/tour\s*no(?:\.|:|=)?\s*#?\s*([A-Z0-9][A-Z0-9-]*)/i)
+  if (match?.[1]) return cleanReference(match[1])
+
+  const subjectMatch = text.match(/pnl\s*[:#-]?\s*#?\s*([A-Z0-9][A-Z0-9-]*)/i)
+  return cleanReference(subjectMatch?.[1])
+}
+
 // ── Microsoft Graph API email reader ─────────────────────────────────────────
 
-export async function getGraphToken(): Promise<string> {
-  const tenantId     = process.env.Azure_TENANT_ID
-  const clientId     = process.env.Azure_CLIENT_ID
-  const clientSecret = process.env.Azure_CLIENT_SECRET
+export async function getGraphToken(credentialSet: 'default' | 'pnl' = 'default'): Promise<string> {
+  let tenantId: string | undefined
+  let clientId: string | undefined
+  let clientSecret: string | undefined
+
+  if (credentialSet === 'pnl' && process.env.GRAPH_CLIENT_ID && process.env.GRAPH_CLIENT_SECRET) {
+    tenantId     = process.env.GRAPH_TENANT_ID ?? process.env.Azure_TENANT_ID
+    clientId     = process.env.GRAPH_CLIENT_ID
+    clientSecret = process.env.GRAPH_CLIENT_SECRET
+  } else {
+    tenantId     = process.env.Azure_TENANT_ID
+    clientId     = process.env.Azure_CLIENT_ID
+    clientSecret = process.env.Azure_CLIENT_SECRET
+  }
 
   if (!tenantId || !clientId || !clientSecret) {
     throw new Error('Azure AD credentials not set (Azure_TENANT_ID / Azure_CLIENT_ID / Azure_CLIENT_SECRET)')
@@ -279,6 +346,11 @@ export async function getGraphToken(): Promise<string> {
     throw new Error(`Token request failed: ${json.error_description ?? json.error ?? 'unknown'}`)
   }
   return json.access_token
+}
+
+function isPnlMailboxUser(user: string): boolean {
+  const pnlUser = process.env.GRAPH_PNL_USER?.trim()
+  return !!pnlUser && user === pnlUser
 }
 
 interface GraphMessage {
@@ -401,7 +473,7 @@ export async function fetchUnprocessedEmailsForUser(
 ): Promise<ProcessedEmail[]> {
   if (!user) throw new Error('Mailbox user not set')
 
-  const token = await getGraphToken()
+  const token = await getGraphToken(isPnlMailboxUser(user) ? 'pnl' : 'default')
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
   const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
 
@@ -428,6 +500,14 @@ export async function fetchUnprocessedEmailsForUser(
   const messages = await graphGetAllPages<GraphMessage>(token, url)
   const limited  = messages.slice(0, limit)
 
+  // Mailbox identity is the authoritative source of email type —
+  // content-based detection is unreliable (TQ bodies contain PNL keywords like "transport"/"is number")
+  const tqUser  = (process.env.Outlookmail_USERNAME ?? '').trim()
+  const pnlUser = (process.env.GRAPH_PNL_USER ?? '').trim()
+  const forcedType: ProcessedEmail['type'] | null =
+    user === tqUser  && tqUser  ? 'TOUR_CONFIRMATION' :
+    user === pnlUser && pnlUser ? 'PNL'               : null
+
   const results: ProcessedEmail[] = limited.map((msg, i) => {
     const { text, html } = parseBody(msg)
     const subject  = msg.subject ?? ''
@@ -442,7 +522,7 @@ export async function fetchUnprocessedEmailsForUser(
       to:             (msg.toRecipients ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
       cc:             (msg.ccRecipients  ?? []).map(r => r.emailAddress?.address ?? '').filter(Boolean),
       date:           msg.receivedDateTime ?? new Date().toISOString(),
-      type:           detectEmailType(subject, bodyText),
+      type:           forcedType ?? detectEmailType(subject, bodyText),
       rawBody:        bodyText.slice(0, 30000),
       bodyHtml:       html.slice(0, 100000),
       folder:         folderMap.get(msg.parentFolderId ?? '') ?? (msg.inferenceClassification === 'focused' ? 'Focused' : 'Inbox'),
@@ -471,7 +551,7 @@ export async function fetchMessageByIdForUser(
 ): Promise<ProcessedEmail | null> {
   if (!user) return null
 
-  const token = await getGraphToken()
+  const token = await getGraphToken(isPnlMailboxUser(user) ? 'pnl' : 'default')
   const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
   const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}/messages/${graphMessageId}?$select=${select}`
 
@@ -511,7 +591,13 @@ export async function fetchMessageAttachmentsForUser(
 ): Promise<EmailAttachment[]> {
   if (!user) return []
 
-  const token = await getGraphToken()
+  // IMAP emails use a synthetic "imap2_<uid>" graphId — route to IMAP fetcher
+  if (graphMessageId.startsWith('imap2_')) {
+    const { fetchImapAttachments } = await import('@/lib/imap-pnl')
+    return fetchImapAttachments(graphMessageId)
+  }
+
+  const token = await getGraphToken(isPnlMailboxUser(user) ? 'pnl' : 'default')
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
   return fetchAttachmentsForMessage(token, base, graphMessageId)
 }
@@ -622,15 +708,15 @@ async function ensureWebhookSubscriptionForUser(
 
 // Subscribe all configured mailboxes and return their subscription IDs
 export async function ensureAllWebhookSubscriptions(): Promise<string[]> {
-  const url      = notificationUrl()
-  const secret   = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
-  const token    = await getGraphToken()
+  const url       = notificationUrl()
+  const secret    = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
   const mailboxes = getConfiguredMailboxes()
 
   const ids: string[] = []
   for (const mb of mailboxes) {
     try {
-      const id = await ensureWebhookSubscriptionForUser(mb.user, mb.kind, token, url, secret)
+      const mbToken = await getGraphToken(isPnlMailboxUser(mb.user) ? 'pnl' : 'default')
+      const id = await ensureWebhookSubscriptionForUser(mb.user, mb.kind, mbToken, url, secret)
       ids.push(id)
     } catch (err) {
       console.error(`[Webhook] subscription failed for ${mb.user}:`, err instanceof Error ? err.message : err)
@@ -664,7 +750,7 @@ export async function getSubscriptionStatus(): Promise<{
   id: string | null
   expiry: string | null
   url: string
-  mailboxes: Array<{ user: string; kind: MailboxKind; active: boolean; id: string | null; expiry: string | null }>
+  mailboxes: Array<{ user: string; kind: MailboxKind; active: boolean; id: string | null; expiry: string | null; source?: string }>
 }> {
   const url      = notificationUrl()
   const now      = new Date()
@@ -674,7 +760,7 @@ export async function getSubscriptionStatus(): Promise<{
     const id        = await dbGet(skSubId(mb.user))
     const expiryStr = await dbGet(skSubExpiry(mb.user))
     const expiry    = expiryStr ? new Date(expiryStr) : null
-    return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null }
+    return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null, source: 'graph' as 'graph' | 'imap' }
   }))
 
   const primary = statuses[0]

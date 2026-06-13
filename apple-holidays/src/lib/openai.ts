@@ -14,7 +14,7 @@ Return ONLY valid JSON matching the schema below. If a field is not found, use n
 
 Schema:
 {
-  "bookingRef": "string (e.g. VN19005)",
+  "bookingRef": "string (prefer Tour Ref / Tour No when present, e.g. 469182CNTL)",
   "agentBookingId": "string or null",
   "agent": "string (e.g. Make My Trip)",
   "fileHandler": "string or null",
@@ -82,7 +82,8 @@ Schema:
   ]
 }
 
-Be precise and complete. Do not invent data.`
+Be precise and complete. Do not invent data.
+Important: if the document includes both a Tour Ref and an IS Number, use the Tour Ref as bookingRef because the PNL email will link back to it.`
 
 const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.
 Extract P&L (profit & loss) data from the provided Excel/CSV content.

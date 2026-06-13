@@ -332,6 +332,16 @@ async function syncTourConfirmation(
     currency: extracted.currency ?? 'USD',
     terms: extracted.terms,
     exclusions: extracted.exclusions,
+    agentEmail: extracted.agentEmail,
+    agentPhone: extracted.agentPhone,
+    agentWhatsapp: extracted.agentWhatsapp,
+    agentCountry: extracted.agentCountry,
+    agentAddress: extracted.agentAddress,
+    contactEmail: extracted.contactEmail,
+    contactPhone: extracted.contactPhone,
+    contactWhatsapp: extracted.contactWhatsapp,
+    contactCountry: extracted.contactCountry,
+    contactAddress: extracted.contactAddress,
     status: 'GT_REVIEW' as const,
     ...(isNew ? { createdById } : {}),
   }
@@ -352,6 +362,16 @@ async function syncTourConfirmation(
         currency: bookingData.currency,
         terms: bookingData.terms,
         exclusions: bookingData.exclusions,
+        agentEmail: bookingData.agentEmail,
+        agentPhone: bookingData.agentPhone,
+        agentWhatsapp: bookingData.agentWhatsapp,
+        agentCountry: bookingData.agentCountry,
+        agentAddress: bookingData.agentAddress,
+        contactEmail: bookingData.contactEmail,
+        contactPhone: bookingData.contactPhone,
+        contactWhatsapp: bookingData.contactWhatsapp,
+        contactCountry: bookingData.contactCountry,
+        contactAddress: bookingData.contactAddress,
         status: 'GT_REVIEW',
       },
     })
@@ -400,10 +420,18 @@ async function syncPnL(
   if (!booking) {
     const numericPart = rawBookingRef.replace(/[^0-9]/g, '')
     if (numericPart.length >= 4) {
+      // endsWith handles "VN19679" prefix case (PNL gives "19679")
       booking = await prisma.booking.findFirst({
         where: { bookingRef: { endsWith: numericPart } },
         orderBy: { createdAt: 'desc' },
       }) ?? null
+      // startsWith handles "469083CNTL" suffix case (PNL gives "469083", TQ stored "469083CNTL")
+      if (!booking) {
+        booking = await prisma.booking.findFirst({
+          where: { bookingRef: { startsWith: numericPart } },
+          orderBy: { createdAt: 'desc' },
+        }) ?? null
+      }
     }
   }
 
@@ -434,6 +462,16 @@ async function syncPnL(
         currency: extracted.currency ?? 'USD',
         terms: extracted.terms,
         exclusions: extracted.exclusions,
+        agentEmail: extracted.agentEmail,
+        agentPhone: extracted.agentPhone,
+        agentWhatsapp: extracted.agentWhatsapp,
+        agentCountry: extracted.agentCountry,
+        agentAddress: extracted.agentAddress,
+        contactEmail: extracted.contactEmail,
+        contactPhone: extracted.contactPhone,
+        contactWhatsapp: extracted.contactWhatsapp,
+        contactCountry: extracted.contactCountry,
+        contactAddress: extracted.contactAddress,
         status: 'GT_REVIEW',
         createdById,
       },
