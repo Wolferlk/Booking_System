@@ -4,40 +4,53 @@ import { detectEmailType, type ProcessedEmail, type EmailAttachment } from './ma
 
 const HOST = process.env.IMAP_HOST ?? 'outlook.office365.com'
 const PORT = Number(process.env.IMAP_PORT ?? '993')
-const USER = process.env.IMAP_USERNAME ?? ''
-const PASS = process.env.IMAP_PASSWORD ?? ''
 
-// Module-level attachment cache — lives for the lifetime of the server process
-const attachmentCache = new Map<string, EmailAttachment[]>()
+// ── Mailbox 1: accounts.receivable@aahaas.com ────────────────────────────────
+const RECEIVER_USER = process.env.IMAP_USERNAME ?? ''
+const RECEIVER_PASS = process.env.IMAP_PASSWORD ?? ''
 
-export const IMAP_PNL_USER = USER
+// ── Mailbox 2: accounts.payable@aahaas.com ───────────────────────────────────
+const PAYABLE_USER  = process.env.IMAP2_USERNAME ?? ''
+const PAYABLE_PASS  = process.env.IMAP2_PASSWORD ?? ''
+
+// Module-level attachment caches — lives for the lifetime of the server process
+const attachmentCacheReceiver = new Map<string, EmailAttachment[]>()
+const attachmentCachePayable  = new Map<string, EmailAttachment[]>()
+
+export const IMAP_PNL_USER  = RECEIVER_USER  // backward-compat alias
+export const IMAP_PNL2_USER = PAYABLE_USER
+
+function cacheFor(user: string) {
+  return user === PAYABLE_USER ? attachmentCachePayable : attachmentCacheReceiver
+}
+
+function makeGraphId(uid: number, user: string): string {
+  const tag = user === PAYABLE_USER ? 'imap2' : 'imap'
+  return `${tag}_${uid}`
+}
 
 export function isImapGraphId(graphId: string): boolean {
-  return graphId.startsWith('imap_')
+  return graphId.startsWith('imap_') || graphId.startsWith('imap2_')
 }
 
-function makeGraphId(uid: number): string {
-  return `imap_${uid}`
-}
-
-function makeClient(): ImapFlow {
+function makeClient(user: string, pass: string): ImapFlow {
   return new ImapFlow({
     host: HOST,
     port: PORT,
     secure: PORT === 993,
-    auth: { user: USER, pass: PASS },
+    auth: { user, pass },
     logger: false,
     tls: { rejectUnauthorized: false },
   })
 }
 
-function parsedToEmail(uid: number, parsed: ParsedMail): ProcessedEmail {
+function parsedToEmail(uid: number, parsed: ParsedMail, user: string): ProcessedEmail {
   const subject  = parsed.subject ?? ''
   const bodyText = parsed.text ?? ''
   const bodyHtml = typeof parsed.html === 'string' ? parsed.html : bodyText
-  const graphId  = makeGraphId(uid)
+  const graphId  = makeGraphId(uid, user)
 
-  const from = (parsed.from as AddressObject | undefined)
+  const from  = (parsed.from as AddressObject | undefined)
   const toObj = (parsed.to as AddressObject | AddressObject[] | undefined)
   const toAddrs: string[] = Array.isArray(toObj)
     ? toObj.flatMap(a => a.value.map(r => r.address ?? '')).filter(Boolean)
@@ -73,10 +86,17 @@ function parsedToAttachments(parsed: ParsedMail): EmailAttachment[] {
   }))
 }
 
-export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> {
-  if (!USER || !PASS) return []
+// ── Core fetch function (shared by both mailboxes) ───────────────────────────
 
-  const client = makeClient()
+async function fetchImapEmailsForMailbox(
+  user: string,
+  pass: string,
+  limit = 50,
+): Promise<ProcessedEmail[]> {
+  if (!user || !pass) return []
+
+  const cache  = cacheFor(user)
+  const client = makeClient(user, pass)
   const emails: ProcessedEmail[] = []
 
   try {
@@ -93,13 +113,12 @@ export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> 
         if (!msg.source) continue
         try {
           const parsed = await (simpleParser(msg.source) as Promise<ParsedMail>)
-          const email  = parsedToEmail(msg.uid, parsed)
+          const email  = parsedToEmail(msg.uid, parsed, user)
 
           if (parsed.attachments?.length) {
-            attachmentCache.set(email.graphId, parsedToAttachments(parsed))
+            cache.set(email.graphId, parsedToAttachments(parsed))
           }
 
-          // Mark read state from flags if available
           if (msg.flags) {
             email.isRead = msg.flags.has('\\Seen')
           }
@@ -113,7 +132,6 @@ export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> 
       lock.release()
     }
   } catch {
-    // Return empty on connection failure
     return []
   } finally {
     try { await client.logout() } catch { /* ignore */ }
@@ -122,15 +140,22 @@ export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> 
   return emails.reverse().slice(0, limit)
 }
 
-export async function fetchImapAttachments(graphId: string): Promise<EmailAttachment[]> {
-  const cached = attachmentCache.get(graphId)
+// ── Core attachment fetch (shared) ───────────────────────────────────────────
+
+async function fetchImapAttachmentsForMailbox(
+  graphId: string,
+  user: string,
+  pass: string,
+): Promise<EmailAttachment[]> {
+  const cache = cacheFor(user)
+  const cached = cache.get(graphId)
   if (cached) return cached
 
-  const uidMatch = graphId.match(/^imap_(\d+)$/)
-  if (!uidMatch || !USER || !PASS) return []
+  const uidMatch = graphId.match(/^imap2?_(\d+)$/)
+  if (!uidMatch || !user || !pass) return []
 
   const uid    = parseInt(uidMatch[1], 10)
-  const client = makeClient()
+  const client = makeClient(user, pass)
   const results: EmailAttachment[] = []
 
   try {
@@ -153,6 +178,26 @@ export async function fetchImapAttachments(graphId: string): Promise<EmailAttach
     try { await client.logout() } catch { /* ignore */ }
   }
 
-  attachmentCache.set(graphId, results)
+  cache.set(graphId, results)
   return results
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/** Fetch emails from accounts.receivable@aahaas.com via IMAP */
+export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> {
+  return fetchImapEmailsForMailbox(RECEIVER_USER, RECEIVER_PASS, limit)
+}
+
+/** Fetch emails from accounts.payable@aahaas.com via IMAP */
+export async function fetchImapPayableEmails(limit = 50): Promise<ProcessedEmail[]> {
+  return fetchImapEmailsForMailbox(PAYABLE_USER, PAYABLE_PASS, limit)
+}
+
+/** Fetch attachments — routes to the correct mailbox based on graphId prefix */
+export async function fetchImapAttachments(graphId: string): Promise<EmailAttachment[]> {
+  if (graphId.startsWith('imap2_')) {
+    return fetchImapAttachmentsForMailbox(graphId, PAYABLE_USER, PAYABLE_PASS)
+  }
+  return fetchImapAttachmentsForMailbox(graphId, RECEIVER_USER, RECEIVER_PASS)
 }

@@ -66,10 +66,11 @@ interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const POLL_INTERVAL   = 30_000
-const PROCESS_DELAY   = 1500   // ms between auto-processes
-const TQ_EMAIL        = 'confirm.booking@aahaas.com'
-const PNL_EMAIL       = 'confirm.booking.pnl@aahaas.com'
+const POLL_INTERVAL    = 30_000
+const PROCESS_DELAY    = 1500   // ms between auto-processes
+const TQ_EMAIL         = 'confirm.booking@aahaas.com'
+const PNL_EMAIL        = 'accounts.payable@aahaas.com'
+const PNL_IMAP_EMAIL   = 'accounts.receivable@aahaas.com'
 
 const CAT_COLOR: Record<string, string> = {
   HOTEL: 'bg-blue-100 text-blue-700', FLIGHT_TICKETS: 'bg-indigo-100 text-indigo-700',
@@ -582,10 +583,10 @@ export default function MailInboxPage() {
     return map
   }, [results])
 
-  const tqSub  = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
-  // Prefer IMAP PNL mailbox status; fall back to Graph PNL if present
-  const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL' && m.source === 'imap')
-             ?? subStatus?.mailboxes?.find(m => m.kind === 'PNL')
+  const tqSub          = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
+  const imapMailboxes  = subStatus?.mailboxes?.filter(m => m.source === 'imap') ?? []
+  const imapReceiver   = imapMailboxes.find(m => m.user === PNL_IMAP_EMAIL) ?? imapMailboxes[0]
+  const imapPayable    = imapMailboxes.find(m => m.user === PNL_EMAIL) ?? imapMailboxes[1]
 
   return (
     <div>
@@ -593,8 +594,8 @@ export default function MailInboxPage() {
         title="Mail Inbox"
         subtitle={
           mailboxFilter === 'tq'  ? `TQ — ${TQ_EMAIL}`  :
-          mailboxFilter === 'pnl' ? `PNL — ${PNL_EMAIL}` :
-          `${TQ_EMAIL}  +  ${PNL_EMAIL}`
+          mailboxFilter === 'pnl' ? `PNL — ${PNL_EMAIL} + ${PNL_IMAP_EMAIL}` :
+          `${TQ_EMAIL}  +  ${PNL_EMAIL}  +  ${PNL_IMAP_EMAIL}`
         }
         actions={
           <div className="flex gap-2 items-center flex-wrap">
@@ -639,20 +640,39 @@ export default function MailInboxPage() {
         </Card>
 
         {/* ── Mailbox Status ─────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { label: 'Travel Quotation', email: TQ_EMAIL,  sub: tqSub,  isImap: false },
-            { label: 'P&L Mailbox',      email: PNL_EMAIL, sub: pnlSub, isImap: true  },
-          ].map(({ label, email, sub, isImap }) => (
-            <Card key={email} className={`p-3 border ${sub?.active ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+        <div className="grid grid-cols-3 gap-3">
+          {([
+            {
+              label: 'Travel Quotation',
+              email: TQ_EMAIL,
+              active: tqSub?.active ?? false,
+              badge: tqSub?.active ? 'Webhook Live' : 'Cron 5min',
+              color: tqSub?.active ? 'tq-live' : 'tq-cron',
+            },
+            {
+              label: 'P&L — Payable',
+              email: PNL_EMAIL,
+              active: imapPayable?.active ?? true,
+              badge: 'IMAP Poll · 30s',
+              color: 'pnl',
+            },
+            {
+              label: 'P&L — Receivable',
+              email: PNL_IMAP_EMAIL,
+              active: imapReceiver?.active ?? true,
+              badge: 'IMAP Poll · 30s',
+              color: 'pnl',
+            },
+          ] as { label: string; email: string; active: boolean; badge: string; color: string }[]).map(({ label, email, active, badge }) => (
+            <Card key={email} className={`p-3 border ${active ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
               <div className="flex items-center gap-2.5">
-                {sub?.active ? <Wifi className="w-3.5 h-3.5 text-green-500 flex-shrink-0" /> : <WifiOff className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                {active
+                  ? <Wifi className="w-3.5 h-3.5 text-green-500 flex-shrink-0 animate-pulse" />
+                  : <WifiOff className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-xs font-bold ${sub?.active ? 'text-green-800' : 'text-amber-800'}`}>{label}</span>
-                    <Badge color={sub?.active ? 'green' : 'amber'} className="text-[9px]">
-                      {isImap ? 'IMAP Poll' : sub?.active ? 'Webhook Live' : 'Cron 5min'}
-                    </Badge>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`text-xs font-bold ${active ? 'text-green-800' : 'text-amber-800'}`}>{label}</span>
+                    <Badge color={active ? 'green' : 'amber'} className="text-[9px]">{badge}</Badge>
                   </div>
                   <p className="text-[10px] font-mono text-slate-500 truncate">{email}</p>
                 </div>
@@ -976,8 +996,8 @@ export default function MailInboxPage() {
             <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-500 font-medium">No emails found</p>
             <p className="text-slate-400 text-sm mt-1">
-              {mailboxFilter === 'tq' ? `Checking ${TQ_EMAIL}…` :
-               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL}…` : 'Checking both mailboxes…'}
+              {mailboxFilter === 'tq'  ? `Checking ${TQ_EMAIL}…` :
+               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL} + ${PNL_IMAP_EMAIL}…` : 'Checking all mailboxes…'}
             </p>
           </Card>
         )}

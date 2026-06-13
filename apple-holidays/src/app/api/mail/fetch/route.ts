@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { fetchUnprocessedEmailsForUser, getConfiguredMailboxes } from '@/lib/mail-processor'
-import { fetchImapPnlEmails, IMAP_PNL_USER } from '@/lib/imap-pnl'
+import { fetchImapPnlEmails, fetchImapPayableEmails, IMAP_PNL_USER, IMAP_PNL2_USER } from '@/lib/imap-pnl'
 
 const IMAP_PNL_KIND = 'PNL' as const
 
@@ -20,9 +20,16 @@ export async function GET(req: NextRequest) {
     const configured = getConfiguredMailboxes()
 
     if (mailbox === 'pnl') {
-      // IMAP is the sole PNL source
-      const emails = await fetchImapPnlEmails(limit)
-      return buildApiSuccess(emails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL_USER })))
+      // Fetch from both IMAP mailboxes (accounts.receivable + accounts.payable)
+      const [receiverEmails, payableEmails] = await Promise.all([
+        fetchImapPnlEmails(limit).catch(() => [] as Awaited<ReturnType<typeof fetchImapPnlEmails>>),
+        fetchImapPayableEmails(limit).catch(() => [] as Awaited<ReturnType<typeof fetchImapPayableEmails>>),
+      ])
+      const merged = [
+        ...receiverEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL_USER })),
+        ...payableEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL2_USER })),
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, limit)
+      return buildApiSuccess(merged)
     }
 
     if (mailbox === 'tq') {
@@ -32,22 +39,24 @@ export async function GET(req: NextRequest) {
       return buildApiSuccess(emails.map(e => ({ ...e, mailboxKind: target.kind, mailboxUser: target.user })))
     }
 
-    // 'all' — fetch TQ from Graph + PNL from IMAP, merge most-recent-first
-    const [graphResults, imapEmails] = await Promise.all([
+    // 'all' — TQ from Graph + both IMAP PNL mailboxes, merge most-recent-first
+    const tqMailboxes = configured.filter(mb => mb.kind === 'TOUR_CONFIRMATION')
+    const [graphResults, receiverEmails, payableEmails] = await Promise.all([
       Promise.all(
-        configured
-          .filter(mb => mb.kind === 'TOUR_CONFIRMATION')
-          .map(mb => fetchUnprocessedEmailsForUser(mb.user, limit, folder)
+        tqMailboxes.map(mb =>
+          fetchUnprocessedEmailsForUser(mb.user, limit, folder)
             .then(emails => emails.map(e => ({ ...e, mailboxKind: mb.kind, mailboxUser: mb.user })))
             .catch(() => [] as never[])
-          )
+        )
       ),
       fetchImapPnlEmails(limit).catch(() => []),
+      fetchImapPayableEmails(limit).catch(() => []),
     ])
 
     const merged = [
       ...graphResults.flat(),
-      ...imapEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL_USER })),
+      ...receiverEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL_USER })),
+      ...payableEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL2_USER })),
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, limit)
 
     return buildApiSuccess(merged)

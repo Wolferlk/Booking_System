@@ -254,10 +254,20 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
 
 // ── Microsoft Graph API email reader ─────────────────────────────────────────
 
-export async function getGraphToken(): Promise<string> {
-  const tenantId     = process.env.Azure_TENANT_ID
-  const clientId     = process.env.Azure_CLIENT_ID
-  const clientSecret = process.env.Azure_CLIENT_SECRET
+export async function getGraphToken(credentialSet: 'default' | 'pnl' = 'default'): Promise<string> {
+  let tenantId: string | undefined
+  let clientId: string | undefined
+  let clientSecret: string | undefined
+
+  if (credentialSet === 'pnl' && process.env.GRAPH_CLIENT_ID && process.env.GRAPH_CLIENT_SECRET) {
+    tenantId     = process.env.GRAPH_TENANT_ID ?? process.env.Azure_TENANT_ID
+    clientId     = process.env.GRAPH_CLIENT_ID
+    clientSecret = process.env.GRAPH_CLIENT_SECRET
+  } else {
+    tenantId     = process.env.Azure_TENANT_ID
+    clientId     = process.env.Azure_CLIENT_ID
+    clientSecret = process.env.Azure_CLIENT_SECRET
+  }
 
   if (!tenantId || !clientId || !clientSecret) {
     throw new Error('Azure AD credentials not set (Azure_TENANT_ID / Azure_CLIENT_ID / Azure_CLIENT_SECRET)')
@@ -282,6 +292,11 @@ export async function getGraphToken(): Promise<string> {
     throw new Error(`Token request failed: ${json.error_description ?? json.error ?? 'unknown'}`)
   }
   return json.access_token
+}
+
+function isPnlMailboxUser(user: string): boolean {
+  const pnlUser = process.env.GRAPH_PNL_USER?.trim()
+  return !!pnlUser && user === pnlUser
 }
 
 interface GraphMessage {
@@ -404,7 +419,7 @@ export async function fetchUnprocessedEmailsForUser(
 ): Promise<ProcessedEmail[]> {
   if (!user) throw new Error('Mailbox user not set')
 
-  const token = await getGraphToken()
+  const token = await getGraphToken(isPnlMailboxUser(user) ? 'pnl' : 'default')
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
   const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
 
@@ -474,7 +489,7 @@ export async function fetchMessageByIdForUser(
 ): Promise<ProcessedEmail | null> {
   if (!user) return null
 
-  const token = await getGraphToken()
+  const token = await getGraphToken(isPnlMailboxUser(user) ? 'pnl' : 'default')
   const select = 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,isRead,hasAttachments,importance,conversationId,parentFolderId,inferenceClassification'
   const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}/messages/${graphMessageId}?$select=${select}`
 
@@ -520,7 +535,7 @@ export async function fetchMessageAttachmentsForUser(
     return fetchImapAttachments(graphMessageId)
   }
 
-  const token = await getGraphToken()
+  const token = await getGraphToken(isPnlMailboxUser(user) ? 'pnl' : 'default')
   const base  = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(user)}`
   return fetchAttachmentsForMessage(token, base, graphMessageId)
 }
@@ -631,15 +646,15 @@ async function ensureWebhookSubscriptionForUser(
 
 // Subscribe all configured mailboxes and return their subscription IDs
 export async function ensureAllWebhookSubscriptions(): Promise<string[]> {
-  const url      = notificationUrl()
-  const secret   = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
-  const token    = await getGraphToken()
+  const url       = notificationUrl()
+  const secret    = process.env.WEBHOOK_SECRET ?? 'aahaas-webhook-secret'
   const mailboxes = getConfiguredMailboxes()
 
   const ids: string[] = []
   for (const mb of mailboxes) {
     try {
-      const id = await ensureWebhookSubscriptionForUser(mb.user, mb.kind, token, url, secret)
+      const mbToken = await getGraphToken(isPnlMailboxUser(mb.user) ? 'pnl' : 'default')
+      const id = await ensureWebhookSubscriptionForUser(mb.user, mb.kind, mbToken, url, secret)
       ids.push(id)
     } catch (err) {
       console.error(`[Webhook] subscription failed for ${mb.user}:`, err instanceof Error ? err.message : err)
@@ -686,10 +701,14 @@ export async function getSubscriptionStatus(): Promise<{
     return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null, source: 'graph' as 'graph' | 'imap' }
   }))
 
-  // Add IMAP PNL mailbox (always active — polled, no webhook needed)
-  const imapUser = process.env.IMAP_USERNAME?.trim()
-  if (imapUser) {
-    statuses.push({ user: imapUser, kind: 'PNL', active: true, id: null, expiry: null, source: 'imap' as 'graph' | 'imap' })
+  // Add both IMAP PNL mailboxes (always active — polled every 30s, no webhook needed)
+  const imapReceiver = process.env.IMAP_USERNAME?.trim()
+  if (imapReceiver) {
+    statuses.push({ user: imapReceiver, kind: 'PNL', active: true, id: null, expiry: null, source: 'imap' as 'graph' | 'imap' })
+  }
+  const imapPayable = process.env.IMAP2_USERNAME?.trim()
+  if (imapPayable) {
+    statuses.push({ user: imapPayable, kind: 'PNL', active: true, id: null, expiry: null, source: 'imap' as 'graph' | 'imap' })
   }
 
   const primary = statuses[0]
