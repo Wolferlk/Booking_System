@@ -5,12 +5,6 @@ import {
   fetchUnprocessedEmailsForUser,
   extractEmailSourceTextForUser,
 } from '@/lib/mail-processor'
-import {
-  fetchImapPnlEmails,
-  fetchImapPayableEmails,
-  IMAP_PNL_USER,
-  IMAP_PNL2_USER,
-} from '@/lib/imap-pnl'
 import { processMailboxEmail } from '@/lib/incoming-mail-automation'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 
@@ -47,8 +41,8 @@ async function processEmailBatch(
       const msg = err instanceof Error ? err.message : String(err)
       await prisma.systemSetting.upsert({
         where:  { key: 'mailbox_cron_last_error' },
-        update: { value: `${new Date().toISOString()} | ${mailboxUser} | ${msg.slice(0, 500)}` },
-        create: { key: 'mailbox_cron_last_error', value: `${new Date().toISOString()} | ${mailboxUser} | ${msg.slice(0, 500)}` },
+        update: { value: `${new Date().toISOString()} | ${mailboxUser} | ${msg.slice(0, 5)}` },
+        create: { key: 'mailbox_cron_last_error', value: `${new Date().toISOString()} | ${msg.slice(0, 500)}` },
       })
     }
   }
@@ -64,23 +58,14 @@ export async function GET(req: NextRequest) {
 
   const summaries: Array<{ mailbox: string; checked: number; processed: number; skipped: number }> = []
 
-  // ── 1. Graph mailboxes (TQ via confirm.booking@aahaas.com) ──────────────────
+  // All mailboxes (TQ + PNL) are fetched via Microsoft Graph API
+  // getConfiguredMailboxes() returns:
+  //   • confirm.booking@aahaas.com   → TOUR_CONFIRMATION (Azure_* credentials)
+  //   • accounts.payable@aahaas.com  → PNL               (GRAPH_* credentials)
   const mailboxes = getConfiguredMailboxes()
   for (const mailbox of mailboxes) {
-    const emails = await fetchUnprocessedEmailsForUser(mailbox.user, 25, 'inbox')
+    const emails = await fetchUnprocessedEmailsForUser(mailbox.user, 25, 'inbox').catch(() => [] as ProcessedEmail[])
     await processEmailBatch(emails, mailbox.user, mailbox.kind, summaries)
-  }
-
-  // ── 2. IMAP mailbox 1 — accounts.receivable@aahaas.com ─────────────────────
-  if (IMAP_PNL_USER) {
-    const emails = await fetchImapPnlEmails(25).catch(() => [] as ProcessedEmail[])
-    await processEmailBatch(emails, IMAP_PNL_USER, 'PNL', summaries)
-  }
-
-  // ── 3. IMAP mailbox 2 — accounts.payable@aahaas.com ────────────────────────
-  if (IMAP_PNL2_USER) {
-    const emails = await fetchImapPayableEmails(25).catch(() => [] as ProcessedEmail[])
-    await processEmailBatch(emails, IMAP_PNL2_USER, 'PNL', summaries)
   }
 
   return NextResponse.json({ ok: true, summaries })

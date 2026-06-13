@@ -5,50 +5,43 @@ import type { ProcessedEmail, EmailAttachment } from './mail-processor'
 const HOST = process.env.IMAP_HOST ?? 'outlook.office365.com'
 const PORT = Number(process.env.IMAP_PORT ?? '993')
 
-// ── Mailbox 1: accounts.receivable@aahaas.com ────────────────────────────────
-const RECEIVER_USER = process.env.IMAP_USERNAME ?? ''
-const RECEIVER_PASS = process.env.IMAP_PASSWORD ?? ''
+// ── Only mailbox: accounts.payable@aahaas.com ────────────────────────────────
+const PAYABLE_USER = process.env.IMAP2_USERNAME ?? ''
+const PAYABLE_PASS = process.env.IMAP2_PASSWORD ?? ''
 
-// ── Mailbox 2: accounts.payable@aahaas.com ───────────────────────────────────
-const PAYABLE_USER  = process.env.IMAP2_USERNAME ?? ''
-const PAYABLE_PASS  = process.env.IMAP2_PASSWORD ?? ''
+const attachmentCache = new Map<string, EmailAttachment[]>()
 
-// Module-level attachment caches — lives for the lifetime of the server process
-const attachmentCacheReceiver = new Map<string, EmailAttachment[]>()
-const attachmentCachePayable  = new Map<string, EmailAttachment[]>()
-
-export const IMAP_PNL_USER  = RECEIVER_USER  // backward-compat alias
+// IMAP_PNL_USER and IMAP_PNL2_USER both point to payable (backward-compat)
+export const IMAP_PNL_USER  = PAYABLE_USER
 export const IMAP_PNL2_USER = PAYABLE_USER
 
-function cacheFor(user: string) {
-  return user === PAYABLE_USER ? attachmentCachePayable : attachmentCacheReceiver
-}
+// Last connection error — readable by API for diagnostics
+export let lastImapError: string | null = null
 
-function makeGraphId(uid: number, user: string): string {
-  const tag = user === PAYABLE_USER ? 'imap2' : 'imap'
-  return `${tag}_${uid}`
+function makeGraphId(uid: number): string {
+  return `imap2_${uid}`
 }
 
 export function isImapGraphId(graphId: string): boolean {
-  return graphId.startsWith('imap_') || graphId.startsWith('imap2_')
+  return graphId.startsWith('imap2_')
 }
 
-function makeClient(user: string, pass: string): ImapFlow {
+function makeClient(): ImapFlow {
   return new ImapFlow({
     host: HOST,
     port: PORT,
     secure: PORT === 993,
-    auth: { user, pass },
+    auth: { user: PAYABLE_USER, pass: PAYABLE_PASS },
     logger: false,
     tls: { rejectUnauthorized: false },
   })
 }
 
-function parsedToEmail(uid: number, parsed: ParsedMail, user: string): ProcessedEmail {
+function parsedToEmail(uid: number, parsed: ParsedMail): ProcessedEmail {
   const subject  = parsed.subject ?? ''
   const bodyText = parsed.text ?? ''
   const bodyHtml = typeof parsed.html === 'string' ? parsed.html : bodyText
-  const graphId  = makeGraphId(uid, user)
+  const graphId  = makeGraphId(uid)
 
   const from  = (parsed.from as AddressObject | undefined)
   const toObj = (parsed.to as AddressObject | AddressObject[] | undefined)
@@ -86,25 +79,28 @@ function parsedToAttachments(parsed: ParsedMail): EmailAttachment[] {
   }))
 }
 
-// ── Core fetch function (shared by both mailboxes) ───────────────────────────
+// ── Fetch emails from accounts.payable@aahaas.com ───────────────────────────
 
-async function fetchImapEmailsForMailbox(
-  user: string,
-  pass: string,
-  limit = 50,
-): Promise<ProcessedEmail[]> {
-  if (!user || !pass) return []
+async function fetchEmails(limit = 50): Promise<ProcessedEmail[]> {
+  if (!PAYABLE_USER || !PAYABLE_PASS) {
+    lastImapError = 'IMAP2_USERNAME or IMAP2_PASSWORD not set in environment'
+    console.error('[IMAP-Payable]', lastImapError)
+    return []
+  }
 
-  const cache  = cacheFor(user)
-  const client = makeClient(user, pass)
+  const client = makeClient()
   const emails: ProcessedEmail[] = []
 
   try {
     await client.connect()
+    lastImapError = null  // clear on successful connect
+
     const lock = await client.getMailboxLock('INBOX')
 
     try {
       const total = (client.mailbox as { exists?: number } | null)?.exists ?? 0
+      console.log(`[IMAP-Payable] Connected to ${PAYABLE_USER}, INBOX has ${total} messages`)
+
       if (total === 0) return []
 
       const start = Math.max(1, total - limit + 1)
@@ -113,10 +109,10 @@ async function fetchImapEmailsForMailbox(
         if (!msg.source) continue
         try {
           const parsed = await (simpleParser(msg.source) as Promise<ParsedMail>)
-          const email  = parsedToEmail(msg.uid, parsed, user)
+          const email  = parsedToEmail(msg.uid, parsed)
 
           if (parsed.attachments?.length) {
-            cache.set(email.graphId, parsedToAttachments(parsed))
+            attachmentCache.set(email.graphId, parsedToAttachments(parsed))
           }
 
           if (msg.flags) {
@@ -131,31 +127,40 @@ async function fetchImapEmailsForMailbox(
     } finally {
       lock.release()
     }
-  } catch {
+  } catch (err: unknown) {
+    lastImapError = err instanceof Error ? err.message : String(err)
+    console.error('[IMAP-Payable] Connection failed:', lastImapError)
     return []
   } finally {
     try { await client.logout() } catch { /* ignore */ }
   }
 
+  console.log(`[IMAP-Payable] Fetched ${emails.length} emails from ${PAYABLE_USER}`)
   return emails.reverse().slice(0, limit)
 }
 
-// ── Core attachment fetch (shared) ───────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
-async function fetchImapAttachmentsForMailbox(
-  graphId: string,
-  user: string,
-  pass: string,
-): Promise<EmailAttachment[]> {
-  const cache = cacheFor(user)
-  const cached = cache.get(graphId)
+/** Fetch emails from accounts.payable@aahaas.com via IMAP */
+export async function fetchImapPayableEmails(limit = 50): Promise<ProcessedEmail[]> {
+  return fetchEmails(limit)
+}
+
+/** Backward-compat alias — same as fetchImapPayableEmails */
+export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> {
+  return fetchEmails(limit)
+}
+
+/** Fetch attachments for a payable IMAP email (graphId prefix: imap2_) */
+export async function fetchImapAttachments(graphId: string): Promise<EmailAttachment[]> {
+  const cached = attachmentCache.get(graphId)
   if (cached) return cached
 
-  const uidMatch = graphId.match(/^imap2?_(\d+)$/)
-  if (!uidMatch || !user || !pass) return []
+  const uidMatch = graphId.match(/^imap2_(\d+)$/)
+  if (!uidMatch || !PAYABLE_USER || !PAYABLE_PASS) return []
 
   const uid    = parseInt(uidMatch[1], 10)
-  const client = makeClient(user, pass)
+  const client = makeClient()
   const results: EmailAttachment[] = []
 
   try {
@@ -172,32 +177,34 @@ async function fetchImapAttachmentsForMailbox(
     } finally {
       lock.release()
     }
-  } catch {
-    // Return empty on failure
+  } catch (err: unknown) {
+    console.error('[IMAP-Payable] Attachment fetch failed:', err instanceof Error ? err.message : err)
   } finally {
     try { await client.logout() } catch { /* ignore */ }
   }
 
-  cache.set(graphId, results)
+  attachmentCache.set(graphId, results)
   return results
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
-/** Fetch emails from accounts.receivable@aahaas.com via IMAP */
-export async function fetchImapPnlEmails(limit = 50): Promise<ProcessedEmail[]> {
-  return fetchImapEmailsForMailbox(RECEIVER_USER, RECEIVER_PASS, limit)
-}
-
-/** Fetch emails from accounts.payable@aahaas.com via IMAP */
-export async function fetchImapPayableEmails(limit = 50): Promise<ProcessedEmail[]> {
-  return fetchImapEmailsForMailbox(PAYABLE_USER, PAYABLE_PASS, limit)
-}
-
-/** Fetch attachments — routes to the correct mailbox based on graphId prefix */
-export async function fetchImapAttachments(graphId: string): Promise<EmailAttachment[]> {
-  if (graphId.startsWith('imap2_')) {
-    return fetchImapAttachmentsForMailbox(graphId, PAYABLE_USER, PAYABLE_PASS)
+/** Test the IMAP connection and return result — used by diagnostic API */
+export async function testImapConnection(): Promise<{ ok: boolean; error: string | null; messageCount: number; user: string }> {
+  if (!PAYABLE_USER || !PAYABLE_PASS) {
+    return { ok: false, error: 'IMAP2_USERNAME or IMAP2_PASSWORD not set', messageCount: 0, user: PAYABLE_USER }
   }
-  return fetchImapAttachmentsForMailbox(graphId, RECEIVER_USER, RECEIVER_PASS)
+
+  const client = makeClient()
+
+  try {
+    await client.connect()
+    const lock = await client.getMailboxLock('INBOX')
+    const total = (client.mailbox as { exists?: number } | null)?.exists ?? 0
+    lock.release()
+    await client.logout()
+    return { ok: true, error: null, messageCount: total, user: PAYABLE_USER }
+  } catch (err: unknown) {
+    const error = err instanceof Error ? err.message : String(err)
+    try { await client.logout() } catch { /* ignore */ }
+    return { ok: false, error, messageCount: 0, user: PAYABLE_USER }
+  }
 }

@@ -1,4 +1,3 @@
-import { simpleParser } from 'mailparser'
 import openai from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
@@ -537,8 +536,8 @@ export async function fetchMessageAttachmentsForUser(
 ): Promise<EmailAttachment[]> {
   if (!user) return []
 
-  // IMAP emails use a synthetic "imap_<uid>" graphId — route to IMAP fetcher
-  if (graphMessageId.startsWith('imap_')) {
+  // IMAP emails use a synthetic "imap2_<uid>" graphId — route to IMAP fetcher
+  if (graphMessageId.startsWith('imap2_')) {
     const { fetchImapAttachments } = await import('@/lib/imap-pnl')
     return fetchImapAttachments(graphMessageId)
   }
@@ -708,16 +707,6 @@ export async function getSubscriptionStatus(): Promise<{
     const expiry    = expiryStr ? new Date(expiryStr) : null
     return { user: mb.user, kind: mb.kind, active: !!(id && expiry && expiry > now), id: id ?? null, expiry: expiryStr ?? null, source: 'graph' as 'graph' | 'imap' }
   }))
-
-  // Add both IMAP PNL mailboxes (always active — polled every 30s, no webhook needed)
-  const imapReceiver = process.env.IMAP_USERNAME?.trim()
-  if (imapReceiver) {
-    statuses.push({ user: imapReceiver, kind: 'PNL', active: true, id: null, expiry: null, source: 'imap' as 'graph' | 'imap' })
-  }
-  const imapPayable = process.env.IMAP2_USERNAME?.trim()
-  if (imapPayable) {
-    statuses.push({ user: imapPayable, kind: 'PNL', active: true, id: null, expiry: null, source: 'imap' as 'graph' | 'imap' })
-  }
 
   const primary = statuses[0]
   return {

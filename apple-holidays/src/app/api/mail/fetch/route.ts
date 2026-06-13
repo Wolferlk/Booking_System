@@ -3,9 +3,6 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { fetchUnprocessedEmailsForUser, getConfiguredMailboxes } from '@/lib/mail-processor'
-import { fetchImapPnlEmails, fetchImapPayableEmails, IMAP_PNL_USER, IMAP_PNL2_USER } from '@/lib/imap-pnl'
-
-const IMAP_PNL_KIND = 'PNL' as const
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -18,46 +15,44 @@ export async function GET(req: NextRequest) {
 
   try {
     const configured = getConfiguredMailboxes()
+    // configured = [{ user: 'confirm.booking@aahaas.com', kind: 'TOUR_CONFIRMATION' },
+    //               { user: 'accounts.payable@aahaas.com', kind: 'PNL' }]
 
     if (mailbox === 'pnl') {
-      // Fetch from both IMAP mailboxes (accounts.receivable + accounts.payable)
-      const [receiverEmails, payableEmails] = await Promise.all([
-        fetchImapPnlEmails(limit).catch(() => [] as Awaited<ReturnType<typeof fetchImapPnlEmails>>),
-        fetchImapPayableEmails(limit).catch(() => [] as Awaited<ReturnType<typeof fetchImapPayableEmails>>),
-      ])
-      const merged = [
-        ...receiverEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL_USER })),
-        ...payableEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL2_USER })),
-      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, limit)
+      const pnlMailboxes = configured.filter(mb => mb.kind === 'PNL')
+      if (!pnlMailboxes.length) return buildApiError('PNL mailbox not configured', 400)
+      const results = await Promise.all(
+        pnlMailboxes.map(mb =>
+          fetchUnprocessedEmailsForUser(mb.user, limit, folder)
+            .then(emails => emails.map(e => ({ ...e, mailboxKind: mb.kind, mailboxUser: mb.user })))
+            .catch(() => [] as never[])
+        )
+      )
+      const merged = results.flat()
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, limit)
       return buildApiSuccess(merged)
     }
 
     if (mailbox === 'tq') {
       const target = configured.find(mb => mb.kind === 'TOUR_CONFIRMATION')
-      if (!target) return buildApiError(`TQ mailbox not configured`, 400)
+      if (!target) return buildApiError('TQ mailbox not configured', 400)
       const emails = await fetchUnprocessedEmailsForUser(target.user, limit, folder)
       return buildApiSuccess(emails.map(e => ({ ...e, mailboxKind: target.kind, mailboxUser: target.user })))
     }
 
-    // 'all' — TQ from Graph + both IMAP PNL mailboxes, merge most-recent-first
-    const tqMailboxes = configured.filter(mb => mb.kind === 'TOUR_CONFIRMATION')
-    const [graphResults, receiverEmails, payableEmails] = await Promise.all([
-      Promise.all(
-        tqMailboxes.map(mb =>
-          fetchUnprocessedEmailsForUser(mb.user, limit, folder)
-            .then(emails => emails.map(e => ({ ...e, mailboxKind: mb.kind, mailboxUser: mb.user })))
-            .catch(() => [] as never[])
-        )
-      ),
-      fetchImapPnlEmails(limit).catch(() => []),
-      fetchImapPayableEmails(limit).catch(() => []),
-    ])
+    // 'all' — fetch all configured mailboxes (TQ + PNL) via Graph API
+    const allResults = await Promise.all(
+      configured.map(mb =>
+        fetchUnprocessedEmailsForUser(mb.user, limit, folder)
+          .then(emails => emails.map(e => ({ ...e, mailboxKind: mb.kind, mailboxUser: mb.user })))
+          .catch(() => [] as never[])
+      )
+    )
 
-    const merged = [
-      ...graphResults.flat(),
-      ...receiverEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL_USER })),
-      ...payableEmails.map(e => ({ ...e, mailboxKind: IMAP_PNL_KIND, mailboxUser: IMAP_PNL2_USER })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, limit)
+    const merged = allResults.flat()
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, limit)
 
     return buildApiSuccess(merged)
   } catch (err: unknown) {

@@ -72,7 +72,6 @@ const POLL_INTERVAL    = 30_000
 const PROCESS_DELAY    = 1500   // ms between auto-processes
 const TQ_EMAIL         = 'confirm.booking@aahaas.com'
 const PNL_EMAIL        = 'accounts.payable@aahaas.com'
-const PNL_IMAP_EMAIL   = 'accounts.receivable@aahaas.com'
 
 const CAT_COLOR: Record<string, string> = {
   HOTEL: 'bg-blue-100 text-blue-700', FLIGHT_TICKETS: 'bg-indigo-100 text-indigo-700',
@@ -97,10 +96,9 @@ function fmtTs(d?: string | null) {
 function usd(n: number) { return n > 0 ? `$${n.toFixed(2)}` : '—' }
 
 function mailboxLabel(user: string) {
-  if (user === TQ_EMAIL)        return { label: 'TQ',        color: 'bg-blue-100 text-blue-700 border-blue-200' }
-  if (user === PNL_EMAIL)       return { label: 'PNL·Pay',   color: 'bg-teal-100 text-teal-700 border-teal-200' }
-  if (user === PNL_IMAP_EMAIL)  return { label: 'PNL·Recv',  color: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
-  return                               { label: user.split('@')[0], color: 'bg-slate-100 text-slate-600 border-slate-200' }
+  if (user === TQ_EMAIL)  return { label: 'TQ',   color: 'bg-blue-100 text-blue-700 border-blue-200' }
+  if (user === PNL_EMAIL) return { label: 'PNL',  color: 'bg-teal-100 text-teal-700 border-teal-200' }
+  return                         { label: user.split('@')[0], color: 'bg-slate-100 text-slate-600 border-slate-200' }
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -626,7 +624,7 @@ export default function MailInboxPage() {
     Array.from(results.entries()).forEach(([graphId, r]) => {
       if (!r.success || !r.data?.bookingRef) return
       const email = emails.find(e => e.graphId === graphId)
-      if (!email || (email.mailboxKind !== 'PNL' && email.type !== 'PNL')) return
+      if (!email || email.mailboxKind !== 'PNL') return
       const num = r.data.bookingRef.replace(/[^0-9]/g, '')
       if (num.length >= 4) {
         map.set(num, { mailboxUser: email.mailboxUser, processedAt: r.data.processedAt, pnlLines: r.data.pnlLines })
@@ -635,19 +633,17 @@ export default function MailInboxPage() {
     return map
   }, [results, emails])
 
-  const tqSub          = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
-  const imapMailboxes  = subStatus?.mailboxes?.filter(m => m.source === 'imap') ?? []
-  const imapReceiver   = imapMailboxes.find(m => m.user === PNL_IMAP_EMAIL) ?? imapMailboxes[0]
-  const imapPayable    = imapMailboxes.find(m => m.user === PNL_EMAIL) ?? imapMailboxes[1]
+  const tqSub  = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
+  const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL')
 
   return (
     <div>
       <Header
         title="Mail Inbox"
         subtitle={
-          mailboxFilter === 'tq'  ? `TQ — ${TQ_EMAIL}`  :
-          mailboxFilter === 'pnl' ? `PNL — ${PNL_EMAIL} + ${PNL_IMAP_EMAIL}` :
-          `${TQ_EMAIL}  +  ${PNL_EMAIL}  +  ${PNL_IMAP_EMAIL}`
+          mailboxFilter === 'tq'  ? `TQ — ${TQ_EMAIL}` :
+          mailboxFilter === 'pnl' ? `PNL — ${PNL_EMAIL}` :
+          `${TQ_EMAIL}  +  ${PNL_EMAIL}`
         }
         actions={
           <div className="flex gap-2 items-center flex-wrap">
@@ -692,7 +688,7 @@ export default function MailInboxPage() {
         </Card>
 
         {/* ── Mailbox Status ─────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           {([
             {
               label: 'Travel Quotation',
@@ -704,15 +700,8 @@ export default function MailInboxPage() {
             {
               label: 'P&L — Payable',
               email: PNL_EMAIL,
-              active: imapPayable?.active ?? true,
-              badge: 'IMAP Poll · 30s',
-              color: 'pnl',
-            },
-            {
-              label: 'P&L — Receivable',
-              email: PNL_IMAP_EMAIL,
-              active: imapReceiver?.active ?? true,
-              badge: 'IMAP Poll · 30s',
+              active: pnlSub?.active ?? true,
+              badge: pnlSub?.active ? 'Webhook Live' : 'Graph Poll · 30s',
               color: 'pnl',
             },
           ] as { label: string; email: string; active: boolean; badge: string; color: string }[]).map(({ label, email, active, badge }) => (
@@ -1135,7 +1124,7 @@ export default function MailInboxPage() {
             <p className="text-slate-500 font-medium">No emails found</p>
             <p className="text-slate-400 text-sm mt-1">
               {mailboxFilter === 'tq'  ? `Checking ${TQ_EMAIL}…` :
-               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL} + ${PNL_IMAP_EMAIL}…` : 'Checking all mailboxes…'}
+               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL}…` : 'Checking all mailboxes…'}
             </p>
           </Card>
         )}
