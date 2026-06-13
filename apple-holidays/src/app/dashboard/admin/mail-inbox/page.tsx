@@ -10,6 +10,7 @@ import {
   ClipboardCheck, Inbox, Plane, Hotel, Phone,
   FileSpreadsheet, Link2, ChevronDown, ChevronUp,
   Eye, Info, Zap, CalendarClock, Merge, HourglassIcon,
+  Search, X,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -364,6 +365,7 @@ export default function MailInboxPage() {
   const [mailboxFilter, setMailboxFilter] = useState<MailboxFilter>('all')
   const [subStatus, setSubStatus]         = useState<SubStatus | null>(null)
   const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
+  const [searchQuery, setSearchQuery]     = useState('')
   const [pnlStatusMap, setPnlStatusMap]   = useState<Map<string, PnlStatus>>(new Map())
   const [autoProcessingIds, setAutoProcessingIds] = useState<Set<string>>(new Set())
 
@@ -584,6 +586,23 @@ export default function MailInboxPage() {
   const waitingCount   = Array.from(results.values()).filter(r => r.success && r.data?.status === 'PNL_WAITING').length
   const autoCount      = autoProcessingIds.size
 
+  // Search filter — applied on top of the mailbox tab filter
+  const displayEmails = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return emails
+    return emails.filter(email => {
+      if (email.subject.toLowerCase().includes(q)) return true
+      if (email.from.toLowerCase().includes(q)) return true
+      if (email.fromName.toLowerCase().includes(q)) return true
+      const ref = results.get(email.graphId)?.data?.bookingRef ?? ''
+      if (ref.toLowerCase().includes(q)) return true
+      // also match Tour No format: "#469083" → search "469083"
+      const numericRef = ref.replace(/[^0-9]/g, '')
+      if (numericRef && numericRef.includes(q.replace(/[^0-9]/g, ''))) return true
+      return false
+    })
+  }, [emails, searchQuery, results])
+
   // Merged = TQ bookings that also have a PNL attached
   const mergedCount = useMemo(() => {
     return Array.from(results.entries()).filter(([graphId, r]) => {
@@ -742,6 +761,28 @@ export default function MailInboxPage() {
           ))}
         </div>
 
+        {/* ── Search ────────────────────────────────────────────────────── */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search subject, sender, Tour Ref or Tour No…"
+            className="w-full pl-9 pr-9 py-2.5 text-sm border border-slate-200 rounded-xl bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"
+          />
+          {searchQuery && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+              <span className="text-[10px] font-semibold text-slate-400">
+                {displayEmails.length} / {emails.length}
+              </span>
+              <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* ── Live Stats ────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
           {/* Total */}
@@ -801,7 +842,7 @@ export default function MailInboxPage() {
         )}
 
         {/* ── Email Cards ───────────────────────────────────────────────── */}
-        {!fetching && emails.map(email => {
+        {!fetching && displayEmails.map(email => {
           const result       = results.get(email.graphId)
           const isAutoProc   = autoProcessingIds.has(email.graphId)
           const isExpanded   = expandedId === email.graphId
@@ -1118,14 +1159,27 @@ export default function MailInboxPage() {
         )}
 
         {/* Empty state */}
-        {!fetching && emails.length === 0 && (
+        {!fetching && displayEmails.length === 0 && (
           <Card className="p-12 text-center">
-            <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-500 font-medium">No emails found</p>
-            <p className="text-slate-400 text-sm mt-1">
-              {mailboxFilter === 'tq'  ? `Checking ${TQ_EMAIL}…` :
-               mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL}…` : 'Checking all mailboxes…'}
-            </p>
+            {searchQuery ? (
+              <>
+                <Search className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">No results for &ldquo;{searchQuery}&rdquo;</p>
+                <p className="text-slate-400 text-sm mt-1">Try a different subject, sender name, or Tour Ref</p>
+                <button onClick={() => setSearchQuery('')} className="mt-3 text-xs text-blue-500 hover:text-blue-700 font-medium">
+                  Clear search
+                </button>
+              </>
+            ) : (
+              <>
+                <Mail className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">No emails found</p>
+                <p className="text-slate-400 text-sm mt-1">
+                  {mailboxFilter === 'tq'  ? `Checking ${TQ_EMAIL}…` :
+                   mailboxFilter === 'pnl' ? `Checking ${PNL_EMAIL}…` : 'Checking all mailboxes…'}
+                </p>
+              </>
+            )}
           </Card>
         )}
       </div>
