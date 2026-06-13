@@ -160,6 +160,20 @@ model Booking {
   exclusions            String?       @db.Text
   policyNotes           String?       @db.Text
 
+  // Agent contact details (extracted from email)
+  agentEmail            String?
+  agentPhone            String?
+  agentWhatsapp         String?
+  agentCountry          String?
+  agentAddress          String?       @db.Text
+
+  // Lead customer contact details (extracted from email)
+  contactEmail          String?
+  contactPhone          String?
+  contactWhatsapp       String?
+  contactCountry        String?
+  contactAddress        String?       @db.Text
+
   sourceDocUrl          String?       @db.Text
   sourceDocName         String?
 

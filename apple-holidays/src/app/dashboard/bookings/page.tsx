@@ -4,7 +4,8 @@ import { Suspense, useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
-  Plus, Search, Filter, FileText, Loader2, ArrowRight, Users, Calendar,
+  Plus, Search, FileText, Loader2, ArrowRight, Users, Calendar,
+  ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -16,6 +17,24 @@ import { useSession } from 'next-auth/react'
 import type { BookingStatus } from '@prisma/client'
 
 const STATUSES = Object.keys(STATUS_LABELS) as BookingStatus[]
+
+type SortField = 'arrivalDate' | 'departureDate' | 'createdAt' | 'updatedAt'
+type SortDir   = 'asc' | 'desc'
+type DateFilter = '' | 'today' | 'this_week' | 'this_month'
+
+const DATE_FILTER_OPTIONS: { value: DateFilter; label: string }[] = [
+  { value: '',           label: 'All' },
+  { value: 'today',      label: 'Today' },
+  { value: 'this_week',  label: 'This Week' },
+  { value: 'this_month', label: 'This Month' },
+]
+
+const SORT_FIELD_OPTIONS: { value: SortField; label: string }[] = [
+  { value: 'arrivalDate',   label: 'Arrival Date' },
+  { value: 'departureDate', label: 'Departure Date' },
+  { value: 'createdAt',     label: 'Created' },
+  { value: 'updatedAt',     label: 'Last Updated' },
+]
 
 interface Booking {
   id: string
@@ -34,24 +53,37 @@ interface Booking {
   _count: { changeRequests: number }
 }
 
+function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortField; sortDir: SortDir }) {
+  if (sortBy !== field) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-25 inline" />
+  return sortDir === 'asc'
+    ? <ArrowUp   className="w-3 h-3 ml-1 text-brand-600 inline" />
+    : <ArrowDown className="w-3 h-3 ml-1 text-brand-600 inline" />
+}
+
 function BookingsPageInner() {
   const { data: session } = useSession()
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  const [bookings, setBookings] = useState<Booking[]>([])
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState(searchParams.get('search') ?? '')
-  const [status, setStatus] = useState(searchParams.get('status') ?? '')
+  const [bookings, setBookings]     = useState<Booking[]>([])
+  const [total, setTotal]           = useState(0)
+  const [loading, setLoading]       = useState(true)
+  const [search, setSearch]         = useState(searchParams.get('search') ?? '')
+  const [status, setStatus]         = useState(searchParams.get('status') ?? '')
+  const [dateFilter, setDateFilter] = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
+  const [sortBy, setSortBy]         = useState<SortField>((searchParams.get('sortBy') ?? 'arrivalDate') as SortField)
+  const [sortDir, setSortDir]       = useState<SortDir>((searchParams.get('sortDir') ?? 'desc') as SortDir)
 
   const fetchBookings = useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams()
-    if (search) params.set('search', search)
-    if (status) params.set('status', status)
+    if (search)     params.set('search',     search)
+    if (status)     params.set('status',     status)
+    if (dateFilter) params.set('dateFilter', dateFilter)
+    params.set('sortBy',  sortBy)
+    params.set('sortDir', sortDir)
     try {
-      const res = await fetch(`/api/bookings?${params}`)
+      const res  = await fetch(`/api/bookings?${params}`)
       const json = await res.json()
       if (json.success) {
         setBookings(json.data.bookings)
@@ -60,11 +92,20 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, status])
+  }, [search, status, dateFilter, sortBy, sortDir])
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
-  const role = session?.user?.role
+  function toggleSort(field: SortField) {
+    if (sortBy === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortBy(field)
+      setSortDir('desc')
+    }
+  }
+
+  const role      = session?.user?.role
   const canCreate = ['BT_USER', 'SUPER_ADMIN'].includes(role ?? '')
 
   return (
@@ -83,7 +124,9 @@ function BookingsPageInner() {
 
       <div className="p-8 space-y-5">
         {/* Filters */}
-        <Card className="p-4">
+        <Card className="p-4 space-y-3">
+
+          {/* Row 1 — Search + Status */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -105,6 +148,52 @@ function BookingsPageInner() {
                 <option key={s} value={s}>{STATUS_LABELS[s]}</option>
               ))}
             </select>
+          </div>
+
+          {/* Row 2 — Date period pills + Sort controls */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+
+            {/* Date period pills */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-0.5" />
+              {DATE_FILTER_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setDateFilter(opt.value)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                    dateFilter === opt.value
+                      ? 'bg-brand-600 text-white border-brand-600'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sort controls — pushed to the right on sm+ */}
+            <div className="sm:ml-auto flex items-center gap-2">
+              <span className="text-xs text-slate-400 whitespace-nowrap">Sort by</span>
+              <select
+                value={sortBy}
+                onChange={e => { setSortBy(e.target.value as SortField); setSortDir('desc') }}
+                className="form-select text-sm py-1.5 pr-8"
+              >
+                {SORT_FIELD_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                title={sortDir === 'asc' ? 'Ascending — click for Descending' : 'Descending — click for Ascending'}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-medium transition-colors"
+              >
+                {sortDir === 'asc'
+                  ? <><ArrowUp   className="w-3.5 h-3.5" /> Asc</>
+                  : <><ArrowDown className="w-3.5 h-3.5" /> Desc</>
+                }
+              </button>
+            </div>
           </div>
         </Card>
 
@@ -132,7 +221,22 @@ function BookingsPageInner() {
                     <th>Booking Ref</th>
                     <th>Lead Passenger</th>
                     <th>Agent</th>
-                    <th>Trip Dates</th>
+                    <th>
+                      <button
+                        className="flex items-center whitespace-nowrap hover:text-brand-700 transition-colors"
+                        onClick={() => toggleSort('arrivalDate')}
+                      >
+                        Arrival <SortIcon field="arrivalDate" sortBy={sortBy} sortDir={sortDir} />
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        className="flex items-center whitespace-nowrap hover:text-brand-700 transition-colors"
+                        onClick={() => toggleSort('departureDate')}
+                      >
+                        Departure <SortIcon field="departureDate" sortBy={sortBy} sortDir={sortDir} />
+                      </button>
+                    </th>
                     <th>Pax</th>
                     <th>Quoted</th>
                     <th>Status</th>
@@ -162,7 +266,13 @@ function BookingsPageInner() {
                         <td>
                           <div className="flex items-center gap-1 text-xs text-slate-600">
                             <Calendar className="w-3 h-3 flex-shrink-0" />
-                            {formatDate(b.arrivalDate)} → {formatDate(b.departureDate)}
+                            {formatDate(b.arrivalDate)}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="flex items-center gap-1 text-xs text-slate-600">
+                            <Calendar className="w-3 h-3 flex-shrink-0" />
+                            {formatDate(b.departureDate)}
                           </div>
                         </td>
                         <td>

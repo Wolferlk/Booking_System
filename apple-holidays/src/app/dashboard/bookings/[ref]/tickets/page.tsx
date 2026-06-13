@@ -8,7 +8,7 @@ import {
   Plus, Loader2, ShoppingCart, AlertCircle,
   Upload, FileText, Image as ImageIcon, ExternalLink, CheckCircle2,
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
-  Anchor, Activity, MapPin, Plane, Printer,
+  Anchor, Activity, MapPin, Plane, Printer, Pencil,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -77,6 +77,9 @@ export default function TicketsPage() {
   const [form, setForm] = useState({
     type: '', qty: '1', supplier: '', costPerUnit: '', currency: 'USD', notes: '',
   })
+  const [editModal, setEditModal]   = useState<Ticket | null>(null)
+  const [editForm, setEditForm]     = useState({ type: '', supplier: '', qty: '', costPerUnit: '', reference: '', notes: '' })
+  const [editSaving, setEditSaving] = useState(false)
 
   const canCreate   = ['GT_USER', 'SUPER_ADMIN'].includes(role)
   const canPurchase = ['GT_USER', 'SUPER_ADMIN'].includes(role)
@@ -185,6 +188,34 @@ export default function TicketsPage() {
     if (!fileInputRef.current) return
     fileInputRef.current.dataset.ticketId = ticketId
     fileInputRef.current.click()
+  }
+
+  function openEdit(t: Ticket) {
+    setEditForm({ type: t.type, supplier: t.supplier ?? '', qty: String(t.qty), costPerUnit: t.costPerUnit ?? '', reference: t.reference ?? '', notes: t.notes ?? '' })
+    setEditModal(t)
+  }
+
+  async function saveEdit() {
+    if (!editModal) return
+    setEditSaving(true)
+    try {
+      const res  = await fetch(`/api/tickets/${editModal.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: editForm.type, supplier: editForm.supplier,
+          qty: Number(editForm.qty),
+          costPerUnit: editForm.costPerUnit ? Number(editForm.costPerUnit) : null,
+          reference: editForm.reference, notes: editForm.notes,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Ticket updated')
+      setEditModal(null)
+      load()
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed') }
+    finally { setEditSaving(false) }
   }
 
   if (loading) return (
@@ -419,6 +450,11 @@ export default function TicketsPage() {
                             <ShoppingCart className="w-3.5 h-3.5" /> Purchase
                           </button>
                         )}
+                        {canCreate && (
+                          <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm" title="Edit ticket">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
 
                         {canUpload && t.status === 'DRAFT' && !t.fileUrl && (
                           <button onClick={() => triggerUpload(t.id)} disabled={uploadingId === t.id} className="btn-ghost btn btn-sm text-xs">
@@ -554,6 +590,60 @@ export default function TicketsPage() {
               <CheckCircle2 className="w-4 h-4" /> Confirm Purchase
             </button>
             <button onClick={() => setPurchaseModal(null)} className="btn-secondary btn">Cancel</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Edit Ticket Modal */}
+      <Modal
+        open={!!editModal}
+        onClose={() => setEditModal(null)}
+        title={`Edit — ${editModal?.type ?? ''}`}
+        footer={
+          <>
+            <button onClick={() => setEditModal(null)} className="btn btn-secondary">Cancel</button>
+            <button onClick={saveEdit} disabled={editSaving} className="btn btn-primary">
+              {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pencil className="w-4 h-4" />}
+              Save Changes
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="form-label">Activity / Ticket Type</label>
+            <input className="form-input" value={editForm.type}
+              onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))} />
+          </div>
+          <div>
+            <label className="form-label">Supplier</label>
+            <input className="form-input" placeholder="Supplier / provider name"
+              value={editForm.supplier}
+              onChange={e => setEditForm(f => ({ ...f, supplier: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label">Quantity</label>
+              <input type="number" className="form-input" min="1" value={editForm.qty}
+                onChange={e => setEditForm(f => ({ ...f, qty: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Cost Per Unit</label>
+              <input type="number" className="form-input" placeholder="0.00" min="0" step="0.01"
+                value={editForm.costPerUnit}
+                onChange={e => setEditForm(f => ({ ...f, costPerUnit: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <label className="form-label">Reference / Confirmation No.</label>
+            <input className="form-input font-mono" placeholder="TKT-2026-001"
+              value={editForm.reference}
+              onChange={e => setEditForm(f => ({ ...f, reference: e.target.value }))} />
+          </div>
+          <div>
+            <label className="form-label">Notes</label>
+            <textarea className="form-textarea" rows={2} value={editForm.notes}
+              onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
         </div>
       </Modal>
