@@ -23,14 +23,23 @@ export async function POST(req: NextRequest) {
   if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { rawBody, subject, emailType, graphId, mailboxUser } = body as {
+  const { rawBody, subject, emailType, graphId, mailboxUser, emailTo, emailCc, sourceMailFrom, sourceMailDate } = body as {
     rawBody: string
     subject: string
     emailType?: string
     graphId?: string
     mailboxUser?: string
+    emailTo?: string[]
+    emailCc?: string[]
+    sourceMailFrom?: string
+    sourceMailDate?: string
   }
   if (!rawBody) return buildApiError('rawBody is required')
+
+  // Build CC list from the email's To + CC headers (deduped)
+  const emailToList = (emailTo ?? []).filter(Boolean)
+  const emailCcList = (emailCc ?? []).filter(Boolean)
+  const allCcEmails = Array.from(new Set([...emailToList, ...emailCcList]))
 
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
 
@@ -107,6 +116,22 @@ export async function POST(req: NextRequest) {
 
   if (existingBooking) {
     bookingId = existingBooking.id
+    // Merge To+CC emails and backfill source mail metadata if not already stored
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const eb = existingBooking as any
+    let existingCc: string[] = []
+    try { existingCc = JSON.parse(eb.ccEmails ?? '[]') } catch { /* ok */ }
+    const mergedCc = Array.from(new Set([...existingCc, ...allCcEmails]))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await prisma.booking.update({
+      where: { id: bookingId },
+      data: {
+        ccEmails: mergedCc.length > 0 ? JSON.stringify(mergedCc) : eb.ccEmails,
+        ...(!eb.sourceMailSubject && subject    ? { sourceMailSubject: subject }           : {}),
+        ...(!eb.sourceMailFrom    && sourceMailFrom ? { sourceMailFrom: sourceMailFrom }   : {}),
+        ...(!eb.sourceMailDate    && sourceMailDate ? { sourceMailDate: sourceMailDate }   : {}),
+      } as any,
+    })
   } else {
     // PNL emails never contain arrival/departure dates — they only carry cost data.
     // Store as PNL_WAITING — when the TQ arrives, the UI will auto-retry linking.
@@ -146,6 +171,21 @@ export async function POST(req: NextRequest) {
         exclusions:     extracted.exclusions,
         status:         'GT_REVIEW',
         createdById:    session.user.id,
+        // Contact fields from AI extraction
+        agentEmail:      extracted.agentEmail      ?? null,
+        agentPhone:      extracted.agentPhone      ?? null,
+        agentWhatsapp:   extracted.agentWhatsapp   ?? null,
+        agentCountry:    extracted.agentCountry    ?? null,
+        contactEmail:    extracted.contactEmail    ?? null,
+        contactPhone:    extracted.contactPhone    ?? null,
+        contactWhatsapp: extracted.contactWhatsapp ?? null,
+        contactCountry:  extracted.contactCountry  ?? null,
+        // CC email list from the email's To+CC headers
+        ccEmails:          allCcEmails.length > 0 ? JSON.stringify(allCcEmails) : null,
+        // Source email metadata
+        sourceMailSubject: subject ?? null,
+        sourceMailFrom:    sourceMailFrom ?? null,
+        sourceMailDate:    sourceMailDate ?? null,
       } as any,
     })
     bookingId = created.id
@@ -322,22 +362,28 @@ export async function POST(req: NextRequest) {
     xlsxUsed:         !!xlsxParsed,
     bookingCreatedAt: finalBooking?.createdAt?.toISOString() ?? null,
     processedAt,
+    ccEmails:         allCcEmails,
     extracted: {
-      agent:           extracted.agent,
-      fileHandler:     extracted.fileHandler,
-      agentBookingId:  extracted.agentBookingId,
-      arrivalDate:     extracted.arrivalDate,
-      departureDate:   extracted.departureDate,
-      paxAdults:       extracted.paxAdults,
-      paxChildren:     extracted.paxChildren,
-      quotedTotal:     extracted.quotedTotal,
-      currency:        extracted.currency,
-      passengers:      extracted.passengers,
-      flights:         extracted.flights,
-      accommodations:  extracted.accommodations,
-      itineraryItems:  extracted.itineraryItems.slice(0, 10),
+      agent:            extracted.agent,
+      fileHandler:      extracted.fileHandler,
+      agentBookingId:   extracted.agentBookingId,
+      arrivalDate:      extracted.arrivalDate,
+      departureDate:    extracted.departureDate,
+      paxAdults:        extracted.paxAdults,
+      paxChildren:      extracted.paxChildren,
+      quotedTotal:      extracted.quotedTotal,
+      currency:         extracted.currency,
+      agentEmail:       extracted.agentEmail,
+      agentPhone:       extracted.agentPhone,
+      contactEmail:     extracted.contactEmail,
+      contactPhone:     extracted.contactPhone,
+      contactWhatsapp:  extracted.contactWhatsapp,
+      passengers:       extracted.passengers,
+      flights:          extracted.flights,
+      accommodations:   extracted.accommodations,
+      itineraryItems:   extracted.itineraryItems.slice(0, 10),
       emergencyContacts: extracted.emergencyContacts,
-      pnlLines:        extracted.pnlLines,
+      pnlLines:         extracted.pnlLines,
     },
   }, existingBooking
     ? `P&L updated for existing booking ${bookingRef}`

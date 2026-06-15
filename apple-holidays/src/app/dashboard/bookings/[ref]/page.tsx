@@ -448,13 +448,22 @@ Wishing you a wonderful trip! ✈️
   async function openEmailModal() {
     const { mode, settings } = await loadTestMode()
     const agentEmail   = (booking.agentEmail   as string | null) ?? ''
-    const contactEmail = (booking.contactEmail as string | null) ?? ''
     if (mode) {
       setEmailTo(settings.testEmail1)
       setEmailCc([settings.testEmail2])
     } else {
       setEmailTo(agentEmail)
-      const ccList = contactEmail && contactEmail !== agentEmail ? [contactEmail] : []
+      // Use the stored CC list from the source email (To+CC headers) — fall back to contactEmail
+      let ccList: string[] = []
+      if (booking.ccEmails) {
+        try {
+          const parsed: string[] = JSON.parse(booking.ccEmails as string)
+          ccList = parsed.filter((e: string) => e && e !== agentEmail)
+        } catch { /* ignore */ }
+      }
+      if (ccList.length === 0 && booking.contactEmail && booking.contactEmail !== agentEmail) {
+        ccList = [booking.contactEmail as string]
+      }
       setEmailCc(ccList)
     }
     setEmailModal(true)
@@ -990,6 +999,155 @@ Wishing you a wonderful trip! ✈️
             </CardBody>
           </Card>
         )}
+
+        {/* Source Email Info */}
+        {canViewClientDetails && (booking.sourceMailSubject || booking.sourceMailFrom || booking.ccEmails) && (
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Mail className="w-4 h-4 text-blue-400" /> Source Email
+              </h3>
+            </CardHeader>
+            <CardBody className="py-3 px-4 space-y-2.5">
+              {booking.sourceMailFrom && (
+                <div className="flex items-start gap-3">
+                  <span className="text-xs text-slate-400 w-14 flex-shrink-0 pt-0.5">From</span>
+                  <span className="text-sm text-slate-700 break-all">{booking.sourceMailFrom as string}</span>
+                </div>
+              )}
+              {booking.sourceMailSubject && (
+                <div className="flex items-start gap-3">
+                  <span className="text-xs text-slate-400 w-14 flex-shrink-0 pt-0.5">Subject</span>
+                  <span className="text-sm text-slate-700">{booking.sourceMailSubject as string}</span>
+                </div>
+              )}
+              {booking.sourceMailDate && (
+                <div className="flex items-start gap-3">
+                  <span className="text-xs text-slate-400 w-14 flex-shrink-0 pt-0.5">Date</span>
+                  <span className="text-sm text-slate-500">
+                    {(() => { try { return new Date(booking.sourceMailDate as string).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return booking.sourceMailDate as string } })()}
+                  </span>
+                </div>
+              )}
+              {booking.ccEmails && (() => {
+                let addrs: string[] = []
+                try { addrs = JSON.parse(booking.ccEmails as string) } catch { /* ignore */ }
+                if (addrs.length === 0) return null
+                return (
+                  <div className="flex items-start gap-3">
+                    <span className="text-xs text-slate-400 w-14 flex-shrink-0 pt-0.5">CC / To</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {addrs.map((addr, i) => (
+                        <span key={i} className="inline-flex items-center gap-1 text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full border border-blue-100">
+                          <Mail className="w-2.5 h-2.5" /> {addr}
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(addr); toast.success('Email copied') }}
+                            className="ml-0.5 text-blue-400 hover:text-blue-600"
+                          >
+                            <Copy className="w-2.5 h-2.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </CardBody>
+          </Card>
+        )}
+
+        {/* Extracted Phone Numbers */}
+        {canViewClientDetails && (() => {
+          const guestPhones = [
+            booking.contactWhatsapp ? { label: 'WhatsApp', value: booking.contactWhatsapp as string } : null,
+            booking.contactPhone && booking.contactPhone !== booking.contactWhatsapp
+              ? { label: 'Phone', value: booking.contactPhone as string } : null,
+          ].filter((x): x is { label: string; value: string } => x !== null)
+
+          const hotelPhones = accommodations
+            .filter((a) => a.contact)
+            .map((a) => ({ label: a.hotel as string, value: a.contact as string }))
+            // deduplicate by value
+            .filter((a, i, arr) => arr.findIndex(x => x.value === a.value) === i)
+
+          const hasAny = guestPhones.length > 0 || emergencyContacts.length > 0 || hotelPhones.length > 0
+          if (!hasAny) return null
+
+          return (
+            <Card>
+              <CardHeader>
+                <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-slate-400" /> Phone Numbers
+                </h3>
+              </CardHeader>
+              <CardBody className="py-3 px-4 space-y-4">
+                {guestPhones.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <MessageCircle className="w-3 h-3 text-green-500" /> Guest Contact Numbers
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {guestPhones.map((p, i) => (
+                        <div key={i} className="flex items-center gap-2 bg-green-50 border border-green-100 rounded-lg px-3 py-1.5">
+                          <span className="text-xs text-green-600 font-medium">{p.label}</span>
+                          <span className="text-sm font-mono text-slate-800">{p.value}</span>
+                          <button onClick={() => { navigator.clipboard.writeText(p.value); toast.success('Number copied') }} className="text-slate-300 hover:text-slate-500">
+                            <Copy className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={async () => { await openWhatsApp(); setWaPhone(p.value.replace(/\D/g, '')) }}
+                            className="text-green-500 hover:text-green-700"
+                            title="Send WhatsApp"
+                          >
+                            <MessageCircle className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {emergencyContacts.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <Shield className="w-3 h-3 text-red-400" /> Emergency Contacts
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {emergencyContacts.map((c) => (
+                        <div key={c.id as string} className="flex items-center gap-2 bg-red-50 border border-red-100 rounded-lg px-3 py-1.5">
+                          <span className="text-xs text-red-600 font-medium">{c.name as string}</span>
+                          {c.phone && <span className="text-sm font-mono text-slate-800">{c.phone as string}</span>}
+                          {c.phone && (
+                            <button onClick={() => { navigator.clipboard.writeText(c.phone as string); toast.success('Number copied') }} className="text-slate-300 hover:text-slate-500">
+                              <Copy className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {hotelPhones.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                      <Hotel className="w-3 h-3 text-blue-400" /> Hotel Contact Numbers
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {hotelPhones.map((p, i) => (
+                        <div key={i} className="flex items-center gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-1.5">
+                          <span className="text-xs text-blue-600 font-medium truncate max-w-[120px]">{p.label}</span>
+                          <span className="text-sm font-mono text-slate-800">{p.value}</span>
+                          <button onClick={() => { navigator.clipboard.writeText(p.value); toast.success('Number copied') }} className="text-slate-300 hover:text-slate-500">
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+          )
+        })()}
 
         {/* Itinerary */}
         {itinerary.length > 0 && (

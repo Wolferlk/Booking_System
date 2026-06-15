@@ -52,6 +52,8 @@ interface ExtractedData {
   arrivalDate: string | null; departureDate: string | null
   paxAdults: number; paxChildren: number
   quotedTotal: number | null; currency: string
+  agentEmail?: string | null; agentPhone?: string | null
+  contactEmail?: string | null; contactPhone?: string | null; contactWhatsapp?: string | null
   passengers: ExtractedPassenger[]; flights: ExtractedFlight[]
   accommodations: ExtractedHotel[]; emergencyContacts: ExtractedContact[]
   pnlLines: ExtractedPnlLine[]
@@ -63,6 +65,7 @@ interface ProcessResult {
   status: string; xlsxUsed?: boolean; extracted?: ExtractedData
   bookingCreatedAt?: string | null
   processedAt?: string | null
+  ccEmails?: string[]
 }
 
 interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
@@ -233,16 +236,46 @@ function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems:
         </div>
       )}
 
+      {/* Guest Contact Numbers — used for WhatsApp automation */}
+      {(data.contactPhone || data.contactWhatsapp) && (
+        <div>
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+            <Phone className="w-3 h-3 text-green-500" /> Guest Contact (WhatsApp automation)
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {data.contactPhone && (
+              <div className="bg-green-50 border border-green-100 rounded-lg px-3 py-1.5 text-xs flex items-center gap-2">
+                <Phone className="w-3 h-3 text-green-400" />
+                <span className="text-slate-500">Phone:</span>
+                <span className="text-green-700 font-mono font-semibold">{data.contactPhone}</span>
+              </div>
+            )}
+            {data.contactWhatsapp && data.contactWhatsapp !== data.contactPhone && (
+              <div className="bg-green-50 border border-green-100 rounded-lg px-3 py-1.5 text-xs flex items-center gap-2">
+                <Phone className="w-3 h-3 text-green-400" />
+                <span className="text-slate-500">WhatsApp:</span>
+                <span className="text-green-700 font-mono font-semibold">{data.contactWhatsapp}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {data.emergencyContacts.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {data.emergencyContacts.map((c, i) => (
-            <div key={i} className="bg-red-50 border border-red-100 rounded-lg px-3 py-1.5 text-xs flex items-center gap-2">
-              <Phone className="w-3 h-3 text-red-400" />
-              <span className="font-semibold text-slate-800">{c.name}</span>
-              {c.role && <span className="text-slate-500">({c.role})</span>}
-              {c.phone && <span className="text-red-600 font-mono">{c.phone}</span>}
-            </div>
-          ))}
+        <div>
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+            <Phone className="w-3 h-3 text-red-500" /> Emergency Contacts
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {data.emergencyContacts.map((c, i) => (
+              <div key={i} className="bg-red-50 border border-red-100 rounded-lg px-3 py-1.5 text-xs flex items-center gap-2">
+                <Phone className="w-3 h-3 text-red-400" />
+                <span className="font-semibold text-slate-800">{c.name}</span>
+                {c.role && <span className="text-slate-500">({c.role})</span>}
+                {c.phone && <span className="text-red-600 font-mono">{c.phone}</span>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -412,11 +445,15 @@ export default function MailInboxPage() {
       const res  = await fetch('/api/mail/process', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rawBody:     email.rawBody,
-          subject:     email.subject,
-          emailType:   isPnlEmail ? 'PNL' : 'TOUR_CONFIRMATION',
-          graphId:     email.graphId,
-          mailboxUser: email.mailboxUser,
+          rawBody:          email.rawBody,
+          subject:          email.subject,
+          emailType:        isPnlEmail ? 'PNL' : 'TOUR_CONFIRMATION',
+          graphId:          email.graphId,
+          mailboxUser:      email.mailboxUser,
+          emailTo:          email.to,
+          emailCc:          email.cc,
+          sourceMailFrom:   email.fromName ? `${email.fromName} <${email.from}>` : email.from,
+          sourceMailDate:   email.date,
         }),
       })
       const json = await res.json()
@@ -1134,6 +1171,22 @@ export default function MailInboxPage() {
                         isNew={result.data.isNew} xlsxUsed={result.data.xlsxUsed ?? false} />
                     ) : (
                       <TQExtraction data={result.data.extracted} agendaItems={result.data.agendaItems} />
+                    )}
+
+                    {/* CC email list from original email To+CC headers */}
+                    {result.data.ccEmails && result.data.ccEmails.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-200">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-2">
+                          <Mail className="w-3 h-3 text-blue-500" /> CC List ({result.data.ccEmails.length}) — used as default CC for automated emails
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {result.data.ccEmails.map((addr, i) => (
+                            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-blue-50 border border-blue-100 text-blue-700 font-mono">
+                              {addr}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}

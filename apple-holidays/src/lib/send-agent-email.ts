@@ -66,12 +66,20 @@ export async function sendAgentConfirmationEmail(
     console.log(`[email] TEST MODE — redirecting to ${toEmail}, CC: ${ccEmails.join(', ')}`)
   } else {
     toEmail  = getAgentEmail(booking as { agentEmail?: string | null })
-    const extraCc = opts?.cc ?? []
-    // Auto-add contact email if not already in CC
+
+    // Load saved CC list from the original booking email's To+CC headers
+    let storedCc: string[] = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { storedCc = JSON.parse((booking as any).ccEmails ?? '[]') } catch { /* ok */ }
+
+    // Always include contactEmail (guest); add caller-supplied extras
     const contactEmail = (booking as { contactEmail?: string | null }).contactEmail
-    const autoCc = contactEmail && contactEmail !== toEmail ? [contactEmail] : []
-    const combined = [...autoCc, ...extraCc]
-    ccEmails = combined.filter((addr, idx) => combined.indexOf(addr) === idx)
+    const extraCc = opts?.cc ?? []
+    const combined = [...storedCc, ...extraCc]
+    if (contactEmail && contactEmail !== toEmail) combined.push(contactEmail)
+
+    // Deduplicate and exclude toEmail
+    ccEmails = Array.from(new Set(combined)).filter(e => Boolean(e) && e !== toEmail)
   }
 
   await sendMailViaGraph({
