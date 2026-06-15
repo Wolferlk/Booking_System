@@ -152,7 +152,7 @@ model Booking {
   paxAdults             Int           @default(0)
   paxChildren           Int           @default(0)
 
-  quotedTotal           Decimal       @db.Decimal(10, 2)
+  quotedTotal           Decimal?       @db.Decimal(10, 2)
   currency              String        @default("USD")
   cancellationDeadline  DateTime?
 

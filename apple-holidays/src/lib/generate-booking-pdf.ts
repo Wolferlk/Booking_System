@@ -1,94 +1,73 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const _pdfkit = require('pdfkit')
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const PDFDocument: any = _pdfkit.default ?? _pdfkit
+import { mkdir, copyFile, readdir, readFile } from 'fs/promises'
+import path from 'path'
+
+// ── Constants ────────────────────────────────────────────────────────────────
+const HEADER_BG = '#0F172A'
+const BRAND     = '#D97706'
+const DARK      = '#1E293B'
+const MUTED     = '#64748B'
+const LINE      = '#E2E8F0'
+const GREEN     = '#059669'
+const PAGE_W    = 595
+const MARGIN    = 50
+const CONTENT_W = PAGE_W - MARGIN * 2
 
 function fmt(d: string | Date | null | undefined): string {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-export interface BookingPdfOptions {
-  /** Include passenger names & types. Default: true */
-  includePassengers?: boolean
-  /** Include quoted total in booking summary. Default: true */
-  includeQuotedTotal?: boolean
+// ── PDFKit boot ──────────────────────────────────────────────────────────────
+let pdfkitDataReady: Promise<void> | null = null
+
+async function ensurePdfkitDataFiles() {
+  if (pdfkitDataReady) return pdfkitDataReady
+  pdfkitDataReady = (async () => {
+    const sourceDir = path.join(process.cwd(), 'node_modules', 'pdfkit', 'js', 'data')
+    const targetDir = path.join(process.cwd(), '.next', 'server', 'vendor-chunks', 'data')
+    await mkdir(targetDir, { recursive: true })
+    const files = await readdir(sourceDir)
+    await Promise.all(
+      files
+        .filter(file => file.toLowerCase().endsWith('.afm'))
+        .map(file => copyFile(path.join(sourceDir, file), path.join(targetDir, file)).catch(() => {})),
+    )
+  })()
+  return pdfkitDataReady
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function generateBookingPdf(booking: any, options: BookingPdfOptions = {}): Promise<Buffer> {
-  const { includePassengers = true, includeQuotedTotal = true } = options
+async function loadPdfDocumentCtor() {
+  const mod = await import('pdfkit')
+  return (mod as typeof mod & { default?: unknown }).default ?? mod
+}
 
+// ── Asset loaders ────────────────────────────────────────────────────────────
+async function loadLogo(): Promise<Buffer | null> {
+  for (const name of ['aahaslogo.png', 'aahaas.png', 'chat-logo.png']) {
+    try {
+      return await readFile(path.join(process.cwd(), 'public', 'png', name))
+    } catch { continue }
+  }
+  return null
+}
+
+async function resolveTicketImage(fileUrl: string | null | undefined): Promise<Buffer | null> {
+  if (!fileUrl) return null
+  const rel = fileUrl.startsWith('/') ? fileUrl.slice(1) : fileUrl
+  try {
+    return await readFile(path.join(process.cwd(), 'public', rel))
+  } catch {
+    return null
+  }
+}
+
+// ── Core builder ─────────────────────────────────────────────────────────────
+async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true })
-
-    doc.on('data', (chunk: Buffer) => chunks.push(chunk))
-    doc.on('end', () => resolve(Buffer.concat(chunks)))
-    doc.on('error', reject)
-
-    const BRAND  = '#D97706'  // amber-600
-    const DARK   = '#1E293B'  // slate-800
-    const MUTED  = '#64748B'  // slate-500
-    const LINE   = '#E2E8F0'  // slate-200
-
-    function sectionHeader(title: string) {
-      if (doc.y > 720) doc.addPage()
-      doc.moveDown(0.5)
-      doc.rect(50, doc.y, 495, 20).fill(BRAND)
-      doc.fillColor('white').fontSize(10).font('Helvetica-Bold')
-         .text(title.toUpperCase(), 58, doc.y - 17)
-      doc.fillColor(DARK).moveDown(0.8)
-    }
-
-    function row(label: string, value: string) {
-      const y = doc.y
-      doc.fontSize(9).font('Helvetica-Bold').fillColor(MUTED).text(label, 55, y, { width: 130 })
-      doc.fontSize(9).font('Helvetica').fillColor(DARK).text(value || '—', 190, y, { width: 355 })
-      doc.moveDown(0.5)
-    }
-
-    function divider() {
-      doc.moveTo(50, doc.y).lineTo(545, doc.y).strokeColor(LINE).lineWidth(0.5).stroke()
-      doc.moveDown(0.3)
-    }
-
-    // ── Header ────────────────────────────────────────────────────────────────
-    doc.rect(0, 0, 595, 80).fill(DARK)
-    doc.fillColor('white').fontSize(22).font('Helvetica-Bold')
-       .text('Apple Holidays', 50, 20)
-    doc.fontSize(9).font('Helvetica').fillColor('#94A3B8')
-       .text('MMT Vietnam · Tour Confirmation', 50, 48)
-    doc.fillColor(BRAND).fontSize(18).font('Helvetica-Bold')
-       .text(booking.bookingRef, 430, 25, { align: 'right', width: 115 })
-    doc.fillColor('#94A3B8').fontSize(8).font('Helvetica')
-       .text(booking.status?.replace(/_/g, ' '), 430, 48, { align: 'right', width: 115 })
-    doc.y = 100
-
-    // ── Booking Summary ───────────────────────────────────────────────────────
-    sectionHeader('Booking Summary')
-    row('Agent / Operator', booking.agent ?? '')
-    row('File Handler',     booking.fileHandler ?? '')
-    row('Agent Booking ID', booking.agentBookingId ?? '')
-    row('Arrival',          fmt(booking.arrivalDate))
-    row('Departure',        fmt(booking.departureDate))
-    row('Pax',              `${booking.paxAdults ?? 0} Adults, ${booking.paxChildren ?? 0} Children`)
-    if (includeQuotedTotal) {
-      row('Total', booking.quotedTotal ? `${booking.currency ?? 'USD'} ${Number(booking.quotedTotal).toLocaleString()}` : '—')
-    }
-
-    // ── Passengers ────────────────────────────────────────────────────────────
-    if (includePassengers && (booking.passengers ?? []).length > 0) {
-      sectionHeader('Passengers')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      booking.passengers.forEach((p: any, i: number) => {
-        const label = `${i + 1}. ${p.isLead ? '(Lead) ' : ''}${p.name}`
-        doc.fontSize(9).font(p.isLead ? 'Helvetica-Bold' : 'Helvetica').fillColor(DARK)
-           .text(label, 55, doc.y, { continued: true })
-        doc.fillColor(MUTED).text(`  ${p.type ?? ''}`, { align: 'right', width: 440 })
-        doc.moveDown(0.4)
-      })
-    }
+    void (async () => {
+      await ensurePdfkitDataFiles()
+      const PDFDocument = await loadPdfDocumentCtor()
+      const logo = await loadLogo()
 
       const chunks: Buffer[] = []
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -471,38 +450,43 @@ export async function generateBookingPdf(booking: any, options: BookingPdfOption
             }
           }
         }
-        divider()
-      })
-    }
+      }
 
-    // ── Terms & Conditions ─────────────────────────────────────────────────────
-    if (booking.terms) {
-      if (doc.y > 600) doc.addPage()
-      sectionHeader('Terms & Conditions')
-      doc.fontSize(8).font('Helvetica').fillColor(MUTED)
-         .text(booking.terms, 55, doc.y, { width: 490, lineGap: 2 })
-      doc.moveDown()
-    }
+      // ── 10. Terms & Conditions ─────────────────────────────────────────────
+      if (booking.terms) {
+        doc.addPage()
+        doc.y = MARGIN
+        sectionTitle('Terms & Conditions')
+        doc.font('Helvetica').fontSize(8.5).fillColor(DARK)
+          .text(booking.terms, MARGIN + 5, doc.y, { width: CONTENT_W - 10, lineGap: 2 })
+        doc.moveDown()
+      }
 
-    if (booking.exclusions) {
-      if (doc.y > 600) doc.addPage()
-      sectionHeader('Exclusions')
-      doc.fontSize(8).font('Helvetica').fillColor(MUTED)
-         .text(booking.exclusions, 55, doc.y, { width: 490, lineGap: 2 })
-    }
+      // ── 11. Exclusions ────────────────────────────────────────────────────
+      if (booking.exclusions) {
+        if (!booking.terms) { doc.addPage(); doc.y = MARGIN }
+        sectionTitle('Not Included — Exclusions')
+        doc.font('Helvetica').fontSize(8.5).fillColor(DARK)
+          .text(booking.exclusions, MARGIN + 5, doc.y, { width: CONTENT_W - 10, lineGap: 2 })
+      }
 
-    // ── Footer ────────────────────────────────────────────────────────────────
-    const pages = doc.bufferedPageRange()
-    for (let i = 0; i < pages.count; i++) {
-      doc.switchToPage(i)
-      doc.fontSize(7).fillColor(MUTED)
-         .text(
-           `Apple Holidays · MMT Vietnam · ${booking.bookingRef} · Page ${i + 1} of ${pages.count} · Generated ${new Date().toLocaleString('en-GB')}`,
-           50, 820, { width: 495, align: 'center' },
-         )
-    }
+      // ── Footer on every page ──────────────────────────────────────────────
+      const range = doc.bufferedPageRange()
+      for (let i = 0; i < range.count; i++) {
+        doc.switchToPage(i)
+        doc.moveTo(MARGIN, 820).lineTo(PAGE_W - MARGIN, 820)
+          .strokeColor(LINE).lineWidth(0.5).stroke()
+        doc.font('Helvetica').fontSize(7).fillColor(MUTED)
+          .text(
+            `Apple Holidays  ·  MMT Vietnam  ·  Ref: ${booking.bookingRef}`
+            + `  ·  Page ${i + 1} of ${range.count}`
+            + `  ·  ${new Date().toLocaleString('en-GB')}`,
+            MARGIN, 824, { width: CONTENT_W, align: 'center' },
+          )
+      }
 
-    doc.end()
+      doc.end()
+    })().catch(reject)
   })
 }
 
