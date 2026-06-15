@@ -21,6 +21,7 @@ import { formatDate, formatCurrency, getDaysUntilTrip } from '@/lib/utils'
 import { getAvailableTransitions } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
+import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -1445,6 +1446,11 @@ Wishing you a wonderful trip! ✈️
           </div>
         </div>
       </Modal>
+
+      {/* ── WhatsApp mini chat widget ─────────────────────────────────── */}
+      {['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+        <WhatsAppMiniChat bookingRef={ref} booking={booking} />
+      )}
 
       {/* ── Send Email modal ───────────────────────────────────────────── */}
       <Modal

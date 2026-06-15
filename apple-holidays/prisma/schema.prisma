@@ -671,3 +671,22 @@ model SystemSetting {
 
   @@map("system_settings")
 }
+
+// ─── WhatsApp Chat History ────────────────────────────────────────────────
+
+model WhatsAppMessage {
+  id          String   @id @default(cuid())
+  bookingRef  String
+  phone       String   // normalised E.164 without leading +
+  direction   String   // outbound | inbound
+  body        String   @db.Text
+  waMessageId String?  // Meta's wamid — used for dedup on inbound
+  status      String   @default("sent") // sent | received | failed
+  senderName  String?  // staff display name (outbound) or contact name (inbound)
+  createdAt   DateTime @default(now())
+
+  @@index([bookingRef])
+  @@index([phone])
+  @@index([waMessageId])
+  @@map("whatsapp_messages")
+}

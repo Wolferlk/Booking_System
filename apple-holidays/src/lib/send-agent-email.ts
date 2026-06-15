@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { generateBookingHtml } from '@/lib/generate-booking-html'
-import { htmlToPdf } from '@/lib/html-to-pdf'
+import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
 import { sendMailViaGraph, getAgentEmail, buildAgentConfirmationEmail } from '@/lib/send-mail'
 
 const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
@@ -55,10 +54,7 @@ export async function sendAgentConfirmationEmail(
 
   const { useTestData, testEmail1, testEmail2 } = await getMailSettings()
 
-  const sentAt    = new Date()
-  const html      = generateBookingHtml(booking)
-  const filename  = `${ref}-confirmation.pdf`
-  const pdfBuffer = await htmlToPdf(html, filename, { bookingRef: ref, sentAt })
+  const pdfBuffer = await generateConfirmationPdf(booking)
   const bodyHtml  = buildAgentConfirmationEmail(booking)
 
   let toEmail: string

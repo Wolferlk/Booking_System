@@ -214,11 +214,27 @@ export async function POST(
     ? `${baseUrl}/uploads/whatsapp/${encodeURIComponent(pdfFilename)}`
     : undefined
 
+  const senderName = session.user.name ?? session.user.email ?? 'Staff'
+  const normPhone  = to.replace(/\D/g, '')
+
   try {
     const metaResult = await sendViaMetaApi({
       to, name, message, attachPdf, pdfBuffer, pdfFilename,
     })
-    if (metaResult) return buildApiSuccess(metaResult, `WhatsApp message sent to ${to}`)
+    if (metaResult) {
+      await prisma.whatsAppMessage.create({
+        data: {
+          bookingRef: params.ref,
+          phone:      normPhone,
+          direction:  'outbound',
+          body:       message,
+          waMessageId: (metaResult.text as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null,
+          status:     'sent',
+          senderName,
+        },
+      })
+      return buildApiSuccess(metaResult, `WhatsApp message sent to ${to}`)
+    }
 
     const proxyResult = await sendViaNotifyProxy({
       to, name, message,
@@ -226,7 +242,19 @@ export async function POST(
         ? { files: [{ url: fileUrl, filename: pdfFilename, caption: isFullPdf ? 'Full tour details & vouchers' : 'Tour confirmation' }] }
         : {}),
     })
-    if (proxyResult) return buildApiSuccess(proxyResult, `WhatsApp message sent to ${to}`)
+    if (proxyResult) {
+      await prisma.whatsAppMessage.create({
+        data: {
+          bookingRef: params.ref,
+          phone:      normPhone,
+          direction:  'outbound',
+          body:       message,
+          status:     'sent',
+          senderName,
+        },
+      })
+      return buildApiSuccess(proxyResult, `WhatsApp message sent to ${to}`)
+    }
 
     return buildApiError('No WhatsApp credentials configured', 500)
   } catch (err) {

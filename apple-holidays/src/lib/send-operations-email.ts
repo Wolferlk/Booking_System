@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { generateBookingHtml } from '@/lib/generate-booking-html'
-import { htmlToPdf } from '@/lib/html-to-pdf'
+import { generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { sendMailViaGraph, getAgentEmail, buildOperationsReadyEmail } from '@/lib/send-mail'
 
 /**
@@ -36,10 +35,7 @@ export async function sendOperationsReadyEmail(ref: string): Promise<void> {
 
   if (!booking) throw new Error(`Booking not found: ${ref}`)
 
-  const sentAt    = new Date()
-  const html      = generateBookingHtml(booking, { includeTickets: true })
-  const filename  = `${ref}-operations.pdf`
-  const pdfBuffer = await htmlToPdf(html, filename, { bookingRef: ref, sentAt })
+  const pdfBuffer = await generateFullDetailsPdf(booking)
 
   const agentEmail = getAgentEmail(booking as { agentEmail?: string | null })
   const bodyHtml   = buildOperationsReadyEmail(booking)
