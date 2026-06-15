@@ -496,6 +496,7 @@ export async function fetchUnprocessedEmailsForUser(
   user: string,
   limit = 50,
   folder: 'inbox' | 'all' = 'all',
+  options?: { since?: string },
 ): Promise<ProcessedEmail[]> {
   if (!user) throw new Error('Mailbox user not set')
 
@@ -519,9 +520,12 @@ export async function fetchUnprocessedEmailsForUser(
     } catch { /* folder map is optional */ }
   }
 
+  const filter = options?.since
+    ? `&$filter=${encodeURIComponent(`receivedDateTime ge ${options.since}`)}`
+    : ''
   const url = folder === 'inbox'
-    ? `${base}/mailFolders/inbox/messages?$top=${Math.min(limit, 999)}&$orderby=receivedDateTime desc&$select=${select}`
-    : `${base}/messages?$top=${Math.min(limit, 999)}&$orderby=receivedDateTime desc&$select=${select}`
+    ? `${base}/mailFolders/inbox/messages?$top=${Math.min(limit, 999)}&$orderby=receivedDateTime desc&$select=${select}${filter}`
+    : `${base}/messages?$top=${Math.min(limit, 999)}&$orderby=receivedDateTime desc&$select=${select}${filter}`
 
   const messages = await graphGetAllPages<GraphMessage>(token, url)
   const limited  = messages.slice(0, limit)

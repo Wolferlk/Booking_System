@@ -88,6 +88,18 @@ enum CreditPaymentStatus {
   OVERDUE
 }
 
+enum MailboxKind {
+  TOUR_CONFIRMATION
+  PNL
+}
+
+enum MailMessageStatus {
+  RECEIVED
+  PROCESSED
+  WAITING
+  ERROR
+}
+
 // ─── User ────────────────────────────────────────────────────────────────
 
 model User {
@@ -133,6 +145,41 @@ model ActivityLog {
   @@index([entityId])
   @@index([createdAt])
   @@map("activity_logs")
+}
+
+// ─── Mail cache ──────────────────────────────────────────────────────────
+
+model MailMessage {
+  id             String           @id @default(cuid())
+  graphId        String           @unique
+  mailboxUser    String
+  mailboxKind    MailboxKind
+  uid            Int?
+  subject        String
+  fromAddress    String
+  fromName       String
+  toRecipients   Json?
+  ccRecipients   Json?
+  receivedAt     DateTime
+  folder         String
+  isRead         Boolean          @default(false)
+  hasAttachments Boolean          @default(false)
+  importance     String           @default("normal")
+  conversationId String?
+  type           String
+  rawBody        String           @db.LongText
+  bodyHtml       String           @db.LongText
+  bookingRef     String?
+  status         MailMessageStatus @default(RECEIVED)
+  processedAt    DateTime?
+  lastSyncedAt   DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime         @default(now())
+
+  @@index([mailboxUser, receivedAt])
+  @@index([mailboxUser, status])
+  @@index([bookingRef])
+  @@map("mail_messages")
 }
 
 // ─── Booking ─────────────────────────────────────────────────────────────

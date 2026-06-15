@@ -66,6 +66,10 @@ interface ProcessResult {
 }
 
 interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
+interface MailSettings {
+  lessCreditMode: boolean
+  recentMailWindowMinutes: number
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -368,6 +372,9 @@ export default function MailInboxPage() {
   const [searchQuery, setSearchQuery]     = useState('')
   const [pnlStatusMap, setPnlStatusMap]   = useState<Map<string, PnlStatus>>(new Map())
   const [autoProcessingIds, setAutoProcessingIds] = useState<Set<string>>(new Set())
+  const [mailSettings, setMailSettings]   = useState<MailSettings | null>(null)
+  const [inboxSynced, setInboxSynced]     = useState(false)
+  const [savingLessCreditMode, setSavingLessCreditMode] = useState(false)
 
   // Refs for queue management (avoid stale closures)
   const resultsRef         = useRef(results)
@@ -380,6 +387,11 @@ export default function MailInboxPage() {
   useEffect(() => { resultsRef.current = results }, [results])
   useEffect(() => { emailsRef.current  = emails  }, [emails])
   useEffect(() => { pnlStatusMapRef.current = pnlStatusMap }, [pnlStatusMap])
+
+  const recentWindowMs = (mailSettings?.recentMailWindowMinutes ?? 15) * 60 * 1000
+  const isRecentEmail = useCallback((date: string) => {
+    return Date.now() - new Date(date).getTime() <= recentWindowMs
+  }, [recentWindowMs])
 
   // ── PNL status check ─────────────────────────────────────────────────────
 
@@ -417,6 +429,18 @@ export default function MailInboxPage() {
           emailType:   isPnlEmail ? 'PNL' : 'TOUR_CONFIRMATION',
           graphId:     email.graphId,
           mailboxUser: email.mailboxUser,
+          bodyHtml:    email.bodyHtml,
+          date:        email.date,
+          folder:      email.folder,
+          from:        email.from,
+          fromName:    email.fromName,
+          to:          email.to,
+          cc:          email.cc,
+          isRead:      email.isRead,
+          hasAttachments: email.hasAttachments,
+          importance:  email.importance,
+          conversationId: email.conversationId,
+          uid:         email.uid,
         }),
       })
       const json = await res.json()
@@ -488,16 +512,18 @@ export default function MailInboxPage() {
 
   // Trigger auto-process when emails change
   useEffect(() => {
+    if (!inboxSynced || !mailSettings) return
+    const recentOnly = mailSettings.lessCreditMode
     const toProcess = emails.filter(e =>
       !resultsRef.current.has(e.graphId) &&
       e.type !== 'UNKNOWN' &&
       !autoQueuedRef.current.has(e.graphId),
-    )
+    ).filter(e => !recentOnly || isRecentEmail(e.date))
     if (!toProcess.length) return
     toProcess.forEach(e => autoQueuedRef.current.add(e.graphId))
     autoQueueRef.current.push(...toProcess)
     drainQueue()
-  }, [emails, drainQueue])
+  }, [emails, drainQueue, isRecentEmail, inboxSynced, mailSettings])
 
   // ── Load emails ──────────────────────────────────────────────────────────
 
@@ -508,9 +534,39 @@ export default function MailInboxPage() {
       .catch(() => {})
   }, [])
 
+  useEffect(() => {
+    fetch('/api/mail/settings')
+      .then(r => r.json())
+      .then(j => {
+        if (j.success && j.data) setMailSettings(j.data as MailSettings)
+      })
+      .catch(() => {})
+  }, [])
+
+  const toggleLessCreditMode = useCallback(async () => {
+    if (!mailSettings) return
+    setSavingLessCreditMode(true)
+    try {
+      const res = await fetch('/api/mail/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lessCreditMode: !mailSettings.lessCreditMode }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error as string)
+      setMailSettings(json.data as MailSettings)
+      toast.success('Mail mode updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update mail mode')
+    } finally {
+      setSavingLessCreditMode(false)
+    }
+  }, [mailSettings])
+
   const loadEmails = useCallback(async (silent = false) => {
     if (!silent) setFetching(true)
     else setPolling(true)
+    setInboxSynced(false)
     try {
       const res  = await fetch(`/api/mail/fetch?limit=${limit}&folder=${folder}&mailbox=${mailboxFilter}`)
       const json = await res.json()
@@ -548,6 +604,7 @@ export default function MailInboxPage() {
           }
         }
       }
+      setInboxSynced(true)
     } catch (err: unknown) {
       if (!silent) toast.error(err instanceof Error ? err.message : 'Failed to load emails')
     } finally {
@@ -585,6 +642,8 @@ export default function MailInboxPage() {
   const processedCount = Array.from(results.values()).filter(r => r.success && r.data?.status !== 'PNL_WAITING').length
   const waitingCount   = Array.from(results.values()).filter(r => r.success && r.data?.status === 'PNL_WAITING').length
   const autoCount      = autoProcessingIds.size
+  const lessCreditMode = mailSettings?.lessCreditMode ?? false
+  const recentMailWindowMinutes = mailSettings?.recentMailWindowMinutes ?? 15
 
   // Search filter — applied on top of the mailbox tab filter
   const displayEmails = useMemo(() => {
@@ -666,6 +725,19 @@ export default function MailInboxPage() {
         }
         actions={
           <div className="flex gap-2 items-center flex-wrap">
+            {lessCreditMode && (
+              <Badge color="amber" className="text-[10px]">
+                Less Credit Mode · last {recentMailWindowMinutes} min auto-process only
+              </Badge>
+            )}
+            <Button
+              size="sm"
+              variant={lessCreditMode ? 'outline' : 'secondary'}
+              loading={savingLessCreditMode}
+              onClick={toggleLessCreditMode}
+            >
+              {lessCreditMode ? 'Less Credit On' : 'Less Credit Off'}
+            </Button>
             <select value={folder} onChange={e => setFolder(e.target.value as 'all' | 'inbox')}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
               <option value="all">All Folders</option>
@@ -933,6 +1005,25 @@ export default function MailInboxPage() {
                       className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors" title="Preview body">
                       {showRaw ? <ChevronUp className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
+                    {lessCreditMode && !result?.success && !isAutoProc && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={<Zap className="w-3.5 h-3.5" />}
+                        onClick={() => processOne(email)}
+                      >
+                        Process mail
+                      </Button>
+                    )}
+                    {lessCreditMode && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setRawBodyId(showRaw ? null : email.graphId)}
+                      >
+                        {showRaw ? 'Hide mail' : 'Read mail'}
+                      </Button>
+                    )}
                     {result?.success && bookingRef && !isWaiting && (
                       <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
                         onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>

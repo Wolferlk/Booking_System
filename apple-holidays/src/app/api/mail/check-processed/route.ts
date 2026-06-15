@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
+import { getCachedProcessedMail } from '@/lib/mail-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,14 +15,16 @@ export async function POST(req: NextRequest) {
   const { graphIds } = await req.json() as { graphIds: string[] }
   if (!Array.isArray(graphIds) || graphIds.length === 0) return buildApiSuccess([])
 
+  const processed = await getCachedProcessedMail(graphIds)
+  if (processed.length > 0) return buildApiSuccess(processed)
+
   const keys = graphIds.map(id => `processed_email_${id}`)
   const rows = await prisma.systemSetting.findMany({ where: { key: { in: keys } } })
-
-  const processed = rows.map(row => {
+  const fallback = rows.map(row => {
     const graphId = row.key.replace('processed_email_', '')
     const [bookingRef, processedAt] = row.value.split('|')
     return { graphId, bookingRef, processedAt: processedAt ?? null }
   })
 
-  return buildApiSuccess(processed)
+  return buildApiSuccess(fallback)
 }

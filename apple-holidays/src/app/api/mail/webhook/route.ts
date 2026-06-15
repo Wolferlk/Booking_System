@@ -7,6 +7,7 @@ import {
   extractEmailSourceTextForUser,
 } from '@/lib/mail-processor'
 import { processMailboxEmail } from '@/lib/incoming-mail-automation'
+import { upsertCachedMailMessage } from '@/lib/mail-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,6 +91,13 @@ async function processNotifications(notifications: GraphNotification[], secret: 
       continue
     }
 
+    await upsertCachedMailMessage({
+      email,
+      mailboxUser,
+      mailboxKind,
+      status: 'RECEIVED',
+    }).catch(() => {})
+
     try {
       const { rawText, attachments } = await extractEmailSourceTextForUser(mailboxUser, email)
       const result = await processMailboxEmail({ ...email, rawBody: rawText }, mailboxKind, attachments)
@@ -100,10 +108,25 @@ async function processNotifications(notifications: GraphNotification[], secret: 
         create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
       })
 
+      await upsertCachedMailMessage({
+        email,
+        mailboxUser,
+        mailboxKind,
+        bookingRef: result.bookingRef,
+        status: 'PROCESSED',
+        processedAt: new Date().toISOString(),
+      }).catch(() => {})
+
       console.log(`[Webhook] ✓ processed ${mailboxKind} → booking ${result.bookingRef}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[Webhook] processing failed:', msg)
+      await upsertCachedMailMessage({
+        email,
+        mailboxUser,
+        mailboxKind,
+        status: 'ERROR',
+      }).catch(() => {})
       await prisma.systemSetting.upsert({
         where:  { key: 'webhook_last_error' },
         update: { value: `${new Date().toISOString()} | ${mailboxUser} | ${graphId} | ${msg.slice(0, 500)}` },

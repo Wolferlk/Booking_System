@@ -8,6 +8,8 @@ import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { prisma } from '@/lib/prisma'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
+import { upsertCachedMailMessage } from '@/lib/mail-cache'
+import type { ProcessedEmail } from '@/lib/mail-processor'
 
 function generateRef(base: string | null): string {
   if (base) {
@@ -29,10 +31,52 @@ export async function POST(req: NextRequest) {
     emailType?: string
     graphId?: string
     mailboxUser?: string
+    bodyHtml?: string
+    date?: string
+    folder?: string
+    from?: string
+    fromName?: string
+    to?: string[]
+    cc?: string[]
+    isRead?: boolean
+    hasAttachments?: boolean
+    importance?: string
+    conversationId?: string
+    uid?: number
   }
   if (!rawBody) return buildApiError('rawBody is required')
 
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
+  const emailSnapshot: ProcessedEmail | null = graphId && mailboxUser
+    ? {
+        uid: body.uid ?? 0,
+        graphId,
+        subject: subject ?? '',
+        from: body.from ?? '',
+        fromName: body.fromName ?? '',
+        to: Array.isArray(body.to) ? body.to : [],
+        cc: Array.isArray(body.cc) ? body.cc : [],
+        date: body.date ?? new Date().toISOString(),
+        type,
+        rawBody,
+        bodyHtml: body.bodyHtml ?? '',
+        folder: body.folder ?? 'Inbox',
+        isRead: body.isRead ?? false,
+        hasAttachments: body.hasAttachments ?? false,
+        importance: body.importance ?? 'normal',
+        conversationId: body.conversationId ?? '',
+        parsed: null,
+      }
+    : null
+
+  if (emailSnapshot && mailboxUser) {
+    await upsertCachedMailMessage({
+      email: emailSnapshot,
+      mailboxUser,
+      mailboxKind: type,
+      status: 'RECEIVED',
+    }).catch(() => {})
+  }
 
   // ── 1. Extract via OpenAI (email body) ────────────────────────────────────
   let extracted: ExtractedBooking
@@ -41,6 +85,14 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     const isQuota = msg.includes('insufficient_quota') || msg.includes('429') || msg.includes('exceeded your current quota')
+    if (emailSnapshot && mailboxUser) {
+      await upsertCachedMailMessage({
+        email: emailSnapshot,
+        mailboxUser,
+        mailboxKind: type,
+        status: 'ERROR',
+      }).catch(() => {})
+    }
     if (isQuota) {
       return buildApiError('OpenAI quota exceeded — please add billing credits at platform.openai.com/account/billing', 503)
     }
@@ -112,6 +164,15 @@ export async function POST(req: NextRequest) {
     // Store as PNL_WAITING — when the TQ arrives, the UI will auto-retry linking.
     if (type === 'PNL') {
       const numericRef = rawBookingRef.replace(/[^0-9]/g, '')
+      if (emailSnapshot && mailboxUser) {
+        await upsertCachedMailMessage({
+          email: emailSnapshot,
+          mailboxUser,
+          mailboxKind: type,
+          bookingRef: numericRef,
+          status: 'WAITING',
+        }).catch(() => {})
+      }
       return buildApiSuccess(
         {
           status:      'PNL_WAITING',
@@ -311,6 +372,17 @@ export async function POST(req: NextRequest) {
   }).catch(() => null)
 
   const processedAt = new Date().toISOString()
+
+  if (emailSnapshot && mailboxUser) {
+    await upsertCachedMailMessage({
+      email: emailSnapshot,
+      mailboxUser,
+      mailboxKind: type,
+      bookingRef,
+      status: 'PROCESSED',
+      processedAt,
+    }).catch(() => {})
+  }
 
   return buildApiSuccess({
     bookingRef,

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, Zap } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -17,6 +17,7 @@ interface Settings {
   test_email_1?: string
   test_email_2?: string
   test_whatsapp?: string
+  less_credit_mode?: string
 }
 
 export default function ConfigPage() {
@@ -62,6 +63,7 @@ export default function ConfigPage() {
   }
 
   const useTestData = settings.use_test_data === 'true'
+  const lessCreditMode = settings.less_credit_mode === 'true'
   const testEmail1  = settings.test_email_1  ?? DEFAULT_TEST_EMAIL_1
   const testEmail2  = settings.test_email_2  ?? DEFAULT_TEST_EMAIL_2
   const testWa      = settings.test_whatsapp ?? DEFAULT_TEST_WHATSAPP
@@ -180,6 +182,45 @@ export default function ConfigPage() {
                 </p>
               </div>
             )}
+          </CardBody>
+        </Card>
+
+        {/* Less Credit Mode */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-slate-400" /> Mail Inbox Credit Saver
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+            <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">
+                  {lessCreditMode ? 'Less Credit Mode On' : 'Less Credit Mode Off'}
+                </p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {lessCreditMode
+                    ? 'Only emails from the last 15 minutes are auto-processed. Older emails stay in the inbox with a manual Process button.'
+                    : 'All new inbox emails are auto-processed as they arrive.'}
+                </p>
+              </div>
+              <button
+                disabled={saving === 'less_credit_mode'}
+                onClick={() => saveSetting('less_credit_mode', lessCreditMode ? 'false' : 'true')}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${
+                  lessCreditMode ? 'bg-amber-500' : 'bg-slate-300'
+                }`}
+              >
+                {saving === 'less_credit_mode' && (
+                  <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                )}
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    lessCreditMode ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
           </CardBody>
         </Card>
 
