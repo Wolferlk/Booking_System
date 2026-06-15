@@ -7,6 +7,7 @@ import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download, Mail,
+  ShieldAlert,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -15,10 +16,10 @@ import type { UserRole } from '@prisma/client'
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
+  Users, Shield, Settings, Globe, Truck, Home, Download, Mail, ShieldAlert,
 }
 
-const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string }[]> = {
+const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
   BT_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { label: 'All Bookings', href: '/dashboard/bookings', icon: 'FileText' },
@@ -73,6 +74,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
     { label: 'Vendors', href: '/dashboard/ground/vendors', icon: 'Truck' },
     { label: 'Settings', href: '/dashboard/admin/config', icon: 'Settings' },
+    { label: 'Danger Zone', href: '/dashboard/admin/danger', icon: 'ShieldAlert', danger: true },
   ],
 }
 
@@ -118,6 +120,26 @@ export default function Sidebar() {
             const isActive = item.href === '/dashboard'
               ? pathname === '/dashboard'
               : pathname.startsWith(item.href)
+
+            if (item.danger) {
+              return (
+                <li key={item.href} className="mt-2 pt-2 border-t border-slate-800">
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
+                      isActive
+                        ? 'bg-red-500/15 text-red-400 border border-red-500/30'
+                        : 'text-red-500/70 hover:text-red-400 hover:bg-red-500/10',
+                    )}
+                  >
+                    {Icon && <Icon className="w-4 h-4 flex-shrink-0 text-red-500/70 group-hover:text-red-400 transition-colors" />}
+                    {item.label}
+                    {isActive && <ChevronRight className="w-3 h-3 ml-auto text-red-400" />}
+                  </Link>
+                </li>
+              )
+            }
 
             return (
               <li key={item.href}>
