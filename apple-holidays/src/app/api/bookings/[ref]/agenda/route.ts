@@ -86,6 +86,48 @@ export async function POST(
     ),
   )
 
+  await Promise.all(
+    items.map((item: Record<string, unknown>, index: number) => {
+      const assignment = item.assignment as
+        | {
+            driverId?: string | null
+            driverName?: string | null
+            driverPhone?: string | null
+            vehicleType?: string | null
+            vehiclePlate?: string | null
+            notes?: string | null
+          }
+        | null
+        | undefined
+
+      if (!assignment) return Promise.resolve()
+
+      const agendaItem = createdItems[index]
+      if (!agendaItem) return Promise.resolve()
+
+      return prisma.assignment.upsert({
+        where: { agendaItemId: agendaItem.id },
+        create: {
+          agendaItemId: agendaItem.id,
+          driverId: assignment.driverId || null,
+          driverName: assignment.driverName || null,
+          driverPhone: assignment.driverPhone || null,
+          vehicleType: assignment.vehicleType || null,
+          vehiclePlate: assignment.vehiclePlate || null,
+          notes: assignment.notes || null,
+        },
+        update: {
+          driverId: assignment.driverId || null,
+          driverName: assignment.driverName || null,
+          driverPhone: assignment.driverPhone || null,
+          vehicleType: assignment.vehicleType || null,
+          vehiclePlate: assignment.vehiclePlate || null,
+          notes: assignment.notes || null,
+        },
+      })
+    }),
+  )
+
   return buildApiSuccess({ agenda, items: createdItems }, 'Agenda saved')
 }
 

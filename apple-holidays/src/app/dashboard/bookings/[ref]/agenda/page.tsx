@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
-import { useParams } from 'next/navigation'
+import { useCallback, useEffect, useState, useRef } from 'react'
+import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
@@ -66,6 +66,7 @@ interface BookingDetails {
 
 export default function AgendaPage() {
   const { ref } = useParams<{ ref: string }>()
+  const router = useRouter()
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole
 
@@ -86,7 +87,7 @@ export default function AgendaPage() {
   const canEdit   = ['BT_USER', 'GT_USER', 'SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'SUPER_ADMIN'].includes(role)
 
-  async function loadAgenda() {
+  const loadAgenda = useCallback(async () => {
     try {
       const [agendaRes, bookingRes] = await Promise.all([
         fetch(`/api/bookings/${ref}/agenda`),
@@ -95,19 +96,33 @@ export default function AgendaPage() {
       const [agendaJson, bookingJson] = await Promise.all([agendaRes.json(), bookingRes.json()])
 
       if (agendaJson.success && agendaJson.data) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setItems((agendaJson.data.items ?? []).map((i: any) => ({
-          id:          i.id,
-          date:        (i.date as string)?.slice(0, 10) ?? '',
-          location:    i.location ?? '',
-          fromPoint:   i.fromPoint ?? '',
-          toPoint:     i.toPoint ?? '',
-          details:     i.details ?? '',
-          mealPlan:    i.mealPlan ?? '',
-          meetingTime: i.meetingTime ?? '',
-          serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
-          assignment:  i.assignment,
-        })))
+        setItems((agendaJson.data.items ?? []).map((raw: unknown) => {
+          const i = raw as Partial<{
+            id: string
+            date: string
+            location: string
+            fromPoint: string
+            toPoint: string
+            details: string
+            mealPlan: string
+            meetingTime: string
+            serviceType: string
+            assignment: AgendaItem['assignment']
+          }>
+
+          return {
+            id:          i.id,
+            date:        i.date?.slice(0, 10) ?? '',
+            location:    i.location ?? '',
+            fromPoint:   i.fromPoint ?? '',
+            toPoint:     i.toPoint ?? '',
+            details:     i.details ?? '',
+            mealPlan:    i.mealPlan ?? '',
+            meetingTime: i.meetingTime ?? '',
+            serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
+            assignment:  i.assignment,
+          }
+        }))
       }
       if (bookingJson.success && bookingJson.data) {
         setBooking(bookingJson.data)
@@ -115,7 +130,7 @@ export default function AgendaPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [ref])
 
   async function loadDriversForDate(date: string) {
     setLoadingDrivers(true)
@@ -129,7 +144,7 @@ export default function AgendaPage() {
     }
   }
 
-  useEffect(() => { loadAgenda() }, [ref])
+  useEffect(() => { loadAgenda() }, [loadAgenda])
 
   // Auto-generate if page loads with no saved items
   useEffect(() => {
@@ -207,6 +222,8 @@ export default function AgendaPage() {
     setSaving(true)
     try {
       await persistItems(items)
+      toast.success('Driver allocation saved')
+      router.push(`/dashboard/bookings/${ref}`)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally {
@@ -322,7 +339,7 @@ export default function AgendaPage() {
                   )}
                 </div>
                 <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
-                  Save Chart
+                  Save driver allocation
                 </Button>
               </>
             )}
@@ -526,7 +543,7 @@ export default function AgendaPage() {
             <MapPin className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-500 font-medium mb-2">No movement items yet</p>
             {canEdit && (
-              <p className="text-slate-400 text-sm">Use "AI Generate" above to regenerate, or add items manually</p>
+              <p className="text-slate-400 text-sm">Use &quot;AI Generate&quot; above to regenerate, or add items manually</p>
             )}
           </Card>
         )}
