@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 
+const PROTECTED_KEYS = new Set(['use_test_data', 'less_credit_mode'])
+
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session || session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
@@ -18,8 +20,16 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session || session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
 
-  const { key, value } = await req.json() as { key: string; value: string }
+  const { key, value, password } = await req.json() as { key: string; value: string; password?: string }
   if (!key) return buildApiError('Key is required')
+
+  if (PROTECTED_KEYS.has(key)) {
+    const criticalPassword = process.env.CRITICAL_OPS_PASSWORD
+    if (!criticalPassword) return buildApiError('Critical operations password is not configured on the server', 500)
+    if (!password || password !== criticalPassword) {
+      return buildApiError('Incorrect critical operations password', 403)
+    }
+  }
 
   await prisma.systemSetting.upsert({
     where:  { key },
