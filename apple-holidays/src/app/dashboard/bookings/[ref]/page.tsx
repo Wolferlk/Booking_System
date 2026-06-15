@@ -9,6 +9,7 @@ import {
   AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
+  FlaskConical,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -67,6 +68,36 @@ export default function BookingDetailPage() {
   const [waAttachPdf, setWaAttachPdf] = useState(true)
   const [waSending, setWaSending] = useState(false)
   const [waPdfType, setWaPdfType] = useState<'confirmation' | 'full'>('confirmation')
+
+  // Email send modal
+  const [emailModal, setEmailModal] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [emailCc, setEmailCc] = useState<string[]>([])
+  const [emailSending, setEmailSending] = useState(false)
+
+  // Test mode setting (loaded when email/wa modal opens)
+  const [testMode, setTestMode] = useState<boolean>(false)
+  const [testSettings, setTestSettings] = useState({ testEmail1: 'sasiofficial25@gmail.com', testEmail2: 'sasindu@aahaas.com', testWhatsapp: '94778231121' })
+
+  async function loadTestMode() {
+    try {
+      const res = await fetch('/api/admin/settings')
+      const json = await res.json()
+      if (json.success) {
+        const d = json.data as Record<string, string>
+        const mode = d['use_test_data'] === 'true'
+        const settings = {
+          testEmail1:   d['test_email_1']  ?? 'sasiofficial25@gmail.com',
+          testEmail2:   d['test_email_2']  ?? 'sasindu@aahaas.com',
+          testWhatsapp: d['test_whatsapp'] ?? '94778231121',
+        }
+        setTestMode(mode)
+        setTestSettings(settings)
+        return { mode, settings }
+      }
+    } catch { /* ignore */ }
+    return { mode: false, settings: testSettings }
+  }
 
   async function load() {
     try {
@@ -326,16 +357,50 @@ Wishing you a wonderful trip! ✈️
 *Apple Holidays Team*`
   }
 
-  function openWhatsApp() {
+  async function openWhatsApp() {
+    const { mode, settings } = await loadTestMode()
     const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
     const firstName = (lead?.name ?? 'Guest').split(' ')[0]
-    // Auto-populate from stored WhatsApp/phone (tourist first, agent as fallback)
     const storedPhone = booking.contactWhatsapp ?? booking.contactPhone ?? booking.agentWhatsapp ?? booking.agentPhone ?? ''
-    setWaPhone(storedPhone)
+    setWaPhone(mode ? settings.testWhatsapp : storedPhone)
     setWaPdfType('confirmation')
     setWaMessage(buildConfirmationMessage(firstName))
     setWaAttachPdf(true)
     setWaModal(true)
+  }
+
+  async function openEmailModal() {
+    const { mode, settings } = await loadTestMode()
+    const agentEmail   = (booking.agentEmail   as string | null) ?? ''
+    const contactEmail = (booking.contactEmail as string | null) ?? ''
+    if (mode) {
+      setEmailTo(settings.testEmail1)
+      setEmailCc([settings.testEmail2])
+    } else {
+      setEmailTo(agentEmail)
+      const ccList = contactEmail && contactEmail !== agentEmail ? [contactEmail] : []
+      setEmailCc(ccList)
+    }
+    setEmailModal(true)
+  }
+
+  async function sendEmail() {
+    setEmailSending(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/send-agent-email`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ cc: emailCc.filter(Boolean) }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Confirmation email sent')
+      setEmailModal(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setEmailSending(false)
+    }
   }
 
   function switchWaPdfType(type: 'confirmation' | 'full') {
@@ -511,12 +576,7 @@ Wishing you a wonderful trip! ✈️
               )}
               {['TE_USER', 'SUPER_ADMIN'].includes(role) && (
                 <button
-                  onClick={async () => {
-                    const res = await fetch(`/api/bookings/${ref}/send-agent-email`, { method: 'POST' })
-                    const json = await res.json()
-                    if (json.success) toast.success('Confirmation email sent to agent')
-                    else toast.error(json.error ?? 'Failed to send email')
-                  }}
+                  onClick={openEmailModal}
                   className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
                 >
                   <Send className="w-3.5 h-3.5" /> Send Email
@@ -1298,6 +1358,27 @@ Wishing you a wonderful trip! ✈️
             </div>
           </div>
 
+          {/* Test mode banner */}
+          {testMode && (
+            <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+              <FlaskConical className="w-4 h-4 text-amber-500 flex-shrink-0" />
+              <p className="text-xs text-amber-700 font-medium">
+                Test mode — sending to <strong>{testSettings.testWhatsapp}</strong> instead of real customer number.
+              </p>
+            </div>
+          )}
+
+          {/* Extracted numbers from booking */}
+          {!testMode && (booking.contactWhatsapp || booking.contactPhone || booking.agentWhatsapp || booking.agentPhone) && (
+            <div className="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-500 space-y-1">
+              <p className="font-medium text-slate-600">Extracted numbers from booking:</p>
+              {booking.contactWhatsapp && <p>Customer WhatsApp: <button className="text-brand-600 hover:underline" onClick={() => setWaPhone(booking.contactWhatsapp as string)}>{booking.contactWhatsapp as string}</button></p>}
+              {booking.contactPhone    && <p>Customer Phone: <button className="text-brand-600 hover:underline" onClick={() => setWaPhone(booking.contactPhone as string)}>{booking.contactPhone as string}</button></p>}
+              {booking.agentWhatsapp   && <p>Agent WhatsApp: <button className="text-brand-600 hover:underline" onClick={() => setWaPhone(booking.agentWhatsapp as string)}>{booking.agentWhatsapp as string}</button></p>}
+              {booking.agentPhone      && <p>Agent Phone: <button className="text-brand-600 hover:underline" onClick={() => setWaPhone(booking.agentPhone as string)}>{booking.agentPhone as string}</button></p>}
+            </div>
+          )}
+
           {/* Phone */}
           <div>
             <label className="form-label">Client WhatsApp / Phone Number *</label>
@@ -1361,6 +1442,102 @@ Wishing you a wonderful trip! ✈️
             {waPdfType === 'full' && (
               <div className="text-amber-600">· Ticket images will be embedded in the PDF</div>
             )}
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Send Email modal ───────────────────────────────────────────── */}
+      <Modal
+        open={emailModal}
+        onClose={() => setEmailModal(false)}
+        title="Send Confirmation Email"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEmailModal(false)}>Cancel</Button>
+            <Button
+              loading={emailSending}
+              icon={<Send className="w-4 h-4" />}
+              onClick={sendEmail}
+              className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+            >
+              {emailSending ? 'Sending…' : 'Send Email'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+
+          {/* Test mode banner */}
+          {testMode && (
+            <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5">
+              <FlaskConical className="w-4 h-4 text-amber-500 flex-shrink-0" />
+              <div className="text-xs text-amber-700">
+                <p className="font-semibold">Test Mode Active</p>
+                <p>Email will be redirected to test addresses regardless of values below.</p>
+              </div>
+            </div>
+          )}
+
+          {/* To */}
+          <div>
+            <label className="form-label">To (Agent Email)</label>
+            <div className="flex items-center gap-2 form-input bg-slate-50 text-slate-600 text-sm">
+              <Mail className="w-4 h-4 text-slate-400 flex-shrink-0" />
+              <span className="truncate">{testMode ? testSettings.testEmail1 : (emailTo || '— not set —')}</span>
+              {testMode && <span className="ml-auto text-amber-500 text-xs font-medium flex-shrink-0">test</span>}
+            </div>
+            {!testMode && !emailTo && (
+              <p className="text-xs text-red-500 mt-1">No agent email found in booking. Add it to the booking first.</p>
+            )}
+          </div>
+
+          {/* CC */}
+          <div>
+            <label className="form-label">CC (extracted from booking)</label>
+            {testMode ? (
+              <div className="flex items-center gap-2 form-input bg-slate-50 text-slate-600 text-sm">
+                <Mail className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <span className="truncate">{testSettings.testEmail2}</span>
+                <span className="ml-auto text-amber-500 text-xs font-medium flex-shrink-0">test</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {emailCc.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic px-1">No additional email addresses found in booking</p>
+                ) : (
+                  emailCc.map((addr, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <div className="flex-1 flex items-center gap-2 form-input bg-slate-50 text-slate-600 text-sm py-1.5">
+                        <Mail className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                        <span className="truncate">{addr}</span>
+                      </div>
+                      <button
+                        onClick={() => setEmailCc(prev => prev.filter((_, idx) => idx !== i))}
+                        className="text-slate-400 hover:text-red-500 flex-shrink-0"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))
+                )}
+                <button
+                  onClick={() => {
+                    const email = prompt('Enter email address to add to CC:')
+                    if (email && email.includes('@')) setEmailCc(prev => [...prev, email.trim()])
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-brand-600 hover:text-brand-700 mt-1"
+                >
+                  <Plus className="w-3 h-3" /> Add CC address
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Booking info */}
+          <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-1">
+            <div>Booking: <strong>{ref}</strong></div>
+            <div>The PDF confirmation will be generated and attached automatically.</div>
+            {booking.agent && <div>Agent: <strong>{booking.agent as string}</strong></div>}
           </div>
         </div>
       </Modal>

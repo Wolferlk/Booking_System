@@ -3,11 +3,35 @@ import { generateBookingHtml } from '@/lib/generate-booking-html'
 import { htmlToPdf } from '@/lib/html-to-pdf'
 import { sendMailViaGraph, getAgentEmail, buildAgentConfirmationEmail } from '@/lib/send-mail'
 
+const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
+const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
+
+async function getMailSettings(): Promise<{
+  useTestData: boolean
+  testEmail1: string
+  testEmail2: string
+}> {
+  const rows = await prisma.systemSetting.findMany({
+    where: { key: { in: ['use_test_data', 'test_email_1', 'test_email_2'] } },
+  })
+  const map: Record<string, string> = {}
+  rows.forEach(r => { map[r.key] = r.value })
+  return {
+    useTestData: map['use_test_data'] === 'true',
+    testEmail1:  map['test_email_1'] ?? DEFAULT_TEST_EMAIL_1,
+    testEmail2:  map['test_email_2'] ?? DEFAULT_TEST_EMAIL_2,
+  }
+}
+
 /**
  * Generates the agent confirmation PDF and sends the email.
  * Shared by the auto-send (on GT_VERIFIED) and the manual send button.
+ * Respects the use_test_data system setting.
  */
-export async function sendAgentConfirmationEmail(ref: string): Promise<void> {
+export async function sendAgentConfirmationEmail(
+  ref: string,
+  opts?: { cc?: string[] },
+): Promise<void> {
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: ref },
     include: {
@@ -29,24 +53,42 @@ export async function sendAgentConfirmationEmail(ref: string): Promise<void> {
 
   if (!booking) throw new Error(`Booking not found: ${ref}`)
 
+  const { useTestData, testEmail1, testEmail2 } = await getMailSettings()
+
   const sentAt    = new Date()
   const html      = generateBookingHtml(booking)
   const filename  = `${ref}-confirmation.pdf`
   const pdfBuffer = await htmlToPdf(html, filename, { bookingRef: ref, sentAt })
+  const bodyHtml  = buildAgentConfirmationEmail(booking)
 
-  const agentEmail = getAgentEmail(booking as { agentEmail?: string | null })
-  const bodyHtml   = buildAgentConfirmationEmail(booking)
+  let toEmail: string
+  let ccEmails: string[]
+
+  if (useTestData) {
+    toEmail  = testEmail1
+    ccEmails = [testEmail2]
+    console.log(`[email] TEST MODE — redirecting to ${toEmail}, CC: ${ccEmails.join(', ')}`)
+  } else {
+    toEmail  = getAgentEmail(booking as { agentEmail?: string | null })
+    const extraCc = opts?.cc ?? []
+    // Auto-add contact email if not already in CC
+    const contactEmail = (booking as { contactEmail?: string | null }).contactEmail
+    const autoCc = contactEmail && contactEmail !== toEmail ? [contactEmail] : []
+    const combined = [...autoCc, ...extraCc]
+    ccEmails = combined.filter((addr, idx) => combined.indexOf(addr) === idx)
+  }
 
   await sendMailViaGraph({
-    to: agentEmail,
-    subject: `Booking Confirmed — ${ref} (${booking.agent ?? 'Apple Holidays'})`,
+    to:         toEmail,
+    cc:         ccEmails.length > 0 ? ccEmails : undefined,
+    subject:    `Booking Confirmed — ${ref} (${booking.agent ?? 'Apple Holidays'})`,
     bodyHtml,
     attachment: {
-      name: `AppleHolidays-${ref}-Confirmation.pdf`,
+      name:        `AppleHolidays-${ref}-Confirmation.pdf`,
       contentType: 'application/pdf',
-      buffer: pdfBuffer,
+      buffer:      pdfBuffer,
     },
   })
 
-  console.log(`[email] Confirmation sent to ${agentEmail} for booking ${ref}`)
+  console.log(`[email] Confirmation sent to ${toEmail}${ccEmails.length ? ` CC: ${ccEmails.join(', ')}` : ''} for booking ${ref}`)
 }

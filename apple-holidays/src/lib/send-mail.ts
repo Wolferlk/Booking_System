@@ -11,6 +11,7 @@ interface MailAttachment {
 
 interface SendMailOptions {
   to: string
+  cc?: string[]
   subject: string
   bodyHtml: string
   attachment?: MailAttachment
@@ -31,6 +32,9 @@ export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
         emailAddress: { address: opts.to },
       },
     ],
+    ...(opts.cc && opts.cc.length > 0
+      ? { ccRecipients: opts.cc.map(addr => ({ emailAddress: { address: addr } })) }
+      : {}),
   }
 
   if (opts.attachment) {

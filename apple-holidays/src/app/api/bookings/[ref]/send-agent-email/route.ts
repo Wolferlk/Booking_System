@@ -7,7 +7,7 @@ import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import type { UserRole } from '@prisma/client'
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { ref: string } },
 ) {
   const session = await getServerSession(authOptions)
@@ -22,7 +22,15 @@ export async function POST(
   })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  await sendAgentConfirmationEmail(params.ref)
+  let cc: string[] | undefined
+  try {
+    const body = await req.json() as { cc?: string[] }
+    cc = body.cc
+  } catch {
+    // no body — that's fine
+  }
 
-  return buildApiSuccess(null, 'Confirmation email sent to agent')
+  await sendAgentConfirmationEmail(params.ref, { cc })
+
+  return buildApiSuccess(null, 'Confirmation email sent')
 }
