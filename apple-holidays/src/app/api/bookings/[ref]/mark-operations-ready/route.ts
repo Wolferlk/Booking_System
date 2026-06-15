@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { sendOperationsReadyEmail } from '@/lib/send-operations-email'
 import type { UserRole } from '@prisma/client'
 
 // GT_USER / TE_USER advances GT_VERIFIED → OPERATIONS_READY after allocating drivers
@@ -32,5 +33,10 @@ export async function POST(
       },
     }),
   ])
+  // Fire-and-forget — does not block the response
+  sendOperationsReadyEmail(params.ref).catch(err =>
+    console.error('[mark-operations-ready] Email failed:', err),
+  )
+
   return buildApiSuccess(updated, 'Booking is now Operations Ready')
 }

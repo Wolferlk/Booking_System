@@ -5,6 +5,7 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
     instrumentationHook: true,
+    serverComponentsExternalPackages: ['pdfkit', 'puppeteer'],
   },
   images: {
     domains: ['localhost'],
