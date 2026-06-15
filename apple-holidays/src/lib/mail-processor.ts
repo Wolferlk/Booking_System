@@ -154,16 +154,16 @@ Return ONLY valid JSON matching this exact schema:
   "terms": "full terms and conditions text or null",
   "exclusions": "exclusions text or null",
   "agentEmail": "agent company email address or null",
-  "agentPhone": "agent company phone number (any format) or null",
-  "agentWhatsapp": "agent WhatsApp number or null",
+  "agentPhone": "agent phone number in international format with country code (e.g. +91 9876543210, +94 77 123 4567, +1 212 555 0100) or null",
+  "agentWhatsapp": "agent WhatsApp number in international format with country code or null",
   "agentCountry": "agent country or null",
   "agentAddress": "agent full office/mailing address or null",
   "contactEmail": "lead customer/passenger email address or null",
-  "contactPhone": "lead customer/passenger phone number or null",
-  "contactWhatsapp": "lead customer/passenger WhatsApp number or null",
+  "contactPhone": "lead customer/tourist phone number in international format with country code (e.g. +91 9876543210) or null",
+  "contactWhatsapp": "lead customer/tourist WhatsApp number in international format with country code or null",
   "contactCountry": "lead customer country or nationality or null",
   "contactAddress": "lead customer home/mailing address or null",
-  "emergencyContacts": [{ "name": "string", "phone": "string or null", "role": "string or null" }],
+  "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false }],
   "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "IATA code", "depTime": "HH:MM or null", "toApt": "IATA code", "arrTime": "HH:MM or null", "airline": "string or null" }],
   "accommodations": [{ "hotel": "hotel name", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
@@ -176,7 +176,8 @@ If no Tour Ref is present, fall back to the best available booking reference suc
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, etc.).
 Date format must be YYYY-MM-DD strictly.
-For contact details: scan email headers (From/Reply-To), email signatures, and booking form fields for email addresses, phone numbers, WhatsApp numbers, countries, and addresses. Look for both agent (sender company) and customer (traveller) contact info separately.`
+CONTACT EXTRACTION: Scan all of — email From/Reply-To headers, email signatures, booking form fields, "Contact Details" / "Guest Info" sections, and footers. Extract BOTH agent (sender company) and customer/tourist (traveller) contacts separately.
+PHONE FORMAT: Always use international format with + country code. Common codes: India +91, Sri Lanka +94, USA/Canada +1, UK +44, Australia +61, Singapore +65, UAE +971, Vietnam +84, Malaysia +60, Thailand +66. If a number is given in local format without country code, infer the code from the agent's or customer's stated country.`
 
 const PNL_PROMPT = `You are a P&L extraction expert for AppleHolidays (MMT Vietnam).
 Extract the booking IS Number and all cost line items from this email/document.
@@ -249,7 +250,7 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   })
 
   const content = response.choices[0]?.message?.content
-  if (!content) throw new Error('OpenAI returned empty response')
+  if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
 
   const parsed = JSON.parse(content) as Partial<ExtractedBooking>
   const tourRefOverride = emailType === 'TOUR_CONFIRMATION'

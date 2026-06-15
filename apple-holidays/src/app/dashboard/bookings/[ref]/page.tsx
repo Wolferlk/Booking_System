@@ -8,7 +8,7 @@ import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
-  Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2,
+  Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -329,7 +329,9 @@ Wishing you a wonderful trip! ✈️
   function openWhatsApp() {
     const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
     const firstName = (lead?.name ?? 'Guest').split(' ')[0]
-    setWaPhone('')
+    // Auto-populate from stored WhatsApp/phone (tourist first, agent as fallback)
+    const storedPhone = booking.contactWhatsapp ?? booking.contactPhone ?? booking.agentWhatsapp ?? booking.agentPhone ?? ''
+    setWaPhone(storedPhone)
     setWaPdfType('confirmation')
     setWaMessage(buildConfirmationMessage(firstName))
     setWaAttachPdf(true)
@@ -641,6 +643,125 @@ Wishing you a wonderful trip! ✈️
             </CardBody>
           </Card>
         </div>
+
+        {/* Contact Information — Agent & Tourist */}
+        {canViewClientDetails && (
+          booking.agentEmail || booking.agentPhone || booking.agentWhatsapp ||
+          booking.contactEmail || booking.contactPhone || booking.contactWhatsapp
+        ) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+            {/* Agent Contact */}
+            {(booking.agentEmail || booking.agentPhone || booking.agentWhatsapp) && (
+              <Card>
+                <CardHeader>
+                  <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-slate-400" /> Agent Contact
+                    {booking.agent && <span className="text-xs text-slate-400 font-normal">— {booking.agent as string}</span>}
+                  </h3>
+                </CardHeader>
+                <CardBody className="py-3 px-4">
+                  <div className="space-y-2.5">
+                    {booking.agentEmail && (
+                      <div className="flex items-center gap-3">
+                        <Mail className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-slate-400">Email</p>
+                          <a href={`mailto:${booking.agentEmail as string}`} className="text-sm text-brand-600 hover:underline truncate block">{booking.agentEmail as string}</a>
+                        </div>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(booking.agentEmail as string); toast.success('Email copied') }}
+                          className="text-slate-300 hover:text-slate-500 flex-shrink-0"
+                        ><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                    {booking.agentPhone && (
+                      <div className="flex items-center gap-3">
+                        <Phone className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-slate-400">Phone</p>
+                          <a href={`tel:${booking.agentPhone as string}`} className="text-sm text-slate-700 hover:underline">{booking.agentPhone as string}</a>
+                        </div>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(booking.agentPhone as string); toast.success('Phone copied') }}
+                          className="text-slate-300 hover:text-slate-500 flex-shrink-0"
+                        ><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                    {booking.agentWhatsapp && (
+                      <div className="flex items-center gap-3">
+                        <MessageCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-slate-400">WhatsApp</p>
+                          <span className="text-sm text-slate-700">{booking.agentWhatsapp as string}</span>
+                        </div>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(booking.agentWhatsapp as string); toast.success('WhatsApp number copied') }}
+                          className="text-slate-300 hover:text-slate-500 flex-shrink-0"
+                        ><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+
+            {/* Tourist / Guest Contact */}
+            {(booking.contactEmail || booking.contactPhone || booking.contactWhatsapp) && (
+              <Card>
+                <CardHeader>
+                  <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                    <Phone className="w-4 h-4 text-brand-400" /> Guest / Tourist Contact
+                    {booking.contactCountry && <span className="text-xs text-slate-400 font-normal">— {booking.contactCountry as string}</span>}
+                  </h3>
+                </CardHeader>
+                <CardBody className="py-3 px-4">
+                  <div className="space-y-2.5">
+                    {booking.contactEmail && (
+                      <div className="flex items-center gap-3">
+                        <Mail className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-slate-400">Email</p>
+                          <a href={`mailto:${booking.contactEmail as string}`} className="text-sm text-brand-600 hover:underline truncate block">{booking.contactEmail as string}</a>
+                        </div>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(booking.contactEmail as string); toast.success('Email copied') }}
+                          className="text-slate-300 hover:text-slate-500 flex-shrink-0"
+                        ><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                    {booking.contactPhone && (
+                      <div className="flex items-center gap-3">
+                        <Phone className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-slate-400">Phone</p>
+                          <a href={`tel:${booking.contactPhone as string}`} className="text-sm text-slate-700 hover:underline">{booking.contactPhone as string}</a>
+                        </div>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(booking.contactPhone as string); toast.success('Phone copied') }}
+                          className="text-slate-300 hover:text-slate-500 flex-shrink-0"
+                        ><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                    {booking.contactWhatsapp && (
+                      <div className="flex items-center gap-3">
+                        <MessageCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs text-slate-400">WhatsApp</p>
+                          <span className="text-sm text-slate-700">{booking.contactWhatsapp as string}</span>
+                        </div>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(booking.contactWhatsapp as string); toast.success('WhatsApp number copied') }}
+                          className="text-slate-300 hover:text-slate-500 flex-shrink-0"
+                        ><Copy className="w-3.5 h-3.5" /></button>
+                      </div>
+                    )}
+                  </div>
+                </CardBody>
+              </Card>
+            )}
+          </div>
+        )}
 
         {/* Emergency Contacts (visible to staff, not clients) */}
         {canViewClientDetails && emergencyContacts.length > 0 && (
@@ -1166,15 +1287,14 @@ Wishing you a wonderful trip! ✈️
 
           {/* Phone */}
           <div>
-            <label className="form-label">Client Phone Number *</label>
+            <label className="form-label">Client WhatsApp / Phone Number *</label>
             <input
               type="tel"
               className="form-input"
-              placeholder="e.g. 94771234567 (country code, no +)"
+              placeholder="e.g. 94771234567 (with country code, no +)"
               value={waPhone}
               onChange={e => setWaPhone(e.target.value)}
             />
-            <p className="text-xs text-slate-400 mt-1">Include country code without + (94 = Sri Lanka · 91 = India)</p>
           </div>
 
           {/* Message */}
@@ -1204,12 +1324,29 @@ Wishing you a wonderful trip! ✈️
             </span>
           </label>
 
+          {/* Phone number hint */}
+          <p className="text-xs text-slate-400 mt-1">Include country code without + (e.g. 94 = Sri Lanka · 91 = India · 61 = Australia)</p>
+
           {/* Info bar */}
-          <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3 border border-slate-100">
-            Booking: <strong>{ref}</strong> · Lead:{' '}
-            <strong>{(booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead)?.name ?? (booking.passengers?.[0]?.name ?? '—')}</strong>
+          <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-1">
+            <div>
+              Booking: <strong>{ref}</strong> · Lead:{' '}
+              <strong>{(booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead)?.name ?? (booking.passengers?.[0]?.name ?? '—')}</strong>
+            </div>
+            {(booking.contactEmail || booking.agentEmail) && (
+              <div className="flex items-center gap-1.5">
+                <Mail className="w-3 h-3" />
+                <span>Email:</span>{' '}
+                <a
+                  href={`mailto:${(booking.contactEmail ?? booking.agentEmail) as string}`}
+                  className="text-brand-500 hover:underline"
+                >
+                  {(booking.contactEmail ?? booking.agentEmail) as string}
+                </a>
+              </div>
+            )}
             {waPdfType === 'full' && (
-              <span className="ml-2 text-amber-600">· Ticket images will be embedded in the PDF</span>
+              <div className="text-amber-600">· Ticket images will be embedded in the PDF</div>
             )}
           </div>
         </div>

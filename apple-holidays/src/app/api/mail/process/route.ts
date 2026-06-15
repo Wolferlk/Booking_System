@@ -35,7 +35,17 @@ export async function POST(req: NextRequest) {
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
 
   // ── 1. Extract via OpenAI (email body) ────────────────────────────────────
-  const extracted: ExtractedBooking = await extractBookingFromEmail(rawBody, type)
+  let extracted: ExtractedBooking
+  try {
+    extracted = await extractBookingFromEmail(rawBody, type)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const isQuota = msg.includes('insufficient_quota') || msg.includes('429') || msg.includes('exceeded your current quota')
+    if (isQuota) {
+      return buildApiError('OpenAI quota exceeded — please add billing credits at platform.openai.com/account/billing', 503)
+    }
+    return buildApiError(`AI extraction failed: ${msg}`, 500)
+  }
 
   // ── 1b. For PNL: also parse XLSX attachment if available ──────────────────
   let xlsxParsed: ReturnType<typeof parsePNLXlsx> | null = null

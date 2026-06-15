@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import {
   Plane, Hotel, Users, Calendar, Clock, MapPin,
   ChevronRight, Phone, RefreshCw, Loader2,
-  AlertCircle, CheckCircle, Zap, LayoutList, CalendarDays,
+  AlertCircle, CheckCircle, Zap, LayoutList, CalendarDays, Printer,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -19,13 +19,6 @@ type MainTab = 'overview' | 'daily'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Booking = any
-
-const STATUS_COLORS: Record<string, string> = {
-  IN_PROGRESS:      'bg-blue-100 text-blue-800',
-  CLIENT_LIVE:      'bg-green-100 text-green-800',
-  OPERATIONS_READY: 'bg-purple-100 text-purple-800',
-  COMPLETED:        'bg-slate-100 text-slate-600',
-}
 
 function daysLeft(departure: string) {
   const diff = Math.ceil((new Date(departure).getTime() - Date.now()) / 86400000)
@@ -110,9 +103,20 @@ function BookingsOverview() {
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
-        <Link href="/dashboard/te/analytics" className="btn btn-sm btn-secondary ml-auto">
-          Analytics &amp; Compare →
-        </Link>
+        <div className="ml-auto flex items-center gap-2">
+          {rangeInfo && (
+            <Link
+              href={`/print/te/range?from=${rangeInfo.start.slice(0,10)}&to=${rangeInfo.end.slice(0,10)}`}
+              target="_blank"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-900 transition-colors"
+            >
+              <Printer className="w-3.5 h-3.5" /> Print / Export PDF
+            </Link>
+          )}
+          <Link href="/dashboard/te/analytics" className="btn btn-sm btn-secondary">
+            Analytics &amp; Compare →
+          </Link>
+        </div>
       </div>
 
       {rangeInfo && (
@@ -196,7 +200,6 @@ function BookingsOverview() {
 
       {/* Booking cards */}
       {!loading && bookings.map((b: Booking) => {
-        const lead       = (b.passengers ?? []).find((p: Booking) => p.isLead) ?? b.passengers?.[0]
         const daysBadge  = daysLeft(b.departureDate)
         const isToday    = b.arrivalDate?.slice(0, 10) === today
         const tonightHotel = (b.accommodations ?? []).find((a: Booking) =>

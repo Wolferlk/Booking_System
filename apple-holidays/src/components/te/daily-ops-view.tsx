@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { toast } from 'sonner'
 import {
   Plane, Hotel, Users, Calendar, ChevronLeft, ChevronRight,
-  Loader2, MapPin, Clock, ArrowRight, RefreshCw, Car,
+  Loader2, MapPin, ArrowRight, RefreshCw, Car,
   LogIn, LogOut, Utensils, Navigation, Phone, Compass,
-  CheckCircle2, AlertTriangle, Sun, Bed,
+  CheckCircle2, Sun, Bed, Printer, X,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
@@ -366,6 +366,8 @@ function BookingDayCard({ booking }: { booking: DailyBooking }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+type FilterKey = 'all' | 'activity' | 'agenda' | 'flights' | 'checkins' | 'checkouts' | 'arrivals' | 'departures'
+
 export default function DailyOpsView() {
   const todayYMD = toYMD(new Date())
 
@@ -374,6 +376,7 @@ export default function DailyOpsView() {
   const [summary, setSummary]   = useState<DailySummary | null>(null)
   const [loading, setLoading]   = useState(true)
   const [showInactive, setShowInactive] = useState(false)
+  const [filter, setFilter]     = useState<FilterKey>('all')
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -390,7 +393,7 @@ export default function DailyOpsView() {
     }
   }, [date])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { load(); setFilter('all') }, [load])
 
   // Auto-refresh every 3 minutes
   useEffect(() => {
@@ -398,8 +401,21 @@ export default function DailyOpsView() {
     return () => clearInterval(id)
   }, [load])
 
-  const active   = bookings.filter(b => b.hasActivity)
-  const inactive = bookings.filter(b => !b.hasActivity)
+  const filteredBookings = useMemo(() => {
+    switch (filter) {
+      case 'activity':    return bookings.filter(b => b.hasActivity)
+      case 'agenda':      return bookings.filter(b => b.agendaItems.length > 0)
+      case 'flights':     return bookings.filter(b => b.flights.length > 0)
+      case 'checkins':    return bookings.filter(b => b.checkIns.length > 0)
+      case 'checkouts':   return bookings.filter(b => b.checkOuts.length > 0)
+      case 'arrivals':    return bookings.filter(b => b.isArriving)
+      case 'departures':  return bookings.filter(b => b.isDeparting)
+      default:            return bookings
+    }
+  }, [bookings, filter])
+
+  const active   = filteredBookings.filter(b => b.hasActivity)
+  const inactive = filteredBookings.filter(b => !b.hasActivity)
   const isToday  = date === todayYMD
 
   // ── Quick nav config ────────────────────────────────────────────────────────
@@ -485,26 +501,53 @@ export default function DailyOpsView() {
         </div>
       </Card>
 
-      {/* ── Summary stats ── */}
+      {/* ── Summary stats (clickable filters) ── */}
       {!loading && summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
-          {[
-            { label: 'Active Trips',   value: summary.totalActive,      icon: <CheckCircle2 className="w-4 h-4" />,  color: 'text-brand-600',   bg: 'bg-brand-50' },
-            { label: 'With Activity',  value: summary.withActivity,     icon: <Calendar className="w-4 h-4" />,      color: 'text-violet-600',  bg: 'bg-violet-50' },
-            { label: 'Agenda Items',   value: summary.totalAgendaItems, icon: <Navigation className="w-4 h-4" />,    color: 'text-blue-600',    bg: 'bg-blue-50' },
-            { label: 'Flights',        value: summary.totalFlights,     icon: <Plane className="w-4 h-4" />,         color: 'text-indigo-600',  bg: 'bg-indigo-50' },
-            { label: 'Check-ins',      value: summary.totalCheckIns,    icon: <LogIn className="w-4 h-4" />,         color: 'text-emerald-600', bg: 'bg-emerald-50' },
-            { label: 'Check-outs',     value: summary.totalCheckOuts,   icon: <LogOut className="w-4 h-4" />,        color: 'text-rose-600',    bg: 'bg-rose-50' },
-            { label: 'Arrivals',       value: summary.totalArrivals,    icon: <LogIn className="w-4 h-4" />,         color: 'text-teal-600',    bg: 'bg-teal-50' },
-            { label: 'Departures',     value: summary.totalDepartures,  icon: <LogOut className="w-4 h-4" />,        color: 'text-orange-600',  bg: 'bg-orange-50' },
-          ].map(s => (
-            <div key={s.label} className={`${s.bg} rounded-xl p-3 flex flex-col gap-1`}>
-              <div className={s.color}>{s.icon}</div>
-              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-              <p className="text-[10px] text-slate-500 font-medium leading-tight">{s.label}</p>
-            </div>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+            {([
+              { key: 'all' as FilterKey,        label: 'Active Trips',   value: summary.totalActive,      icon: <CheckCircle2 className="w-4 h-4" />,  color: 'text-brand-600',   bg: 'bg-brand-50',   ring: 'ring-brand-400' },
+              { key: 'activity' as FilterKey,   label: 'With Activity',  value: summary.withActivity,     icon: <Calendar className="w-4 h-4" />,      color: 'text-violet-600',  bg: 'bg-violet-50',  ring: 'ring-violet-400' },
+              { key: 'agenda' as FilterKey,     label: 'Agenda Items',   value: summary.totalAgendaItems, icon: <Navigation className="w-4 h-4" />,    color: 'text-blue-600',    bg: 'bg-blue-50',    ring: 'ring-blue-400' },
+              { key: 'flights' as FilterKey,    label: 'Flights',        value: summary.totalFlights,     icon: <Plane className="w-4 h-4" />,         color: 'text-indigo-600',  bg: 'bg-indigo-50',  ring: 'ring-indigo-400' },
+              { key: 'checkins' as FilterKey,   label: 'Check-ins',      value: summary.totalCheckIns,    icon: <LogIn className="w-4 h-4" />,         color: 'text-emerald-600', bg: 'bg-emerald-50', ring: 'ring-emerald-400' },
+              { key: 'checkouts' as FilterKey,  label: 'Check-outs',     value: summary.totalCheckOuts,   icon: <LogOut className="w-4 h-4" />,        color: 'text-rose-600',    bg: 'bg-rose-50',    ring: 'ring-rose-400' },
+              { key: 'arrivals' as FilterKey,   label: 'Arrivals',       value: summary.totalArrivals,    icon: <LogIn className="w-4 h-4" />,         color: 'text-teal-600',    bg: 'bg-teal-50',    ring: 'ring-teal-400' },
+              { key: 'departures' as FilterKey, label: 'Departures',     value: summary.totalDepartures,  icon: <LogOut className="w-4 h-4" />,        color: 'text-orange-600',  bg: 'bg-orange-50',  ring: 'ring-orange-400' },
+            ] as const).map(s => (
+              <button
+                key={s.key}
+                onClick={() => setFilter(prev => prev === s.key ? 'all' : s.key)}
+                className={`${s.bg} rounded-xl p-3 flex flex-col gap-1 text-left transition-all hover:shadow-sm ${
+                  filter === s.key ? `ring-2 ${s.ring} shadow-sm` : 'ring-1 ring-transparent'
+                }`}
+              >
+                <div className={s.color}>{s.icon}</div>
+                <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                <p className="text-[10px] text-slate-500 font-medium leading-tight">{s.label}</p>
+              </button>
+            ))}
+          </div>
+
+          {/* Active filter + Print bar */}
+          <div className="flex items-center gap-2">
+            {filter !== 'all' && (
+              <div className="flex items-center gap-2 bg-brand-50 border border-brand-200 rounded-lg px-3 py-1.5 text-xs text-brand-700 font-medium">
+                <span>Showing: <strong>{filter}</strong> ({filteredBookings.length} booking{filteredBookings.length !== 1 ? 's' : ''})</span>
+                <button onClick={() => setFilter('all')} className="text-brand-400 hover:text-brand-700">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            <Link
+              href={`/print/te/daily?date=${date}`}
+              target="_blank"
+              className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-900 transition-colors"
+            >
+              <Printer className="w-3.5 h-3.5" /> Print / Export PDF
+            </Link>
+          </div>
+        </>
       )}
 
       {/* ── Loading ── */}
