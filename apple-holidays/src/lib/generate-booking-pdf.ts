@@ -187,6 +187,17 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
       infoRow('Agent Email', booking.agentEmail)
       infoRow('Agent Phone', booking.agentPhone)
       infoRow('Agent WhatsApp', booking.agentWhatsapp)
+      if (booking.agentCountry) infoRow('Agent Country', booking.agentCountry)
+
+      // ── 2b. Lead Guest / Tourist Contact ─────────────────────────────────
+      if (booking.contactEmail || booking.contactPhone || booking.contactWhatsapp || booking.contactCountry) {
+        sectionTitle('Lead Guest / Tourist Contact')
+        infoRow('Email', booking.contactEmail)
+        infoRow('Phone', booking.contactPhone)
+        infoRow('WhatsApp', booking.contactWhatsapp)
+        infoRow('Country / Nationality', booking.contactCountry)
+        if (booking.contactAddress) infoRow('Address', booking.contactAddress)
+      }
 
       // ── 3. Passenger Details ──────────────────────────────────────────────
       const passengers: any[] = booking.passengers ?? []
@@ -219,6 +230,28 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
           doc.y = py + 17
         })
         doc.moveDown(0.5)
+      }
+
+      // ── 3b. Emergency Contacts ────────────────────────────────────────────
+      const emergencyContacts: any[] = booking.emergencyContacts ?? []
+      if (emergencyContacts.length > 0) {
+        sectionTitle('Emergency Contacts')
+        emergencyContacts.forEach((ec: any) => {
+          if (doc.y > 760) { doc.addPage(); doc.y = MARGIN }
+          const ey = doc.y
+          doc.font('Helvetica-Bold').fontSize(9).fillColor(DARK)
+            .text(ec.name ?? '—', MARGIN + 5, ey, { width: 200, lineBreak: false })
+          if (ec.role) {
+            doc.font('Helvetica').fontSize(8.5).fillColor(MUTED)
+              .text(ec.role, MARGIN + 210, ey, { width: 120, lineBreak: false })
+          }
+          if (ec.phone) {
+            doc.font('Helvetica-Bold').fontSize(9).fillColor('#059669')
+              .text(ec.phone, MARGIN + 210, ey, { width: CONTENT_W - 215, align: 'right', lineBreak: false })
+          }
+          doc.moveDown(0.5)
+          divider()
+        })
       }
 
       // ── 4. Accommodation ──────────────────────────────────────────────────

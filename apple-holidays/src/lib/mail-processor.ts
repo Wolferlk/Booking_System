@@ -154,16 +154,16 @@ Return ONLY valid JSON matching this exact schema:
   "terms": "full terms and conditions text or null",
   "exclusions": "exclusions text or null",
   "agentEmail": "agent company email address or null",
-  "agentPhone": "agent company phone number (any format) or null",
-  "agentWhatsapp": "agent WhatsApp number or null",
+  "agentPhone": "agent phone number in international format with country code (e.g. +91 9876543210, +94 77 123 4567, +1 212 555 0100) or null",
+  "agentWhatsapp": "agent WhatsApp number in international format with country code or null",
   "agentCountry": "agent country or null",
   "agentAddress": "agent full office/mailing address or null",
   "contactEmail": "lead customer/passenger email address or null",
-  "contactPhone": "lead customer/passenger phone number or null",
-  "contactWhatsapp": "lead customer/passenger WhatsApp number or null",
+  "contactPhone": "lead customer/tourist phone number in international format with country code (e.g. +91 9876543210) or null",
+  "contactWhatsapp": "lead customer/tourist WhatsApp number in international format with country code or null",
   "contactCountry": "lead customer country or nationality or null",
   "contactAddress": "lead customer home/mailing address or null",
-  "emergencyContacts": [{ "name": "string", "phone": "string or null", "role": "string or null" }],
+  "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false }],
   "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "IATA code", "depTime": "HH:MM or null", "toApt": "IATA code", "arrTime": "HH:MM or null", "airline": "string or null" }],
   "accommodations": [{ "hotel": "hotel name", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
@@ -176,7 +176,9 @@ If no Tour Ref is present, fall back to the best available booking reference suc
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, etc.).
 Date format must be YYYY-MM-DD strictly.
-For contact details: scan email headers (From/Reply-To), email signatures, and booking form fields for email addresses, phone numbers, WhatsApp numbers, countries, and addresses. Look for both agent (sender company) and customer (traveller) contact info separately.`
+CONTACT EXTRACTION: Scan all of — email From/Reply-To headers, email signatures, booking form fields, "Contact Details" / "Guest Info" sections, and footers. Extract BOTH agent (sender company) and customer/tourist (traveller) contacts separately.
+GUEST PHONE FIELDS: MakeMyTrip and similar agents include fields like "Lead Pax Contact Number", "Guest Contact Number", or "Lead Passenger Contact" — these are the tourist/customer phone numbers; always map them to contactPhone/contactWhatsapp.
+PHONE FORMAT: Always use international format with + country code. Common codes: India +91, Sri Lanka +94, USA/Canada +1, UK +44, Australia +61, Singapore +65, UAE +971, Vietnam +84, Malaysia +60, Thailand +66. If a number is given in local format without country code, infer the code from the agent's or customer's stated country. For MakeMyTrip bookings, the agent is Indian (+91) — apply +91 to unqualified 10-digit numbers starting with 6, 7, 8, or 9.`
 
 const PNL_PROMPT = `You are a P&L extraction expert for AppleHolidays (MMT Vietnam).
 Extract the booking IS Number and all cost line items from this email/document.
@@ -249,12 +251,16 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   })
 
   const content = response.choices[0]?.message?.content
-  if (!content) throw new Error('OpenAI returned empty response')
+  if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
 
   const parsed = JSON.parse(content) as Partial<ExtractedBooking>
   const tourRefOverride = emailType === 'TOUR_CONFIRMATION'
     ? extractTourRefFromText(emailBody)
     : extractPnlTourNoFromText(emailBody)
+
+  const regexPhone = emailType === 'TOUR_CONFIRMATION'
+    ? extractGuestPhoneFromText(emailBody)
+    : null
 
   return {
     bookingRef:       tourRefOverride ?? parsed.bookingRef ?? null,
@@ -275,8 +281,8 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     agentCountry:     parsed.agentCountry     ?? null,
     agentAddress:     parsed.agentAddress     ?? null,
     contactEmail:     parsed.contactEmail     ?? null,
-    contactPhone:     parsed.contactPhone     ?? null,
-    contactWhatsapp:  parsed.contactWhatsapp  ?? null,
+    contactPhone:     parsed.contactPhone     ?? regexPhone ?? null,
+    contactWhatsapp:  parsed.contactWhatsapp  ?? regexPhone ?? null,
     contactCountry:   parsed.contactCountry   ?? null,
     contactAddress:   parsed.contactAddress   ?? null,
     passengers:       parsed.passengers       ?? [],
@@ -286,6 +292,26 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     emergencyContacts: parsed.emergencyContacts ?? [],
     pnlLines:         parsed.pnlLines         ?? [],
   }
+}
+
+function extractGuestPhoneFromText(text: string): string | null {
+  // Match MakeMyTrip / agent-style labels for guest/lead passenger contact numbers
+  const patterns = [
+    /(?:guest\s+contact\s+number|lead\s+pax\s+contact\s+(?:number|no\.?)|lead\s+passenger\s+contact(?:\s+number)?|customer\s+(?:phone|mobile|contact)(?:\s+number)?)\s*[:\-]?\s*([+\d][\d\s\-().]{6,18}\d)/gi,
+  ]
+
+  for (const re of patterns) {
+    const match = re.exec(text)
+    if (match?.[1]) {
+      const raw = match[1].replace(/[\s\-().]/g, '')
+      // 10-digit Indian mobile (starts with 6-9) → add +91
+      if (/^[6-9]\d{9}$/.test(raw)) return `+91${raw}`
+      // Already has country code prefix
+      if (raw.startsWith('+') && raw.length >= 10) return raw
+      if (/^\d{11,13}$/.test(raw)) return `+${raw}`
+    }
+  }
+  return null
 }
 
 function cleanReference(value: string | null | undefined): string | null {
