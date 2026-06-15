@@ -181,6 +181,11 @@ model Booking {
   recheckCompletedAt    DateTime?
   recheckCompletedBy    String?
 
+  // QC tracking
+  qcPassedAt        DateTime?
+  qcAutoEmailSentAt DateTime?
+  qcAutoWaSentAt    DateTime?
+
   createdById           String
   createdBy             User          @relation("CreatedBy", fields: [createdById], references: [id])
   clientUserId          String?

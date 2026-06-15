@@ -22,6 +22,7 @@ import { getAvailableTransitions } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
+import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -79,6 +80,9 @@ export default function BookingDetailPage() {
   // Test mode setting (loaded when email/wa modal opens)
   const [testMode, setTestMode] = useState<boolean>(false)
   const [testSettings, setTestSettings] = useState({ testEmail1: 'sasiofficial25@gmail.com', testEmail2: 'sasindu@aahaas.com', testWhatsapp: '94778231121' })
+
+  // QC auto-send
+  const [qcAutoSending, setQcAutoSending] = useState(false)
 
   // Contact info editing
   const [editContactModal, setEditContactModal] = useState(false)
@@ -445,6 +449,21 @@ Wishing you a wonderful trip! ✈️
     setWaModal(true)
   }
 
+  async function handleQCAutoSend() {
+    setQcAutoSending(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/qc-send`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Type-1 messages sent (Email + WhatsApp)')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setQcAutoSending(false)
+    }
+  }
+
   async function openEmailModal() {
     const { mode, settings } = await loadTestMode()
     const agentEmail   = (booking.agentEmail   as string | null) ?? ''
@@ -680,6 +699,16 @@ Wishing you a wonderful trip! ✈️
             <BookingLifecycle status={status} />
           </div>
         </Card>
+
+        {/* QC Panel — visible to operations/TE/admin */}
+        {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+          <BookingQCPanel
+            booking={booking}
+            onAutoSend={handleQCAutoSend}
+            autoSending={qcAutoSending}
+            daysUntilTrip={daysUntil}
+          />
+        )}
 
         {/* Open change requests */}
         {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
