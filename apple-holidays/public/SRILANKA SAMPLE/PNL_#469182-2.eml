@@ -1,0 +1,2258 @@
+Received: from KUXPR04MB8949.apcprd04.prod.outlook.com (2603:1096:d10:51::9)
+ by KL1PR04MB6949.apcprd04.prod.outlook.com with HTTPS; Sat, 13 Jun 2026
+ 05:37:55 +0000
+Received: from PS2PR01CA0021.apcprd01.prod.exchangelabs.com
+ (2603:1096:300:2d::33) by KUXPR04MB8949.apcprd04.prod.outlook.com
+ (2603:1096:d10:51::9) with Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id 15.21.92.18; Sat, 13 Jun
+ 2026 05:37:54 +0000
+Received: from TY2PEPF0000AB8A.apcprd03.prod.outlook.com
+ (2603:1096:300:2d:cafe::84) by PS2PR01CA0021.outlook.office365.com
+ (2603:1096:300:2d::33) with Microsoft SMTP Server (version=TLS1_3,
+ cipher=TLS_AES_256_GCM_SHA384) id 15.21.113.15 via Frontend Transport; Sat,
+ 13 Jun 2026 05:37:53 +0000
+Authentication-Results: spf=pass (sender IP is 2607:f8b0:4864:20::735)
+ smtp.mailfrom=appleholidays.lk; dkim=pass (signature was verified)
+ header.d=appleholidays.lk;dmarc=pass action=none
+ header.from=appleholidays.lk;compauth=pass reason=100
+Received-SPF: Pass (protection.outlook.com: domain of appleholidays.lk
+ designates 2607:f8b0:4864:20::735 as permitted sender)
+ receiver=protection.outlook.com; client-ip=2607:f8b0:4864:20::735;
+ helo=mail-qk1-x735.google.com; pr=C
+Received: from mail-qk1-x735.google.com (2607:f8b0:4864:20::735) by
+ TY2PEPF0000AB8A.mail.protection.outlook.com (2603:1096:408::d08) with
+ Microsoft SMTP Server (version=TLS1_3, cipher=TLS_AES_256_GCM_SHA384) id
+ 15.21.113.7 via Frontend Transport; Sat, 13 Jun 2026 05:37:53 +0000
+Received: by mail-qk1-x735.google.com with SMTP id af79cd13be357-91587626ae1so193747085a.3
+        for <accounts.payable@aahaas.com>; Fri, 12 Jun 2026 22:37:53 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=appleholidays.lk; s=google; t=1781329071; x=1781933871; darn=aahaas.com;
+        h=content-transfer-encoding:mime-version:cc:to:reply-to:subject:date
+         :message-id:from:from:to:cc:subject:date:message-id:reply-to;
+        bh=D+QgPjVF45zbmAlnKu2NfhzauFOJfK0rFrs8JALkJDk=;
+        b=q6jk2MAC6AOq0Bzo/2Q2nrctAH+brD+ZJMg795vuIRBp8Sf+CJedD9KFn0Y6YO6Y7+
+         oWM+RH8QfOJBDDCY6WOsPoKI0AdfTsJve7PPFGluE15TiCQhKSJQQhPHkgPj5fNdNTxp
+         6j8UEpjU95J0KAC5gQKA3i1zUAuYRQLqk8mOzXsEiC5OhNtPtZl4pbMsZw4bsPVCxj+j
+         oi7TZONNmPXyls+5FxDhhSYccE8aHU4XTo14hjmcYbc+mVgLDgIZf5maBa21cikW8LG8
+         BoOYPzpjXw/zhUjnL/xqDz8jVcBjim9luMken8DBEo6Ds4z3pG0T5ll0/8tOY17Uc+pP
+         MCxA==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20251104; t=1781329071; x=1781933871;
+        h=content-transfer-encoding:mime-version:cc:to:reply-to:subject:date
+         :message-id:from:x-gm-gg:x-gm-message-state:from:to:cc:subject:date
+         :message-id:reply-to;
+        bh=D+QgPjVF45zbmAlnKu2NfhzauFOJfK0rFrs8JALkJDk=;
+        b=V29L4YFr9m/VulDLs8r+dAVFXxJ2vpzMig+QIW6AB4UsjvKAdGhFhZ+mn/DSA91jk1
+         uZmYvqHccgcOKWbkp3wM6RedowxVFng4fiTFTiG+PaHi9s6uURLLZgebuJk8gLXCjzw0
+         dSGKXYJm7I9yoPu6RXZ+hvOLIyNTIMqUdnSz01xcZKXvXHHtTJIVHzBzBtBqzVjDXC0i
+         0c1/bJ/EnQObq0cj+hT1/yGsbKFvWT2ZqFmRy66mgJsf3GhSKDqQs7g0Oz3MkuqxbN4i
+         INXXbVPrLcfqBJmazNOm4Eov+5mN9wwVCUQOSYr7ZUktAI/ghU2cW0b7twtwYJ2iRAsN
+         dGHQ==
+X-Gm-Message-State: AOJu0YxHgxXFs3aeJTDNnaTqH/y937UfLoOHpOGxRsHXssDeSCl4eO2q
+	md7olxD3QVA39YuYYPGIuwh/21bgbii/px6AzU/gyu1bilymw9C7OSKx1vFfpiGtaT2I74hhfYY
+	71FQD
+X-Gm-Gg: Acq92OFvlIQTP2wt7mT0BpAUv0Is8v7ixOUJwNBBWWNkAfTKYOqAfqGIylbMSeUqRCR
+	Z5AzArbTeU+PX7VPEvpfTx1ErBTfOUscgZIihA+T1NzrrC/dJqKN9gfMf8oyp1O1CpheNSwpU8x
+	GWMVTSxayzgclXm6K+cIN9vWyz/YEz7Tjqw0rraX2mcDGIUQIDn0v3fVJ4OlTPcII5n5wTS1QWg
+	qGq8ihS9Hisg8P8F50bE0Ccz4nVeXZR8/aihE9Gm3+ZcfdhfODop9GYyLbRtcs3JqyodvMejAyY
+	o9CJp4mniuCUgsM8G6KN6EOBhYh4H0xmlQJ7Ozv9SPRO/Lg2teuyjRWEzyLwXc/pxHWSyMhM4/z
+	yYHUVOC47H2hkDbKNa5OGuAjh6Y4OEUcGJl4kY+fs87IcsvODNJf3IeTpOsLrjxtWOFCiZt2pzj
+	i4tr8Bhq/B0osVcTSqm50P6QIOONBKAW/cv5R8c6bFfA==
+X-Received: by 2002:a05:620a:c45:b0:915:c858:7d42 with SMTP id af79cd13be357-9161bae70eamr903987485a.18.1781329071238;
+        Fri, 12 Jun 2026 22:37:51 -0700 (PDT)
+Return-Path: no-reply@appleholidays.lk
+Received: from [127.0.0.1] ([167.71.189.146])
+        by smtp.gmail.com with ESMTPSA id af79cd13be357-9161a056eb8sm411895285a.40.2026.06.12.22.37.49
+        (version=TLS1_2 cipher=ECDHE-ECDSA-AES128-GCM-SHA256 bits=128/128);
+        Fri, 12 Jun 2026 22:37:50 -0700 (PDT)
+From: Apple Holidays <no-reply@appleholidays.lk>
+X-Google-Original-From: Apple Holidays <appsadmin@appleholidays.lk>
+Message-ID: <6598ab2039efb834e0ce4fb60d0bea7c@swift.generated>
+Date: Sat, 13 Jun 2026 11:07:45 +0530
+Subject: PNL:#469182
+Reply-To: buddhika.shehan@aahaas.com
+To: buddhika.shehan@aahaas.com
+Cc: accounts.payable@aahaas.com
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+X-MS-Exchange-Organization-ExpirationStartTime: 13 Jun 2026 05:37:53.4882
+ (UTC)
+X-MS-Exchange-Organization-ExpirationStartTimeReason: OriginalSubmit
+X-MS-Exchange-Organization-ExpirationInterval: 1:00:00:00.0000000
+X-MS-Exchange-Organization-ExpirationIntervalReason: OriginalSubmit
+X-MS-Exchange-Organization-Network-Message-Id: 395afee0-7519-4d4a-0d40-08dec90dea3e
+X-EOPAttributedMessage: 0
+X-EOPTenantAttributedMessage: f42f071c-30d7-448e-9465-45e25cf6b548:0
+X-MS-Exchange-Organization-MessageDirectionality: Incoming
+X-MS-PublicTrafficType: Email
+X-MS-TrafficTypeDiagnostic: TY2PEPF0000AB8A:EE_|KUXPR04MB8949:EE_|KL1PR04MB6949:EE_
+X-MS-Exchange-Organization-AuthSource: TY2PEPF0000AB8A.apcprd03.prod.outlook.com
+X-MS-Exchange-Organization-AuthAs: Anonymous
+X-MS-Office365-Filtering-Correlation-Id: 395afee0-7519-4d4a-0d40-08dec90dea3e
+X-MS-Exchange-Organization-SCL: 1
+X-Microsoft-Antispam: BCL:0;ARA:13230040|704162311799003|43022699015|12012899012|2092899012|3072899012|6059299003|18002099003|19002099009|16102099003|6143699003|56012099006|8096899003|5063699009;
+X-Forefront-Antispam-Report: CIP:2607:f8b0:4864:20::735;CTRY:;LANG:en;SCL:1;SRV:;IPV:NLI;SFV:NSPM;H:mail-qk1-x735.google.com;PTR:mail-qk1-x735.google.com;CAT:NONE;SFS:(13230040)(704162311799003)(43022699015)(12012899012)(2092899012)(3072899012)(6059299003)(18002099003)(19002099009)(16102099003)(6143699003)(56012099006)(8096899003)(5063699009);DIR:INB;
+X-MS-Exchange-CrossTenant-OriginalArrivalTime: 13 Jun 2026 05:37:53.4421
+ (UTC)
+X-MS-Exchange-CrossTenant-Network-Message-Id: 395afee0-7519-4d4a-0d40-08dec90dea3e
+X-MS-Exchange-CrossTenant-Id: f42f071c-30d7-448e-9465-45e25cf6b548
+X-MS-Exchange-CrossTenant-AuthSource: TY2PEPF0000AB8A.apcprd03.prod.outlook.com
+X-MS-Exchange-CrossTenant-AuthAs: Anonymous
+X-MS-Exchange-CrossTenant-FromEntityHeader: Internet
+X-MS-Exchange-Transport-CrossTenantHeadersStamped: KUXPR04MB8949
+X-MS-Exchange-Transport-EndToEndLatency: 00:00:02.5189942
+X-MS-Exchange-Processed-By-BccFoldering: 15.21.0113.000
+X-Microsoft-Antispam-Mailbox-Delivery:
+	ucf:0;jmr:0;auth:0;dest:I;ENG:(910005)(944506478)(944626604)(920097)(930201)(20251009189)(140003);
+X-Microsoft-Antispam-Message-Info:
+	=?utf-8?B?V1k3MkNQR3hiMGw4VkNHSFN2a0tpUDBOeWpldXBNWm1ia1dvSTE5Mnk2QWpS?=
+ =?utf-8?B?WThFTXFCOUlHWXFIcmdvVFlsSlozdlMvL29YMGgwdkJ2RzM3QWREUHhWM04y?=
+ =?utf-8?B?TVdLalp1Z0w1R3hIM0g0UGc1U3lualRRL2Q3ZlMwc3hDRmZRVWJJWHVlTmNw?=
+ =?utf-8?B?RnFQRm40TVRDbkhnN1huZm9KeE5tSU51NHk3aWZLSlpsUTF6d21JNFJuSTEw?=
+ =?utf-8?B?dEpudWhwMVhyL1pRL1IzSlpzRDR1TFZhUHU2MUpQNS9pZXVxeDJJWEg0MHVL?=
+ =?utf-8?B?QnVlMm1oc05NWVdQTlJuNXFEY3lGQ2xyUktpQUhqUnY5cWVEb2FqWWxWWWxE?=
+ =?utf-8?B?K3hMVzZJQkROUlBmQW1vTFBUOUM1a084dVJFVHdlV1FkOXJlYmhnYmZWU1VG?=
+ =?utf-8?B?aHBOUE9zUzNHYnlwK1VodEhKMWxudEQ2Y2Y2YzlLc2FOL2pVRlZubjJyQ3RO?=
+ =?utf-8?B?QTBoL05UMGFxT3d1SmNRYUpHWVdFVEdVWFYwSTh5MGdFYk1BK280OE1LMFNh?=
+ =?utf-8?B?YVNUUVRUeWQrc21Ha1B5OEc3NnhjOUJIaW92Um1ydTJ2bjZ1VDVzQjFjM2sx?=
+ =?utf-8?B?cXQzNXdHRGYybWFvaUhoelJhVjFIeldaTFhMbVllbVVZeXhsM0ZFejU5QW5T?=
+ =?utf-8?B?eUhGUzFoZzgzcTNJRnBlUEhwWXB5Z0lrWkZjWUorQ1JmSC9HQlFqcWszdzZP?=
+ =?utf-8?B?NnMxck5ybFo1UXJPMlUzbFVrTWdwR2hsTVh0TXlmb2dwSWw1U2p1Mi9ScHFn?=
+ =?utf-8?B?czhkSURZQ1lKSml2WjJtUFR4Ty9HeVNDV2Y1Tkh2cjBwZVR6OWROZ3NwTGh5?=
+ =?utf-8?B?QnBGN3NFaDdUaE9pc3dwbVJyeWtiazRRNmI3SzcyYmE3c1A2cWM2Tmlvd1Ay?=
+ =?utf-8?B?d2Fqa0VWaE1jNHlIYnlteFBWRytnai9sN2x2dWovYzM1c2VlRklUeE14bEQ1?=
+ =?utf-8?B?dGwzV2JINHRXRTN5eUJOdU5WYWtKZHRjMHhMU0RHOTN1dXgvbVowOXRHaEFa?=
+ =?utf-8?B?TnI1d3VacDBiMTlYaWw0aW51NjF3KzhCQlRMcE5CWkg3eWxrNk9malV4TFBG?=
+ =?utf-8?B?MW10WUhSQkNmSitMWkU3NW5aNEpFQ3lRREZzZ2M3OWg3TlJMdDduOFR2QnNu?=
+ =?utf-8?B?SHMrTzQyT21CeVBvSklRcVVNejF0ZWFVS0Y1aGZwYllhbTFST0hjVEU2QW1D?=
+ =?utf-8?B?UXYvelF2UVU4bXFjRTdRcThXTkU5QkFsUUNoaUpOa1I0Rmk1czFQbCtSQXIv?=
+ =?utf-8?B?alExaVZ6VkdjRTI1Z3J3RHlzUzAzMEpjWVdJWmlwV0I3RGxzNWk1bWxidW5B?=
+ =?utf-8?B?ZFNBM0xsVlN3T1hCUDJUUXJyV3RxUTNKN3BYSnR5enphUEgxT3ZUU3VGQVYv?=
+ =?utf-8?B?RTVPaTNsWWxoc1dVcml1a3RTSWQvdGtaZzlyTEpHQmt4c1VpbXd3ekF3Wmcy?=
+ =?utf-8?B?OUpQS3J6VW1QMzRUeGtGL0s3ZUlNNVgwMTVvNEFoeXdMRE83ZjVBeldHM3Ar?=
+ =?utf-8?B?WmU3UzdKOTVWQjFreXRGaTRnTDBzSngxYUVtNncyemxIb3cwU3JqS3JTVHpu?=
+ =?utf-8?B?QU9hM1ptRHRPTDNSOGk2Y2I3UW5WZFRWaHAvRzdnUjlNT3ZFZnErR0wzVlR1?=
+ =?utf-8?B?V3VhYktnYnVLeHJvd2JDb00xLzkzTUxpVWVIeUw4RmUwU0NXaElQdUYyenRz?=
+ =?utf-8?B?L2sxa25kclAzU1VKbUcza2lteDZVdWVyV3d1ZURDMXFEbGJNUytENkNrTnJD?=
+ =?utf-8?B?UXRVNlo3YWtJM0huMWdHM2VaNUIyTUhVNHZVNzJJcExlS2NyUGZOWU0vakMw?=
+ =?utf-8?B?dXQ3OVRYZTUxVFhYSnRIa1V4cjlkWDZvb25iWk9leG4zcXRkc0pXYjZVYy9J?=
+ =?utf-8?B?L2RNbzN5bzF3L01kVkRVd1hUMWRIY29ocWpFcEVwWHZQeFVhNXFOZEhVNFI2?=
+ =?utf-8?B?djhIWE1sQS9WaEtuMktOeXFsZms4Uk4vbDJWZ2s4WGFhMHU5aXA5WC9ZT2tO?=
+ =?utf-8?B?dVpYTVJMS0UzbkQvQ2haTk5TL1NqUUdCeWhoNGtGUlZ2T0FwcFhnMkdpN1Fs?=
+ =?utf-8?B?Um41VEp2dmt5bWxDWmFmTTdLM004Mit1Tkh4WXNKbXhLNXFMV0wvdGNpM3g1?=
+ =?utf-8?B?K2h1RkQwRnRQTjNNYzFKT0JiU3JJWUppNDgvQ0dPMll0bTlmdFZUWVMzSVlK?=
+ =?utf-8?B?M2Z6Z2JtKzJHN0lMMmVGV015RUQ0cEF4cTRHM1g2NE8zYlNVaFdFbjIwTUNk?=
+ =?utf-8?B?dWpTQTR4bXlTZUQ2Qk9IRmtwSjhyOUR1OXpjd2J3VVMwYXJ2MTlPT2lvYVc4?=
+ =?utf-8?B?amNjZW9qR3FJNWFEUFp0SXFJVXMrb0xlOTF4KzhWMWRRVlkwL0V4VE5vTHBl?=
+ =?utf-8?B?NTZQT2FYSllmdU01aEN1OGt1bmc2bzBLUDc5N0prakxKblNzUkVQY2NQam5P?=
+ =?utf-8?B?U1hLVUljNkpZcGE1TTlHeURPeWpSVURjQjgyMENVb1pXN3BlTkdJYjZaOUtu?=
+ =?utf-8?B?amo0eklRTXBYWFVFN0kyV1NyZXVNWWs5Y3EvZUFFWW1ab0hORFpCUzJlcnZ0?=
+ =?utf-8?B?R1VHVkE2b2V4ZnB0MmFOeGlVeWZPVWtUMDc4YW5welppZ3BsQk9PZDd4b1ph?=
+ =?utf-8?B?T3JBQnhEQTJpMXpRbTZkeDhPcFJ2QzlGeUxYbHZEbmdhTzFpMEs3b2IvWGdF?=
+ =?utf-8?B?T1hVVUwvN2l0YldZVEdEN3F2aXBsV3BmckRoTFVhR3Biampib1RMZW8wNEVF?=
+ =?utf-8?B?UTVkSkZNNmpmUHFBbTk3SjE0RDJjWE9sYXdkZEFLSTNCbzhPZGhtQ0dqYXQ5?=
+ =?utf-8?B?d1dsNjR1ZUg0NUdxMUFqTUxid2x3Vko4bEd2RjJ4NEMyQ2ZLSjYyUXFRZHo4?=
+ =?utf-8?B?YUlPMUdkYTRJa1Q4aS9lamdXUWJTUm5hQys3Z25WNTk4Z2tYWXRCblhTRCtx?=
+ =?utf-8?B?NnpQWEIyUjhIaHM3dkdGZUs1c1IzcHVaVHVFY2pyQ1NFVElEOW1jcDliaVRQ?=
+ =?utf-8?B?WUwxSW1JNEoydkd1cGFNd2M4Z1hLTkFCN3lVMkhSbGdGWDFSaXFreDV6Zlo1?=
+ =?utf-8?B?bUUvWWtxS09yck16dTRtT1lLeEg4a2s3YW5sUlp2TWFNRnkzVlowdFZGT3pZ?=
+ =?utf-8?B?RmxRMHFJLzNTMUQzQlR4TXVHUFlmZnVKRmlmTEFlMVh2LzNBYXpJdHVLdkdw?=
+ =?utf-8?B?UlVwam9QcmcyV3FwdDNLdElEUEloVUxaZ0E1ZmhJdkRnVXQrc2tDaVM2ajkx?=
+ =?utf-8?B?bThuMTF5cXNPaFRTQyswbG5EWnBvaFc2dzAyNVMrT0k0Z1lEbWdvNGZXSWpj?=
+ =?utf-8?B?Sm1ycHFEeGI2RWRXbTFBRDk5dlF2Mytvd0dHdTdnVEtNcFl6V3JTSU9URHEz?=
+ =?utf-8?B?bVhORHVTd041eXdJeWE2R3RFeXVObEhTT1dQTGRXdUFvc1RNYU9FYVFCOU53?=
+ =?utf-8?B?NC84cStYS1Z4NlV3aFh3K3pzY3JXMXlkblcya1lBVzFSYVhqdzRXOUxudlVU?=
+ =?utf-8?B?VlMwZFkySzlWWXg5WmZHcFdHdGVqUFNidmtEVTdCQy90OGk2aUJzeEh0S2ZM?=
+ =?utf-8?B?Rzl6OVdDODZ3MDhIT1hldk50cXlRcG9YWHlaeXFwUWpNYVJaUGxZTDgzT0NH?=
+ =?utf-8?B?SWl3VVV3RGFhL0swcmkwMnlsekFBVjhsQlhDaVVPSUlnRTdmNmZxTnVsTTg1?=
+ =?utf-8?B?enhYMDBJMjNySFh1R1pyem80bHNXUE5nOVhweSt3UCtwTHZIQUdiVkE3bFpx?=
+ =?utf-8?Q?aGx60aw?=
+MIME-Version: 1.0
+
+<!doctype html><html style=3D"-webkit-box-sizing: border-box; -moz-box-sizi=
+ng: border-box; box-sizing: border-box; font-family: sans-serif; -ms-text-s=
+ize-adjust: 100%; -webkit-text-size-adjust: 100%; font-size: 10px; -webkit-=
+tap-highlight-color: rgba(0, 0, 0, 0); height: 100%;">
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8"></=
+head>
+<body style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box;=
+ box-sizing: border-box; margin: 0; font-family: 'Open Sans', Arial, Helvet=
+ica, Sans-Serif; font-size: 13px; line-height: 1.428571429; color: #666; -w=
+ebkit-font-smoothing: antialiased; letter-spacing: 0.1px; text-rendering: o=
+ptimizeLegibility; height: 100%; position: relative; background-color: #fff=
+; padding: 0; overflow: visible;">
+   =20
+    <ul class=3D"nav nav-tabs" id=3D"pnl_tab" style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; margin-top=
+: 0; padding-left: 0; margin-bottom: 0; list-style: none; border-bottom: 1p=
+x solid transparent;">
+                    <li class=3D"active" style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; position: relat=
+ive; display: block; float: left; margin-bottom: -1px;">
+                <a href=3D"#pnl_all" data-toggle=3D"tab" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ text-decoration: none; position: relative; display: block; padding: 10px 1=
+5px; line-height: 1.428571429; border-radius: 3px 3px 0 0; margin-right: 0;=
+ -webkit-transition: all 0.2s !important; -moz-transition: all 0.2s !import=
+ant; -ms-transition: all 0.2s !important; -o-transition: all 0.2s !importan=
+t; transition: all 0.2s !important; cursor: default; background-color: tran=
+sparent; border-bottom-color: transparent; border: none; -webkit-box-shadow=
+: inset 0 -2px 0 #2196F3; box-shadow: inset 0 -2px 0 #2196F3; color: #2196F=
+3;">PNL All</a>
+            </li>
+            </ul>
+
+    <div class=3D"tab-content" style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box;">
+                    <div class=3D"tab-pane active  active   " role=3D"tabpa=
+nel" id=3D"pnl_all" style=3D"-webkit-box-sizing: border-box; -moz-box-sizin=
+g: border-box; box-sizing: border-box; display: block;">
+                <div id=3D"lost-profit" class=3D"  email_format   " style=
+=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing=
+: border-box; background-color: #fff !important; width: 100% !important; he=
+ight: auto !important; padding: 20px; display: inline-block; text-align: le=
+ft;">
+
+                    <input type=3D"hidden" class=3D"reference_id" value=3D"=
+469247" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-bo=
+x; box-sizing: border-box; color: inherit; font: inherit; margin: 0; font-s=
+ize: inherit; line-height: inherit; -webkit-font-smoothing: antialiased; le=
+tter-spacing: 0.1px; text-rendering: optimizeLegibility; font-family: Tahom=
+a, Verdana, Segoe, sans-serif !important;">
+                    <input type=3D"hidden" class=3D"quotation_no" value=3D"=
+469182" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-bo=
+x; box-sizing: border-box; color: inherit; font: inherit; margin: 0; font-s=
+ize: inherit; line-height: inherit; -webkit-font-smoothing: antialiased; le=
+tter-spacing: 0.1px; text-rendering: optimizeLegibility; font-family: Tahom=
+a, Verdana, Segoe, sans-serif !important;">
+
+                    <table width=3D"100%" class=3D"table table table-border=
+ed " style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; border-collapse: collapse; border-spacing: 0; backg=
+round-color: transparent; width: 100%; max-width: 100%; margin-bottom: 18px=
+; border: 1px solid #ddd; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; font-size: 12px;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <td class=3D"col-md-6" style=3D"-webkit-box-siz=
+ing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; min-h=
+eight: 1px; padding-right: 15px; padding-left: 15px; font-family: Tahoma, V=
+erdana, Segoe, sans-serif !important; position: static; display: table-cell=
+; float: none; padding: 3px !important;">Tour No: #469182
+                                <br style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important;"><div style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; clear: bot=
+h; font-family: Tahoma, Verdana, Segoe, sans-serif !important; height: 5px;=
+" class=3D"hr-style1"></div>                                               =
+                     Is Number:  IS 48375
+                                    <br style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important;"><div style=3D"-webkit-box-sizi=
+ng: border-box; -moz-box-sizing: border-box; box-sizing: border-box; clear:=
+ both; font-family: Tahoma, Verdana, Segoe, sans-serif !important; height: =
+5px;" class=3D"hr-style1"></div>
+                                    Agent:  Al Mousim Travel &amp; Tours, C=
+o. Ltd
+                                    <br style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important;"><div style=3D"-webkit-box-sizi=
+ng: border-box; -moz-box-sizing: border-box; box-sizing: border-box; clear:=
+ both; font-family: Tahoma, Verdana, Segoe, sans-serif !important; height: =
+5px;" class=3D"hr-style1"></div>                                           =
+                     No. Pax: 5
+                                <br style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important;"><div style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; clear: bot=
+h; font-family: Tahoma, Verdana, Segoe, sans-serif !important; height: 5px;=
+" class=3D"hr-style1"></div>                                No. Night: 7<br=
+ style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-=
+sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !import=
+ant;">
+
+                            </td>
+                            <td class=3D"col-md-6" style=3D"-webkit-box-siz=
+ing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; min-h=
+eight: 1px; padding-right: 15px; padding-left: 15px; font-family: Tahoma, V=
+erdana, Segoe, sans-serif !important; position: static; display: table-cell=
+; float: none; padding: 3px !important;"> Currency:                        =
+             USD
+                                                                <br style=
+=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing=
+: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important;">=
+<div style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; clear: both; font-family: Tahoma, Verdana, Segoe, s=
+ans-serif !important; height: 5px;" class=3D"hr-style1"></div>             =
+                   Exchange Rate: 1.00
+                                <br style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important;"><div style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; clear: bot=
+h; font-family: Tahoma, Verdana, Segoe, sans-serif !important; height: 5px;=
+" class=3D"hr-style1"></div>                            </td>
+                        </tr>
+                    </table>
+
+                                            <h5 style=3D"-webkit-box-sizing=
+: border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-wei=
+ght: 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9p=
+x; font-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !import=
+ant;">Hotels/Cruises</h5>
+
+                        <hr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: content-box; height: 0; margin-top: 18px=
+; margin-bottom: 18px; border: 0; border-top: 1px solid #eeeeee; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">
+
+                        <table width=3D"100%" class=3D"table table-striped =
+table table-bordered " style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; border-collapse: collapse; border=
+-spacing: 0; background-color: transparent; width: 100%; max-width: 100%; m=
+argin-bottom: 18px; border: 1px solid #ddd; font-family: Tahoma, Verdana, S=
+egoe, sans-serif !important; font-size: 12px;">
+                            <thead class=3D"table-dark" style=3D"-webkit-bo=
+x-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; =
+color: #fff; background-color: #525252; font-family: Tahoma, Verdana, Segoe=
+, sans-serif !important;">
+                            <tr style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important;">
+                                <th style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; text-align: left; fo=
+nt-family: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #65=
+6565; padding: 3px !important; line-height: 1.428571429; vertical-align: bo=
+ttom; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-=
+width: 2px; border-top: 0;">Name</th>
+
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">SGL</th>
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">DBL</th>
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">TPL</th>
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">CWB</th>
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">CNB</th>
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">Nights</th>
+                                <th class=3D"text-center" style=3D"-webkit-=
+box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box=
+; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant; border-color: #656565; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px so=
+lid #ddd; border-bottom-width: 2px; border-top: 0;">Room Night</th>
+                                <th class=3D"text-right" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !import=
+ant; border-color: #656565; padding: 3px !important; line-height: 1.4285714=
+29; vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px soli=
+d #ddd; border-bottom-width: 2px; border-top: 0;">Total</th>
+                            </tr>
+                            </thead>
+                            <tbody style=3D"-webkit-box-sizing: border-box;=
+ -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, =
+Verdana, Segoe, sans-serif !important;">
+
+                           =20
+                                <tr style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Nelly Marine Hotel</td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span class=3D"" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ font-family: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                                                         53 /
+                                                                           =
+                                                 <br style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; fon=
+t-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">2</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        0 <br style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        15 <br style=3D"-webkit-box-sizing:=
+ border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-fami=
+ly: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">1</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">1</h5>
+                                    </td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">121.00</h5>
+                                    </td>
+                                    <td class=3D"text-right" style=3D"-webk=
+it-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-=
+box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;"> 121.00</td>
+
+                                </tr>
+
+                               =20
+                           =20
+                                <tr style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Royal Classic Resort</td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span class=3D"" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ font-family: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                                                         50 /
+                                                                           =
+                 50 /
+                                                                           =
+                                                 <br style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; fon=
+t-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">2</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        29 <br style=3D"-webkit-box-sizing:=
+ border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-fami=
+ly: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        14 <br style=3D"-webkit-box-sizing:=
+ border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-fami=
+ly: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">1</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">2</h5>
+                                    </td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">114.00</h5>
+                                    </td>
+                                    <td class=3D"text-right" style=3D"-webk=
+it-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-=
+box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;"> 228.00</td>
+
+                                </tr>
+
+                               =20
+                           =20
+                                <tr style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Victoria Court Suites Hotel (Horton Towers &amp; Cottage=
+s)</td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span class=3D"" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ font-family: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                                                         60 /
+                                                                           =
+                                                 <br style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; fon=
+t-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">2</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        0 <br style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        15 <br style=3D"-webkit-box-sizing:=
+ border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-fami=
+ly: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">1</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">1</h5>
+                                    </td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">135.00</h5>
+                                    </td>
+                                    <td class=3D"text-right" style=3D"-webk=
+it-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-=
+box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;"> 135.00</td>
+
+                                </tr>
+
+                               =20
+                           =20
+                                <tr style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Jie Jie Beach Panadura</td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span class=3D"" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ font-family: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                                                         55 /
+                                                                           =
+                 55 /
+                                                                           =
+                                                 <br style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; fon=
+t-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">2</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        0 <br style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        13 <br style=3D"-webkit-box-sizing:=
+ border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-fami=
+ly: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">1</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">2</h5>
+                                    </td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">123.00</h5>
+                                    </td>
+                                    <td class=3D"text-right" style=3D"-webk=
+it-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-=
+box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;"> 246.00</td>
+
+                                </tr>
+
+                               =20
+                           =20
+                                <tr style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">The Ocean colombo</td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span class=3D"" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ font-family: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                                                         60 /
+                                                                           =
+                                                 <br style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; fon=
+t-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">2</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+         0
+                                                                           =
+     <br style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-b=
+ox; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif=
+ !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        0 <br style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">0</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        15 <br style=3D"-webkit-box-sizing:=
+ border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-fami=
+ly: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                        <span style=3D"-webkit-box-sizing: =
+border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-famil=
+y: Tahoma, Verdana, Segoe, sans-serif !important;">1</span>
+                                    </td>
+
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">1</h5>
+                                    </td>
+                                    <td class=3D"text-center" style=3D"-web=
+kit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border=
+-box; text-align: center; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                        <h5 style=3D"-webkit-box-sizing: bo=
+rder-box; -moz-box-sizing: border-box; box-sizing: border-box; font-weight:=
+ 400; line-height: 1.1; color: #444; margin-top: 9px; margin-bottom: 9px; f=
+ont-size: 20px; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+">135.00</h5>
+                                    </td>
+                                    <td class=3D"text-right" style=3D"-webk=
+it-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-=
+box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;"> 135.00</td>
+
+                                </tr>
+
+                               =20
+                           =20
+                           =20
+                            </tbody>
+                            <tfoot style=3D"-webkit-box-sizing: border-box;=
+ -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, =
+Verdana, Segoe, sans-serif !important;">
+                            <tr style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important;">
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;">Total</td>
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;"></td>
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;"></td>
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;"></td>
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;"></td>
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;"></td>
+                                <td style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma,=
+ Verdana, Segoe, sans-serif !important; padding: 3px !important; line-heigh=
+t: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1p=
+x solid #ddd;"></td>
+                                <td class=3D"text-right" style=3D"-webkit-b=
+ox-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box;=
+ text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !import=
+ant; padding: 3px !important; line-height: 1.428571429; vertical-align: top=
+; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;"> 865.00</strong> USD
+                                </td>
+                            </tr>
+                            </tfoot>
+                        </table>
+
+                        <div style=3D"-webkit-box-sizing: border-box; -moz-=
+box-sizing: border-box; box-sizing: border-box; clear: both; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important; height: 20px;" class=3D"hr-st=
+yle1"></div>
+                   =20
+                    <hr style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: content-box; height: 0; margin-top: 18px; ma=
+rgin-bottom: 18px; border: 0; border-top: 1px solid #eeeeee; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">
+
+                    <h5 style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: border-box; font-weight: 400; line-height: 1=
+.1; color: #444; margin-top: 9px; margin-bottom: 9px; font-size: 20px; font=
+-family: Tahoma, Verdana, Segoe, sans-serif !important;">Transport</h5>
+
+                    <table width=3D"100%" class=3D"table table-striped tabl=
+e table-bordered " style=3D"-webkit-box-sizing: border-box; -moz-box-sizing=
+: border-box; box-sizing: border-box; border-collapse: collapse; border-spa=
+cing: 0; background-color: transparent; width: 100%; max-width: 100%; margi=
+n-bottom: 18px; border: 1px solid #ddd; font-family: Tahoma, Verdana, Segoe=
+, sans-serif !important; font-size: 12px;">
+                        <thead class=3D"table-dark" style=3D"-webkit-box-si=
+zing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; colo=
+r: #fff; background-color: #525252; font-family: Tahoma, Verdana, Segoe, sa=
+ns-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Expense</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Distance/Days</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Rate</th>
+                            <th class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ border-color: #656565; padding: 3px !important; line-height: 1.428571429; =
+vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px solid #d=
+dd; border-bottom-width: 2px; border-top: 0;">Total</th>
+                        </tr>
+                        </thead>
+                        <tbody style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Travel</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">930</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">0.3576</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">332.55</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Bata</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">8</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">6.06</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">48.48</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Paging</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">1</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">7.58</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">7.58</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Highway Charges</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">1</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">0.00</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">0.00</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Driver Accomodation</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">0</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">0.00</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">0.00</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Guide Fee</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">0.00</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">0.00</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Guide Fee</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">0.00</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">0.00</td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Water Bottles </td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Adt - 4, cwb - 0, cnb - 4</td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">20.00USD </td>
+                        </tr>
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Other Cost</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                        </tr>
+                        </tbody>
+                        <tfoot style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;">Total</td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                <strong class=3D"rate" style=3D"-webkit-box=
+-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; f=
+ont-weight: bold; font-family: Tahoma, Verdana, Segoe, sans-serif !importan=
+t;">
+                                                                       =20
+                                                                           =
+=20
+                                       =20
+                                        408.61
+                                                                    </stron=
+g> USD
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+
+                    <div style=3D"-webkit-box-sizing: border-box; -moz-box-=
+sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana, S=
+egoe, sans-serif !important; page-break-after: always;"></div>
+
+                    <h5 style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: border-box; font-weight: 400; line-height: 1=
+.1; color: #444; margin-top: 9px; margin-bottom: 9px; font-size: 20px; font=
+-family: Tahoma, Verdana, Segoe, sans-serif !important;">Attraction</h5>
+                    <table width=3D"100%" class=3D"table table-striped tabl=
+e table-bordered " style=3D"-webkit-box-sizing: border-box; -moz-box-sizing=
+: border-box; box-sizing: border-box; border-collapse: collapse; border-spa=
+cing: 0; background-color: transparent; width: 100%; max-width: 100%; margi=
+n-bottom: 18px; border: 1px solid #ddd; font-family: Tahoma, Verdana, Segoe=
+, sans-serif !important; font-size: 12px;">
+                        <thead class=3D"table-dark" style=3D"-webkit-box-si=
+zing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; colo=
+r: #fff; background-color: #525252; font-family: Tahoma, Verdana, Segoe, sa=
+ns-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Name</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Adult</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Rate <br style=3D"-webkit-box-sizing: border-box; -=
+moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ve=
+rdana, Segoe, sans-serif !important;"><i style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important;">Attraction, Vehicle</i>
+</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Child</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Rate <br style=3D"-webkit-box-sizing: border-box; -=
+moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ve=
+rdana, Segoe, sans-serif !important;"><i style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important;">Attraction, Vehicle</i>
+</th>
+                            <th class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ border-color: #656565; padding: 3px !important; line-height: 1.428571429; =
+vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px solid #d=
+dd; border-bottom-width: 2px; border-top: 0;">Total</th>
+                        </tr>
+                        </thead>
+                        <tbody style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+
+                       =20
+                        </tbody>
+                        <tfoot style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; padding: 3px !importa=
+nt; line-height: 1.428571429; vertical-align: top; border-top: 1px solid #d=
+dd; border: 1px solid #ddd;">Total</th>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                    <hr style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: content-box; height: 0; margin-top: 18px; ma=
+rgin-bottom: 18px; border: 0; border-top: 1px solid #eeeeee; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">
+
+                    <h5 style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: border-box; font-weight: 400; line-height: 1=
+.1; color: #444; margin-top: 9px; margin-bottom: 9px; font-size: 20px; font=
+-family: Tahoma, Verdana, Segoe, sans-serif !important;">Tour Transfers</h5=
+>
+                    <table width=3D"100%" class=3D"table table-striped tabl=
+e table-bordered " style=3D"-webkit-box-sizing: border-box; -moz-box-sizing=
+: border-box; box-sizing: border-box; border-collapse: collapse; border-spa=
+cing: 0; background-color: transparent; width: 100%; max-width: 100%; margi=
+n-bottom: 18px; border: 1px solid #ddd; font-family: Tahoma, Verdana, Segoe=
+, sans-serif !important; font-size: 12px;">
+                        <thead class=3D"table-dark" style=3D"-webkit-box-si=
+zing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; colo=
+r: #fff; background-color: #525252; font-family: Tahoma, Verdana, Segoe, sa=
+ns-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Name</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Adult</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Rate <br style=3D"-webkit-box-sizing: border-box; -=
+moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ve=
+rdana, Segoe, sans-serif !important;"><i style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important;">Attraction, Vehicle</i>
+</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Child</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Rate <br style=3D"-webkit-box-sizing: border-box; -=
+moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ve=
+rdana, Segoe, sans-serif !important;"><i style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important;">Attraction, Vehicle</i>
+</th>
+                            <th class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ border-color: #656565; padding: 3px !important; line-height: 1.428571429; =
+vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px solid #d=
+dd; border-bottom-width: 2px; border-top: 0;">Total</th>
+                        </tr>
+                        </thead>
+                        <tbody style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+
+                       =20
+                       =20
+                        </tbody>
+                        <tfoot style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; padding: 3px !importa=
+nt; line-height: 1.428571429; vertical-align: top; border-top: 1px solid #d=
+dd; border: 1px solid #ddd;">Total</th>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                    <hr style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: content-box; height: 0; margin-top: 18px; ma=
+rgin-bottom: 18px; border: 0; border-top: 1px solid #eeeeee; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">
+
+                   =20
+                    <h5 style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: border-box; font-weight: 400; line-height: 1=
+.1; color: #444; margin-top: 9px; margin-bottom: 9px; font-size: 20px; font=
+-family: Tahoma, Verdana, Segoe, sans-serif !important;">Meals</h5>
+
+                    <table width=3D"100%" class=3D"table table-striped tabl=
+e table-bordered " style=3D"-webkit-box-sizing: border-box; -moz-box-sizing=
+: border-box; box-sizing: border-box; border-collapse: collapse; border-spa=
+cing: 0; background-color: transparent; width: 100%; max-width: 100%; margi=
+n-bottom: 18px; border: 1px solid #ddd; font-family: Tahoma, Verdana, Segoe=
+, sans-serif !important; font-size: 12px;">
+                        <thead class=3D"table-dark" style=3D"-webkit-box-si=
+zing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; colo=
+r: #fff; background-color: #525252; font-family: Tahoma, Verdana, Segoe, sa=
+ns-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Day</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Break First (Rate * Count)</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Lunch (Rate * Count)</th>
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; border-color: #656565=
+; padding: 3px !important; line-height: 1.428571429; vertical-align: bottom=
+; border-bottom: 2px solid #ddd; border: 1px solid #ddd; border-bottom-widt=
+h: 2px; border-top: 0;">Dinner (Rate * Count)</th>
+                            <th class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ border-color: #656565; padding: 3px !important; line-height: 1.428571429; =
+vertical-align: bottom; border-bottom: 2px solid #ddd; border: 1px solid #d=
+dd; border-bottom-width: 2px; border-top: 0;">Total</th>
+                        </tr>
+                        </thead>
+                        <tbody style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+
+                                                                           =
+                                 <tr style=3D"-webkit-box-sizing: border-bo=
+x; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma=
+, Verdana, Segoe, sans-serif !important; background-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 1 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                            <tr style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 2 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                            <tr style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important; backgro=
+und-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 3 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                            <tr style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 4 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                            <tr style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important; backgro=
+und-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 5 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                            <tr style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 6 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                            <tr style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important; backgro=
+und-color: #f9f9f9;">
+                                    <td style=3D"-webkit-box-sizing: border=
+-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Tah=
+oma, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-h=
+eight: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; border=
+: 1px solid #ddd;">Day - 7 </td>
+                                                                           =
+                                     <td style=3D"-webkit-box-sizing: borde=
+r-box; -moz-box-sizing: border-box; box-sizing: border-box; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                           =
+ <td style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; =
+box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !im=
+portant; padding: 3px !important; line-height: 1.428571429; vertical-align:=
+ top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+                                                                           =
+                 Adult : 0 * 4=20
+                                                                           =
+                     Child : 0
+                                                * 1
+
+                                                                           =
+                                                         </td>
+                                                                        <td=
+ class=3D"text-right" style=3D"-webkit-box-sizing: border-box; -moz-box-siz=
+ing: border-box; box-sizing: border-box; text-align: right; font-family: Ta=
+homa, Verdana, Segoe, sans-serif !important; padding: 3px !important; line-=
+height: 1.428571429; vertical-align: top; border-top: 1px solid #ddd; borde=
+r: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                                    </td>
+                                </tr>
+                                                   =20
+                        </tbody>
+                        <tfoot style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+                        <tr style=3D"-webkit-box-sizing: border-box; -moz-b=
+ox-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verdana=
+, Segoe, sans-serif !important;">
+                            <th style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; text-align: left; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important; padding: 3px !importa=
+nt; line-height: 1.428571429; vertical-align: top; border-top: 1px solid #d=
+dd; border: 1px solid #ddd;">Total</th>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Ver=
+dana, Segoe, sans-serif !important; padding: 3px !important; line-height: 1=
+.428571429; vertical-align: top; border-top: 1px solid #ddd; border: 1px so=
+lid #ddd;"></td>
+                            <td class=3D"text-right" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; tex=
+t-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif !important;=
+ padding: 3px !important; line-height: 1.428571429; vertical-align: top; bo=
+rder-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">0.00</strong> USD
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+
+                    <hr style=3D"-webkit-box-sizing: border-box; -moz-box-s=
+izing: border-box; box-sizing: content-box; height: 0; margin-top: 18px; ma=
+rgin-bottom: 18px; border: 0; border-top: 1px solid #eeeeee; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">
+                    <table width=3D"100%" class=3D"table table-striped tabl=
+e table-bordered " style=3D"-webkit-box-sizing: border-box; -moz-box-sizing=
+: border-box; box-sizing: border-box; border-collapse: collapse; border-spa=
+cing: 0; background-color: transparent; width: 100%; max-width: 100%; margi=
+n-bottom: 18px; border: 1px solid #ddd; font-family: Tahoma, Verdana, Segoe=
+, sans-serif !important; font-size: 12px;">
+                        <tfoot style=3D"-webkit-box-sizing: border-box; -mo=
+z-box-sizing: border-box; box-sizing: border-box; font-family: Tahoma, Verd=
+ana, Segoe, sans-serif !important;">
+                       =20
+                       =20
+                                                   =20
+                            <tr id=3D"PP_adult_cost_2" style=3D"-webkit-box=
+-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; f=
+ont-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                                <td colspan=3D"6" align=3D"right" style=3D"=
+-webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bo=
+rder-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important; paddi=
+ng: 3px !important; line-height: 1.428571429; vertical-align: top; border-t=
+op: 1px solid #ddd; border: 1px solid #ddd;">
+<span style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box;=
+ box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !i=
+mportant;">
+                                <span class=3D"text" style=3D"-webkit-box-s=
+izing: border-box; -moz-box-sizing: border-box; box-sizing: border-box; fon=
+t-family: Tahoma, Verdana, Segoe, sans-serif !important;">Cost Per Person D=
+ouble</span> </span>
+                                </td>
+                                <td width=3D"25%" class=3D"col_total text-r=
+ight" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box;=
+ box-sizing: border-box; text-align: right; font-family: Tahoma, Verdana, S=
+egoe, sans-serif !important; padding: 3px !important; line-height: 1.428571=
+429; vertical-align: top; border-top: 1px solid #ddd; border: 1px solid #dd=
+d;">
+
+                                    <strong class=3D"rate" style=3D"-webkit=
+-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: border-bo=
+x; font-weight: bold; font-family: Tahoma, Verdana, Segoe, sans-serif !impo=
+rtant;">
+                                        315.75
+                                    </strong> USD
+                                </td>
+                            </tr>
+                       =20
+
+
+
+                       =20
+                       =20
+
+                       =20
+
+                       =20
+                                                    <tr id=3D"PP_cnb_cost" =
+style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-s=
+izing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !importa=
+nt;">
+                                <td colspan=3D"6" align=3D"right" class=3D"=
+accordion-toggle" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing:=
+ border-box; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, s=
+ans-serif !important; padding: 3px !important; line-height: 1.428571429; ve=
+rtical-align: top; border-top: 1px solid #ddd; border: 1px solid #ddd;"><sp=
+an class=3D"text" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing:=
+ border-box; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, s=
+ans-serif !important;">  Cost Per Child Without Bed</span></td>
+                                <td width=3D"25%" class=3D"col_total  text-=
+right" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box=
+; box-sizing: border-box; text-align: right; font-family: Tahoma, Verdana, =
+Segoe, sans-serif !important; padding: 3px !important; line-height: 1.42857=
+1429; vertical-align: top; border-top: 1px solid #ddd; border: 1px solid #d=
+dd;">
+<strong class=3D"rate" style=3D"-webkit-box-sizing: border-box; -moz-box-si=
+zing: border-box; box-sizing: border-box; font-weight: bold; font-family: T=
+ahoma, Verdana, Segoe, sans-serif !important;">103.00</strong> USD
+                                </td>
+                            </tr>
+
+                                               =20
+
+
+                        <tr class=3D"grand_total" style=3D"-webkit-box-sizi=
+ng: border-box; -moz-box-sizing: border-box; box-sizing: border-box; font-f=
+amily: Tahoma, Verdana, Segoe, sans-serif !important;">
+                            <td class=3D"col_total" colspan=3D"6" align=3D"=
+right" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box=
+; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">Total Tour Cos=
+t</td>
+                            <td class=3D"col_total  text-right" style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif =
+!important; padding: 3px !important; line-height: 1.428571429; vertical-ali=
+gn: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong id=3D"quotation_total_cost" style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-weight: bold; f=
+ont-family: Tahoma, Verdana, Segoe, sans-serif !important;">1,366.00
+
+                                </strong> USD
+                            </td>
+                        </tr>
+                        <tr class=3D"grand_total_without_markup" style=3D"-=
+webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bor=
+der-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                            <td class=3D"col_total" colspan=3D"6" align=3D"=
+right" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box=
+; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">Total Tour Cos=
+t Without Markup</td>
+                            <td class=3D"col_total  text-right" style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif =
+!important; padding: 3px !important; line-height: 1.428571429; vertical-ali=
+gn: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong id=3D"quotation_total_cost" style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-weight: bold; f=
+ont-family: Tahoma, Verdana, Segoe, sans-serif !important;">1,273.61
+
+                                </strong> USD
+                            </td>
+                        </tr>
+
+                        <tr class=3D"grand_total_without_markup" style=3D"-=
+webkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bor=
+der-box; font-family: Tahoma, Verdana, Segoe, sans-serif !important;">
+                            <td class=3D"col_total" colspan=3D"6" align=3D"=
+right" style=3D"-webkit-box-sizing: border-box; -moz-box-sizing: border-box=
+; box-sizing: border-box; font-family: Tahoma, Verdana, Segoe, sans-serif !=
+important; padding: 3px !important; line-height: 1.428571429; vertical-alig=
+n: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">Profit/Loss</t=
+d>
+                            <td class=3D"col_total  text-right" style=3D"-w=
+ebkit-box-sizing: border-box; -moz-box-sizing: border-box; box-sizing: bord=
+er-box; text-align: right; font-family: Tahoma, Verdana, Segoe, sans-serif =
+!important; padding: 3px !important; line-height: 1.428571429; vertical-ali=
+gn: top; border-top: 1px solid #ddd; border: 1px solid #ddd;">
+<strong id=3D"quotation_total_cost" style=3D"-webkit-box-sizing: border-box=
+; -moz-box-sizing: border-box; box-sizing: border-box; font-weight: bold; f=
+ont-family: Tahoma, Verdana, Segoe, sans-serif !important;">92.39
+
+                                </strong> USD
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+
+                </div>
+            </div>
+
+                            <hr style=3D"-webkit-box-sizing: border-box; -m=
+oz-box-sizing: border-box; box-sizing: content-box; height: 0; margin-top: =
+18px; margin-bottom: 18px; border: 0; border-top: 1px solid #eeeeee;">
+                        </div>
+
+    </body> </html>

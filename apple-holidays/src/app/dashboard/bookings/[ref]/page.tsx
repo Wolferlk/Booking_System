@@ -8,7 +8,7 @@ import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
-  Phone, Shield, Edit2, UserCheck, MessageCircle, Send,
+  Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -50,11 +50,23 @@ export default function BookingDetailPage() {
   })
   const [savingBooking, setSavingBooking] = useState(false)
 
+  type FlightEntry = {
+    _key: string; _isNew: boolean; _deleted: boolean
+    id: string; flightNo: string; date: string
+    fromApt: string; depTime: string; toApt: string; arrTime: string
+    airline: string; notes: string
+  }
+  const [editFlightModal, setEditFlightModal] = useState(false)
+  const [flightEditList, setFlightEditList] = useState<FlightEntry[]>([])
+  const [flightChangeReason, setFlightChangeReason] = useState('')
+  const [savingFlights, setSavingFlights] = useState(false)
+
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
   const [waMessage, setWaMessage] = useState('')
   const [waAttachPdf, setWaAttachPdf] = useState(true)
   const [waSending, setWaSending] = useState(false)
+  const [waPdfType, setWaPdfType] = useState<'confirmation' | 'full'>('confirmation')
 
   async function load() {
     try {
@@ -122,6 +134,82 @@ export default function BookingDetailPage() {
   const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
   const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)
 
+  const canEditFlights = ['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role)
+
+  function openEditFlight() {
+    setFlightEditList(
+      (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
+        _key: String(f.id ?? i),
+        _isNew: false,
+        _deleted: false,
+        id: String(f.id ?? ''),
+        flightNo: String(f.flightNo ?? ''),
+        date: f.date ? String(f.date).slice(0, 10) : '',
+        fromApt: String(f.fromApt ?? ''),
+        depTime: String(f.depTime ?? ''),
+        toApt: String(f.toApt ?? ''),
+        arrTime: String(f.arrTime ?? ''),
+        airline: String(f.airline ?? ''),
+        notes: String(f.notes ?? ''),
+      }))
+    )
+    setFlightChangeReason('')
+    setEditFlightModal(true)
+  }
+
+  function updateFlight(key: string, field: string, value: string) {
+    setFlightEditList(prev => prev.map(f => f._key === key ? { ...f, [field]: value } : f))
+  }
+
+  function addNewFlight() {
+    const key = `new-${Date.now()}`
+    setFlightEditList(prev => [...prev, {
+      _key: key, _isNew: true, _deleted: false,
+      id: '', flightNo: '', date: '', fromApt: '', depTime: '',
+      toApt: '', arrTime: '', airline: '', notes: '',
+    }])
+  }
+
+  function removeFlight(key: string) {
+    setFlightEditList(prev => prev.map(f => f._key === key ? { ...f, _deleted: true } : f))
+  }
+
+  async function saveFlightEdits() {
+    if (!flightChangeReason.trim()) { toast.error('Please provide a reason for the change'); return }
+    setSavingFlights(true)
+    try {
+      const active = flightEditList.filter(f => !f._deleted)
+      const deleted = flightEditList.filter(f => f._deleted && !f._isNew)
+
+      const flightUpdates = active.filter(f => !f._isNew).map(({ id, flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes }) => ({
+        id, flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes,
+      }))
+      const flightAdds = active.filter(f => f._isNew).map(({ flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes }) => ({
+        flightNo, date, fromApt, depTime, toApt, arrTime, airline, notes,
+      }))
+      const flightDeletes = deleted.map(f => f.id)
+
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          flightUpdates,
+          flightAdds,
+          flightDeletes,
+          amendmentNote: flightChangeReason,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Flight details updated')
+      setEditFlightModal(false)
+      setFlightChangeReason('')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setSavingFlights(false) }
+  }
+
   function openEditBooking() {
     setBookingForm({
       agent: String(booking.agent ?? ''),
@@ -184,31 +272,75 @@ export default function BookingDetailPage() {
     } finally { setSavingAccom(false) }
   }
 
+  function buildConfirmationMessage(firstName: string): string {
+    return `Hello ${firstName},
+Greetings from Apple Holidays! 🌟
+
+Please find the attached *Tour Confirmation* for your upcoming trip.
+
+*Booking Reference:* ${ref}
+*Travel Dates:* ${booking.arrivalDate ? new Date(booking.arrivalDate as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'} – ${booking.departureDate ? new Date(booking.departureDate as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+*Passengers:* ${booking.paxAdults ?? 0} Adults${(booking.paxChildren as number) > 0 ? `, ${booking.paxChildren} Children` : ''}
+
+Kindly review the attached PDF and confirm:
+✅ All passenger names & passport details are correct
+✅ Accommodation and itinerary are as expected
+✅ Flight details (if any) are accurate
+
+We kindly request the following information:
+1️⃣ Meal preference — Vegetarian or Non-Vegetarian?
+2️⃣ Any special assistance required for seniors or infants?
+
+*Emergency Contacts:*
+📞 Helen: +84 94 959 15 36
+📞 Senthoor Pandian: +91 95852 22335
+📞 Tina: +84 94 516 95 95
+
+Please reply with your confirmation at the earliest.
+Thank you! 🙏
+*Apple Holidays Team*`
+  }
+
+  function buildFullDetailsMessage(firstName: string): string {
+    return `Hello ${firstName},
+Greetings from Apple Holidays! 🌟
+
+Please find the *Full Tour Details & Vouchers* for your upcoming trip to Vietnam.
+
+*Booking Reference:* ${ref}
+*Travel Dates:* ${booking.arrivalDate ? new Date(booking.arrivalDate as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'} – ${booking.departureDate ? new Date(booking.departureDate as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+
+This document includes:
+✅ Complete day-by-day itinerary & tour agenda
+✅ Driver & vehicle assignments
+✅ All tickets and voucher receipts
+
+Please keep this document handy throughout your travel.
+
+*Emergency Contacts:*
+📞 Helen: +84 94 959 15 36
+📞 Senthoor Pandian: +91 95852 22335
+📞 Tina: +84 94 516 95 95
+
+Wishing you a wonderful trip! ✈️
+*Apple Holidays Team*`
+  }
+
   function openWhatsApp() {
     const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
-    const leadName: string = lead?.name ?? 'Guest'
-    const firstName = leadName.split(' ')[0]
+    const firstName = (lead?.name ?? 'Guest').split(' ')[0]
     setWaPhone('')
-    setWaMessage(
-`Hello ${firstName},
-Greetings from Apple Holidays!
-
-We have shared the tour details for your upcoming trip. Kindly review the details and let us know if everything is in order. If you have any questions, notice any mismatch, or if there are changes related to your flight details, please feel free to call us or send a message to this number.
-
-We kindly request you to share the following information:
-1. Meal preference (Vegetarian or Non-Vegetarian)?
-2. If senior travelers or infants travelling with you, along with any specific assistance required for them?
-
-*Emergency contact number*
-1st level: Helen (+84 94 959 15 36)
-2nd level: Senthoor Pandian (+91 95852 22335)
-3rd level: Tina (+84 94 516 95 95)
-
-We look forward to your confirmation.
-Thank you!`,
-    )
+    setWaPdfType('confirmation')
+    setWaMessage(buildConfirmationMessage(firstName))
     setWaAttachPdf(true)
     setWaModal(true)
+  }
+
+  function switchWaPdfType(type: 'confirmation' | 'full') {
+    const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
+    const firstName = (lead?.name ?? 'Guest').split(' ')[0]
+    setWaPdfType(type)
+    setWaMessage(type === 'full' ? buildFullDetailsMessage(firstName) : buildConfirmationMessage(firstName))
   }
 
   async function sendWhatsApp() {
@@ -224,11 +356,12 @@ Thank you!`,
           name:      lead?.name ?? 'Guest',
           message:   waMessage,
           attachPdf: waAttachPdf,
+          pdfType:   waPdfType,
         }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('WhatsApp message sent!')
+      toast.success(`WhatsApp ${waPdfType === 'full' ? 'Full Details' : 'Confirmation'} sent!`)
       setWaModal(false)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
@@ -455,12 +588,21 @@ Thank you!`,
 
           {/* Flights */}
           <Card>
-            <CardHeader>
+            <CardHeader
+              action={canEditFlights ? (
+                <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
+                  <Edit2 className="w-3 h-3" /> Edit
+                </button>
+              ) : undefined}
+            >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Plane className="w-4 h-4 text-slate-400" /> Flights
               </h3>
             </CardHeader>
             <CardBody className="p-0">
+              {flights.length === 0 && (
+                <p className="px-4 py-3 text-xs text-slate-400">No flights recorded</p>
+              )}
               {flights.map((f) => (
                 <div key={f.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
                   <div className="flex items-center justify-between">
@@ -474,6 +616,8 @@ Thank you!`,
                     <span className="font-medium">{f.toApt as string}</span>
                     <span>{f.arrTime as string}</span>
                   </div>
+                  {f.airline && <p className="text-xs text-slate-400 mt-0.5">{f.airline as string}</p>}
+                  {f.notes && <p className="text-xs text-amber-600 mt-0.5">{f.notes as string}</p>}
                 </div>
               ))}
             </CardBody>
@@ -854,11 +998,123 @@ Thank you!`,
         </div>
       </Modal>
 
+      {/* ── Edit Flight Details Modal ────────────────────────────────── */}
+      <Modal
+        open={editFlightModal}
+        onClose={() => setEditFlightModal(false)}
+        title="Update Flight Details"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditFlightModal(false)}>Cancel</Button>
+            <Button loading={savingFlights} onClick={saveFlightEdits}>Save Changes</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700">
+              Use for emergency flight changes only — cancellations, reschedules, or missing flights.
+              This change will be recorded in the activity log.
+            </p>
+          </div>
+
+          <div>
+            <label className="form-label">Reason for change *</label>
+            <textarea
+              className="form-textarea"
+              rows={2}
+              placeholder="e.g. Flight VN123 cancelled — replaced with VN456 departing 14:30"
+              value={flightChangeReason}
+              onChange={e => setFlightChangeReason(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-4">
+            {flightEditList.filter(f => !f._deleted).map((f) => (
+              <div key={f._key} className={`border rounded-xl p-4 space-y-3 ${f._isNew ? 'border-brand-300 bg-brand-50/30' : 'border-slate-200'}`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    {f._isNew ? 'New Flight' : `Flight ${f.flightNo || '—'}`}
+                  </span>
+                  <button
+                    onClick={() => removeFlight(f._key)}
+                    className="text-red-400 hover:text-red-600 flex items-center gap-1 text-xs"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    {f._isNew ? 'Remove' : 'Delete'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="form-label">Flight No *</label>
+                    <input className="form-input font-mono" placeholder="e.g. VN123"
+                      value={f.flightNo}
+                      onChange={e => updateFlight(f._key, 'flightNo', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">Date *</label>
+                    <input type="date" className="form-input"
+                      value={f.date}
+                      onChange={e => updateFlight(f._key, 'date', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">From Airport *</label>
+                    <input className="form-input uppercase" placeholder="e.g. CMB"
+                      value={f.fromApt}
+                      onChange={e => updateFlight(f._key, 'fromApt', e.target.value.toUpperCase())} />
+                  </div>
+                  <div>
+                    <label className="form-label">Departure Time *</label>
+                    <input className="form-input" placeholder="e.g. 08:30"
+                      value={f.depTime}
+                      onChange={e => updateFlight(f._key, 'depTime', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">To Airport *</label>
+                    <input className="form-input uppercase" placeholder="e.g. HAN"
+                      value={f.toApt}
+                      onChange={e => updateFlight(f._key, 'toApt', e.target.value.toUpperCase())} />
+                  </div>
+                  <div>
+                    <label className="form-label">Arrival Time *</label>
+                    <input className="form-input" placeholder="e.g. 14:45"
+                      value={f.arrTime}
+                      onChange={e => updateFlight(f._key, 'arrTime', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">Airline</label>
+                    <input className="form-input" placeholder="e.g. Vietnam Airlines"
+                      value={f.airline}
+                      onChange={e => updateFlight(f._key, 'airline', e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="form-label">Notes</label>
+                    <input className="form-input" placeholder="e.g. Rescheduled due to cancellation"
+                      value={f.notes}
+                      onChange={e => updateFlight(f._key, 'notes', e.target.value)} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={addNewFlight}
+            className="w-full flex items-center justify-center gap-2 py-2.5 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Add Replacement Flight
+          </button>
+        </div>
+      </Modal>
+
       {/* ── WhatsApp modal ────────────────────────────────────────────── */}
       <Modal
         open={waModal}
         onClose={() => setWaModal(false)}
-        title="Send Details via WhatsApp"
+        title="Send via WhatsApp"
         footer={
           <>
             <Button variant="secondary" onClick={() => setWaModal(false)}>Cancel</Button>
@@ -868,34 +1124,84 @@ Thank you!`,
               onClick={sendWhatsApp}
               className="bg-green-600 hover:bg-green-700 text-white border-green-700"
             >
-              {waSending ? 'Sending…' : 'Send WhatsApp'}
+              {waSending
+                ? 'Sending…'
+                : waPdfType === 'full'
+                  ? 'Send Full Details + Vouchers'
+                  : 'Send Tour Confirmation'}
             </Button>
           </>
         }
       >
         <div className="space-y-4">
+
+          {/* PDF Type Selector */}
+          <div>
+            <label className="form-label mb-1">Select Message Type</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => switchWaPdfType('confirmation')}
+                className={`flex flex-col items-start gap-1 rounded-lg border-2 p-3 text-left transition-all ${
+                  waPdfType === 'confirmation'
+                    ? 'border-green-500 bg-green-50'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <span className={`text-xs font-bold uppercase tracking-wide ${waPdfType === 'confirmation' ? 'text-green-700' : 'text-slate-500'}`}>
+                  Send 1
+                </span>
+                <span className="text-sm font-semibold text-slate-800">Tour Confirmation</span>
+                <span className="text-xs text-slate-500 leading-relaxed">
+                  Booking summary · Passengers · Accommodation · Itinerary · Tour Agenda · T&C
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => switchWaPdfType('full')}
+                className={`flex flex-col items-start gap-1 rounded-lg border-2 p-3 text-left transition-all ${
+                  waPdfType === 'full'
+                    ? 'border-green-500 bg-green-50'
+                    : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                <span className={`text-xs font-bold uppercase tracking-wide ${waPdfType === 'full' ? 'text-green-700' : 'text-slate-500'}`}>
+                  Send 2
+                </span>
+                <span className="text-sm font-semibold text-slate-800">Full Details + Vouchers</span>
+                <span className="text-xs text-slate-500 leading-relaxed">
+                  All of Send 1 + Drivers · Tickets & voucher receipts (each on own page)
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Phone */}
           <div>
             <label className="form-label">Client Phone Number *</label>
             <input
               type="tel"
               className="form-input"
-              placeholder="e.g. 94771234567 (with country code, no +)"
+              placeholder="e.g. 94771234567 (country code, no +)"
               value={waPhone}
               onChange={e => setWaPhone(e.target.value)}
             />
-            <p className="text-xs text-slate-400 mt-1">Include country code without + (e.g. 94 for Sri Lanka, 91 for India)</p>
+            <p className="text-xs text-slate-400 mt-1">Include country code without + (94 = Sri Lanka · 91 = India)</p>
           </div>
 
+          {/* Message */}
           <div>
             <label className="form-label">Message</label>
             <textarea
               className="form-textarea font-mono text-xs"
-              rows={14}
+              rows={13}
               value={waMessage}
               onChange={e => setWaMessage(e.target.value)}
             />
           </div>
 
+          {/* Attach PDF toggle */}
           <label className="flex items-center gap-3 cursor-pointer">
             <input
               type="checkbox"
@@ -903,12 +1209,21 @@ Thank you!`,
               checked={waAttachPdf}
               onChange={e => setWaAttachPdf(e.target.checked)}
             />
-            <span className="text-sm text-slate-700">Attach tour details PDF</span>
+            <span className="text-sm text-slate-700">
+              Attach PDF&nbsp;
+              <span className="text-slate-400 text-xs">
+                ({waPdfType === 'full' ? 'Full Details & Vouchers' : 'Tour Confirmation'})
+              </span>
+            </span>
           </label>
 
+          {/* Info bar */}
           <div className="text-xs text-slate-400 bg-slate-50 rounded-lg p-3 border border-slate-100">
-            Booking: <strong>{ref}</strong> · Lead passenger:{' '}
+            Booking: <strong>{ref}</strong> · Lead:{' '}
             <strong>{(booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead)?.name ?? (booking.passengers?.[0]?.name ?? '—')}</strong>
+            {waPdfType === 'full' && (
+              <span className="ml-2 text-amber-600">· Ticket images will be embedded in the PDF</span>
+            )}
           </div>
         </div>
       </Modal>
