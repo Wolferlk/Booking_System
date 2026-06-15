@@ -94,6 +94,9 @@ export async function PUT(
     arrivalDate, departureDate, paxAdults, paxChildren,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
+    // Contact info fields (editable at any booking status)
+    agentEmail, agentPhone, agentWhatsapp,
+    contactEmail, contactPhone, contactWhatsapp,
     // Super Admin can also update passengers, flights, accommodations
     passengers, flights, accommodations,
     // GT/BT/TE can update accommodation room types and vehicle changes
@@ -108,7 +111,15 @@ export async function PUT(
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
 
-  if (!isFlightOnlyUpdate && !isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
+  // Contact info updates are allowed at any booking status
+  const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined ||
+    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined) &&
+    !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
+    !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
+    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
+    !accommodationUpdates && !flightUpdates && !flightAdds && !flightDeletes
+
+  if (!isFlightOnlyUpdate && !isContactOnlyUpdate && !isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
     return buildApiError('Booking cannot be edited in current state')
   }
 
@@ -128,6 +139,12 @@ export async function PUT(
       ...(exclusions !== undefined && { exclusions }),
       ...(policyNotes !== undefined && { policyNotes }),
       ...(amendmentNote !== undefined && { amendmentNote }),
+      ...(agentEmail !== undefined && { agentEmail }),
+      ...(agentPhone !== undefined && { agentPhone }),
+      ...(agentWhatsapp !== undefined && { agentWhatsapp }),
+      ...(contactEmail !== undefined && { contactEmail }),
+      ...(contactPhone !== undefined && { contactPhone }),
+      ...(contactWhatsapp !== undefined && { contactWhatsapp }),
       ...(isSuperAdmin && { version: { increment: 1 } }),
     },
   })

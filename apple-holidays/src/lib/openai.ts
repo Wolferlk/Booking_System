@@ -28,6 +28,17 @@ Schema:
   "terms": "string or null",
   "exclusions": "string or null",
   "policyNotes": "string or null",
+
+  "agentEmail": "string or null — email address of the travel agent / booking company (found in From:, CC:, agent signature, or booking header)",
+  "agentPhone": "string or null — phone/mobile number of the travel agent or company",
+  "agentWhatsapp": "string or null — WhatsApp number of the agent (if labeled WA: or WhatsApp: separately from phone)",
+  "agentCountry": "string or null — country of the travel agent company",
+
+  "contactEmail": "string or null — personal email of the lead tourist / end customer (found in passenger section, 'Guest Email', or different domain from agent)",
+  "contactPhone": "string or null — personal mobile/phone of the lead tourist",
+  "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
+  "contactCountry": "string or null — home country or nationality country of the lead tourist",
+
   "passengers": [
     {
       "name": "string",
@@ -36,7 +47,7 @@ Schema:
       "isLead": "boolean",
       "passport": "string or null",
       "nationality": "string or null",
-      "contact": "string or null"
+      "contact": "string or null — personal phone or WhatsApp of this specific passenger if mentioned"
     }
   ],
   "flights": [
@@ -81,6 +92,14 @@ Schema:
     }
   ]
 }
+
+Contact classification rules:
+- Agent contact (agentEmail / agentPhone): belongs to the travel agency or booking company — found in email headers (From/Reply-To/CC), booking office signatures, or labelled "Agent:", "Company:", "Booking Office:"
+- Customer contact (contactEmail / contactPhone): belongs to the end traveller — found in passenger list, labelled "Guest:", "Tourist:", "Traveller:", "Customer:", or is a personal mobile number next to the lead passenger
+- If a single phone is present with no label, assign it to contactPhone
+- If a single email is present with no label, assign it to agentEmail (confirmation emails usually come from the agent)
+- Extract ALL phone numbers and emails found; classify each carefully as agent or customer
+- WhatsApp numbers are often explicitly labeled "WA:" or are the same as the customer mobile
 
 Be precise and complete. Do not invent data.
 Important: if the document includes both a Tour Ref and an IS Number, use the Tour Ref as bookingRef because the PNL email will link back to it.`

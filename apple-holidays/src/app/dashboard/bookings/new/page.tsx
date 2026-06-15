@@ -37,6 +37,13 @@ export default function NewBookingPage() {
     exclusions: '',
     policyNotes: '',
     amendmentNote: '',
+    // Contact details (auto-filled by AI or entered manually)
+    agentEmail: '',
+    agentPhone: '',
+    agentWhatsapp: '',
+    contactEmail: '',
+    contactPhone: '',
+    contactWhatsapp: '',
   })
 
   const [passengers, setPassengers] = useState<Passenger[]>([
@@ -72,7 +79,13 @@ export default function NewBookingPage() {
       terms: (data.terms as string) || prev.terms,
       exclusions: (data.exclusions as string) || prev.exclusions,
       policyNotes: (data.policyNotes as string) || prev.policyNotes,
-      amendmentNote: (data.amendmentNote as string) || prev.amendmentNote,
+      amendmentNote:  (data.amendmentNote  as string) || prev.amendmentNote,
+      agentEmail:     (data.agentEmail     as string) || prev.agentEmail,
+      agentPhone:     (data.agentPhone     as string) || prev.agentPhone,
+      agentWhatsapp:  (data.agentWhatsapp  as string) || prev.agentWhatsapp,
+      contactEmail:   (data.contactEmail   as string) || prev.contactEmail,
+      contactPhone:   (data.contactPhone   as string) || prev.contactPhone,
+      contactWhatsapp:(data.contactWhatsapp as string) || prev.contactWhatsapp,
     }))
 
     const pax = data.passengers as Passenger[] | undefined
@@ -412,6 +425,55 @@ export default function NewBookingPage() {
                 <label className="form-label">Policy Notes</label>
                 <textarea className="form-textarea" rows={2} value={form.policyNotes}
                   onChange={e => setForm(p => ({ ...p, policyNotes: e.target.value }))} />
+              </div>
+            </div>
+          </Section>
+
+          {/* Contact Information */}
+          <Section title="Contact Information">
+            <p className="text-xs text-slate-500 mb-4">Auto-filled by AI from the document. Verify and correct if needed. Email confirmation will go to Agent email; WhatsApp will be sent to Customer only.</p>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Agent / Travel Company</p>
+                <div>
+                  <label className="form-label text-xs">Agent Email</label>
+                  <input className="form-input" type="email" placeholder="agent@travelco.com"
+                    value={form.agentEmail}
+                    onChange={e => setForm(p => ({ ...p, agentEmail: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="form-label text-xs">Agent Phone</label>
+                  <input className="form-input" type="tel" placeholder="+91 98765 43210"
+                    value={form.agentPhone}
+                    onChange={e => setForm(p => ({ ...p, agentPhone: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="form-label text-xs">Agent WhatsApp</label>
+                  <input className="form-input" type="tel" placeholder="919876543210 (no +)"
+                    value={form.agentWhatsapp}
+                    onChange={e => setForm(p => ({ ...p, agentWhatsapp: e.target.value }))} />
+                </div>
+              </div>
+              <div className="space-y-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Customer / Guest (WhatsApp target)</p>
+                <div>
+                  <label className="form-label text-xs">Customer Email</label>
+                  <input className="form-input" type="email" placeholder="customer@gmail.com"
+                    value={form.contactEmail}
+                    onChange={e => setForm(p => ({ ...p, contactEmail: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="form-label text-xs">Customer Phone</label>
+                  <input className="form-input" type="tel" placeholder="+94 77 123 4567"
+                    value={form.contactPhone}
+                    onChange={e => setForm(p => ({ ...p, contactPhone: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="form-label text-xs">Customer WhatsApp</label>
+                  <input className="form-input" type="tel" placeholder="94771234567 (no +)"
+                    value={form.contactWhatsapp}
+                    onChange={e => setForm(p => ({ ...p, contactWhatsapp: e.target.value }))} />
+                </div>
               </div>
             </div>
           </Section>
