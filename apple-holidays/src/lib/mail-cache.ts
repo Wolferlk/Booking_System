@@ -5,6 +5,20 @@ import { fetchUnprocessedEmailsForUser } from './mail-processor'
 
 type MailboxFilter = 'all' | 'tq' | 'pnl'
 type FolderFilter = 'all' | 'inbox'
+
+// If the Prisma client was generated before the MailMessage model was added to
+// the schema, prisma.mailMessage is undefined. Return null and log clearly so
+// the operator knows to run `npx prisma generate && pm2 restart`.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mm(): any {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const model = (prisma as any).mailMessage
+  if (!model) {
+    console.error('[mail-cache] prisma.mailMessage is undefined — run "npx prisma generate" then restart the server')
+  }
+  return model ?? null
+}
+
 export interface CachedMailboxEmail extends ProcessedEmail {
   mailboxKind: MailboxKind
   mailboxUser: string
@@ -47,8 +61,10 @@ export async function upsertCachedMailMessage(params: {
   status?: 'RECEIVED' | 'PROCESSED' | 'WAITING' | 'ERROR'
   processedAt?: string | Date | null
 }) {
+  const model = mm()
+  if (!model) return
   const { email, mailboxUser, mailboxKind } = params
-  await prisma.mailMessage.upsert({
+  await model.upsert({
     where: { graphId: email.graphId },
     create: {
       graphId: email.graphId,
@@ -138,7 +154,9 @@ export async function listCachedMailboxEmails(params: {
   folder: FolderFilter
   limit: number
 }): Promise<CachedMailboxEmail[]> {
-  const rows = await prisma.mailMessage.findMany({
+  const model = mm()
+  if (!model) return []
+  const rows = await model.findMany({
     where: {
       ...(params.mailbox === 'tq' ? { mailboxKind: 'TOUR_CONFIRMATION' } : params.mailbox === 'pnl' ? { mailboxKind: 'PNL' } : {}),
       ...(params.folder === 'inbox'
@@ -185,7 +203,9 @@ export async function listUnprocessedDbEmails(
   mailboxUser: string,
   limit: number,
 ): Promise<CachedMailboxEmail[]> {
-  const rows = await prisma.mailMessage.findMany({
+  const model = mm()
+  if (!model) return []
+  const rows = await model.findMany({
     where: { mailboxUser, status: 'RECEIVED' },
     orderBy: { receivedAt: 'asc' },
     take: limit,
@@ -219,7 +239,9 @@ export async function listUnprocessedDbEmails(
 
 export async function getCachedProcessedMail(graphIds: string[]) {
   if (!graphIds.length) return []
-  const rows = await prisma.mailMessage.findMany({
+  const model = mm()
+  if (!model) return []
+  const rows = await model.findMany({
     where: {
       graphId: { in: graphIds },
       status: { in: ['PROCESSED', 'WAITING'] },
