@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import {
   getConfiguredMailboxes,
-  fetchUnprocessedEmailsForUser,
   extractEmailSourceTextForUser,
 } from '@/lib/mail-processor'
 import { processMailboxEmail } from '@/lib/incoming-mail-automation'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import { getLessCreditModeEnabled, RECENT_MAIL_WINDOW_MINUTES } from '@/lib/mail-mode'
-import { upsertCachedMailMessage } from '@/lib/mail-cache'
+import { upsertCachedMailMessage, syncMailboxEmailsToDb, listUnprocessedDbEmails } from '@/lib/mail-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,6 +25,8 @@ async function processEmailBatch(
   let skipped = 0
 
   for (const email of emails) {
+    // Dedup: skip emails already marked processed in systemSetting (guards against
+    // race conditions when the webhook and cron fire at the same time)
     const dedupKey = `processed_email_${email.graphId}`
     const already = await prisma.systemSetting.findUnique({ where: { key: dedupKey } })
     if (already) { skipped += 1; continue }
@@ -38,8 +39,10 @@ async function processEmailBatch(
         status: 'RECEIVED',
       }).catch(() => {})
 
+      // Body is already cached in rawBody; this call only hits Graph API for attachments
       const { rawText, attachments } = await extractEmailSourceTextForUser(mailboxUser, email)
       const result = await processMailboxEmail({ ...email, rawBody: rawText }, kind, attachments)
+
       await prisma.systemSetting.upsert({
         where:  { key: dedupKey },
         update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
@@ -64,7 +67,7 @@ async function processEmailBatch(
       }).catch(() => {})
       await prisma.systemSetting.upsert({
         where:  { key: 'mailbox_cron_last_error' },
-        update: { value: `${new Date().toISOString()} | ${mailboxUser} | ${msg.slice(0, 5)}` },
+        update: { value: `${new Date().toISOString()} | ${mailboxUser} | ${msg.slice(0, 500)}` },
         create: { key: 'mailbox_cron_last_error', value: `${new Date().toISOString()} | ${msg.slice(0, 500)}` },
       })
     }
@@ -83,16 +86,28 @@ export async function GET(req: NextRequest) {
   const lessCreditMode = await getLessCreditModeEnabled()
   const cutoffMs = RECENT_MAIL_WINDOW_MINUTES * 60 * 1000
 
-  // All mailboxes (TQ + PNL) are fetched via Microsoft Graph API
-  // getConfiguredMailboxes() returns:
-  //   • confirm.booking@aahaas.com   → TOUR_CONFIRMATION (Azure_* credentials)
-  //   • accounts.payable@aahaas.com  → PNL               (GRAPH_* credentials)
+  // All mailboxes (TQ + PNL) use Microsoft Graph API via the DB cache layer:
+  //   • Incremental sync: only fetches emails newer than the last cron run
+  //   • Body already stored in DB from webhook or prior sync — no redundant Graph API calls
+  //   • Dedup via systemSetting prevents re-processing even if webhook already handled it
   const mailboxes = getConfiguredMailboxes()
+
   for (const mailbox of mailboxes) {
-    const emails = await fetchUnprocessedEmailsForUser(mailbox.user, 25, 'inbox').catch(() => [] as ProcessedEmail[])
+    // 1. Incremental Graph API sync — only emails received since last sync timestamp
+    await syncMailboxEmailsToDb({
+      mailboxUser: mailbox.user,
+      mailboxKind: mailbox.kind,
+      limit: 50,
+      folder: 'inbox',
+    }).catch(() => {})
+
+    // 2. Read all unprocessed (status=RECEIVED) emails from DB cache — no additional Graph API calls
+    const dbEmails = await listUnprocessedDbEmails(mailbox.user, 25).catch(() => [] as ProcessedEmail[])
+
     const scopedEmails = lessCreditMode
-      ? emails.filter(email => Date.now() - new Date(email.date).getTime() <= cutoffMs)
-      : emails
+      ? dbEmails.filter(email => Date.now() - new Date(email.date).getTime() <= cutoffMs)
+      : dbEmails
+
     await processEmailBatch(scopedEmails, mailbox.user, mailbox.kind, summaries)
   }
 

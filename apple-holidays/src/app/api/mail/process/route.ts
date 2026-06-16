@@ -13,7 +13,9 @@ import type { ProcessedEmail } from '@/lib/mail-processor'
 
 function generateRef(base: string | null): string {
   if (base) {
-    const clean = base.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
+    // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
+    const stripped = base.replace(/[A-Z]+$/i, '')
+    const clean = (stripped.length >= 4 ? stripped : base).replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
     if (clean.length >= 4) return clean
   }
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
@@ -128,6 +130,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // For Tour Confirmation: only accept Tour Ref — reject IS/VN numbers
+  if (type === 'TOUR_CONFIRMATION' && extracted.bookingRef) {
+    if (/^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
+      extracted.bookingRef = null
+    }
+  }
+
   const rawBookingRef = generateRef(extracted.bookingRef)
 
   // ── 2. Find or create booking ─────────────────────────────────────────────
@@ -205,6 +214,16 @@ export async function POST(req: NextRequest) {
         currency:       extracted.currency ?? 'USD',
         terms:          extracted.terms,
         exclusions:     extracted.exclusions,
+        agentEmail:     extracted.agentEmail,
+        agentPhone:     extracted.agentPhone,
+        agentWhatsapp:  extracted.agentWhatsapp,
+        agentCountry:   extracted.agentCountry,
+        agentAddress:   extracted.agentAddress,
+        contactEmail:   extracted.contactEmail,
+        contactPhone:   extracted.contactPhone,
+        contactWhatsapp: extracted.contactWhatsapp,
+        contactCountry: extracted.contactCountry,
+        contactAddress: extracted.contactAddress,
         status:         'GT_REVIEW',
         createdById:    session.user.id,
       } as any,

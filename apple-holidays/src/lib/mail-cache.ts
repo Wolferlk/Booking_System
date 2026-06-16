@@ -1,4 +1,5 @@
 import { prisma } from './prisma'
+import type { MailMessage } from '@prisma/client'
 import type { MailboxKind, ProcessedEmail } from './mail-processor'
 import { fetchUnprocessedEmailsForUser } from './mail-processor'
 
@@ -154,7 +155,43 @@ export async function listCachedMailboxEmails(params: {
     take: params.limit,
   })
 
-  return rows.map(row => ({
+  return rows.map((row: MailMessage) => ({
+    uid: row.uid ?? 0,
+    graphId: row.graphId,
+    mailboxKind: row.mailboxKind,
+    mailboxUser: row.mailboxUser,
+    subject: row.subject,
+    from: row.fromAddress,
+    fromName: row.fromName,
+    to: Array.isArray(row.toRecipients) ? (row.toRecipients as string[]) : [],
+    cc: Array.isArray(row.ccRecipients) ? (row.ccRecipients as string[]) : [],
+    date: row.receivedAt.toISOString(),
+    type: row.type as ProcessedEmail['type'],
+    rawBody: row.rawBody,
+    bodyHtml: row.bodyHtml,
+    folder: row.folder,
+    isRead: row.isRead,
+    hasAttachments: row.hasAttachments,
+    importance: row.importance,
+    conversationId: row.conversationId ?? '',
+    parsed: null,
+    status: row.status,
+    bookingRef: row.bookingRef,
+    processedAt: row.processedAt?.toISOString() ?? null,
+  }))
+}
+
+export async function listUnprocessedDbEmails(
+  mailboxUser: string,
+  limit: number,
+): Promise<CachedMailboxEmail[]> {
+  const rows = await prisma.mailMessage.findMany({
+    where: { mailboxUser, status: 'RECEIVED' },
+    orderBy: { receivedAt: 'asc' },
+    take: limit,
+  })
+
+  return rows.map((row: MailMessage) => ({
     uid: row.uid ?? 0,
     graphId: row.graphId,
     mailboxKind: row.mailboxKind,

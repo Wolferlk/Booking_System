@@ -141,7 +141,7 @@ Extract ALL booking details from this email thread. Focus on the MOST RECENT tou
 
 Return ONLY valid JSON matching this exact schema:
 {
-  "bookingRef": "Tour Ref / Tour No / internal booking reference (e.g. 469182CNTL, VN19730)",
+  "bookingRef": "Tour Ref numeric part ONLY — strip any trailing letters like CNTL (e.g. 469182CNTL → \"469182\"). Return null if no Tour Ref is present. Do NOT use IS Number or VN Number.",
   "agentBookingId": "Agent's booking ID (e.g. 402011138462)",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip)",
   "fileHandler": "File handler name (e.g. Yogi)",
@@ -171,8 +171,7 @@ Return ONLY valid JSON matching this exact schema:
   "pnlLines": []
 }
 
-IMPORTANT: Prefer the Tour Ref / Tour No as bookingRef when it exists, because PNL emails link back to that value.
-If no Tour Ref is present, fall back to the best available booking reference such as IS Number or agent reference.
+IMPORTANT: Use ONLY the Tour Ref as bookingRef. Strip any trailing non-numeric suffix before returning (e.g. 469182CNTL → "469182", 463658CNTL → "463658"). Do NOT use IS Number, VN Number, or any agent reference as bookingRef. If no Tour Ref is found, return null for bookingRef.
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, etc.).
 Date format must be YYYY-MM-DD strictly.
@@ -321,7 +320,11 @@ function cleanReference(value: string | null | undefined): string | null {
 
 function extractTourRefFromText(text: string): string | null {
   const match = text.match(/tour\s*ref(?:erence)?\s*[:=#-]?\s*([A-Z0-9][A-Z0-9-]*)/i)
-  return cleanReference(match?.[1])
+  const ref = cleanReference(match?.[1])
+  if (!ref) return null
+  // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
+  const stripped = ref.replace(/[A-Z]+$/i, '')
+  return stripped.length >= 4 ? stripped : null
 }
 
 function extractPnlTourNoFromText(text: string): string | null {

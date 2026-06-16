@@ -16,7 +16,9 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Database } from 'lucide-react'
 import type { ProcessedEmail } from '@/lib/mail-processor'
+import DbMailboxView from './db-mailbox-view'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -358,6 +360,7 @@ function PNLExtraction({ data, bookingRef, isNew, xlsxUsed }: {
 export default function MailInboxPage() {
   const router = useRouter()
 
+  const [mainView, setMainView]           = useState<'live' | 'db'>('live')
   const [emails, setEmails]               = useState<EmailWithMailbox[]>([])
   const [fetching, setFetching]           = useState(true)
   const [polling, setPolling]             = useState(false)
@@ -756,6 +759,34 @@ export default function MailInboxPage() {
       />
 
       <div className="p-6 max-w-5xl space-y-4">
+
+        {/* ── View switcher ─────────────────────────────────────────────── */}
+        <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+          <button
+            onClick={() => setMainView('live')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              mainView === 'live' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Mail className="w-4 h-4" />
+            Live Processing
+          </button>
+          <button
+            onClick={() => setMainView('db')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              mainView === 'db' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Database className="w-4 h-4" />
+            DB Mailbox Store
+          </button>
+        </div>
+
+        {/* ── DB Mailbox view ───────────────────────────────────────────── */}
+        {mainView === 'db' && <DbMailboxView />}
+
+        {/* ── Live view (existing content) ──────────────────────────────── */}
+        {mainView === 'live' && <>
 
         {/* ── Pipeline ──────────────────────────────────────────────────── */}
         <Card className="p-4 bg-gradient-to-r from-slate-50 to-blue-50/30">
@@ -1273,6 +1304,9 @@ export default function MailInboxPage() {
             )}
           </Card>
         )}
+
+        </> /* end live view */}
+
       </div>
     </div>
   )
