@@ -19,7 +19,9 @@ const TICKETABLE_CATEGORIES = new Set(['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'G
 
 function generateRef(base: string | null): string {
   if (base) {
-    const clean = base.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
+    // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
+    const stripped = base.replace(/[A-Z]+$/i, '')
+    const clean = (stripped.length >= 4 ? stripped : base).replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
     if (clean.length >= 4) return clean
   }
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
@@ -311,6 +313,10 @@ async function syncTourConfirmation(
   extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
   createdById: string,
 ): Promise<SyncResult> {
+  // Reject IS/VN numbers — only Tour Ref is valid for booking creation
+  if (extracted.bookingRef && /^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
+    extracted.bookingRef = null
+  }
   const bookingRef = generateRef(extracted.bookingRef)
   const existing = await prisma.booking.findUnique({ where: { bookingRef } })
   const isNew = !existing

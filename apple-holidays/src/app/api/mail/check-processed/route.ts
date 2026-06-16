@@ -16,7 +16,19 @@ export async function POST(req: NextRequest) {
   if (!Array.isArray(graphIds) || graphIds.length === 0) return buildApiSuccess([])
 
   const processed = await getCachedProcessedMail(graphIds)
-  if (processed.length > 0) return buildApiSuccess(processed)
+
+  async function enrichWithBookingCreatedAt(
+    items: { graphId: string; bookingRef: string; processedAt: string | null }[],
+  ) {
+    const refs = items.map(i => i.bookingRef).filter(Boolean)
+    const bookings = refs.length > 0
+      ? await prisma.booking.findMany({ where: { bookingRef: { in: refs } }, select: { bookingRef: true, createdAt: true } })
+      : []
+    const map = new Map(bookings.map(b => [b.bookingRef, b.createdAt.toISOString()]))
+    return items.map(i => ({ ...i, bookingCreatedAt: i.bookingRef ? (map.get(i.bookingRef) ?? null) : null }))
+  }
+
+  if (processed.length > 0) return buildApiSuccess(await enrichWithBookingCreatedAt(processed))
 
   const keys = graphIds.map(id => `processed_email_${id}`)
   const rows = await prisma.systemSetting.findMany({ where: { key: { in: keys } } })
@@ -26,5 +38,5 @@ export async function POST(req: NextRequest) {
     return { graphId, bookingRef, processedAt: processedAt ?? null }
   })
 
-  return buildApiSuccess(fallback)
+  return buildApiSuccess(await enrichWithBookingCreatedAt(fallback))
 }

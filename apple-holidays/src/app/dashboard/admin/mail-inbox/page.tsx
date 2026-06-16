@@ -585,13 +585,13 @@ export default function MailInboxPage() {
         })
         const ckj = await ck.json()
         if (ckj.success && Array.isArray(ckj.data)) {
-          const alreadyProcessed = ckj.data as { graphId: string; bookingRef: string; processedAt: string | null }[]
+          const alreadyProcessed = ckj.data as { graphId: string; bookingRef: string; processedAt: string | null; bookingCreatedAt?: string | null }[]
 
           setResults(prev => {
             const next = new Map(prev)
-            for (const { graphId, bookingRef, processedAt } of alreadyProcessed) {
+            for (const { graphId, bookingRef, processedAt, bookingCreatedAt } of alreadyProcessed) {
               if (!next.has(graphId)) {
-                next.set(graphId, { success: true, data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing', processedAt } })
+                next.set(graphId, { success: true, data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing', processedAt, bookingCreatedAt } })
               }
               autoQueuedRef.current.add(graphId)
             }
