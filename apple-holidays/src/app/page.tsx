@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { MapPin, ArrowRight, Lock, Plane, Globe2 } from 'lucide-react'
+import { MapPin, ArrowRight, Plane, Globe2 } from 'lucide-react'
 
 const DESTINATIONS = [
   {
@@ -11,7 +11,7 @@ const DESTINATIONS = [
     flag: '🇻🇳',
     description: 'Ho Chi Minh · Hanoi · Da Nang · Hoi An',
     active: true,
-    href: '/vietnam',
+    href: '/login?country=vietnam',
     tag: 'Live',
     gradient: 'from-red-600/20 via-red-500/10 to-yellow-500/15',
     border: 'border-red-500/40 hover:border-red-400/60',
@@ -26,15 +26,15 @@ const DESTINATIONS = [
     code: 'MMT_LK',
     flag: '🇱🇰',
     description: 'Colombo · Kandy · Sigiriya · Galle',
-    active: false,
-    href: null,
-    tag: 'Coming Soon',
+    active: true,
+    href: '/login?country=srilanka',
+    tag: 'Live',
     gradient: 'from-yellow-700/10 via-yellow-600/8 to-red-800/10',
     border: 'border-yellow-700/20',
-    glow: '',
-    accent: 'text-yellow-600',
-    dot: 'bg-slate-600',
-    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+    glow: 'hover:shadow-yellow-500/10',
+    accent: 'text-yellow-400',
+    dot: 'bg-emerald-400',
+    tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
   {
     id: 'malaysia',
@@ -42,15 +42,15 @@ const DESTINATIONS = [
     code: 'MMT_MY',
     flag: '🇲🇾',
     description: 'Kuala Lumpur · Penang · Langkawi · Malacca',
-    active: false,
-    href: null,
-    tag: 'Coming Soon',
+    active: true,
+    href: '/login?country=malaysia',
+    tag: 'Live',
     gradient: 'from-blue-600/10 via-blue-500/8 to-red-500/10',
     border: 'border-blue-600/20',
-    glow: '',
-    accent: 'text-blue-500',
-    dot: 'bg-slate-600',
-    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+    glow: 'hover:shadow-blue-500/10',
+    accent: 'text-blue-400',
+    dot: 'bg-emerald-400',
+    tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
   {
     id: 'singapore',
@@ -58,15 +58,15 @@ const DESTINATIONS = [
     code: 'MMT_SG',
     flag: '🇸🇬',
     description: 'Marina Bay · Sentosa · Orchard · Clarke Quay',
-    active: false,
-    href: null,
-    tag: 'Coming Soon',
+    active: true,
+    href: '/login?country=singapore',
+    tag: 'Live',
     gradient: 'from-red-600/10 via-slate-600/8 to-white/5',
     border: 'border-red-600/20',
-    glow: '',
-    accent: 'text-red-500',
-    dot: 'bg-slate-600',
-    tagBg: 'bg-slate-700/40 text-slate-500 border-slate-600/30',
+    glow: 'hover:shadow-red-500/10',
+    accent: 'text-red-400',
+    dot: 'bg-emerald-400',
+    tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
 ]
 
@@ -170,24 +170,17 @@ export default function HomePage() {
               <p className="text-xs text-slate-500 leading-relaxed mb-6">{dest.description}</p>
 
               {/* CTA */}
-              {dest.active ? (
-                <div className={`flex items-center gap-2 text-sm font-bold ${dest.accent} group-hover:gap-3 transition-all`}>
-                  Enter System
-                  <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-xs text-slate-600 font-medium">
-                  <Lock className="w-3.5 h-3.5" />
-                  Not yet available
-                </div>
-              )}
+              <div className={`flex items-center gap-2 text-sm font-bold ${dest.accent} group-hover:gap-3 transition-all`}>
+                Enter System
+                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+              </div>
             </button>
           ))}
         </div>
 
         {/* Sub-info */}
         <p className="mt-10 text-slate-600 text-xs text-center">
-          Only Vietnam (MMT_VN) is currently operational. Other destinations launch soon.
+          Now live for Vietnam, Sri Lanka, Malaysia and Singapore.
         </p>
       </main>
 

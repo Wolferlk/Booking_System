@@ -5,13 +5,13 @@ import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Plus, Search, FileText, Loader2, ArrowRight, Users, Calendar,
-  ArrowUp, ArrowDown, ArrowUpDown,
+  ArrowUp, ArrowDown, ArrowUpDown, Clock, CheckCircle2, XCircle,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
-import { formatDate, formatCurrency } from '@/lib/utils'
+import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { useSession } from 'next-auth/react'
 import type { BookingStatus } from '@prisma/client'
@@ -48,9 +48,11 @@ interface Booking {
   paxChildren: number
   quotedTotal: string
   currency: string
+  createdAt: string
   passengers: { name: string; isLead: boolean }[]
   createdBy: { name: string }
   _count: { changeRequests: number }
+  pnl: { id: string } | null
 }
 
 function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortField; sortDir: SortDir }) {
@@ -241,6 +243,15 @@ function BookingsPageInner() {
                     <th>Quoted</th>
                     <th>Status</th>
                     <th>Handler</th>
+                    <th>
+                      <button
+                        className="flex items-center whitespace-nowrap hover:text-brand-700 transition-colors"
+                        onClick={() => toggleSort('createdAt')}
+                      >
+                        Created <SortIcon field="createdAt" sortBy={sortBy} sortDir={sortDir} />
+                      </button>
+                    </th>
+                    <th>PNL</th>
                     <th />
                   </tr>
                 </thead>
@@ -286,6 +297,23 @@ function BookingsPageInner() {
                         </td>
                         <td><StatusBadge status={b.status} /></td>
                         <td className="text-slate-500 text-xs">{b.fileHandler ?? b.createdBy?.name ?? '—'}</td>
+                        <td>
+                          <div className="flex items-center gap-1 text-xs text-slate-500 whitespace-nowrap">
+                            <Clock className="w-3 h-3 flex-shrink-0" />
+                            {formatDateTime(b.createdAt)}
+                          </div>
+                        </td>
+                        <td>
+                          {b.pnl ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                              <CheckCircle2 className="w-3 h-3" /> Merged
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                              <XCircle className="w-3 h-3" /> Not Merged
+                            </span>
+                          )}
+                        </td>
                         <td>
                           <ArrowRight className="w-4 h-4 text-slate-300" />
                         </td>

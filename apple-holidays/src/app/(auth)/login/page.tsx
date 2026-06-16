@@ -7,6 +7,13 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import { Eye, EyeOff, Loader2, ChevronLeft, FileText, Truck, MapPin, BarChart2, Globe, Shield } from 'lucide-react'
 
+const DESTINATION_META: Record<string, { label: string; flag: string; code: string }> = {
+  vietnam: { label: 'Vietnam', flag: '🇻🇳', code: 'MMT_VN' },
+  srilanka: { label: 'Sri Lanka', flag: '🇱🇰', code: 'MMT_LK' },
+  malaysia: { label: 'Malaysia', flag: '🇲🇾', code: 'MMT_MY' },
+  singapore: { label: 'Singapore', flag: '🇸🇬', code: 'MMT_SG' },
+}
+
 const ROLE_META: Record<string, {
   label: string
   email: string
@@ -76,7 +83,9 @@ function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const roleParam = searchParams.get('role') ?? ''
+  const countryParam = searchParams.get('country') ?? ''
   const roleMeta = ROLE_META[roleParam] ?? null
+  const destinationMeta = DESTINATION_META[countryParam]
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -128,11 +137,11 @@ function LoginForm() {
         {/* Back nav */}
         <div className="flex items-center gap-4 mb-8">
           <Link
-            href="/vietnam"
+            href="/"
             className="flex items-center gap-1.5 text-slate-500 hover:text-white transition-colors text-sm group"
           >
             <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-            Back to portals
+            Back to destinations
           </Link>
         </div>
 
@@ -144,9 +153,19 @@ function LoginForm() {
             </div>
             <div className="text-left">
               <p className="text-white font-bold text-xl leading-tight">AppleHolidays</p>
-              <p className="text-slate-500 text-xs tracking-wider">MMT Vietnam</p>
+              <p className="text-slate-500 text-xs tracking-wider">Multi-Destination Platform</p>
             </div>
           </div>
+
+          {destinationMeta && (
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 mb-4">
+              <span className="text-xl">{destinationMeta.flag}</span>
+              <div className="text-left">
+                <p className="text-sm font-bold text-white leading-tight">{destinationMeta.label}</p>
+                <p className="text-[11px] text-slate-500 tracking-wider uppercase">{destinationMeta.code}</p>
+              </div>
+            </div>
+          )}
 
           {/* Role indicator */}
           {roleMeta && RoleIcon ? (
@@ -247,7 +266,7 @@ function LoginForm() {
         </div>
 
         <p className="text-center text-slate-700 text-xs mt-6">
-          © {new Date().getFullYear()} AppleHolidays MMT Vietnam
+          © {new Date().getFullYear()} AppleHolidays Multi-Destination
         </p>
       </div>
     </div>

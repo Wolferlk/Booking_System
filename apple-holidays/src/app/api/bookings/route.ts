@@ -78,6 +78,7 @@ export async function GET(req: NextRequest) {
         passengers: { where: { isLead: true }, take: 1 },
         createdBy: { select: { id: true, name: true, role: true } },
         _count: { select: { changeRequests: true } },
+        pnl: { select: { id: true } },
       },
     }),
   ])
