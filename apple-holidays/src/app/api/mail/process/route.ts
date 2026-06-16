@@ -321,7 +321,7 @@ export async function POST(req: NextRequest) {
     }
     await prisma.pNLLineItem.deleteMany({ where: { pnlId: pnl.id } })
 
-    const ticketCats = ['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS']
+    const ticketCats = ['HOTEL', 'TRANSPORT', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS']
     for (let i = 0; i < classifiedLines.length; i++) {
       const l = classifiedLines[i]
       const created = await prisma.pNLLineItem.create({

@@ -9,6 +9,7 @@ import type { UserRole, PNLCategory } from '@prisma/client'
 // Categories that should generate an auto-ticket for the ground team
 const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
   HOTEL:          'Hotel Voucher',
+  TRANSPORT:      'Transfer Voucher',
   TICKETS:        'Entrance Ticket',
   GUIDES:         'Guide Service',
   CRUISE:         'Cruise Ticket',

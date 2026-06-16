@@ -155,11 +155,11 @@ export async function classifyPNLCategories(activities: string[]): Promise<strin
   const prompt = `You are a Vietnam travel operations expert classifying P&L line items for AppleHolidays (MMT Vietnam).
 
 CATEGORIES (pick exactly one per activity):
-- HOTEL: hotel/resort stays, airport-to-hotel transfers, hotel check-in/check-out transfers, accommodation
-- TRANSPORT: pure ground transport NOT hotel-related (cab, private car between cities, day trip vehicle hire)
-- CRUISE: Ha Long Bay cruise, boat trips, yacht, river cruise, junk boat
-- GUIDES: guided walking tours, city tours, day tours with guide, sightseeing
-- TICKETS: entrance tickets, admission, cable car, theme park, night shows, "Ba Na", attraction passes
+- HOTEL: accommodation stays only — hotel/resort/villa/homestay check-in or check-out (NO transfers)
+- TRANSPORT: ANY transfer or vehicle service — private transfers, airport↔hotel transfers, cab, taxi, private car, bus, SIC transfer, limousine, shuttle
+- CRUISE: Ha Long Bay cruise, boat trips, yacht, river cruise, junk boat, overnight cruise
+- GUIDES: guided day tours, sightseeing tours, city tours, walking tours, SIC tours (not cruise/tickets)
+- TICKETS: entrance tickets, admission, cable car, theme park, night shows, "Ba Na", attraction passes, combo tickets
 - WATER: water sports, kayaking, snorkeling, diving, swimming, surfing
 - FLIGHT_TICKETS: airline/domestic flight tickets
 - MEALS: restaurant meals, food tours (NOT meals included in a package)
@@ -167,12 +167,14 @@ CATEGORIES (pick exactly one per activity):
 - OTHER: anything else
 
 IMPORTANT RULES:
-- "Airport to [Hotel name]" or "[Hotel] to Airport" → HOTEL (hotel-related transfer)
-- "Ha Long / Halong / cruise / boat" → CRUISE
-- "Fansipan / trekking / hiking" → GUIDES
-- "Ticket / entrance / Ba Na / cable car" → TICKETS
-- "Two-way transfer between cities" → TRANSPORT
-- "Cab service / Grab / taxi" → TRANSPORT
+- "Private Transfer" / "Private Transfers" → ALWAYS TRANSPORT, even if the name contains "Hotel" or "Airport"
+- "[Hotel] to Airport" or "Airport to [Hotel]" → TRANSPORT (it is a vehicle service, not accommodation)
+- "SIC transfer" alone → TRANSPORT; "SIC tour/cruise" → GUIDES or CRUISE
+- Pure hotel/resort name with no transfer keyword → HOTEL
+- "Ha Long / Halong / cruise / boat / overnight cruise" → CRUISE
+- "Fansipan / trekking / hiking / sightseeing" → GUIDES
+- "Ticket / entrance / cable car / theme park / VinWonders / Aquatopia / Safari combo" → TICKETS
+- "Two-way transfer between cities / cab / Grab / taxi / limousine" → TRANSPORT
 
 Return JSON: { "categories": ["HOTEL", "CRUISE", ...] } — same order as input, one per activity.
 
