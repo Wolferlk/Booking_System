@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download, Mail,
-  ShieldAlert,
+  ShieldAlert, Table2,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -16,7 +16,7 @@ import type { UserRole } from '@prisma/client'
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, Truck, Home, Download, Mail, ShieldAlert,
+  Users, Shield, Settings, Globe, Truck, Home, Download, Mail, ShieldAlert, Table2,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
@@ -31,6 +31,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   GT_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
+    { label: 'MC Report', href: '/dashboard/mc-report', icon: 'Table2' },
     { label: 'Tickets', href: '/dashboard/ground/tickets', icon: 'Ticket' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
     { label: 'Vendors', href: '/dashboard/ground/vendors', icon: 'Truck' },
@@ -42,6 +43,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Review Queue',       href: '/dashboard/te/review',      icon: 'ClipboardCheck' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',     icon: 'Ticket' },
     { label: 'All Bookings',       href: '/dashboard/bookings',       icon: 'FileText' },
+    { label: 'MC Report',          href: '/dashboard/mc-report',      icon: 'Table2' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',    icon: 'Phone' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',   icon: 'Bell' },
   ],
@@ -65,6 +67,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',       icon: 'Ticket' },
     { label: 'Ground Review',      href: '/dashboard/ground/review',    icon: 'ClipboardCheck' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments', icon: 'MapPin' },
+    { label: 'MC Report',          href: '/dashboard/mc-report',         icon: 'Table2' },
     { label: 'Credit Agents', href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
