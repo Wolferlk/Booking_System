@@ -4,7 +4,10 @@
 **Example Booking:** `https://holidays-booking.aahaas.com/dashboard/bookings/VN19662`  
 **API Base URL:** `https://holidays-booking.aahaas.com/api`
 
-> All API endpoints require an authenticated session cookie (`next-auth.session-token`).  
+> `GET /api/bookings/full/[ref]` is public read-only and does not require login.  
+> `POST` and `PUT` on the same endpoint still require an authenticated NextAuth session cookie.  
+> On local HTTP this is usually `next-auth.session-token`; on production HTTPS it is often  
+> `__Secure-next-auth.session-token`. Use the exact cookie name/value from your logged-in browser session when writing.  
 > For server-to-server calls use the `Authorization: Bearer <CRON_SECRET>` header on cron routes,  
 > or pass the session cookie from your browser for manual testing.
 
@@ -48,7 +51,6 @@ GET /api/bookings/full/{tourRef}
 **Example:**
 ```bash
 curl -s \
-  -H "Cookie: next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/VN19662" \
   | jq .
 ```
@@ -253,7 +255,7 @@ POST /api/bookings/full/{tourRef}
 ```bash
 curl -s -X POST \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/464660" \
   -d '{
     "bookingRef":    "464660",
@@ -342,7 +344,7 @@ accommodations, agendaItems) perform a **full replace** of that section when inc
 ```bash
 curl -s -X PUT \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/VN19662" \
   -d '{
     "paxAdults":   3,
@@ -356,7 +358,7 @@ curl -s -X PUT \
 ```bash
 curl -s -X PUT \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/VN19662" \
   -d '{
     "flights": [
@@ -387,7 +389,7 @@ curl -s -X PUT \
 ```bash
 curl -s -X PUT \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/VN19662" \
   -d '{
     "agendaItems": [
@@ -418,7 +420,7 @@ curl -s -X PUT \
 ```bash
 curl -s -X PUT \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/VN19662" \
   -d '{
     "assignDriver": {
@@ -438,7 +440,7 @@ curl -s -X PUT \
 ```bash
 curl -s -X PUT \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/bookings/full/VN19662" \
   -d '{
     "accommodations": [
@@ -503,7 +505,7 @@ These are existing routes at `/api/bookings/[ref]/...`:
 ```bash
 curl -s -X POST \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/mail/process" \
   -d '{
     "emailType":   "TOUR_CONFIRMATION",
@@ -519,7 +521,7 @@ curl -s -X POST \
 ```bash
 curl -s -X POST \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=<your-token>" \
+  -H "Cookie: __Secure-next-auth.session-token=<your-token>" \
   "https://holidays-booking.aahaas.com/api/mail/process" \
   -d '{
     "emailType":   "PNL",

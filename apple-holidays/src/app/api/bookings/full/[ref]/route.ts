@@ -66,12 +66,6 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { ref: string } },
 ) {
-  const session = await getServerSession(authOptions)
-  if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'GT_USER', 'SUPER_ADMIN'].includes(session.user.role)) {
-    return buildApiError('Forbidden', 403)
-  }
-
   const ref = params.ref.trim()
 
   // Accept numeric-only refs: "464660" finds "464660" directly
