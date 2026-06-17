@@ -27,7 +27,7 @@ export default function PrintBookingPage() {
   )
 
   const role = session?.user?.role ?? ''
-  const allowedRoles = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN']
+  const allowedRoles = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
   if (!allowedRoles.includes(role)) return (
     <div className="flex items-center justify-center min-h-screen text-red-500 text-sm">Access denied.</div>
   )

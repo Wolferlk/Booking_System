@@ -53,6 +53,15 @@ interface Booking {
   createdBy: { name: string }
   _count: { changeRequests: number }
   pnl: { id: string } | null
+  operationCountry: string | null
+  isNumber: string | null
+}
+
+const COUNTRY_BADGE: Record<string, { flag: string; label: string; color: string }> = {
+  VIETNAM:            { flag: '🇻🇳', label: 'Vietnam',     color: 'bg-red-500/10 text-red-400 border-red-500/20' },
+  SRILANKA:           { flag: '🇱🇰', label: 'Sri Lanka',   color: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' },
+  SINGAPORE_MALAYSIA: { flag: '🇸🇬', label: 'SG & MY',     color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  ALL:                { flag: '🌐', label: 'All',          color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 }
 
 function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortField; sortDir: SortDir }) {
@@ -108,7 +117,7 @@ function BookingsPageInner() {
   }
 
   const role      = session?.user?.role
-  const canCreate = ['BT_USER', 'SUPER_ADMIN'].includes(role ?? '')
+  const canCreate = ['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role ?? '')
 
   return (
     <div>
@@ -221,6 +230,7 @@ function BookingsPageInner() {
                 <thead>
                   <tr>
                     <th>Booking Ref</th>
+                    <th>Country</th>
                     <th>Lead Passenger</th>
                     <th>Agent</th>
                     <th>
@@ -266,10 +276,24 @@ function BookingsPageInner() {
                       >
                         <td>
                           <span className="font-semibold text-slate-900 font-mono">{b.bookingRef}</span>
+                          {b.isNumber && (
+                            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-400">
+                              {b.isNumber}
+                            </span>
+                          )}
                           {b._count.changeRequests > 0 && (
                             <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700">
                               {b._count.changeRequests} change{b._count.changeRequests > 1 ? 's' : ''}
                             </span>
+                          )}
+                        </td>
+                        <td>
+                          {b.operationCountry && COUNTRY_BADGE[b.operationCountry] ? (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${COUNTRY_BADGE[b.operationCountry].color}`}>
+                              {COUNTRY_BADGE[b.operationCountry].flag} {COUNTRY_BADGE[b.operationCountry].label}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
                           )}
                         </td>
                         <td>{lead?.name ?? '—'}</td>

@@ -81,9 +81,9 @@ export default function TicketsPage() {
   const [editForm, setEditForm]     = useState({ type: '', supplier: '', qty: '', costPerUnit: '', reference: '', notes: '' })
   const [editSaving, setEditSaving] = useState(false)
 
-  const canCreate   = ['GT_USER', 'SUPER_ADMIN'].includes(role)
-  const canPurchase = ['GT_USER', 'SUPER_ADMIN'].includes(role)
-  const canUpload   = ['GT_USER', 'SUPER_ADMIN'].includes(role)
+  const canCreate   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canPurchase = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canUpload   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   async function load() {
     try {

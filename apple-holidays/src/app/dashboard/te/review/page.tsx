@@ -21,7 +21,7 @@ export default function TEReviewPage() {
   const [filter, setFilter] = useState<'GT_REVIEW' | 'GT_VERIFIED' | 'all'>('GT_REVIEW')
 
   useEffect(() => {
-    if (role && !['TE_USER', 'SUPER_ADMIN'].includes(role)) {
+    if (role && !['TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
       router.replace('/dashboard')
       return
     }

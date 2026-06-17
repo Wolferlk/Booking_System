@@ -84,8 +84,8 @@ export default function AgendaPage() {
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
 
-  const canEdit   = ['BT_USER', 'GT_USER', 'SUPER_ADMIN'].includes(role)
-  const canAssign = ['GT_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit   = ['BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canAssign = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   const loadAgenda = useCallback(async () => {
     try {

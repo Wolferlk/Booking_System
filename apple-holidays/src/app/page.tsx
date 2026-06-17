@@ -11,7 +11,7 @@ const DESTINATIONS = [
     flag: '🇻🇳',
     description: 'Ho Chi Minh · Hanoi · Da Nang · Hoi An',
     active: true,
-    href: '/login?country=vietnam',
+    href: '/vietnam',
     tag: 'Live',
     gradient: 'from-red-600/20 via-red-500/10 to-yellow-500/15',
     border: 'border-red-500/40 hover:border-red-400/60',
@@ -27,7 +27,7 @@ const DESTINATIONS = [
     flag: '🇱🇰',
     description: 'Colombo · Kandy · Sigiriya · Galle',
     active: true,
-    href: '/login?country=srilanka',
+    href: '/srilanka',
     tag: 'Live',
     gradient: 'from-yellow-700/10 via-yellow-600/8 to-red-800/10',
     border: 'border-yellow-700/20',
@@ -37,36 +37,36 @@ const DESTINATIONS = [
     tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
   {
-    id: 'malaysia',
-    name: 'Malaysia',
-    code: 'MMT_MY',
-    flag: '🇲🇾',
-    description: 'Kuala Lumpur · Penang · Langkawi · Malacca',
-    active: true,
-    href: '/login?country=malaysia',
-    tag: 'Live',
-    gradient: 'from-blue-600/10 via-blue-500/8 to-red-500/10',
-    border: 'border-blue-600/20',
-    glow: 'hover:shadow-blue-500/10',
-    accent: 'text-blue-400',
-    dot: 'bg-emerald-400',
-    tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-  },
-  {
     id: 'singapore',
-    name: 'Singapore',
-    code: 'MMT_SG',
-    flag: '🇸🇬',
-    description: 'Marina Bay · Sentosa · Orchard · Clarke Quay',
+    name: 'Singapore & Malaysia',
+    code: 'MMT_SG_MY',
+    flag: '🇸🇬🇲🇾',
+    description: 'Marina Bay · Sentosa · KL · Langkawi · Penang',
     active: true,
-    href: '/login?country=singapore',
+    href: '/singapore',
     tag: 'Live',
-    gradient: 'from-red-600/10 via-slate-600/8 to-white/5',
+    gradient: 'from-red-600/10 via-blue-600/8 to-white/5',
     border: 'border-red-600/20',
     glow: 'hover:shadow-red-500/10',
     accent: 'text-red-400',
     dot: 'bg-emerald-400',
     tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+  },
+  {
+    id: 'ultra',
+    name: 'All Countries',
+    code: 'ULTRA_ADMIN',
+    flag: '🌐',
+    description: 'Global view · All operations · Critical access',
+    active: true,
+    href: '/ultra',
+    tag: 'Restricted',
+    gradient: 'from-amber-600/15 via-amber-500/8 to-orange-500/10',
+    border: 'border-amber-500/40 hover:border-amber-400/60',
+    glow: 'hover:shadow-amber-500/10',
+    accent: 'text-amber-400',
+    dot: 'bg-amber-400',
+    tagBg: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
   },
 ]
 
@@ -139,7 +139,7 @@ export default function HomePage() {
         </div>
 
         {/* Destination Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 w-full max-w-5xl">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5 w-full max-w-6xl">
           {DESTINATIONS.map(dest => (
             <button
               key={dest.id}

@@ -78,10 +78,10 @@ export async function PUT(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  const isSuperAdmin = role === 'SUPER_ADMIN'
-  // GT, BT, TE can edit accommodation/vehicle fields during change requests
+  const isSuperAdmin = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  // GT, BT, TE, GT_TE can edit accommodation/vehicle fields during change requests
   const canEdit = isSuperAdmin || hasPermission(role, 'booking:edit') ||
-    ['GT_USER', 'BT_USER', 'TE_USER'].includes(role)
+    ['GT_USER', 'BT_USER', 'TE_USER', 'GT_TE_USER'].includes(role)
 
   if (!canEdit) return buildApiError('Forbidden', 403)
 
@@ -97,6 +97,8 @@ export async function PUT(
     // Contact info fields (editable at any booking status)
     agentEmail, agentPhone, agentWhatsapp,
     contactEmail, contactPhone, contactWhatsapp,
+    // Country (always editable)
+    operationCountry,
     // Super Admin can also update passengers, flights, accommodations
     passengers, flights, accommodations,
     // GT/BT/TE can update accommodation room types and vehicle changes
@@ -111,9 +113,10 @@ export async function PUT(
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
 
-  // Contact info updates are allowed at any booking status
+  // Contact info and country updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined ||
-    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined) &&
+    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined ||
+    operationCountry !== undefined) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
@@ -145,6 +148,7 @@ export async function PUT(
       ...(contactEmail !== undefined && { contactEmail }),
       ...(contactPhone !== undefined && { contactPhone }),
       ...(contactWhatsapp !== undefined && { contactWhatsapp }),
+      ...(operationCountry !== undefined && { operationCountry }),
       ...(isSuperAdmin && { version: { increment: 1 } }),
     },
   })

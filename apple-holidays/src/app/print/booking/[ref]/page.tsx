@@ -84,7 +84,7 @@ export default function PrintBookingPage() {
   }, [ref, authStatus])
 
   const role = session?.user?.role ?? ''
-  const isStaff = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
+  const isStaff = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canSeePnl = ['BT_USER', 'SUPER_ADMIN', 'AC_USER'].includes(role)
 
   if (authStatus === 'loading' || loading) return (

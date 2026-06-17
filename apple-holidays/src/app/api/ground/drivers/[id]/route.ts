@@ -36,7 +36,7 @@ export async function PUT(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['GT_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const driver = await prisma.driver.findUnique({ where: { id: params.id } })
   if (!driver) return buildApiError('Driver not found', 404)

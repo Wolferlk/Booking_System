@@ -43,15 +43,18 @@ type SortDir   = 'asc' | 'desc'
 const ROLE_COLORS: Record<UserRole, 'blue' | 'green' | 'purple' | 'orange' | 'gray' | 'red'> = {
   BT_USER: 'blue', GT_USER: 'green', TE_USER: 'purple',
   AC_USER: 'orange', CLIENT: 'gray', SUPER_ADMIN: 'red',
+  GT_TE_USER: 'green', ULTRA_SUPER_ADMIN: 'orange',
 }
 
 const ROLE_BG: Record<UserRole, string> = {
-  BT_USER:    'bg-blue-500',
-  GT_USER:    'bg-emerald-500',
-  TE_USER:    'bg-purple-500',
-  AC_USER:    'bg-orange-500',
-  CLIENT:     'bg-slate-400',
-  SUPER_ADMIN:'bg-red-500',
+  BT_USER:           'bg-blue-500',
+  GT_USER:           'bg-emerald-500',
+  TE_USER:           'bg-purple-500',
+  AC_USER:           'bg-orange-500',
+  CLIENT:            'bg-slate-400',
+  SUPER_ADMIN:       'bg-red-500',
+  GT_TE_USER:        'bg-teal-500',
+  ULTRA_SUPER_ADMIN: 'bg-amber-500',
 }
 
 const ALL_ROLES = Object.entries(ROLE_LABELS) as [UserRole, string][]
@@ -365,6 +368,19 @@ export default function UsersPage() {
       />
 
       <div className="p-6 space-y-5">
+
+        {/* ── Ultra Super Admin identity banner ────────────────────────────── */}
+        {(session?.user?.role as string) === 'ULTRA_SUPER_ADMIN' && (
+          <div className="flex items-center gap-3 px-5 py-3.5 rounded-xl bg-amber-50 border border-amber-200">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center flex-shrink-0 shadow-sm">
+              <Key className="w-4 h-4 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-amber-800">Ultra Super Admin — Full System Control</p>
+              <p className="text-xs text-amber-600 mt-0.5">You can create, edit, and delete users across all countries. Changes are logged in the audit trail.</p>
+            </div>
+          </div>
+        )}
 
         {/* ── Stats ──────────────────────────────────────────────────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
@@ -893,9 +909,11 @@ export default function UsersPage() {
             <div>
               <p className="text-xs font-semibold text-blue-700">{ROLE_LABELS[form.role]} — Access Level</p>
               <p className="text-[11px] text-blue-600 mt-0.5">
-                {form.role === 'SUPER_ADMIN' && 'Full system access including user management, danger zone, and all admin functions.'}
+                {form.role === 'ULTRA_SUPER_ADMIN' && '🌐 System owner — all-countries access, all modules, user management & danger zone. Requires critical password on login.'}
+                {form.role === 'SUPER_ADMIN' && 'Full country access — user management, danger zone, and all admin functions for the assigned country.'}
                 {form.role === 'BT_USER'     && 'Booking creation, confirmation, P&L management, and mail inbox.'}
                 {form.role === 'GT_USER'     && 'Ground operations: assignments, tickets, drivers, vendors, and MC report.'}
+                {form.role === 'GT_TE_USER'  && 'Combined ground + travel experience — assignments, reminders, payments (used in SL & SG/MY).'}
                 {form.role === 'TE_USER'     && 'Travel experience: live overview, analytics, ticket & voucher management.'}
                 {form.role === 'AC_USER'     && 'Accounts: P&L management, profit dashboard, credit agents, and reports.'}
                 {form.role === 'CLIENT'      && 'Read-only access to client portal — cannot access the dashboard.'}

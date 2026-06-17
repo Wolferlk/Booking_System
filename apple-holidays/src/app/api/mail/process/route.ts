@@ -10,6 +10,7 @@ import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
 import { upsertCachedMailMessage } from '@/lib/mail-cache'
 import type { ProcessedEmail } from '@/lib/mail-processor'
+import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 
 function generateRef(base: string | null): string {
   if (base) {
@@ -24,7 +25,7 @@ function generateRef(base: string | null): string {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
   const { rawBody, subject, emailType, graphId, mailboxUser } = body as {
@@ -139,6 +140,11 @@ export async function POST(req: NextRequest) {
 
   const rawBookingRef = generateRef(extracted.bookingRef)
 
+  // Detect operation country from IS/VN/SG/MY number prefix or subject/body keywords
+  const detectedCountry =
+    detectCountryFromRef(rawBookingRef) ??
+    detectCountryFromText(subject ?? '', rawBody)
+
   // ── 2. Find or create booking ─────────────────────────────────────────────
   // Try exact match first, then numeric-suffix fallback
   // (handles "IS48369" vs "IS 48369", or PNL giving "48369" vs TQ stored "IS48369")
@@ -203,29 +209,30 @@ export async function POST(req: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: {
         bookingRef,
-        agentBookingId: extracted.agentBookingId,
-        agent:          extracted.agent ?? 'Unknown Agent',
-        fileHandler:    extracted.fileHandler,
-        arrivalDate:    new Date(extracted.arrivalDate),
-        departureDate:  new Date(extracted.departureDate),
-        paxAdults:      extracted.paxAdults,
-        paxChildren:    extracted.paxChildren,
-        quotedTotal:    extracted.quotedTotal ?? undefined,
-        currency:       extracted.currency ?? 'USD',
-        terms:          extracted.terms,
-        exclusions:     extracted.exclusions,
-        agentEmail:     extracted.agentEmail,
-        agentPhone:     extracted.agentPhone,
-        agentWhatsapp:  extracted.agentWhatsapp,
-        agentCountry:   extracted.agentCountry,
-        agentAddress:   extracted.agentAddress,
-        contactEmail:   extracted.contactEmail,
-        contactPhone:   extracted.contactPhone,
-        contactWhatsapp: extracted.contactWhatsapp,
-        contactCountry: extracted.contactCountry,
-        contactAddress: extracted.contactAddress,
-        status:         'GT_REVIEW',
-        createdById:    session.user.id,
+        agentBookingId:   extracted.agentBookingId,
+        agent:            extracted.agent ?? 'Unknown Agent',
+        fileHandler:      extracted.fileHandler,
+        arrivalDate:      new Date(extracted.arrivalDate),
+        departureDate:    new Date(extracted.departureDate),
+        paxAdults:        extracted.paxAdults,
+        paxChildren:      extracted.paxChildren,
+        quotedTotal:      extracted.quotedTotal ?? undefined,
+        currency:         extracted.currency ?? 'USD',
+        terms:            extracted.terms,
+        exclusions:       extracted.exclusions,
+        agentEmail:       extracted.agentEmail,
+        agentPhone:       extracted.agentPhone,
+        agentWhatsapp:    extracted.agentWhatsapp,
+        agentCountry:     extracted.agentCountry,
+        agentAddress:     extracted.agentAddress,
+        contactEmail:     extracted.contactEmail,
+        contactPhone:     extracted.contactPhone,
+        contactWhatsapp:  extracted.contactWhatsapp,
+        contactCountry:   extracted.contactCountry,
+        contactAddress:   extracted.contactAddress,
+        operationCountry: detectedCountry ?? undefined,
+        status:           'GT_REVIEW',
+        createdById:      session.user.id,
       } as any,
     })
     bookingId = created.id
@@ -398,6 +405,7 @@ export async function POST(req: NextRequest) {
       mailboxUser,
       mailboxKind: type,
       bookingRef,
+      operationCountry: detectedCountry,
       status: 'PROCESSED',
       processedAt,
     }).catch(() => {})

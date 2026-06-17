@@ -83,10 +83,10 @@ function CategoryIcon({ cat, className = 'w-4 h-4' }: { cat: string; className?:
 export default function TETicketsPage() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole
-  const canEdit     = ['GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canCreate   = ['GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canPurchase = ['GT_USER', 'SUPER_ADMIN'].includes(role)
-  const canUpload   = ['GT_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit     = ['GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canCreate   = ['GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canPurchase = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canUpload   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   const [tickets, setTickets]         = useState<Ticket[]>([])
   const [loading, setLoading]         = useState(true)

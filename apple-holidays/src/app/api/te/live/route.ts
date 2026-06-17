@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) {
+  if (!['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
   }
 

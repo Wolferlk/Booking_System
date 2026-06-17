@@ -3,6 +3,7 @@ import { logActivity, ACTION } from '@/lib/activity'
 import { classifyPNLCategories } from '@/lib/openai'
 import { extractBookingFromEmail, type ProcessedEmail, type MailboxKind, type EmailAttachment } from '@/lib/mail-processor'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
+import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 import fs from 'fs'
 import path from 'path'
 
@@ -325,30 +326,47 @@ async function syncTourConfirmation(
     throw new Error(`Missing arrival/departure dates for tour confirmation ${bookingRef}`)
   }
 
+  // Detect country from booking ref prefix (VN/IS/SG/MY), IS number, or email text
+  const detectedCountry =
+    detectCountryFromRef(bookingRef) ??
+    (extracted.isNumber ? detectCountryFromRef(extracted.isNumber) : null) ??
+    (extracted as any)._detectedCountry ??
+    null
+
   const bookingData = {
     bookingRef,
-    agentBookingId: extracted.agentBookingId,
-    agent: extracted.agent ?? 'Unknown Agent',
-    fileHandler: extracted.fileHandler,
-    arrivalDate: new Date(extracted.arrivalDate),
-    departureDate: new Date(extracted.departureDate),
-    paxAdults: extracted.paxAdults,
-    paxChildren: extracted.paxChildren,
-    quotedTotal: extracted.quotedTotal ?? 0,
-    currency: extracted.currency ?? 'USD',
-    terms: extracted.terms,
-    exclusions: extracted.exclusions,
-    agentEmail: extracted.agentEmail,
-    agentPhone: extracted.agentPhone,
-    agentWhatsapp: extracted.agentWhatsapp,
-    agentCountry: extracted.agentCountry,
-    agentAddress: extracted.agentAddress,
-    contactEmail: extracted.contactEmail,
-    contactPhone: extracted.contactPhone,
-    contactWhatsapp: extracted.contactWhatsapp,
-    contactCountry: extracted.contactCountry,
-    contactAddress: extracted.contactAddress,
-    status: 'GT_REVIEW' as const,
+    agentBookingId:   extracted.agentBookingId,
+    agent:            extracted.agent ?? 'Unknown Agent',
+    fileHandler:      extracted.fileHandler,
+    arrivalDate:      new Date(extracted.arrivalDate),
+    departureDate:    new Date(extracted.departureDate),
+    paxAdults:        extracted.paxAdults,
+    paxChildren:      extracted.paxChildren,
+    quotedTotal:      extracted.quotedTotal ?? 0,
+    currency:         extracted.currency ?? 'USD',
+    terms:            extracted.terms,
+    exclusions:       extracted.exclusions,
+    agentEmail:       extracted.agentEmail,
+    agentPhone:       extracted.agentPhone,
+    agentWhatsapp:    extracted.agentWhatsapp,
+    agentCountry:     extracted.agentCountry,
+    agentAddress:     extracted.agentAddress,
+    contactEmail:     extracted.contactEmail,
+    contactPhone:     extracted.contactPhone,
+    contactWhatsapp:  extracted.contactWhatsapp,
+    contactCountry:   extracted.contactCountry,
+    contactAddress:   extracted.contactAddress,
+    operationCountry: detectedCountry ?? undefined,
+    status:           'GT_REVIEW' as const,
+    // TC-specific fields
+    isNumber:           extracted.isNumber         ?? undefined,
+    dealName:           extracted.dealName         ?? undefined,
+    tourDestination:    extracted.tourDestination  ?? undefined,
+    chauffeurContact:   extracted.chauffeurContact ?? undefined,
+    languagePreference: extracted.languagePreference ?? undefined,
+    specialOccasions:   extracted.specialOccasions ?? undefined,
+    checkedBy:          extracted.checkedBy        ?? undefined,
+    reconfirmBy:        extracted.reconfirmBy      ?? undefined,
     ...(isNew ? { createdById } : {}),
   }
 
@@ -378,6 +396,14 @@ async function syncTourConfirmation(
         contactWhatsapp: bookingData.contactWhatsapp,
         contactCountry: bookingData.contactCountry,
         contactAddress: bookingData.contactAddress,
+        isNumber:            bookingData.isNumber,
+        dealName:            bookingData.dealName,
+        tourDestination:     bookingData.tourDestination,
+        chauffeurContact:    bookingData.chauffeurContact,
+        languagePreference:  bookingData.languagePreference,
+        specialOccasions:    bookingData.specialOccasions,
+        checkedBy:           bookingData.checkedBy,
+        reconfirmBy:         bookingData.reconfirmBy,
         status: 'GT_REVIEW',
       },
     })
@@ -616,7 +642,10 @@ export async function processIncomingMail(
   const normalizedType = normalizeType(type)
   const extracted = await extractBookingFromEmail(email.rawBody, normalizedType)
 
+  // Attach detected country to extracted object so syncTourConfirmation can use it
   if (normalizedType === 'TOUR_CONFIRMATION') {
+    const country = detectCountryFromText(email.subject, email.rawBody)
+    ;(extracted as any)._detectedCountry = country
     return syncTourConfirmation(extracted, createdById)
   }
 

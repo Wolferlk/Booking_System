@@ -8,7 +8,7 @@ const PROTECTED_KEYS = new Set(['use_test_data', 'less_credit_mode'])
 
 export async function GET() {
   const session = await getServerSession(authOptions)
-  if (!session || session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
+  if (!session || !['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const settings = await prisma.systemSetting.findMany()
   const map: Record<string, string> = {}
@@ -18,7 +18,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
-  if (!session || session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
+  if (!session || !['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const { key, value, password } = await req.json() as { key: string; value: string; password?: string }
   if (!key) return buildApiError('Key is required')

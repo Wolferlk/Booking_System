@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const { graphIds } = await req.json() as { graphIds: string[] }
   if (!Array.isArray(graphIds) || graphIds.length === 0) return buildApiSuccess([])

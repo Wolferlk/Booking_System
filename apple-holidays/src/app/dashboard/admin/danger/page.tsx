@@ -25,7 +25,7 @@ export default function DangerZonePage() {
   // Guard — redirect non-super-admins
   useEffect(() => {
     if (status === 'loading') return
-    if (!session || session.user.role !== 'SUPER_ADMIN') router.replace('/dashboard')
+    if (!session || !['SUPER_ADMIN','ULTRA_SUPER_ADMIN'].includes(session.user.role)) router.replace('/dashboard')
   }, [session, status, router])
 
   // ── Booking count ────────────────────────────────────────────────────────
@@ -129,11 +129,11 @@ export default function DangerZonePage() {
     )
   }
 
-  if (!session || session.user.role !== 'SUPER_ADMIN') return null
+  if (!session || !['SUPER_ADMIN','ULTRA_SUPER_ADMIN'].includes(session.user.role)) return null
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Header title="Danger Zone" subtitle="Irreversible system operations — Super Admin only" />
+      <Header title="Danger Zone" subtitle="Irreversible system operations — Admin & Ultra Super Admin" />
 
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
 

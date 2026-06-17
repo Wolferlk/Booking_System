@@ -2,6 +2,7 @@ import { prisma } from './prisma'
 import type { MailMessage } from '@prisma/client'
 import type { MailboxKind, ProcessedEmail } from './mail-processor'
 import { fetchUnprocessedEmailsForUser } from './mail-processor'
+import { detectCountryFromText, type OperationCountry } from './country-detection'
 
 type MailboxFilter = 'all' | 'tq' | 'pnl'
 type FolderFilter = 'all' | 'inbox'
@@ -24,6 +25,7 @@ export interface CachedMailboxEmail extends ProcessedEmail {
   mailboxUser: string
   status: string
   bookingRef: string | null
+  operationCountry: OperationCountry | null
   processedAt: string | null
 }
 
@@ -58,12 +60,21 @@ export async function upsertCachedMailMessage(params: {
   mailboxUser: string
   mailboxKind: MailboxKind
   bookingRef?: string | null
+  operationCountry?: OperationCountry | null
   status?: 'RECEIVED' | 'PROCESSED' | 'WAITING' | 'ERROR'
   processedAt?: string | Date | null
 }) {
   const model = mm()
   if (!model) return
   const { email, mailboxUser, mailboxKind } = params
+
+  // Auto-detect country from subject+body if not provided (only for TQ mails)
+  const country = params.operationCountry !== undefined
+    ? params.operationCountry
+    : mailboxKind === 'TOUR_CONFIRMATION'
+      ? detectCountryFromText(email.subject, email.rawBody)
+      : null
+
   await model.upsert({
     where: { graphId: email.graphId },
     create: {
@@ -86,6 +97,7 @@ export async function upsertCachedMailMessage(params: {
       rawBody: email.rawBody,
       bodyHtml: email.bodyHtml,
       bookingRef: params.bookingRef ?? null,
+      operationCountry: country ?? null,
       status: mapStatus(params.status),
       processedAt: params.processedAt ? new Date(params.processedAt) : null,
       lastSyncedAt: new Date(),
@@ -109,6 +121,7 @@ export async function upsertCachedMailMessage(params: {
       rawBody: email.rawBody,
       bodyHtml: email.bodyHtml,
       bookingRef: params.bookingRef ?? undefined,
+      operationCountry: country ?? undefined,
       status: mapStatus(params.status),
       processedAt: params.processedAt ? new Date(params.processedAt) : undefined,
       lastSyncedAt: new Date(),
@@ -153,9 +166,15 @@ export async function listCachedMailboxEmails(params: {
   mailbox: MailboxFilter
   folder: FolderFilter
   limit: number
+  operationCountry?: OperationCountry | null
 }): Promise<CachedMailboxEmail[]> {
   const model = mm()
   if (!model) return []
+
+  const countryFilter = params.operationCountry
+    ? { OR: [{ operationCountry: params.operationCountry }, { operationCountry: null }] }
+    : {}
+
   const rows = await model.findMany({
     where: {
       ...(params.mailbox === 'tq' ? { mailboxKind: 'TOUR_CONFIRMATION' } : params.mailbox === 'pnl' ? { mailboxKind: 'PNL' } : {}),
@@ -168,6 +187,7 @@ export async function listCachedMailboxEmails(params: {
             ],
           }
         : {}),
+      ...countryFilter,
     },
     orderBy: { receivedAt: 'desc' },
     take: params.limit,
@@ -195,6 +215,7 @@ export async function listCachedMailboxEmails(params: {
     parsed: null,
     status: row.status,
     bookingRef: row.bookingRef,
+    operationCountry: ((row as any).operationCountry as OperationCountry | null) ?? null,
     processedAt: row.processedAt?.toISOString() ?? null,
   }))
 }
@@ -233,6 +254,7 @@ export async function listUnprocessedDbEmails(
     parsed: null,
     status: row.status,
     bookingRef: row.bookingRef,
+    operationCountry: ((row as any).operationCountry as OperationCountry | null) ?? null,
     processedAt: row.processedAt?.toISOString() ?? null,
   }))
 }
@@ -248,7 +270,7 @@ export async function getCachedProcessedMail(graphIds: string[]) {
     },
   })
 
-  return rows.map(row => ({
+  return rows.map((row: MailMessage) => ({
     graphId: row.graphId,
     bookingRef: row.bookingRef ?? '',
     processedAt: row.processedAt?.toISOString() ?? null,

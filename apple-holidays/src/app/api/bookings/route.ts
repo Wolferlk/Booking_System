@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
+import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
+import { detectCountryFromRef } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
@@ -26,11 +27,18 @@ export async function GET(req: NextRequest) {
     : 'arrivalDate'
 
   const role = session.user.role as UserRole
+  const userCountry = (session.user as any).country as string | undefined
 
   const where: Record<string, unknown> = {}
 
   if (role === 'CLIENT') {
     where.clientUserId = session.user.id
+  } else if (!canSeeAllCountries(role, userCountry as any)) {
+    // Country-scoped users only see their country's bookings + unassigned ones
+    where.OR = [
+      { operationCountry: userCountry ?? null },
+      { operationCountry: null },
+    ]
   }
 
   if (status) where.status = status
@@ -135,6 +143,9 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.booking.findUnique({ where: { bookingRef } })
   if (existing) return buildApiError(`Booking ref ${bookingRef} already exists`)
 
+  // Detect country from booking ref prefix (VN/IS/SG/MY)
+  const operationCountry = detectCountryFromRef(bookingRef) ?? undefined
+
   const cancellationDeadline = getCancellationDeadline(arrivalDate)
 
   const booking = await prisma.booking.create({
@@ -161,6 +172,7 @@ export async function POST(req: NextRequest) {
       contactWhatsapp: contactWhatsapp || null,
       contactCountry: contactCountry  || null,
       cancellationDeadline,
+      operationCountry: operationCountry as any,
       createdById: session.user.id,
       passengers: {
         create: passengers.map((p: Record<string, unknown>) => ({

@@ -33,7 +33,7 @@ const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
 
 export default function VendorsPage() {
   const { data: session } = useSession()
-  const isAdmin = ['GT_USER', 'SUPER_ADMIN'].includes(session?.user?.role ?? '')
+  const isAdmin = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
 
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [loading, setLoading] = useState(true)

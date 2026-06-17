@@ -15,7 +15,7 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['TE_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)

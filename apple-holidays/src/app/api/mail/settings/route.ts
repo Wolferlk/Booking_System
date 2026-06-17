@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const lessCreditMode = await getLessCreditModeEnabled()
   return buildApiSuccess({
@@ -19,7 +19,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json().catch(() => ({})) as { lessCreditMode?: boolean }
   if (typeof body.lessCreditMode !== 'boolean') {

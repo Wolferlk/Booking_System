@@ -12,7 +12,7 @@ export async function PUT(
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   const role = session.user.role as UserRole
-  if (!['AC_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const existing = await prisma.creditAgentPayment.findUnique({ where: { id: params.paymentId } })
   if (!existing) return buildApiError('Payment cycle not found', 404)
@@ -67,7 +67,7 @@ export async function DELETE(
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   const role = session.user.role as UserRole
-  if (!['AC_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   await prisma.creditAgentPayment.delete({ where: { id: params.paymentId } })
   return buildApiSuccess({ deleted: true })

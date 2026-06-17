@@ -30,7 +30,7 @@ export default function ConfigPage() {
 
   useEffect(() => {
     if (status === 'loading') return
-    if (!session || session.user.role !== 'SUPER_ADMIN') router.replace('/dashboard')
+    if (!session || !['SUPER_ADMIN','ULTRA_SUPER_ADMIN'].includes(session.user.role)) router.replace('/dashboard')
   }, [session, status, router])
 
   useEffect(() => {

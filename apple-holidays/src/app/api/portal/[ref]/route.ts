@@ -44,7 +44,7 @@ export async function GET(
 
   // Strip cost/profit data for clients
   const role = session.user.role as UserRole
-  const isStaff = ['BT_USER', 'GT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)
+  const isStaff = ['BT_USER', 'GT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   // Build client-safe response
   const portalData = {

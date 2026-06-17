@@ -39,6 +39,15 @@ Schema:
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
 
+  "isNumber": "string or null — IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122 (labeled 'IS Number' or 'Confirmation Number' in TC header)",
+  "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
+  "tourDestination": "string or null — destination country/city e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia' (labeled 'Destination' in TC)",
+  "chauffeurContact": "string or null — chauffeur or tour guide contact details (labeled 'Chauffeur/Tour guide contact' in TC)",
+  "languagePreference": "string or null — guests' language preference (labeled 'Guests Language Preference' or similar)",
+  "specialOccasions": "string or null — special occasions e.g. honeymoon, birthday (labeled 'Special Occasions' in TC)",
+  "checkedBy": "string or null — name of person who checked/verified the TC (labeled 'Checked by' in TC)",
+  "reconfirmBy": "string or null — deadline or person for reconfirmation (labeled 'Reconfirm by' in TC)",
+
   "passengers": [
     {
       "name": "string",

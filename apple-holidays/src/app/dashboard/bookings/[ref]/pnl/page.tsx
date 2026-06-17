@@ -60,8 +60,8 @@ export default function PNLPage() {
   const [classifyingLines, setClassifyingLines] = useState<Set<number>>(new Set())
   const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
 
-  const canEdit           = ['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit           = ['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const isCreditBk        = isCreditAgent(bookingAgent)
 
   async function loadPNL() {

@@ -13,9 +13,18 @@ enum UserRole {
   BT_USER
   GT_USER
   TE_USER
+  GT_TE_USER
   AC_USER
   CLIENT
   SUPER_ADMIN
+  ULTRA_SUPER_ADMIN
+}
+
+enum OperationCountry {
+  ALL
+  VIETNAM
+  SRILANKA
+  SINGAPORE_MALAYSIA
 }
 
 enum BookingStatus {
@@ -103,16 +112,17 @@ enum MailMessageStatus {
 // ─── User ────────────────────────────────────────────────────────────────
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String           @id @default(cuid())
+  email         String           @unique
   name          String
-  password      String    @db.Text
+  password      String           @db.Text
   role          UserRole
+  country       OperationCountry @default(ALL)
   phone         String?
   avatar        String?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   bookingsCreated   Booking[]       @relation("CreatedBy")
   statusEvents      StatusEvent[]
@@ -169,8 +179,9 @@ model MailMessage {
   type           String
   rawBody        String           @db.LongText
   bodyHtml       String           @db.LongText
-  bookingRef     String?
-  status         MailMessageStatus @default(RECEIVED)
+  bookingRef       String?
+  operationCountry OperationCountry?
+  status           MailMessageStatus @default(RECEIVED)
   processedAt    DateTime?
   lastSyncedAt   DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
@@ -206,6 +217,19 @@ model Booking {
   terms                 String?       @db.Text
   exclusions            String?       @db.Text
   policyNotes           String?       @db.Text
+
+  // Country this booking belongs to (detected from IS number / email subject)
+  operationCountry      OperationCountry?
+
+  // TC (Tour Confirmation) extracted fields
+  isNumber              String?           // e.g. VN19005, IS48377, SG22232
+  dealName              String?           // e.g. "Rakshitha - Vietnam - 060626"
+  tourDestination       String?           // e.g. "Vietnam", "Sri Lanka"
+  chauffeurContact      String?           @db.Text
+  languagePreference    String?
+  specialOccasions      String?           @db.Text
+  checkedBy             String?
+  reconfirmBy           String?
 
   // Agent contact details (extracted from email)
   agentEmail            String?

@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['AC_USER', 'SUPER_ADMIN'].includes(role)) {
+  if (!['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
     return buildApiError('Forbidden', 403)
   }
 

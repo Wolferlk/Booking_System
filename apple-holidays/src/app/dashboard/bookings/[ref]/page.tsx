@@ -202,10 +202,10 @@ export default function BookingDetailPage() {
     booking.contactEmail ? { label: `Customer: ${booking.contactEmail}`, value: String(booking.contactEmail) } : null,
   ].filter((x): x is { label: string; value: string } => x !== null)
 
-  const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)
+  const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canEditBooking = ['GT_USER', 'GT_TE_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
-  const canEditFlights = ['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role)
+  const canEditFlights = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   function openEditFlight() {
     setFlightEditList(
@@ -548,9 +548,27 @@ Wishing you a wonderful trip! ✈️
         <Card className="p-6">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
             <div>
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+                {booking.isNumber && (
+                  <span className="text-sm font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
+                    {booking.isNumber as string}
+                  </span>
+                )}
                 <StatusBadge status={status} />
+                {booking.operationCountry && (
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
+                    booking.operationCountry === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-200' :
+                    booking.operationCountry === 'SRILANKA'           ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                    booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-200' :
+                    'bg-slate-100 text-slate-500 border-slate-200'
+                  }`}>
+                    {booking.operationCountry === 'VIETNAM'            ? '🇻🇳 Vietnam' :
+                     booking.operationCountry === 'SRILANKA'           ? '🇱🇰 Sri Lanka' :
+                     booking.operationCountry === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 Singapore & Malaysia' :
+                     '🌐 All Countries'}
+                  </span>
+                )}
                 {Boolean(booking.amendmentNote) && (
                   <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
                     {String(booking.amendmentNote)}
@@ -634,7 +652,7 @@ Wishing you a wonderful trip! ✈️
                 <Ticket className="w-3.5 h-3.5" /> Tickets
               </Link>
               {/* Drivers — GT can assign drivers from the Agenda page */}
-              {['GT_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link
                   href={`/dashboard/bookings/${ref}/agenda`}
                   className={`btn btn-sm ${
@@ -646,7 +664,7 @@ Wishing you a wonderful trip! ✈️
                   <UserCheck className="w-3.5 h-3.5" /> Drivers
                 </Link>
               )}
-              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>
@@ -656,12 +674,12 @@ Wishing you a wonderful trip! ✈️
                   <Edit2 className="w-3.5 h-3.5" /> Edit
                 </button>
               )}
-              {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/print/booking/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
               )}
-              {['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openWhatsApp}
                   className="btn btn-sm bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5"
@@ -669,7 +687,7 @@ Wishing you a wonderful trip! ✈️
                   <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
                 </button>
               )}
-              {['TE_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openEmailModal}
                   className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
@@ -700,8 +718,122 @@ Wishing you a wonderful trip! ✈️
           </div>
         </Card>
 
+        {/* TC Confirmation Details — always shown */}
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="w-4 h-4 text-brand-400" />
+            <h3 className="text-sm font-semibold text-slate-900">Tour Confirmation Details</h3>
+            {/* Inline country selector — always editable */}
+            <div className="ml-auto flex items-center gap-1.5">
+              <select
+                value={(booking.operationCountry as string) ?? ''}
+                onChange={async (e) => {
+                  const val = e.target.value || null
+                  try {
+                    const res = await fetch(`/api/bookings/${ref}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ operationCountry: val }),
+                    })
+                    const json = await res.json()
+                    if (!json.success) throw new Error(json.error)
+                    toast.success('Country updated')
+                    await load()
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Update failed')
+                  }
+                }}
+                className={`text-xs font-semibold rounded-full px-3 py-1 border cursor-pointer appearance-none pr-6 ${
+                  booking.operationCountry === 'VIETNAM'            ? 'bg-red-500/10 text-red-500 border-red-500/25' :
+                  booking.operationCountry === 'SRILANKA'           ? 'bg-yellow-500/10 text-yellow-600 border-yellow-500/25' :
+                  booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-500/10 text-blue-500 border-blue-500/25' :
+                  'bg-slate-100 text-slate-400 border-slate-200'
+                }`}
+                style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%239ca3af\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
+              >
+                <option value="">🌍 Country not set</option>
+                <option value="VIETNAM">🇻🇳 Vietnam</option>
+                <option value="SRILANKA">🇱🇰 Sri Lanka</option>
+                <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Tour Ref</p>
+              <p className="text-sm font-mono font-semibold text-slate-900">{booking.bookingRef as string}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">IS Number</p>
+              {booking.isNumber
+                ? <p className="text-sm font-mono font-semibold text-brand-600">{booking.isNumber as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reference Number</p>
+              {booking.agentBookingId
+                ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Destination</p>
+              {booking.tourDestination
+                ? <p className="text-sm text-slate-700">{booking.tourDestination as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            {booking.dealName && (
+              <div className="col-span-2">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Deal Name</p>
+                <p className="text-sm font-medium text-slate-800">{booking.dealName as string}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Travel Date</p>
+              <p className="text-sm text-slate-700">
+                {formatDate(booking.arrivalDate as string)} → {formatDate(booking.departureDate as string)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">File Handler</p>
+              {booking.fileHandler
+                ? <p className="text-sm text-slate-700">{booking.fileHandler as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Checked By</p>
+              {booking.checkedBy
+                ? <p className="text-sm text-slate-700">{booking.checkedBy as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reconfirm By</p>
+              {booking.reconfirmBy
+                ? <p className="text-sm text-slate-700">{booking.reconfirmBy as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Guests&apos; Language Preference</p>
+              {booking.languagePreference
+                ? <p className="text-sm text-slate-700">{booking.languagePreference as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Special Occasions</p>
+              {booking.specialOccasions
+                ? <p className="text-sm text-slate-700">{booking.specialOccasions as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div className="col-span-2 md:col-span-3">
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Chauffeur / Tour Guide Contact</p>
+              {booking.chauffeurContact
+                ? <p className="text-sm text-slate-700 whitespace-pre-line">{booking.chauffeurContact as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+          </div>
+        </Card>
+
         {/* QC Panel — visible to operations/TE/admin */}
-        {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+        {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <BookingQCPanel
             booking={booking}
             onAutoSend={handleQCAutoSend}
@@ -1613,7 +1745,7 @@ Wishing you a wonderful trip! ✈️
       </Modal>
 
       {/* ── WhatsApp mini chat widget ─────────────────────────────────── */}
-      {['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+      {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
         <WhatsAppMiniChat bookingRef={ref} booking={booking} />
       )}
 

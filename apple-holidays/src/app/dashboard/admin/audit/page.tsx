@@ -40,7 +40,8 @@ const ENTITY_ICONS: Record<string, React.ComponentType<{ className?: string }>> 
 }
 
 const ROLE_COLORS: Record<string, string> = {
-  SUPER_ADMIN: 'text-red-600', BT_USER: 'text-blue-600', GT_USER: 'text-emerald-600',
+  SUPER_ADMIN: 'text-red-600', ULTRA_SUPER_ADMIN: 'text-amber-500 font-bold',
+  BT_USER: 'text-blue-600', GT_USER: 'text-emerald-600', GT_TE_USER: 'text-teal-600',
   TE_USER: 'text-purple-600', AC_USER: 'text-amber-600', CLIENT: 'text-cyan-600',
 }
 

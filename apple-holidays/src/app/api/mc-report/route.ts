@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
-const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'SUPER_ADMIN']
+const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)

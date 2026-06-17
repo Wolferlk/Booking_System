@@ -9,7 +9,7 @@ import type { UserRole } from '@prisma/client'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
+  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const users = await prisma.user.findMany({
     select: {
@@ -29,7 +29,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
+  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const { email, name, password, role, phone } = await req.json()
 

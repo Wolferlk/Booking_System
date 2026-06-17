@@ -53,6 +53,15 @@ export interface ExtractedBooking {
   currency: string
   terms: string | null
   exclusions: string | null
+  // TC confirmation specific fields
+  isNumber: string | null
+  dealName: string | null
+  tourDestination: string | null
+  chauffeurContact: string | null
+  languagePreference: string | null
+  specialOccasions: string | null
+  checkedBy: string | null
+  reconfirmBy: string | null
   // Agent contact details
   agentEmail: string | null
   agentPhone: string | null
@@ -136,15 +145,15 @@ export function getConfiguredMailboxes(): MailboxConfig[] {
 
 // ── OpenAI extraction ────────────────────────────────────────────────────────
 
-const TOUR_CONFIRMATION_PROMPT = `You are a Vietnam travel booking extraction expert for AppleHolidays (MMT Vietnam).
+const TOUR_CONFIRMATION_PROMPT = `You are a travel booking extraction expert for AppleHolidays (Vietnam, Sri Lanka, Singapore, Malaysia).
 Extract ALL booking details from this email thread. Focus on the MOST RECENT tour confirmation section.
 
 Return ONLY valid JSON matching this exact schema:
 {
   "bookingRef": "Tour Ref numeric part ONLY — strip any trailing letters like CNTL (e.g. 469182CNTL → \"469182\"). Return null if no Tour Ref is present. Do NOT use IS Number or VN Number.",
-  "agentBookingId": "Agent's booking ID (e.g. 402011138462)",
-  "agent": "Agent company name (e.g. 30 Sundays, Make My Trip)",
-  "fileHandler": "File handler name (e.g. Yogi)",
+  "agentBookingId": "Agent's booking ID / reference number from the email subject or booking form (e.g. 402011138462)",
+  "agent": "Agent company name (e.g. 30 Sundays, Make My Trip, Tours Experts)",
+  "fileHandler": "File handler or account manager name listed in the confirmation (e.g. Sangeetha Priya, Yogi, Shehan Jayakody)",
   "arrivalDate": "YYYY-MM-DD",
   "departureDate": "YYYY-MM-DD",
   "paxAdults": number,
@@ -153,6 +162,14 @@ Return ONLY valid JSON matching this exact schema:
   "currency": "USD",
   "terms": "full terms and conditions text or null",
   "exclusions": "exclusions text or null",
+  "isNumber": "IS/VN/SG/MY number exactly as written (e.g. VN19785, IS48375, SG22232) — look for 'IS Number:' label in the confirmation body. Return null if not found.",
+  "dealName": "Deal name or booking title from the email subject or confirmation header (e.g. 'Rakshitha - Vietnam - 060626', 'Arpit Jain - Sri Lanka'). Strip the agent booking ID and country prefix/suffix from the subject line if present.",
+  "tourDestination": "Primary destination country or region (e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia'). Infer from IS number prefix (VN=Vietnam, IS=Sri Lanka, SG/MY=Singapore & Malaysia) or email content.",
+  "chauffeurContact": "Chauffeur or tour guide contact information as listed in the confirmation — may be a name and phone, or 'Will Advice'. Return null if not found.",
+  "languagePreference": "Guest preferred language (e.g. 'English', 'Hindi', 'Tamil'). Look for 'Language Preference' or similar field. Return null if not specified.",
+  "specialOccasions": "Any special occasions mentioned (e.g. 'Honeymoon', 'Anniversary', 'Birthday'). Return null if not mentioned.",
+  "checkedBy": "Name of person who checked or verified the booking (look for 'Checked by:' label). Return null if not found.",
+  "reconfirmBy": "Name or date for reconfirmation (look for 'Reconfirm by:' label). Return null if not found.",
   "agentEmail": "agent company email address or null",
   "agentPhone": "agent phone number in international format with country code (e.g. +91 9876543210, +94 77 123 4567, +1 212 555 0100) or null",
   "agentWhatsapp": "agent WhatsApp number in international format with country code or null",
@@ -172,8 +189,10 @@ Return ONLY valid JSON matching this exact schema:
 }
 
 IMPORTANT: Use ONLY the Tour Ref as bookingRef. Strip any trailing non-numeric suffix before returning (e.g. 469182CNTL → "469182", 463658CNTL → "463658"). Do NOT use IS Number, VN Number, or any agent reference as bookingRef. If no Tour Ref is found, return null for bookingRef.
+IS NUMBER: The IS Number appears on a line labelled "IS Number" in the tour confirmation body. It starts with a prefix (VN for Vietnam, IS for Sri Lanka, SG for Singapore, MY for Malaysia) followed by digits. Always extract it exactly as written including the prefix (e.g. "VN19785", "IS48375").
+DEAL NAME: Usually found in the email subject between the agent booking ID and date codes — e.g. subject "Quotation | 402011387896 | Rakshitha - Vietnam - 060626 | ..." → dealName is "Rakshitha - Vietnam - 060626".
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
-For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, etc.).
+For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, CMB=Colombo, etc.).
 Date format must be YYYY-MM-DD strictly.
 CONTACT EXTRACTION: Scan all of — email From/Reply-To headers, email signatures, booking form fields, "Contact Details" / "Guest Info" sections, and footers. Extract BOTH agent (sender company) and customer/tourist (traveller) contacts separately.
 GUEST PHONE FIELDS: MakeMyTrip and similar agents include fields like "Lead Pax Contact Number", "Guest Contact Number", or "Lead Passenger Contact" — these are the tourist/customer phone numbers; always map them to contactPhone/contactWhatsapp.
@@ -274,6 +293,14 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     currency:         parsed.currency         ?? 'USD',
     terms:            parsed.terms            ?? null,
     exclusions:       parsed.exclusions       ?? null,
+    isNumber:         parsed.isNumber         ?? null,
+    dealName:         parsed.dealName         ?? null,
+    tourDestination:  parsed.tourDestination  ?? null,
+    chauffeurContact: parsed.chauffeurContact ?? null,
+    languagePreference: parsed.languagePreference ?? null,
+    specialOccasions: parsed.specialOccasions ?? null,
+    checkedBy:        parsed.checkedBy        ?? null,
+    reconfirmBy:      parsed.reconfirmBy      ?? null,
     agentEmail:       parsed.agentEmail       ?? null,
     agentPhone:       parsed.agentPhone       ?? null,
     agentWhatsapp:    parsed.agentWhatsapp    ?? null,
