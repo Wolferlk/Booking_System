@@ -36,14 +36,17 @@ export async function GET(req: NextRequest) {
   if (role === 'CLIENT') {
     andClauses.push({ clientUserId: session.user.id })
   } else if (!canSeeAllCountries(role, userCountry as any)) {
-    // Country-scoped users only see their own country's bookings
-    andClauses.push({ operationCountry: userCountry ?? null })
+    // Country-scoped users only see their own country's bookings — never include unassigned
+    if (userCountry && userCountry !== 'ALL') andClauses.push({ operationCountry: userCountry })
   } else if (countryOverride && countryOverride !== 'ALL') {
     // Admin users may narrow to a specific country via explicit param
     andClauses.push({ operationCountry: countryOverride })
   }
 
-  if (status) andClauses.push({ status })
+  if (status) {
+    const statuses = status.split(',').filter(Boolean)
+    andClauses.push(statuses.length === 1 ? { status: statuses[0] } : { status: { in: statuses } })
+  }
 
   if (search) {
     andClauses.push({

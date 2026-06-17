@@ -277,6 +277,7 @@ model Booking {
   versions              BookingVersion[]
   emergencyContacts     EmergencyContact[]
   tickets               Ticket[]
+  contactLogs           ContactLog[]
 
   @@index([status])
   @@index([arrivalDate])
@@ -573,6 +574,7 @@ model ContactLog {
   id          String   @id @default(cuid())
   bookingId   String
   userId      String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   user        User     @relation(fields: [userId], references: [id])
   type        String
   subject     String

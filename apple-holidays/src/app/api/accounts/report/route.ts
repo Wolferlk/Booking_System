@@ -28,12 +28,7 @@ export async function GET(req: NextRequest) {
 
   // Country scoping
   if (!canSeeAllCountries(role, userCountry ?? 'ALL')) {
-    andClauses.push({
-      OR: [
-        { operationCountry: userCountry ?? null },
-        { operationCountry: null },
-      ],
-    })
+    if (userCountry && userCountry !== 'ALL') andClauses.push({ operationCountry: userCountry })
   } else if (countryOverride && countryOverride !== 'ALL') {
     andClauses.push({ operationCountry: countryOverride })
   }

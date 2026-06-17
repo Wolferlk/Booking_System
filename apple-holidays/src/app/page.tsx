@@ -1,6 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { MapPin, ArrowRight, Plane, Globe2 } from 'lucide-react'
 
 const DESTINATIONS = [
@@ -93,15 +94,25 @@ export default function HomePage() {
       {/* Header */}
       <header className="relative z-10 border-b border-white/5">
         <div className="max-w-7xl mx-auto px-8 py-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30">
-              <span className="text-white font-black text-sm">AH</span>
+          <button
+            onClick={() => router.push('/overview')}
+            className="flex items-center gap-3 hover:opacity-85 transition-opacity group"
+            title="Open Global Command Center"
+          >
+            <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-brand-500/20">
+              <Image src="/png/aahaslogo.png" alt="Aahas Logo" fill className="object-contain" />
             </div>
-            <div>
+            <div className="border-l border-white/10 pl-3 flex items-center gap-2">
+              <div className="relative h-6 w-16 opacity-60 group-hover:opacity-80 transition-opacity">
+                <Image src="/png/aahaas.png" alt="Aahaas" fill className="object-contain" />
+              </div>
+              <span className="text-slate-600 text-[9px] uppercase tracking-widest hidden sm:block">Subsidiary</span>
+            </div>
+            <div className="border-l border-white/6 pl-3 hidden sm:block">
               <p className="text-white font-bold text-base leading-tight tracking-tight">AppleHolidays</p>
               <p className="text-slate-500 text-[11px] tracking-wider uppercase">Travel Management System</p>
             </div>
-          </div>
+          </button>
 
           <div className="hidden sm:flex items-center gap-6 text-xs text-slate-500">
             <div className="flex items-center gap-1.5">

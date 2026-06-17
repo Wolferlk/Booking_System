@@ -10,8 +10,14 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 const COLORS = ['#eab308', '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#ef4444']
 
+const COUNTRY_META: Record<string, { name: string; flag: string; code: string }> = {
+  VIETNAM:            { name: 'Vietnam',              flag: '🇻🇳', code: 'MMT_VN' },
+  SRILANKA:           { name: 'Sri Lanka',            flag: '🇱🇰', code: 'MMT_LK' },
+  SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY' },
+}
+
 export default function ProfitDashboardPage() {
-  const { countryFilter } = useCountryFilter()
+  const { countryFilter, canFilter } = useCountryFilter()
   const [stats, setStats] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -41,10 +47,29 @@ export default function ProfitDashboardPage() {
     ? Object.entries(stats.byStatus as Record<string, number>).map(([name, value]) => ({ name, value }))
     : []
 
+  const countryMeta = countryFilter && countryFilter !== 'ALL' ? COUNTRY_META[countryFilter] : null
+
   return (
     <div>
-      <Header title="Profit Dashboard" subtitle="Financial overview across all bookings" />
+      <Header
+        title={countryMeta ? `${countryMeta.flag} ${countryMeta.name} Profit Dashboard` : 'Profit Dashboard'}
+        subtitle={
+          countryMeta
+            ? `${canFilter ? 'Filtered to' : 'Operating in'} ${countryMeta.name} · ${countryMeta.code}`
+            : 'Financial overview across all bookings'
+        }
+      />
       <div className="p-8 space-y-6">
+
+        {countryMeta && (
+          <div className="flex items-center justify-between gap-3 px-5 py-4 rounded-xl bg-slate-50 border border-slate-200">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-slate-400 font-semibold">Country Scope</p>
+              <p className="text-sm font-semibold text-slate-800 mt-0.5">{countryMeta.flag} {countryMeta.name}</p>
+            </div>
+            <p className="text-xs text-slate-400 font-mono">{countryMeta.code}</p>
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
@@ -106,10 +131,14 @@ export default function ProfitDashboardPage() {
         </div>
 
         {/* Summary table */}
-        <Card>
-          <CardHeader><h3 className="text-sm font-semibold">Summary</h3></CardHeader>
-          <CardBody>
-            <div className="grid grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold">
+                Summary {countryMeta ? `· ${countryMeta.name}` : ''}
+              </h3>
+            </CardHeader>
+            <CardBody>
+              <div className="grid grid-cols-2 gap-4">
               <div className="space-y-3">
                 {[
                   { label: 'Total Bookings', value: String(stats?.totalBookings ?? 0) },

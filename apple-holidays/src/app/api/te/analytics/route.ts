@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+  if (!['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
   }
 
@@ -21,10 +21,7 @@ export async function GET(req: NextRequest) {
 
   const countryWhere: Record<string, unknown> = {}
   if (!canSeeAllCountries(role, userCountry as any)) {
-    countryWhere.OR = [
-      { operationCountry: userCountry ?? null },
-      { operationCountry: null },
-    ]
+    if (userCountry && userCountry !== 'ALL') countryWhere.operationCountry = userCountry
   } else if (countryOverride && countryOverride !== 'ALL') {
     countryWhere.operationCountry = countryOverride
   }

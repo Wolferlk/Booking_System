@@ -19,10 +19,7 @@ export async function GET(req: NextRequest) {
 
   const countryWhere: Record<string, unknown> = {}
   if (!canSeeAllCountries(role, userCountry as any)) {
-    countryWhere.OR = [
-      { operationCountry: userCountry ?? null },
-      { operationCountry: null },
-    ]
+    if (userCountry && userCountry !== 'ALL') countryWhere.operationCountry = userCountry
   } else if (countryOverride && countryOverride !== 'ALL') {
     countryWhere.operationCountry = countryOverride
   }

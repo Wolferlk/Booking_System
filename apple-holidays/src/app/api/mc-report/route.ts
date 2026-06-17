@@ -39,11 +39,8 @@ export async function GET(req: NextRequest) {
   // Build booking-level country filter to pass through the agenda → booking relation
   let bookingCountryWhere: Record<string, unknown> | undefined
   if (!canSeeAllCountries(role, userCountry as any)) {
-    bookingCountryWhere = {
-      OR: [
-        { operationCountry: userCountry ?? null },
-        { operationCountry: null },
-      ],
+    if (userCountry && userCountry !== 'ALL') {
+      bookingCountryWhere = { operationCountry: userCountry }
     }
   } else if (countryOverride && countryOverride !== 'ALL') {
     bookingCountryWhere = { operationCountry: countryOverride }
