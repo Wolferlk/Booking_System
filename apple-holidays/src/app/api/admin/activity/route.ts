@@ -12,19 +12,26 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const userId = searchParams.get('userId') ?? undefined
   const action = searchParams.get('action') ?? undefined
+  const countryFilter = searchParams.get('country') ?? undefined
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '100'), 200)
   const page = parseInt(searchParams.get('page') ?? '1')
+
+  // Filter by country: only show activity from users belonging to that country
+  const userCountryWhere = countryFilter && countryFilter !== 'ALL'
+    ? { user: { country: countryFilter as never } }
+    : {}
 
   const where = {
     ...(userId && { userId }),
     ...(action && { action }),
+    ...userCountryWhere,
   }
 
   const [logs, total] = await Promise.all([
     prisma.activityLog.findMany({
       where,
       include: {
-        user: { select: { id: true, name: true, email: true, role: true } },
+        user: { select: { id: true, name: true, email: true, role: true, country: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: limit,

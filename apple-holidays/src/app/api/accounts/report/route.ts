@@ -3,7 +3,9 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { canSeeAllCountries } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
+import type { OperationCountry } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -14,21 +16,41 @@ export async function GET(req: NextRequest) {
     return buildApiError('Forbidden', 403)
   }
 
+  const userCountry = session.user.country as OperationCountry | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country') as OperationCountry | null
+
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const search = searchParams.get('search')
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '500'), 1000)
 
-  const where: Record<string, unknown> = {}
-  if (status) where.status = status
-  if (search) {
-    where.OR = [
-      { bookingRef: { contains: search } },
-      { agent: { contains: search } },
-      { fileHandler: { contains: search } },
-      { passengers: { some: { name: { contains: search } } } },
-    ]
+  const andClauses: Record<string, unknown>[] = []
+
+  // Country scoping
+  if (!canSeeAllCountries(role, userCountry ?? 'ALL')) {
+    andClauses.push({
+      OR: [
+        { operationCountry: userCountry ?? null },
+        { operationCountry: null },
+      ],
+    })
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    andClauses.push({ operationCountry: countryOverride })
   }
+
+  if (status) andClauses.push({ status })
+  if (search) {
+    andClauses.push({
+      OR: [
+        { bookingRef: { contains: search } },
+        { agent: { contains: search } },
+        { fileHandler: { contains: search } },
+        { passengers: { some: { name: { contains: search } } } },
+      ],
+    })
+  }
+
+  const where: Record<string, unknown> = andClauses.length ? { AND: andClauses } : {}
 
   const bookings = await prisma.booking.findMany({
     where,

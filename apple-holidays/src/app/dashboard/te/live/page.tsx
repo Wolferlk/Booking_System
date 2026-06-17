@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Link from 'next/link'
 import DailyOpsView from '@/components/te/daily-ops-view'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 type Mode    = 'today' | 'week' | 'range'
 type MainTab = 'overview' | 'daily'
@@ -38,6 +39,7 @@ function fmtTime(t: string) {
 
 function BookingsOverview() {
   const router = useRouter()
+  const { countryFilter } = useCountryFilter()
   const [mode, setMode]           = useState<Mode>('today')
   const [fromDate, setFromDate]   = useState('')
   const [toDate, setToDate]       = useState('')
@@ -50,6 +52,7 @@ function BookingsOverview() {
     try {
       let url = `/api/te/live?mode=${mode}`
       if (mode === 'range' && fromDate && toDate) url += `&from=${fromDate}&to=${toDate}`
+      if (countryFilter && countryFilter !== 'ALL') url += `&country=${countryFilter}`
       const res  = await fetch(url)
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
@@ -60,7 +63,7 @@ function BookingsOverview() {
     } finally {
       setLoading(false)
     }
-  }, [mode, fromDate, toDate])
+  }, [mode, fromDate, toDate, countryFilter])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {

@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
 
   const role = session.user.role as UserRole
   const userCountry = (session.user as any).country as string | undefined
+  const countryOverride = searchParams.get('country')
 
   const where: Record<string, unknown> = {}
 
@@ -39,6 +40,9 @@ export async function GET(req: NextRequest) {
       { operationCountry: userCountry ?? null },
       { operationCountry: null },
     ]
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    // Admin users may narrow to a specific country via explicit param
+    where.operationCountry = countryOverride
   }
 
   if (status) where.status = status

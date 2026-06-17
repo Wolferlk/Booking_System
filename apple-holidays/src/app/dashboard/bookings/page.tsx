@@ -14,6 +14,7 @@ import Button from '@/components/ui/button'
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { useSession } from 'next-auth/react'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { BookingStatus } from '@prisma/client'
 
 const STATUSES = Object.keys(STATUS_LABELS) as BookingStatus[]
@@ -75,6 +76,7 @@ function BookingsPageInner() {
   const { data: session } = useSession()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { countryFilter } = useCountryFilter()
 
   const [bookings, setBookings]     = useState<Booking[]>([])
   const [total, setTotal]           = useState(0)
@@ -88,9 +90,10 @@ function BookingsPageInner() {
   const fetchBookings = useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams()
-    if (search)     params.set('search',     search)
-    if (status)     params.set('status',     status)
-    if (dateFilter) params.set('dateFilter', dateFilter)
+    if (search)                             params.set('search',     search)
+    if (status)                             params.set('status',     status)
+    if (dateFilter)                         params.set('dateFilter', dateFilter)
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
     params.set('sortBy',  sortBy)
     params.set('sortDir', sortDir)
     try {
@@ -103,7 +106,7 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, status, dateFilter, sortBy, sortDir])
+  }, [search, status, dateFilter, sortBy, sortDir, countryFilter])
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 

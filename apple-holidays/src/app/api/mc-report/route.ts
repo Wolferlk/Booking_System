@@ -3,9 +3,28 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { canSeeAllCountries } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
 
-const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+
+// Merges optional search + country conditions into a single booking WHERE clause
+function buildBookingWhere(
+  search: string | null,
+  countryWhere: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const conditions: Record<string, unknown>[] = []
+  if (countryWhere) conditions.push(countryWhere)
+  if (search) conditions.push({
+    OR: [
+      { bookingRef: { contains: search } },
+      { agent:      { contains: search } },
+    ],
+  })
+  if (conditions.length === 0) return undefined
+  if (conditions.length === 1) return conditions[0]
+  return { AND: conditions }
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -13,6 +32,22 @@ export async function GET(req: NextRequest) {
 
   const role = session.user.role as UserRole
   if (!ALLOWED_ROLES.includes(role)) return buildApiError('Forbidden', 403)
+
+  const userCountry = (session.user as any).country as string | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country')
+
+  // Build booking-level country filter to pass through the agenda → booking relation
+  let bookingCountryWhere: Record<string, unknown> | undefined
+  if (!canSeeAllCountries(role, userCountry as any)) {
+    bookingCountryWhere = {
+      OR: [
+        { operationCountry: userCountry ?? null },
+        { operationCountry: null },
+      ],
+    }
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    bookingCountryWhere = { operationCountry: countryOverride }
+  }
 
   const { searchParams } = req.nextUrl
   const dateFrom = searchParams.get('dateFrom')
@@ -33,14 +68,7 @@ export async function GET(req: NextRequest) {
       ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
       ...(serviceType ? { serviceType: serviceType as never } : {}),
       agenda: {
-        booking: search
-          ? {
-              OR: [
-                { bookingRef: { contains: search } },
-                { agent:      { contains: search } },
-              ],
-            }
-          : undefined,
+        booking: buildBookingWhere(search, bookingCountryWhere),
       },
     },
     include: {

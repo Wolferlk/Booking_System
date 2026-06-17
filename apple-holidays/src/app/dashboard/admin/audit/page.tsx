@@ -9,6 +9,7 @@ import {
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { format } from 'date-fns'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 interface LogEntry {
   id: string
@@ -46,6 +47,7 @@ const ROLE_COLORS: Record<string, string> = {
 }
 
 export default function AuditLogPage() {
+  const { countryFilter } = useCountryFilter()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -59,13 +61,15 @@ export default function AuditLogPage() {
     try {
       const params = new URLSearchParams({ limit: String(limit), page: String(page) })
       if (filterAction) params.set('action', filterAction)
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
       const res = await fetch(`/api/admin/activity?${params}`)
       const data = await res.json()
       if (data.success) { setLogs(data.data.logs); setTotal(data.data.total) }
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [page, filterAction])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [page, filterAction, countryFilter])
 
   const filtered = search
     ? logs.filter(l =>

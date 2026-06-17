@@ -17,6 +17,7 @@ import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
 import { ROLE_LABELS } from '@/lib/rbac'
 import { formatDate, formatDateTime, getInitials, cn } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { UserRole } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -109,6 +110,7 @@ function RoleSelect({ value, onChange }: { value: string; onChange: (v: string) 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
+  const { countryFilter } = useCountryFilter()
   const { data: session } = useSession()
 
   // Data
@@ -145,7 +147,8 @@ export default function UsersPage() {
   async function loadUsers() {
     setLoading(true)
     try {
-      const res  = await fetch('/api/users')
+      const cqs = countryFilter && countryFilter !== 'ALL' ? `?country=${countryFilter}` : ''
+      const res  = await fetch(`/api/users${cqs}`)
       const json = await res.json()
       if (json.success) setUsers(json.data)
       else toast.error(json.error ?? 'Failed to load users')
@@ -156,7 +159,7 @@ export default function UsersPage() {
     }
   }
 
-  useEffect(() => { loadUsers() }, [])
+  useEffect(() => { loadUsers() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Filtered + Sorted ─────────────────────────────────────────────────────────
 

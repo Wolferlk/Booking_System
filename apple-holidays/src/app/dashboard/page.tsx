@@ -10,6 +10,7 @@ import Header from '@/components/layout/header'
 import { Card, StatCard, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
 import type { UserRole, BookingStatus } from '@prisma/client'
 
@@ -40,6 +41,7 @@ interface RecentBooking {
 export default function DashboardPage() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
+  const { countryFilter } = useCountryFilter()
   const [stats, setStats] = useState<Stats | null>(null)
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,9 +49,10 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
+        const cqs = countryFilter && countryFilter !== 'ALL' ? `country=${countryFilter}` : ''
         const [statsRes, bookingsRes] = await Promise.all([
-          fetch('/api/dashboard/stats'),
-          fetch('/api/bookings?limit=5'),
+          fetch(`/api/dashboard/stats${cqs ? `?${cqs}` : ''}`),
+          fetch(`/api/bookings?limit=5${cqs ? `&${cqs}` : ''}`),
         ])
         const [statsJson, bookingsJson] = await Promise.all([
           statsRes.json(),
@@ -62,7 +65,7 @@ export default function DashboardPage() {
       }
     }
     load()
-  }, [])
+  }, [countryFilter])
 
   const isAdmin = role === 'SUPER_ADMIN'
   const isAccounts = role === 'AC_USER'

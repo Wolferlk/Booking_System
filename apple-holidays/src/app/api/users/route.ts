@@ -6,12 +6,25 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import bcrypt from 'bcryptjs'
 import type { UserRole } from '@prisma/client'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
+  const sessionCountry = (session.user as any).country as string | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country')
+
+  // SUPER_ADMIN with a specific country only sees users in their country
+  // ULTRA_SUPER_ADMIN (country=ALL) can filter via ?country= param
+  let countryWhere: Record<string, unknown> = {}
+  if (sessionCountry && sessionCountry !== 'ALL') {
+    countryWhere = { country: sessionCountry }
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    countryWhere = { country: countryOverride }
+  }
+
   const users = await prisma.user.findMany({
+    where: countryWhere,
     select: {
       id: true, email: true, name: true, role: true,
       phone: true, avatar: true, isActive: true,

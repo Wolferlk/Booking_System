@@ -10,6 +10,13 @@ import {
   FileText, Truck, MapPin, BarChart2, Globe, Shield, Lock,
 } from 'lucide-react'
 
+const COUNTRY_PARAM_TO_FILTER: Record<string, string> = {
+  vietnam:   'VIETNAM',
+  srilanka:  'SRILANKA',
+  singapore: 'SINGAPORE_MALAYSIA',
+  malaysia:  'SINGAPORE_MALAYSIA',
+}
+
 const DESTINATION_META: Record<string, { label: string; flag: string; code: string }> = {
   vietnam:   { label: 'Vietnam',              flag: '🇻🇳',     code: 'MMT_VN' },
   srilanka:  { label: 'Sri Lanka',            flag: '🇱🇰',     code: 'MMT_LK' },
@@ -141,6 +148,10 @@ function LoginForm() {
           toast.error('Invalid email or password')
         }
       } else {
+        const countryFilter = COUNTRY_PARAM_TO_FILTER[countryParam]
+        if (countryFilter) {
+          localStorage.setItem('ah_country_filter', countryFilter)
+        }
         router.push(roleParam === 'CLIENT' ? '/portal' : '/dashboard')
         router.refresh()
       }

@@ -658,15 +658,16 @@ model Vehicle {
 }
 
 model VehicleVendor {
-  id        String    @id @default(cuid())
+  id        String            @id @default(cuid())
   name      String
   phone     String?
   email     String?
   address   String?
-  isActive  Boolean   @default(true)
+  isActive  Boolean           @default(true)
+  country   OperationCountry?
   vehicles  Vehicle[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
 
   @@map("vehicle_vendors")
 }
@@ -701,6 +702,7 @@ model CreditAgent {
   currency      String               @default("USD")
   notes         String?              @db.Text
   isActive      Boolean              @default(true)
+  country       OperationCountry?
 
   payments      CreditAgentPayment[]
 

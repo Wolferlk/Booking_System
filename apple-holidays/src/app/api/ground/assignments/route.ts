@@ -3,17 +3,34 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { canSeeAllCountries } from '@/lib/rbac'
+import type { UserRole } from '@prisma/client'
 
-export async function GET(_req: NextRequest) {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
+  }
+
+  const role = session.user.role as UserRole
+  const userCountry = (session.user as any).country as string | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country')
+
+  const countryWhere: Record<string, unknown> = {}
+  if (!canSeeAllCountries(role, userCountry as any)) {
+    countryWhere.OR = [
+      { operationCountry: userCountry ?? null },
+      { operationCountry: null },
+    ]
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    countryWhere.operationCountry = countryOverride
   }
 
   // All operational bookings with upcoming / current trips
   const bookings = await prisma.booking.findMany({
     where: {
+      ...countryWhere,
       status: { in: ['OPERATIONS_READY', 'CLIENT_LIVE', 'IN_PROGRESS'] },
     },
     include: {

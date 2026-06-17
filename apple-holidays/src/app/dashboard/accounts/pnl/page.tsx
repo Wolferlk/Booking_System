@@ -7,6 +7,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge, Badge } from '@/components/ui/badge'
 import { formatDate, formatCurrency } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { BookingStatus } from '@prisma/client'
 
 interface Booking {
@@ -17,14 +18,16 @@ interface Booking {
 
 export default function AccountsPNLPage() {
   const router = useRouter()
+  const { countryFilter } = useCountryFilter()
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    const cqs = countryFilter && countryFilter !== 'ALL' ? `&country=${countryFilter}` : ''
     Promise.all([
-      fetch('/api/bookings?status=AWAITING_PAYMENT_CONFIRM').then(r => r.json()),
-      fetch('/api/bookings?status=GT_VERIFIED').then(r => r.json()),
-      fetch('/api/bookings?status=OPERATIONS_READY').then(r => r.json()),
+      fetch(`/api/bookings?status=AWAITING_PAYMENT_CONFIRM${cqs}`).then(r => r.json()),
+      fetch(`/api/bookings?status=GT_VERIFIED${cqs}`).then(r => r.json()),
+      fetch(`/api/bookings?status=OPERATIONS_READY${cqs}`).then(r => r.json()),
     ]).then(([a, b, c]) => {
       const all = [
         ...(a.success ? a.data.bookings : []),
@@ -33,7 +36,7 @@ export default function AccountsPNLPage() {
       ]
       setBookings(all)
     }).finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   const awaiting = bookings.filter(b => b.status === 'AWAITING_PAYMENT_CONFIRM')
   const verified = bookings.filter(b => b.status === 'GT_VERIFIED')

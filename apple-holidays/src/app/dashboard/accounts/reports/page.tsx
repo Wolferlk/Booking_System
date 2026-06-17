@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, Download, FileText, Filter } from 'lucide-react'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
@@ -41,6 +42,7 @@ const STATUSES = [
 ]
 
 export default function ReportsPage() {
+  const { countryFilter } = useCountryFilter()
   const [rows, setRows] = useState<ReportRow[]>([])
   const [loading, setLoading] = useState(false)
   const [filterStatus, setFilterStatus] = useState('')
@@ -54,6 +56,7 @@ export default function ReportsPage() {
       const params = new URLSearchParams({ limit: '500' })
       if (filterStatus) params.set('status', filterStatus)
       if (filterAgent) params.set('search', filterAgent)
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
 
       const res = await fetch(`/api/accounts/report?${params}`)
       const json = await res.json()
@@ -73,7 +76,7 @@ export default function ReportsPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function downloadCSV() {
     if (rows.length === 0) { toast.error('No data to export'); return }

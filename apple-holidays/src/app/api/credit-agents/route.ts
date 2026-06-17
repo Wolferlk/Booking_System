@@ -3,15 +3,24 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { canSeeAllCountries } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
+import type { OperationCountry } from '@prisma/client'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   const role = session.user.role as UserRole
-  if (!['AC_USER', 'SUPER_ADMIN', 'BT_USER'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN', 'BT_USER'].includes(role)) return buildApiError('Forbidden', 403)
+
+  const userCountry = session.user.country as OperationCountry | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country') as OperationCountry | null
+  const effectiveCountry = canSeeAllCountries(role, userCountry ?? 'ALL')
+    ? (countryOverride || null)
+    : (userCountry || null)
 
   const agents = await prisma.creditAgent.findMany({
+    where: effectiveCountry ? { country: effectiveCountry } : {},
     orderBy: { name: 'asc' },
     include: {
       payments: {
@@ -56,12 +65,17 @@ export async function POST(req: NextRequest) {
   if (!['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { name, aliases, contactName, contactEmail, contactPhone, creditLimit, currency, notes } = body
+  const { name, aliases, contactName, contactEmail, contactPhone, creditLimit, currency, notes, country } = body
 
   if (!name?.trim()) return buildApiError('Agent name is required')
 
   const existing = await prisma.creditAgent.findFirst({ where: { name: { equals: name.trim() } } })
   if (existing) return buildApiError('An agent with this name already exists')
+
+  const userCountry = session.user.country as OperationCountry | undefined
+  const agentCountry = canSeeAllCountries(role, userCountry ?? 'ALL')
+    ? (country || null)
+    : (userCountry || null)
 
   const agent = await prisma.creditAgent.create({
     data: {
@@ -73,6 +87,7 @@ export async function POST(req: NextRequest) {
       creditLimit: creditLimit ? Number(creditLimit) : null,
       currency: currency || 'USD',
       notes: notes || null,
+      country: agentCountry as OperationCountry || null,
     },
   })
 

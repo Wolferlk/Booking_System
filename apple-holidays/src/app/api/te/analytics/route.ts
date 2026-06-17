@@ -2,7 +2,9 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { canSeeAllCountries } from '@/lib/rbac'
 import { prisma } from '@/lib/prisma'
+import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,6 +13,20 @@ export async function GET(req: NextRequest) {
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
+  }
+
+  const role = session.user.role as UserRole
+  const userCountry = (session.user as any).country as string | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country')
+
+  const countryWhere: Record<string, unknown> = {}
+  if (!canSeeAllCountries(role, userCountry as any)) {
+    countryWhere.OR = [
+      { operationCountry: userCountry ?? null },
+      { operationCountry: null },
+    ]
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    countryWhere.operationCountry = countryOverride
   }
 
   const { searchParams } = req.nextUrl
@@ -39,6 +55,7 @@ export async function GET(req: NextRequest) {
   async function getStats(start: Date, end: Date) {
     const bookings = await prisma.booking.findMany({
       where: {
+        ...countryWhere,
         arrivalDate: { gte: start, lte: end },
         status: { notIn: ['CANCELLED'] },
       },
@@ -49,7 +66,7 @@ export async function GET(req: NextRequest) {
     })
 
     const cancelled = await prisma.booking.count({
-      where: { arrivalDate: { gte: start, lte: end }, status: 'CANCELLED' },
+      where: { ...countryWhere, arrivalDate: { gte: start, lte: end }, status: 'CANCELLED' },
     })
 
     const byStatus: Record<string, number> = {}
@@ -91,7 +108,7 @@ export async function GET(req: NextRequest) {
   const allStatuses = await prisma.booking.groupBy({
     by: ['status'],
     _count: { id: true },
-    where: { arrivalDate: { gte: periodA.start, lte: periodA.end } },
+    where: { ...countryWhere, arrivalDate: { gte: periodA.start, lte: periodA.end } },
   })
 
   return buildApiSuccess({

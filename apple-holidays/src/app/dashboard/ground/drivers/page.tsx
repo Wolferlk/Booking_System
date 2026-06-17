@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import {
   Plus, Loader2, Car, Truck, User, Phone, Mail, Search, X,
   CreditCard, Wallet, ChevronDown, ChevronRight,
@@ -88,6 +89,7 @@ const PAY_TYPE_COLORS: Record<string, string> = {
 
 export default function DriversPage() {
   const { data: session } = useSession()
+  const { countryFilter } = useCountryFilter()
   const isAdmin = session?.user?.role === 'SUPER_ADMIN'
 
   const [drivers, setDrivers] = useState<Driver[]>([])
@@ -122,13 +124,15 @@ export default function DriversPage() {
   async function loadDrivers() {
     setLoading(true)
     try {
-      const res = await fetch('/api/ground/drivers')
+      const params = new URLSearchParams()
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      const res = await fetch(`/api/ground/drivers?${params}`)
       const data = await res.json()
       if (data.success) setDrivers(data.data)
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { loadDrivers() }, [])
+  useEffect(() => { loadDrivers() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadDriverDetail(id: string) {
     if (expandedId === id) { setExpandedId(null); return }

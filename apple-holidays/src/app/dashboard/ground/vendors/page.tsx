@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import { Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car, ChevronDown, ChevronUp } from 'lucide-react'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
@@ -33,6 +34,7 @@ const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
 
 export default function VendorsPage() {
   const { data: session } = useSession()
+  const { countryFilter } = useCountryFilter()
   const isAdmin = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
 
   const [vendors, setVendors] = useState<Vendor[]>([])
@@ -51,13 +53,15 @@ export default function VendorsPage() {
 
   async function load() {
     try {
-      const res = await fetch('/api/ground/vendors')
+      const params = new URLSearchParams()
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      const res = await fetch(`/api/ground/vendors?${params}`)
       const data = await res.json()
       if (data.success) setVendors(data.data)
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function openAddVendor() {
     setVendorForm({ name: '', phone: '', email: '', address: '' })

@@ -10,6 +10,7 @@ import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { toast } from 'sonner'
 import { cn, formatDate } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -155,6 +156,7 @@ function SortTh({
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function MCReportPage() {
+  const { countryFilter } = useCountryFilter()
   const [rows, setRows]           = useState<MCRow[]>([])
   const [loading, setLoading]     = useState(false)
   const [dateFrom, setDateFrom]   = useState('')
@@ -175,6 +177,7 @@ export default function MCReportPage() {
       if (dateTo)      params.set('dateTo',   dateTo)
       if (search)      params.set('search',   search)
       if (svcFilter)   params.set('serviceType', svcFilter)
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
 
       const res  = await fetch(`/api/mc-report?${params}`)
       const json = await res.json()
@@ -188,7 +191,7 @@ export default function MCReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateFrom, dateTo, search, svcFilter])
+  }, [dateFrom, dateTo, search, svcFilter, countryFilter])
 
   useEffect(() => {
     // Auto-load with today's date on mount

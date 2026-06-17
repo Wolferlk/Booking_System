@@ -15,9 +15,9 @@ export async function GET(req: NextRequest) {
   const excludeBooking = searchParams.get('excludeRef')    // booking ref to exclude from busy check
 
   const userCountry = session.user.country as OperationCountry | undefined
-  const countryWhere = (!userCountry || userCountry === 'ALL')
-    ? {}
-    : { country: userCountry }
+  const countryOverride = searchParams.get('country') as OperationCountry | null
+  const effectiveCountry = (!userCountry || userCountry === 'ALL') ? countryOverride : userCountry
+  const countryWhere = effectiveCountry ? { country: effectiveCountry } : {}
 
   let drivers
   try {

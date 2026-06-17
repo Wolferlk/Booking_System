@@ -11,7 +11,16 @@ import {
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { UserRole } from '@prisma/client'
+import type { OperationCountry } from '@/lib/country-detection'
+
+const COUNTRY_PILLS: { value: OperationCountry | 'ALL'; flag: string; short: string }[] = [
+  { value: 'ALL',                flag: '🌍', short: 'All' },
+  { value: 'VIETNAM',            flag: '🇻🇳', short: 'VN' },
+  { value: 'SRILANKA',           flag: '🇱🇰', short: 'LK' },
+  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', short: 'SG/MY' },
+]
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
@@ -119,6 +128,7 @@ export default function Sidebar() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
   const navItems = role ? NAV_ITEMS[role] ?? [] : []
+  const { countryFilter, setCountryFilter, canFilter } = useCountryFilter()
 
   return (
     <aside className="fixed left-0 top-0 h-full w-[260px] bg-slate-900 flex flex-col z-30 border-r border-slate-800">
@@ -139,6 +149,43 @@ export default function Sidebar() {
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/8 border border-brand-500/20">
             <div className="w-1.5 h-1.5 rounded-full bg-brand-500 flex-shrink-0" />
             <span className="text-brand-400 text-[11px] font-semibold">{ROLE_LABELS[role]}</span>
+          </div>
+        )}
+        {/* Country filter — only for admins who can see all countries */}
+        {canFilter && (
+          <div className="mt-3">
+            <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
+              Country Filter
+            </p>
+            <div className="grid grid-cols-4 gap-1">
+              {COUNTRY_PILLS.map(pill => (
+                <button
+                  key={pill.value}
+                  onClick={() => setCountryFilter(pill.value)}
+                  title={pill.value === 'ALL' ? 'All Countries' : pill.value.replace('_', ' & ')}
+                  className={cn(
+                    'flex flex-col items-center gap-0.5 py-1.5 px-0.5 rounded-lg text-center transition-all text-[9px] font-semibold leading-tight',
+                    countryFilter === pill.value
+                      ? 'bg-brand-500/20 border border-brand-500/40 text-brand-300'
+                      : 'bg-slate-800/60 border border-slate-700/40 text-slate-500 hover:text-slate-300 hover:bg-slate-700/60',
+                  )}
+                >
+                  <span className="text-base leading-none">{pill.flag}</span>
+                  <span>{pill.short}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* Country badge for scoped users */}
+        {!canFilter && session?.user && (session.user as any).country && (session.user as any).country !== 'ALL' && (
+          <div className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/40">
+            <span className="text-xs">{COUNTRY_PILLS.find(p => p.value === (session.user as any).country)?.flag ?? '🌍'}</span>
+            <span className="text-slate-400 text-[10px] font-medium">
+              {(session.user as any).country === 'VIETNAM' ? 'Vietnam'
+                : (session.user as any).country === 'SRILANKA' ? 'Sri Lanka'
+                : 'Singapore & Malaysia'}
+            </span>
           </div>
         )}
       </div>
