@@ -8,6 +8,7 @@ import { processMailboxEmail } from '@/lib/incoming-mail-automation'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import { getLessCreditModeEnabled, RECENT_MAIL_WINDOW_MINUTES } from '@/lib/mail-mode'
 import { upsertCachedMailMessage, syncMailboxEmailsToDb, listUnprocessedDbEmails } from '@/lib/mail-cache'
+import { fetchImapPayableEmails, fetchImapAttachments, IMAP_PNL_USER } from '@/lib/imap-pnl'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,6 +77,88 @@ async function processEmailBatch(
   summaries.push({ mailbox: mailboxUser, checked: emails.length, processed, skipped })
 }
 
+// ── IMAP payable mailbox processor ───────────────────────────────────────────
+// Runs only when IMAP2_USERNAME is set AND is not already covered by GRAPH_PNL_USER.
+// Fetches PNL emails via IMAP, processes each one into a booking PNL, and records
+// a dedup key so re-runs skip already-processed messages.
+
+async function processImapPayableEmails(
+  summaries: Array<{ mailbox: string; checked: number; processed: number; skipped: number }>,
+  lessCreditMode: boolean,
+  cutoffMs: number,
+) {
+  if (!IMAP_PNL_USER) return
+
+  // Skip if the same address is already being handled through Microsoft Graph
+  const graphMailboxes = getConfiguredMailboxes()
+  if (graphMailboxes.some(mb => mb.user === IMAP_PNL_USER)) return
+
+  const emails = await fetchImapPayableEmails(25).catch(() => [])
+
+  const scopedEmails = lessCreditMode
+    ? emails.filter(e => Date.now() - new Date(e.date).getTime() <= cutoffMs)
+    : emails
+
+  let processed = 0
+  let skipped = 0
+
+  for (const email of scopedEmails) {
+    const dedupKey = `processed_email_${email.graphId}`
+    const already = await prisma.systemSetting.findUnique({ where: { key: dedupKey } })
+    if (already) { skipped += 1; continue }
+
+    try {
+      await upsertCachedMailMessage({
+        email,
+        mailboxUser: IMAP_PNL_USER,
+        mailboxKind: 'PNL',
+        status: 'RECEIVED',
+      }).catch(() => {})
+
+      const attachments = email.hasAttachments
+        ? await fetchImapAttachments(email.graphId).catch(() => [])
+        : []
+
+      const result = await processMailboxEmail(email, 'PNL', attachments)
+
+      await prisma.systemSetting.upsert({
+        where:  { key: dedupKey },
+        update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
+        create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
+      })
+      await upsertCachedMailMessage({
+        email,
+        mailboxUser: IMAP_PNL_USER,
+        mailboxKind: 'PNL',
+        bookingRef: result.bookingRef,
+        status: 'PROCESSED',
+        processedAt: new Date().toISOString(),
+      }).catch(() => {})
+
+      console.log(`[IMAP-Cron] ✓ processed PNL → booking ${result.bookingRef}`)
+      processed += 1
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[IMAP-Cron] processing failed:', msg)
+      await upsertCachedMailMessage({
+        email,
+        mailboxUser: IMAP_PNL_USER,
+        mailboxKind: 'PNL',
+        status: 'ERROR',
+      }).catch(() => {})
+      await prisma.systemSetting.upsert({
+        where:  { key: 'imap_cron_last_error' },
+        update: { value: `${new Date().toISOString()} | ${IMAP_PNL_USER} | ${msg.slice(0, 500)}` },
+        create: { key: 'imap_cron_last_error', value: `${new Date().toISOString()} | ${IMAP_PNL_USER} | ${msg.slice(0, 500)}` },
+      })
+    }
+  }
+
+  summaries.push({ mailbox: `${IMAP_PNL_USER} (IMAP)`, checked: scopedEmails.length, processed, skipped })
+}
+
+// ── Cron handler ──────────────────────────────────────────────────────────────
+
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET ?? process.env.WEBHOOK_SECRET}`) {
@@ -110,6 +193,9 @@ export async function GET(req: NextRequest) {
 
     await processEmailBatch(scopedEmails, mailbox.user, mailbox.kind, summaries)
   }
+
+  // IMAP payable mailbox — runs only if IMAP2_USERNAME is set and not covered by Graph
+  await processImapPayableEmails(summaries, lessCreditMode, cutoffMs)
 
   return NextResponse.json({ ok: true, summaries })
 }
