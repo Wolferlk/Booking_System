@@ -44,9 +44,12 @@ export async function PUT(
   const body = await req.json()
   const {
     name, phone, email, licenseNo, isActive, photoUrl,
-    vehicleId,
+    vehicleId, country,
     bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
   } = body
+
+  // Only ALL-country users can change the driver's country
+  const userCountry = session.user.country as string | undefined
 
   const updated = await prisma.driver.update({
     where: { id: params.id },
@@ -58,6 +61,7 @@ export async function PUT(
       ...(isActive !== undefined && { isActive }),
       ...(photoUrl !== undefined && { photoUrl }),
       ...(vehicleId !== undefined && { vehicleId: vehicleId || null }),
+      ...(country !== undefined && (!userCountry || userCountry === 'ALL') && { country: country || null }),
       ...(bankName !== undefined && { bankName }),
       ...(bankAccountNo !== undefined && { bankAccountNo }),
       ...(bankHolder !== undefined && { bankHolder }),

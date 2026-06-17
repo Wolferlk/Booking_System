@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import type { OperationCountry } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -13,10 +14,22 @@ export async function GET(req: NextRequest) {
   const date           = searchParams.get('date')          // YYYY-MM-DD — check availability for this date
   const excludeBooking = searchParams.get('excludeRef')    // booking ref to exclude from busy check
 
-  const drivers = await prisma.driver.findMany({
-    include: { vehicle: { include: { vendor: true } } },
-    orderBy: { name: 'asc' },
-  })
+  const userCountry = session.user.country as OperationCountry | undefined
+  const countryWhere = (!userCountry || userCountry === 'ALL')
+    ? {}
+    : { country: userCountry }
+
+  let drivers
+  try {
+    drivers = await prisma.driver.findMany({
+      where: countryWhere,
+      include: { vehicle: { include: { vendor: true } } },
+      orderBy: { name: 'asc' },
+    })
+  } catch (err) {
+    console.error('[drivers GET] Prisma error:', err)
+    return buildApiError('Failed to load drivers', 500)
+  }
 
   if (!date) return buildApiSuccess(drivers)
 
@@ -75,8 +88,12 @@ export async function POST(req: NextRequest) {
   if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { name, phone, email, licenseNo, vehicleId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive, photoUrl } = body
+  const { name, phone, email, licenseNo, vehicleId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive, photoUrl, country } = body
   if (!name || !phone) return buildApiError('name and phone are required')
+
+  // Non-ALL users can only create drivers for their own country
+  const userCountry = session.user.country as OperationCountry | undefined
+  const driverCountry = (!userCountry || userCountry === 'ALL') ? (country || null) : userCountry
 
   const driver = await prisma.driver.create({
     data: {
@@ -86,6 +103,7 @@ export async function POST(req: NextRequest) {
       isActive:     isActive     ?? true,
       photoUrl:     photoUrl     || null,
       vehicleId:    vehicleId    || null,
+      country:      driverCountry || null,
       bankName:     bankName     || null,
       bankAccountNo: bankAccountNo || null,
       bankHolder:   bankHolder   || null,

@@ -100,13 +100,13 @@ async function main() {
   const [driver1, driver2] = await Promise.all([
     prisma.driver.upsert({
       where: { id: 'driver-001' },
-      update: {},
-      create: { id: 'driver-001', name: 'Nguyen Van Minh', phone: '+84-905-123456', email: 'minh@van.vn', licenseNo: 'VN-2024-001' },
+      update: { country: 'VIETNAM' },
+      create: { id: 'driver-001', name: 'Nguyen Van Minh', phone: '+84-905-123456', email: 'minh@van.vn', licenseNo: 'VN-2024-001', country: 'VIETNAM' },
     }),
     prisma.driver.upsert({
       where: { id: 'driver-002' },
-      update: {},
-      create: { id: 'driver-002', name: 'Tran Thi Lan', phone: '+84-906-789012', email: 'lan@transport.vn', licenseNo: 'VN-2024-002' },
+      update: { country: 'VIETNAM' },
+      create: { id: 'driver-002', name: 'Tran Thi Lan', phone: '+84-906-789012', email: 'lan@transport.vn', licenseNo: 'VN-2024-002', country: 'VIETNAM' },
     }),
   ])
 
@@ -387,6 +387,134 @@ async function main() {
   }
 
   console.log('\n🎉 Seed complete!')
+  // ─── Singapore & Malaysia Drivers ───────────────────────────────────────
+  const sgCount = await prisma.driver.count({ where: { country: 'SINGAPORE_MALAYSIA' } })
+  if (sgCount === 0) {
+    const sgDrivers = [
+      { name: 'Siva',     phone: '+6589250414', licenseNo: null as string | null, vehicleNote: 'PD2885P' },
+      { name: 'Karthik',  phone: '+6584848172', licenseNo: null as string | null, vehicleNote: null },
+      { name: 'Bharathi', phone: '+6598783767', licenseNo: null as string | null, vehicleNote: 'PC2145Y' },
+    ]
+    for (const d of sgDrivers) {
+      const driver = await prisma.driver.create({
+        data: { name: d.name, phone: d.phone, country: 'SINGAPORE_MALAYSIA', isActive: true },
+      })
+      if (d.vehicleNote) {
+        const isPC2145Y = d.vehicleNote === 'PC2145Y'
+        const vehicle = await prisma.vehicle.upsert({
+          where: { plateNo: d.vehicleNote },
+          update: {},
+          create: {
+            plateNo: d.vehicleNote, type: 'van', capacity: 13,
+            description: isPC2145Y ? '13S White Combi' : undefined,
+          },
+        })
+        await prisma.driver.update({ where: { id: driver.id }, data: { vehicleId: vehicle.id } })
+      }
+    }
+    console.log('✅ Singapore & Malaysia drivers seeded')
+  }
+
+  // ─── Sri Lanka Drivers ────────────────────────────────────────────────────
+  const slCount = await prisma.driver.count({ where: { country: 'SRILANKA' } })
+  if (slCount === 0) {
+    const slDrivers = [
+      { name: 'Dinesh-Dushan',      phone: '+94779426347' },
+      { name: 'Prabudda',           phone: '+94757600655' },
+      { name: 'Asanka',             phone: '+94777369536' },
+      { name: 'Nuwan',              phone: '+94775671107' },
+      { name: 'Dulara',             phone: '+94713307472' },
+      { name: 'Sithum',             phone: '+94702853374' },
+      { name: 'Isuru',              phone: '+94716066657' },
+      { name: 'Shashi',             phone: '+94768001799' },
+      { name: 'Ashen',              phone: '+94767310531' },
+      { name: 'Manju',              phone: '+94743348256' },
+      { name: 'Shanaka',            phone: '+94769610272' },
+      { name: 'Jude',               phone: '+94773845678' },
+      { name: 'Kumara',             phone: '+94762194429' },
+      { name: 'Yooshaf',            phone: '+94743688516' },
+      { name: 'Nishan',             phone: '+94714703767' },
+      { name: 'Shohan-Asitha',      phone: '+94779865601' },
+      { name: 'Ayesh',              phone: '+94719627551' },
+      { name: 'Chanuka',            phone: '+94716145200' },
+      { name: 'Danushka',           phone: '+94703827701' },
+      { name: 'Danuka',             phone: '+94774641671' },
+      { name: 'Isuru (2)',          phone: '+94711401924' },
+      { name: 'Roshan',             phone: '+94774640338' },
+      { name: 'Sandaru',            phone: '+94713989664' },
+      { name: 'Prashantha',         phone: '+94775186976' },
+      { name: 'Haritha',            phone: '+94771288646' },
+      { name: 'Sheshan-Sanath',     phone: '+94720991071' },
+      { name: 'Sheshan',            phone: '+94719999735' },
+      { name: 'Akila',              phone: '+94770403392' },
+      { name: 'Lakshitha',          phone: '+94778169330' },
+      { name: 'Sadeesha',           phone: '+94718788620' },
+      { name: 'Mass',               phone: '+94775158111' },
+      { name: 'Ishwara',            phone: '+94767733233' },
+      { name: 'Rukshan',            phone: '+94728834218' },
+      { name: 'Kanishka',           phone: '+94773840760' },
+      { name: 'Supun',              phone: '+94719960265' },
+      { name: 'Elmo',               phone: '+94718249808' },
+      { name: 'Udaya',              phone: '+94718240279' },
+      { name: 'Harshana',           phone: '+94778910915' },
+      { name: 'Susil',              phone: '+94702636977' },
+      { name: 'Sudam',              phone: '+94765947473' },
+      { name: 'Eranga',             phone: '+94759300034' },
+      { name: 'Omila',              phone: '+94777033760' },
+      { name: 'Sanjeewa',           phone: '+94771925946' },
+      { name: 'Sanjeewa Chathuranga', phone: '+94717777755' },
+      { name: 'Gamage',             phone: '+94713004835' },
+      { name: 'Ashan',              phone: '+94763740448' },
+      { name: 'Ranjith',            phone: '+94768541928' },
+      { name: 'Chaminda',           phone: '+94772682149' },
+      { name: 'Prabath',            phone: '+94770251227' },
+      { name: 'Sanjitha',           phone: '+94777608279' },
+      { name: 'Ruwan Dayananda',    phone: '+94768949132' },
+      { name: 'Omila Denuth',       phone: '+94784412224' },
+      { name: 'Kumara (Katunayake)', phone: '+94778390822' },
+      { name: 'Ishan',              phone: '+94774224083' },
+      { name: 'Raheem',             phone: '+94778066967' },
+      { name: 'Anusha',             phone: '+94710642196' },
+      { name: 'Ananda',             phone: '+94716055696' },
+      { name: 'Saparamadu',         phone: '+94770651045' },
+      { name: 'Dinusha',            phone: '+94776736717' },
+      { name: 'Supun (2)',          phone: '+94758284502' },
+      { name: 'Bandara',            phone: '+94773754051' },
+      { name: 'Lakshan',            phone: '+94773894557' },
+      { name: 'Sanjaya Sameera',    phone: '+94771592566' },
+      { name: 'Sanjaya Pradeep',    phone: '+94718714143' },
+      { name: 'Sanjaya Shehan',     phone: '+94772980494' },
+      { name: 'Pasindu',            phone: '+94718818367' },
+      { name: 'Vipul',              phone: '+94768610333' },
+      { name: 'Chandana',           phone: '+94707666689' },
+      { name: 'Lankapura',          phone: '+94763036995' },
+      { name: 'Ranji',              phone: '+94775584711' },
+      { name: 'Bhanuka',            phone: '+94772469699' },
+      { name: 'Aravinda',           phone: '+94778808393' },
+      { name: 'Nayanajith',         phone: '+94777340186' },
+      { name: 'Daya',               phone: '+94775002402' },
+      { name: 'Sunil',              phone: '+94768461286' },
+      { name: 'Mahinda',            phone: '+94712071222' },
+      { name: 'Anura',              phone: '+94766148632' },
+      { name: 'Amila Dinesh',       phone: '+94712746484' },
+      { name: 'Amila Prasantha',    phone: '+94773572700' },
+      { name: 'Kosala',             phone: '+94774878243' },
+      { name: 'Roshan (2)',         phone: '+94742802644' },
+      { name: 'Neshal Prasan',      phone: '+94777287111' },
+      { name: 'Nimesh Niroshan',    phone: '+94711574400' },
+      { name: 'Bhathiya Terry',     phone: '+94764983721' },
+      { name: 'Miniruwan',          phone: '+94714554654' },
+      { name: 'Shantha',            phone: '+94704034613' },
+      { name: 'Harshana Shan',      phone: '+94759392625' },
+      { name: 'Anjana',             phone: '+94751478534' },
+    ]
+    await prisma.driver.createMany({
+      data: slDrivers.map(d => ({ ...d, country: 'SRILANKA' as const, isActive: true })),
+      skipDuplicates: true,
+    })
+    console.log(`✅ Sri Lanka drivers seeded (${slDrivers.length} drivers)`)
+  }
+
   console.log('\nDemo credentials (all use password: password123):')
   console.log('  admin@apple.com     — Super Admin')
   console.log('  bt@apple.com        — Booking Team')

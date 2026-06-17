@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
-  Plus, Loader2, Car, Truck, User, Phone, Mail,
+  Plus, Loader2, Car, Truck, User, Phone, Mail, Search, X,
   CreditCard, Wallet, ChevronDown, ChevronRight,
   CheckCircle2, Edit2, Trash2, DollarSign,
   Building2, ArrowUpCircle, ArrowDownCircle, Camera,
@@ -29,17 +29,54 @@ interface Driver {
   id: string; name: string; phone: string; email: string | null
   licenseNo: string | null; isActive: boolean; photoUrl: string | null
   vehicleId: string | null; vehicle: Vehicle | null
+  country: string | null
   bankName: string | null; bankAccountNo: string | null
   bankHolder: string | null; bankBranch: string | null; bankCode: string | null
   advanceBalance: number
   driverPayments?: DriverPayment[]
 }
 
-const VN_BANKS = [
-  'Vietcombank', 'Techcombank', 'BIDV', 'VietinBank', 'MB Bank',
-  'ACB', 'Sacombank', 'VPBank', 'TPBank', 'VIB', 'SHB', 'Agribank',
-  'HDBank', 'Eximbank', 'OCB', 'MSB', 'LienVietPostBank', 'Other',
-]
+const BANKS_BY_COUNTRY: Record<string, string[]> = {
+  VIETNAM: [
+    'Vietcombank', 'Techcombank', 'BIDV', 'VietinBank', 'MB Bank',
+    'ACB', 'Sacombank', 'VPBank', 'TPBank', 'VIB', 'SHB', 'Agribank',
+    'HDBank', 'Eximbank', 'OCB', 'MSB', 'LienVietPostBank', 'Other',
+  ],
+  SRILANKA: [
+    'Bank of Ceylon', "People's Bank", 'Commercial Bank', 'Hatton National Bank (HNB)',
+    'Sampath Bank', 'Seylan Bank', 'Nations Trust Bank (NTB)', 'NDB Bank',
+    'DFCC Bank', 'Pan Asia Bank', 'Union Bank', 'Amana Bank', 'Other',
+  ],
+  SINGAPORE_MALAYSIA: [
+    'DBS', 'OCBC', 'UOB', 'Maybank', 'CIMB', 'Standard Chartered',
+    'Citibank', 'HSBC', 'RHB', 'Bank Mandiri', 'Other',
+  ],
+}
+
+const BANK_LABELS: Record<string, string> = {
+  VIETNAM:            '🇻🇳 Vietnamese Bank Account',
+  SRILANKA:           '🇱🇰 Sri Lanka Bank Account',
+  SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 Singapore / Malaysia Bank Account',
+}
+
+const HOLDER_PLACEHOLDERS: Record<string, string> = {
+  VIETNAM:            'NGUYEN VAN MINH',
+  SRILANKA:           'KASUN PERERA',
+  SINGAPORE_MALAYSIA: 'RAVI KUMAR',
+}
+
+const BRANCH_PLACEHOLDERS: Record<string, string> = {
+  VIETNAM:            'Ho Chi Minh City',
+  SRILANKA:           'Colombo',
+  SINGAPORE_MALAYSIA: 'Singapore CBD',
+}
+
+const SWIFT_PLACEHOLDERS: Record<string, string> = {
+  VIETNAM:            'BFTVVNVX',
+  SRILANKA:           'BCEYLKLX',
+  SINGAPORE_MALAYSIA: 'DBSSSGSG',
+}
+
 const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
 
 const PAY_TYPE_COLORS: Record<string, string> = {
@@ -60,12 +97,19 @@ export default function DriversPage() {
   const [editDriver, setEditDriver] = useState<Driver | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [showPayModal, setShowPayModal] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const userCountry = (session?.user?.country ?? 'ALL') as string
+  const isAllCountry = !userCountry || userCountry === 'ALL'
 
   const [form, setForm] = useState({
     name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '',
-    vehicleId: '',
+    vehicleId: '', country: '',
     bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '',
   })
+
+  // Active country for the form — drives bank list & labels
+  const formCountry = editDriver?.country ?? form.country ?? (isAllCountry ? '' : userCountry)
   const [vehForm, setVehForm] = useState({
     plateNo: '', type: 'van', brand: '', model: '', capacity: '4',
     photoOutside: '', photoInside: '',
@@ -124,6 +168,7 @@ export default function DriversPage() {
       isActive: driver.isActive,
       photoUrl: driver.photoUrl ?? '',
       vehicleId: driver.vehicleId ?? '',
+      country: driver.country ?? '',
       bankName: driver.bankName ?? '',
       bankAccountNo: driver.bankAccountNo ?? '',
       bankHolder: driver.bankHolder ?? '',
@@ -149,7 +194,7 @@ export default function DriversPage() {
   }
 
   function openAdd() {
-    setForm({ name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '', vehicleId: '', bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '' })
+    setForm({ name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '', vehicleId: '', country: '', bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '' })
     setVehForm({ plateNo: '', type: 'van', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '' })
     setShowNewVehicle(false)
     setShowAdd(true)
@@ -236,6 +281,36 @@ export default function DriversPage() {
     } finally { setSaving(false) }
   }
 
+  const filteredDrivers = drivers.filter(driver => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return true
+
+    const vehicleText = [
+      driver.vehicle?.plateNo,
+      driver.vehicle?.brand,
+      driver.vehicle?.model,
+      driver.vehicle?.type,
+    ].filter(Boolean).join(' ').toLowerCase()
+
+    const bankText = [
+      driver.bankName,
+      driver.bankAccountNo,
+      driver.bankHolder,
+      driver.bankBranch,
+      driver.bankCode,
+    ].filter(Boolean).join(' ').toLowerCase()
+
+    return [
+      driver.name,
+      driver.phone,
+      driver.email,
+      driver.licenseNo,
+      driver.country,
+      vehicleText,
+      bankText,
+    ].some(value => value?.toLowerCase().includes(q))
+  })
+
   return (
     <div>
       <Header
@@ -249,16 +324,38 @@ export default function DriversPage() {
       />
 
       <div className="p-8 space-y-5">
+        <div className="relative max-w-xl">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search drivers, phones, licenses, vehicles, or banks…"
+            className="form-input pl-9 pr-10"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              aria-label="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 text-brand-500 animate-spin" /></div>
-        ) : drivers.length === 0 ? (
+        ) : filteredDrivers.length === 0 ? (
           <Card className="p-12 text-center">
             <Car className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-            <p className="text-slate-400">No drivers yet</p>
+            <p className="text-slate-400">
+              {searchQuery ? `No drivers match "${searchQuery}"` : 'No drivers yet'}
+            </p>
           </Card>
         ) : (
           <div className="space-y-4">
-            {drivers.map(driver => {
+            {filteredDrivers.map(driver => {
               const isExpanded = expandedId === driver.id
               return (
                 <Card key={driver.id} className={`overflow-hidden transition-all ${isExpanded ? 'ring-2 ring-brand-500/20' : ''}`}>
@@ -275,11 +372,23 @@ export default function DriversPage() {
                     {/* Info */}
                     <div className="flex-1 min-w-0 grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-semibold text-slate-900">{driver.name}</p>
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${driver.isActive ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
                             {driver.isActive ? 'Active' : 'Inactive'}
                           </span>
+                          {driver.country && (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              driver.country === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-100' :
+                              driver.country === 'SRILANKA'           ? 'bg-yellow-50 text-yellow-700 border-yellow-100' :
+                              driver.country === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                              'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}>
+                              {driver.country === 'VIETNAM' ? '🇻🇳 Vietnam' :
+                               driver.country === 'SRILANKA' ? '🇱🇰 Sri Lanka' :
+                               driver.country === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 SG/MY' : driver.country}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500">
                           <Phone className="w-3 h-3" /> {driver.phone}
@@ -488,6 +597,18 @@ export default function DriversPage() {
                 <input value={form.licenseNo} onChange={e => setForm(f => ({ ...f, licenseNo: e.target.value }))}
                   className="form-input" placeholder="VN-2024-001" />
               </div>
+              {isAllCountry && (
+                <div className="col-span-2">
+                  <label className="form-label">Country / Team</label>
+                  <select value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
+                    className="form-select">
+                    <option value="">Not set</option>
+                    <option value="VIETNAM">🇻🇳 Vietnam</option>
+                    <option value="SRILANKA">🇱🇰 Sri Lanka</option>
+                    <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
@@ -585,19 +706,25 @@ export default function DriversPage() {
             )}
           </div>
 
-          {/* Vietnamese Bank Details */}
+          {/* Bank Account Details */}
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-amber-500" /> Vietnamese Bank Account
+              <Building2 className="w-4 h-4 text-amber-500" />
+              {BANK_LABELS[formCountry] ?? 'Bank Account'}
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 sm:col-span-1">
                 <label className="form-label">Bank Name</label>
-                <select value={form.bankName} onChange={e => setForm(f => ({ ...f, bankName: e.target.value }))}
-                  className="form-select">
-                  <option value="">Select Bank</option>
-                  {VN_BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
+                {BANKS_BY_COUNTRY[formCountry] ? (
+                  <select value={form.bankName} onChange={e => setForm(f => ({ ...f, bankName: e.target.value }))}
+                    className="form-select">
+                    <option value="">Select Bank</option>
+                    {BANKS_BY_COUNTRY[formCountry].map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                ) : (
+                  <input value={form.bankName} onChange={e => setForm(f => ({ ...f, bankName: e.target.value }))}
+                    className="form-input" placeholder="Bank name" />
+                )}
               </div>
               <div className="col-span-2 sm:col-span-1">
                 <label className="form-label">Account Number</label>
@@ -607,17 +734,17 @@ export default function DriversPage() {
               <div>
                 <label className="form-label">Account Holder Name</label>
                 <input value={form.bankHolder} onChange={e => setForm(f => ({ ...f, bankHolder: e.target.value }))}
-                  className="form-input" placeholder="NGUYEN VAN MINH" />
+                  className="form-input" placeholder={HOLDER_PLACEHOLDERS[formCountry] ?? 'Account holder name'} />
               </div>
               <div>
                 <label className="form-label">Branch / City</label>
                 <input value={form.bankBranch} onChange={e => setForm(f => ({ ...f, bankBranch: e.target.value }))}
-                  className="form-input" placeholder="Ho Chi Minh City" />
+                  className="form-input" placeholder={BRANCH_PLACEHOLDERS[formCountry] ?? 'Branch or city'} />
               </div>
               <div className="col-span-2">
-                <label className="form-label">SWIFT / Napas Code (optional)</label>
+                <label className="form-label">SWIFT / Code (optional)</label>
                 <input value={form.bankCode} onChange={e => setForm(f => ({ ...f, bankCode: e.target.value }))}
-                  className="form-input font-mono" placeholder="BFTVVNVX" />
+                  className="form-input font-mono" placeholder={SWIFT_PLACEHOLDERS[formCountry] ?? 'SWIFT code'} />
               </div>
             </div>
           </div>
