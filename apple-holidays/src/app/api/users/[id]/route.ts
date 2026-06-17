@@ -4,7 +4,8 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import bcrypt from 'bcryptjs'
-import type { UserRole } from '@prisma/client'
+import type { UserRole, OperationCountry } from '@prisma/client'
+import { isRoleAllowedInCountry } from '@/lib/rbac'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
@@ -14,13 +15,18 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const user = await prisma.user.findUnique({
     where: { id: params.id },
     select: {
-      id: true, email: true, name: true, role: true,
+      id: true, email: true, name: true, role: true, country: true,
       phone: true, avatar: true, isActive: true,
       createdAt: true, updatedAt: true,
       _count: { select: { bookingsCreated: true, activityLogs: true } },
     },
   })
   if (!user) return buildApiError('User not found', 404)
+
+  const sessionCountry = session.user.country as OperationCountry
+  if (session.user.role === 'SUPER_ADMIN' && sessionCountry !== 'ALL' && user.country !== sessionCountry) {
+    return buildApiError('Forbidden', 403)
+  }
 
   return buildApiSuccess(user)
 }
@@ -32,10 +38,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { id } = params
   const body = await req.json()
-  const { name, email, phone, role, isActive, password } = body
+  const { name, email, phone, role, isActive, password, country } = body
 
   const existing = await prisma.user.findUnique({ where: { id } })
   if (!existing) return buildApiError('User not found', 404)
+
+  const sessionCountry = session.user.country as OperationCountry
+  const isGlobalAdmin = session.user.role === 'SUPER_ADMIN' && sessionCountry === 'ALL'
+
+  if (!isGlobalAdmin && session.user.role !== 'ULTRA_SUPER_ADMIN' && existing.country !== sessionCountry) {
+    return buildApiError('Forbidden — you can only manage users in your country', 403)
+  }
 
   // Prevent deactivating own account
   if (id === session.user.id && isActive === false) {
@@ -45,8 +58,26 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const updateData: Record<string, unknown> = {}
   if (name !== undefined)   updateData.name = name
   if (phone !== undefined)  updateData.phone = phone || null
-  if (role !== undefined)   updateData.role = role as UserRole
   if (isActive !== undefined) updateData.isActive = isActive
+
+  const nextCountry = country !== undefined
+    ? (country as OperationCountry)
+    : existing.country
+
+  if (country !== undefined) {
+    if (session.user.role !== 'ULTRA_SUPER_ADMIN') {
+      return buildApiError('Forbidden — only Ultra Super Admin can change country', 403)
+    }
+    updateData.country = country as OperationCountry
+  }
+
+  if (role !== undefined) {
+    const roleValue = role as UserRole
+    if (!isRoleAllowedInCountry(roleValue, nextCountry as OperationCountry)) {
+      return buildApiError(`Role ${roleValue} cannot be assigned to ${nextCountry}`)
+    }
+    updateData.role = roleValue
+  }
 
   if (email !== undefined && email !== existing.email) {
     const emailTaken = await prisma.user.findFirst({ where: { email, NOT: { id } } })
@@ -63,7 +94,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     where: { id },
     data: updateData,
     select: {
-      id: true, email: true, name: true, role: true,
+      id: true, email: true, name: true, role: true, country: true,
       phone: true, isActive: true, createdAt: true, updatedAt: true,
       _count: { select: { bookingsCreated: true, activityLogs: true } },
     },
@@ -113,6 +144,11 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
 
   const existing = await prisma.user.findUnique({ where: { id } })
   if (!existing) return buildApiError('User not found', 404)
+
+  const sessionCountry = session.user.country as OperationCountry
+  if (session.user.role === 'SUPER_ADMIN' && sessionCountry !== 'ALL' && existing.country !== sessionCountry) {
+    return buildApiError('Forbidden', 403)
+  }
 
   await prisma.user.delete({ where: { id } })
 

@@ -7,6 +7,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 interface CR {
   id: string; notes: string; targetField: string | null; status: string
@@ -16,16 +17,18 @@ interface CR {
 
 // Simplified — real impl would use a dedicated API endpoint
 export default function ChangeRequestsPage() {
+  const { countryFilter } = useCountryFilter()
   const [crs, setCrs] = useState<CR[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Load bookings and extract change requests
-    fetch('/api/bookings?status=CHANGE_REQUESTED&limit=50')
+    const params = new URLSearchParams({ status: 'CHANGE_REQUESTED', limit: '50' })
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+    fetch(`/api/bookings?${params}`)
       .then(r => r.json())
       .then(j => { if (j.success) setCrs([]) }) // placeholder
       .finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   return (
     <div>

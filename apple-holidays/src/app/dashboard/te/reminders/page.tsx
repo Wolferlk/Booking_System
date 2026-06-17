@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { Loader2, Bell, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -16,15 +17,18 @@ interface Booking {
 }
 
 export default function RemindersPage() {
+  const { countryFilter } = useCountryFilter()
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/bookings?limit=50')
+    const params = new URLSearchParams({ limit: '50' })
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+    fetch(`/api/bookings?${params}`)
       .then(r => r.json())
       .then(j => { if (j.success) setBookings(j.data.bookings) })
       .finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   const activeBookings = bookings.filter(b =>
     !['COMPLETED', 'CANCELLED'].includes(b.status) && getDaysUntilTrip(b.arrivalDate) > 0,

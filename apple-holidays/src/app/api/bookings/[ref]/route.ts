@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
+import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import type { UserRole } from '@prisma/client'
@@ -51,6 +51,13 @@ export async function GET(
 
   if (!booking) return buildApiError('Booking not found', 404)
 
+  const userCountry = session.user.country as string | undefined
+  if (role !== 'CLIENT' && !canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL') {
+    if (booking.operationCountry !== userCountry) {
+      return buildApiError('Forbidden', 403)
+    }
+  }
+
   if (role === 'CLIENT') {
     if (booking.clientUserId !== session.user.id) return buildApiError('Forbidden', 403)
     if (!isClientPortalUnlocked(booking.arrivalDate)) return buildApiError('Client portal not yet available', 403)
@@ -87,6 +94,11 @@ export async function PUT(
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
+
+  const userCountry = session.user.country as string | undefined
+  if (!canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL' && booking.operationCountry !== userCountry) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const body = await req.json()
   const {

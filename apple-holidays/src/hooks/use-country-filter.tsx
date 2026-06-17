@@ -3,7 +3,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import type { OperationCountry } from '@/lib/country-detection'
-import { canSeeAllCountries } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
 
 type CountryFilter = OperationCountry | 'ALL'
@@ -11,9 +10,8 @@ type CountryFilter = OperationCountry | 'ALL'
 interface CountryFilterContextValue {
   countryFilter: CountryFilter
   setCountryFilter: (c: CountryFilter) => void
-  // true only for users who can choose a different country
+  /** true only for ULTRA_SUPER_ADMIN — all other roles are locked to their assigned country */
   canFilter: boolean
-  // the param string to append to fetch URLs — '' if no filter needed
   countryParam: string
 }
 
@@ -29,30 +27,30 @@ const STORAGE_KEY = 'ah_country_filter'
 export function CountryFilterProvider({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
-  const sessionCountry = (session?.user as any)?.country as OperationCountry | undefined
+  const sessionCountry = session?.user?.country as OperationCountry | undefined
 
-  // Determine if this user can switch countries
-  const canFilter = !!(role && canSeeAllCountries(role, sessionCountry ?? 'ALL'))
+  // Only ULTRA_SUPER_ADMIN can switch countries — all other roles are locked to their session country
+  const canFilter = role === 'ULTRA_SUPER_ADMIN'
 
-  // Initialise from localStorage (only for admins); scoped users always see their own country
-  const [countryFilter, setCountryFilterState] = useState<CountryFilter>('ALL')
+  const [storedFilter, setStoredFilter] = useState<CountryFilter>('ALL')
 
+  // Load persisted selection from localStorage (Ultra admin only)
   useEffect(() => {
     if (!canFilter) return
     try {
       const stored = localStorage.getItem(STORAGE_KEY) as CountryFilter | null
-      if (stored) setCountryFilterState(stored)
+      if (stored) setStoredFilter(stored)
     } catch {}
   }, [canFilter])
 
   const setCountryFilter = (c: CountryFilter) => {
-    setCountryFilterState(c)
+    setStoredFilter(c)
     try { localStorage.setItem(STORAGE_KEY, c) } catch {}
   }
 
-  // For country-scoped users, effective filter is always their session country
+  // All non-ultra users are locked to their session country — no override possible
   const effectiveFilter: CountryFilter = canFilter
-    ? countryFilter
+    ? storedFilter
     : (sessionCountry ?? 'ALL')
 
   const countryParam = effectiveFilter && effectiveFilter !== 'ALL'

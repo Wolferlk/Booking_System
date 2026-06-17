@@ -86,7 +86,7 @@ export default function SriLankaPage() {
             </div>
             <div>
               <p className="text-white font-bold text-sm leading-tight">AppleHolidays</p>
-              <p className="text-slate-500 text-[10px] uppercase tracking-wider">MMT Sri Lanka</p>
+              <p className="text-slate-500 text-[10px] uppercase tracking-wider">Sri Lanka</p>
             </div>
           </div>
         </div>
@@ -97,7 +97,7 @@ export default function SriLankaPage() {
           <div className="flex items-center justify-center gap-4 mb-5">
             <span className="text-6xl filter drop-shadow-lg">🇱🇰</span>
             <div className="text-left">
-              <h1 className="text-5xl font-black text-white tracking-tight leading-tight">MMT Sri Lanka</h1>
+              <h1 className="text-5xl font-black text-white tracking-tight leading-tight"> Sri Lanka</h1>
               <p className="text-slate-400 text-xl mt-0.5">Booking & Operations System</p>
             </div>
           </div>
@@ -112,7 +112,7 @@ export default function SriLankaPage() {
             </div>
           </div>
           <p className="text-slate-500 text-sm mt-5 max-w-lg mx-auto">
-            IS numbers (IS xxxxx) identify Sri Lanka bookings. Select your role to enter the operations portal.
+             Select your role to enter the operations portal.
           </p>
         </div>
 

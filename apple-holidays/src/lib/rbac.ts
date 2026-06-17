@@ -35,6 +35,18 @@ export const ROLE_COLORS: Record<UserRole, string> = {
   ULTRA_SUPER_ADMIN: 'gold',
 }
 
+// Country-role guardrails used by admin provisioning and backend access checks.
+export const ROLE_COUNTRY_SCOPE: Record<UserRole, OperationCountry[]> = {
+  BT_USER:           ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA'],
+  GT_USER:           ['VIETNAM'],
+  TE_USER:           ['VIETNAM'],
+  GT_TE_USER:        ['SRILANKA', 'SINGAPORE_MALAYSIA'],
+  AC_USER:           ['ALL'],
+  CLIENT:            ['ALL'],
+  SUPER_ADMIN:       ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'ALL'],
+  ULTRA_SUPER_ADMIN: ['ALL'],
+}
+
 // Permission definitions
 export type Permission =
   | 'booking:create'
@@ -168,6 +180,10 @@ export function hasPermission(role: UserRole, permission: Permission): boolean {
 
 export function hasAnyPermission(role: UserRole, permissions: Permission[]): boolean {
   return permissions.some(p => hasPermission(role, p))
+}
+
+export function isRoleAllowedInCountry(role: UserRole, country: OperationCountry): boolean {
+  return ROLE_COUNTRY_SCOPE[role]?.includes(country) ?? false
 }
 
 export function assertPermission(role: UserRole, permission: Permission): void {

@@ -5,20 +5,24 @@ import { Loader2, TrendingUp, TrendingDown } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { formatCurrency } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
 
 const COLORS = ['#eab308', '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#ef4444']
 
 export default function ProfitDashboardPage() {
+  const { countryFilter } = useCountryFilter()
   const [stats, setStats] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/dashboard/stats')
+    const params = new URLSearchParams()
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+    fetch(`/api/dashboard/stats?${params}`)
       .then(r => r.json())
       .then(j => { if (j.success) setStats(j.data) })
       .finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   if (loading) return <div className="flex justify-center h-48"><Loader2 className="w-6 h-6 text-brand-500 animate-spin mt-12" /></div>
 

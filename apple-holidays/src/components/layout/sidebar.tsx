@@ -7,7 +7,7 @@ import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download, Mail,
-  ShieldAlert, Table2,
+  ShieldAlert, Table2, Lock, Radio,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -25,7 +25,7 @@ const COUNTRY_PILLS: { value: OperationCountry | 'ALL'; flag: string; short: str
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
-  Users, Shield, Settings, Globe, Truck, Home, Download, Mail, ShieldAlert, Table2,
+  Users, Shield, Settings, Globe, Truck, Home, Download, Mail, ShieldAlert, Table2, Radio,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
@@ -55,6 +55,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'MC Report',          href: '/dashboard/mc-report',      icon: 'Table2' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',    icon: 'Phone' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',   icon: 'Bell' },
+    { label: 'Payments',           href: '/dashboard/te/payments',    icon: 'CreditCard' },
   ],
   AC_USER: [
     { label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
@@ -89,22 +90,25 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Danger Zone', href: '/dashboard/admin/danger', icon: 'ShieldAlert', danger: true },
   ],
   GT_TE_USER: [
-    { label: 'Dashboard',        href: '/dashboard',                   icon: 'LayoutDashboard' },
-    { label: 'My Assignments',   href: '/dashboard/ground/assignments', icon: 'MapPin' },
-    { label: 'MC Report',        href: '/dashboard/mc-report',          icon: 'Table2' },
-    { label: 'Tickets',          href: '/dashboard/ground/tickets',     icon: 'Ticket' },
-    { label: 'Drivers',          href: '/dashboard/ground/drivers',     icon: 'Car' },
-    { label: 'Vendors',          href: '/dashboard/ground/vendors',     icon: 'Truck' },
-    { label: 'Live Overview',    href: '/dashboard/te/live',            icon: 'LayoutDashboard' },
-    { label: 'Review Queue',     href: '/dashboard/te/review',          icon: 'ClipboardCheck' },
-    { label: 'Reminders',        href: '/dashboard/te/reminders',       icon: 'Bell' },
-    { label: 'Contact Log',      href: '/dashboard/te/contacts',        icon: 'Phone' },
+    { label: 'Dashboard',          href: '/dashboard',                    icon: 'LayoutDashboard' },
+    { label: 'All Bookings',       href: '/dashboard/bookings',           icon: 'FileText' },
+    { label: 'Live Overview',      href: '/dashboard/te/live',            icon: 'Radio' },
+    { label: 'Analytics',          href: '/dashboard/te/analytics',       icon: 'BarChart2' },
+    { label: 'Review Queue',       href: '/dashboard/te/review',          icon: 'ClipboardCheck' },
+    { label: 'My Assignments',     href: '/dashboard/ground/assignments', icon: 'MapPin' },
+    { label: 'MC Report',          href: '/dashboard/mc-report',          icon: 'Table2' },
+    { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',         icon: 'Ticket' },
+    { label: 'Drivers',            href: '/dashboard/ground/drivers',     icon: 'Car' },
+    { label: 'Vendors',            href: '/dashboard/ground/vendors',     icon: 'Truck' },
+    { label: 'Contact Log',        href: '/dashboard/te/contacts',        icon: 'Phone' },
+    { label: 'Reminders',          href: '/dashboard/te/reminders',       icon: 'Bell' },
+    { label: 'Payments',           href: '/dashboard/te/payments',        icon: 'CreditCard' },
   ],
   ULTRA_SUPER_ADMIN: [
     { label: 'Dashboard',          href: '/dashboard',                   icon: 'LayoutDashboard' },
     { label: 'All Bookings',       href: '/dashboard/bookings',          icon: 'FileText' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',      icon: 'PlusCircle' },
-    { label: 'Live Overview',      href: '/dashboard/te/live',           icon: 'LayoutDashboard' },
+    { label: 'Live Overview',      href: '/dashboard/te/live',           icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',      icon: 'BarChart2' },
     { label: 'MC Report',          href: '/dashboard/mc-report',         icon: 'Table2' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments', icon: 'MapPin' },
@@ -140,7 +144,7 @@ export default function Sidebar() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-sm leading-tight">AppleHolidays</p>
-            <p className="text-slate-500 text-[10px] uppercase tracking-wider">MMT Vietnam</p>
+            <p className="text-slate-500 text-[10px] uppercase tracking-wider">Booking System</p>
           </div>
           <Home className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400 transition-colors flex-shrink-0" />
         </Link>
@@ -177,17 +181,43 @@ export default function Sidebar() {
             </div>
           </div>
         )}
-        {/* Country badge for scoped users */}
-        {!canFilter && session?.user && (session.user as any).country && (session.user as any).country !== 'ALL' && (
-          <div className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/40">
-            <span className="text-xs">{COUNTRY_PILLS.find(p => p.value === (session.user as any).country)?.flag ?? '🌍'}</span>
-            <span className="text-slate-400 text-[10px] font-medium">
-              {(session.user as any).country === 'VIETNAM' ? 'Vietnam'
-                : (session.user as any).country === 'SRILANKA' ? 'Sri Lanka'
-                : 'Singapore & Malaysia'}
-            </span>
-          </div>
-        )}
+        {/* Locked country — all non-Ultra users */}
+        {!canFilter && role && role !== 'CLIENT' && (() => {
+          const COUNTRY_META = {
+            VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    flag: '🇻🇳',     color: 'border-red-500/25 bg-red-500/8' },
+            SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    flag: '🇱🇰',     color: 'border-yellow-500/25 bg-yellow-500/8' },
+            SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', flag: '🇸🇬🇲🇾', color: 'border-blue-500/25 bg-blue-500/8' },
+          }
+          const meta = countryFilter && countryFilter !== 'ALL'
+            ? COUNTRY_META[countryFilter as 'VIETNAM' | 'SRILANKA' | 'SINGAPORE_MALAYSIA']
+            : null
+          return (
+            <div className="mt-3">
+              <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
+                Operating Country
+              </p>
+              {meta ? (
+                <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${meta.color}`}>
+                  <span className="text-2xl leading-none flex-shrink-0">{meta.flag}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-xs font-bold leading-tight truncate">{meta.name}</p>
+                    <p className="text-slate-500 text-[9px] uppercase tracking-wider mt-0.5">{meta.code}</p>
+                  </div>
+                  <Lock className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-slate-600/25 bg-slate-700/20">
+                  <span className="text-2xl leading-none flex-shrink-0">🌍</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-xs font-bold leading-tight truncate">All Countries</p>
+                    <p className="text-slate-500 text-[9px] uppercase tracking-wider mt-0.5">MMT_ALL</p>
+                  </div>
+                  <Lock className="w-3 h-3 text-slate-500 flex-shrink-0" />
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Navigation */}

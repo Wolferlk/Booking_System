@@ -4,7 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import bcrypt from 'bcryptjs'
-import type { UserRole } from '@prisma/client'
+import type { UserRole, OperationCountry } from '@prisma/client'
+import { isRoleAllowedInCountry } from '@/lib/rbac'
+
+const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'ALL']
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -26,7 +29,7 @@ export async function GET(req: NextRequest) {
   const users = await prisma.user.findMany({
     where: countryWhere,
     select: {
-      id: true, email: true, name: true, role: true,
+      id: true, email: true, name: true, role: true, country: true,
       phone: true, avatar: true, isActive: true,
       createdAt: true, updatedAt: true,
       _count: {
@@ -44,7 +47,7 @@ export async function POST(req: NextRequest) {
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
-  const { email, name, password, role, phone } = await req.json()
+  const { email, name, password, role, phone, country: countryBody } = await req.json()
 
   if (!email || !name || !password || !role) {
     return buildApiError('email, name, password, and role are required')
@@ -54,15 +57,36 @@ export async function POST(req: NextRequest) {
     return buildApiError('Password must be at least 6 characters')
   }
 
+  // Determine the country to assign to this user
+  let assignedCountry: OperationCountry
+  const sessionCountry = (session.user as any).country as OperationCountry | undefined
+
+  if (session.user.role === 'ULTRA_SUPER_ADMIN') {
+    // Ultra admin must specify a valid country
+    if (!countryBody || !VALID_COUNTRIES.includes(countryBody)) {
+      return buildApiError('Country is required and must be valid')
+    }
+    assignedCountry = countryBody as OperationCountry
+  } else {
+    // SUPER_ADMIN: force their own country, or remain global if they are the ALL-country admin
+    assignedCountry = (sessionCountry && sessionCountry !== 'ALL')
+      ? sessionCountry
+      : (countryBody && VALID_COUNTRIES.includes(countryBody) ? countryBody : 'ALL')
+  }
+
+  if (!isRoleAllowedInCountry(role as UserRole, assignedCountry)) {
+    return buildApiError(`Role ${role} cannot be assigned to ${assignedCountry}`)
+  }
+
   const existing = await prisma.user.findUnique({ where: { email } })
   if (existing) return buildApiError('Email already registered')
 
   const hashed = await bcrypt.hash(password, 12)
 
   const user = await prisma.user.create({
-    data: { email, name, password: hashed, role: role as UserRole, phone: phone || null },
+    data: { email, name, password: hashed, role: role as UserRole, phone: phone || null, country: assignedCountry },
     select: {
-      id: true, email: true, name: true, role: true,
+      id: true, email: true, name: true, role: true, country: true,
       phone: true, isActive: true, createdAt: true, updatedAt: true,
       _count: { select: { bookingsCreated: true, activityLogs: true } },
     },

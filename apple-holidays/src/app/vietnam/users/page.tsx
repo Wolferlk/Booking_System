@@ -12,9 +12,7 @@ const ROLE_LABELS: Record<string, string> = {
   BT_USER: 'Booking Team',
   GT_USER: 'Ground Team',
   TE_USER: 'Travel Experience',
-  AC_USER: 'Accounts Team',
-  CLIENT: 'Client / Agent',
-  SUPER_ADMIN: 'Super Admin',
+  SUPER_ADMIN: 'Vietnam Admin',
 }
 
 const ROLE_COLORS: Record<string, string> = {
@@ -74,7 +72,7 @@ export default function UsersManagementPage() {
       const res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, country: 'VIETNAM' }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)

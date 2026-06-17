@@ -101,7 +101,7 @@ export default function DriversPage() {
   const [showPayModal, setShowPayModal] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
-  const userCountry = (session?.user?.country ?? 'ALL') as string
+  const userCountry = session?.user?.country ?? 'ALL'
   const isAllCountry = !userCountry || userCountry === 'ALL'
 
   const [form, setForm] = useState({

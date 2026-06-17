@@ -275,7 +275,7 @@ function BookingPanel({ detail, isPnl }: { detail: BookingDetail; isPnl: boolean
                 <tr>
                   <th className="px-3 py-1.5 text-left">Activity</th>
                   <th className="px-3 py-1.5 text-left">Category</th>
-                  <th className="px-3 py-1.5 text-right">MMT Rate</th>
+                  <th className="px-3 py-1.5 text-right"> Rate</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">

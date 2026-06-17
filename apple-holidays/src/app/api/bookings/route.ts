@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/u
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { detectCountryFromRef } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
+import type { OperationCountry } from '@/lib/country-detection'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -30,30 +31,29 @@ export async function GET(req: NextRequest) {
   const userCountry = (session.user as any).country as string | undefined
   const countryOverride = searchParams.get('country')
 
-  const where: Record<string, unknown> = {}
+  const andClauses: Record<string, unknown>[] = []
 
   if (role === 'CLIENT') {
-    where.clientUserId = session.user.id
+    andClauses.push({ clientUserId: session.user.id })
   } else if (!canSeeAllCountries(role, userCountry as any)) {
-    // Country-scoped users only see their country's bookings + unassigned ones
-    where.OR = [
-      { operationCountry: userCountry ?? null },
-      { operationCountry: null },
-    ]
+    // Country-scoped users only see their own country's bookings
+    andClauses.push({ operationCountry: userCountry ?? null })
   } else if (countryOverride && countryOverride !== 'ALL') {
     // Admin users may narrow to a specific country via explicit param
-    where.operationCountry = countryOverride
+    andClauses.push({ operationCountry: countryOverride })
   }
 
-  if (status) where.status = status
+  if (status) andClauses.push({ status })
 
   if (search) {
-    where.OR = [
+    andClauses.push({
+      OR: [
       { bookingRef: { contains: search } },
       { agent: { contains: search } },
       { fileHandler: { contains: search } },
       { passengers: { some: { name: { contains: search } } } },
-    ]
+      ],
+    })
   }
 
   // Date period filter applied to arrivalDate
@@ -61,23 +61,29 @@ export async function GET(req: NextRequest) {
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     if (dateFilter === 'today') {
-      where.arrivalDate = {
+      andClauses.push({
+        arrivalDate: {
         gte: todayStart,
         lt: new Date(todayStart.getTime() + 86_400_000),
-      }
+        },
+      })
     } else if (dateFilter === 'this_week') {
       const startOfWeek = new Date(todayStart)
       startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
       const endOfWeek = new Date(startOfWeek)
       endOfWeek.setDate(startOfWeek.getDate() + 7)
-      where.arrivalDate = { gte: startOfWeek, lt: endOfWeek }
+      andClauses.push({ arrivalDate: { gte: startOfWeek, lt: endOfWeek } })
     } else if (dateFilter === 'this_month') {
-      where.arrivalDate = {
+      andClauses.push({
+        arrivalDate: {
         gte: new Date(now.getFullYear(), now.getMonth(), 1),
         lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
-      }
+        },
+      })
     }
   }
+
+  const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 
   const [total, bookings] = await Promise.all([
     prisma.booking.count({ where }),
@@ -148,7 +154,15 @@ export async function POST(req: NextRequest) {
   if (existing) return buildApiError(`Booking ref ${bookingRef} already exists`)
 
   // Detect country from booking ref prefix (VN/IS/SG/MY)
-  const operationCountry = detectCountryFromRef(bookingRef) ?? undefined
+  const detectedCountry = detectCountryFromRef(bookingRef)
+  const sessionCountry = session.user.country as OperationCountry | undefined
+  const operationCountry = detectedCountry ?? (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
+  if (!operationCountry) {
+    return buildApiError('Booking country could not be determined from bookingRef')
+  }
+  if (sessionCountry && sessionCountry !== 'ALL' && operationCountry !== sessionCountry) {
+    return buildApiError('Forbidden — booking country must match your assigned country', 403)
+  }
 
   const cancellationDeadline = getCancellationDeadline(arrivalDate)
 
@@ -176,7 +190,7 @@ export async function POST(req: NextRequest) {
       contactWhatsapp: contactWhatsapp || null,
       contactCountry: contactCountry  || null,
       cancellationDeadline,
-      operationCountry: operationCountry as any,
+      operationCountry,
       createdById: session.user.id,
       passengers: {
         create: passengers.map((p: Record<string, unknown>) => ({

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import {
   FileText, Clock, AlertCircle, CreditCard, TrendingUp,
-  Globe, Users, Loader2, ArrowRight, CheckCircle2,
+  Globe, Users, Loader2, ArrowRight, CheckCircle2, Lock,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, StatCard, CardHeader, CardBody } from '@/components/ui/card'
@@ -13,6 +13,43 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
 import type { UserRole, BookingStatus } from '@prisma/client'
+
+const COUNTRY_META: Record<string, {
+  name: string; flag: string; code: string
+  gradient: string; border: string; text: string; badge: string
+}> = {
+  VIETNAM: {
+    name: 'Vietnam', flag: '🇻🇳', code: 'MMT_VN',
+    gradient: 'from-red-500/10 to-red-600/5',
+    border: 'border-red-500/20',
+    text: 'text-red-700',
+    badge: 'bg-red-100 text-red-700 border-red-200',
+  },
+  SRILANKA: {
+    name: 'Sri Lanka', flag: '🇱🇰', code: 'MMT_LK',
+    gradient: 'from-yellow-500/10 to-yellow-600/5',
+    border: 'border-yellow-500/20',
+    text: 'text-yellow-700',
+    badge: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+  },
+  SINGAPORE_MALAYSIA: {
+    name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY',
+    gradient: 'from-blue-500/10 to-blue-600/5',
+    border: 'border-blue-500/20',
+    text: 'text-blue-700',
+    badge: 'bg-blue-100 text-blue-700 border-blue-200',
+  },
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  BT_USER:           'Booking Team',
+  GT_USER:           'Ground Team',
+  TE_USER:           'Travel Experience Team',
+  GT_TE_USER:        'Ground & Travel Experience',
+  AC_USER:           'Accounts Team',
+  SUPER_ADMIN:       'Country Admin',
+  ULTRA_SUPER_ADMIN: 'Ultra Super Admin',
+}
 
 interface Stats {
   totalBookings: number
@@ -34,6 +71,7 @@ interface RecentBooking {
   arrivalDate: string
   paxAdults: number
   paxChildren: number
+  operationCountry: string | null
   passengers: { name: string }[]
   createdBy: { name: string }
 }
@@ -41,7 +79,7 @@ interface RecentBooking {
 export default function DashboardPage() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
-  const { countryFilter } = useCountryFilter()
+  const { countryFilter, canFilter } = useCountryFilter()
   const [stats, setStats] = useState<Stats | null>(null)
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([])
   const [loading, setLoading] = useState(true)
@@ -69,15 +107,44 @@ export default function DashboardPage() {
 
   const isAdmin = role === 'SUPER_ADMIN'
   const isAccounts = role === 'AC_USER'
+  const countryMeta = countryFilter && countryFilter !== 'ALL' ? COUNTRY_META[countryFilter] : null
 
   return (
     <div>
       <Header
         title={`Welcome back, ${session?.user?.name?.split(' ')[0]} 👋`}
-        subtitle="Here's what's happening with your bookings today"
+        subtitle={
+          countryMeta
+            ? `${countryMeta.flag} ${ROLE_LABELS[role ?? ''] ?? role} · ${countryMeta.name} Operations`
+            : "Here's what's happening with your bookings today"
+        }
       />
 
       <div className="p-8 space-y-8">
+        {/* Country context banner */}
+        {countryMeta && (
+          <div className={`flex items-center gap-4 px-6 py-5 rounded-2xl border bg-gradient-to-r ${countryMeta.gradient} ${countryMeta.border}`}>
+            <span className="text-5xl leading-none flex-shrink-0">{countryMeta.flag}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Operating Region</p>
+              <p className="text-2xl font-bold text-slate-900 mt-0.5 leading-tight">{countryMeta.name}</p>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">{countryMeta.code}</p>
+            </div>
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              {!canFilter ? (
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 bg-white/70 backdrop-blur-sm px-3 py-1.5 rounded-full border border-slate-200/80">
+                  <Lock className="w-3 h-3" /> Country Locked
+                </div>
+              ) : (
+                <div className="text-xs font-semibold text-slate-500 bg-white/60 px-3 py-1.5 rounded-full border border-slate-200/80">
+                  Filtered to {countryMeta.name}
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400">All stats &amp; bookings shown below are for this region</p>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
@@ -163,7 +230,14 @@ export default function DashboardPage() {
                     </Link>
                   }
                 >
-                  <h3 className="text-base font-semibold text-slate-900">Recent Bookings</h3>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {countryMeta ? (
+                      <>
+                        <span className="mr-1.5">{countryMeta.flag}</span>
+                        Recent {countryMeta.name} Bookings
+                      </>
+                    ) : 'Recent Bookings'}
+                  </h3>
                 </CardHeader>
                 <CardBody className="p-0">
                   {recentBookings.length === 0 ? (
@@ -177,9 +251,14 @@ export default function DashboardPage() {
                             className="flex items-center gap-4 px-6 py-3.5 hover:bg-slate-50 transition-colors"
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-sm font-semibold text-slate-900">{b.bookingRef}</span>
                                 <StatusBadge status={b.status} />
+                                {!countryMeta && b.operationCountry && COUNTRY_META[b.operationCountry] && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold border ${COUNTRY_META[b.operationCountry].badge}`}>
+                                    {COUNTRY_META[b.operationCountry].flag} {COUNTRY_META[b.operationCountry].code}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-xs text-slate-500 mt-0.5">
                                 {b.passengers[0]?.name ?? b.agent ?? '—'} · {formatDate(b.arrivalDate)}

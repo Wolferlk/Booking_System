@@ -106,7 +106,7 @@ export default function VietnamPage() {
             </div>
             <div>
               <p className="text-white font-bold text-sm leading-tight">AppleHolidays</p>
-              <p className="text-slate-500 text-[10px] uppercase tracking-wider">MMT Vietnam</p>
+              <p className="text-slate-500 text-[10px] uppercase tracking-wider">Vietnam</p>
             </div>
           </div>
 
@@ -129,7 +129,7 @@ export default function VietnamPage() {
             <span className="text-6xl filter drop-shadow-lg">🇻🇳</span>
             <div className="text-left">
               <h1 className="text-5xl font-black text-white tracking-tight leading-tight">
-                MMT Vietnam
+               Vietnam
               </h1>
               <p className="text-slate-400 text-xl mt-0.5">Booking & Operations System</p>
             </div>
@@ -147,7 +147,7 @@ export default function VietnamPage() {
           </div>
 
           <p className="text-slate-500 text-sm mt-5 max-w-lg mx-auto">
-            VN numbers (VN xxxxx) identify Vietnam bookings. Select your role to enter the operations portal.
+            Select your role to enter the operations portal.
           </p>
         </div>
 

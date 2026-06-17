@@ -8,7 +8,7 @@ import {
   X, User, Mail, Phone, Shield, CheckCircle, XCircle,
   Calendar, Activity, BookOpen, RefreshCw, Lock, EyeOff,
   AlertTriangle, ChevronUp, ChevronDown, ToggleLeft, ToggleRight,
-  UserCheck, UserX, Users, Key,
+  UserCheck, UserX, Users, Key, Globe,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -18,7 +18,7 @@ import Modal from '@/components/ui/modal'
 import { ROLE_LABELS } from '@/lib/rbac'
 import { formatDate, formatDateTime, getInitials, cn } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
-import type { UserRole } from '@prisma/client'
+import type { UserRole, OperationCountry } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ interface UserRecord {
   email: string
   name: string
   role: UserRole
+  country: OperationCountry
   phone: string | null
   avatar: string | null
   isActive: boolean
@@ -60,8 +61,26 @@ const ROLE_BG: Record<UserRole, string> = {
 
 const ALL_ROLES = Object.entries(ROLE_LABELS) as [UserRole, string][]
 
+const COUNTRY_META: Record<OperationCountry, { label: string; flag: string; color: string }> = {
+  VIETNAM:            { label: 'Vietnam',              flag: '🇻🇳',     color: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  SRILANKA:           { label: 'Sri Lanka',            flag: '🇱🇰',     color: 'bg-yellow-500/15 text-yellow-600 border-yellow-500/30' },
+  SINGAPORE_MALAYSIA: { label: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
+  ALL:                { label: 'All Countries',        flag: '🌍',      color: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
+}
+
+// Roles available per country (used to filter the role dropdown when adding/editing)
+const COUNTRY_ROLES: Record<OperationCountry, UserRole[]> = {
+  VIETNAM:            ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'],
+  SRILANKA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
+  SINGAPORE_MALAYSIA: ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
+  ALL:                ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+}
+
+const SELECTABLE_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA']
+
 const EMPTY_FORM = {
   name: '', email: '', phone: '', role: 'BT_USER' as UserRole,
+  country: 'VIETNAM' as OperationCountry,
   isActive: true, password: '', confirmPassword: '',
 }
 
@@ -97,10 +116,12 @@ function UserAvatar({ user, size = 'md' }: { user: Pick<UserRecord, 'name' | 'ro
 
 // ─── Role select options ──────────────────────────────────────────────────────
 
-function RoleSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function RoleSelect({ value, onChange, country }: { value: string; onChange: (v: string) => void; country?: OperationCountry }) {
+  const allowedRoles = country ? COUNTRY_ROLES[country] : ALL_ROLES.map(([v]) => v as UserRole)
+  const roleEntries = ALL_ROLES.filter(([v]) => allowedRoles.includes(v as UserRole))
   return (
     <select className="form-select" value={value} onChange={e => onChange(e.target.value)}>
-      {ALL_ROLES.map(([val, label]) => (
+      {roleEntries.map(([val, label]) => (
         <option key={val} value={val}>{label}</option>
       ))}
     </select>
@@ -216,14 +237,17 @@ export default function UsersPage() {
 
   function openEdit(u: UserRecord) {
     setSelected(u)
-    setForm({ name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, isActive: u.isActive, password: '', confirmPassword: '' })
+    setForm({ name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, country: u.country ?? 'VIETNAM', isActive: u.isActive, password: '', confirmPassword: '' })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
     setMode('edit')
   }
 
   function openAdd() {
     setSelected(null)
-    setForm({ ...EMPTY_FORM })
+    // Pre-fill country from session for SUPER_ADMIN, default to VIETNAM for Ultra
+    const sessionCountry = (session?.user as any)?.country as OperationCountry | undefined
+    const defaultCountry: OperationCountry = (sessionCountry && sessionCountry !== 'ALL') ? sessionCountry : 'VIETNAM'
+    setForm({ ...EMPTY_FORM, country: defaultCountry })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
     setMode('add')
   }
@@ -279,6 +303,7 @@ export default function UsersPage() {
         email: form.email.trim().toLowerCase(),
         phone: form.phone.trim() || null,
         role: form.role,
+        country: form.country,
         isActive: form.isActive,
       }
       if (mode === 'add' || (mode === 'edit' && resetPwd)) {
@@ -532,6 +557,7 @@ export default function UsersPage() {
                       <SortTh field="name" label="User" />
                       <th className="text-left px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Contact</th>
                       <SortTh field="role" label="Role" />
+                      <th className="text-left px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Country</th>
                       <SortTh field="isActive" label="Status" />
                       <th className="text-left px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Activity</th>
                       <SortTh field="createdAt" label="Joined" />
@@ -570,6 +596,18 @@ export default function UsersPage() {
                         {/* Role */}
                         <td className="px-4 py-3">
                           <Badge color={ROLE_COLORS[u.role]}>{ROLE_LABELS[u.role]}</Badge>
+                        </td>
+
+                        {/* Country */}
+                        <td className="px-4 py-3">
+                          {u.country && COUNTRY_META[u.country] ? (
+                            <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[u.country].color)}>
+                              <span>{COUNTRY_META[u.country].flag}</span>
+                              <span>{COUNTRY_META[u.country].label}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 text-xs">—</span>
+                          )}
                         </td>
 
                         {/* Status toggle */}
@@ -684,6 +722,7 @@ export default function UsersPage() {
                 { icon: <Mail className="w-4 h-4" />,     label: 'Email',         value: selected.email,           color: 'text-blue-500' },
                 { icon: <Phone className="w-4 h-4" />,    label: 'Phone',         value: selected.phone ?? '—',    color: 'text-green-500' },
                 { icon: <Shield className="w-4 h-4" />,   label: 'Role',          value: ROLE_LABELS[selected.role], color: 'text-purple-500' },
+                { icon: <Globe className="w-4 h-4" />,    label: 'Country',       value: selected.country ? `${COUNTRY_META[selected.country]?.flag ?? ''} ${COUNTRY_META[selected.country]?.label ?? selected.country}` : '—', color: 'text-cyan-500' },
                 { icon: <CheckCircle className="w-4 h-4" />, label: 'Status',     value: selected.isActive ? 'Active' : 'Inactive', color: selected.isActive ? 'text-emerald-500' : 'text-red-500' },
                 { icon: <Calendar className="w-4 h-4" />, label: 'Joined',        value: formatDate(selected.createdAt),   color: 'text-slate-400' },
                 { icon: <RefreshCw className="w-4 h-4" />, label: 'Last Updated', value: formatDateTime(selected.updatedAt), color: 'text-slate-400' },
@@ -769,26 +808,71 @@ export default function UsersPage() {
             </div>
           </div>
 
-          {/* Phone + Role */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Phone */}
+          <div>
+            <label className="form-label flex items-center gap-1.5">
+              <Phone className="w-3.5 h-3.5 text-slate-400" /> Phone Number
+            </label>
+            <input
+              type="tel"
+              className="form-input"
+              placeholder="e.g. +94 77 123 4567"
+              value={form.phone}
+              onChange={e => setForm(x => ({ ...x, phone: e.target.value }))}
+            />
+          </div>
+
+          {/* Country (Ultra Super Admin only — SUPER_ADMIN is locked to their country) */}
+          {(session?.user?.role as string) === 'ULTRA_SUPER_ADMIN' ? (
             <div>
               <label className="form-label flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5 text-slate-400" /> Phone Number
+                <Globe className="w-3.5 h-3.5 text-slate-400" /> Operating Country *
               </label>
-              <input
-                type="tel"
-                className="form-input"
-                placeholder="e.g. +94 77 123 4567"
-                value={form.phone}
-                onChange={e => setForm(x => ({ ...x, phone: e.target.value }))}
-              />
+              <select
+                className="form-select"
+                value={form.country}
+                onChange={e => {
+                  const c = e.target.value as OperationCountry
+                  // Reset role if it's not valid for the new country
+                  const validRoles = COUNTRY_ROLES[c]
+                  const newRole = validRoles.includes(form.role) ? form.role : validRoles[0]
+                  setForm(x => ({ ...x, country: c, role: newRole }))
+                }}
+              >
+                {SELECTABLE_COUNTRIES.map(c => (
+                  <option key={c} value={c}>{COUNTRY_META[c].flag} {COUNTRY_META[c].label}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                This user will only see data for the selected country.
+              </p>
             </div>
+          ) : (
+            /* SUPER_ADMIN — show locked country badge, no edit */
             <div>
               <label className="form-label flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-slate-400" /> Role *
+                <Globe className="w-3.5 h-3.5 text-slate-400" /> Operating Country
               </label>
-              <RoleSelect value={form.role} onChange={v => setForm(x => ({ ...x, role: v as UserRole }))} />
+              {form.country && COUNTRY_META[form.country] ? (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50">
+                  <span className="text-lg">{COUNTRY_META[form.country].flag}</span>
+                  <span className="text-sm font-medium text-slate-700">{COUNTRY_META[form.country].label}</span>
+                  <Lock className="w-3 h-3 text-slate-400 ml-auto" />
+                </div>
+              ) : null}
             </div>
+          )}
+
+          {/* Role */}
+          <div>
+            <label className="form-label flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-slate-400" /> Role *
+            </label>
+            <RoleSelect
+              value={form.role}
+              onChange={v => setForm(x => ({ ...x, role: v as UserRole }))}
+              country={form.country}
+            />
           </div>
 
           {/* Active status */}
@@ -906,18 +990,23 @@ export default function UsersPage() {
             )}
           </div>
 
-          {/* Role info */}
+          {/* Role + country summary */}
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 flex items-start gap-3">
             <Shield className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-blue-700">{ROLE_LABELS[form.role]} — Access Level</p>
+              <p className="text-xs font-semibold text-blue-700">
+                {ROLE_LABELS[form.role]}
+                {form.country && form.country !== 'ALL' && COUNTRY_META[form.country]
+                  ? ` — ${COUNTRY_META[form.country].flag} ${COUNTRY_META[form.country].label}`
+                  : ''}
+              </p>
               <p className="text-[11px] text-blue-600 mt-0.5">
                 {form.role === 'ULTRA_SUPER_ADMIN' && '🌐 System owner — all-countries access, all modules, user management & danger zone. Requires critical password on login.'}
                 {form.role === 'SUPER_ADMIN' && 'Full country access — user management, danger zone, and all admin functions for the assigned country.'}
                 {form.role === 'BT_USER'     && 'Booking creation, confirmation, P&L management, and mail inbox.'}
-                {form.role === 'GT_USER'     && 'Ground operations: assignments, tickets, drivers, vendors, and MC report.'}
-                {form.role === 'GT_TE_USER'  && 'Combined ground + travel experience — assignments, reminders, payments (used in SL & SG/MY).'}
-                {form.role === 'TE_USER'     && 'Travel experience: live overview, analytics, ticket & voucher management.'}
+                {form.role === 'GT_USER'     && 'Ground operations: assignments, tickets, drivers, vendors, and MC report. (Vietnam only)'}
+                {form.role === 'GT_TE_USER'  && 'Combined ground + travel experience — assignments, reminders, payments. (Sri Lanka & Singapore/Malaysia)'}
+                {form.role === 'TE_USER'     && 'Travel experience: live overview, analytics, ticket & voucher management. (Vietnam only)'}
                 {form.role === 'AC_USER'     && 'Accounts: P&L management, profit dashboard, credit agents, and reports.'}
                 {form.role === 'CLIENT'      && 'Read-only access to client portal — cannot access the dashboard.'}
               </p>

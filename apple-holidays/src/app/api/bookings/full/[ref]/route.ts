@@ -14,6 +14,9 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { canSeeAllCountries } from '@/lib/rbac'
+import { detectCountryFromRef } from '@/lib/country-detection'
+import type { OperationCountry } from '@/lib/country-detection'
 
 // ─── Full booking include ────────────────────────────────────────────────────
 
@@ -67,6 +70,8 @@ export async function GET(
   { params }: { params: { ref: string } },
 ) {
   const ref = params.ref.trim()
+  const session = await getServerSession(authOptions)
+  if (!session) return buildApiError('Unauthorized', 401)
 
   // Accept numeric-only refs: "464660" finds "464660" directly
   let booking = await prisma.booking.findUnique({
@@ -91,6 +96,12 @@ export async function GET(
   }
 
   if (!booking) return buildApiError(`Booking "${ref}" not found`, 404)
+
+  const role = session.user.role
+  const userCountry = session.user.country as OperationCountry | undefined
+  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && booking.operationCountry !== userCountry) {
+    return buildApiError('Forbidden', 403)
+  }
 
   return buildApiSuccess(shapeBooking(booking))
 }
@@ -118,6 +129,16 @@ export async function POST(
   const exists = await prisma.booking.findUnique({ where: { bookingRef } })
   if (exists) return buildApiError(`Booking "${bookingRef}" already exists — use PUT to update`, 409)
 
+  const detectedCountry = detectCountryFromRef(bookingRef)
+  const sessionCountry = session.user.country as OperationCountry | undefined
+  const operationCountry = detectedCountry ?? (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
+  if (!operationCountry) {
+    return buildApiError('Booking country could not be determined from bookingRef')
+  }
+  if (sessionCountry && sessionCountry !== 'ALL' && operationCountry !== sessionCountry) {
+    return buildApiError('Forbidden — booking country must match your assigned country', 403)
+  }
+
   const booking = await prisma.booking.create({
     data: {
       bookingRef,
@@ -142,6 +163,7 @@ export async function POST(
       contactWhatsapp: body.contactWhatsapp ?? null,
       contactCountry:  body.contactCountry ?? null,
       contactAddress:  body.contactAddress ?? null,
+      operationCountry,
       status:          (body.status as never) ?? 'GT_REVIEW',
       createdById:     session.user.id,
     },
@@ -176,6 +198,12 @@ export async function PUT(
   const ref = params.ref.trim()
   const booking = await prisma.booking.findUnique({ where: { bookingRef: ref } })
   if (!booking) return buildApiError(`Booking "${ref}" not found`, 404)
+
+  const role = session.user.role
+  const userCountry = session.user.country as OperationCountry | undefined
+  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && booking.operationCountry !== userCountry) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const body = await req.json() as Partial<BookingInput>
 
