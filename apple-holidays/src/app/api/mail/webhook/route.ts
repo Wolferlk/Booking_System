@@ -83,13 +83,15 @@ async function processNotifications(notifications: GraphNotification[], secret: 
       continue
     }
 
-    console.log(`[Webhook] new ${mailboxKind} email (${mailboxUser}), graphId:`, graphId)
+    console.log(`[Webhook] notification received — ${mailboxKind} (${mailboxUser})`)
 
     const email = await fetchMessageByIdForUser(mailboxUser, graphId)
     if (!email) {
       console.warn('[Webhook] could not fetch message', graphId)
       continue
     }
+
+    console.log(`[Webhook] email fetched — "${email.subject}" from ${email.from}`)
 
     await upsertCachedMailMessage({
       email,

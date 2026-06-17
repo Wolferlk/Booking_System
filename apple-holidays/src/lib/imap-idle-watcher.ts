@@ -25,6 +25,7 @@ import { prisma } from './prisma'
 import { fetchImapPayableEmails, fetchImapAttachments, IMAP_PNL_USER } from './imap-pnl'
 import { processMailboxEmail } from './incoming-mail-automation'
 import { upsertCachedMailMessage } from './mail-cache'
+import { getConfiguredMailboxes } from './mail-processor'
 
 const HOST = process.env.IMAP_HOST   ?? 'outlook.office365.com'
 const PORT = Number(process.env.IMAP_PORT ?? '993')
@@ -119,6 +120,7 @@ async function runIdleLoop() {
     try {
       await client.connect()
       retryDelay = 5_000 // connection succeeded — reset back-off
+      console.log(`[IDLE] Connected to ${HOST}:${PORT} as ${IMAP_PNL_USER}`)
 
       const lock = await client.getMailboxLock('INBOX')
       let knownExists = (client.mailbox as { exists?: number } | null)?.exists ?? 0
@@ -147,8 +149,11 @@ async function runIdleLoop() {
       }
 
       try { lock.release() } catch { /* ignore */ }
-    } catch (err) {
-      console.error('[IDLE] Connection failed:', err instanceof Error ? err.message : err)
+    } catch (err: unknown) {
+      // Log full error details — imapflow wraps IMAP errors in err.response / err.serverResponse
+      const e = err as Record<string, unknown>
+      const detail = e?.response ?? e?.serverResponse ?? e?.message ?? String(err)
+      console.error(`[IDLE] Connection failed (${HOST}:${PORT} / ${IMAP_PNL_USER}):`, detail)
     } finally {
       try { await client.logout() } catch { /* ignore */ }
     }
@@ -170,6 +175,14 @@ export function startImapIdleWatcher() {
 
   if (!IMAP_PNL_USER || !PASS) {
     console.log('[IDLE] IMAP2_USERNAME or IMAP2_PASSWORD not set — watcher disabled')
+    return
+  }
+
+  // Skip if the same mailbox is already covered by Microsoft Graph webhook.
+  // In that case real-time delivery comes through /api/mail/webhook, not IMAP.
+  const graphMailboxes = getConfiguredMailboxes()
+  if (graphMailboxes.some(mb => mb.user === IMAP_PNL_USER)) {
+    console.log(`[IDLE] ${IMAP_PNL_USER} is handled by Graph webhook — IMAP IDLE not needed`)
     return
   }
 

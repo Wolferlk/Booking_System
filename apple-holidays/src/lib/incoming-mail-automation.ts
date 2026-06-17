@@ -7,6 +7,24 @@ import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detec
 import fs from 'fs'
 import path from 'path'
 
+// ── Terminal logging helpers ──────────────────────────────────────────────────
+
+const SEP = '─'.repeat(60)
+
+function mailLog(label: string, value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return
+  const pad = 14
+  console.log(`[Mail]  ${label.padEnd(pad)}: ${value}`)
+}
+
+function mailHeader(type: string, subject: string, from: string, fromName: string) {
+  console.log(`\n${SEP}`)
+  console.log(` NEW EMAIL  →  ${type}`)
+  console.log(`  From    : ${fromName ? `${fromName} <${from}>` : from}`)
+  console.log(`  Subject : ${subject}`)
+  console.log(SEP)
+}
+
 type SyncResult = {
   bookingRef: string
   bookingId: string
@@ -412,6 +430,21 @@ async function syncTourConfirmation(
 
   const agendaItems = await upsertAgenda(booking.id, bookingRef, extracted)
 
+  // ── Terminal output ───────────────────────────────────────────────────────
+  console.log(`[Mail]  Booking ref  : ${bookingRef}  (${isNew ? 'CREATED NEW' : 'UPDATED existing'})`)
+  mailLog('Agent',        extracted.agent)
+  mailLog('Deal',         extracted.dealName)
+  mailLog('Destination',  extracted.tourDestination)
+  mailLog('Arrive',       extracted.arrivalDate)
+  mailLog('Depart',       extracted.departureDate)
+  mailLog('Pax',          `${extracted.paxAdults} adult${extracted.paxAdults !== 1 ? 's' : ''}${extracted.paxChildren ? ` + ${extracted.paxChildren} child${extracted.paxChildren !== 1 ? 'ren' : ''}` : ''}`)
+  mailLog('Passengers',   extracted.passengers.length ? extracted.passengers.map(p => p.name).join(', ') : null)
+  mailLog('Flights',      extracted.flights.length ? `${extracted.flights.length} flight(s)` : null)
+  mailLog('Hotels',       extracted.accommodations.length ? extracted.accommodations.map(a => a.hotel).join(' → ') : null)
+  mailLog('Agenda items', agendaItems > 0 ? `${agendaItems} generated` : 'none')
+  console.log(`[Mail]  ✓ DONE${SEP.slice(8)}\n`)
+  // ─────────────────────────────────────────────────────────────────────────
+
   await logActivity({
     userId: createdById,
     action: ACTION.BOOKING_CREATED,
@@ -615,6 +648,17 @@ async function syncPnL(
     })
   }
 
+  // ── Terminal output ───────────────────────────────────────────────────────
+  console.log(`[Mail]  Booking ref  : ${bookingRef}`)
+  mailLog('Pax',       `${paxAdults} adult${paxAdults !== 1 ? 's' : ''}${paxChildren ? ` + ${paxChildren} child${paxChildren !== 1 ? 'ren' : ''}` : ''}`)
+  mailLog('PNL lines',  createdLines.length.toString())
+  for (const line of pnlLines.slice(0, 15)) {
+    console.log(`[Mail]    ${String(line.category).padEnd(14)}  ${line.activity}`)
+  }
+  if (pnlLines.length > 15) console.log(`[Mail]    ... and ${pnlLines.length - 15} more`)
+  console.log(`[Mail]  ✓ DONE${SEP.slice(8)}\n`)
+  // ─────────────────────────────────────────────────────────────────────────
+
   await logActivity({
     userId: createdById,
     action: ACTION.BOOKING_UPDATED,
@@ -638,8 +682,17 @@ export async function processIncomingMail(
   type: MailboxKind,
   attachments: EmailAttachment[] = [],
 ): Promise<SyncResult> {
-  const createdById = await getAutomationUserId()
   const normalizedType = normalizeType(type)
+
+  // ── Print header so every email is visible in the terminal immediately ───
+  mailHeader(normalizedType, email.subject, email.from, email.fromName)
+  if (attachments.length > 0) {
+    console.log(`[Mail]  Attachments  : ${attachments.map(a => a.name).join(', ')}`)
+  }
+  console.log(`[Mail]  Extracting data via OpenAI...`)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const createdById = await getAutomationUserId()
   const extracted = await extractBookingFromEmail(email.rawBody, normalizedType)
 
   // Attach detected country to extracted object so syncTourConfirmation can use it
