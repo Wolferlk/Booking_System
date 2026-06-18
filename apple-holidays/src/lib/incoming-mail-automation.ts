@@ -86,7 +86,15 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
         role: 'system',
         content: `Vietnam tour operations expert. Generate movement chart from booking data.
 RULES: ${conditions}
-Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM — required for PVT/SIC","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
+
+SERVICE TYPE — MANDATORY (override all other logic):
+- Airport/flight transfer → serviceType="PVT_TRANSFER" ALWAYS, no exceptions
+- Leisure day / free time / at leisure / hotel stay only → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- Explicitly SIC/shared → serviceType="SIC_TRANSFER"
+- Private tour, cruise, inter-city with vehicle → serviceType="PVT_TRANSFER"
+- Ticket-only / self-guided → serviceType="OWN_ARRANGEMENT", meetingTime=null
+
+Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
       },
       { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
     ],
@@ -98,7 +106,24 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
   if (!content) return []
   try {
     const parsed = JSON.parse(content) as { items?: any[] }
-    return Array.isArray(parsed) ? parsed : (parsed.items ?? [])
+    const rawItems: any[] = Array.isArray(parsed) ? parsed : (parsed.items ?? [])
+
+    const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight)\b/i
+    const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement|check.?in|check.?out)\b/i
+
+    return rawItems.map((item: any) => {
+      const from = String(item.fromPoint ?? '')
+      const to   = String(item.toPoint   ?? '')
+      const det  = String(item.details   ?? '')
+      const loc  = String(item.location  ?? '')
+      if (AIRPORT_RE.test(from) || AIRPORT_RE.test(to) || AIRPORT_RE.test(det)) {
+        return { ...item, serviceType: 'PVT_TRANSFER' }
+      }
+      if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+        return { ...item, serviceType: 'OWN_ARRANGEMENT', meetingTime: null }
+      }
+      return item
+    })
   } catch {
     return []
   }

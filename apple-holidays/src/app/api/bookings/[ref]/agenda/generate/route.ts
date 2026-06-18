@@ -112,6 +112,13 @@ MEETING TIME — CRITICAL RULES (always fill this field):
 - Ticket-only / OWN_ARRANGEMENT (no guide, no driver): null
 - NEVER leave meetingTime null for PVT_TRANSFER or SIC_TRANSFER items
 
+SERVICE TYPE — MANDATORY RULES (override everything else):
+- ANY item involving an airport, terminal, or flight connection → serviceType = "PVT_TRANSFER" (NEVER SIC or OWN for airport transfers)
+- Leisure day / free time / at leisure / no guide / hotel only → serviceType = "OWN_ARRANGEMENT", meetingTime = null
+- Explicitly "SIC" or "shared" tour → serviceType = "SIC_TRANSFER"
+- Private tour, cruise, city-to-city transfer → serviceType = "PVT_TRANSFER"
+- Ticket/entrance only (no driver, no guide) → serviceType = "OWN_ARRANGEMENT", meetingTime = null
+
 ADDITIONAL RULES:
 - Include every single day from arrival date to departure date
 - Split multi-city movement into separate items per leg
@@ -134,8 +141,26 @@ ADDITIONAL RULES:
   if (!content) return buildApiError('AI returned empty response')
 
   const parsed = JSON.parse(content)
-  const items = Array.isArray(parsed) ? parsed
+  const rawItems: Record<string, unknown>[] = Array.isArray(parsed) ? parsed
     : parsed.items ?? parsed.agenda ?? parsed.days ?? []
+
+  // Post-process: enforce airport → PVT_TRANSFER and leisure → OWN_ARRANGEMENT
+  const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight)\b/i
+  const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement|check.?in|check.?out)\b/i
+
+  const items = rawItems.map(item => {
+    const from = String(item.fromPoint ?? '')
+    const to   = String(item.toPoint   ?? '')
+    const loc  = String(item.location  ?? '')
+    const det  = String(item.details   ?? '')
+    if (AIRPORT_RE.test(from) || AIRPORT_RE.test(to) || AIRPORT_RE.test(det)) {
+      return { ...item, serviceType: 'PVT_TRANSFER' }
+    }
+    if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+      return { ...item, serviceType: 'OWN_ARRANGEMENT', meetingTime: null }
+    }
+    return item
+  })
 
   return buildApiSuccess({ items }, `Generated ${items.length} agenda items`)
 }

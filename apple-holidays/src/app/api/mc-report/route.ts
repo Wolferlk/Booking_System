@@ -17,8 +17,10 @@ function buildBookingWhere(
   if (countryWhere) conditions.push(countryWhere)
   if (search) conditions.push({
     OR: [
-      { bookingRef: { contains: search } },
-      { agent:      { contains: search } },
+      { bookingRef:     { contains: search } },
+      { isNumber:       { contains: search } },
+      { agentBookingId: { contains: search } },
+      { agent:          { contains: search } },
     ],
   })
   if (conditions.length === 0) return undefined
@@ -73,11 +75,13 @@ export async function GET(req: NextRequest) {
         include: {
           booking: {
             select: {
-              bookingRef: true,
-              paxAdults:  true,
-              paxChildren: true,
-              agent:      true,
-              status:     true,
+              bookingRef:     true,
+              isNumber:       true,
+              agentBookingId: true,
+              paxAdults:      true,
+              paxChildren:    true,
+              agent:          true,
+              status:         true,
             },
           },
         },
@@ -98,26 +102,28 @@ export async function GET(req: NextRequest) {
   })
 
   const data = items.map(item => ({
-    id:          item.id,
-    date:        item.date.toISOString().slice(0, 10),
-    vnCode:      item.agenda.booking.bookingRef,
-    location:    item.location,
-    paxAdults:   item.agenda.booking.paxAdults,
-    paxChildren: item.agenda.booking.paxChildren,
-    fromPoint:   item.fromPoint ?? null,
-    toPoint:     item.toPoint   ?? null,
-    details:     item.details   ?? null,
-    mealPlan:    item.mealPlan  ?? null,
-    meetingTime: item.meetingTime ?? null,
-    serviceType: item.serviceType,
-    vendor:      item.assignment?.driver?.vehicle?.vendor?.name
-                   ?? item.assignment?.driverName
-                   ?? null,
-    driverName:  item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
-    vehicleType: item.assignment?.vehicleType  ?? null,
-    vehiclePlate: item.assignment?.vehiclePlate ?? null,
-    agent:        item.agenda.booking.agent    ?? null,
-    bookingStatus: item.agenda.booking.status,
+    id:             item.id,
+    date:           item.date.toISOString().slice(0, 10),
+    vnCode:         item.agenda.booking.bookingRef,
+    isNumber:       item.agenda.booking.isNumber       ?? null,
+    agentBookingId: item.agenda.booking.agentBookingId ?? null,
+    location:       item.location,
+    paxAdults:      item.agenda.booking.paxAdults,
+    paxChildren:    item.agenda.booking.paxChildren,
+    fromPoint:      item.fromPoint ?? null,
+    toPoint:        item.toPoint   ?? null,
+    details:        item.details   ?? null,
+    mealPlan:       item.mealPlan  ?? null,
+    meetingTime:    item.meetingTime ?? null,
+    serviceType:    item.serviceType,
+    vendor:         item.assignment?.driver?.vehicle?.vendor?.name
+                      ?? item.assignment?.driverName
+                      ?? null,
+    driverName:     item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
+    vehicleType:    item.assignment?.vehicleType  ?? null,
+    vehiclePlate:   item.assignment?.vehiclePlate ?? null,
+    agent:          item.agenda.booking.agent    ?? null,
+    bookingStatus:  item.agenda.booking.status,
   }))
 
   return buildApiSuccess(data)

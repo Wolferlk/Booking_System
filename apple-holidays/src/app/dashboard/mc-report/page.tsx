@@ -17,24 +17,26 @@ import { useCountryFilter } from '@/hooks/use-country-filter'
 type ServiceType = 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT'
 
 type MCRow = {
-  id:           string
-  date:         string
-  vnCode:       string
-  location:     string
-  paxAdults:    number
-  paxChildren:  number
-  fromPoint:    string | null
-  toPoint:      string | null
-  details:      string | null
-  mealPlan:     string | null
-  meetingTime:  string | null
-  serviceType:  ServiceType
-  vendor:       string | null
-  driverName:   string | null
-  vehicleType:  string | null
-  vehiclePlate: string | null
-  agent:        string | null
-  bookingStatus: string
+  id:             string
+  date:           string
+  vnCode:         string
+  isNumber:       string | null
+  agentBookingId: string | null
+  location:       string
+  paxAdults:      number
+  paxChildren:    number
+  fromPoint:      string | null
+  toPoint:        string | null
+  details:        string | null
+  mealPlan:       string | null
+  meetingTime:    string | null
+  serviceType:    ServiceType
+  vendor:         string | null
+  driverName:     string | null
+  vehicleType:    string | null
+  vehiclePlate:   string | null
+  agent:          string | null
+  bookingStatus:  string
 }
 
 type SortField = 'date' | 'vnCode' | 'location' | 'serviceType' | 'meetingTime'
@@ -254,27 +256,30 @@ export default function MCReportPage() {
     if (rows.length === 0) { toast.error('No data to export'); return }
 
     const headers = [
-      'Date', 'VN Code', 'Location', 'Adults', 'Children',
+      'Date', 'Tour Ref', 'IS Number', 'Agent ID', 'Location', 'Adults', 'Children',
       'From', 'To', 'Details', 'Meal Plan', 'Meeting Time',
-      'Service Type', 'Vendor', 'Driver', 'Vehicle Type', 'Plate',
+      'Service Type', 'Vendor', 'Driver', 'Vehicle Type', 'Plate', 'Agent',
     ]
 
     const csvRows = sorted.map(r => [
       r.date,
       r.vnCode,
+      r.isNumber       ?? '',
+      r.agentBookingId ?? '',
       r.location,
       r.paxAdults,
       r.paxChildren,
-      r.fromPoint  ?? '',
-      r.toPoint    ?? '',
-      r.details    ?? '',
-      r.mealPlan   ?? '',
+      r.fromPoint   ?? '',
+      r.toPoint     ?? '',
+      r.details     ?? '',
+      r.mealPlan    ?? '',
       r.meetingTime ?? '',
       SERVICE_LABELS[r.serviceType] ?? r.serviceType,
-      r.vendor     ?? '',
-      r.driverName ?? '',
-      r.vehicleType ?? '',
+      r.vendor      ?? '',
+      r.driverName  ?? '',
+      r.vehicleType  ?? '',
       r.vehiclePlate ?? '',
+      r.agent        ?? '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
 
     const csv  = [headers.join(','), ...csvRows].join('\n')
@@ -362,12 +367,12 @@ export default function MCReportPage() {
               </div>
               <div>
                 <label className="form-label flex items-center gap-1.5">
-                  <Search className="w-3.5 h-3.5 text-slate-400" /> VN Code / Agent
+                  <Search className="w-3.5 h-3.5 text-slate-400" /> Tour Ref / IS Number / Agent ID
                 </label>
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g. AH-2025-001"
+                  placeholder="e.g. VN19785, IS48375, agent ref…"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && load()}
@@ -525,17 +530,27 @@ export default function MCReportPage() {
                               </div>
                             </td>
 
-                            {/* VN Code */}
+                            {/* Booking Ref / IS Number / Agent ID */}
                             <td className="px-3 py-2.5">
                               <a
                                 href={`/dashboard/bookings/${row.vnCode}`}
                                 target="_blank"
                                 rel="noreferrer"
                                 onClick={e => e.stopPropagation()}
-                                className="font-mono font-semibold text-brand-700 hover:underline whitespace-nowrap"
+                                className="font-mono font-semibold text-brand-700 hover:underline whitespace-nowrap block"
                               >
                                 {row.vnCode}
                               </a>
+                              {row.isNumber && (
+                                <span className="inline-flex items-center mt-0.5 text-[10px] font-semibold font-mono text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                  IS: {row.isNumber}
+                                </span>
+                              )}
+                              {row.agentBookingId && (
+                                <span className="inline-flex items-center mt-0.5 ml-1 text-[10px] font-semibold font-mono text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded whitespace-nowrap">
+                                  {row.agentBookingId}
+                                </span>
+                              )}
                             </td>
 
                             {/* Location */}
@@ -631,11 +646,14 @@ export default function MCReportPage() {
                               <td colSpan={12} className="px-4 py-3">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                                   {[
+                                    { label: 'Tour Ref',       value: row.vnCode },
+                                    { label: 'IS Number',      value: row.isNumber },
+                                    { label: 'Agent ID',       value: row.agentBookingId },
+                                    { label: 'Agent',          value: row.agent },
                                     { label: 'Full Details',   value: row.details },
                                     { label: 'Driver',         value: row.driverName },
                                     { label: 'Vehicle Type',   value: row.vehicleType },
                                     { label: 'Vehicle Plate',  value: row.vehiclePlate },
-                                    { label: 'Agent',          value: row.agent },
                                     { label: 'Booking Status', value: row.bookingStatus?.replace(/_/g, ' ') },
                                     { label: 'Pax',            value: `${row.paxAdults} Adults, ${row.paxChildren} Children` },
                                     { label: 'Vendor',         value: row.vendor },
@@ -643,7 +661,7 @@ export default function MCReportPage() {
                                     item.value ? (
                                       <div key={item.label}>
                                         <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-0.5">{item.label}</p>
-                                        <p className="text-slate-700 font-medium">{item.value}</p>
+                                        <p className="text-slate-700 font-medium font-mono">{item.value}</p>
                                       </div>
                                     ) : null
                                   ))}
