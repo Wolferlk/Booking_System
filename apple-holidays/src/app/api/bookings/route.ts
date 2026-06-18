@@ -15,6 +15,9 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const search = searchParams.get('search')
+  const refSearch = searchParams.get('refSearch')   // IS number / VN ref / agent ID
+  const dateFrom = searchParams.get('dateFrom')     // createdAt range start
+  const dateTo   = searchParams.get('dateTo')       // createdAt range end
   const page = parseInt(searchParams.get('page') ?? '1')
   const limit = parseInt(searchParams.get('limit') ?? '20')
   const dateFilter = searchParams.get('dateFilter') ?? ''
@@ -51,12 +54,37 @@ export async function GET(req: NextRequest) {
   if (search) {
     andClauses.push({
       OR: [
-      { bookingRef: { contains: search } },
-      { agent: { contains: search } },
-      { fileHandler: { contains: search } },
-      { passengers: { some: { name: { contains: search } } } },
+        { bookingRef:     { contains: search } },
+        { agent:          { contains: search } },
+        { fileHandler:    { contains: search } },
+        { isNumber:       { contains: search } },
+        { agentBookingId: { contains: search } },
+        { passengers: { some: { name: { contains: search } } } },
       ],
     })
+  }
+
+  // Ref / IS number / agent ID dedicated search
+  if (refSearch) {
+    andClauses.push({
+      OR: [
+        { bookingRef:     { contains: refSearch } },
+        { isNumber:       { contains: refSearch } },
+        { agentBookingId: { contains: refSearch } },
+      ],
+    })
+  }
+
+  // Created-at date range
+  if (dateFrom || dateTo) {
+    const createdRange: Record<string, Date> = {}
+    if (dateFrom) createdRange.gte = new Date(dateFrom)
+    if (dateTo) {
+      const end = new Date(dateTo)
+      end.setHours(23, 59, 59, 999)
+      createdRange.lte = end
+    }
+    andClauses.push({ createdAt: createdRange })
   }
 
   // Date period filter applied to arrivalDate
@@ -100,6 +128,7 @@ export async function GET(req: NextRequest) {
         createdBy: { select: { id: true, name: true, role: true } },
         _count: { select: { changeRequests: true } },
         pnl: { select: { id: true } },
+        tourAgenda: { select: { id: true } },
       },
     }),
   ])
