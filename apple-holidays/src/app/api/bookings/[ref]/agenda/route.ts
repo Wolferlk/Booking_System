@@ -91,6 +91,8 @@ export async function POST(
       const assignment = item.assignment as
         | {
             driverId?: string | null
+            vendorId?: string | null
+            vendorName?: string | null
             driverName?: string | null
             driverPhone?: string | null
             vehicleType?: string | null
@@ -102,28 +104,31 @@ export async function POST(
 
       if (!assignment) return Promise.resolve()
 
+      // Skip if nothing meaningful is set
+      const hasData = assignment.driverId || assignment.vendorId || assignment.vendorName || assignment.driverName
+      if (!hasData) return Promise.resolve()
+
       const agendaItem = createdItems[index]
       if (!agendaItem) return Promise.resolve()
 
+      const data = {
+        driverId:     assignment.driverId     || null,
+        vendorId:     assignment.vendorId     || null,
+        vendorName:   assignment.vendorName   || null,
+        driverName:   assignment.driverName   || null,
+        driverPhone:  assignment.driverPhone  || null,
+        vehicleType:  assignment.vehicleType  || null,
+        vehiclePlate: assignment.vehiclePlate || null,
+        notes:        assignment.notes        || null,
+      }
+
       return prisma.assignment.upsert({
         where: { agendaItemId: agendaItem.id },
-        create: {
-          agendaItemId: agendaItem.id,
-          driverId: assignment.driverId || null,
-          driverName: assignment.driverName || null,
-          driverPhone: assignment.driverPhone || null,
-          vehicleType: assignment.vehicleType || null,
-          vehiclePlate: assignment.vehiclePlate || null,
-          notes: assignment.notes || null,
-        },
-        update: {
-          driverId: assignment.driverId || null,
-          driverName: assignment.driverName || null,
-          driverPhone: assignment.driverPhone || null,
-          vehicleType: assignment.vehicleType || null,
-          vehiclePlate: assignment.vehiclePlate || null,
-          notes: assignment.notes || null,
-        },
+        create: { agendaItemId: agendaItem.id, ...data },
+        update: data,
+      }).catch((err: Error) => {
+        console.error('[agenda POST] assignment upsert failed:', err.message, { agendaItemId: agendaItem.id, vendorId: data.vendorId, driverId: data.driverId })
+        // Non-fatal: skip assignment rather than failing the whole save
       })
     }),
   )
@@ -156,26 +161,27 @@ export async function PUT(
     if (assignment === null) {
       await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
     } else {
-      await prisma.assignment.upsert({
-        where: { agendaItemId: itemId },
-        create: {
-          agendaItemId: itemId,
-          driverId: assignment.driverId || null,
-          driverName: assignment.driverName || null,
-          driverPhone: assignment.driverPhone || null,
-          vehicleType: assignment.vehicleType || null,
-          vehiclePlate: assignment.vehiclePlate || null,
-          notes: assignment.notes || null,
-        },
-        update: {
-          driverId: assignment.driverId || null,
-          driverName: assignment.driverName || null,
-          driverPhone: assignment.driverPhone || null,
-          vehicleType: assignment.vehicleType || null,
-          vehiclePlate: assignment.vehiclePlate || null,
-          notes: assignment.notes || null,
-        },
-      })
+      const data = {
+        driverId:     assignment.driverId     || null,
+        vendorId:     assignment.vendorId     || null,
+        vendorName:   assignment.vendorName   || null,
+        driverName:   assignment.driverName   || null,
+        driverPhone:  assignment.driverPhone  || null,
+        vehicleType:  assignment.vehicleType  || null,
+        vehiclePlate: assignment.vehiclePlate || null,
+        notes:        assignment.notes        || null,
+      }
+      try {
+        await prisma.assignment.upsert({
+          where: { agendaItemId: itemId },
+          create: { agendaItemId: itemId, ...data },
+          update: data,
+        })
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[agenda PUT] assignment upsert failed:', msg)
+        return buildApiError(`Assignment save failed: ${msg}`, 500)
+      }
     }
     const updated = await prisma.agendaItem.findUnique({ where: { id: itemId }, include: { assignment: true } })
     return buildApiSuccess(updated, 'Assignment saved')

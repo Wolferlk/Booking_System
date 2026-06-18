@@ -8,7 +8,7 @@ import {
   Plus, Loader2, ShoppingCart, AlertCircle,
   Upload, FileText, Image as ImageIcon, ExternalLink, CheckCircle2,
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
-  Anchor, Activity, MapPin, Plane, Printer, Pencil,
+  Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -77,9 +77,15 @@ export default function TicketsPage() {
   const [form, setForm] = useState({
     type: '', qty: '1', supplier: '', costPerUnit: '', currency: 'USD', notes: '',
   })
-  const [editModal, setEditModal]   = useState<Ticket | null>(null)
-  const [editForm, setEditForm]     = useState({ type: '', supplier: '', qty: '', costPerUnit: '', reference: '', notes: '' })
-  const [editSaving, setEditSaving] = useState(false)
+  const [editModal, setEditModal]     = useState<Ticket | null>(null)
+  const [editForm, setEditForm]       = useState({ type: '', supplier: '', qty: '', costPerUnit: '', reference: '', notes: '' })
+  const [editSaving, setEditSaving]   = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [deleting, setDeleting]           = useState<string | null>(null)
+  const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set())
+  const [bulkModal, setBulkModal]         = useState(false)
+  const [bulkForm, setBulkForm]           = useState({ reference: '', supplier: '', notes: '' })
+  const [bulkActivating, setBulkActivating] = useState(false)
 
   const canCreate   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canPurchase = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
@@ -129,6 +135,38 @@ export default function TicketsPage() {
     } catch {
       toast.error('Some activations failed')
     } finally { setActivating(null) }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll(ids: string[]) {
+    setSelectedIds(prev => prev.size === ids.length ? new Set() : new Set(ids))
+  }
+
+  async function activateSelected() {
+    setBulkActivating(true)
+    try {
+      await Promise.all(Array.from(selectedIds).map(id =>
+        fetch(`/api/tickets/${id}/activate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bulkForm),
+        }),
+      ))
+      toast.success(`${selectedIds.size} ticket${selectedIds.size > 1 ? 's' : ''} activated`)
+      setSelectedIds(new Set())
+      setBulkModal(false)
+      setBulkForm({ reference: '', supplier: '', notes: '' })
+      load()
+    } catch {
+      toast.error('Some activations failed')
+    } finally { setBulkActivating(false) }
   }
 
   function openActivateModal(t: Ticket) {
@@ -218,6 +256,20 @@ export default function TicketsPage() {
     finally { setEditSaving(false) }
   }
 
+  async function deleteTicket(id: string) {
+    setDeleting(id)
+    try {
+      const res  = await fetch(`/api/tickets/${id}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Ticket deleted')
+      setConfirmDelete(null)
+      load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete')
+    } finally { setDeleting(null) }
+  }
+
   if (loading) return (
     <div className="flex justify-center h-48">
       <Loader2 className="w-6 h-6 text-brand-500 animate-spin mt-12" />
@@ -271,36 +323,54 @@ export default function TicketsPage() {
           <div>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
+                {canCreate && (
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-slate-300 accent-brand-500"
+                    checked={selectedIds.size === inactive.length && inactive.length > 0}
+                    onChange={() => toggleSelectAll(inactive.map(t => t.id))}
+                    title="Select all"
+                  />
+                )}
                 <Sparkles className="w-4 h-4 text-amber-500" />
                 <h2 className="text-sm font-semibold text-slate-900">
                   Auto-generated from P&L
                   <span className="ml-2 text-xs font-normal text-slate-400">— review and activate before purchasing</span>
                 </h2>
               </div>
-              {canCreate && inactive.length > 1 && (
+              {canCreate && selectedIds.size > 0 && (
                 <button
-                  onClick={activateAll}
-                  disabled={activating === 'all'}
+                  onClick={() => setBulkModal(true)}
                   className="btn btn-primary btn-sm text-xs"
                 >
-                  {activating === 'all'
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Zap className="w-3.5 h-3.5" />}
-                  Activate All ({inactive.length})
+                  <Zap className="w-3.5 h-3.5" />
+                  Activate Selected ({selectedIds.size})
                 </button>
               )}
             </div>
 
             <div className="space-y-2">
               {inactive.map(t => {
-                const cat    = t.pnlLine?.category ?? 'OTHER'
-                const payOk  = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
+                const cat = t.pnlLine?.category ?? 'OTHER'
+                const payOk = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
 
                 return (
                   <div
                     key={t.id}
-                    className="flex items-center gap-4 p-4 bg-amber-50 border border-amber-200 rounded-xl"
+                    className={`flex items-center gap-4 p-4 rounded-xl border transition-colors ${
+                      selectedIds.has(t.id)
+                        ? 'bg-brand-50 border-brand-300'
+                        : 'bg-amber-50 border-amber-200'
+                    }`}
                   >
+                    {canCreate && (
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-slate-300 accent-brand-500 flex-shrink-0"
+                        checked={selectedIds.has(t.id)}
+                        onChange={() => toggleSelect(t.id)}
+                      />
+                    )}
                     <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
                       <CategoryIcon cat={cat} className="w-4.5 h-4.5 text-amber-600" />
                     </div>
@@ -310,23 +380,48 @@ export default function TicketsPage() {
                         <span className="text-[10px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded font-semibold uppercase tracking-wide">
                           {cat.replace('_', ' ')}
                         </span>
-                        {t.pnlLine && (
-                          <span className={`text-[10px] font-medium flex items-center gap-1 ${payOk ? 'text-green-600' : 'text-amber-600'}`}>
-                            {payOk
-                              ? <><CheckCircle2 className="w-3 h-3" /> Payment confirmed</>
-                              : <><AlertCircle className="w-3 h-3" /> Payment pending</>}
+                        {payOk && t.pnlLine && (
+                          <span className="text-[10px] font-medium flex items-center gap-1 text-green-600">
+                            <CheckCircle2 className="w-3 h-3" /> Payment confirmed
                           </span>
                         )}
                       </div>
                     </div>
-                    {canCreate && (
-                      <button
-                        onClick={() => openActivateModal(t)}
-                        className="btn btn-primary btn-sm text-xs flex-shrink-0"
-                      >
-                        <Zap className="w-3.5 h-3.5" /> Activate
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {canCreate && (
+                        <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm" title="Edit ticket">
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {canCreate && (
+                        confirmDelete === t.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => deleteTicket(t.id)}
+                              disabled={deleting === t.id}
+                              className="btn btn-sm bg-red-600 text-white hover:bg-red-700 text-xs"
+                            >
+                              {deleting === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Confirm?'}
+                            </button>
+                            <button onClick={() => setConfirmDelete(null)} className="btn btn-secondary btn-sm">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setConfirmDelete(t.id)} className="btn btn-secondary btn-sm text-red-500 hover:text-red-700" title="Delete ticket">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )
+                      )}
+                      {canCreate && (
+                        <button
+                          onClick={() => openActivateModal(t)}
+                          className="btn btn-primary btn-sm text-xs"
+                        >
+                          <Zap className="w-3.5 h-3.5" /> Activate
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )
               })}
@@ -411,17 +506,17 @@ export default function TicketsPage() {
                           {t.pnlLine ? (
                             <div>
                               <p className="text-xs font-medium text-slate-700 truncate">{t.pnlLine.activity}</p>
+                              {payOk && (
                               <div className="flex items-center gap-1 mt-0.5">
-                                {payOk
-                                  ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                  : <AlertCircle  className="w-3.5 h-3.5 text-amber-500"   />}
-                                <span className={`text-xs font-semibold ${payOk ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                <span className="text-xs font-semibold text-emerald-600">
                                   {t.pnlLine.paymentStatus}
                                 </span>
                                 {t.pnlLine.paymentRefNumber && (
                                   <span className="text-xs text-slate-400 font-mono">#{t.pnlLine.paymentRefNumber}</span>
                                 )}
                               </div>
+                              )}
                             </div>
                           ) : <p className="text-xs text-slate-400">No P&L link</p>}
                         </div>
@@ -454,6 +549,26 @@ export default function TicketsPage() {
                           <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm" title="Edit ticket">
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
+                        )}
+                        {canCreate && (
+                          confirmDelete === t.id ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => deleteTicket(t.id)}
+                                disabled={deleting === t.id}
+                                className="btn btn-sm bg-red-600 text-white hover:bg-red-700 text-xs"
+                              >
+                                {deleting === t.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Confirm?'}
+                              </button>
+                              <button onClick={() => setConfirmDelete(null)} className="btn btn-secondary btn-sm">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setConfirmDelete(t.id)} className="btn btn-secondary btn-sm text-red-500 hover:text-red-700" title="Delete ticket">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )
                         )}
 
                         {canUpload && t.status === 'DRAFT' && !t.fileUrl && (
@@ -644,6 +759,56 @@ export default function TicketsPage() {
             <label className="form-label">Notes</label>
             <textarea className="form-textarea" rows={2} value={editForm.notes}
               onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bulk Activate Modal */}
+      <Modal
+        open={bulkModal}
+        onClose={() => setBulkModal(false)}
+        title={`Activate ${selectedIds.size} Ticket${selectedIds.size > 1 ? 's' : ''}`}
+        footer={
+          <>
+            <button onClick={() => setBulkModal(false)} className="btn btn-secondary">Cancel</button>
+            <button onClick={activateSelected} disabled={bulkActivating} className="btn btn-primary">
+              {bulkActivating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              Activate {selectedIds.size} Ticket{selectedIds.size > 1 ? 's' : ''}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="bg-teal-50 border border-teal-100 rounded-lg p-3 text-sm text-teal-700">
+            One reference and supplier will be applied to all {selectedIds.size} selected tickets. Once activated, they become visible to the client.
+          </div>
+          <div>
+            <label className="form-label">Reference / Confirmation Number</label>
+            <input
+              className="form-input font-mono"
+              placeholder="e.g. TKT-2026-001"
+              value={bulkForm.reference}
+              onChange={e => setBulkForm(f => ({ ...f, reference: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="form-label">Supplier / Provider</label>
+            <input
+              className="form-input"
+              placeholder="e.g. Heritage Cruises"
+              value={bulkForm.supplier}
+              onChange={e => setBulkForm(f => ({ ...f, supplier: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="form-label">Notes (optional)</label>
+            <textarea
+              className="form-textarea"
+              rows={2}
+              placeholder="Meeting point, dress code..."
+              value={bulkForm.notes}
+              onChange={e => setBulkForm(f => ({ ...f, notes: e.target.value }))}
+            />
           </div>
         </div>
       </Modal>

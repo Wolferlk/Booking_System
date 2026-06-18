@@ -410,17 +410,20 @@ model AgendaItem {
 }
 
 model Assignment {
-  id            String     @id @default(cuid())
-  agendaItemId  String     @unique
-  agendaItem    AgendaItem @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  agendaItemId  String         @unique
+  agendaItem    AgendaItem     @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
   driverId      String?
-  driver        Driver?    @relation(fields: [driverId], references: [id])
+  driver        Driver?        @relation(fields: [driverId], references: [id])
+  vendorId      String?
+  vendor        VehicleVendor? @relation(fields: [vendorId], references: [id])
+  vendorName    String?
   driverName    String?
   driverPhone   String?
   vehicleType   String?
   vehiclePlate  String?
-  notes         String?    @db.Text
-  assignedAt    DateTime   @default(now())
+  notes         String?        @db.Text
+  assignedAt    DateTime       @default(now())
 
   @@map("assignments")
 }
@@ -670,16 +673,17 @@ model Vehicle {
 }
 
 model VehicleVendor {
-  id        String            @id @default(cuid())
-  name      String
-  phone     String?
-  email     String?
-  address   String?
-  isActive  Boolean           @default(true)
-  country   OperationCountry?
-  vehicles  Vehicle[]
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  id          String            @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  isActive    Boolean           @default(true)
+  country     OperationCountry?
+  vehicles    Vehicle[]
+  assignments Assignment[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   @@map("vehicle_vendors")
 }

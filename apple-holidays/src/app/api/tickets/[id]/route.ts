@@ -24,6 +24,21 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return buildApiSuccess(ticket)
 }
 
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return buildApiError('Unauthorized', 401)
+
+  const role = session.user.role as UserRole
+  if (!CAN_EDIT.includes(role)) return buildApiError('Forbidden', 403)
+
+  const { id } = await params
+  const existing = await prisma.ticket.findUnique({ where: { id } })
+  if (!existing) return buildApiError('Ticket not found', 404)
+
+  await prisma.ticket.delete({ where: { id } })
+  return buildApiSuccess(null, 'Ticket deleted')
+}
+
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
