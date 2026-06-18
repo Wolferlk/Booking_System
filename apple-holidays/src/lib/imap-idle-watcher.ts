@@ -61,22 +61,34 @@ async function processNewImapEmails() {
 
         const result = await processMailboxEmail(email, 'PNL', attachments)
 
-        await prisma.systemSetting.upsert({
-          where:  { key: dedupKey },
-          update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
-          create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
-        })
-        await upsertCachedMailMessage({
-          email,
-          mailboxUser: IMAP_PNL_USER,
-          mailboxKind: 'PNL',
-          bookingRef:  result.bookingRef,
-          status:      'PROCESSED',
-          processedAt: new Date().toISOString(),
-        }).catch(() => {})
-
-        console.log(`[IDLE] ✓ PNL → booking ${result.bookingRef}`)
-        processed++
+        if (result.status === 'PNL_WAITING') {
+          // No matching TQ booking yet — store as WAITING so the 5-min cron retries it
+          // Do NOT write the dedup key, allowing future re-processing
+          await upsertCachedMailMessage({
+            email,
+            mailboxUser: IMAP_PNL_USER,
+            mailboxKind: 'PNL',
+            bookingRef:  result.bookingRef,
+            status:      'WAITING',
+          }).catch(() => {})
+          console.log(`[IDLE] PNL Tour No ${result.bookingRef} — waiting for TQ booking, will retry`)
+        } else {
+          await prisma.systemSetting.upsert({
+            where:  { key: dedupKey },
+            update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
+            create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
+          })
+          await upsertCachedMailMessage({
+            email,
+            mailboxUser: IMAP_PNL_USER,
+            mailboxKind: 'PNL',
+            bookingRef:  result.bookingRef,
+            status:      'PROCESSED',
+            processedAt: new Date().toISOString(),
+          }).catch(() => {})
+          console.log(`[IDLE] ✓ PNL → booking ${result.bookingRef}`)
+          processed++
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.error('[IDLE] email processing failed:', msg)

@@ -33,17 +33,25 @@ async function processOne(
   const { rawText, attachments } = await extractEmailSourceTextForUser(mailboxUser, email)
   const result = await processMailboxEmail({ ...email, rawBody: rawText }, kind, attachments)
 
+  if (result.status === 'PNL_WAITING') {
+    // No matching TQ booking yet — store as WAITING so the next cron retries it
+    // Do NOT write the dedup key, allowing future re-processing when TQ arrives
+    await upsertCachedMailMessage({
+      email, mailboxUser, mailboxKind: kind,
+      bookingRef: result.bookingRef, status: 'WAITING',
+    }).catch(() => {})
+    console.log(`[Scheduler] PNL Tour No ${result.bookingRef} — waiting for TQ, will retry`)
+    return 'waiting'
+  }
+
   await prisma.systemSetting.upsert({
     where:  { key: dedupKey },
     update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
     create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
   })
   await upsertCachedMailMessage({
-    email,
-    mailboxUser,
-    mailboxKind: kind,
-    bookingRef: result.bookingRef,
-    status: 'PROCESSED',
+    email, mailboxUser, mailboxKind: kind,
+    bookingRef: result.bookingRef, status: 'PROCESSED',
     processedAt: new Date().toISOString(),
   }).catch(() => {})
 
@@ -118,21 +126,28 @@ async function runImapMailbox(lessCreditMode: boolean, cutoffMs: number) {
 
       const result = await processMailboxEmail(email, 'PNL', attachments)
 
-      await prisma.systemSetting.upsert({
-        where:  { key: dedupKey },
-        update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
-        create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
-      })
-      await upsertCachedMailMessage({
-        email,
-        mailboxUser: IMAP_PNL_USER,
-        mailboxKind: 'PNL',
-        bookingRef:  result.bookingRef,
-        status:      'PROCESSED',
-        processedAt: new Date().toISOString(),
-      }).catch(() => {})
-
-      console.log(`[Scheduler] ✓ IMAP PNL → booking ${result.bookingRef}`)
+      if (result.status === 'PNL_WAITING') {
+        await upsertCachedMailMessage({
+          email, mailboxUser: IMAP_PNL_USER, mailboxKind: 'PNL',
+          bookingRef: result.bookingRef, status: 'WAITING',
+        }).catch(() => {})
+        console.log(`[Scheduler] IMAP PNL Tour No ${result.bookingRef} — waiting for TQ, will retry`)
+      } else {
+        await prisma.systemSetting.upsert({
+          where:  { key: dedupKey },
+          update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
+          create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
+        })
+        await upsertCachedMailMessage({
+          email,
+          mailboxUser: IMAP_PNL_USER,
+          mailboxKind: 'PNL',
+          bookingRef:  result.bookingRef,
+          status:      'PROCESSED',
+          processedAt: new Date().toISOString(),
+        }).catch(() => {})
+        console.log(`[Scheduler] ✓ IMAP PNL → booking ${result.bookingRef}`)
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[Scheduler] IMAP PNL failed:', msg)

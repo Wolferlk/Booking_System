@@ -49,6 +49,37 @@ export async function POST(req: NextRequest) {
   }
   if (!rawBody) return buildApiError('rawBody is required')
 
+  // ── Dedup: if backend already processed this email, return cached result ──────
+  // This prevents duplicate OpenAI calls when the backend (webhook/IMAP IDLE/cron)
+  // already extracted and saved the booking before the user's browser loaded.
+  if (graphId) {
+    const cached = await prisma.systemSetting.findUnique({
+      where: { key: `processed_email_${graphId}` },
+    })
+    if (cached) {
+      const [cachedRef, cachedAt] = cached.value.split('|')
+      const booking = await prisma.booking.findFirst({
+        where: { bookingRef: cachedRef },
+        select: {
+          id: true, createdAt: true,
+          pnl: { select: { lineItems: { select: { id: true } } } },
+        },
+      }).catch(() => null)
+      return buildApiSuccess({
+        bookingRef:      cachedRef,
+        bookingId:       booking?.id ?? '',
+        isNew:           false,
+        pnlLines:        booking?.pnl?.lineItems?.length ?? 0,
+        agendaItems:     0,
+        status:          'GT_REVIEW',
+        xlsxUsed:        false,
+        bookingCreatedAt: booking?.createdAt?.toISOString() ?? null,
+        processedAt:     cachedAt ?? null,
+        extracted:       null,
+      }, `Booking ${cachedRef} already processed by backend`)
+    }
+  }
+
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
   const emailSnapshot: ProcessedEmail | null = graphId && mailboxUser
     ? {

@@ -99,7 +99,7 @@ Return a JSON object with key "items" containing an array. Each item MUST have A
 }
 
 MEETING TIME — CRITICAL RULES (always fill this field):
-- International arrival transfer: flight arrTime + 45 min (e.g. lands 14:20 → meetingTime "15:05")
+- International arrival transfer: flight arrTime + 30 min (e.g. lands 14:20 → meetingTime "15:05")
 - Domestic arrival transfer: flight arrTime + 30 min (e.g. lands 10:00 → meetingTime "10:30")
 - Departure transfer: flight depTime − 3 hours (e.g. departs 09:30 → meetingTime "06:30")
 - SIC full-day tour: "07:30" (default)

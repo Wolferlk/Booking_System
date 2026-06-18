@@ -104,22 +104,28 @@ async function processNotifications(notifications: GraphNotification[], secret: 
       const { rawText, attachments } = await extractEmailSourceTextForUser(mailboxUser, email)
       const result = await processMailboxEmail({ ...email, rawBody: rawText }, mailboxKind, attachments)
 
-      await prisma.systemSetting.upsert({
-        where:  { key: dedupKey },
-        update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
-        create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
-      })
-
-      await upsertCachedMailMessage({
-        email,
-        mailboxUser,
-        mailboxKind,
-        bookingRef: result.bookingRef,
-        status: 'PROCESSED',
-        processedAt: new Date().toISOString(),
-      }).catch(() => {})
-
-      console.log(`[Webhook] ✓ processed ${mailboxKind} → booking ${result.bookingRef}`)
+      if (result.status === 'PNL_WAITING') {
+        // No matching TQ booking yet — store as WAITING so the 5-min cron retries it
+        // Do NOT write the dedup key, allowing future re-processing when TQ arrives
+        await upsertCachedMailMessage({
+          email, mailboxUser, mailboxKind,
+          bookingRef: result.bookingRef, status: 'WAITING',
+        }).catch(() => {})
+        console.log(`[Webhook] PNL Tour No ${result.bookingRef} — waiting for TQ booking, will retry`)
+      } else {
+        await prisma.systemSetting.upsert({
+          where:  { key: dedupKey },
+          update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
+          create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
+        })
+        await upsertCachedMailMessage({
+          email, mailboxUser, mailboxKind,
+          bookingRef: result.bookingRef,
+          status: 'PROCESSED',
+          processedAt: new Date().toISOString(),
+        }).catch(() => {})
+        console.log(`[Webhook] ✓ processed ${mailboxKind} → booking ${result.bookingRef}`)
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[Webhook] processing failed:', msg)

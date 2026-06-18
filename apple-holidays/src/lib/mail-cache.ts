@@ -227,7 +227,7 @@ export async function listUnprocessedDbEmails(
   const model = mm()
   if (!model) return []
   const rows = await model.findMany({
-    where: { mailboxUser, status: 'RECEIVED' },
+    where: { mailboxUser, status: { in: ['RECEIVED', 'WAITING'] } },
     orderBy: { receivedAt: 'asc' },
     take: limit,
   })

@@ -32,6 +32,7 @@ type SyncResult = {
   isNew: boolean
   pnlLines: number
   agendaItems: number
+  status: 'GT_REVIEW' | 'PNL_WAITING'
 }
 
 const TICKETABLE_CATEGORIES = new Set(['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS'])
@@ -460,6 +461,7 @@ async function syncTourConfirmation(
     isNew,
     pnlLines: 0,
     agendaItems,
+    status: 'GT_REVIEW' as const,
   }
 }
 
@@ -505,12 +507,19 @@ async function syncPnL(
 
   if (!booking) {
     // PNL emails never contain travel dates — they only carry cost data.
-    // We cannot create a booking from PNL alone; the TQ must arrive first.
+    // Return PNL_WAITING so the caller stores the email for retry (without writing
+    // the dedup key). When the TQ booking arrives the cron will re-process it.
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      throw new Error(
-        `PNL received for IS Number "${bookingRef}" but no matching TQ booking found. ` +
-        `Process the Travel Quotation email first.`,
-      )
+      console.log(`[Mail]  PNL Tour No "${rawBookingRef}" — no matching booking yet, will retry when TQ arrives`)
+      return {
+        bookingRef: rawBookingRef,
+        bookingId:  '',
+        mode:       'PNL' as const,
+        isNew:      false,
+        pnlLines:   0,
+        agendaItems: 0,
+        status:     'PNL_WAITING' as const,
+      }
     }
 
     const created = await prisma.booking.create({
@@ -674,6 +683,7 @@ async function syncPnL(
     isNew: false,
     pnlLines: createdLines.length,
     agendaItems: 0,
+    status: 'GT_REVIEW' as const,
   }
 }
 
@@ -712,10 +722,10 @@ export async function processMailboxEmail(
 ): Promise<{ bookingRef: string; bookingId: string; pnlLines: number; agendaItems: number; status: string }> {
   const result = await processIncomingMail(email, type, attachments)
   return {
-    bookingRef: result.bookingRef,
-    bookingId: result.bookingId,
-    pnlLines: result.pnlLines,
+    bookingRef:  result.bookingRef,
+    bookingId:   result.bookingId,
+    pnlLines:    result.pnlLines,
     agendaItems: result.agendaItems,
-    status: 'GT_REVIEW',
+    status:      result.status,
   }
 }
