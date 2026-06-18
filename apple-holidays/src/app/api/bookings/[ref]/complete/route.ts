@@ -17,13 +17,13 @@ export async function POST(
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
-  if (booking.status !== 'IN_PROGRESS') return buildApiError('Booking must be In Progress first')
+  if (booking.status !== 'FEEDBACK_DONE') return buildApiError('Booking must be in Feedback Done status first')
 
   const [updated] = await Promise.all([
     prisma.booking.update({ where: { bookingRef: params.ref }, data: { status: 'COMPLETED' } }),
     prisma.statusEvent.create({
       data: {
-        bookingId: booking.id, fromState: 'IN_PROGRESS', toState: 'COMPLETED',
+        bookingId: booking.id, fromState: 'FEEDBACK_DONE', toState: 'COMPLETED',
         actorId: session.user.id, note: 'Trip completed',
       },
     }),

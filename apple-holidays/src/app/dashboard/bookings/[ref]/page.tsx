@@ -84,6 +84,12 @@ export default function BookingDetailPage() {
   // QC auto-send
   const [qcAutoSending, setQcAutoSending] = useState(false)
 
+  // Customer feedback modal (triggered on Complete Trip)
+  const [feedbackModal, setFeedbackModal] = useState(false)
+  const [feedbackRating, setFeedbackRating] = useState(0)
+  const [feedbackComment, setFeedbackComment] = useState('')
+  const [feedbackSaving, setFeedbackSaving] = useState(false)
+
   // Contact info editing
   const [editContactModal, setEditContactModal] = useState(false)
   const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', contactEmail: '', contactPhone: '', contactWhatsapp: '' })
@@ -464,6 +470,26 @@ Wishing you a wonderful trip! ✈️
     }
   }
 
+  async function saveFeedbackAndComplete() {
+    setFeedbackSaving(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: feedbackRating || null, comment: feedbackComment }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Trip completed and feedback saved')
+      setFeedbackModal(false)
+      setFeedbackRating(0)
+      setFeedbackComment('')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setFeedbackSaving(false) }
+  }
+
   async function openEmailModal() {
     const { mode, settings } = await loadTestMode()
     const agentEmail   = (booking.agentEmail   as string | null) ?? ''
@@ -605,6 +631,15 @@ Wishing you a wonderful trip! ✈️
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
               {transitions.map(t => {
+                // New step-through statuses use the advance-status endpoint
+                const ADVANCE_STEPS: BookingStatus[] = [
+                  'TE_REVIEWED', 'DRIVER_ALLOCATED', 'QC1_PASS',
+                  'TICKETS_ISSUED', 'QC2_PASS', 'MSG_SENT_CUSTOMER', 'FEEDBACK_DONE',
+                ]
+
+                const isAdvanceStep = ADVANCE_STEPS.includes(t.to)
+                const isComplete = t.to === 'COMPLETED'
+
                 const key = t.to === 'CHANGE_REQUESTED' ? 'change-request'
                   : t.from === 'CHANGE_REQUESTED' && t.to === 'BT_CONFIRMED' ? 'resubmit'
                   : t.to === 'GT_REVIEW' ? 'submit-ground'
@@ -613,12 +648,12 @@ Wishing you a wonderful trip! ✈️
                   : t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
                   : t.to === 'CLIENT_LIVE' ? 'client-live'
                   : t.to === 'IN_PROGRESS' ? 'in-progress'
-                  : t.to === 'COMPLETED' ? 'complete'
+                  : isAdvanceStep ? `advance-step-${t.to}`
+                  : isComplete ? 'complete-feedback'
                   : ''
 
                 if (!key) return null
 
-                // Keys that open the note modal before calling their endpoint
                 const needsNote = ['change-request', 'resubmit', 'verify'].includes(key)
 
                 return (
@@ -628,8 +663,17 @@ Wishing you a wonderful trip! ✈️
                     size="sm"
                     loading={actionLoading === key}
                     onClick={() => {
-                      if (needsNote) { setPendingAction(key); setNote(''); setChangeModal(true) }
-                      else doTransition(key)
+                      if (needsNote) {
+                        setPendingAction(key); setNote(''); setChangeModal(true)
+                      } else if (isAdvanceStep) {
+                        doTransition('advance-status', { to: t.to })
+                      } else if (isComplete) {
+                        setFeedbackRating(0)
+                        setFeedbackComment('')
+                        setFeedbackModal(true)
+                      } else {
+                        doTransition(key)
+                      }
                     }}
                   >
                     {t.label}
@@ -1462,6 +1506,68 @@ Wishing you a wonderful trip! ✈️
               value={cancelReason}
               onChange={e => setCancelReason(e.target.value)}
               placeholder="Reason for cancellation..." />
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Customer Feedback Modal (Complete Trip) ─────────────────── */}
+      <Modal
+        open={feedbackModal}
+        onClose={() => setFeedbackModal(false)}
+        title="Customer Feedback — Complete Trip"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setFeedbackModal(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              loading={feedbackSaving}
+              onClick={saveFeedbackAndComplete}
+            >
+              Save &amp; Complete Trip
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-700">
+              Record the customer&apos;s feedback before completing the trip. This will be saved by the TE team.
+            </p>
+          </div>
+
+          {/* Star rating */}
+          <div>
+            <label className="form-label mb-2">Customer Rating</label>
+            <div className="flex items-center gap-2">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setFeedbackRating(star === feedbackRating ? 0 : star)}
+                  className={`text-2xl transition-transform hover:scale-110 ${
+                    star <= feedbackRating ? 'text-yellow-400' : 'text-slate-200'
+                  }`}
+                >
+                  ★
+                </button>
+              ))}
+              {feedbackRating > 0 && (
+                <span className="text-sm text-slate-500 ml-1">{feedbackRating} / 5</span>
+              )}
+            </div>
+          </div>
+
+          {/* Comment */}
+          <div>
+            <label className="form-label">Customer Review / Comment</label>
+            <textarea
+              className="form-textarea"
+              rows={4}
+              placeholder="Write the customer's feedback here..."
+              value={feedbackComment}
+              onChange={e => setFeedbackComment(e.target.value)}
+            />
           </div>
         </div>
       </Modal>

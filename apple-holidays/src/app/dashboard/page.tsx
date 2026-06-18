@@ -12,7 +12,17 @@ import { StatusBadge } from '@/components/ui/badge'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
+import { LIFECYCLE_STEPS } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
+
+// Workflow order for all statuses shown in the dashboard
+const STATUS_ORDER: BookingStatus[] = [
+  ...LIFECYCLE_STEPS.map(s => s.status),
+  'CHANGE_REQUESTED',
+  'AWAITING_PAYMENT_CONFIRM',
+  'AMENDED',
+  'CANCELLED',
+]
 
 const COUNTRY_META: Record<string, {
   name: string; flag: string; code: string
@@ -282,21 +292,26 @@ export default function DashboardPage() {
                 </CardHeader>
                 <CardBody>
                   {stats?.byStatus && Object.keys(stats.byStatus).length > 0 ? (
-                    <div className="space-y-3">
-                      {Object.entries(stats.byStatus)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([status, count]) => (
-                          <div key={status} className="flex items-center gap-3">
-                            <StatusBadge status={status as BookingStatus} />
-                            <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
-                              <div
-                                className="h-full bg-brand-500 rounded-full transition-all"
-                                style={{ width: `${(count / (stats?.totalBookings || 1)) * 100}%` }}
-                              />
+                    <div className="space-y-2.5">
+                      {STATUS_ORDER
+                        .filter(s => (stats.byStatus[s] ?? 0) > 0)
+                        .map(status => {
+                          const count = stats.byStatus[status] ?? 0
+                          return (
+                            <div key={status} className="flex items-center gap-3">
+                              <div className="w-44 flex-shrink-0">
+                                <StatusBadge status={status as BookingStatus} />
+                              </div>
+                              <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                                <div
+                                  className="h-full bg-brand-500 rounded-full transition-all"
+                                  style={{ width: `${(count / (stats?.totalBookings || 1)) * 100}%` }}
+                                />
+                              </div>
+                              <span className="text-sm font-semibold text-slate-700 w-6 text-right">{count}</span>
                             </div>
-                            <span className="text-sm font-semibold text-slate-700 w-6 text-right">{count}</span>
-                          </div>
-                        ))}
+                          )
+                        })}
                     </div>
                   ) : (
                     <p className="text-center text-slate-400 text-sm py-8">No data yet</p>

@@ -37,6 +37,13 @@ enum BookingStatus {
   OPERATIONS_READY
   CLIENT_LIVE
   IN_PROGRESS
+  TE_REVIEWED
+  DRIVER_ALLOCATED
+  QC1_PASS
+  TICKETS_ISSUED
+  QC2_PASS
+  MSG_SENT_CUSTOMER
+  FEEDBACK_DONE
   COMPLETED
   CANCELLED
   AMENDED
@@ -134,6 +141,7 @@ model User {
   activityLogs      ActivityLog[]
   driverPayments        DriverPayment[]       @relation("ProcessedByUser")
   creditAgentPayments   CreditAgentPayment[]  @relation("CreditPaymentProcessor")
+  feedbackSaved         CustomerFeedback[]    @relation("FeedbackSavedBy")
 
   @@map("users")
 }
@@ -278,6 +286,7 @@ model Booking {
   emergencyContacts     EmergencyContact[]
   tickets               Ticket[]
   contactLogs           ContactLog[]
+  customerFeedback      CustomerFeedback?
 
   @@index([status])
   @@index([arrivalDate])
@@ -772,4 +781,20 @@ model WhatsAppMessage {
   @@index([phone])
   @@index([waMessageId])
   @@map("whatsapp_messages")
+}
+
+// ─── Customer Feedback ───────────────────────────────────────────────────
+
+model CustomerFeedback {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  rating      Int?
+  comment     String?  @db.Text
+  savedById   String
+  savedBy     User     @relation("FeedbackSavedBy", fields: [savedById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("customer_feedback")
 }
