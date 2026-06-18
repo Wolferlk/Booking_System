@@ -67,6 +67,17 @@ export const DRIVE_CONFIGS: DriveConfig[] = [
   },
 ]
 
+export interface DriveAccessResult {
+  driveKey: string
+  label: string
+  rootPath: string
+  ok: boolean
+  driveId?: string
+  folderCount?: number
+  sampleFolders?: string[]
+  error?: string
+}
+
 // ── Booking-ref detection ─────────────────────────────────────────────────────
 
 const BOOKING_FOLDER_RE = /^(VN|IS|SG|MY|AH)\s*\d{3,}[-\s]/i
@@ -104,6 +115,32 @@ async function resolveDriveId(cfg: DriveConfig): Promise<string> {
   }
   driveIdCache[cfg.key] = id
   return id
+}
+
+export async function testDriveAccess(cfg: DriveConfig): Promise<DriveAccessResult> {
+  const rootPath = cfg.type === 'personal' ? cfg.rootFolder ?? '' : cfg.rootFolder_sp ?? ''
+  try {
+    const driveId = await resolveDriveId(cfg)
+    const items = rootPath ? await listFolderChildren(driveId, rootPath) : await listFolderChildren(driveId)
+    return {
+      driveKey: cfg.key,
+      label: cfg.label,
+      rootPath: rootPath || '(drive root)',
+      ok: true,
+      driveId,
+      folderCount: items.length,
+      sampleFolders: items.slice(0, 5).map(item => item.name),
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return {
+      driveKey: cfg.key,
+      label: cfg.label,
+      rootPath: rootPath || '(drive root)',
+      ok: false,
+      error: msg,
+    }
+  }
 }
 
 // ── Delta token persistence ───────────────────────────────────────────────────

@@ -60,6 +60,17 @@ interface DriveConfig {
   country: string
 }
 
+interface DriveAccessResult {
+  driveKey: string
+  label: string
+  rootPath: string
+  ok: boolean
+  driveId?: string
+  folderCount?: number
+  sampleFolders?: string[]
+  error?: string
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const EVENT_ICONS: Record<string, React.ReactNode> = {
@@ -110,8 +121,10 @@ export default function OneDriveMonitorPage() {
   const [stats, setStats]           = useState<StatGroup[]>([])
   const [tokens, setTokens]         = useState<DeltaToken[]>([])
   const [drives, setDrives]         = useState<DriveConfig[]>([])
+  const [access, setAccess]         = useState<DriveAccessResult[]>([])
   const [loading, setLoading]       = useState(true)
   const [lastScan, setLastScan]     = useState<ScanResult[] | null>(null)
+  const [checkingAccess, setCheckingAccess] = useState(false)
 
   // ── filter state (event log) ──
   const [logSearch, setLogSearch]   = useState('')
@@ -151,12 +164,14 @@ export default function OneDriveMonitorPage() {
       if (logStatus) params.set('status',   logStatus)
       params.set('limit', '200')
 
-      const [evRes, cfgRes] = await Promise.all([
+      const [evRes, cfgRes, acRes] = await Promise.all([
         fetch(`/api/onedrive/events?${params}`),
         fetch('/api/onedrive/sync'),
+        fetch('/api/onedrive/access'),
       ])
       const evJson  = await evRes.json()
       const cfgJson = await cfgRes.json()
+      const acJson  = await acRes.json()
 
       if (evJson.success) {
         setEvents(evJson.data.events)
@@ -167,6 +182,9 @@ export default function OneDriveMonitorPage() {
         setDrives(cfgJson.data.drives)
         // default: all drives selected
         setSelectedDrives(prev => prev.length ? prev : cfgJson.data.drives.map((d: DriveConfig) => d.key))
+      }
+      if (acJson.success) {
+        setAccess(acJson.data.results ?? [])
       }
     } catch { /* ignore */ }
     finally  { setLoading(false) }
@@ -248,6 +266,22 @@ export default function OneDriveMonitorPage() {
     )
   }
 
+  async function refreshAccessChecks() {
+    if (checkingAccess) return
+    setCheckingAccess(true)
+    try {
+      const res = await fetch('/api/onedrive/access')
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Access check failed')
+      setAccess(json.data.results ?? [])
+      toast.success('OneDrive access check complete')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Access check failed')
+    } finally {
+      setCheckingAccess(false)
+    }
+  }
+
   if (authStatus === 'loading' || loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -295,6 +329,15 @@ export default function OneDriveMonitorPage() {
             <Button variant="secondary" size="sm" icon={<RefreshCw className="w-3.5 h-3.5" />} onClick={loadData}>
               Refresh
             </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={checkingAccess}
+              icon={<CheckCircle className="w-3.5 h-3.5" />}
+              onClick={refreshAccessChecks}
+            >
+              Test Access
+            </Button>
           </div>
           <a
             href="/dashboard/admin"
@@ -309,6 +352,7 @@ export default function OneDriveMonitorPage() {
           {drives.map(d => {
             const ds  = driveStats[d.key] ?? { tc: 0, pnl: 0, folders: 0, errors: 0 }
             const tok = tokens.find(t => t.driveKey === d.key)
+            const ac  = access.find(a => a.driveKey === d.key)
             const col = dc(d.key)
             return (
               <Card key={d.key} className={`border ${col.border}`}>
@@ -339,6 +383,30 @@ export default function OneDriveMonitorPage() {
                   <p className="text-xs text-slate-400">
                     {tok ? `Synced ${fmtDate(tok.updatedAt)}` : <span className="text-amber-500">No delta token</span>}
                   </p>
+                  <div className={`text-xs rounded-lg border px-2.5 py-2 ${ac ? (ac.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700') : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+                    {ac ? (
+                      ac.ok ? (
+                        <div className="space-y-1">
+                          <div className="font-semibold">Access OK</div>
+                          <div className="text-[11px] opacity-80">
+                            {ac.rootPath} · {ac.folderCount ?? 0} items
+                          </div>
+                          {ac.sampleFolders && ac.sampleFolders.length > 0 && (
+                            <div className="text-[11px] truncate opacity-80">
+                              {ac.sampleFolders.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="font-semibold">Access failed</div>
+                          <div className="text-[11px] opacity-80 truncate">{ac.error}</div>
+                        </div>
+                      )
+                    ) : (
+                      'Access check not run yet'
+                    )}
+                  </div>
                   <button
                     onClick={() => resetToken(d.key)}
                     className="w-full flex items-center justify-center gap-1 text-xs text-slate-400 hover:text-red-500 border border-slate-200 rounded-lg py-1 transition-colors"
