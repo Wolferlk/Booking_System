@@ -107,8 +107,8 @@ export async function PUT(
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
     // Contact info fields (editable at any booking status)
-    agentEmail, agentPhone, agentWhatsapp,
-    contactEmail, contactPhone, contactWhatsapp,
+    agentEmail, agentPhone, agentWhatsapp, agentAddress,
+    contactEmail, contactPhone, contactWhatsapp, contactAddress,
     // Country (always editable)
     operationCountry,
     // Super Admin can also update passengers, flights, accommodations
@@ -126,8 +126,8 @@ export async function PUT(
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
 
   // Contact info and country updates are allowed at any booking status
-  const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined ||
-    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined ||
+  const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
+    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
     operationCountry !== undefined) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
@@ -157,9 +157,11 @@ export async function PUT(
       ...(agentEmail !== undefined && { agentEmail }),
       ...(agentPhone !== undefined && { agentPhone }),
       ...(agentWhatsapp !== undefined && { agentWhatsapp }),
+      ...(agentAddress !== undefined && { agentAddress }),
       ...(contactEmail !== undefined && { contactEmail }),
       ...(contactPhone !== undefined && { contactPhone }),
       ...(contactWhatsapp !== undefined && { contactWhatsapp }),
+      ...(contactAddress !== undefined && { contactAddress }),
       ...(operationCountry !== undefined && { operationCountry }),
       ...(isSuperAdmin && { version: { increment: 1 } }),
     },

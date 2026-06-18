@@ -233,6 +233,7 @@ export async function POST(req: NextRequest) {
           passport: p.passport as string | undefined,
           nationality: p.nationality as string | undefined,
           contact: p.contact as string | undefined,
+          mealPreference: (p.mealPreference as string) || null,
         })),
       },
       flights: {

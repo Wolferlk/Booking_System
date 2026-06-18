@@ -299,13 +299,14 @@ model Passenger {
   id          String        @id @default(cuid())
   bookingId   String
   booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  name        String
-  type        PassengerType @default(ADULT)
-  age         Int?
-  isLead      Boolean       @default(false)
-  passport    String?
-  nationality String?
-  contact     String?
+  name           String
+  type           PassengerType @default(ADULT)
+  age            Int?
+  isLead         Boolean       @default(false)
+  passport       String?
+  nationality    String?
+  contact        String?
+  mealPreference String?
 
   @@map("passengers")
 }

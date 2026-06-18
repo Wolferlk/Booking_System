@@ -210,6 +210,7 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
         name: p.name,
         type: (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
         isLead: p.isLead ?? false,
+        mealPreference: (p as Record<string, unknown>).mealPreference as string ?? null,
       })),
     })
   }

@@ -6,7 +6,7 @@ import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
-  AlertCircle, Clock, Loader2,
+  AlertCircle, Clock, Loader2, Save,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical,
@@ -84,6 +84,12 @@ export default function BookingDetailPage() {
   // QC auto-send
   const [qcAutoSending, setQcAutoSending] = useState(false)
 
+  // Meal preference inline editing
+  const [mealPrefs, setMealPrefs] = useState<Record<string, string>>({})
+  const [mealPrefsDirty, setMealPrefsDirty] = useState(false)
+  const [savingMealPrefs, setSavingMealPrefs] = useState(false)
+  const [expandedMeal, setExpandedMeal] = useState<Set<string>>(new Set())
+
   // Customer feedback modal (triggered on Complete Trip)
   const [feedbackModal, setFeedbackModal] = useState(false)
   const [feedbackRating, setFeedbackRating] = useState(0)
@@ -92,7 +98,7 @@ export default function BookingDetailPage() {
 
   // Contact info editing
   const [editContactModal, setEditContactModal] = useState(false)
-  const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', contactEmail: '', contactPhone: '', contactWhatsapp: '' })
+  const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', agentAddress: '', contactEmail: '', contactPhone: '', contactWhatsapp: '', contactAddress: '' })
   const [savingContact, setSavingContact] = useState(false)
 
   async function loadTestMode() {
@@ -134,10 +140,19 @@ export default function BookingDetailPage() {
         agentEmail:     String(booking.agentEmail     ?? ''),
         agentPhone:     String(booking.agentPhone     ?? ''),
         agentWhatsapp:  String(booking.agentWhatsapp  ?? ''),
+        agentAddress:   String(booking.agentAddress   ?? ''),
         contactEmail:   String(booking.contactEmail   ?? ''),
         contactPhone:   String(booking.contactPhone   ?? ''),
         contactWhatsapp: String(booking.contactWhatsapp ?? ''),
+        contactAddress: String(booking.contactAddress ?? ''),
       })
+      // Initialise meal preference map from loaded passengers
+      const prefs: Record<string, string> = {}
+      for (const p of (booking.passengers ?? [])) {
+        prefs[p.id as string] = (p.mealPreference as string) ?? ''
+      }
+      setMealPrefs(prefs)
+      setMealPrefsDirty(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booking])
@@ -414,12 +429,14 @@ Wishing you a wonderful trip! ✈️
 
   function openEditContact() {
     setContactForm({
-      agentEmail: String(booking.agentEmail ?? ''),
-      agentPhone: String(booking.agentPhone ?? ''),
-      agentWhatsapp: String(booking.agentWhatsapp ?? ''),
-      contactEmail: String(booking.contactEmail ?? ''),
-      contactPhone: String(booking.contactPhone ?? ''),
+      agentEmail:     String(booking.agentEmail     ?? ''),
+      agentPhone:     String(booking.agentPhone     ?? ''),
+      agentWhatsapp:  String(booking.agentWhatsapp  ?? ''),
+      agentAddress:   String(booking.agentAddress   ?? ''),
+      contactEmail:   String(booking.contactEmail   ?? ''),
+      contactPhone:   String(booking.contactPhone   ?? ''),
       contactWhatsapp: String(booking.contactWhatsapp ?? ''),
+      contactAddress: String(booking.contactAddress ?? ''),
     })
     setEditContactModal(true)
   }
@@ -440,6 +457,28 @@ Wishing you a wonderful trip! ✈️
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSavingContact(false) }
+  }
+
+  async function saveMealPreferences() {
+    setSavingMealPrefs(true)
+    try {
+      const updates = Object.entries(mealPrefs).map(([id, mealPreference]) => ({
+        id,
+        mealPreference: mealPreference || null,
+      }))
+      const res = await fetch(`/api/bookings/${ref}/passengers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Meal preferences saved')
+      setMealPrefsDirty(false)
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setSavingMealPrefs(false) }
   }
 
   async function openWhatsApp() {
@@ -577,8 +616,13 @@ Wishing you a wonderful trip! ✈️
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
                 {booking.isNumber && (
-                  <span className="text-sm font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
-                    {booking.isNumber as string}
+                  <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                    <Ticket className="w-3 h-3" /> IS: {booking.isNumber as string}
+                  </span>
+                )}
+                {booking.agentBookingId && (
+                  <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
+                    <UserCheck className="w-3 h-3" /> Agent: {booking.agentBookingId as string}
                   </span>
                 )}
                 <StatusBadge status={status} />
@@ -904,28 +948,149 @@ Wishing you a wonderful trip! ✈️
         {/* Three-column detail grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-          {/* Passengers */}
+          {/* Passengers + Meal Preferences */}
           <Card>
-            <CardHeader>
+            <CardHeader
+              action={
+                mealPrefsDirty && canEditBooking ? (
+                  <button
+                    onClick={saveMealPreferences}
+                    disabled={savingMealPrefs}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    {savingMealPrefs
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
+                      : <><Save className="w-3 h-3" /> Save Meal Prefs</>}
+                  </button>
+                ) : undefined
+              }
+            >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Users className="w-4 h-4 text-slate-400" /> Passengers
               </h3>
             </CardHeader>
             <CardBody className="p-0">
-              {passengers.map((p) => (
-                <div key={p.id as string} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-0">
-                  <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0">
-                    {(p.name as string).slice(0, 1)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">
-                      {p.name as string}
-                      {p.isLead && <span className="ml-2 text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">Lead</span>}
-                    </p>
-                    <p className="text-xs text-slate-500">{p.type as string} · {p.age ? `Age ${p.age}` : 'Age N/A'}</p>
-                  </div>
-                </div>
-              ))}
+              {(() => {
+                const MEAL_OPTIONS = [
+                  { label: 'Non-Veg',      value: 'Non-Vegetarian', colour: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',   active: 'bg-orange-500 text-white border-orange-500' },
+                  { label: 'Vegetarian',   value: 'Vegetarian',     colour: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',       active: 'bg-green-600 text-white border-green-600' },
+                  { label: 'Vegan',        value: 'Vegan',          colour: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100', active: 'bg-emerald-600 text-white border-emerald-600' },
+                  { label: 'Halal',        value: 'Halal',          colour: 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100',           active: 'bg-teal-600 text-white border-teal-600' },
+                  { label: 'Jain',         value: 'Jain',           colour: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',       active: 'bg-amber-500 text-white border-amber-500' },
+                  { label: 'Gluten-Free',  value: 'Gluten-Free',    colour: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',   active: 'bg-yellow-500 text-white border-yellow-500' },
+                  { label: 'No Pork',      value: 'No Pork',        colour: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',               active: 'bg-red-500 text-white border-red-500' },
+                  { label: 'No Beef',      value: 'No Beef',        colour: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',           active: 'bg-rose-500 text-white border-rose-500' },
+                  { label: 'Seafood-Free', value: 'Seafood-Free',   colour: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',           active: 'bg-blue-500 text-white border-blue-500' },
+                  { label: 'Diabetic',     value: 'Diabetic',       colour: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',   active: 'bg-purple-500 text-white border-purple-500' },
+                ]
+
+                function togglePref(passengerId: string, value: string) {
+                  setMealPrefs(prev => {
+                    const current = (prev[passengerId] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+                    const next = current.includes(value)
+                      ? current.filter(v => v !== value)
+                      : [...current, value]
+                    return { ...prev, [passengerId]: next.join(', ') }
+                  })
+                  setMealPrefsDirty(true)
+                }
+
+                return passengers.map((p) => {
+                  const pid = p.id as string
+                  const pref = mealPrefs[pid] ?? ''
+                  const selected = pref.split(',').map(s => s.trim()).filter(Boolean)
+                  const isOpen = expandedMeal.has(pid)
+
+                  function toggleOpen() {
+                    setExpandedMeal(prev => {
+                      const next = new Set(prev)
+                      next.has(pid) ? next.delete(pid) : next.add(pid)
+                      return next
+                    })
+                  }
+
+                  return (
+                    <div key={pid} className="border-b border-slate-100 last:border-0">
+                      {/* Passenger name row */}
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0">
+                          {(p.name as string).slice(0, 1)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-900">
+                            {p.name as string}
+                            {p.isLead && <span className="ml-2 text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">Lead</span>}
+                          </p>
+                          <p className="text-xs text-slate-500">{p.type as string}{p.age ? ` · Age ${p.age}` : ''}</p>
+                        </div>
+                        {/* Meal toggle — shows selected chips inline when collapsed, chevron to expand */}
+                        <button
+                          type="button"
+                          onClick={toggleOpen}
+                          className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-700 transition-colors flex-shrink-0"
+                        >
+                          {selected.length > 0 && !isOpen && (
+                            <div className="flex flex-wrap gap-1 max-w-[120px]">
+                              {selected.slice(0, 2).map(v => {
+                                const opt = MEAL_OPTIONS.find(o => o.value === v)
+                                return (
+                                  <span key={v} className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${opt ? opt.active : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                    {v}
+                                  </span>
+                                )
+                              })}
+                              {selected.length > 2 && <span className="text-[10px] text-slate-400">+{selected.length - 2}</span>}
+                            </div>
+                          )}
+                          {!selected.length && !isOpen && (
+                            <span className="text-[11px] text-slate-300 font-medium">🍽 Set meal</span>
+                          )}
+                          {isOpen
+                            ? <ChevronRight className="w-3.5 h-3.5 rotate-90 text-slate-400" />
+                            : <ChevronRight className="w-3.5 h-3.5 text-slate-300" />}
+                        </button>
+                      </div>
+
+                      {/* Expandable meal preference chips */}
+                      {isOpen && (
+                        <div className="px-4 pb-3 ml-11">
+                          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">🍽 Meal Preferences</p>
+                          {canEditBooking ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {MEAL_OPTIONS.map(opt => {
+                                const isOn = selected.includes(opt.value)
+                                return (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => togglePref(pid, opt.value)}
+                                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-all ${isOn ? opt.active : opt.colour}`}
+                                  >
+                                    {isOn && <span className="mr-0.5">✓</span>}{opt.label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ) : selected.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {selected.map(v => {
+                                const opt = MEAL_OPTIONS.find(o => o.value === v)
+                                return (
+                                  <span key={v} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${opt ? opt.active : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                    {v}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-300 italic">Not specified</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              })()}
             </CardBody>
           </Card>
 
@@ -1038,6 +1203,14 @@ Wishing you a wonderful trip! ✈️
                           value={contactForm.agentWhatsapp}
                           onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value }))} />
                       </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
+                          <MapPin className="w-3.5 h-3.5" /> Office Address
+                        </label>
+                        <textarea className="form-textarea resize-none text-sm" rows={2} placeholder="Agent office address"
+                          value={contactForm.agentAddress}
+                          onChange={e => setContactForm(f => ({ ...f, agentAddress: e.target.value }))} />
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
@@ -1071,7 +1244,17 @@ Wishing you a wonderful trip! ✈️
                           <button onClick={() => { navigator.clipboard.writeText(booking.agentWhatsapp as string); toast.success('WhatsApp number copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
                         </div>
                       )}
-                      {!booking.agentEmail && !booking.agentPhone && !booking.agentWhatsapp && (
+                      {booking.agentAddress && (
+                        <div className="flex items-start gap-3">
+                          <MapPin className="w-4 h-4 text-slate-300 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-400">Office Address</p>
+                            <p className="text-sm text-slate-700 whitespace-pre-line leading-snug">{booking.agentAddress as string}</p>
+                          </div>
+                          <button onClick={() => { navigator.clipboard.writeText(booking.agentAddress as string); toast.success('Address copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
+                        </div>
+                      )}
+                      {!booking.agentEmail && !booking.agentPhone && !booking.agentWhatsapp && !booking.agentAddress && (
                         <p className="text-xs text-slate-400 italic">No agent contact info</p>
                       )}
                     </div>
@@ -1114,6 +1297,14 @@ Wishing you a wonderful trip! ✈️
                           value={contactForm.contactWhatsapp}
                           onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value }))} />
                       </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
+                          <MapPin className="w-3.5 h-3.5" /> Home Address
+                        </label>
+                        <textarea className="form-textarea resize-none text-sm" rows={2} placeholder="Customer home/mailing address"
+                          value={contactForm.contactAddress}
+                          onChange={e => setContactForm(f => ({ ...f, contactAddress: e.target.value }))} />
+                      </div>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
@@ -1147,7 +1338,17 @@ Wishing you a wonderful trip! ✈️
                           <button onClick={() => { navigator.clipboard.writeText(booking.contactWhatsapp as string); toast.success('WhatsApp number copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
                         </div>
                       )}
-                      {!booking.contactEmail && !booking.contactPhone && !booking.contactWhatsapp && (
+                      {booking.contactAddress && (
+                        <div className="flex items-start gap-3">
+                          <MapPin className="w-4 h-4 text-slate-300 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-400">Home Address</p>
+                            <p className="text-sm text-slate-700 whitespace-pre-line leading-snug">{booking.contactAddress as string}</p>
+                          </div>
+                          <button onClick={() => { navigator.clipboard.writeText(booking.contactAddress as string); toast.success('Address copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
+                        </div>
+                      )}
+                      {!booking.contactEmail && !booking.contactPhone && !booking.contactWhatsapp && !booking.contactAddress && (
                         <p className="text-xs text-slate-400 italic">No guest contact info</p>
                       )}
                     </div>
