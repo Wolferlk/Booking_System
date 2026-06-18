@@ -23,6 +23,7 @@ import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
+import OneDriveFiles from '@/components/bookings/onedrive-files'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -732,6 +733,21 @@ Wishing you a wonderful trip! ✈️
                 </Button>
               )}
 
+              {/* OneDrive folder link */}
+              {booking.onedriveFolderUrl && (
+                <a
+                  href={String(booking.onedriveFolderUrl)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-sm bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.5 10.6A4.5 4.5 0 0 0 16.5 7a4.5 4.5 0 0 0-4.35 3.4A3 3 0 0 0 9 13a3 3 0 0 0 3 3h8.5a2.5 2.5 0 0 0 0-5h-.5a4.5 4.5 0 0 0-.5-0.4z"/>
+                  </svg>
+                  Drive
+                </a>
+              )}
+
               {/* Links to sub-pages */}
               <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
                 <MapPin className="w-3.5 h-3.5" /> Movement Chart
@@ -928,6 +944,11 @@ Wishing you a wonderful trip! ✈️
             autoSending={qcAutoSending}
             daysUntilTrip={daysUntil}
           />
+        )}
+
+        {/* OneDrive Files — show to all internal staff */}
+        {['GT_USER', 'TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <OneDriveFiles bookingRef={ref} />
         )}
 
         {/* Open change requests */}

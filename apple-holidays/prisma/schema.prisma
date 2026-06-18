@@ -256,6 +256,9 @@ model Booking {
   sourceDocUrl          String?       @db.Text
   sourceDocName         String?
 
+  // OneDrive folder link for this booking
+  onedriveFolderUrl     String?       @db.Text
+
   clientPortalUnlockedAt DateTime?
   recheckCompletedAt    DateTime?
   recheckCompletedBy    String?
@@ -802,4 +805,51 @@ model CustomerFeedback {
   updatedAt   DateTime @updatedAt
 
   @@map("customer_feedback")
+}
+
+// ─── OneDrive Integration ────────────────────────────────────────────────
+
+enum OneDriveEventType {
+  FOLDER_DETECTED
+  TC_PROCESSED
+  PNL_PROCESSED
+  FILE_DETECTED
+  ERROR
+  SKIPPED
+}
+
+enum OneDriveEventStatus {
+  PENDING
+  PROCESSED
+  ERROR
+  SKIPPED
+}
+
+model OneDriveEvent {
+  id           String              @id @default(cuid())
+  driveType    String              // VN | SL | SG | MY
+  itemId       String              // Graph item ID
+  itemName     String              // file/folder name
+  itemPath     String              @db.Text // full path in drive
+  webUrl       String?             @db.Text
+  eventType    OneDriveEventType
+  bookingRef   String?
+  status       OneDriveEventStatus @default(PENDING)
+  errorMessage String?             @db.Text
+  rawData      String?             @db.LongText
+  processedAt  DateTime?
+  createdAt    DateTime            @default(now())
+
+  @@index([bookingRef])
+  @@index([driveType, status])
+  @@index([itemId])
+  @@map("onedrive_events")
+}
+
+model OneDriveDeltaToken {
+  driveKey  String   @id         // e.g. "VN" | "SL"
+  token     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@map("onedrive_delta_tokens")
 }
