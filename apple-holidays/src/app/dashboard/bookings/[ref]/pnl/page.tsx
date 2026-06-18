@@ -10,7 +10,7 @@ import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { formatCurrency, computePNLLineTotal, isCreditAgent } from '@/lib/utils'
+import { formatCurrency, formatDateTime, computePNLLineTotal, isCreditAgent } from '@/lib/utils'
 import FileUpload from '@/components/shared/file-upload'
 import type { UserRole } from '@prisma/client'
 
@@ -18,6 +18,7 @@ const CATEGORIES = ['HOTEL', 'TICKETS', 'GUIDES', 'MEALS', 'CRUISE', 'WATER', 'T
 
 interface Line {
   id?: string
+  sortOrder?: number
   activity: string
   category: string
   mmtRate: string
@@ -30,7 +31,26 @@ interface Line {
   paymentRefNumber?: string | null
   paymentBillUrl?: string | null
   paymentBillName?: string | null
+  paymentConfirmedAt?: string | null
+  paymentConfirmedBy?: string | null
   notes: string
+  totalCost?: number
+}
+
+interface PNLRecord {
+  id: string
+  paxAdults: number
+  paxChildren: number
+  sourceDocUrl?: string | null
+  lockedAt?: string | null
+  createdAt?: string
+  updatedAt?: string
+  bookingAgent?: string | null
+  totalRevenue?: number
+  totalCost?: number
+  profit?: number
+  margin?: number
+  lineItems?: Line[]
 }
 
 export default function PNLPage() {
@@ -38,7 +58,7 @@ export default function PNLPage() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole
 
-  const [pnl, setPnl] = useState<Record<string, unknown> | null>(null)
+  const [pnl, setPnl] = useState<PNLRecord | null>(null)
   const [bookingAgent, setBookingAgent] = useState<string | null>(null)
   const [paxAdults, setPaxAdults] = useState('2')
   const [paxChildren, setPaxChildren] = useState('0')
@@ -64,19 +84,20 @@ export default function PNLPage() {
   const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const isCreditBk        = isCreditAgent(bookingAgent)
 
-  async function loadPNL() {
+  const loadPNL = useCallback(async () => {
     try {
       const res  = await fetch(`/api/bookings/${ref}/pnl`)
       const json = await res.json()
       if (json.success && json.data) {
-        const data = json.data as Record<string, unknown>
+        const data = json.data as PNLRecord
         setPnl(data)
-        setBookingAgent((data.bookingAgent as string | null) ?? null)
+        setBookingAgent(data.bookingAgent ?? null)
         setPaxAdults(String(data.paxAdults ?? 2))
         setPaxChildren(String(data.paxChildren ?? 0))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         setLines(((data.lineItems ?? []) as any[]).map((l: any) => ({
           id:               l.id as string,
+          sortOrder:        l.sortOrder as number | undefined,
           activity:         l.activity as string,
           category:         l.category as string,
           mmtRate:          String(l.mmtRate),
@@ -89,15 +110,18 @@ export default function PNLPage() {
           paymentRefNumber: l.paymentRefNumber as string | null,
           paymentBillUrl:   l.paymentBillUrl as string | null,
           paymentBillName:  l.paymentBillName as string | null,
+          paymentConfirmedAt: l.paymentConfirmedAt as string | null,
+          paymentConfirmedBy: l.paymentConfirmedBy as string | null,
           notes:            (l.notes as string) ?? '',
+          totalCost:        Number(l.totalCost ?? 0),
         })))
       }
     } finally {
       setLoading(false)
     }
-  }
+  }, [ref])
 
-  useEffect(() => { loadPNL() }, [ref])
+  useEffect(() => { loadPNL() }, [loadPNL])
 
   function computeTotal(line: Line) {
     return computePNLLineTotal(
@@ -264,13 +288,13 @@ export default function PNLPage() {
       setLines(items.map(l => ({
         activity:   l.activity || '',
         category:   l.category || 'OTHER',
-        mmtRate:    String(l.mmtRate    || 0),
-        sicRate:    String(l.sicRate    || 0),
-        pvtRatePP:  String(l.pvtRatePP  || 0),
+        mmtRate:    String(l.mmtRate || 0),
+        sicRate:    String(l.sicRate || 0),
+        pvtRatePP:  String(l.pvtRatePP || 0),
         adEntrance: String(l.adEntrance || 0),
         chEntrance: String(l.chEntrance || 0),
-        otherRate:  String(l.otherRate  || 0),
-        notes: '',
+        otherRate:  String(l.otherRate || 0),
+        notes:      '',
       })))
       if (data.paxAdults)     setPaxAdults(String(data.paxAdults))
       if (data.paxChildren !== undefined) setPaxChildren(String(data.paxChildren))
@@ -336,6 +360,57 @@ export default function PNLPage() {
           </div>
         )}
 
+        {pnl && (
+          <Card className="p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">P&L Record Details</h3>
+                <p className="text-xs text-slate-500 mt-1">Metadata and source document information for this booking P&L.</p>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Adults</p>
+                  <p className="font-semibold text-slate-900">{pnl.paxAdults}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Children</p>
+                  <p className="font-semibold text-slate-900">{pnl.paxChildren}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Locked</p>
+                  <p className="font-semibold text-slate-900">{pnl.lockedAt ? formatDateTime(pnl.lockedAt) : 'No'}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Source file</p>
+                  {pnl.sourceDocUrl ? (
+                    <a href={pnl.sourceDocUrl} target="_blank" rel="noreferrer" className="font-semibold text-brand-600 hover:underline">
+                      Open source document
+                    </a>
+                  ) : (
+                    <p className="font-semibold text-slate-900">Not stored</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Created</p>
+                  <p className="font-semibold text-slate-900">{pnl.createdAt ? formatDateTime(pnl.createdAt) : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Updated</p>
+                  <p className="font-semibold text-slate-900">{pnl.updatedAt ? formatDateTime(pnl.updatedAt) : '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Revenue</p>
+                  <p className="font-semibold text-slate-900">{formatCurrency(pnl.totalRevenue ?? totalRevenue)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Cost</p>
+                  <p className="font-semibold text-slate-900">{formatCurrency(pnl.totalCost ?? totalCost)}</p>
+                </div>
+              </div>
+            </div>
+          </Card>
+        )}
+
         {/* AI Upload */}
         {showUpload && canEdit && (
           <Card className="p-6">
@@ -353,7 +428,7 @@ export default function PNLPage() {
         {/* Summary cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
-            { label: 'Total Revenue (MMT Rate)', value: formatCurrency(totalRevenue), color: 'text-slate-900' },
+            { label: 'Total Revenue ', value: formatCurrency(totalRevenue), color: 'text-slate-900' },
             { label: 'Total Cost (Apple Rate)',  value: formatCurrency(totalCost),    color: 'text-slate-900' },
             { label: 'Profit',  value: formatCurrency(profit), color: profit >= 0 ? 'text-green-600' : 'text-red-600' },
             { label: 'Margin',  value: `${margin.toFixed(1)}%`, color: margin >= 15 ? 'text-green-600' : 'text-orange-600' },
@@ -405,6 +480,7 @@ export default function PNLPage() {
             <table className="data-table">
               <thead>
                 <tr>
+                  <th className="w-10">#</th>
                   <th className="min-w-[180px]">Activity</th>
                   <th>Category</th>
                   <th className="text-right">MMT Rate</th>
@@ -413,8 +489,9 @@ export default function PNLPage() {
                   <th className="text-right">AD Entry</th>
                   <th className="text-right">CH Entry</th>
                   <th className="text-right">Other</th>
-                  <th className="text-right font-semibold">Total Cost</th>
+                  <th className="text-right font-semibold">Total Apple Rate</th>
                   <th className="text-right">Profit</th>
+                  <th>Notes</th>
                   {/* Payment column only for non-credit bookings */}
                   {!isCreditBk && <th>Payment</th>}
                   {canEdit && <th />}
@@ -426,6 +503,7 @@ export default function PNLPage() {
                   const lineProfitRow  = Number(line.mmtRate || 0) - total
                   return (
                     <tr key={i}>
+                      <td className="text-xs text-slate-400 font-mono">{line.sortOrder ?? i + 1}</td>
                       <td>
                         {canEdit ? (
                           <input className="form-input text-xs py-1" value={line.activity}
@@ -461,16 +539,30 @@ export default function PNLPage() {
                           )}
                         </td>
                       ))}
-                      <td className="text-right font-semibold text-slate-900 text-xs">{total.toFixed(2)}</td>
+                      <td className="text-right font-semibold text-slate-900 text-xs">{(line.totalCost ?? total).toFixed(2)}</td>
                       <td className={`text-right text-xs font-semibold ${lineProfitRow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {lineProfitRow.toFixed(2)}
+                      </td>
+
+                      <td>
+                        {canEdit ? (
+                          <input
+                            className="form-input text-xs py-1 w-44"
+                            value={line.notes}
+                            onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, notes: e.target.value } : l))}
+                            placeholder="Notes"
+                          />
+                        ) : (
+                          <span className="text-xs text-slate-600">{line.notes || '—'}</span>
+                        )}
                       </td>
 
                       {/* Payment cell — only for non-credit agents */}
                       {!isCreditBk && (
                         <td>
                           {line.id ? (
-                            <div className="flex items-center gap-1 flex-wrap">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1 flex-wrap">
                               <Badge
                                 color={line.paymentStatus === 'CONFIRMED' ? 'green' : line.paymentStatus === 'REJECTED' ? 'red' : 'yellow'}
                               >
@@ -490,26 +582,32 @@ export default function PNLPage() {
                                   <Paperclip className="w-3.5 h-3.5" />
                                 </a>
                               )}
-                              {canConfirmPayment && line.paymentStatus === 'PENDING' && (
-                                <div className="flex gap-1 ml-1">
-                                  <button
-                                    onClick={() => openConfirm(line.id!, 'CONFIRMED', line.activity)}
-                                    disabled={confirmingLine === line.id}
-                                    className="text-green-600 hover:text-green-800"
-                                    title="Confirm payment"
-                                  >
-                                    <CheckCircle className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() => openConfirm(line.id!, 'REJECTED', line.activity)}
-                                    disabled={confirmingLine === line.id}
-                                    className="text-red-500 hover:text-red-700"
-                                    title="Reject payment"
-                                  >
-                                    <XCircle className="w-4 h-4" />
-                                  </button>
-                                </div>
-                              )}
+                                {canConfirmPayment && line.paymentStatus === 'PENDING' && (
+                                  <div className="flex gap-1 ml-1">
+                                    <button
+                                      onClick={() => openConfirm(line.id!, 'CONFIRMED', line.activity)}
+                                      disabled={confirmingLine === line.id}
+                                      className="text-green-600 hover:text-green-800"
+                                      title="Confirm payment"
+                                    >
+                                      <CheckCircle className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => openConfirm(line.id!, 'REJECTED', line.activity)}
+                                      disabled={confirmingLine === line.id}
+                                      className="text-red-500 hover:text-red-700"
+                                      title="Reject payment"
+                                    >
+                                      <XCircle className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-500 space-y-0.5">
+                                {line.paymentRefNumber && <div className="font-mono">Ref #{line.paymentRefNumber}</div>}
+                                {line.paymentConfirmedAt && <div>Confirmed {formatDateTime(line.paymentConfirmedAt)}</div>}
+                                {line.paymentConfirmedBy && <div className="font-mono">By {line.paymentConfirmedBy}</div>}
+                              </div>
                             </div>
                           ) : (
                             <span className="text-xs text-slate-400">—</span>
@@ -532,14 +630,17 @@ export default function PNLPage() {
               {lines.length > 0 && (
                 <tfoot>
                   <tr className="bg-slate-50">
-                    <td colSpan={2} className="px-4 py-3 text-sm font-bold text-slate-900">TOTALS</td>
+                    <td colSpan={3} className="px-4 py-3 text-sm font-bold text-slate-900">TOTALS</td>
                     <td className="text-right px-4 py-3 text-sm font-bold">{totalRevenue.toFixed(2)}</td>
                     <td colSpan={5} />
                     <td className="text-right px-4 py-3 text-sm font-bold">{totalCost.toFixed(2)}</td>
                     <td className={`text-right px-4 py-3 text-sm font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {profit.toFixed(2)}
                     </td>
-                    <td colSpan={(!isCreditBk ? 1 : 0) + (canEdit ? 1 : 0)} />
+                    <td />
+                    {((!isCreditBk ? 1 : 0) + (canEdit ? 1 : 0)) > 0 && (
+                      <td colSpan={(!isCreditBk ? 1 : 0) + (canEdit ? 1 : 0)} />
+                    )}
                   </tr>
                 </tfoot>
               )}

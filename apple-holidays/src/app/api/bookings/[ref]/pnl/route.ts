@@ -36,12 +36,23 @@ export async function GET(
 
   const pnl = await prisma.pNL.findUnique({
     where: { bookingId: booking.id },
-    include: { lineItems: { orderBy: { sortOrder: 'asc' } } },
+    include: {
+      lineItems: {
+        orderBy: { sortOrder: 'asc' },
+      },
+    },
   })
 
   if (!pnl) return buildApiSuccess(null)
 
-  return buildApiSuccess({ ...computePNLTotals(pnl), bookingAgent: booking.agent })
+  return buildApiSuccess({
+    ...computePNLTotals(pnl),
+    bookingAgent: booking.agent,
+    sourceDocUrl: pnl.sourceDocUrl,
+    lockedAt: pnl.lockedAt,
+    createdAt: pnl.createdAt,
+    updatedAt: pnl.updatedAt,
+  })
 }
 
 export async function POST(

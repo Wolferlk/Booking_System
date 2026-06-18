@@ -750,7 +750,7 @@ Wishing you a wonderful trip! ✈️
 
               {/* Links to sub-pages */}
               <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
-                <MapPin className="w-3.5 h-3.5" /> Movement Chart
+                <MapPin className="w-3.5 h-3.5" /> Agenda
               </Link>
               <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
                 <Ticket className="w-3.5 h-3.5" /> Tickets
