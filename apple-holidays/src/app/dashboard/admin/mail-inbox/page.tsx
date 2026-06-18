@@ -76,7 +76,6 @@ interface MailSettings {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const POLL_INTERVAL    = 30_000
-const PROCESS_DELAY    = 1500   // ms between auto-processes
 const TQ_EMAIL         = 'confirm.booking@aahaas.com'
 const PNL_EMAIL        = 'accounts.payable@aahaas.com'
 
@@ -382,19 +381,11 @@ export default function MailInboxPage() {
   // Refs for queue management (avoid stale closures)
   const resultsRef         = useRef(results)
   const emailsRef          = useRef(emails)
-  const autoQueuedRef      = useRef<Set<string>>(new Set())
-  const autoRunningRef     = useRef(false)
-  const autoQueueRef       = useRef<EmailWithMailbox[]>([])
   const pnlStatusMapRef    = useRef(pnlStatusMap)
 
-  useEffect(() => { resultsRef.current = results }, [results])
-  useEffect(() => { emailsRef.current  = emails  }, [emails])
+  useEffect(() => { resultsRef.current   = results      }, [results])
+  useEffect(() => { emailsRef.current    = emails       }, [emails])
   useEffect(() => { pnlStatusMapRef.current = pnlStatusMap }, [pnlStatusMap])
-
-  const recentWindowMs = (mailSettings?.recentMailWindowMinutes ?? 15) * 60 * 1000
-  const isRecentEmail = useCallback((date: string) => {
-    return Date.now() - new Date(date).getTime() <= recentWindowMs
-  }, [recentWindowMs])
 
   // ── PNL status check ─────────────────────────────────────────────────────
 
@@ -419,6 +410,10 @@ export default function MailInboxPage() {
   }, [])
 
   // ── Auto-process queue ───────────────────────────────────────────────────
+
+  // processOneRef allows the callback to schedule sibling-email retries without
+  // a circular useCallback dependency (PNL_WAITING → retry after TQ processed).
+  const processOneRef = useRef<(email: EmailWithMailbox) => void>(null as unknown as (email: EmailWithMailbox) => void)
 
   const processOne = useCallback(async (email: EmailWithMailbox) => {
     setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
@@ -452,9 +447,9 @@ export default function MailInboxPage() {
         setResults(m => new Map(m).set(email.graphId, { success: true, data }))
 
         if (data.status === 'PNL_WAITING') {
-          // PNL arrived before its TQ — show info toast, wait for TQ
+          // PNL arrived before its TQ — backend will retry automatically via cron
           toast.info(
-            `Tour No #${data.bookingRef} received — waiting for Travel Quotation`,
+            `Tour No #${data.bookingRef} received — backend will link when TQ arrives`,
             { duration: 5000 },
           )
         } else if (isPnlEmail) {
@@ -466,7 +461,7 @@ export default function MailInboxPage() {
             toast.success(`PNL added to ${data.bookingRef} — ${data.pnlLines} lines`, { duration: 4000 })
           }
         } else {
-          // TQ processed — check PNL status then auto-retry any waiting PNLs
+          // TQ processed — check PNL status then retry any waiting PNLs shown in this view
           checkBookingPnl(data.bookingRef)
           const numericRef = data.bookingRef.replace(/[^0-9]/g, '')
           if (numericRef.length >= 4) {
@@ -478,8 +473,8 @@ export default function MailInboxPage() {
             })
             for (const pnlEmail of waitingPnls) {
               setResults(m => { const n = new Map(m); n.delete(pnlEmail.graphId); return n })
-              autoQueuedRef.current.delete(pnlEmail.graphId)
-              autoQueueRef.current.unshift(pnlEmail)
+              // Fire-and-forget: retry the waiting PNL now that its TQ booking exists
+              setTimeout(() => processOneRef.current(pnlEmail), 500)
             }
             if (waitingPnls.length > 0) {
               toast.info(
@@ -493,40 +488,15 @@ export default function MailInboxPage() {
         setResults(m => new Map(m).set(email.graphId, { success: false, error: json.error as string }))
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Auto-process failed'
+      const msg = err instanceof Error ? err.message : 'Processing failed'
       setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
     } finally {
       setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
     }
   }, [checkBookingPnl])
 
-  const drainQueue = useCallback(async () => {
-    if (autoRunningRef.current) return
-    autoRunningRef.current = true
-    while (autoQueueRef.current.length > 0) {
-      const email = autoQueueRef.current.shift()!
-      await processOne(email)
-      if (autoQueueRef.current.length > 0) {
-        await new Promise(r => setTimeout(r, PROCESS_DELAY))
-      }
-    }
-    autoRunningRef.current = false
-  }, [processOne])
-
-  // Trigger auto-process when emails change
-  useEffect(() => {
-    if (!inboxSynced || !mailSettings) return
-    const recentOnly = mailSettings.lessCreditMode
-    const toProcess = emails.filter(e =>
-      !resultsRef.current.has(e.graphId) &&
-      e.type !== 'UNKNOWN' &&
-      !autoQueuedRef.current.has(e.graphId),
-    ).filter(e => !recentOnly || isRecentEmail(e.date))
-    if (!toProcess.length) return
-    toProcess.forEach(e => autoQueuedRef.current.add(e.graphId))
-    autoQueueRef.current.push(...toProcess)
-    drainQueue()
-  }, [emails, drainQueue, isRecentEmail, inboxSynced, mailSettings])
+  // Keep ref in sync so PNL retry closure always calls the latest version
+  useEffect(() => { processOneRef.current = processOne }, [processOne])
 
   // ── Load emails ──────────────────────────────────────────────────────────
 
@@ -593,7 +563,7 @@ export default function MailInboxPage() {
               if (!next.has(graphId)) {
                 next.set(graphId, { success: true, data: { bookingRef, bookingId: '', isNew: false, pnlLines: 0, agendaItems: 0, status: 'existing', processedAt, bookingCreatedAt } })
               }
-              autoQueuedRef.current.add(graphId)
+              // No auto-queue: backend processes all emails automatically
             }
             return next
           })
@@ -646,7 +616,6 @@ export default function MailInboxPage() {
   const waitingCount   = Array.from(results.values()).filter(r => r.success && r.data?.status === 'PNL_WAITING').length
   const autoCount      = autoProcessingIds.size
   const lessCreditMode = mailSettings?.lessCreditMode ?? false
-  const recentMailWindowMinutes = mailSettings?.recentMailWindowMinutes ?? 15
 
   // Search filter — applied on top of the mailbox tab filter
   const displayEmails = useMemo(() => {
@@ -730,7 +699,7 @@ export default function MailInboxPage() {
           <div className="flex gap-2 items-center flex-wrap">
             {lessCreditMode && (
               <Badge color="amber" className="text-[10px]">
-                Less Credit Mode · last {recentMailWindowMinutes} min auto-process only
+                Less Credit Mode · backend processes recent mail only
               </Badge>
             )}
             <Button
@@ -748,7 +717,7 @@ export default function MailInboxPage() {
             </select>
             <select value={limit} onChange={e => setLimit(Number(e.target.value))}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
-              {[20, 50, 100, 200].map(n => <option key={n} value={n}>{n} emails</option>)}
+              {[20, 50, 100, 200,1000,10000,100000].map(n => <option key={n} value={n}>{n} emails</option>)}
             </select>
             <button onClick={() => loadEmails(false)} disabled={fetching}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40">
@@ -1036,25 +1005,23 @@ export default function MailInboxPage() {
                       className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors" title="Preview body">
                       {showRaw ? <ChevronUp className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    {lessCreditMode && !result?.success && !isAutoProc && (
+                    {!result?.success && !isAutoProc && (
                       <Button
                         size="sm"
                         variant="outline"
                         icon={<Zap className="w-3.5 h-3.5" />}
                         onClick={() => processOne(email)}
                       >
-                        Process mail
+                        Process now
                       </Button>
                     )}
-                    {lessCreditMode && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setRawBodyId(showRaw ? null : email.graphId)}
-                      >
-                        {showRaw ? 'Hide mail' : 'Read mail'}
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setRawBodyId(showRaw ? null : email.graphId)}
+                    >
+                      {showRaw ? 'Hide mail' : 'Read mail'}
+                    </Button>
                     {result?.success && bookingRef && !isWaiting && (
                       <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
                         onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>
