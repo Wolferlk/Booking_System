@@ -172,7 +172,7 @@ export default function DashboardPage() {
                 color="yellow"
               />
               <StatCard
-                label="Upcoming Trips (30d)"
+                label="Upcoming Trips (7d)"
                 value={stats?.upcomingTrips ?? 0}
                 icon={<Globe className="w-5 h-5" />}
                 color="purple"

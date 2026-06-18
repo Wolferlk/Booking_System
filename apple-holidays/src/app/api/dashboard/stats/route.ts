@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   }
 
   const now = new Date()
-  const next30Days = addDays(now, 30)
+  const next7Days = addDays(now, 7)
 
   const [
     totalBookings,
@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
     prisma.booking.count({
       where: {
         ...countryWhere,
-        arrivalDate: { gte: now, lte: next30Days },
+        arrivalDate: { gte: now, lte: next7Days },
         status: { notIn: ['CANCELLED'] },
       },
     }),
