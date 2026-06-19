@@ -188,6 +188,11 @@ async function jobRenewWebhook() {
   }
 }
 
+async function jobOneDrivePoll() {
+  const { runOneDrivePoll } = await import('./onedrive-monitor')
+  await runOneDrivePoll()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Scheduler entry point — called once from instrumentation.ts on server boot
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,6 +203,7 @@ export function startCronJobs() {
   if (started) return
   started = true
 
+  const THREE_MIN  = 3  * 60  * 1000
   const FIVE_MIN   = 5  * 60  * 1000
   const TWELVE_HRS = 12 * 3600 * 1000
 
@@ -208,9 +214,11 @@ export function startCronJobs() {
   // Delayed first runs so the server is fully ready before processing starts
   setTimeout(() => { jobRenewWebhook() },     15_000)   // 15 s after boot
   setTimeout(() => { jobProcessMailboxes() }, 30_000)   // 30 s after boot
+  setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
 
   setInterval(() => { jobProcessMailboxes() }, FIVE_MIN)
+  setInterval(() => { jobOneDrivePoll() },     THREE_MIN)  // OneDrive every 3 min
   setInterval(() => { jobRenewWebhook() },     TWELVE_HRS)
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), process-mailboxes every 5 min, renew-webhook every 12 h')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h')
 }

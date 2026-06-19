@@ -7,7 +7,7 @@ import {
   FolderOpen, RefreshCw, CheckCircle, AlertCircle, Loader2,
   Clock, FileText, TrendingUp, Trash2, ChevronRight, Activity,
   RotateCcw, HardDrive, Search, ExternalLink, Link2, Calendar,
-  MapPin, Zap, X, Sunrise,
+  MapPin, Zap, X, Sunrise, Radio, CircleDot,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -131,9 +131,16 @@ export default function OneDriveMonitorPage() {
   const [logDrive, setLogDrive]     = useState('')
   const [logStatus, setLogStatus]   = useState('')
 
+  // ── background poll status ──
+  const [pollRunning,    setPollRunning]    = useState(false)
+  const [lastPollAt,     setLastPollAt]     = useState<string | null>(null)
+  const [lastPollResult, setLastPollResult] = useState<{ bookingsCreated: number; bookingsUpdated: number; pnlsUpdated: number; errors: number } | null>(null)
+  const [forcePollBusy,  setForcePollBusy]  = useState(false)
+  const [secondsAgo,     setSecondsAgo]     = useState<number | null>(null)
+
   // ── scan panel state ──
   const [syncing, setSyncing]           = useState(false)
-  const [autoRefresh, setAutoRefresh]   = useState(false)
+  const [autoRefresh, setAutoRefresh]   = useState(true)
   const [todaySyncing, setTodaySyncing] = useState<Record<string, boolean>>({})
 
   // Country (drive) selection
@@ -198,6 +205,52 @@ export default function OneDriveMonitorPage() {
     const id = setInterval(loadData, 15_000)
     return () => clearInterval(id)
   }, [autoRefresh, loadData])
+
+  // ── Background poll status ──────────────────────────────────────────────────
+  const loadPollStatus = useCallback(async () => {
+    try {
+      const res  = await fetch('/api/onedrive/poll-status')
+      const json = await res.json()
+      if (!json.success) return
+      setPollRunning(json.data.running)
+      setLastPollAt(json.data.lastPollAt ?? null)
+      setLastPollResult(json.data.lastPollResult ?? null)
+    } catch { /* ignore */ }
+  }, [])
+
+  // Poll status every 8 seconds so the UI updates while a scan is running
+  useEffect(() => {
+    loadPollStatus()
+    const id = setInterval(loadPollStatus, 8_000)
+    return () => clearInterval(id)
+  }, [loadPollStatus])
+
+  // Live "X seconds ago" counter
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (lastPollAt) {
+        setSecondsAgo(Math.floor((Date.now() - new Date(lastPollAt).getTime()) / 1000))
+      }
+    }, 1_000)
+    return () => clearInterval(id)
+  }, [lastPollAt])
+
+  async function forcePoll() {
+    if (forcePollBusy || pollRunning) return
+    setForcePollBusy(true)
+    try {
+      const res  = await fetch('/api/onedrive/poll-status', { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(json.message ?? 'Poll started in background')
+      // Reload event log after a short delay
+      setTimeout(() => { loadData(); loadPollStatus() }, 8_000)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to trigger poll')
+    } finally {
+      setForcePollBusy(false)
+    }
+  }
 
   // ── scan handler ──
   async function runScan() {
@@ -375,6 +428,62 @@ export default function OneDriveMonitorPage() {
           >
             <ChevronRight className="w-3 h-3 rotate-180" /> Back to Admin
           </a>
+        </div>
+
+        {/* ── Live background-poll status banner ── */}
+        <div className={`flex items-center justify-between px-4 py-3 rounded-xl border ${
+          pollRunning
+            ? 'bg-blue-50 border-blue-200'
+            : secondsAgo !== null && secondsAgo > 300
+              ? 'bg-amber-50 border-amber-200'
+              : 'bg-green-50 border-green-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            {pollRunning ? (
+              <>
+                <Loader2 className="w-4 h-4 text-blue-600 animate-spin flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-blue-800">Scanning drives now…</p>
+                  <p className="text-xs text-blue-600">Background poll is running — new bookings will appear shortly</p>
+                </div>
+              </>
+            ) : lastPollAt ? (
+              <>
+                <CircleDot className={`w-4 h-4 flex-shrink-0 ${secondsAgo !== null && secondsAgo > 300 ? 'text-amber-500' : 'text-green-600'}`} />
+                <div>
+                  <p className={`text-sm font-semibold ${secondsAgo !== null && secondsAgo > 300 ? 'text-amber-800' : 'text-green-800'}`}>
+                    {secondsAgo !== null && secondsAgo > 300
+                      ? `Last sync ${Math.floor((secondsAgo ?? 0) / 60)}m ago — may be stale`
+                      : `Synced ${secondsAgo !== null ? `${secondsAgo}s ago` : ''}`}
+                  </p>
+                  {lastPollResult && (
+                    <p className="text-xs text-slate-500">
+                      {lastPollResult.bookingsCreated} created · {lastPollResult.bookingsUpdated} updated · {lastPollResult.pnlsUpdated} PNLs
+                      {lastPollResult.errors > 0 && <span className="text-red-500"> · {lastPollResult.errors} errors</span>}
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <Radio className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-600">Auto-poll: waiting for first run</p>
+                  <p className="text-xs text-slate-400">Background poll starts ~60s after server boot</p>
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            onClick={forcePoll}
+            disabled={pollRunning || forcePollBusy}
+            className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+          >
+            {forcePollBusy || pollRunning
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Zap className="w-3.5 h-3.5 text-amber-500" />}
+            Force Sync Now
+          </button>
         </div>
 
         {/* ── Drive stat cards ── */}

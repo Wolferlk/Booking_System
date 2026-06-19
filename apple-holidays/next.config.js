@@ -13,8 +13,8 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
     instrumentationHook: true,
-    serverComponentsExternalPackages: ['pdfkit', 'puppeteer'],
   },
+  serverExternalPackages: ['pdf-parse', 'pdfkit', 'puppeteer'],
   images: {
     domains: ['localhost'],
   },

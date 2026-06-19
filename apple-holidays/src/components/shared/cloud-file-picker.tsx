@@ -26,12 +26,18 @@ interface BreadcrumbEntry {
 }
 
 interface CloudFilePickerProps {
-  bookingRef: string
+  /**
+   * One of two sources must be provided:
+   *  - bookingRef: browse the booking's linked OneDrive folder
+   *  - driveKey:   browse a full drive root by key (VN, SL, MY, SG)
+   */
+  bookingRef?: string
+  driveKey?:   string
+  driveLabel?: string   // shown in the header when using driveKey mode
+
   open: boolean
   onClose: () => void
-  /** Called when user confirms selection. Caller decides what to do with the file. */
   onSelect: (file: CloudFile) => void
-  /** When set, only files matching these extensions (e.g. ['.xlsx','.pdf']) are selectable */
   filterExtensions?: string[]
   title?: string
   selectLabel?: string
@@ -45,7 +51,7 @@ function ext(name: string) {
 
 function fmtSize(bytes: number | null) {
   if (!bytes) return ''
-  if (bytes < 1024)       return `${bytes} B`
+  if (bytes < 1024)        return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
@@ -73,6 +79,8 @@ function FileIcon({ name, isFolder }: { name: string; isFolder: boolean }) {
 
 export default function CloudFilePicker({
   bookingRef,
+  driveKey,
+  driveLabel,
   open,
   onClose,
   onSelect,
@@ -84,29 +92,44 @@ export default function CloudFilePicker({
   const [loading,     setLoading]     = useState(false)
   const [error,       setError]       = useState<string | null>(null)
   const [folderUrl,   setFolderUrl]   = useState<string | null>(null)
-  const [hasFolder,   setHasFolder]   = useState(false)
+  const [hasFolder,   setHasFolder]   = useState(true) // driveKey mode always has a drive
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([])
   const [selected,    setSelected]    = useState<CloudFile | null>(null)
 
   const currentFolderId = breadcrumbs.length > 0 ? breadcrumbs[breadcrumbs.length - 1].id : undefined
 
+  const buildUrl = useCallback((folderId?: string) => {
+    if (driveKey) {
+      return `/api/drives/${driveKey}/browse${folderId ? `?folderId=${folderId}` : ''}`
+    }
+    return `/api/bookings/${bookingRef}/cloud-files${folderId ? `?folderId=${folderId}` : ''}`
+  }, [bookingRef, driveKey])
+
   const load = useCallback(async (folderId?: string) => {
     setLoading(true)
     setError(null)
     try {
-      const url = `/api/bookings/${bookingRef}/cloud-files${folderId ? `?folderId=${folderId}` : ''}`
-      const res  = await fetch(url)
+      const res  = await fetch(buildUrl(folderId))
       const json = await res.json()
       if (!json.success) throw new Error(json.error ?? 'Failed to list folder')
-      setHasFolder(json.data.hasFolder)
-      setFolderUrl(json.data.folderUrl ?? null)
-      setFiles(json.data.files ?? [])
+
+      if (driveKey) {
+        // Drive-root mode — always has a drive
+        setHasFolder(true)
+        setFolderUrl(null)
+        setFiles(json.data.files ?? [])
+      } else {
+        // Booking-folder mode
+        setHasFolder(json.data.hasFolder)
+        setFolderUrl(json.data.folderUrl ?? null)
+        setFiles(json.data.files ?? [])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
       setLoading(false)
     }
-  }, [bookingRef])
+  }, [buildUrl, driveKey])
 
   useEffect(() => {
     if (open) {
@@ -123,7 +146,6 @@ export default function CloudFilePicker({
   }
 
   function navigateTo(index: number) {
-    // index = -1 means root
     setSelected(null)
     if (index < 0) {
       setBreadcrumbs([])
@@ -140,6 +162,11 @@ export default function CloudFilePicker({
     if (!filterExtensions || filterExtensions.length === 0) return true
     return filterExtensions.some(e => file.name.toLowerCase().endsWith(e))
   }
+
+  // Determine display label
+  const modeLabel = driveKey
+    ? (driveLabel ?? driveKey)
+    : (bookingRef ? `Booking ${bookingRef}` : 'OneDrive')
 
   return (
     <Modal
@@ -175,10 +202,10 @@ export default function CloudFilePicker({
       }
     >
       <div className="flex flex-col gap-3">
-        {/* Drive icon */}
+        {/* Header label */}
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <HardDrive className="w-3.5 h-3.5 text-brand-500" />
-          <span className="font-medium text-slate-700">OneDrive — Booking {bookingRef}</span>
+          <span className="font-medium text-slate-700">OneDrive — {modeLabel}</span>
         </div>
 
         {/* Breadcrumb */}

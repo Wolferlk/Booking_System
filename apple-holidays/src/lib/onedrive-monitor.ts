@@ -98,7 +98,9 @@ export interface DriveAccessResult {
 
 // ── Booking-ref detection ─────────────────────────────────────────────────────
 
-const BOOKING_FOLDER_RE = /^(VN|IS|SG|MY|AH)\s*\d{3,}[-\s]/i
+// Match booking folders: prefix + 3+ digits + optional dash/space/end-of-string
+// This handles both "VN19018 - Haji" AND bare refs like "VN10000"
+const BOOKING_FOLDER_RE = /^(VN|IS|SG|MY|AH)\s*\d{3,}([-\s]|$)/i
 
 function extractRefFromFolderName(name: string): string | null {
   const m = name.match(/^([A-Z]{2,3}\d{3,})/i)
@@ -151,6 +153,14 @@ async function resolveDriveId(cfg: DriveConfig): Promise<string> {
   }
   driveIdCache[cfg.key] = id
   return id
+}
+
+/** Resolve the Graph driveId for a drive key (VN, SL, MY, SG). */
+export async function resolveDriveByKey(key: string): Promise<{ driveId: string; cfg: DriveConfig } | null> {
+  const cfg = DRIVE_CONFIGS.find(c => c.key === key)
+  if (!cfg) return null
+  const driveId = await resolveDriveId(cfg)
+  return { driveId, cfg }
 }
 
 export async function testDriveAccess(cfg: DriveConfig): Promise<DriveAccessResult> {
@@ -439,6 +449,74 @@ async function processBookingFolderFromDelta(
   }
 
   await processTCAndPNL(driveId, files, bookingRef, cfg, result, folderWebUrl ?? undefined)
+}
+
+// ── Background poll runner (used by cron-scheduler) ──────────────────────────
+
+let pollRunning = false
+let lastPollAt: Date | null = null
+let lastPollResult: { bookingsCreated: number; bookingsUpdated: number; pnlsUpdated: number; errors: number } | null = null
+
+export function getOneDrivePollStatus() {
+  return { pollRunning, lastPollAt, lastPollResult }
+}
+
+/**
+ * Run one full poll cycle: delta scan + today's folder scan.
+ * Guarded by a concurrency lock — won't start if already running.
+ * Called by cron-scheduler.ts every few minutes on self-hosted servers.
+ */
+export async function runOneDrivePoll(): Promise<void> {
+  if (pollRunning) {
+    console.log('[OneDrive] Poll skipped — previous run still in progress')
+    return
+  }
+  pollRunning = true
+  const t0 = Date.now()
+  console.log('\n╔══ [OneDrive][AUTO-POLL] Starting ══╗')
+  try {
+    const setting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
+    if (setting?.value === 'false') {
+      console.log('[OneDrive] Auto-poll disabled in settings — skipping')
+      return
+    }
+
+    const deltaResults = await scanAllDrives()
+    const todayResults = await scanTodayAllDrives()
+
+    // Merge
+    const total = [...deltaResults, ...todayResults].reduce(
+      (acc, r) => ({
+        bookingsCreated: acc.bookingsCreated + r.bookingsCreated,
+        bookingsUpdated: acc.bookingsUpdated + r.bookingsUpdated,
+        pnlsUpdated:     acc.pnlsUpdated     + r.pnlsUpdated,
+        errors:          acc.errors          + r.errors,
+      }),
+      { bookingsCreated: 0, bookingsUpdated: 0, pnlsUpdated: 0, errors: 0 },
+    )
+
+    lastPollAt     = new Date()
+    lastPollResult = total
+    const elapsed  = ((Date.now() - t0) / 1000).toFixed(1)
+    console.log(`╚══ [OneDrive][AUTO-POLL] Done in ${elapsed}s — created:${total.bookingsCreated} updated:${total.bookingsUpdated} pnls:${total.pnlsUpdated} errors:${total.errors} ══╝\n`)
+
+    // Persist timestamp for admin page status
+    await prisma.systemSetting.upsert({
+      where:  { key: 'onedrive_last_poll' },
+      update: { value: lastPollAt.toISOString() },
+      create: { key: 'onedrive_last_poll', value: lastPollAt.toISOString() },
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[OneDrive][AUTO-POLL] Fatal error:', msg)
+    await prisma.systemSetting.upsert({
+      where:  { key: 'onedrive_poll_last_error' },
+      update: { value: `${new Date().toISOString()} | ${msg.slice(0, 500)}` },
+      create: { key: 'onedrive_poll_last_error', value: `${new Date().toISOString()} | ${msg.slice(0, 500)}` },
+    }).catch(() => {})
+  } finally {
+    pollRunning = false
+  }
 }
 
 /** Scan all configured drives and return combined results. */

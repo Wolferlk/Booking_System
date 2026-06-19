@@ -1,4 +1,5 @@
 import Sidebar from '@/components/layout/sidebar'
+import OneDriveSyncOnLogin from '@/components/layout/onedrive-sync-on-login'
 import { CountryFilterProvider } from '@/hooks/use-country-filter'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -10,6 +11,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </main>
       </div>
+      {/* Fires a background OneDrive scan once per browser session on login */}
+      <OneDriveSyncOnLogin />
     </CountryFilterProvider>
   )
 }

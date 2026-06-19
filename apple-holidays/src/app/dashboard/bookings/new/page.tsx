@@ -3,12 +3,25 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Plus, Trash2, Wand2, Loader2, Save } from 'lucide-react'
+import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import FileUpload from '@/components/shared/file-upload'
+import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import { generateBookingRef } from '@/lib/utils'
+
+// ─── Drive options per destination country ────────────────────────────────────
+const COUNTRY_DRIVES = [
+  { label: 'Vietnam',   driveKey: 'VN', driveLabel: 'Vietnam (VN OPERATION)',   country: 'VIETNAM' },
+  { label: 'Sri Lanka', driveKey: 'SL', driveLabel: 'Sri Lanka (SL Share Drive)', country: 'SRILANKA' },
+  { label: 'Malaysia',  driveKey: 'MY', driveLabel: 'Malaysia',                  country: 'SINGAPORE_MALAYSIA' },
+  { label: 'Singapore', driveKey: 'SG', driveLabel: 'Singapore',                 country: 'SINGAPORE_MALAYSIA' },
+] as const
+
+type DriveKey = typeof COUNTRY_DRIVES[number]['driveKey']
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Passenger { name: string; type: string; age: string; isLead: boolean; passport: string; nationality: string }
 interface Flight { flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string }
@@ -16,10 +29,17 @@ interface Hotel { city: string; hotel: string; checkIn: string; checkOut: string
 interface ItineraryItem { dayNo: string; date: string; title: string; description: string }
 interface EmergencyContact { name: string; phone: string; role: string }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function NewBookingPage() {
   const router = useRouter()
-  const [saving, setSaving] = useState(false)
+  const [saving,    setSaving]    = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+
+  // Drive picker state
+  const [selectedDriveKey,  setSelectedDriveKey]  = useState<DriveKey | ''>('')
+  const [drivePickerOpen,   setDrivePickerOpen]   = useState(false)
+  const [sourceMode,        setSourceMode]         = useState<'pc' | 'drive' | null>(null)
 
   // Form state
   const [form, setForm] = useState({
@@ -37,7 +57,6 @@ export default function NewBookingPage() {
     exclusions: '',
     policyNotes: '',
     amendmentNote: '',
-    // Contact details (auto-filled by AI or entered manually)
     agentEmail: '',
     agentPhone: '',
     agentWhatsapp: '',
@@ -46,39 +65,40 @@ export default function NewBookingPage() {
     contactWhatsapp: '',
   })
 
-  const [passengers, setPassengers] = useState<Passenger[]>([
+  const [passengers,        setPassengers]        = useState<Passenger[]>([
     { name: '', type: 'ADULT', age: '', isLead: true, passport: '', nationality: '' },
   ])
-  const [flights, setFlights] = useState<Flight[]>([
+  const [flights,           setFlights]           = useState<Flight[]>([
     { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '' },
   ])
-  const [hotels, setHotels] = useState<Hotel[]>([
+  const [hotels,            setHotels]            = useState<Hotel[]>([
     { city: '', hotel: '', checkIn: '', checkOut: '', nights: '', roomType: '', mealType: '', address: '' },
   ])
-  const [itinerary, setItinerary] = useState<ItineraryItem[]>([
+  const [itinerary,         setItinerary]         = useState<ItineraryItem[]>([
     { dayNo: '1', date: '', title: '', description: '' },
   ])
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([
     { name: '', phone: '', role: '' },
   ])
 
+  // ── Apply extracted data to form ──────────────────────────────────────────
   function handleAIParsed(data: Record<string, unknown>) {
     if (!data) return
     setForm(prev => ({
       ...prev,
-      bookingRef: (data.bookingRef as string) || prev.bookingRef,
+      bookingRef:     (data.bookingRef     as string) || prev.bookingRef,
       agentBookingId: (data.agentBookingId as string) || prev.agentBookingId,
-      agent: (data.agent as string) || prev.agent,
-      fileHandler: (data.fileHandler as string) || prev.fileHandler,
-      arrivalDate: (data.arrivalDate as string)?.slice(0, 10) || prev.arrivalDate,
-      departureDate: (data.departureDate as string)?.slice(0, 10) || prev.departureDate,
-      paxAdults: String(data.paxAdults ?? prev.paxAdults),
-      paxChildren: String(data.paxChildren ?? prev.paxChildren),
-      quotedTotal: String(data.quotedTotal ?? prev.quotedTotal),
-      currency: (data.currency as string) || prev.currency,
-      terms: (data.terms as string) || prev.terms,
-      exclusions: (data.exclusions as string) || prev.exclusions,
-      policyNotes: (data.policyNotes as string) || prev.policyNotes,
+      agent:          (data.agent          as string) || prev.agent,
+      fileHandler:    (data.fileHandler    as string) || prev.fileHandler,
+      arrivalDate:    (data.arrivalDate    as string)?.slice(0, 10) || prev.arrivalDate,
+      departureDate:  (data.departureDate  as string)?.slice(0, 10) || prev.departureDate,
+      paxAdults:      String(data.paxAdults   ?? prev.paxAdults),
+      paxChildren:    String(data.paxChildren ?? prev.paxChildren),
+      quotedTotal:    String(data.quotedTotal ?? prev.quotedTotal),
+      currency:       (data.currency       as string) || prev.currency,
+      terms:          (data.terms          as string) || prev.terms,
+      exclusions:     (data.exclusions     as string) || prev.exclusions,
+      policyNotes:    (data.policyNotes    as string) || prev.policyNotes,
       amendmentNote:  (data.amendmentNote  as string) || prev.amendmentNote,
       agentEmail:     (data.agentEmail     as string) || prev.agentEmail,
       agentPhone:     (data.agentPhone     as string) || prev.agentPhone,
@@ -104,22 +124,45 @@ export default function NewBookingPage() {
     if (ec?.length) setEmergencyContacts(ec)
   }
 
+  // ── File selected from OneDrive picker ────────────────────────────────────
+  async function handleDriveFileSelected(file: CloudFile) {
+    setDrivePickerOpen(false)
+    if (!selectedDriveKey) return
+    setAiLoading(true)
+    try {
+      const res  = await fetch(`/api/drives/${selectedDriveKey}/extract`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ itemId: file.id, itemName: file.name }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      handleAIParsed(json.data.extracted)
+      toast.success(`Booking details extracted from "${file.name}"`)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Extraction failed')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  // ── Submit ────────────────────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
     try {
       const res = await fetch('/api/bookings', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          paxAdults: Number(form.paxAdults),
-          paxChildren: Number(form.paxChildren),
-          quotedTotal: Number(form.quotedTotal),
-          passengers: passengers.filter(p => p.name),
-          flights: flights.filter(f => f.flightNo),
-          accommodations: hotels.filter(h => h.hotel).map(h => ({ ...h, nights: Number(h.nights) })),
-          itineraryItems: itinerary.filter(i => i.title).map(i => ({ ...i, dayNo: Number(i.dayNo) })),
+          paxAdults:         Number(form.paxAdults),
+          paxChildren:       Number(form.paxChildren),
+          quotedTotal:       Number(form.quotedTotal),
+          passengers:        passengers.filter(p => p.name),
+          flights:           flights.filter(f => f.flightNo),
+          accommodations:    hotels.filter(h => h.hotel).map(h => ({ ...h, nights: Number(h.nights) })),
+          itineraryItems:    itinerary.filter(i => i.title).map(i => ({ ...i, dayNo: Number(i.dayNo) })),
           emergencyContacts: emergencyContacts.filter(e => e.name),
         }),
       })
@@ -141,26 +184,137 @@ export default function NewBookingPage() {
     </Card>
   )
 
+  const activeDrive = COUNTRY_DRIVES.find(d => d.driveKey === selectedDriveKey)
+
   return (
     <div>
       <Header title="New Booking" subtitle="Create a booking from quotation or enter manually" />
       <div className="p-8 space-y-6 max-w-5xl">
 
-        {/* AI Upload */}
-        <Section title="🤖 AI Document Parser">
-          <p className="text-sm text-slate-500 mb-4">
-            Upload a tour confirmation (.docx, .pdf) to auto-fill the form using OpenAI.
-          </p>
-          <FileUpload
-            uploadType="booking"
-            onParsed={handleAIParsed}
-            label="Upload Tour Confirmation"
-            description="Drag & drop a .docx or .pdf file — AI will extract all booking details"
-          />
-        </Section>
+        {/* ── AI Document Parser ──────────────────────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-base font-semibold text-slate-900">AI Document Parser</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Upload or select a tour confirmation — AI will auto-fill the form below.
+            </p>
+          </CardHeader>
+          <CardBody className="space-y-4">
+
+            {/* Source selector */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setSourceMode(sourceMode === 'pc' ? null : 'pc')}
+                className={`rounded-xl border p-4 text-left transition-colors ${
+                  sourceMode === 'pc'
+                    ? 'border-brand-400 bg-brand-50'
+                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Upload className={`w-4 h-4 ${sourceMode === 'pc' ? 'text-brand-600' : 'text-slate-500'}`} />
+                  <p className="font-semibold text-slate-900 text-sm">Upload from PC</p>
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Upload a .docx or .pdf file from your computer. AI will extract all booking details.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSourceMode(sourceMode === 'drive' ? null : 'drive')}
+                className={`rounded-xl border p-4 text-left transition-colors ${
+                  sourceMode === 'drive'
+                    ? 'border-blue-400 bg-blue-50'
+                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <HardDrive className={`w-4 h-4 ${sourceMode === 'drive' ? 'text-blue-600' : 'text-slate-500'}`} />
+                  <p className="font-semibold text-slate-900 text-sm">Browse from OneDrive</p>
+                </div>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Select destination country, then browse the company OneDrive and pick a file.
+                </p>
+              </button>
+            </div>
+
+            {/* PC upload panel */}
+            {sourceMode === 'pc' && (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                {aiLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-slate-500">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Extracting booking details with AI…
+                  </div>
+                ) : (
+                  <FileUpload
+                    uploadType="booking"
+                    onParsed={handleAIParsed}
+                    label="Upload Tour Confirmation"
+                    description="Drag & drop a .docx or .pdf file — AI will extract all booking details"
+                  />
+                )}
+              </div>
+            )}
+
+            {/* OneDrive panel */}
+            {sourceMode === 'drive' && (
+              <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3">
+                {/* Country / drive selector */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 mb-1.5">
+                    <Globe className="w-3.5 h-3.5 text-blue-500" /> Select Destination Country
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {COUNTRY_DRIVES.map(d => (
+                      <button
+                        key={d.driveKey}
+                        type="button"
+                        onClick={() => setSelectedDriveKey(d.driveKey)}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedDriveKey === d.driveKey
+                            ? 'border-blue-500 bg-blue-600 text-white shadow-sm'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Open drive button */}
+                {selectedDriveKey ? (
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDrivePickerOpen(true)}
+                      disabled={aiLoading}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors disabled:opacity-60"
+                    >
+                      {aiLoading
+                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Extracting with AI…</>
+                        : <><HardDrive className="w-4 h-4" /> Open {activeDrive?.label} Drive</>
+                      }
+                    </button>
+                    <p className="text-xs text-slate-500">
+                      Browse <span className="font-semibold text-slate-700">{activeDrive?.driveLabel}</span> and select a tour confirmation file.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-600 font-medium">
+                    Select a country above to open the correct OneDrive.
+                  </p>
+                )}
+              </div>
+            )}
+
+          </CardBody>
+        </Card>
 
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Booking header */}
+          {/* Booking details */}
           <Section title="Booking Details">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
@@ -209,6 +363,7 @@ export default function NewBookingPage() {
                   <select className="form-select w-24" value={form.currency}
                     onChange={e => setForm(p => ({ ...p, currency: e.target.value }))}>
                     <option>USD</option><option>INR</option><option>VND</option><option>SGD</option>
+                    <option>LKR</option><option>MYR</option>
                   </select>
                   <input type="number" step="0.01" min="0" className="form-input flex-1" required
                     value={form.quotedTotal}
@@ -272,8 +427,7 @@ export default function NewBookingPage() {
                   </div>
                 </div>
               ))}
-              <Button type="button" variant="ghost" size="sm"
-                icon={<Plus className="w-3 h-3" />}
+              <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
                 onClick={() => setPassengers(ps => [...ps, { name: '', type: 'ADULT', age: '', isLead: false, passport: '', nationality: '' }])}>
                 Add Passenger
               </Button>
@@ -286,12 +440,12 @@ export default function NewBookingPage() {
               {flights.map((f, i) => (
                 <div key={i} className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 p-3 bg-slate-50 rounded-lg">
                   {[
-                    { label: 'Flight No', key: 'flightNo', type: 'text', placeholder: 'VJ517' },
-                    { label: 'Date', key: 'date', type: 'date', placeholder: '' },
-                    { label: 'From', key: 'fromApt', type: 'text', placeholder: 'HAN' },
-                    { label: 'Dep', key: 'depTime', type: 'time', placeholder: '' },
-                    { label: 'To', key: 'toApt', type: 'text', placeholder: 'SGN' },
-                    { label: 'Arr', key: 'arrTime', type: 'time', placeholder: '' },
+                    { label: 'Flight No', key: 'flightNo', type: 'text',  placeholder: 'VJ517' },
+                    { label: 'Date',      key: 'date',     type: 'date',  placeholder: '' },
+                    { label: 'From',      key: 'fromApt',  type: 'text',  placeholder: 'HAN' },
+                    { label: 'Dep',       key: 'depTime',  type: 'time',  placeholder: '' },
+                    { label: 'To',        key: 'toApt',    type: 'text',  placeholder: 'SGN' },
+                    { label: 'Arr',       key: 'arrTime',  type: 'time',  placeholder: '' },
                   ].map(field => (
                     <div key={field.key}>
                       <label className="form-label text-xs">{field.label}</label>
@@ -323,8 +477,8 @@ export default function NewBookingPage() {
               {hotels.map((h, i) => (
                 <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 p-3 bg-slate-50 rounded-lg">
                   {[
-                    { label: 'City', key: 'city', placeholder: 'Hanoi' },
-                    { label: 'Hotel Name', key: 'hotel', placeholder: 'Hotel Name' },
+                    { label: 'City',      key: 'city',     placeholder: 'Hanoi' },
+                    { label: 'Hotel Name',key: 'hotel',    placeholder: 'Hotel Name' },
                     { label: 'Room Type', key: 'roomType', placeholder: 'Deluxe' },
                     { label: 'Meal Plan', key: 'mealType', placeholder: 'BB' },
                   ].map(field => (
@@ -337,15 +491,15 @@ export default function NewBookingPage() {
                   ))}
                   <div className="grid grid-cols-3 gap-2 col-span-2 lg:col-span-1">
                     {[
-                      { label: 'Check-in', key: 'checkIn', type: 'date' },
+                      { label: 'Check-in',  key: 'checkIn',  type: 'date' },
                       { label: 'Check-out', key: 'checkOut', type: 'date' },
-                      { label: 'Nights', key: 'nights', type: 'number' },
-                    ].map(f => (
-                      <div key={f.key}>
-                        <label className="form-label text-xs">{f.label}</label>
-                        <input type={f.type} className="form-input text-sm"
-                          value={(h as unknown as Record<string, string>)[f.key]}
-                          onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [f.key]: e.target.value } : hx))} />
+                      { label: 'Nights',    key: 'nights',   type: 'number' },
+                    ].map(field => (
+                      <div key={field.key}>
+                        <label className="form-label text-xs">{field.label}</label>
+                        <input type={field.type} className="form-input text-sm"
+                          value={(h as unknown as Record<string, string>)[field.key]}
+                          onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [field.key]: e.target.value } : hx))} />
                       </div>
                     ))}
                   </div>
@@ -431,49 +585,37 @@ export default function NewBookingPage() {
 
           {/* Contact Information */}
           <Section title="Contact Information">
-            <p className="text-xs text-slate-500 mb-4">Auto-filled by AI from the document. Verify and correct if needed. Email confirmation will go to Agent email; WhatsApp will be sent to Customer only.</p>
+            <p className="text-xs text-slate-500 mb-4">Auto-filled by AI from the document. Email confirmation will go to Agent email; WhatsApp will be sent to Customer.</p>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="space-y-3">
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Agent / Travel Company</p>
-                <div>
-                  <label className="form-label text-xs">Agent Email</label>
-                  <input className="form-input" type="email" placeholder="agent@travelco.com"
-                    value={form.agentEmail}
-                    onChange={e => setForm(p => ({ ...p, agentEmail: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="form-label text-xs">Agent Phone</label>
-                  <input className="form-input" type="tel" placeholder="+91 98765 43210"
-                    value={form.agentPhone}
-                    onChange={e => setForm(p => ({ ...p, agentPhone: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="form-label text-xs">Agent WhatsApp</label>
-                  <input className="form-input" type="tel" placeholder="919876543210 (no +)"
-                    value={form.agentWhatsapp}
-                    onChange={e => setForm(p => ({ ...p, agentWhatsapp: e.target.value }))} />
-                </div>
+                {[
+                  { label: 'Agent Email',    key: 'agentEmail',    type: 'email', placeholder: 'agent@travelco.com' },
+                  { label: 'Agent Phone',    key: 'agentPhone',    type: 'tel',   placeholder: '+91 98765 43210' },
+                  { label: 'Agent WhatsApp', key: 'agentWhatsapp', type: 'tel',   placeholder: '919876543210 (no +)' },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label className="form-label text-xs">{f.label}</label>
+                    <input className="form-input" type={f.type} placeholder={f.placeholder}
+                      value={(form as unknown as Record<string, string>)[f.key]}
+                      onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+                  </div>
+                ))}
               </div>
               <div className="space-y-3">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Customer / Guest (WhatsApp target)</p>
-                <div>
-                  <label className="form-label text-xs">Customer Email</label>
-                  <input className="form-input" type="email" placeholder="customer@gmail.com"
-                    value={form.contactEmail}
-                    onChange={e => setForm(p => ({ ...p, contactEmail: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="form-label text-xs">Customer Phone</label>
-                  <input className="form-input" type="tel" placeholder="+94 77 123 4567"
-                    value={form.contactPhone}
-                    onChange={e => setForm(p => ({ ...p, contactPhone: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="form-label text-xs">Customer WhatsApp</label>
-                  <input className="form-input" type="tel" placeholder="94771234567 (no +)"
-                    value={form.contactWhatsapp}
-                    onChange={e => setForm(p => ({ ...p, contactWhatsapp: e.target.value }))} />
-                </div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Customer / Guest</p>
+                {[
+                  { label: 'Customer Email',    key: 'contactEmail',    type: 'email', placeholder: 'customer@gmail.com' },
+                  { label: 'Customer Phone',    key: 'contactPhone',    type: 'tel',   placeholder: '+94 77 123 4567' },
+                  { label: 'Customer WhatsApp', key: 'contactWhatsapp', type: 'tel',   placeholder: '94771234567 (no +)' },
+                ].map(f => (
+                  <div key={f.key}>
+                    <label className="form-label text-xs">{f.label}</label>
+                    <input className="form-input" type={f.type} placeholder={f.placeholder}
+                      value={(form as unknown as Record<string, string>)[f.key]}
+                      onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+                  </div>
+                ))}
               </div>
             </div>
           </Section>
@@ -525,7 +667,22 @@ export default function NewBookingPage() {
             </Button>
           </div>
         </form>
+
       </div>
+
+      {/* OneDrive file picker modal */}
+      {selectedDriveKey && (
+        <CloudFilePicker
+          driveKey={selectedDriveKey}
+          driveLabel={activeDrive?.driveLabel}
+          open={drivePickerOpen}
+          onClose={() => setDrivePickerOpen(false)}
+          onSelect={handleDriveFileSelected}
+          filterExtensions={['.pdf', '.docx', '.doc', '.txt']}
+          title={`Browse ${activeDrive?.label} Drive`}
+          selectLabel="Extract Booking Details"
+        />
+      )}
     </div>
   )
 }
