@@ -17,13 +17,16 @@ import {
   getDriveItemsDelta,
   downloadDriveItem,
   listFolderChildren,
+  listItemChildren,
   searchDriveItems,
   type DriveItem,
 } from '@/lib/graph-client'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractBookingFromEmail } from '@/lib/mail-processor'
-import { classifyPNLCategories } from '@/lib/openai'
+import { classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string; numpages: number }>
 import { detectCountryFromRef } from '@/lib/country-detection'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
@@ -119,8 +122,16 @@ function isTCFile(name: string): boolean {
 }
 
 function isPNLFile(name: string): boolean {
-  // Match xlsx, docx, or PDF PNL files
-  return /pnl/i.test(name) && /\.(xlsx?|docx?|pdf)$/i.test(name)
+  const n = name.toLowerCase().trim()
+  // Extension must be a parseable office/PDF format
+  if (!/\.(xlsx?|xls|docx?|pdf|csv)$/i.test(n)) return false
+  // Match common PNL naming patterns:
+  if (/\bpnl\b/.test(n))                         return true  // "PNL", "VN19342 PNL.xlsx"
+  if (/p\s*&\s*l\b/.test(n))                     return true  // "P&L", "P & L"
+  if (/\bp\s+and\s+l\b/.test(n))                 return true  // "P and L"
+  if (/profit.{0,5}loss/i.test(n))               return true  // "Profit Loss", "Profit & Loss"
+  if (/profit\s*statement/i.test(n))             return true  // "Profit Statement"
+  return false
 }
 
 // ── Drive ID resolution (cached per process lifetime) ────────────────────────
@@ -594,6 +605,32 @@ async function processTCFile(
 
 // ── PNL processing ────────────────────────────────────────────────────────────
 
+type ParsedPNL = Awaited<ReturnType<typeof parsePNLXlsx>>
+
+async function aiParsePNLText(text: string, bookingRef: string): Promise<ParsedPNL> {
+  const aiResult = await extractPNLFromText(text)
+  const rawLines = Array.isArray(aiResult.lineItems)
+    ? (aiResult.lineItems as Record<string, unknown>[])
+    : []
+  return {
+    bookingRef,
+    paxAdults:   typeof aiResult.paxAdults   === 'number' ? aiResult.paxAdults   : 0,
+    paxChildren: typeof aiResult.paxChildren === 'number' ? aiResult.paxChildren : 0,
+    lineItems: rawLines
+      .map(l => ({
+        activity:   String(l.activity   ?? ''),
+        category:   String(l.category   ?? 'OTHER'),
+        mmtRate:    Number(l.mmtRate    ?? 0),
+        sicRate:    Number(l.sicRate    ?? 0),
+        pvtRatePP:  Number(l.pvtRatePP  ?? 0),
+        adEntrance: Number(l.adEntrance ?? 0),
+        chEntrance: Number(l.chEntrance ?? 0),
+        otherRate:  Number(l.otherRate  ?? 0),
+      }))
+      .filter(l => l.activity && (l.mmtRate || l.sicRate || l.pvtRatePP || l.adEntrance || l.otherRate)),
+  }
+}
+
 async function processPNLFile(
   driveId:    string,
   item:       DriveItem,
@@ -601,14 +638,36 @@ async function processPNLFile(
 ): Promise<number> {
   console.log(`[OneDrive] Processing PNL: ${item.name} → ${bookingRef}`)
 
-  if (/\.pdf$/i.test(item.name)) {
-    // PDF PNL files can't be parsed for tabular data without a PDF extractor — skip extraction
-    console.log(`[OneDrive] ${bookingRef}: PNL is PDF — skipped data extraction`)
-    return 0
-  }
+  const buffer = await downloadDriveItem(driveId, item.id)
 
-  const buffer   = await downloadDriveItem(driveId, item.id)
-  const parsed   = parsePNLXlsx(buffer)
+  let parsed: Awaited<ReturnType<typeof parsePNLXlsx>>
+
+  if (/\.pdf$/i.test(item.name)) {
+    console.log(`[OneDrive] ${bookingRef}: PNL is PDF — extracting text then AI`)
+    const pdfData = await pdfParse(buffer)
+    const text    = pdfData.text
+    if (!text || text.trim().length < 20) {
+      console.warn(`[OneDrive] ${bookingRef}: PDF PNL has no extractable text (scanned image?)`)
+      return 0
+    }
+    parsed = await aiParsePNLText(text, bookingRef)
+    console.log(`[OneDrive] ${bookingRef}: PDF PNL → ${parsed.lineItems.length} lines via AI`)
+
+  } else if (/\.docx?$/i.test(item.name)) {
+    console.log(`[OneDrive] ${bookingRef}: PNL is Word doc — extracting text then AI`)
+    const text = await extractTextFromDocx(buffer)
+    if (!text || text.trim().length < 20) {
+      console.warn(`[OneDrive] ${bookingRef}: Word PNL has no extractable text`)
+      return 0
+    }
+    parsed = await aiParsePNLText(text, bookingRef)
+    console.log(`[OneDrive] ${bookingRef}: Word PNL → ${parsed.lineItems.length} lines via AI`)
+
+  } else {
+    // Excel / CSV: structured parser
+    parsed = parsePNLXlsx(buffer)
+    console.log(`[OneDrive] ${bookingRef}: Excel PNL → ${parsed.lineItems.length} lines`)
+  }
 
   // Find existing booking — try exact ref, then numeric suffix fallback
   let booking = await prisma.booking.findUnique({ where: { bookingRef } })
@@ -1006,11 +1065,14 @@ async function processBookingFolderDirect(
   const bookingRef = extractRefFromFolderName(folder.name)
   if (!bookingRef) return
 
-  // List files inside this booking folder
+  // List files by folder ID — works for both personal OneDrive and SharePoint without path issues
   let files: DriveItem[]
   try {
-    files = await listFolderChildren(driveId, buildRelativePath(folder))
-  } catch {
+    files = await listItemChildren(driveId, folder.id)
+    console.log(`    📂 Listed ${files.length} file(s) in "${folder.name}" (id: ${folder.id.slice(0, 12)}…)`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`    ❌ Failed to list folder contents for "${folder.name}": ${msg}`)
     files = []
   }
 
@@ -1091,12 +1153,6 @@ async function processBookingFolderDirect(
   }
 }
 
-function buildRelativePath(folder: DriveItem): string {
-  // parentReference.path is like "/drives/{id}/root:/VN OPERATION/2026/June/02 June"
-  const raw  = folder.parentReference?.path ?? ''
-  const root = raw.replace(/^.*?root:\//, '') // strip up to root:/
-  return root ? `${root}/${folder.name}` : folder.name
-}
 
 function normalizeBookingRef(ref: string) {
   return ref.trim().toUpperCase()

@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles } from 'lucide-react'
+import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles, HardDrive, RefreshCw } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -66,7 +66,9 @@ export default function PNLPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [confirmingLine, setConfirmingLine] = useState<string | null>(null)
-  const [showUpload, setShowUpload] = useState(false)
+  const [showUpload, setShowUpload]         = useState(false)
+  const [syncingOneDrive, setSyncingOneDrive] = useState(false)
+  const [syncResult, setSyncResult]           = useState<{ found: boolean; message: string } | null>(null)
 
   // Confirm modal state
   const [confirmModal, setConfirmModal] = useState<{ lineId: string; action: 'CONFIRMED' | 'REJECTED'; activity: string } | null>(null)
@@ -174,6 +176,43 @@ export default function PNLPage() {
 
     debounceTimers.current.set(idx, timer)
   }, [])
+
+  async function syncFromOneDrive() {
+    setSyncingOneDrive(true)
+    setSyncResult(null)
+    try {
+      const res  = await fetch('/api/onedrive/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ bookingRef: ref }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Sync failed')
+
+      const results: { pnlsUpdated: number; bookingsCreated: number; bookingsUpdated: number; errors: number }[] =
+        json.data?.results ?? []
+      const pnlFound = results.some(r => r.pnlsUpdated > 0)
+      const errors   = results.reduce((s, r) => s + r.errors, 0)
+
+      if (pnlFound) {
+        setSyncResult({ found: true, message: 'PNL synced from OneDrive successfully' })
+        toast.success('PNL data loaded from OneDrive')
+        await loadPNL()
+      } else if (errors > 0) {
+        setSyncResult({ found: false, message: 'Sync completed with errors — check OneDrive Monitor for details' })
+        toast.error('Sync encountered errors')
+      } else {
+        setSyncResult({ found: false, message: 'No PNL file found in the OneDrive booking folder' })
+        toast.warning('No PNL file found in OneDrive for this booking')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sync failed'
+      setSyncResult({ found: false, message: msg })
+      toast.error(msg)
+    } finally {
+      setSyncingOneDrive(false)
+    }
+  }
 
   async function savePNL() {
     setSaving(true)
@@ -316,16 +355,29 @@ export default function PNLPage() {
         title={`P&L — ${ref}`}
         subtitle="Profit & Loss Statement"
         actions={
-          canEdit && (
-            <div className="flex gap-2">
-              <Button variant="secondary" size="sm" onClick={() => setShowUpload(!showUpload)} icon={<Upload className="w-4 h-4" />}>
-                Import P&L
-              </Button>
-              <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={savePNL}>
-                Save P&L
-              </Button>
-            </div>
-          )
+          <div className="flex gap-2">
+            <button
+              onClick={syncFromOneDrive}
+              disabled={syncingOneDrive}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors"
+              title="Search OneDrive for PNL file and import data"
+            >
+              {syncingOneDrive
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Syncing…</>
+                : <><HardDrive className="w-3.5 h-3.5" /><RefreshCw className="w-3 h-3 -ml-0.5" /> Sync from OneDrive</>
+              }
+            </button>
+            {canEdit && (
+              <>
+                <Button variant="secondary" size="sm" onClick={() => setShowUpload(!showUpload)} icon={<Upload className="w-4 h-4" />}>
+                  Import P&L
+                </Button>
+                <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={savePNL}>
+                  Save P&L
+                </Button>
+              </>
+            )}
+          </div>
         }
       />
 
@@ -343,6 +395,19 @@ export default function PNLPage() {
                 the Ground Team will activate them before the trip.
               </p>
             </div>
+          </div>
+        )}
+
+        {/* OneDrive sync result banner */}
+        {syncResult && (
+          <div className={`flex items-start gap-3 p-4 rounded-xl border ${syncResult.found ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+            <HardDrive className={`w-4 h-4 flex-shrink-0 mt-0.5 ${syncResult.found ? 'text-green-600' : 'text-amber-500'}`} />
+            <p className={`text-sm font-medium ${syncResult.found ? 'text-green-800' : 'text-amber-800'}`}>
+              {syncResult.message}
+            </p>
+            <button onClick={() => setSyncResult(null)} className="ml-auto text-slate-400 hover:text-slate-600 flex-shrink-0">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 

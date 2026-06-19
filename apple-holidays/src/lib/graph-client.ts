@@ -111,6 +111,18 @@ async function getSharePointSiteId(host: string, path: string): Promise<string> 
   return data.id
 }
 
+/** List children of a drive folder by item ID — reliable for both personal OneDrive and SharePoint. */
+export async function listItemChildren(driveId: string, itemId: string): Promise<DriveItem[]> {
+  const items: DriveItem[] = []
+  let url: string | undefined = `${GRAPH_BASE}/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,webUrl,folder,file,parentReference,size,createdDateTime,lastModifiedDateTime`
+  while (url) {
+    const page: DriveItemCollection = await graphFetch<DriveItemCollection>(url)
+    items.push(...page.value)
+    url = page['@odata.nextLink']
+  }
+  return items
+}
+
 /** List children of a drive folder by path. */
 export async function listFolderChildren(driveId: string, folderPath?: string): Promise<DriveItem[]> {
   const base = `/drives/${driveId}`
