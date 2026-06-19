@@ -7,7 +7,7 @@ import {
   FolderOpen, RefreshCw, CheckCircle, AlertCircle, Loader2,
   Clock, FileText, TrendingUp, Trash2, ChevronRight, Activity,
   RotateCcw, HardDrive, Search, ExternalLink, Link2, Calendar,
-  MapPin, Zap, X,
+  MapPin, Zap, X, Sunrise,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -132,8 +132,9 @@ export default function OneDriveMonitorPage() {
   const [logStatus, setLogStatus]   = useState('')
 
   // ── scan panel state ──
-  const [syncing, setSyncing]       = useState(false)
-  const [autoRefresh, setAutoRefresh] = useState(false)
+  const [syncing, setSyncing]           = useState(false)
+  const [autoRefresh, setAutoRefresh]   = useState(false)
+  const [todaySyncing, setTodaySyncing] = useState<Record<string, boolean>>({})
 
   // Country (drive) selection
   const [selectedDrives, setSelectedDrives] = useState<string[]>([])
@@ -162,7 +163,7 @@ export default function OneDriveMonitorPage() {
       const params = new URLSearchParams()
       if (logDrive)  params.set('driveKey', logDrive)
       if (logStatus) params.set('status',   logStatus)
-      params.set('limit', '200')
+      params.set('limit', '500')
 
       const [evRes, cfgRes, acRes] = await Promise.all([
         fetch(`/api/onedrive/events?${params}`),
@@ -257,6 +258,32 @@ export default function OneDriveMonitorPage() {
       await loadData()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Reset failed')
+    }
+  }
+
+  async function runTodayOnwards(driveKey: string) {
+    if (todaySyncing[driveKey]) return
+    setTodaySyncing(prev => ({ ...prev, [driveKey]: true }))
+    try {
+      const today   = new Date().toISOString().slice(0, 10)
+      const oneYear = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const res  = await fetch('/api/onedrive/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ driveKeys: [driveKey], dateFrom: today, dateTo: oneYear }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      const t = json.data.total
+      setLastScan(json.data.results ?? [])
+      toast.success(
+        `${driveKey} — Today onwards: ${t.bookingsCreated} created, ${t.bookingsUpdated} updated, ${t.pnlsUpdated} PNLs${t.errors ? ` · ${t.errors} errors` : ''}`,
+      )
+      await loadData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `${driveKey} scan failed`)
+    } finally {
+      setTodaySyncing(prev => ({ ...prev, [driveKey]: false }))
     }
   }
 
@@ -408,6 +435,17 @@ export default function OneDriveMonitorPage() {
                     )}
                   </div>
                   <button
+                    onClick={() => runTodayOnwards(d.key)}
+                    disabled={!!todaySyncing[d.key]}
+                    className={`w-full flex items-center justify-center gap-1.5 text-xs font-semibold rounded-lg py-1.5 border transition-colors disabled:opacity-50 ${col.bg} ${col.border} ${col.text}`}
+                    title={`Scan ${d.label} from today onwards`}
+                  >
+                    {todaySyncing[d.key]
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Processing…</>
+                      : <><Zap className="w-3 h-3" /> Today Onwards</>
+                    }
+                  </button>
+                  <button
                     onClick={() => resetToken(d.key)}
                     className="w-full flex items-center justify-center gap-1 text-xs text-slate-400 hover:text-red-500 border border-slate-200 rounded-lg py-1 transition-colors"
                     title="Reset delta token"
@@ -419,6 +457,121 @@ export default function OneDriveMonitorPage() {
             )
           })}
         </div>
+
+        {/* ── Today's Changes (Last 24 Hours) ── */}
+        {(() => {
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000
+          const recent = events.filter(e => new Date(e.createdAt).getTime() >= cutoff)
+
+          // per-drive summary
+          const byDrive: Record<string, { tc: number; pnl: number; folders: number; errors: number; other: number }> = {}
+          for (const e of recent) {
+            if (!byDrive[e.driveType]) byDrive[e.driveType] = { tc: 0, pnl: 0, folders: 0, errors: 0, other: 0 }
+            if (e.eventType === 'TC_PROCESSED')    byDrive[e.driveType].tc      += 1
+            else if (e.eventType === 'PNL_PROCESSED')  byDrive[e.driveType].pnl     += 1
+            else if (e.eventType === 'FOLDER_DETECTED') byDrive[e.driveType].folders += 1
+            else if (e.status === 'ERROR')          byDrive[e.driveType].errors  += 1
+            else                                    byDrive[e.driveType].other   += 1
+          }
+
+          const totalTC      = recent.filter(e => e.eventType === 'TC_PROCESSED').length
+          const totalPNL     = recent.filter(e => e.eventType === 'PNL_PROCESSED').length
+          const totalFolders = recent.filter(e => e.eventType === 'FOLDER_DETECTED').length
+          const totalErrors  = recent.filter(e => e.status === 'ERROR').length
+
+          return (
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between w-full">
+                  <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                    <Sunrise className="w-4 h-4 text-amber-500" />
+                    Today&rsquo;s Changes
+                    <span className="text-xs font-normal text-slate-400">— last 24 hours</span>
+                  </h3>
+                  <span className="text-xs text-slate-400">{recent.length} event{recent.length !== 1 ? 's' : ''}</span>
+                </div>
+              </CardHeader>
+
+              {recent.length === 0 ? (
+                <CardBody className="p-6 text-center">
+                  <Activity className="w-6 h-6 mx-auto mb-2 text-slate-200" />
+                  <p className="text-sm text-slate-400">No activity in the last 24 hours</p>
+                </CardBody>
+              ) : (
+                <CardBody className="p-4 space-y-4">
+
+                  {/* Totals row */}
+                  <div className="grid grid-cols-4 gap-2">
+                    {[
+                      { label: 'TCs',     val: totalTC,      bg: 'bg-green-50',  border: 'border-green-100',  text: 'text-green-700',  sub: 'text-green-500'  },
+                      { label: 'PNLs',    val: totalPNL,     bg: 'bg-purple-50', border: 'border-purple-100', text: 'text-purple-700', sub: 'text-purple-400' },
+                      { label: 'Folders', val: totalFolders, bg: 'bg-blue-50',   border: 'border-blue-100',   text: 'text-blue-700',   sub: 'text-blue-400'   },
+                      { label: 'Errors',  val: totalErrors,  bg: totalErrors > 0 ? 'bg-red-50'   : 'bg-slate-50',   border: totalErrors > 0 ? 'border-red-200'   : 'border-slate-100',   text: totalErrors > 0 ? 'text-red-700'   : 'text-slate-400', sub: totalErrors > 0 ? 'text-red-400' : 'text-slate-300' },
+                    ].map(s => (
+                      <div key={s.label} className={`rounded-xl border ${s.bg} ${s.border} py-2.5 text-center`}>
+                        <p className={`text-xl font-bold ${s.text}`}>{s.val}</p>
+                        <p className={`text-xs ${s.sub}`}>{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Per-drive chips */}
+                  {Object.keys(byDrive).length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(byDrive).map(([key, ds]) => {
+                        const col = dc(key)
+                        return (
+                          <div key={key} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs ${col.bg} ${col.border}`}>
+                            <span className={`font-bold ${col.text}`}>{key}</span>
+                            {ds.tc      > 0 && <span className="text-green-700 font-medium">{ds.tc} TC</span>}
+                            {ds.pnl     > 0 && <span className="text-purple-700 font-medium">{ds.pnl} PNL</span>}
+                            {ds.folders > 0 && <span className="text-blue-700 font-medium">{ds.folders} folder{ds.folders !== 1 ? 's' : ''}</span>}
+                            {ds.errors  > 0 && <span className="text-red-600 font-semibold">{ds.errors} err</span>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Event timeline */}
+                  <div className="rounded-xl border border-slate-100 overflow-hidden">
+                    <div className="bg-slate-50 border-b border-slate-100 px-3 py-1.5">
+                      <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Activity Timeline</p>
+                    </div>
+                    <div className="divide-y divide-slate-50 max-h-72 overflow-y-auto">
+                      {recent.slice(0, 50).map(ev => (
+                        <div key={ev.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-xs">
+                          <span className="flex-shrink-0">
+                            {EVENT_ICONS[ev.eventType] ?? <FileText className="w-3.5 h-3.5 text-slate-400" />}
+                          </span>
+                          <span className={`flex-shrink-0 font-bold px-1.5 py-0.5 rounded-full ${dc(ev.driveType).badge}`}>{ev.driveType}</span>
+                          <span className="min-w-0 flex-1 font-medium text-slate-700 truncate">{ev.itemName}</span>
+                          {ev.bookingRef && (
+                            <a
+                              href={`/dashboard/bookings/${ev.bookingRef}`}
+                              target="_blank"
+                              className="flex-shrink-0 flex items-center gap-0.5 text-brand-600 hover:text-brand-700 font-semibold"
+                            >
+                              {ev.bookingRef}<ChevronRight className="w-3 h-3" />
+                            </a>
+                          )}
+                          {ev.webUrl && (
+                            <a href={ev.webUrl} target="_blank" rel="noreferrer" className="flex-shrink-0 text-slate-400 hover:text-brand-500">
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          )}
+                          <span className={`flex-shrink-0 px-1.5 py-0.5 rounded-full ${STATUS_COLORS[ev.status] ?? 'bg-slate-100 text-slate-500'}`}>{ev.status}</span>
+                          <span className="flex-shrink-0 text-slate-400 whitespace-nowrap">{fmtDate(ev.createdAt)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                </CardBody>
+              )}
+            </Card>
+          )
+        })()}
 
         {/* ── Scan Control Panel ── */}
         <Card>

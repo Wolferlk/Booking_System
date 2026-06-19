@@ -948,7 +948,10 @@ Wishing you a wonderful trip! ✈️
 
         {/* OneDrive Files — show to all internal staff */}
         {['GT_USER', 'TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <OneDriveFiles bookingRef={ref} />
+          <OneDriveFiles
+            bookingRef={ref}
+            canSync={['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
+          />
         )}
 
         {/* Open change requests */}

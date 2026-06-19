@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -18,6 +18,8 @@ interface Settings {
   test_email_2?: string
   test_whatsapp?: string
   less_credit_mode?: string
+  auto_mail_enabled?: string
+  auto_onedrive_enabled?: string
 }
 
 export default function ConfigPage() {
@@ -62,10 +64,13 @@ export default function ConfigPage() {
     }
   }
 
-  const useTestData = settings.use_test_data === 'true'
-  const testEmail1  = settings.test_email_1  ?? DEFAULT_TEST_EMAIL_1
-  const testEmail2  = settings.test_email_2  ?? DEFAULT_TEST_EMAIL_2
-  const testWa      = settings.test_whatsapp ?? DEFAULT_TEST_WHATSAPP
+  const useTestData       = settings.use_test_data === 'true'
+  const testEmail1        = settings.test_email_1  ?? DEFAULT_TEST_EMAIL_1
+  const testEmail2        = settings.test_email_2  ?? DEFAULT_TEST_EMAIL_2
+  const testWa            = settings.test_whatsapp ?? DEFAULT_TEST_WHATSAPP
+  // Default ON — only false when explicitly set to 'false'
+  const autoMailEnabled     = settings.auto_mail_enabled     !== 'false'
+  const autoOnedriveEnabled = settings.auto_onedrive_enabled !== 'false'
 
   if (loading) {
     return (
@@ -181,6 +186,87 @@ export default function ConfigPage() {
                 </p>
               </div>
             )}
+          </CardBody>
+        </Card>
+
+        {/* ── Automation Settings ── */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-brand-500" /> Automation Settings
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+
+            {/* Auto Mail */}
+            <div className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${autoMailEnabled ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${autoMailEnabled ? 'bg-green-100' : 'bg-slate-100'}`}>
+                  <Mail className={`w-4 h-4 ${autoMailEnabled ? 'text-green-600' : 'text-slate-400'}`} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Auto Mail Processing</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {autoMailEnabled
+                      ? 'System is automatically reading inbox emails and creating bookings every 5 min.'
+                      : 'Mail processing is paused — emails will not be read or processed.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`text-xs font-semibold ${autoMailEnabled ? 'text-green-600' : 'text-slate-400'}`}>
+                  {autoMailEnabled ? 'ON' : 'OFF'}
+                </span>
+                <button
+                  disabled={saving === 'auto_mail_enabled'}
+                  onClick={() => saveSetting('auto_mail_enabled', autoMailEnabled ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${autoMailEnabled ? 'bg-green-500' : 'bg-slate-300'}`}
+                >
+                  {saving === 'auto_mail_enabled' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${autoMailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Auto OneDrive */}
+            <div className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${autoOnedriveEnabled ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${autoOnedriveEnabled ? 'bg-blue-100' : 'bg-slate-100'}`}>
+                  <HardDrive className={`w-4 h-4 ${autoOnedriveEnabled ? 'text-blue-600' : 'text-slate-400'}`} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Auto OneDrive Processing</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {autoOnedriveEnabled
+                      ? 'System is monitoring OneDrive folders every 10 min — new TC/PNL files auto-create bookings.'
+                      : 'OneDrive monitoring is paused — new files will not be processed automatically.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`text-xs font-semibold ${autoOnedriveEnabled ? 'text-blue-600' : 'text-slate-400'}`}>
+                  {autoOnedriveEnabled ? 'ON' : 'OFF'}
+                </span>
+                <button
+                  disabled={saving === 'auto_onedrive_enabled'}
+                  onClick={() => saveSetting('auto_onedrive_enabled', autoOnedriveEnabled ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${autoOnedriveEnabled ? 'bg-blue-500' : 'bg-slate-300'}`}
+                >
+                  {saving === 'auto_onedrive_enabled' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${autoOnedriveEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 text-xs text-slate-400 pt-1">
+              <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <p>Turning off automation does not affect manual scans or the admin OneDrive monitor page — only the automatic scheduled processing is paused.</p>
+            </div>
+
           </CardBody>
         </Card>
 

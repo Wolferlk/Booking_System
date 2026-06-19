@@ -52,7 +52,7 @@ export const DRIVE_CONFIGS: DriveConfig[] = [
     label:      'Vietnam (VN OPERATION)',
     country:    'VIETNAM',
     type:       'personal',
-    userUpn:    process.env.ONEDRIVE_VN_USER ?? 'pradeep_reservation@aahaas.com',
+    userUpn:    process.env.ONEDRIVE_VN_USER ?? 'pradeep.Reservation@aahaas.com',
     rootFolder: process.env.ONEDRIVE_VN_ROOT ?? 'VN OPERATION',
   },
   {
@@ -62,8 +62,23 @@ export const DRIVE_CONFIGS: DriveConfig[] = [
     type:          'sharepoint',
     siteHost:      process.env.ONEDRIVE_SL_SITE_HOST  ?? 'aahaas.sharepoint.com',
     sitePath:      process.env.ONEDRIVE_SL_SITE_PATH  ?? '/sites/BookingExperienceB2B2',
-    library:       'Shared Documents',
     rootFolder_sp: process.env.ONEDRIVE_SL_ROOT ?? 'SL Share Drive_',
+  },
+  {
+    key:     'MY',
+    label:   'Malaysia',
+    country: 'SINGAPORE_MALAYSIA',
+    type:    'personal',
+    userUpn: process.env.ONEDRIVE_MY_USER ?? 'geetha.lakshmi@aahaas.com',
+    // rootFolder omitted — scan from drive root; booking folders detected by MY-prefix regex
+  },
+  {
+    key:     'SG',
+    label:   'Singapore',
+    country: 'SINGAPORE_MALAYSIA',
+    type:    'personal',
+    userUpn: process.env.ONEDRIVE_SG_USER ?? 'geetha.lakshmi@aahaas.com',
+    // rootFolder omitted — scan from drive root; booking folders detected by SG-prefix regex
   },
 ]
 
@@ -93,11 +108,19 @@ function isBookingFolder(item: DriveItem): boolean {
 }
 
 function isTCFile(name: string): boolean {
-  return /^TC\.(docx?|pdf)$/i.test(name.trim())
+  const n = name.trim()
+  // VN format: exactly "TC.docx" or "TC.pdf"
+  if (/^TC\.(docx?|pdf)$/i.test(n)) return true
+  // SL/other format: file with "confirm" in the name (handles typos like "Confirmaiton")
+  if (/confirm/i.test(n) && /\.(docx?|pdf)$/i.test(n)) return true
+  // SL format: file named exactly as the booking ref e.g. "IS48231.docx"
+  if (/^(IS|VN|SG|MY|AH)\d+\.(docx?|pdf)$/i.test(n)) return true
+  return false
 }
 
 function isPNLFile(name: string): boolean {
-  return /pnl/i.test(name) && /\.(xlsx?|docx?)$/i.test(name)
+  // Match xlsx, docx, or PDF PNL files
+  return /pnl/i.test(name) && /\.(xlsx?|docx?|pdf)$/i.test(name)
 }
 
 // ── Drive ID resolution (cached per process lifetime) ────────────────────────
@@ -172,49 +195,72 @@ export interface ScanResult {
 }
 
 export async function scanDrive(cfg: DriveConfig): Promise<ScanResult> {
+  const t0 = Date.now()
+  console.log(`\n━━━ [OneDrive][SCAN] ${cfg.key} ▸ ${cfg.label} ━━━`)
+
   const result: ScanResult = {
     driveKey: cfg.key, label: cfg.label,
     scanned: 0, bookingsCreated: 0, bookingsUpdated: 0, pnlsUpdated: 0, errors: 0,
     events: [],
   }
 
+  // ── Resolve drive ID ────────────────────────────────────────────────────────
   let driveId: string
   try {
     driveId = await resolveDriveId(cfg)
+    console.log(`  📁 Drive ID resolved: ${driveId.slice(0, 20)}…`)
   } catch (err) {
-    console.error(`[OneDrive] ${cfg.key}: failed to resolve drive ID:`, err)
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`  ❌ [${cfg.key}] Drive ID resolution failed: ${msg}`)
     result.errors += 1
     return result
   }
 
-  const rootPath = cfg.type === 'personal' ? cfg.rootFolder : cfg.rootFolder_sp
+  // ── Load delta token ────────────────────────────────────────────────────────
+  const rootPath   = cfg.type === 'personal' ? cfg.rootFolder : cfg.rootFolder_sp
   const deltaToken = await loadDeltaToken(cfg.key)
+  console.log(`  🔑 Delta token: ${deltaToken ? `found (${deltaToken.slice(0, 40)}…)` : 'none (full scan)'}`)
+  console.log(`  📂 Root path: ${rootPath ?? '(drive root)'}`)
 
+  // ── Fetch delta items ───────────────────────────────────────────────────────
   let items: DriveItem[]
   let newToken: string
   try {
     const r = await getDriveItemsDelta(driveId, rootPath, deltaToken)
     items    = r.items
     newToken = r.deltaToken
+    console.log(`  📦 Delta returned ${items.length} items (${items.filter(i => i.folder).length} folders, ${items.filter(i => i.file).length} files)`)
   } catch (err) {
-    console.error(`[OneDrive] ${cfg.key}: delta fetch error:`, err)
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`  ❌ [${cfg.key}] Delta fetch failed: ${msg}`)
     result.errors += 1
     return result
   }
 
   result.scanned = items.length
-  if (newToken) await saveDeltaToken(cfg.key, newToken)
 
-  console.log(`[OneDrive] ${cfg.key}: ${items.length} delta items`)
+  // ── Save new delta token ────────────────────────────────────────────────────
+  if (newToken) {
+    await saveDeltaToken(cfg.key, newToken)
+    console.log(`  💾 Delta token saved (${newToken.slice(0, 40)}…)`)
+  } else {
+    console.warn(`  ⚠️  [${cfg.key}] No delta token returned — next scan will do a full scan`)
+  }
 
-  // Group files by their immediate parent item ID so we can find TC/PNL per booking folder
+  if (items.length === 0) {
+    console.log(`  ✅ [${cfg.key}] No changes since last scan\n`)
+    return result
+  }
+
+  // ── Group items ─────────────────────────────────────────────────────────────
   const filesByParent: Record<string, DriveItem[]> = {}
-  const bookingFolders: Record<string, DriveItem> = {} // itemId → folder item
+  const bookingFolders: Record<string, DriveItem> = {}
 
   for (const item of items) {
     if (item.folder) {
       if (isBookingFolder(item)) {
         bookingFolders[item.id] = item
+        console.log(`  📁 Booking folder in delta: "${item.name}"`)
       }
     } else if (item.file) {
       const parentId = item.parentReference?.id ?? ''
@@ -223,98 +269,163 @@ export async function scanDrive(cfg: DriveConfig): Promise<ScanResult> {
     }
   }
 
-  // Process each booking folder that appeared in this delta
+  // ── Pass 1: process folders that appeared in this delta ─────────────────────
   for (const [folderId, folder] of Object.entries(bookingFolders)) {
     const bookingRef = extractRefFromFolderName(folder.name)
+    if (!bookingRef) {
+      console.log(`  ⏭  Skipping folder (no ref extracted): "${folder.name}"`)
+      continue
+    }
+    const files = filesByParent[folderId] ?? []
+    console.log(`\n  🔖 [${bookingRef}] Folder: "${folder.name}" · ${files.length} file(s) in delta`)
+    await processBookingFolderFromDelta(driveId, folder, bookingRef, files, cfg, result)
+  }
+
+  // ── Pass 2: orphaned files — files added to an EXISTING folder not in this delta ──
+  // This is the common case: folder already existed, staff uploads a new TC/PNL.
+  // The folder itself doesn't appear again in delta, only the new files do.
+  for (const [parentId, files] of Object.entries(filesByParent)) {
+    if (bookingFolders[parentId]) continue // already handled in pass 1
+
+    // Extract booking ref from the parent path segment
+    const sampleFile    = files[0]
+    const rawPath       = sampleFile?.parentReference?.path ?? ''
+    // Graph path: "/drives/{id}/root:/VN OPERATION/2026/June/VN19018 - Haji"
+    const afterRoot     = rawPath.split('root:/').pop() ?? ''
+    const parentName    = decodeURIComponent(afterRoot.split('/').pop() ?? '')
+
+    if (!BOOKING_FOLDER_RE.test(parentName)) continue
+
+    const bookingRef = extractRefFromFolderName(parentName)
     if (!bookingRef) continue
 
-    const files = filesByParent[folderId] ?? []
-
-    // Record folder detected
-    await upsertOneDriveEvent({
-      driveType:  cfg.key,
-      itemId:     folderId,
-      itemName:   folder.name,
-      itemPath:   buildPath(folder),
-      webUrl:     folder.webUrl,
-      eventType:  'FOLDER_DETECTED',
-      bookingRef,
-      status:     'PROCESSED',
-    })
-
-    // Store folder URL on booking if it exists
-    const folderWebUrl = folder.webUrl
-    if (folderWebUrl) {
-      await prisma.booking.updateMany({
-        where: { bookingRef },
-        data:  { onedriveFolderUrl: folderWebUrl },
-      })
-    }
-
-    // Process TC file
-    const tcFile = files.find(f => isTCFile(f.name))
-    if (tcFile) {
-      try {
-        const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderWebUrl)
-        if (r.isNew) { result.bookingsCreated += 1 } else { result.bookingsUpdated += 1 }
-        result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
-
-        await upsertOneDriveEvent({
-          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-          eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
-        })
-      } catch (err) {
-        result.errors += 1
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[OneDrive] ${cfg.key}: TC error for ${bookingRef}:`, msg)
-        await upsertOneDriveEvent({
-          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-        })
+    const hasActionable = files.some(f => isTCFile(f.name) || isPNLFile(f.name))
+    if (!hasActionable) {
+      // Log non-actionable files quietly
+      for (const f of files) {
+        console.log(`  📄 [${bookingRef}] File (no action): "${f.name}"`)
+        if (!f.name.toLowerCase().includes('agenda')) {
+          await upsertOneDriveEvent({
+            driveType: cfg.key, itemId: f.id, itemName: f.name,
+            itemPath: buildPath(f), webUrl: f.webUrl,
+            eventType: 'FILE_DETECTED', bookingRef, status: 'PROCESSED',
+          })
+        }
       }
+      continue
     }
 
-    // Process PNL file
-    const pnlFile = files.find(f => isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda'))
-    if (pnlFile) {
-      try {
-        const pnlLines = await processPNLFile(driveId, pnlFile, bookingRef)
-        result.pnlsUpdated += 1
-        result.events.push({ ref: bookingRef, type: 'PNL', file: pnlFile.name })
+    console.log(`\n  🔖 [${bookingRef}] Orphaned files (folder not in delta) · ${files.length} file(s)`)
+    const existing   = await prisma.booking.findUnique({ where: { bookingRef }, select: { onedriveFolderUrl: true } })
+    const folderUrl  = existing?.onedriveFolderUrl ?? undefined
 
-        await upsertOneDriveEvent({
-          driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
-          itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
-          eventType: 'PNL_PROCESSED', bookingRef, status: 'PROCESSED',
-          rawData: JSON.stringify({ linesProcessed: pnlLines }),
-        })
-      } catch (err) {
-        result.errors += 1
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[OneDrive] ${cfg.key}: PNL error for ${bookingRef}:`, msg)
-        await upsertOneDriveEvent({
-          driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
-          itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
-          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-        })
-      }
-    }
+    await processTCAndPNL(driveId, files, bookingRef, cfg, result, folderUrl)
+  }
 
-    // Record any other files
-    for (const f of files) {
-      if (f === tcFile || f === pnlFile) continue
-      if (f.name.toLowerCase().includes('agenda')) continue
+  // ── Summary ─────────────────────────────────────────────────────────────────
+  const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+  console.log(`\n  📊 [${cfg.key}] Done in ${elapsed}s — created:${result.bookingsCreated} updated:${result.bookingsUpdated} pnls:${result.pnlsUpdated} errors:${result.errors}\n`)
+
+  return result
+}
+
+// ── Shared helper: process TC + PNL from a file list ─────────────────────────
+
+async function processTCAndPNL(
+  driveId:    string,
+  files:      DriveItem[],
+  bookingRef: string,
+  cfg:        DriveConfig,
+  result:     ScanResult,
+  folderUrl?: string,
+): Promise<void> {
+  const tcFile  = files.find(f => isTCFile(f.name))
+  const pnlFile = files.find(f => isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda'))
+
+  if (tcFile) {
+    console.log(`    📄 TC  file: "${tcFile.name}"`)
+    try {
+      const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderUrl)
+      if (r.isNew) { result.bookingsCreated += 1; console.log(`    ✅ Booking CREATED: ${bookingRef}`) }
+      else          { result.bookingsUpdated += 1; console.log(`    ✅ Booking UPDATED: ${bookingRef}`) }
+      result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
       await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: f.id, itemName: f.name,
-        itemPath: buildPath(f), webUrl: f.webUrl,
-        eventType: 'FILE_DETECTED', bookingRef, status: 'PROCESSED',
+        driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+        itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+        eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
+      })
+    } catch (err) {
+      result.errors += 1
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`    ❌ TC error [${bookingRef}]: ${msg}`)
+      await upsertOneDriveEvent({
+        driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+        itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+        eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
       })
     }
   }
 
-  return result
+  if (pnlFile) {
+    console.log(`    📊 PNL file: "${pnlFile.name}"`)
+    try {
+      const lines = await processPNLFile(driveId, pnlFile, bookingRef)
+      result.pnlsUpdated += 1
+      result.events.push({ ref: bookingRef, type: 'PNL', file: pnlFile.name })
+      console.log(`    ✅ PNL UPDATED: ${bookingRef} (${lines} lines)`)
+      await upsertOneDriveEvent({
+        driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
+        itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
+        eventType: 'PNL_PROCESSED', bookingRef, status: 'PROCESSED',
+        rawData: JSON.stringify({ linesProcessed: lines }),
+      })
+    } catch (err) {
+      result.errors += 1
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`    ❌ PNL error [${bookingRef}]: ${msg}`)
+      await upsertOneDriveEvent({
+        driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
+        itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
+        eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+      })
+    }
+  }
+
+  // Log other files
+  for (const f of files) {
+    if (f === tcFile || f === pnlFile) continue
+    if (f.name.toLowerCase().includes('agenda')) continue
+    console.log(`    📎 Other file: "${f.name}"`)
+    await upsertOneDriveEvent({
+      driveType: cfg.key, itemId: f.id, itemName: f.name,
+      itemPath: buildPath(f), webUrl: f.webUrl,
+      eventType: 'FILE_DETECTED', bookingRef, status: 'PROCESSED',
+    })
+  }
+}
+
+async function processBookingFolderFromDelta(
+  driveId:    string,
+  folder:     DriveItem,
+  bookingRef: string,
+  files:      DriveItem[],
+  cfg:        DriveConfig,
+  result:     ScanResult,
+): Promise<void> {
+  const folderWebUrl = folder.webUrl
+
+  await upsertOneDriveEvent({
+    driveType: cfg.key, itemId: folder.id, itemName: folder.name,
+    itemPath: buildPath(folder), webUrl: folderWebUrl,
+    eventType: 'FOLDER_DETECTED', bookingRef, status: 'PROCESSED',
+  })
+
+  if (folderWebUrl) {
+    await prisma.booking.updateMany({ where: { bookingRef }, data: { onedriveFolderUrl: folderWebUrl } })
+    console.log(`    🔗 Folder URL saved to booking`)
+  }
+
+  await processTCAndPNL(driveId, files, bookingRef, cfg, result, folderWebUrl ?? undefined)
 }
 
 /** Scan all configured drives and return combined results. */
@@ -336,6 +447,30 @@ export async function scanAllDrives(): Promise<ScanResult[]> {
   return results
 }
 
+/**
+ * Scan only today's month folder across all drives, skipping files already
+ * processed in the last 30 minutes (so delta + today-scan don't double-process).
+ */
+export async function scanTodayAllDrives(): Promise<ScanResult[]> {
+  const today   = new Date()
+  const results: ScanResult[] = []
+  console.log(`\n═══ [OneDrive][TODAY-SCAN] ${today.toISOString().slice(0, 10)} ═══`)
+  for (const cfg of DRIVE_CONFIGS) {
+    try {
+      const r = await scanDriveByDateRange(cfg, today, today, 30)
+      results.push(r)
+    } catch (err) {
+      console.error(`[OneDrive][TODAY-SCAN] ${cfg.key} error:`, err)
+      results.push({
+        driveKey: cfg.key, label: cfg.label,
+        scanned: 0, bookingsCreated: 0, bookingsUpdated: 0, pnlsUpdated: 0,
+        errors: 1, events: [],
+      })
+    }
+  }
+  return results
+}
+
 // ── TC processing ─────────────────────────────────────────────────────────────
 
 async function processTCFile(
@@ -346,6 +481,16 @@ async function processTCFile(
   folderUrl?:  string,
 ): Promise<{ isNew: boolean }> {
   console.log(`[OneDrive] Processing TC: ${item.name} → ${bookingRef}`)
+
+  if (/\.pdf$/i.test(item.name)) {
+    // PDF TC files can't be parsed without a PDF text extractor — just ensure folder URL is stored
+    const existing = await prisma.booking.findUnique({ where: { bookingRef } })
+    if (existing && folderUrl) {
+      await prisma.booking.update({ where: { bookingRef }, data: { onedriveFolderUrl: folderUrl } })
+    }
+    console.log(`[OneDrive] ${bookingRef}: TC is PDF — skipped text extraction`)
+    return { isNew: false }
+  }
 
   const buffer = await downloadDriveItem(driveId, item.id)
   const text   = await extractTextFromDocx(buffer)
@@ -455,6 +600,12 @@ async function processPNLFile(
   bookingRef: string,
 ): Promise<number> {
   console.log(`[OneDrive] Processing PNL: ${item.name} → ${bookingRef}`)
+
+  if (/\.pdf$/i.test(item.name)) {
+    // PDF PNL files can't be parsed for tabular data without a PDF extractor — skip extraction
+    console.log(`[OneDrive] ${bookingRef}: PNL is PDF — skipped data extraction`)
+    return 0
+  }
 
   const buffer   = await downloadDriveItem(driveId, item.id)
   const parsed   = parsePNLXlsx(buffer)
@@ -638,6 +789,23 @@ type OneDriveEventInput = {
   rawData?:      string
 }
 
+// Returns true if the file was already successfully processed within `withinMinutes`.
+// Used to avoid re-running expensive AI extraction on the same file twice in one cron cycle.
+async function wasRecentlyProcessed(itemId: string, withinMinutes: number): Promise<boolean> {
+  if (withinMinutes <= 0) return false
+  const since = new Date(Date.now() - withinMinutes * 60 * 1000)
+  const ev = await prisma.oneDriveEvent.findFirst({
+    where: {
+      itemId,
+      eventType: { in: ['TC_PROCESSED', 'PNL_PROCESSED'] },
+      status: 'PROCESSED',
+      createdAt: { gte: since },
+    },
+    select: { id: true },
+  })
+  return ev !== null
+}
+
 async function upsertOneDriveEvent(input: OneDriveEventInput): Promise<void> {
   const existing = await prisma.oneDriveEvent.findFirst({
     where: { itemId: input.itemId, eventType: input.eventType },
@@ -716,9 +884,10 @@ function monthsInRange(from: Date, to: Date): { year: number; month: number }[] 
  * without relying on delta tokens — useful for re-processing or backfills.
  */
 export async function scanDriveByDateRange(
-  cfg:      DriveConfig,
-  dateFrom: Date,
-  dateTo:   Date,
+  cfg:          DriveConfig,
+  dateFrom:     Date,
+  dateTo:       Date,
+  dedupMinutes: number = 0,
 ): Promise<ScanResult> {
   const result: ScanResult = {
     driveKey: cfg.key, label: cfg.label,
@@ -735,12 +904,12 @@ export async function scanDriveByDateRange(
     return result
   }
 
-  const rootPath = cfg.type === 'personal' ? cfg.rootFolder! : cfg.rootFolder_sp!
+  const rootPath = cfg.type === 'personal' ? (cfg.rootFolder ?? undefined) : (cfg.rootFolder_sp ?? undefined)
   const months   = monthsInRange(dateFrom, dateTo)
 
   for (const { year, month } of months) {
     const monthName  = MONTH_NAMES[month]
-    const monthPath  = `${rootPath}/${year}/${monthName}`
+    const monthPath  = rootPath ? `${rootPath}/${year}/${monthName}` : `${year}/${monthName}`
 
     let monthChildren: DriveItem[]
     try {
@@ -756,7 +925,7 @@ export async function scanDriveByDateRange(
 
       if (child.folder && isBookingFolder(child)) {
         // Direct booking folder (SL-style)
-        await processBookingFolderDirect(driveId, child, cfg, result)
+        await processBookingFolderDirect(driveId, child, cfg, result, dedupMinutes)
       } else if (child.folder) {
         // Possible date subfolder (e.g. "02 June") — recurse one level
         let dateChildren: DriveItem[]
@@ -768,7 +937,7 @@ export async function scanDriveByDateRange(
         for (const dc of dateChildren) {
           result.scanned += 1
           if (dc.folder && isBookingFolder(dc)) {
-            await processBookingFolderDirect(driveId, dc, cfg, result)
+            await processBookingFolderDirect(driveId, dc, cfg, result, dedupMinutes)
           }
         }
       }
@@ -828,10 +997,11 @@ export async function scanBookingRefInDrive(
 // ── Shared booking-folder processor (used by both date-range and ref scan) ────
 
 async function processBookingFolderDirect(
-  driveId: string,
-  folder:  DriveItem,
-  cfg:     DriveConfig,
-  result:  ScanResult,
+  driveId:      string,
+  folder:       DriveItem,
+  cfg:          DriveConfig,
+  result:       ScanResult,
+  dedupMinutes: number = 0,
 ): Promise<void> {
   const bookingRef = extractRefFromFolderName(folder.name)
   if (!bookingRef) return
@@ -859,45 +1029,53 @@ async function processBookingFolderDirect(
   const pnlFile = files.find(f => f.file && isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda'))
 
   if (tcFile) {
-    try {
-      const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderWebUrl)
-      if (r.isNew) result.bookingsCreated += 1; else result.bookingsUpdated += 1
-      result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-        itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-        eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
-      })
-    } catch (err) {
-      result.errors += 1
-      const msg = err instanceof Error ? err.message : String(err)
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-        itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-        eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-      })
+    if (await wasRecentlyProcessed(tcFile.id, dedupMinutes)) {
+      console.log(`    ⏭  TC skipped (processed <${dedupMinutes}m ago): "${tcFile.name}"`)
+    } else {
+      try {
+        const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderWebUrl)
+        if (r.isNew) result.bookingsCreated += 1; else result.bookingsUpdated += 1
+        result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+          eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
+        })
+      } catch (err) {
+        result.errors += 1
+        const msg = err instanceof Error ? err.message : String(err)
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+        })
+      }
     }
   }
 
   if (pnlFile) {
-    try {
-      const lines = await processPNLFile(driveId, pnlFile, bookingRef)
-      result.pnlsUpdated += 1
-      result.events.push({ ref: bookingRef, type: 'PNL', file: pnlFile.name })
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
-        itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
-        eventType: 'PNL_PROCESSED', bookingRef, status: 'PROCESSED',
-        rawData: JSON.stringify({ linesProcessed: lines }),
-      })
-    } catch (err) {
-      result.errors += 1
-      const msg = err instanceof Error ? err.message : String(err)
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
-        itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
-        eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
-      })
+    if (await wasRecentlyProcessed(pnlFile.id, dedupMinutes)) {
+      console.log(`    ⏭  PNL skipped (processed <${dedupMinutes}m ago): "${pnlFile.name}"`)
+    } else {
+      try {
+        const lines = await processPNLFile(driveId, pnlFile, bookingRef)
+        result.pnlsUpdated += 1
+        result.events.push({ ref: bookingRef, type: 'PNL', file: pnlFile.name })
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
+          itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
+          eventType: 'PNL_PROCESSED', bookingRef, status: 'PROCESSED',
+          rawData: JSON.stringify({ linesProcessed: lines }),
+        })
+      } catch (err) {
+        result.errors += 1
+        const msg = err instanceof Error ? err.message : String(err)
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: pnlFile.id, itemName: pnlFile.name,
+          itemPath: buildPath(pnlFile), webUrl: pnlFile.webUrl,
+          eventType: 'ERROR', bookingRef, status: 'ERROR', errorMessage: msg,
+        })
+      }
     }
   }
 

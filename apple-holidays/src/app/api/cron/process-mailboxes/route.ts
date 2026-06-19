@@ -165,6 +165,11 @@ export async function GET(req: NextRequest) {
     return unauthorized()
   }
 
+  const autoMailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })
+  if (autoMailSetting?.value === 'false') {
+    return NextResponse.json({ ok: true, skipped: true, message: 'Auto mail processing is disabled in settings' })
+  }
+
   const summaries: Array<{ mailbox: string; checked: number; processed: number; skipped: number }> = []
   const lessCreditMode = await getLessCreditModeEnabled()
   const cutoffMs = RECENT_MAIL_WINDOW_MINUTES * 60 * 1000
