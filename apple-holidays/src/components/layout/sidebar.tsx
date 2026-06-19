@@ -1,13 +1,14 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, Truck, Home, Download, Mail,
-  ShieldAlert, Table2, Lock, Radio,
+  ShieldAlert, Table2, Lock, Radio, HardDrive,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -82,6 +83,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'P&L Management', href: '/dashboard/accounts/pnl', icon: 'BarChart2' },
     { label: 'Reports', href: '/dashboard/accounts/reports', icon: 'Download' },
     { label: 'Mail Inbox', href: '/dashboard/admin/mail-inbox', icon: 'Mail' },
+    { label: 'OneDrive Access', href: '/dashboard/admin/onedrive', icon: 'HardDrive' },
     { label: 'Users', href: '/dashboard/admin/users', icon: 'Users' },
     { label: 'Audit Log', href: '/dashboard/admin/audit', icon: 'Shield' },
     { label: 'Drivers', href: '/dashboard/ground/drivers', icon: 'Car' },
@@ -118,6 +120,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',      icon: 'BarChart2' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',   icon: 'Download' },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',   icon: 'Mail' },
+    { label: 'OneDrive Access',    href: '/dashboard/admin/onedrive',     icon: 'HardDrive' },
     { label: 'Users',              href: '/dashboard/admin/users',        icon: 'Users' },
     { label: 'Audit Log',          href: '/dashboard/admin/audit',        icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',     icon: 'Car' },
@@ -139,8 +142,14 @@ export default function Sidebar() {
       {/* Logo */}
       <div className="px-4 py-4 border-b border-slate-800">
         <Link href="/" className="flex items-center gap-3 group mb-3">
-          <div className="w-9 h-9 rounded-xl bg-brand-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-brand-500/30">
-            <span className="text-white font-black text-sm">AH</span>
+          <div className="relative w-9 h-9 rounded-xl overflow-hidden flex-shrink-0 shadow-lg shadow-brand-500/30 bg-white">
+            <Image
+              src="/png/aahaslogo.png"
+              alt="Aahas logo"
+              fill
+              sizes="36px"
+              className="object-contain p-1"
+            />
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-sm leading-tight">AppleHolidays</p>

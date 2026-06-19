@@ -9,7 +9,7 @@ import {
   Upload, FileText, Image as ImageIcon, ExternalLink, CheckCircle2,
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
   Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
-  Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle,
+  Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle, HardDrive,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -18,6 +18,7 @@ import Modal from '@/components/ui/modal'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 import Link from 'next/link'
+import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -211,8 +212,9 @@ export default function TicketsPage() {
     reference: '', supplier: '', notes: '',
     fileUrl: '', fileName: '', fileType: '',
   })
-  const [extracting,    setExtracting]    = useState(false)
-  const [purchaseModal, setPurchaseModal] = useState<string | null>(null)
+  const [extracting,       setExtracting]       = useState(false)
+  const [drivePickerOpen,  setDrivePickerOpen]  = useState(false)
+  const [purchaseModal,    setPurchaseModal]    = useState<string | null>(null)
   const [purchaseRef,   setPurchaseRef]   = useState('')
   const [uploadingId,   setUploadingId]   = useState<string | null>(null)
   const [viewFile,      setViewFile]      = useState<Ticket | null>(null)
@@ -331,6 +333,40 @@ export default function TicketsPage() {
         ].filter(Boolean).join(' | '),
       }))
       toast.success('Details extracted from document')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Extraction failed')
+    } finally { setExtracting(false) }
+  }
+
+  // Pick file from booking's OneDrive folder and extract details
+  async function handleDriveFileSelected(file: CloudFile) {
+    setDrivePickerOpen(false)
+    if (!activateModal) return
+    setExtracting(true)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/cloud-files/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: file.id, itemName: file.name, mode: 'ticket' }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      const { fileUrl, fileName, fileType, extracted } = json.data
+      setActivateForm(f => ({
+        ...f,
+        fileUrl, fileName, fileType,
+        reference: extracted.reference || f.reference,
+        supplier:  extracted.supplier  || f.supplier,
+        notes: [
+          f.notes,
+          extracted.driverName   ? `Driver: ${extracted.driverName}`   : '',
+          extracted.driverPhone  ? `Phone: ${extracted.driverPhone}`   : '',
+          extracted.vehicleType  ? `Vehicle: ${extracted.vehicleType}` : '',
+          extracted.vehicleNumber? `Plate: ${extracted.vehicleNumber}` : '',
+          extracted.notes        ? extracted.notes                      : '',
+        ].filter(Boolean).join(' | '),
+      }))
+      toast.success(`Details extracted from "${file.name}"`)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Extraction failed')
     } finally { setExtracting(false) }
@@ -950,7 +986,7 @@ export default function TicketsPage() {
           {/* File upload + AI scan */}
           <div className="border-2 border-dashed border-slate-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-slate-600 mb-2 flex items-center gap-1.5">
-              <ImageIcon className="w-3.5 h-3.5" /> Upload Ticket / Voucher (optional — AI will extract details)
+              <ImageIcon className="w-3.5 h-3.5" /> Attach Ticket / Voucher (optional — AI will extract details)
             </p>
             {activateForm.fileUrl ? (
               <div className="flex items-center gap-3">
@@ -965,16 +1001,25 @@ export default function TicketsPage() {
                   <X className="w-3 h-3" /> Remove
                 </button>
               </div>
+            ) : extracting ? (
+              <div className="flex items-center justify-center gap-2 py-3 text-sm text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" /> Scanning with AI…
+              </div>
             ) : (
-              <button
-                onClick={() => extractFileRef.current?.click()}
-                disabled={extracting}
-                className="w-full flex items-center justify-center gap-2 py-3 text-sm text-slate-500 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"
-              >
-                {extracting
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Scanning with AI…</>
-                  : <><Upload className="w-4 h-4" /> Click to upload & scan</>}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => extractFileRef.current?.click()}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm text-slate-500 hover:text-brand-600 hover:bg-brand-50 border border-slate-200 rounded-lg transition-colors"
+                >
+                  <Upload className="w-4 h-4" /> Upload from Device
+                </button>
+                <button
+                  onClick={() => setDrivePickerOpen(true)}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm text-brand-600 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-lg transition-colors font-medium"
+                >
+                  <HardDrive className="w-4 h-4" /> Pick from Drive
+                </button>
+              </div>
             )}
           </div>
 
@@ -1209,6 +1254,17 @@ export default function TicketsPage() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Drive File Picker ────────────────────────────────────────────────── */}
+      <CloudFilePicker
+        bookingRef={ref}
+        open={drivePickerOpen}
+        onClose={() => setDrivePickerOpen(false)}
+        onSelect={handleDriveFileSelected}
+        filterExtensions={['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.gif']}
+        title={`Drive Files — ${ref}`}
+        selectLabel="Extract Details"
+      />
 
       {/* ── View File Modal ───────────────────────────────────────────────────── */}
       {viewFile && (

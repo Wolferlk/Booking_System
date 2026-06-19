@@ -12,6 +12,7 @@ import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatCurrency, formatDateTime, computePNLLineTotal, isCreditAgent } from '@/lib/utils'
 import FileUpload from '@/components/shared/file-upload'
+import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import type { UserRole } from '@prisma/client'
 
 const CATEGORIES = ['HOTEL', 'TICKETS', 'GUIDES', 'MEALS', 'CRUISE', 'WATER', 'TRANSPORT', 'TAX_FEES', 'FLIGHT_TICKETS', 'OTHER']
@@ -74,7 +75,9 @@ export default function PNLPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [confirmingLine, setConfirmingLine] = useState<string | null>(null)
-  const [showImportModal, setShowImportModal] = useState(false)
+  const [showImportModal,  setShowImportModal]  = useState(false)
+  const [cloudPickerOpen,  setCloudPickerOpen]  = useState(false)
+  const [cloudProcessing,  setCloudProcessing]  = useState(false)
   const [showAllValueColumns, setShowAllValueColumns] = useState(false)
   const [showPaymentColumn, setShowPaymentColumn] = useState(false)
   const [syncingOneDrive, setSyncingOneDrive] = useState(false)
@@ -234,14 +237,6 @@ export default function PNLPage() {
     }
   }
 
-  async function handleCloudImport() {
-    if (bookingFolderUrl) {
-      window.open(bookingFolderUrl, '_blank', 'noopener,noreferrer')
-    }
-    await syncFromOneDrive()
-    setShowImportModal(false)
-  }
-
   async function savePNL() {
     setSaving(true)
     try {
@@ -370,6 +365,26 @@ export default function PNLPage() {
     } else {
       toast.error('No line items found in the spreadsheet')
     }
+  }
+
+  async function handleCloudFileSelected(file: CloudFile) {
+    setCloudPickerOpen(false)
+    setCloudProcessing(true)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/cloud-files/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: file.id, itemName: file.name, mode: 'pnl' }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      const { linesImported } = json.data as { linesImported: number }
+      toast.success(`P&L imported from "${file.name}": ${linesImported} line items`)
+      setShowImportModal(false)
+      await loadPNL()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Cloud import failed')
+    } finally { setCloudProcessing(false) }
   }
 
   const visibleValueColumns = VALUE_COLUMNS.filter(col => {
@@ -769,16 +784,20 @@ export default function PNLPage() {
           <div className="grid gap-3 md:grid-cols-2">
             <button
               type="button"
-              onClick={handleCloudImport}
-              disabled={syncingOneDrive}
+              onClick={() => setCloudPickerOpen(true)}
+              disabled={cloudProcessing}
               className="text-left rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-50 hover:border-blue-300 transition-colors p-4 disabled:opacity-60"
             >
               <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-blue-600" />
-                <p className="font-semibold text-slate-900">Import from Cloud</p>
+                {cloudProcessing
+                  ? <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
+                  : <HardDrive className="w-4 h-4 text-blue-600" />}
+                <p className="font-semibold text-slate-900">
+                  {cloudProcessing ? 'Importing…' : 'Browse & Import from Cloud'}
+                </p>
               </div>
               <p className="text-xs text-slate-500 mt-2">
-                Pull the latest P&L from the booking&apos;s OneDrive folder.
+                Open the booking&apos;s OneDrive folder, pick a costing sheet file, and import it directly.
               </p>
             </button>
 
@@ -923,6 +942,16 @@ export default function PNLPage() {
           </div>
         )}
       </Modal>
+
+      <CloudFilePicker
+        bookingRef={ref}
+        open={cloudPickerOpen}
+        onClose={() => setCloudPickerOpen(false)}
+        onSelect={handleCloudFileSelected}
+        filterExtensions={['.xlsx', '.xls', '.pdf', '.docx', '.doc', '.csv']}
+        title={`Import P&L from Drive — ${ref}`}
+        selectLabel="Import as P&L"
+      />
     </div>
   )
 }

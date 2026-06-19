@@ -915,6 +915,34 @@ export async function getBookingOneDriveFiles(bookingRef: string) {
   })
 }
 
+/**
+ * Resolve the drive ID + folder item ID for a booking's OneDrive folder.
+ * Looks up the FOLDER_DETECTED OneDriveEvent row, then resolves the drive ID
+ * for that drive config so callers can list/download files.
+ */
+export async function resolveBookingDriveFolder(bookingRef: string): Promise<{
+  driveId: string
+  folderId: string
+  driveKey: string
+  folderUrl: string | null
+} | null> {
+  const event = await prisma.oneDriveEvent.findFirst({
+    where:   { bookingRef, eventType: 'FOLDER_DETECTED' },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!event) return null
+
+  const cfg = DRIVE_CONFIGS.find(c => c.key === event.driveType)
+  if (!cfg) return null
+
+  try {
+    const driveId = await resolveDriveId(cfg)
+    return { driveId, folderId: event.itemId, driveKey: cfg.key, folderUrl: event.webUrl ?? null }
+  } catch {
+    return null
+  }
+}
+
 /** Get the OneDrive folder URL stored on the booking. */
 export async function getBookingFolderUrl(bookingRef: string): Promise<string | null> {
   const ref = normalizeBookingRef(bookingRef)

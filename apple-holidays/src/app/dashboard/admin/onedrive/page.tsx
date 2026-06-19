@@ -339,7 +339,10 @@ export default function OneDriveMonitorPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Header title="OneDrive Monitor" subtitle="Real-time booking file processing from SharePoint & OneDrive" />
+      <Header
+        title="OneDrive Access"
+        subtitle="View and test access across all configured user drives"
+      />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-5">
 
