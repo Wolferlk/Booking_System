@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles, HardDrive, RefreshCw } from 'lucide-react'
+import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles, HardDrive, RefreshCw, FolderOpen, ExternalLink } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -15,6 +15,14 @@ import FileUpload from '@/components/shared/file-upload'
 import type { UserRole } from '@prisma/client'
 
 const CATEGORIES = ['HOTEL', 'TICKETS', 'GUIDES', 'MEALS', 'CRUISE', 'WATER', 'TRANSPORT', 'TAX_FEES', 'FLIGHT_TICKETS', 'OTHER']
+const VALUE_COLUMNS = [
+  { key: 'mmtRate', label: 'MMT Rate' },
+  { key: 'sicRate', label: 'SIC Rate' },
+  { key: 'pvtRatePP', label: 'PVT PP' },
+  { key: 'adEntrance', label: 'AD Entry' },
+  { key: 'chEntrance', label: 'CH Entry' },
+  { key: 'otherRate', label: 'Other' },
+] as const
 
 interface Line {
   id?: string
@@ -66,9 +74,12 @@ export default function PNLPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [confirmingLine, setConfirmingLine] = useState<string | null>(null)
-  const [showUpload, setShowUpload]         = useState(false)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [showAllValueColumns, setShowAllValueColumns] = useState(false)
+  const [showPaymentColumn, setShowPaymentColumn] = useState(false)
   const [syncingOneDrive, setSyncingOneDrive] = useState(false)
   const [syncResult, setSyncResult]           = useState<{ found: boolean; message: string } | null>(null)
+  const [bookingFolderUrl, setBookingFolderUrl] = useState<string | null>(null)
 
   // Confirm modal state
   const [confirmModal, setConfirmModal] = useState<{ lineId: string; action: 'CONFIRMED' | 'REJECTED'; activity: string } | null>(null)
@@ -85,13 +96,18 @@ export default function PNLPage() {
   const canEdit           = ['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const isCreditBk        = isCreditAgent(bookingAgent)
+  const paymentColumnEnabled = !isCreditBk && showPaymentColumn
 
   const loadPNL = useCallback(async () => {
     try {
-      const res  = await fetch(`/api/bookings/${ref}/pnl`)
-      const json = await res.json()
-      if (json.success && json.data) {
-        const data = json.data as PNLRecord
+      const [pnlRes, folderRes] = await Promise.all([
+        fetch(`/api/bookings/${ref}/pnl`),
+        fetch(`/api/onedrive/files/${ref}`),
+      ])
+      const [pnlJson, folderJson] = await Promise.all([pnlRes.json(), folderRes.json()])
+
+      if (pnlJson.success && pnlJson.data) {
+        const data = pnlJson.data as PNLRecord
         setPnl(data)
         setBookingAgent(data.bookingAgent ?? null)
         setPaxAdults(String(data.paxAdults ?? 2))
@@ -117,6 +133,10 @@ export default function PNLPage() {
           notes:            (l.notes as string) ?? '',
           totalCost:        Number(l.totalCost ?? 0),
         })))
+      }
+
+      if (folderJson.success) {
+        setBookingFolderUrl((folderJson.data?.folderUrl as string | null | undefined) ?? null)
       }
     } finally {
       setLoading(false)
@@ -212,6 +232,14 @@ export default function PNLPage() {
     } finally {
       setSyncingOneDrive(false)
     }
+  }
+
+  async function handleCloudImport() {
+    if (bookingFolderUrl) {
+      window.open(bookingFolderUrl, '_blank', 'noopener,noreferrer')
+    }
+    await syncFromOneDrive()
+    setShowImportModal(false)
   }
 
   async function savePNL() {
@@ -338,10 +366,16 @@ export default function PNLPage() {
       if (data.paxAdults)     setPaxAdults(String(data.paxAdults))
       if (data.paxChildren !== undefined) setPaxChildren(String(data.paxChildren))
       toast.success(`${items.length} P&L lines imported from spreadsheet!`)
+      setShowImportModal(false)
     } else {
       toast.error('No line items found in the spreadsheet')
     }
   }
+
+  const visibleValueColumns = VALUE_COLUMNS.filter(col => {
+    if (showAllValueColumns) return true
+    return lines.some(line => Number((line as unknown as Record<string, string>)[col.key]) !== 0)
+  })
 
   if (loading) return (
     <div className="flex justify-center h-64">
@@ -369,7 +403,7 @@ export default function PNLPage() {
             </button>
             {canEdit && (
               <>
-                <Button variant="secondary" size="sm" onClick={() => setShowUpload(!showUpload)} icon={<Upload className="w-4 h-4" />}>
+                <Button variant="secondary" size="sm" onClick={() => setShowImportModal(true)} icon={<Upload className="w-4 h-4" />}>
                   Import P&L
                 </Button>
                 <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={savePNL}>
@@ -476,20 +510,6 @@ export default function PNLPage() {
           </Card>
         )}
 
-        {/* AI Upload */}
-        {showUpload && canEdit && (
-          <Card className="p-6">
-            <h3 className="text-sm font-semibold text-slate-900 mb-4">Import P&L from Spreadsheet</h3>
-            <FileUpload
-              accept={['.xlsx', '.xls', '.csv']}
-              uploadType="pnl"
-              onParsed={handleAIParsed}
-              label="Upload P&L Spreadsheet"
-              description=".xlsx, .xls, or .csv — AI will extract line items"
-            />
-          </Card>
-        )}
-
         {/* Summary cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[
@@ -528,18 +548,39 @@ export default function PNLPage() {
         <Card>
           <CardHeader
             action={
-              canEdit && (
-                <Button size="sm" variant="secondary" icon={<Plus className="w-3 h-3" />}
-                  onClick={() => setLines(ls => [...ls, {
-                    activity: '', category: 'OTHER', mmtRate: '0',
-                    sicRate: '0', pvtRatePP: '0', adEntrance: '0', chEntrance: '0', otherRate: '0', notes: '',
-                  }])}>
-                  Add Line
-                </Button>
-              )
+              <div className="flex items-center gap-2">
+                {canEdit && (
+                  <>
+                    <Button size="sm" variant="secondary" icon={<Plus className="w-3 h-3" />}
+                      onClick={() => setLines(ls => [...ls, {
+                        activity: '', category: 'OTHER', mmtRate: '0',
+                        sicRate: '0', pvtRatePP: '0', adEntrance: '0', chEntrance: '0', otherRate: '0', notes: '',
+                      }])}>
+                      Add Line
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => setShowAllValueColumns(v => !v)}>
+                      {showAllValueColumns ? 'Compact View' : 'Show All Fields'}
+                    </Button>
+                  </>
+                )}
+                {!isCreditBk && (canEdit || canConfirmPayment) && (
+                  <Button
+                    size="sm"
+                    variant={showPaymentColumn ? 'outline' : 'secondary'}
+                    onClick={() => setShowPaymentColumn(v => !v)}
+                  >
+                    Payment {showPaymentColumn ? 'On' : 'Off'}
+                  </Button>
+                )}
+              </div>
             }
           >
-            <h3 className="text-sm font-semibold text-slate-900">P&L Line Items</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-semibold text-slate-900">P&L Line Items</h3>
+              <span className="text-xs text-slate-500">
+                Showing {showAllValueColumns ? 'all value columns' : 'only populated value columns'}
+              </span>
+            </div>
           </CardHeader>
           <div className="overflow-x-auto">
             <table className="data-table">
@@ -548,17 +589,14 @@ export default function PNLPage() {
                   <th className="w-10">#</th>
                   <th className="min-w-[180px]">Activity</th>
                   <th>Category</th>
-                  <th className="text-right">MMT Rate</th>
-                  <th className="text-right">SIC Rate</th>
-                  <th className="text-right">PVT PP</th>
-                  <th className="text-right">AD Entry</th>
-                  <th className="text-right">CH Entry</th>
-                  <th className="text-right">Other</th>
+                  {visibleValueColumns.map(col => (
+                    <th key={col.key} className="text-right">{col.label}</th>
+                  ))}
                   <th className="text-right font-semibold">Total Apple Rate</th>
                   <th className="text-right">Profit</th>
                   <th>Notes</th>
                   {/* Payment column only for non-credit bookings */}
-                  {!isCreditBk && <th>Payment</th>}
+                  {paymentColumnEnabled && <th>Payment</th>}
                   {canEdit && <th />}
                 </tr>
               </thead>
@@ -592,18 +630,21 @@ export default function PNLPage() {
                           <span className="text-xs text-slate-500">{line.category}</span>
                         )}
                       </td>
-                      {['mmtRate', 'sicRate', 'pvtRatePP', 'adEntrance', 'chEntrance', 'otherRate'].map(field => (
-                        <td key={field} className="text-right">
-                          {canEdit ? (
-                            <input type="number" step="0.01" min="0"
-                              className="form-input text-xs py-1 w-16 text-right"
-                              value={(line as unknown as Record<string, string>)[field]}
-                              onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, [field]: e.target.value } : l))} />
-                          ) : (
-                            <span className="text-xs">{Number((line as unknown as Record<string, string>)[field]).toFixed(2)}</span>
-                          )}
-                        </td>
-                      ))}
+                      {visibleValueColumns.map(col => {
+                        const field = col.key
+                        return (
+                          <td key={field} className="text-right">
+                            {canEdit ? (
+                              <input type="number" step="0.01" min="0"
+                                className="form-input text-xs py-1 w-16 text-right"
+                                value={(line as unknown as Record<string, string>)[field]}
+                                onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, [field]: e.target.value } : l))} />
+                            ) : (
+                              <span className="text-xs">{Number((line as unknown as Record<string, string>)[field]).toFixed(2)}</span>
+                            )}
+                          </td>
+                        )
+                      })}
                       <td className="text-right font-semibold text-slate-900 text-xs">{(line.totalCost ?? total).toFixed(2)}</td>
                       <td className={`text-right text-xs font-semibold ${lineProfitRow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         {lineProfitRow.toFixed(2)}
@@ -622,8 +663,8 @@ export default function PNLPage() {
                         )}
                       </td>
 
-                      {/* Payment cell — only for non-credit agents */}
-                      {!isCreditBk && (
+                      {/* Payment cell — only when payment section is switched on */}
+                      {paymentColumnEnabled && (
                         <td>
                           {line.id ? (
                             <div className="flex flex-col gap-1">
@@ -696,16 +737,21 @@ export default function PNLPage() {
                 <tfoot>
                   <tr className="bg-slate-50">
                     <td colSpan={3} className="px-4 py-3 text-sm font-bold text-slate-900">TOTALS</td>
-                    <td className="text-right px-4 py-3 text-sm font-bold">{totalRevenue.toFixed(2)}</td>
-                    <td colSpan={5} />
+                    {visibleValueColumns.length > 0 ? (
+                      <>
+                        <td className="text-right px-4 py-3 text-sm font-bold">{totalRevenue.toFixed(2)}</td>
+                        {visibleValueColumns.slice(1).map(col => (
+                          <td key={col.key} />
+                        ))}
+                      </>
+                    ) : null}
                     <td className="text-right px-4 py-3 text-sm font-bold">{totalCost.toFixed(2)}</td>
                     <td className={`text-right px-4 py-3 text-sm font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {profit.toFixed(2)}
                     </td>
                     <td />
-                    {((!isCreditBk ? 1 : 0) + (canEdit ? 1 : 0)) > 0 && (
-                      <td colSpan={(!isCreditBk ? 1 : 0) + (canEdit ? 1 : 0)} />
-                    )}
+                    {paymentColumnEnabled && <td />}
+                    {canEdit && <td />}
                   </tr>
                 </tfoot>
               )}
@@ -713,6 +759,73 @@ export default function PNLPage() {
           </div>
         </Card>
       </div>
+
+      <Modal
+        open={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        title="Import P&L"
+      >
+        <div className="space-y-5">
+          <div className="grid gap-3 md:grid-cols-2">
+            <button
+              type="button"
+              onClick={handleCloudImport}
+              disabled={syncingOneDrive}
+              className="text-left rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-50 hover:border-blue-300 transition-colors p-4 disabled:opacity-60"
+            >
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-blue-600" />
+                <p className="font-semibold text-slate-900">Import from Cloud</p>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                Pull the latest P&L from the booking&apos;s OneDrive folder.
+              </p>
+            </button>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2">
+                <Upload className="w-4 h-4 text-slate-500" />
+                <p className="font-semibold text-slate-900">Import from PC</p>
+              </div>
+              <p className="text-xs text-slate-500 mt-2 mb-3">
+                Upload an Excel or CSV file from your computer.
+              </p>
+              <FileUpload
+                accept={['.xlsx', '.xls', '.csv']}
+                uploadType="pnl"
+                onParsed={handleAIParsed}
+                label="Upload P&L from PC"
+                description=".xlsx, .xls, or .csv — AI will extract line items"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {bookingFolderUrl ? (
+              <a
+                href={bookingFolderUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-600 hover:text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                Open booking folder in cloud
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            ) : (
+              <p className="text-xs text-slate-500">
+                The booking folder will be found automatically during cloud sync.
+              </p>
+            )}
+            {syncingOneDrive && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Syncing from OneDrive…
+              </span>
+            )}
+          </div>
+        </div>
+      </Modal>
 
       {/* Payment Confirmation Modal — AC_USER only, non-credit agents */}
       <Modal
