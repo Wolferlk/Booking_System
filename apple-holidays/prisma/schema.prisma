@@ -454,6 +454,16 @@ model Ticket {
   reference     String?
   notes         String?      @db.Text
 
+  // Manual category override (if null, falls back to pnlLine.category)
+  category      String?
+
+  // Transfer-specific details (for TRANSPORT category)
+  transferType  String?      // SIC | PVT
+  vehicleType   String?      // Car, Van, Bus, Minibus, Boat, etc.
+  vehicleNumber String?      // Number plate
+  driverName    String?
+  driverPhone   String?
+
   // Ticket file upload (PDF or image)
   fileUrl       String?      @db.Text
   fileName      String?

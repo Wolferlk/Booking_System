@@ -22,9 +22,12 @@ export async function POST(
   if (!ticket) return buildApiError('Ticket not found', 404)
   if (ticket.activated) return buildApiError('Ticket already activated')
 
-  // GT can provide reference number, supplier, and notes when activating
+  // GT can provide reference, supplier, notes, and an already-uploaded file when activating
   const body = await req.json().catch(() => ({}))
-  const { reference, supplier, notes } = body as { reference?: string; supplier?: string; notes?: string }
+  const { reference, supplier, notes, fileUrl, fileName, fileType } = body as {
+    reference?: string; supplier?: string; notes?: string
+    fileUrl?: string; fileName?: string; fileType?: string
+  }
 
   const updated = await prisma.ticket.update({
     where: { id: params.id },
@@ -33,6 +36,7 @@ export async function POST(
       ...(reference ? { reference } : {}),
       ...(supplier  ? { supplier  } : {}),
       ...(notes     ? { notes     } : {}),
+      ...(fileUrl   ? { fileUrl, fileName: fileName || null, fileType: fileType || 'pdf' } : {}),
     },
   })
 

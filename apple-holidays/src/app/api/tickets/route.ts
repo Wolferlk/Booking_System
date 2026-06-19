@@ -33,7 +33,14 @@ export async function GET(req: NextRequest) {
     include: {
       booking: { select: { bookingRef: true, arrivalDate: true } },
       agendaItem: { select: { date: true, location: true, toPoint: true } },
-      pnlLine: { select: { activity: true, paymentStatus: true, paymentRefNumber: true, category: true } },
+      pnlLine: {
+        select: {
+          activity: true, paymentStatus: true, paymentRefNumber: true, category: true,
+          mmtRate: true, sicRate: true, pvtRatePP: true,
+          adEntrance: true, chEntrance: true, otherRate: true,
+          pnl: { select: { paxAdults: true, paxChildren: true } },
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   })

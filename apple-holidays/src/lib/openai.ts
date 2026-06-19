@@ -264,6 +264,73 @@ Return ONLY a JSON array.`,
   return Array.isArray(parsed) ? parsed : parsed.items ?? parsed.agenda ?? []
 }
 
+export async function extractTicketDetails(
+  fileBase64: string,
+  mimeType: string,
+  ticketType: string,
+): Promise<{
+  reference?: string
+  supplier?: string
+  date?: string
+  notes?: string
+  driverName?: string
+  driverPhone?: string
+  vehicleType?: string
+  vehicleNumber?: string
+}> {
+  const isImage = mimeType.startsWith('image/')
+  const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
+    ? [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${fileBase64}`, detail: 'high' },
+            },
+            {
+              type: 'text',
+              text: `This is a ticket, voucher, or confirmation document for: "${ticketType}".
+Extract the following as JSON (use null for anything not found):
+{
+  "reference": "booking/confirmation/ticket reference number",
+  "supplier": "company or provider name",
+  "date": "date of service (YYYY-MM-DD or as shown)",
+  "notes": "any important instructions, meeting point, dress code, or details",
+  "driverName": "driver name if this is a transfer/transport ticket",
+  "driverPhone": "driver phone if visible",
+  "vehicleType": "vehicle type if this is a transfer (Car, Van, Bus, etc.)",
+  "vehicleNumber": "vehicle number plate if visible"
+}
+Return only valid JSON.`,
+            },
+          ],
+        },
+      ]
+    : [
+        {
+          role: 'user',
+          content: `This is a PDF ticket/voucher for: "${ticketType}". The text content is below. Extract key details as JSON (null for missing):
+{"reference": null, "supplier": null, "date": null, "notes": null, "driverName": null, "driverPhone": null, "vehicleType": null, "vehicleNumber": null}
+The fileBase64 is not provided for PDF. Return empty JSON: {}`,
+        },
+      ]
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages,
+      temperature: 0,
+      max_tokens: 400,
+      response_format: { type: 'json_object' },
+    })
+    const content = response.choices[0]?.message?.content ?? '{}'
+    return JSON.parse(content)
+  } catch {
+    return {}
+  }
+}
+
 export async function getBookingAISuggestion(
   question: string,
   bookingContext: string,
