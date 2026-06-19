@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -29,6 +29,8 @@ export default function ConfigPage() {
   const [settings, setSettings] = useState<Settings>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
+  const [criticalPassword, setCriticalPassword] = useState('')
+  const [showCriticalPassword, setShowCriticalPassword] = useState(false)
 
   useEffect(() => {
     if (status === 'loading') return
@@ -62,6 +64,14 @@ export default function ConfigPage() {
     } finally {
       setSaving(null)
     }
+  }
+
+  async function saveProtectedAutomationSetting(key: 'auto_mail_enabled' | 'auto_onedrive_enabled', value: string) {
+    if (!criticalPassword.trim()) {
+      toast.error('Enter the critical services password first')
+      return
+    }
+    await saveSetting(key, value, criticalPassword)
   }
 
   const useTestData       = settings.use_test_data === 'true'
@@ -198,6 +208,33 @@ export default function ConfigPage() {
           </CardHeader>
           <CardBody className="p-5 space-y-4">
 
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5" />
+                Critical Services Password
+              </p>
+              <div className="relative">
+                <input
+                  type={showCriticalPassword ? 'text' : 'password'}
+                  value={criticalPassword}
+                  onChange={e => setCriticalPassword(e.target.value)}
+                  placeholder="Enter password to change automation settings"
+                  className="w-full pr-10 px-3 py-2.5 text-sm rounded-lg border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400 transition-colors bg-white"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCriticalPassword(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showCriticalPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-amber-700/80">
+                Use the same password from <code className="font-mono">CRITICAL_SERVICES_PASSWORD</code> to change automation toggles.
+              </p>
+            </div>
+
             {/* Auto Mail */}
             <div className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${autoMailEnabled ? 'bg-green-50 border-green-200' : 'bg-slate-50 border-slate-200'}`}>
               <div className="flex items-center gap-3">
@@ -218,8 +255,8 @@ export default function ConfigPage() {
                   {autoMailEnabled ? 'ON' : 'OFF'}
                 </span>
                 <button
-                  disabled={saving === 'auto_mail_enabled'}
-                  onClick={() => saveSetting('auto_mail_enabled', autoMailEnabled ? 'false' : 'true')}
+                  disabled={saving === 'auto_mail_enabled' || !criticalPassword.trim()}
+                  onClick={() => saveProtectedAutomationSetting('auto_mail_enabled', autoMailEnabled ? 'false' : 'true')}
                   className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${autoMailEnabled ? 'bg-green-500' : 'bg-slate-300'}`}
                 >
                   {saving === 'auto_mail_enabled' && (
@@ -250,8 +287,8 @@ export default function ConfigPage() {
                   {autoOnedriveEnabled ? 'ON' : 'OFF'}
                 </span>
                 <button
-                  disabled={saving === 'auto_onedrive_enabled'}
-                  onClick={() => saveSetting('auto_onedrive_enabled', autoOnedriveEnabled ? 'false' : 'true')}
+                  disabled={saving === 'auto_onedrive_enabled' || !criticalPassword.trim()}
+                  onClick={() => saveProtectedAutomationSetting('auto_onedrive_enabled', autoOnedriveEnabled ? 'false' : 'true')}
                   className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${autoOnedriveEnabled ? 'bg-blue-500' : 'bg-slate-300'}`}
                 >
                   {saving === 'auto_onedrive_enabled' && (

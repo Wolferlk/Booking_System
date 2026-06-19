@@ -4,7 +4,12 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 
-const PROTECTED_KEYS = new Set(['use_test_data', 'less_credit_mode'])
+const PROTECTED_KEYS = new Set([
+  'use_test_data',
+  'less_credit_mode',
+  'auto_mail_enabled',
+  'auto_onedrive_enabled',
+])
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -24,10 +29,14 @@ export async function POST(req: NextRequest) {
   if (!key) return buildApiError('Key is required')
 
   if (PROTECTED_KEYS.has(key)) {
-    const criticalPassword = process.env.CRITICAL_OPS_PASSWORD
-    if (!criticalPassword) return buildApiError('Critical operations password is not configured on the server', 500)
+    const criticalPassword =
+      process.env.CRITICAL_SERVICES_PASSWORD ??
+      process.env.CRITICAL_OPS_PASSWORD
+    if (!criticalPassword) {
+      return buildApiError('Critical services password is not configured on the server', 500)
+    }
     if (!password || password !== criticalPassword) {
-      return buildApiError('Incorrect critical operations password', 403)
+      return buildApiError('Incorrect critical services password', 403)
     }
   }
 
