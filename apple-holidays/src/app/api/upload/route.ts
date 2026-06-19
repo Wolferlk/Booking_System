@@ -5,6 +5,8 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { extractBookingFromText, classifyPNLCategories } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -26,23 +28,34 @@ export async function POST(req: NextRequest) {
 
   let extractedText = ''
 
-  if (fileName.endsWith('.docx')) {
+  if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
     extractedText = await extractTextFromDocx(buffer)
   } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
     extractedText = extractTextFromXlsx(buffer)
   } else if (fileName.endsWith('.txt') || fileName.endsWith('.csv')) {
     extractedText = buffer.toString('utf-8')
-  } else {
-    return buildApiError('Unsupported file type. Use .docx, .xlsx, or .csv')
+  } else if (fileName.endsWith('.pdf')) {
+    try {
+      const result = await pdfParse(buffer)
+      extractedText = result.text ?? ''
+    } catch {
+      extractedText = ''
+    }
+  }
+  // Any other file type (e.g. .numbers, .ods) — extractedText stays '' and is stored as-is
+
+  if (type === 'pnl' && !extractedText.trim()) {
+    // PNL files with no extractable text (binary, scanned PDF) — accepted but no data parsed
+    return buildApiSuccess({ fileName: file.name, fileSize: file.size, extractedText: '', parsedData: {} })
   }
 
-  if (!extractedText.trim()) {
+  if (type !== 'pnl' && !extractedText.trim()) {
     return buildApiError('Could not extract text from the file')
   }
 
   let parsedData: Record<string, unknown> = {}
 
-  if (type === 'pnl' && (fileName.endsWith('.xlsx') || fileName.endsWith('.xls'))) {
+  if (type === 'pnl' && (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) && extractedText.trim()) {
     // Step 1: Parse numerical data directly from xlsx (fast, accurate)
     const result = parsePNLXlsx(buffer)
 

@@ -123,14 +123,16 @@ function isTCFile(name: string): boolean {
 
 function isPNLFile(name: string): boolean {
   const n = name.toLowerCase().trim()
-  // Extension must be a parseable office/PDF format
-  if (!/\.(xlsx?|xls|docx?|pdf|csv)$/i.test(n)) return false
-  // Match common PNL naming patterns:
+  // Skip images, media, and archives — these are never costing documents
+  if (/\.(jpe?g|png|gif|bmp|webp|mp[34]|mov|avi|mkv|zip|rar|7z|tar)$/i.test(n)) return false
+  // Match PNL / costing-sheet naming patterns:
   if (/\bpnl\b/.test(n))                         return true  // "PNL", "VN19342 PNL.xlsx"
   if (/p\s*&\s*l\b/.test(n))                     return true  // "P&L", "P & L"
   if (/\bp\s+and\s+l\b/.test(n))                 return true  // "P and L"
   if (/profit.{0,5}loss/i.test(n))               return true  // "Profit Loss", "Profit & Loss"
   if (/profit\s*statement/i.test(n))             return true  // "Profit Statement"
+  if (/\bcosting\b/i.test(n))                    return true  // "Costing", "Costing Sheet"
+  if (/cost[_\s-]*sheet/i.test(n))               return true  // "Cost Sheet", "Cost-Sheet"
   return false
 }
 
@@ -664,9 +666,14 @@ async function processPNLFile(
     console.log(`[OneDrive] ${bookingRef}: Word PNL → ${parsed.lineItems.length} lines via AI`)
 
   } else {
-    // Excel / CSV: structured parser
-    parsed = parsePNLXlsx(buffer)
-    console.log(`[OneDrive] ${bookingRef}: Excel PNL → ${parsed.lineItems.length} lines`)
+    // Excel / CSV / other: try structured parser, fall back gracefully
+    try {
+      parsed = parsePNLXlsx(buffer)
+      console.log(`[OneDrive] ${bookingRef}: Excel/CSV PNL → ${parsed.lineItems.length} lines`)
+    } catch {
+      console.warn(`[OneDrive] ${bookingRef}: "${item.name}" is not xlsx-parseable — stored as document reference only`)
+      return 0
+    }
   }
 
   // Find existing booking — try exact ref, then numeric suffix fallback

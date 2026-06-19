@@ -1,6 +1,8 @@
 import openai from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -478,7 +480,7 @@ async function fetchAttachmentsForMessage(token: string, base: string, graphMess
 async function buildAttachmentText(attachment: EmailAttachment): Promise<string> {
   const fileName = attachment.name.toLowerCase()
 
-  if (fileName.endsWith('.docx')) {
+  if (fileName.endsWith('.docx') || fileName.endsWith('.doc')) {
     return extractTextFromDocx(attachment.buffer)
   }
 
@@ -488,6 +490,13 @@ async function buildAttachmentText(attachment: EmailAttachment): Promise<string>
 
   if (fileName.endsWith('.txt') || fileName.endsWith('.csv')) {
     return attachment.buffer.toString('utf-8')
+  }
+
+  if (fileName.endsWith('.pdf')) {
+    try {
+      const result = await pdfParse(attachment.buffer)
+      return result.text ?? ''
+    } catch { return '' }
   }
 
   return ''
