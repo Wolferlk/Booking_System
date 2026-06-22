@@ -608,7 +608,7 @@ Wishing you a wonderful trip! ✈️
         }
       />
 
-      <div className="p-8 space-y-6 max-w-7xl">
+      <div className="p-8 space-y-6 ">
 
         {/* Lifecycle + status */}
         <Card className="p-6">
