@@ -166,6 +166,11 @@ async function runImapMailbox(lessCreditMode: boolean, cutoffMs: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function jobProcessMailboxes() {
+  const mailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })
+  if (mailSetting?.value !== 'true') {
+    console.log('[Scheduler] process-mailboxes disabled — enable in Settings → Automation')
+    return
+  }
   console.log('[Scheduler] process-mailboxes started')
   try {
     const lessCreditMode = await getLessCreditModeEnabled()
@@ -189,6 +194,11 @@ async function jobRenewWebhook() {
 }
 
 async function jobOneDrivePoll() {
+  const driveSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
+  if (driveSetting?.value !== 'true') {
+    console.log('[Scheduler] OneDrive poll disabled — enable in Settings → AI Token Controls')
+    return
+  }
   const { runOneDrivePoll } = await import('./onedrive-monitor')
   await runOneDrivePoll()
 }
