@@ -489,8 +489,8 @@ export async function runOneDrivePoll(): Promise<void> {
   console.log('\n╔══ [OneDrive][AUTO-POLL] Starting ══╗')
   try {
     const setting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
-    if (setting?.value === 'false') {
-      console.log('[OneDrive] Auto-poll disabled in settings — skipping')
+    if (setting?.value !== 'true') {
+      console.log('[OneDrive] Auto-poll disabled in settings — enable in Settings → AI Token Controls')
       return
     }
 

@@ -31,8 +31,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const setting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
-    if (setting?.value === 'false') {
-      return NextResponse.json({ ok: true, skipped: true, message: 'Auto OneDrive processing is disabled in settings' })
+    if (setting?.value !== 'true') {
+      return NextResponse.json({ ok: true, skipped: true, message: 'Auto OneDrive poll is disabled — enable in Settings → AI Token Controls' })
     }
 
     // Pass 1 — delta sync: incremental, only new/changed items since last run

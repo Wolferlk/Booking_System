@@ -166,8 +166,8 @@ export async function GET(req: NextRequest) {
   }
 
   const autoMailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })
-  if (autoMailSetting?.value === 'false') {
-    return NextResponse.json({ ok: true, skipped: true, message: 'Auto mail processing is disabled in settings' })
+  if (autoMailSetting?.value !== 'true') {
+    return NextResponse.json({ ok: true, skipped: true, message: 'Auto mail processing is disabled — enable in Settings → Automation' })
   }
 
   const summaries: Array<{ mailbox: string; checked: number; processed: number; skipped: number }> = []
