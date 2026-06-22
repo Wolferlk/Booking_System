@@ -235,6 +235,7 @@ export default function TicketsPage() {
 
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState<string | null>(null)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
   const [bulkModal,     setBulkModal]     = useState(false)
   const [bulkForm,      setBulkForm]      = useState({ reference: '', supplier: '', notes: '' })
@@ -527,6 +528,26 @@ export default function TicketsPage() {
     } finally { setDeleting(null) }
   }
 
+  async function deleteSelected() {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`Delete ${selectedIds.size} selected ticket${selectedIds.size > 1 ? 's' : ''}?`)) return
+    setBulkDeleting(true)
+    try {
+      await Promise.all(Array.from(selectedIds).map(id =>
+        fetch(`/api/tickets/${id}`, { method: 'DELETE' })
+          .then(res => res.json())
+          .then(json => {
+            if (!json.success) throw new Error(json.error || 'Deletion failed')
+          }),
+      ))
+      toast.success(`${selectedIds.size} ticket${selectedIds.size > 1 ? 's' : ''} deleted`)
+      setSelectedIds(new Set())
+      load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Some deletions failed')
+    } finally { setBulkDeleting(false) }
+  }
+
   // ── Computed ───────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -622,6 +643,15 @@ export default function TicketsPage() {
                     <Zap className="w-3.5 h-3.5" /> Activate Selected ({selectedIds.size})
                   </button>
                 )}
+                  {canCreate && selectedIds.size > 0 && (
+                    <button
+                      onClick={deleteSelected}
+                      disabled={bulkDeleting}
+                      className="btn btn-secondary btn-sm text-xs text-red-500 hover:text-red-700"
+                    >
+                      {bulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete Selected ({selectedIds.size})
+                    </button>
+                  )}
                 {canCreate && inactive.length > 1 && (
                   <button onClick={activateAll} disabled={activating === 'all'} className="btn btn-secondary btn-sm text-xs">
                     {activating === 'all' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
