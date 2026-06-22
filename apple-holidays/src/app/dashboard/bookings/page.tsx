@@ -90,7 +90,7 @@ function BookingsPageInner() {
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
   const [dateFrom, setDateFrom]       = useState('')          // created-at range
   const [dateTo, setDateTo]           = useState('')
-  const [sortBy, setSortBy]           = useState<SortField>((searchParams.get('sortBy') ?? 'arrivalDate') as SortField)
+  const [sortBy, setSortBy]           = useState<SortField>((searchParams.get('sortBy') ?? 'createdAt') as SortField)
   const [sortDir, setSortDir]         = useState<SortDir>((searchParams.get('sortDir') ?? 'desc') as SortDir)
 
   const fetchBookings = useCallback(async () => {

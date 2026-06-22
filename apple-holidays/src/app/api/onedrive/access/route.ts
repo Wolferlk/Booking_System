@@ -9,9 +9,7 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
-    return buildApiError('Forbidden', 403)
-  }
+  if (!session.user.role) return buildApiError('Forbidden', 403)
 
   const { searchParams } = new URL(req.url)
   const driveKey = searchParams.get('driveKey')

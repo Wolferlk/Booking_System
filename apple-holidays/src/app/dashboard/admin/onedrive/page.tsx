@@ -159,7 +159,7 @@ export default function OneDriveMonitorPage() {
   // ── auth guard ──
   useEffect(() => {
     if (authStatus === 'loading') return
-    if (!session || !['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+    if (!session) {
       router.replace('/dashboard')
     }
   }, [session, authStatus, router])

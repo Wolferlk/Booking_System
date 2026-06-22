@@ -19,9 +19,6 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
-    return buildApiError('Forbidden', 403)
-  }
 
   const { pollRunning, lastPollAt, lastPollResult } = getOneDrivePollStatus()
 
@@ -49,9 +46,6 @@ export async function GET() {
 export async function POST() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
-    return buildApiError('Forbidden', 403)
-  }
 
   const { pollRunning } = getOneDrivePollStatus()
   if (pollRunning) {

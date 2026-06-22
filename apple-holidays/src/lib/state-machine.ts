@@ -190,22 +190,24 @@ export function canTransition(
 }
 
 // Booking lifecycle steps for the timeline UI
-export const LIFECYCLE_STEPS: { status: BookingStatus; label: string; step: number }[] = [
-  { status: 'DRAFT',            label: 'Draft',              step: 1 },
-  { status: 'BT_CONFIRMED',     label: 'Confirmed',          step: 2 },
-  { status: 'GT_REVIEW',        label: 'TE Review',          step: 3 },
-  { status: 'GT_VERIFIED',      label: 'Verified',           step: 4 },
-  { status: 'OPERATIONS_READY', label: 'Ops Ready',          step: 5 },
-  { status: 'CLIENT_LIVE',      label: 'Client Live',        step: 6 },
-  { status: 'IN_PROGRESS',      label: 'In Progress',        step: 7 },
-  { status: 'TE_REVIEWED',      label: 'TE Reviewed',        step: 8 },
-  { status: 'DRIVER_ALLOCATED', label: 'Driver Done',        step: 9 },
-  { status: 'QC1_PASS',         label: 'QC1 Pass',           step: 10 },
-  { status: 'TICKETS_ISSUED',   label: 'Tickets',            step: 11 },
-  { status: 'QC2_PASS',         label: 'QC2 Pass',           step: 12 },
-  { status: 'MSG_SENT_CUSTOMER',label: 'Msg Sent',           step: 13 },
-  { status: 'FEEDBACK_DONE',    label: 'Feedback',           step: 14 },
-  { status: 'COMPLETED',        label: 'Completed',          step: 15 },
+// hidden: true steps are tracked for step ordering but not shown in the progress bar
+export const LIFECYCLE_STEPS: { status: BookingStatus; label: string; step: number; hidden?: boolean }[] = [
+  { status: 'DRAFT',                    label: 'Draft',                 step: 1,  hidden: true },
+  { status: 'BT_CONFIRMED',             label: 'Booking Creating',      step: 2 },
+  { status: 'GT_REVIEW',                label: 'TE Reviewing',          step: 3 },
+  { status: 'GT_VERIFIED',              label: 'Verified',              step: 4 },
+  { status: 'AWAITING_PAYMENT_CONFIRM', label: 'P&L',                   step: 5 },
+  { status: 'OPERATIONS_READY',         label: 'Ops Ready',             step: 6,  hidden: true },
+  { status: 'CLIENT_LIVE',              label: 'Client Live',           step: 7,  hidden: true },
+  { status: 'IN_PROGRESS',              label: 'In Progress',           step: 8,  hidden: true },
+  { status: 'TE_REVIEWED',              label: 'TE Reviewed',           step: 9,  hidden: true },
+  { status: 'DRIVER_ALLOCATED',         label: 'Drivers Allocated',     step: 10 },
+  { status: 'QC1_PASS',                 label: 'QC1 Pass',              step: 11 },
+  { status: 'TICKETS_ISSUED',           label: 'Tickets Added',         step: 12 },
+  { status: 'QC2_PASS',                 label: 'QC2 Pass',              step: 13, hidden: true },
+  { status: 'MSG_SENT_CUSTOMER',        label: 'Msg Sent',              step: 14 },
+  { status: 'FEEDBACK_DONE',            label: 'Feedback getting Done', step: 15 },
+  { status: 'COMPLETED',                label: 'Travel Completed',      step: 16 },
 ]
 
 export function getCurrentStep(status: BookingStatus): number {
