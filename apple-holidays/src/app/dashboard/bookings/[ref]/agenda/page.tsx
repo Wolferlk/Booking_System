@@ -97,7 +97,7 @@ interface BookingDetails {
   paxChildren: number
   arrivalDate: string
   departureDate: string
-  passengers: { id: string; name: string; type: string; passport?: string | null; nationality?: string | null; contact?: string | null; isLead?: boolean }[]
+  passengers: { id: string; name: string; type: string; age?: number | null; passport?: string | null; nationality?: string | null; contact?: string | null; isLead?: boolean }[]
   flights: { id: string; flightNo: string; date: string; fromApt: string; depTime?: string | null; toApt: string; arrTime?: string | null; airline?: string | null }[]
   accommodations: { id: string; hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string | null; mealType?: string | null }[]
   emergencyContacts: { id: string; name: string; phone?: string | null; role?: string | null }[]
@@ -642,6 +642,9 @@ export default function AgendaPage() {
                         <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                           <th className="px-4 py-2 text-left font-semibold">Name</th>
                           <th className="px-4 py-2 text-left font-semibold">Type</th>
+                          {booking.passengers.some(p => p.type === 'CHILD' && p.age != null) && (
+                            <th className="px-4 py-2 text-left font-semibold">Age</th>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -651,6 +654,13 @@ export default function AgendaPage() {
                               {p.name}{p.isLead && <span className="ml-1.5 text-[10px] font-bold text-brand-600 bg-brand-100 px-1.5 py-0.5 rounded">LEAD</span>}
                             </td>
                             <td className="px-4 py-2.5 text-slate-500">{p.type ?? 'ADULT'}</td>
+                            {booking.passengers.some(p => p.type === 'CHILD' && p.age != null) && (
+                              <td className="px-4 py-2.5 text-slate-500">
+                                {p.type === 'CHILD' && p.age != null
+                                  ? <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">{p.age} yrs</span>
+                                  : '—'}
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
