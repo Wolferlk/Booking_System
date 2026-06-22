@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe } from 'lucide-react'
@@ -40,6 +40,15 @@ export default function NewBookingPage() {
   const [selectedDriveKey,  setSelectedDriveKey]  = useState<DriveKey | ''>('')
   const [drivePickerOpen,   setDrivePickerOpen]   = useState(false)
   const [sourceMode,        setSourceMode]         = useState<'pc' | 'drive' | null>(null)
+  const [selectedCountry,   setSelectedCountry]   = useState<string>('')
+
+  // Sync country from drive key whenever drive mode selection changes
+  useEffect(() => {
+    if (selectedDriveKey) {
+      const drive = COUNTRY_DRIVES.find(d => d.driveKey === selectedDriveKey)
+      if (drive) setSelectedCountry(drive.country)
+    }
+  }, [selectedDriveKey])
 
   // Form state
   const [form, setForm] = useState({
@@ -151,11 +160,18 @@ export default function NewBookingPage() {
     e.preventDefault()
     setSaving(true)
     try {
+      if (!selectedCountry) {
+        toast.error('Please select a destination country before creating the booking')
+        setSaving(false)
+        return
+      }
+
       const res = await fetch('/api/bookings', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          operationCountry:  selectedCountry,
           paxAdults:         Number(form.paxAdults),
           paxChildren:       Number(form.paxChildren),
           quotedTotal:       Number(form.quotedTotal),
@@ -242,7 +258,33 @@ export default function NewBookingPage() {
 
             {/* PC upload panel */}
             {sourceMode === 'pc' && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                {/* Country selector for PC mode */}
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 mb-1.5">
+                    <Globe className="w-3.5 h-3.5 text-brand-500" /> Destination Country *
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {COUNTRY_DRIVES.map(d => (
+                      <button
+                        key={d.driveKey}
+                        type="button"
+                        onClick={() => setSelectedCountry(d.country)}
+                        className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedCountry === d.country
+                            ? 'border-brand-500 bg-brand-600 text-white shadow-sm'
+                            : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
+                        }`}
+                      >
+                        {d.label}
+                      </button>
+                    ))}
+                  </div>
+                  {!selectedCountry && (
+                    <p className="text-xs text-amber-600 font-medium mt-1.5">Select a country so the booking is scoped correctly.</p>
+                  )}
+                </div>
+
                 {aiLoading ? (
                   <div className="flex items-center gap-2 text-sm text-slate-500">
                     <Loader2 className="w-4 h-4 animate-spin" /> Extracting booking details with AI…
@@ -317,6 +359,30 @@ export default function NewBookingPage() {
           {/* Booking details */}
           <Section title="Booking Details">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="sm:col-span-2 lg:col-span-3">
+                <label className="form-label flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-slate-400" /> Destination Country *
+                </label>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {COUNTRY_DRIVES.map(d => (
+                    <button
+                      key={d.driveKey}
+                      type="button"
+                      onClick={() => setSelectedCountry(d.country)}
+                      className={`rounded-lg border px-4 py-1.5 text-sm font-medium transition-colors ${
+                        selectedCountry === d.country
+                          ? 'border-brand-500 bg-brand-600 text-white shadow-sm'
+                          : 'border-slate-200 bg-white text-slate-700 hover:border-brand-300 hover:bg-brand-50'
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                  {!selectedCountry && (
+                    <span className="text-xs text-amber-600 font-medium self-center ml-1">Required — select a country</span>
+                  )}
+                </div>
+              </div>
               <div>
                 <label className="form-label">Booking Ref *</label>
                 <input className="form-input font-mono" required value={form.bookingRef}

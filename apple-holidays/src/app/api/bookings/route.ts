@@ -161,6 +161,8 @@ export async function POST(req: NextRequest) {
     terms,
     exclusions,
     policyNotes,
+    // Country explicitly selected by user (overrides ref-based detection)
+    operationCountry: bodyCountry,
     // Contact details (extracted by AI or entered manually)
     agentEmail,
     agentPhone,
@@ -185,12 +187,19 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.booking.findUnique({ where: { bookingRef } })
   if (existing) return buildApiError(`Booking ref ${bookingRef} already exists`)
 
-  // Detect country from booking ref prefix (VN/IS/SG/MY)
+  // Country resolution: explicit body value → ref prefix → session country
+  const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA']
+  const validatedBodyCountry = VALID_COUNTRIES.includes(bodyCountry as OperationCountry)
+    ? (bodyCountry as OperationCountry)
+    : null
   const detectedCountry = detectCountryFromRef(bookingRef)
   const sessionCountry = session.user.country as OperationCountry | undefined
-  const operationCountry = detectedCountry ?? (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
+  const operationCountry =
+    validatedBodyCountry ??
+    detectedCountry ??
+    (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
   if (!operationCountry) {
-    return buildApiError('Booking country could not be determined from bookingRef')
+    return buildApiError('Please select a destination country before creating the booking')
   }
   if (sessionCountry && sessionCountry !== 'ALL' && operationCountry !== sessionCountry) {
     return buildApiError('Forbidden — booking country must match your assigned country', 403)
