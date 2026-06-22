@@ -863,3 +863,21 @@ model OneDriveDeltaToken {
 
   @@map("onedrive_delta_tokens")
 }
+
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  callType         String   // booking_extraction | pnl_extraction | pnl_classify | agenda_generation | ticket_details | ai_suggestion | onedrive_pnl_parse | other
+  model            String   // gpt-4o | gpt-4o-mini
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  estimatedCostUsd Float
+  bookingRef       String?
+  source           String?  // email | onedrive | manual | api
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([callType])
+  @@index([bookingRef])
+  @@map("ai_usage_logs")
+}
