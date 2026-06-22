@@ -21,11 +21,12 @@ export default function BookingLifecycle({ status, className }: BookingLifecycle
   }
 
   const currentStep = getCurrentStep(status)
+  const visibleSteps = LIFECYCLE_STEPS.filter(s => !s.hidden)
 
   return (
     <div className={cn('overflow-x-auto', className)}>
       <div className="flex items-center gap-0 min-w-max">
-        {LIFECYCLE_STEPS.map((step, idx) => {
+        {visibleSteps.map((step, idx) => {
           const isCompleted = step.step < currentStep
           const isCurrent = step.step === currentStep
           const isUpcoming = step.step > currentStep
@@ -60,7 +61,7 @@ export default function BookingLifecycle({ status, className }: BookingLifecycle
                   {step.label}
                 </span>
               </div>
-              {idx < LIFECYCLE_STEPS.length - 1 && (
+              {idx < visibleSteps.length - 1 && (
                 <div
                   className={cn(
                     'h-0.5 w-8 mx-1 mb-4 rounded',

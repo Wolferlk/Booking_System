@@ -88,3 +88,32 @@ A leisure day is any day where the itinerary says "at leisure", "free time", "ow
 - meetingTime = null
 - details = describe what the guest can do at leisure (e.g. "Free day to explore the city at leisure. No guided activities scheduled.")
 - mealPlan = only if explicitly included
+
+---
+
+## 8. Details Field — Rich Operational Content (MANDATORY)
+
+The `details` field must be a complete operational briefing — **never a one-liner**. Every item needs 2–4 sentences (50–100 words) covering:
+
+1. **Exact pickup time and spot** — "Meet at hotel lobby at 07:30", "Driver waiting at arrivals hall HAN with name board"
+2. **Vehicle / transport mode** — "Air-conditioned private car", "SIC shared minibus", "Overnight sleeper train seat 12B", "Halong cruise"
+3. **Journey time / distance** — "Approx. 40 min to city centre", "3.5 hour drive to Halong Bay pier"
+4. **Guest instructions** — name board at airport, luggage limit, passport ready, be in lobby 5 min early for SIC, check-in time, what to bring
+5. **Drop-off context** — hotel name, pier name, area, terminal number
+
+### Quick templates:
+
+**Airport arrival:**
+> "Private airport pickup at [meetingTime] (45 min after landing at [airport]). Driver waits at arrivals hall with name board. Air-conditioned private car to [hotel], approx. [X] min. Driver assists with all luggage."
+
+**Airport departure:**
+> "Hotel pickup at [meetingTime] (3 hrs before [depTime] departure). Air-conditioned private car to [airport]. Passengers should have passports and boarding passes ready. Drop-off at [terminal]."
+
+**SIC tour:**
+> "SIC pickup from hotel lobby at [meetingTime] — please be ready 5 min early. Shared air-conditioned minibus. Tour of [activity] with English-speaking guide, approx. [X] hrs. Drop-off at hotel by [end time]."
+
+**Private city transfer:**
+> "Private pickup from [fromPoint] at [meetingTime]. Air-conditioned private vehicle to [toPoint], approx. [X] hrs. Rest stop en route. Driver assists with luggage on arrival."
+
+**Leisure day:**
+> "Free day at leisure in [city]. No transport or guide arranged. Guests may explore [highlights] independently. Hotel concierge available for recommendations and bookings."

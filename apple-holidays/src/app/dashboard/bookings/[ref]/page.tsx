@@ -445,10 +445,17 @@ Wishing you a wonderful trip! ✈️
   async function saveContactEdits() {
     setSavingContact(true)
     try {
+      // WhatsApp must never have a + prefix; fall back to phone if empty
+      const stripPlus = (v: string) => v.replace(/\+/g, '').trim()
+      const payload = {
+        ...contactForm,
+        agentWhatsapp:   stripPlus(contactForm.agentWhatsapp   || contactForm.agentPhone),
+        contactWhatsapp: stripPlus(contactForm.contactWhatsapp || contactForm.contactPhone),
+      }
       const res = await fetch(`/api/bookings/${ref}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(contactForm),
+        body: JSON.stringify(payload),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
@@ -699,7 +706,8 @@ Wishing you a wonderful trip! ✈️
 
                 if (!key) return null
 
-                const needsNote = ['change-request', 'resubmit', 'verify'].includes(key)
+                const needsNote = ['change-request', 'resubmit'].includes(key)
+                const isTeConfirm = key === 'verify'
 
                 return (
                   <Button
@@ -707,9 +715,12 @@ Wishing you a wonderful trip! ✈️
                     variant={t.to === 'CHANGE_REQUESTED' ? 'danger' : 'primary'}
                     size="sm"
                     loading={actionLoading === key}
+                    className={isTeConfirm ? '!bg-emerald-600 !border-emerald-700 hover:!bg-emerald-700 font-bold tracking-wide' : undefined}
                     onClick={() => {
                       if (needsNote) {
                         setPendingAction(key); setNote(''); setChangeModal(true)
+                      } else if (isTeConfirm) {
+                        doTransition('verify')
                       } else if (isAdvanceStep) {
                         doTransition('advance-status', { to: t.to })
                       } else if (isComplete) {
@@ -721,7 +732,7 @@ Wishing you a wonderful trip! ✈️
                       }
                     }}
                   >
-                    {t.label}
+                    {isTeConfirm ? '✓ TE Confirm' : t.label}
                   </Button>
                 )
               })}
@@ -820,6 +831,14 @@ Wishing you a wonderful trip! ✈️
           <div className="mt-6 pt-5 border-t border-slate-100">
             <BookingLifecycle status={status} />
           </div>
+
+          {/* Operation Checklist */}
+          <OperationChecklist
+            status={status}
+            hasPnl={!!(pnl && (booking.pnl as any)?.lineItems?.length > 0)}
+            ticketCount={(booking.tickets as any[])?.length ?? 0}
+            agendaItems={(booking.tourAgenda as any)?.items ?? []}
+          />
         </Card>
 
         {/* TC Confirmation Details — always shown */}
@@ -1217,7 +1236,14 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="+94 77 123 4567"
                           value={contactForm.agentPhone}
-                          onChange={e => setContactForm(f => ({ ...f, agentPhone: e.target.value }))} />
+                          onChange={e => {
+                            const phone = e.target.value
+                            setContactForm(f => ({
+                              ...f,
+                              agentPhone: phone,
+                              agentWhatsapp: f.agentWhatsapp ? f.agentWhatsapp : phone.replace(/\+/g, ''),
+                            }))
+                          }} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -1225,7 +1251,7 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="94771234567 (no +)"
                           value={contactForm.agentWhatsapp}
-                          onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value }))} />
+                          onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value.replace(/\+/g, '') }))} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -1311,7 +1337,14 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="+94 77 123 4567"
                           value={contactForm.contactPhone}
-                          onChange={e => setContactForm(f => ({ ...f, contactPhone: e.target.value }))} />
+                          onChange={e => {
+                            const phone = e.target.value
+                            setContactForm(f => ({
+                              ...f,
+                              contactPhone: phone,
+                              contactWhatsapp: f.contactWhatsapp ? f.contactWhatsapp : phone.replace(/\+/g, ''),
+                            }))
+                          }} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -1319,7 +1352,7 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="94771234567 (no +)"
                           value={contactForm.contactWhatsapp}
-                          onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value }))} />
+                          onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value.replace(/\+/g, '') }))} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -2253,6 +2286,157 @@ Wishing you a wonderful trip! ✈️
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+// ─── Operation Checklist ──────────────────────────────────────────────────────
+
+import { CheckCircle2, XCircle, MinusCircle } from 'lucide-react'
+import { getCurrentStep } from '@/lib/state-machine'
+
+interface OpChecklistProps {
+  status: BookingStatus
+  hasPnl: boolean
+  ticketCount: number
+  agendaItems: { assignment?: { id?: string; driverName?: string | null; driverId?: string | null } | null }[]
+}
+
+const CHECKLIST: {
+  label: string
+  key: string
+  icon: string
+  done: (p: OpChecklistProps) => boolean
+  active: (p: OpChecklistProps) => boolean
+  link?: string
+}[] = [
+  {
+    label:  'Need Review by TE Team',
+    key:    'te-review',
+    icon:   '🧑‍✈️',
+    done:   p => getCurrentStep(p.status) > 3,
+    active: p => p.status === 'GT_REVIEW',
+  },
+  {
+    label:  'Client Verified',
+    key:    'gt-verified',
+    icon:   '✅',
+    done:   p => getCurrentStep(p.status) > 4,
+    active: p => p.status === 'GT_VERIFIED',
+  },
+  {
+    label:  'P&L Added',
+    key:    'pnl',
+    icon:   '📊',
+    done:   p => p.hasPnl,
+    active: p => !p.hasPnl && getCurrentStep(p.status) >= 5,
+  },
+  {
+    label:  'Driver Allocated',
+    key:    'driver',
+    icon:   '🚗',
+    done:   p => getCurrentStep(p.status) >= 10
+                 || p.agendaItems.some(item => item.assignment != null && (item.assignment.driverId != null || item.assignment.driverName != null)),
+    active: p => {
+      const hasDrivers = p.agendaItems.some(item => item.assignment != null && (item.assignment.driverId != null || item.assignment.driverName != null))
+      return !hasDrivers && getCurrentStep(p.status) >= 8 && getCurrentStep(p.status) < 10
+    },
+  },
+  {
+    label:  'QC1 Pass',
+    key:    'qc1',
+    icon:   '🛡️',
+    done:   p => getCurrentStep(p.status) >= 11,
+    active: p => p.status === 'DRIVER_ALLOCATED',
+  },
+  {
+    label:  'Tickets Activated',
+    key:    'tickets',
+    icon:   '🎫',
+    done:   p => getCurrentStep(p.status) >= 12 || p.ticketCount > 0,
+    active: p => p.status === 'QC1_PASS',
+  },
+  {
+    label:  'QC2 Pass',
+    key:    'qc2',
+    icon:   '🔍',
+    done:   p => getCurrentStep(p.status) >= 13,
+    active: p => p.status === 'TICKETS_ISSUED',
+  },
+  {
+    label:  'Message Sent to Customer',
+    key:    'msg',
+    icon:   '💬',
+    done:   p => getCurrentStep(p.status) >= 14,
+    active: p => p.status === 'QC2_PASS',
+  },
+  {
+    label:  'Feedback Done',
+    key:    'feedback',
+    icon:   '⭐',
+    done:   p => getCurrentStep(p.status) >= 15,
+    active: p => p.status === 'MSG_SENT_CUSTOMER',
+  },
+  {
+    label:  'Completed',
+    key:    'completed',
+    icon:   '🏁',
+    done:   p => p.status === 'COMPLETED',
+    active: p => p.status === 'FEEDBACK_DONE',
+  },
+]
+
+function OperationChecklist(props: OpChecklistProps) {
+  const doneCount = CHECKLIST.filter(c => c.done(props)).length
+
+  return (
+    <div className="mt-5 pt-5 border-t border-slate-100">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          Operation Checklist
+        </h4>
+        <span className="text-xs font-semibold text-slate-500">
+          {doneCount} / {CHECKLIST.length} complete
+        </span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full bg-slate-100 rounded-full h-1.5 mb-4 overflow-hidden">
+        <div
+          className="h-full bg-brand-500 rounded-full transition-all duration-500"
+          style={{ width: `${(doneCount / CHECKLIST.length) * 100}%` }}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        {CHECKLIST.map(c => {
+          const done   = c.done(props)
+          const active = !done && c.active(props)
+
+          return (
+            <div
+              key={c.key}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-medium transition-all ${
+                done
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : active
+                    ? 'bg-amber-50 border-amber-300 text-amber-700 ring-1 ring-amber-300 ring-offset-1'
+                    : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}
+            >
+              <span className="text-base leading-none flex-shrink-0">{c.icon}</span>
+              <span className="leading-tight flex-1 min-w-0">{c.label}</span>
+              {done ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+              ) : active ? (
+                <MinusCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 animate-pulse" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

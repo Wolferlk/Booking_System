@@ -9,6 +9,7 @@ import {
   Search, X, CheckCircle2, Phone, AlertTriangle, Users, Plane,
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, CreditCard, Info, Building2,
+  FileDown, MessageCircle, Send, ChevronRight,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -124,11 +125,80 @@ export default function AgendaPage() {
   const [fullDriver,     setFullDriver]     = useState<FullDriver | null>(null)
   const [loadingDriver,  setLoadingDriver]  = useState(false)
 
+  // PDF send modal
+  const [sendModal,       setSendModal]      = useState(false)
+  const [sendMode,        setSendMode]       = useState<'whatsapp' | 'email'>('whatsapp')
+  const [sendDrivers,     setSendDrivers]    = useState(true)
+  const [sendTo,          setSendTo]         = useState('')
+  const [sendMessage,     setSendMessage]    = useState('')
+  const [sendSubject,     setSendSubject]    = useState('')
+  const [sending,         setSending]        = useState(false)
+  const [downloading,     setDownloading]    = useState<'with' | 'without' | null>(null)
+  const [showPdfMenu,     setShowPdfMenu]    = useState(false)
+
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
+  const pdfMenuRef    = useRef<HTMLDivElement>(null)
+
+  // Close PDF dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (pdfMenuRef.current && !pdfMenuRef.current.contains(e.target as Node)) {
+        setShowPdfMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   const canEdit   = ['BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  async function downloadAgendaPdf(withDrivers: boolean) {
+    setDownloading(withDrivers ? 'with' : 'without')
+    try {
+      const res = await fetch(`/api/bookings/${ref}/agenda/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'download', showDrivers: withDrivers }),
+      })
+      if (!res.ok) { toast.error('PDF generation failed'); return }
+      const blob     = await res.blob()
+      const url      = URL.createObjectURL(blob)
+      const a        = document.createElement('a')
+      a.href         = url
+      a.download     = `${ref}-Agenda-${withDrivers ? 'WithDrivers' : 'NoDrivers'}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch { toast.error('Download failed') }
+    finally  { setDownloading(null); setShowPdfMenu(false) }
+  }
+
+  async function sendAgenda() {
+    if (!sendTo.trim()) { toast.error('Enter a recipient'); return }
+    setSending(true)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/agenda/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode:        sendMode,
+          showDrivers: sendDrivers,
+          to:          sendTo.trim(),
+          message:     sendMessage || undefined,
+          subject:     sendSubject || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(`Agenda sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
+      setSendModal(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally { setSending(false) }
+  }
 
   const loadAgenda = useCallback(async () => {
     try {
@@ -328,9 +398,14 @@ export default function AgendaPage() {
       const res  = await fetch(`/api/bookings/${ref}/agenda/describe`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: item.date, location: item.location,
-          fromPoint: item.fromPoint, toPoint: item.toPoint,
-          meetingTime: item.meetingTime, serviceType: item.serviceType,
+          date:            item.date,
+          location:        item.location,
+          fromPoint:       item.fromPoint,
+          toPoint:         item.toPoint,
+          meetingTime:     item.meetingTime,
+          serviceType:     item.serviceType,
+          mealPlan:        item.mealPlan,
+          existingDetails: item.details,
         }),
       })
       const json = await res.json()
@@ -400,7 +475,84 @@ export default function AgendaPage() {
         title={`Movement Chart — ${ref}`}
         subtitle={generating ? 'Generating…' : `${items.length} item${items.length !== 1 ? 's' : ''}`}
         actions={
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            {/* PDF Download — all users */}
+            <div className="relative" ref={pdfMenuRef}>
+              <button
+                onClick={() => setShowPdfMenu(v => !v)}
+                className="btn btn-secondary btn-sm flex items-center gap-1.5"
+              >
+                <FileDown className="w-4 h-4" />
+                Download PDF
+                <ChevronRight className="w-3 h-3 rotate-90" />
+              </button>
+              {showPdfMenu && (
+                <div className="absolute right-0 top-10 z-30 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">Choose PDF Type</p>
+                  <button
+                    onClick={() => downloadAgendaPdf(true)}
+                    disabled={downloading === 'with'}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
+                  >
+                    {downloading === 'with' ? <Loader2 className="w-4 h-4 animate-spin text-brand-500" /> : <Car className="w-4 h-4 text-sky-500" />}
+                    <span className="flex-1 text-left">With Driver Allocation</span>
+                  </button>
+                  <button
+                    onClick={() => downloadAgendaPdf(false)}
+                    disabled={downloading === 'without'}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors border-t border-slate-100"
+                  >
+                    {downloading === 'without' ? <Loader2 className="w-4 h-4 animate-spin text-brand-500" /> : <FileDown className="w-4 h-4 text-slate-400" />}
+                    <span className="flex-1 text-left">Without Driver Info</span>
+                  </button>
+                  <div className="border-t border-slate-100">
+                    <button
+                      onClick={() => { setShowPdfMenu(false); window.open(`/print/agenda/${ref}?drivers=true`, '_blank') }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-600 transition-colors"
+                    >
+                      <Eye className="w-4 h-4 text-slate-400" /> Print Preview (with drivers)
+                    </button>
+                    <button
+                      onClick={() => { setShowPdfMenu(false); window.open(`/print/agenda/${ref}?drivers=false`, '_blank') }}
+                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-600 transition-colors border-t border-slate-100"
+                    >
+                      <Eye className="w-4 h-4 text-slate-400" /> Print Preview (no drivers)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* WhatsApp — all users */}
+            <button
+              onClick={() => {
+                setSendMode('whatsapp')
+                setSendDrivers(true)
+                setSendTo((booking?.passengers.find(p => p.isLead) as { contact?: string | null } | undefined)?.contact ?? '')
+                setSendMessage(`📋 Movement Chart for your booking ${ref}. Please find the agenda PDF attached.`)
+                setSendSubject('')
+                setSendModal(true)
+              }}
+              className="btn btn-sm bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5"
+            >
+              <MessageCircle className="w-4 h-4" /> WhatsApp
+            </button>
+
+            {/* Email — all users */}
+            <button
+              onClick={() => {
+                setSendMode('email')
+                setSendDrivers(false)
+                setSendTo('')
+                setSendMessage('')
+                setSendSubject(`Movement Chart — ${ref}`)
+                setSendModal(true)
+              }}
+              className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
+            >
+              <Send className="w-4 h-4" /> Email
+            </button>
+
             {canEdit && (
               <>
                 <div className="relative">
@@ -463,9 +615,6 @@ export default function AgendaPage() {
                         <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
                           <th className="px-4 py-2 text-left font-semibold">Name</th>
                           <th className="px-4 py-2 text-left font-semibold">Type</th>
-                          <th className="px-4 py-2 text-left font-semibold">Passport</th>
-                          <th className="px-4 py-2 text-left font-semibold">Nationality</th>
-                          <th className="px-4 py-2 text-left font-semibold">Contact</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -475,9 +624,6 @@ export default function AgendaPage() {
                               {p.name}{p.isLead && <span className="ml-1.5 text-[10px] font-bold text-brand-600 bg-brand-100 px-1.5 py-0.5 rounded">LEAD</span>}
                             </td>
                             <td className="px-4 py-2.5 text-slate-500">{p.type ?? 'ADULT'}</td>
-                            <td className="px-4 py-2.5 font-mono text-xs text-slate-600">{p.passport ?? '—'}</td>
-                            <td className="px-4 py-2.5 text-slate-500">{p.nationality ?? '—'}</td>
-                            <td className="px-4 py-2.5 text-slate-500">{p.contact ?? '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -510,7 +656,6 @@ export default function AgendaPage() {
                           <th className="px-4 py-2 text-left font-semibold">Dep.</th>
                           <th className="px-4 py-2 text-left font-semibold">To</th>
                           <th className="px-4 py-2 text-left font-semibold">Arr.</th>
-                          <th className="px-4 py-2 text-left font-semibold">Airline</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -522,7 +667,6 @@ export default function AgendaPage() {
                             <td className="px-4 py-2.5 text-slate-600">{f.depTime ?? '—'}</td>
                             <td className="px-4 py-2.5 font-semibold text-slate-900">{f.toApt}</td>
                             <td className="px-4 py-2.5 text-slate-600">{f.arrTime ?? '—'}</td>
-                            <td className="px-4 py-2.5 text-slate-500">{f.airline ?? '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1073,6 +1217,100 @@ export default function AgendaPage() {
           </Button>
         )}
       </div>
+
+      {/* ── SEND AGENDA MODAL ── */}
+      <Modal
+        open={sendModal}
+        onClose={() => setSendModal(false)}
+        title={`Send Movement Chart — ${ref}`}
+      >
+        <div className="space-y-4">
+          {/* Mode toggle */}
+          <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
+            <button
+              onClick={() => setSendMode('whatsapp')}
+              className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-2 rounded-md font-medium transition-colors ${sendMode === 'whatsapp' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <MessageCircle className="w-4 h-4 text-green-500" /> WhatsApp
+            </button>
+            <button
+              onClick={() => setSendMode('email')}
+              className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-2 rounded-md font-medium transition-colors ${sendMode === 'email' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              <Mail className="w-4 h-4 text-blue-500" /> Email
+            </button>
+          </div>
+
+          {/* Driver toggle */}
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Include Driver Allocation</p>
+              <p className="text-xs text-slate-400 mt-0.5">Show driver names, phones, and vehicle info in the PDF</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSendDrivers(true)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${sendDrivers ? 'bg-sky-500 text-white border-sky-600' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+              >
+                <Car className="w-3 h-3 inline mr-1" />With Drivers
+              </button>
+              <button
+                onClick={() => setSendDrivers(false)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${!sendDrivers ? 'bg-slate-700 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+              >
+                Without Drivers
+              </button>
+            </div>
+          </div>
+
+          {/* To field */}
+          <div>
+            <label className="form-label text-xs">
+              {sendMode === 'whatsapp' ? 'WhatsApp Number (no +)' : 'Email Address'}
+            </label>
+            <input
+              className="form-input"
+              type={sendMode === 'email' ? 'email' : 'tel'}
+              placeholder={sendMode === 'whatsapp' ? '94771234567' : 'recipient@example.com'}
+              value={sendTo}
+              onChange={e => setSendTo(sendMode === 'whatsapp' ? e.target.value.replace(/\+/g, '') : e.target.value)}
+            />
+          </div>
+
+          {/* Subject (email only) */}
+          {sendMode === 'email' && (
+            <div>
+              <label className="form-label text-xs">Subject</label>
+              <input
+                className="form-input"
+                placeholder={`Movement Chart — ${ref}`}
+                value={sendSubject}
+                onChange={e => setSendSubject(e.target.value)}
+              />
+            </div>
+          )}
+
+          {/* Message */}
+          <div>
+            <label className="form-label text-xs">Message (optional)</label>
+            <textarea
+              className="form-textarea resize-none text-sm"
+              rows={3}
+              value={sendMessage}
+              onChange={e => setSendMessage(e.target.value)}
+              placeholder="Add a custom message to include with the agenda PDF…"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <Button loading={sending} onClick={sendAgenda} className="flex-1">
+              <Send className="w-4 h-4" />
+              {sending ? 'Sending…' : `Send via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}`}
+            </Button>
+            <Button variant="ghost" onClick={() => setSendModal(false)}>Cancel</Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* ── DRIVER VIEW MODAL ── */}
       <Modal

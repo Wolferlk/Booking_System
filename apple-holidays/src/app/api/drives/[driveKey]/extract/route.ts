@@ -23,7 +23,7 @@ export async function POST(
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
 
-  const allowed = ['GT_USER', 'TE_USER', 'BT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+  const allowed = ['GT_USER', 'TE_USER', 'GT_TE_USER', 'BT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
   if (!allowed.includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const { driveKey } = await params
