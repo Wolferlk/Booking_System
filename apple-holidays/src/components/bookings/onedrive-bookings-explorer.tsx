@@ -12,6 +12,7 @@ import { Card, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -712,6 +713,19 @@ function SummaryCard({
 export default function OneDriveBookingsExplorer() {
   const router = useRouter()
 
+  const { countryFilter } = useCountryFilter()
+
+  // Map country filter values → which drive keys to show
+  const visibleDrives = useMemo<Set<string>>(() => {
+    if (countryFilter === 'ALL' || !countryFilter)          return new Set(['VN','SL','SG','MY'])
+    if (countryFilter === 'VIETNAM')                        return new Set(['VN'])
+    if (countryFilter === 'SRILANKA')                       return new Set(['SL'])
+    if (countryFilter === 'SINGAPORE_MALAYSIA')             return new Set(['SG','MY'])
+    if (countryFilter === 'SINGAPORE')                      return new Set(['SG'])
+    if (countryFilter === 'MALAYSIA')                       return new Set(['MY'])
+    return new Set(['VN','SL','SG','MY'])
+  }, [countryFilter])
+
   const [events,     setEvents]     = useState<DriveEvent[]>([])
   const [loading,    setLoading]    = useState(true)
   const [processing, setProcessing] = useState<Set<string>>(new Set<string>())
@@ -751,9 +765,10 @@ export default function OneDriveBookingsExplorer() {
   const tree = useMemo(() => buildTree(events), [events])
 
   const filteredTree = useMemo<DriveNode[]>(() => {
-    if (!search.trim()) return tree
+    const byDrive = tree.filter(d => visibleDrives.has(d.key))
+    if (!search.trim()) return byDrive
     const q = search.toLowerCase()
-    return tree
+    return byDrive
       .map(drive => ({
         ...drive,
         years: drive.years
@@ -865,10 +880,11 @@ export default function OneDriveBookingsExplorer() {
     setOpenMonths(new Set<string>())
   }
 
-  const totalBookings  = tree.reduce((s, d) => s + d.totalBookings,  0)
-  const totalProcessed = tree.reduce((s, d) => s + d.processedCount, 0)
-  const totalPending   = tree.reduce((s, d) => s + d.pendingCount,   0)
-  const totalErrors    = tree.reduce((s, d) => s + d.errorCount,     0)
+  const visibleTree    = tree.filter(d => visibleDrives.has(d.key))
+  const totalBookings  = visibleTree.reduce((s, d) => s + d.totalBookings,  0)
+  const totalProcessed = visibleTree.reduce((s, d) => s + d.processedCount, 0)
+  const totalPending   = visibleTree.reduce((s, d) => s + d.pendingCount,   0)
+  const totalErrors    = visibleTree.reduce((s, d) => s + d.errorCount,     0)
 
   return (
     <div className="space-y-5">

@@ -17,11 +17,17 @@ export async function GET(req: NextRequest) {
   const userCountry = (session.user as any).country as string | undefined
   const countryOverride = req.nextUrl.searchParams.get('country')
 
-  const countryWhere: Record<string, unknown> = {}
+  function buildCountryWhere(country: string): Record<string, unknown> {
+    if (country === 'SINGAPORE') return { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'SG' } }
+    if (country === 'MALAYSIA')  return { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'MY' } }
+    return { operationCountry: country }
+  }
+
+  let countryWhere: Record<string, unknown> = {}
   if (!canSeeAllCountries(role, userCountry as any)) {
-    if (userCountry && userCountry !== 'ALL') countryWhere.operationCountry = userCountry
+    if (userCountry && userCountry !== 'ALL') countryWhere = buildCountryWhere(userCountry)
   } else if (countryOverride && countryOverride !== 'ALL') {
-    countryWhere.operationCountry = countryOverride
+    countryWhere = buildCountryWhere(countryOverride)
   }
 
   // All operational bookings with upcoming / current trips

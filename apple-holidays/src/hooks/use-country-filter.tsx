@@ -5,7 +5,8 @@ import { useSession } from 'next-auth/react'
 import type { OperationCountry } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
-type CountryFilter = OperationCountry | 'ALL'
+// SINGAPORE and MALAYSIA are sub-filters of SINGAPORE_MALAYSIA — filtered by bookingRef prefix
+export type CountryFilter = OperationCountry | 'ALL' | 'SINGAPORE' | 'MALAYSIA'
 
 interface CountryFilterContextValue {
   countryFilter: CountryFilter

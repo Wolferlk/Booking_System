@@ -39,13 +39,24 @@ export async function GET(req: NextRequest) {
   const countryOverride = req.nextUrl.searchParams.get('country')
 
   // Build booking-level country filter to pass through the agenda → booking relation
+  // SINGAPORE and MALAYSIA are sub-filters of SINGAPORE_MALAYSIA, distinguished by bookingRef prefix
+  function buildCountryWhere(country: string): Record<string, unknown> {
+    if (country === 'SINGAPORE') {
+      return { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'SG' } }
+    }
+    if (country === 'MALAYSIA') {
+      return { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'MY' } }
+    }
+    return { operationCountry: country }
+  }
+
   let bookingCountryWhere: Record<string, unknown> | undefined
   if (!canSeeAllCountries(role, userCountry as any)) {
     if (userCountry && userCountry !== 'ALL') {
-      bookingCountryWhere = { operationCountry: userCountry }
+      bookingCountryWhere = buildCountryWhere(userCountry)
     }
   } else if (countryOverride && countryOverride !== 'ALL') {
-    bookingCountryWhere = { operationCountry: countryOverride }
+    bookingCountryWhere = buildCountryWhere(countryOverride)
   }
 
   const { searchParams } = req.nextUrl

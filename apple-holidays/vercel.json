@@ -11,6 +11,14 @@
     {
       "path": "/api/cron/onedrive-poll",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/driver-notify",
+      "schedule": "0 23 * * *"
+    },
+    {
+      "path": "/api/cron/driver-notify",
+      "schedule": "0 * * * *"
     }
   ]
 }

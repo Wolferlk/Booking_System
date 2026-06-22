@@ -9,6 +9,7 @@ import {
   CreditCard, Wallet, ChevronDown, ChevronRight,
   CheckCircle2, Edit2, Trash2, DollarSign,
   Building2, ArrowUpCircle, ArrowDownCircle, Camera,
+  MessageCircle, Send, Clock,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -96,6 +97,9 @@ export default function DriversPage() {
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [detailLoading, setDetailLoading] = useState<string | null>(null)
+  const [driverMessages, setDriverMessages] = useState<Record<string, { id: string; body: string; bookingRef: string; createdAt: string; status: string }[]>>({})
+  const [sendingMsg, setSendingMsg] = useState<string | null>(null)
+  const [msgText, setMsgText] = useState<Record<string, string>>({})
   const [editDriver, setEditDriver] = useState<Driver | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [showPayModal, setShowPayModal] = useState<string | null>(null)
@@ -138,13 +142,41 @@ export default function DriversPage() {
     if (expandedId === id) { setExpandedId(null); return }
     setDetailLoading(id)
     try {
-      const res = await fetch(`/api/ground/drivers/${id}`)
-      const data = await res.json()
-      if (data.success) {
-        setDrivers(prev => prev.map(d => d.id === id ? { ...d, ...data.data } : d))
+      const [detailRes, waRes] = await Promise.all([
+        fetch(`/api/ground/drivers/${id}`),
+        fetch(`/api/ground/drivers/${id}/whatsapp`),
+      ])
+      const detail = await detailRes.json()
+      const wa     = await waRes.json()
+      if (detail.success) {
+        setDrivers(prev => prev.map(d => d.id === id ? { ...d, ...detail.data } : d))
         setExpandedId(id)
       }
+      if (wa.success) setDriverMessages(prev => ({ ...prev, [id]: wa.data ?? [] }))
     } finally { setDetailLoading(null) }
+  }
+
+  async function sendDriverMessage(driver: Driver) {
+    const text = msgText[driver.id]?.trim()
+    if (!text) return
+    setSendingMsg(driver.id)
+    try {
+      const res  = await fetch(`/api/ground/drivers/${driver.id}/whatsapp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Send failed')
+      toast.success('Message sent to driver')
+      setMsgText(prev => ({ ...prev, [driver.id]: '' }))
+      setDriverMessages(prev => ({
+        ...prev,
+        [driver.id]: [json.data, ...(prev[driver.id] ?? [])],
+      }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send message')
+    } finally { setSendingMsg(null) }
   }
 
   async function uploadPhoto(file: File, field: 'driver' | 'outside' | 'inside') {
@@ -469,7 +501,7 @@ export default function DriversPage() {
 
                   {/* Expanded detail panel */}
                   {isExpanded && driver.driverPayments !== undefined && (
-                    <div className="border-t border-slate-100 bg-slate-50/50 p-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="border-t border-slate-100 bg-slate-50/50 p-5 grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div>
                         <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
                           <Building2 className="w-4 h-4 text-brand-500" />
@@ -530,6 +562,57 @@ export default function DriversPage() {
                           </div>
                         )}
                       </div>
+                      {/* WhatsApp Messages */}
+                      <div>
+                        <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                          <MessageCircle className="w-4 h-4 text-emerald-500" />
+                          WhatsApp Messages
+                        </h4>
+
+                        {/* Send new message */}
+                        <div className="flex gap-2 mb-3">
+                          <input
+                            type="text"
+                            placeholder="Type a message to driver…"
+                            value={msgText[driver.id] ?? ''}
+                            onChange={e => setMsgText(prev => ({ ...prev, [driver.id]: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendDriverMessage(driver) } }}
+                            className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          />
+                          <button
+                            onClick={() => sendDriverMessage(driver)}
+                            disabled={sendingMsg === driver.id || !msgText[driver.id]?.trim()}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-40 transition-colors"
+                          >
+                            {sendingMsg === driver.id
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <Send className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+
+                        {/* Message history */}
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                          {(driverMessages[driver.id] ?? []).length === 0 ? (
+                            <p className="text-xs text-slate-400 py-2">No messages sent yet. Messages are auto-sent when a driver is assigned to a movement.</p>
+                          ) : (
+                            (driverMessages[driver.id] ?? []).map(m => (
+                              <div key={m.id} className="bg-emerald-50 border border-emerald-100 rounded-lg p-2.5">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-[10px] font-mono text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
+                                    {m.bookingRef !== 'MANUAL' ? m.bookingRef : 'Manual'}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 ml-auto flex items-center gap-1">
+                                    <Clock className="w-2.5 h-2.5" />
+                                    {new Date(m.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed line-clamp-3">{m.body}</p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
                     </div>
                   )}
                 </Card>

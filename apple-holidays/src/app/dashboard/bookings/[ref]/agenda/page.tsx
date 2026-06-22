@@ -43,7 +43,15 @@ interface AgendaItem {
     driverPhone?: string
     vehicleType?: string
     vehiclePlate?: string
+    driverRate?: number | null
+    rateCurrency?: string | null
   } | null
+}
+
+interface PnlRateSuggestion {
+  activity: string
+  mmtRate: number
+  category: string
 }
 
 interface Driver {
@@ -135,6 +143,10 @@ export default function AgendaPage() {
   const [sending,         setSending]        = useState(false)
   const [downloading,     setDownloading]    = useState<'with' | 'without' | null>(null)
   const [showPdfMenu,     setShowPdfMenu]    = useState(false)
+  // Rate input for driver assignment
+  const [rateInput,         setRateInput]        = useState('')
+  const [rateCurrencyInput, setRateCurrencyInput] = useState('USD')
+  const [pnlRates,          setPnlRates]         = useState<PnlRateSuggestion[]>([])
 
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
@@ -370,8 +382,21 @@ export default function AgendaPage() {
       vehicleType: existing?.vehicleType ?? '',
       vehiclePlate: existing?.vehiclePlate ?? '',
     })
+    setRateInput(existing?.driverRate != null ? String(existing.driverRate) : '')
+    setRateCurrencyInput(existing?.rateCurrency ?? 'USD')
     loadDriversForDate(items[idx]?.date ?? '')
     loadVendors()
+    // Load PNL rates from booking data already fetched
+    if (booking) {
+      const pnl = (booking as any).pnl
+      if (pnl?.lineItems?.length) {
+        const suggestions: PnlRateSuggestion[] = pnl.lineItems
+          .filter((li: any) => li.category === 'TRANSPORT' && Number(li.mmtRate) > 0)
+          .map((li: any) => ({ activity: li.activity, mmtRate: Number(li.mmtRate), category: li.category }))
+          .slice(0, 6)
+        setPnlRates(suggestions)
+      }
+    }
   }
 
   function applyVendorAssignment(idx: number) {
@@ -387,6 +412,8 @@ export default function AgendaPage() {
         driverPhone: vendorDriverForm.driverPhone || undefined,
         vehicleType: vendorDriverForm.vehicleType || undefined,
         vehiclePlate: vendorDriverForm.vehiclePlate || undefined,
+        driverRate:   rateInput ? Number(rateInput) : null,
+        rateCurrency: rateCurrencyInput || 'USD',
       },
     } : x))
   }
@@ -877,6 +904,11 @@ export default function AgendaPage() {
                                 {item.assignment.vehiclePlate && (
                                   <span className="font-mono text-slate-600">{item.assignment.vehicleType} {item.assignment.vehiclePlate}</span>
                                 )}
+                                {item.assignment.driverRate != null && (
+                                  <span className="ml-1 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                    {item.assignment.rateCurrency ?? 'USD'} {Number(item.assignment.driverRate).toFixed(0)}
+                                  </span>
+                                )}
                               </div>
                             ) : (
                               <button
@@ -892,6 +924,11 @@ export default function AgendaPage() {
                                 )}
                                 {item.assignment.vehiclePlate && (
                                   <span className="font-mono text-slate-600">{item.assignment.vehicleType} {item.assignment.vehiclePlate}</span>
+                                )}
+                                {item.assignment.driverRate != null && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                    {item.assignment.rateCurrency ?? 'USD'} {Number(item.assignment.driverRate).toFixed(0)}
+                                  </span>
                                 )}
                                 <Eye className="w-3 h-3 text-blue-400" />
                               </button>
@@ -968,6 +1005,11 @@ export default function AgendaPage() {
                               {item.assignment.vehiclePlate && (
                                 <span className="font-mono text-slate-600">{item.assignment.vehicleType} {item.assignment.vehiclePlate}</span>
                               )}
+                              {item.assignment.driverRate != null && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                  {item.assignment.rateCurrency ?? 'USD'} {Number(item.assignment.driverRate).toFixed(0)}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <button
@@ -983,6 +1025,11 @@ export default function AgendaPage() {
                               )}
                               {item.assignment.vehiclePlate && (
                                 <span className="font-mono text-slate-600">{item.assignment.vehicleType} {item.assignment.vehiclePlate}</span>
+                              )}
+                              {item.assignment.driverRate != null && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                  {item.assignment.rateCurrency ?? 'USD'} {Number(item.assignment.driverRate).toFixed(0)}
+                                </span>
                               )}
                               <Eye className="w-3 h-3 text-blue-400" />
                             </button>
@@ -1036,6 +1083,29 @@ export default function AgendaPage() {
                         </button>
                       </div>
 
+                      {/* ── Rate input ── */}
+                      <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                        <p className="text-[11px] font-semibold text-emerald-700 mb-2">💰 Driver Rate (MMT Cost)</p>
+                        {pnlRates.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-2">
+                            {pnlRates.map((r, ri) => (
+                              <button key={ri} onClick={() => setRateInput(String(r.mmtRate))}
+                                className="text-[10px] px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-700 font-medium transition-colors">
+                                {r.activity.length > 22 ? r.activity.slice(0, 22) + '…' : r.activity} · {r.mmtRate}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <select value={rateCurrencyInput} onChange={e => setRateCurrencyInput(e.target.value)}
+                            className="form-select text-xs py-1 w-20">
+                            {['USD','VND','SGD','MYR','LKR','AUD','GBP'].map(c => <option key={c}>{c}</option>)}
+                          </select>
+                          <input type="number" value={rateInput} onChange={e => setRateInput(e.target.value)}
+                            placeholder="0.00" className="form-input text-sm flex-1 py-1" step="0.01" min="0" />
+                        </div>
+                      </div>
+
                       {assignMode === 'driver' ? (
                         <>
                           <div className="relative mb-3">
@@ -1066,6 +1136,8 @@ export default function AgendaPage() {
                                             driverId: d.id, vendorId: null, vendorName: null,
                                             driverName: d.name, driverPhone: d.phone,
                                             vehicleType: d.vehicle?.type ?? '', vehiclePlate: d.vehicle?.plateNo ?? '',
+                                            driverRate: rateInput ? Number(rateInput) : null,
+                                            rateCurrency: rateCurrencyInput || 'USD',
                                           },
                                         } : x))}
                                         className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
@@ -1182,6 +1254,8 @@ export default function AgendaPage() {
                                 driverPhone: vendorDriverForm.driverPhone || undefined,
                                 vehicleType: vendorDriverForm.vehicleType || undefined,
                                 vehiclePlate: vendorDriverForm.vehiclePlate || undefined,
+                                driverRate:   rateInput ? Number(rateInput) : null,
+                                rateCurrency: rateCurrencyInput || 'USD',
                               }
                               saveAssignment(item.id, i, vendorAssignment)
                             } else {
@@ -1194,6 +1268,8 @@ export default function AgendaPage() {
                             setItems(is => is.map((x, j) => j === i ? { ...x, assignment: null } : x))
                             setSelectedVendorId('')
                             setVendorDriverForm({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
+                            setRateInput('')
+                            setRateCurrencyInput('USD')
                           }}>
                             Clear
                           </Button>

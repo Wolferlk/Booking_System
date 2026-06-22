@@ -12,15 +12,16 @@ import {
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
-import { useCountryFilter } from '@/hooks/use-country-filter'
+import { useCountryFilter, type CountryFilter } from '@/hooks/use-country-filter'
 import type { UserRole } from '@prisma/client'
-import type { OperationCountry } from '@/lib/country-detection'
 
-const COUNTRY_PILLS: { value: OperationCountry | 'ALL'; flag: string; short: string }[] = [
+const COUNTRY_PILLS: { value: CountryFilter; flag: string; short: string }[] = [
   { value: 'ALL',                flag: '🌍', short: 'All' },
   { value: 'VIETNAM',            flag: '🇻🇳', short: 'VN' },
   { value: 'SRILANKA',           flag: '🇱🇰', short: 'LK' },
-  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', short: 'SG/MY' },
+  { value: 'SINGAPORE',          flag: '🇸🇬', short: 'SG' },
+  { value: 'MALAYSIA',           flag: '🇲🇾', short: 'MY' },
+  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', short: 'SG & MY' },
 ]
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -204,13 +205,15 @@ export default function Sidebar() {
         )}
         {/* Locked country — all non-Ultra users */}
         {!canFilter && role && role !== 'CLIENT' && (() => {
-          const COUNTRY_META = {
+          const COUNTRY_META: Record<string, { name: string; code: string; flag: string; color: string }> = {
             VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    flag: '🇻🇳',     color: 'border-red-500/25 bg-red-500/8' },
             SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    flag: '🇱🇰',     color: 'border-yellow-500/25 bg-yellow-500/8' },
             SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', flag: '🇸🇬🇲🇾', color: 'border-blue-500/25 bg-blue-500/8' },
+            SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG',    flag: '🇸🇬',     color: 'border-blue-500/25 bg-blue-500/8' },
+            MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    flag: '🇲🇾',     color: 'border-emerald-500/25 bg-emerald-500/8' },
           }
           const meta = countryFilter && countryFilter !== 'ALL'
-            ? COUNTRY_META[countryFilter as 'VIETNAM' | 'SRILANKA' | 'SINGAPORE_MALAYSIA']
+            ? COUNTRY_META[countryFilter]
             : null
           return (
             <div className="mt-3">

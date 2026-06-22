@@ -426,6 +426,9 @@ model Assignment {
   vehicleType   String?
   vehiclePlate  String?
   notes         String?        @db.Text
+  driverRate    Decimal?       @db.Decimal(10,2)  // MMT cost rate for this movement
+  rateCurrency  String?        @default("USD")
+  waSentAt      DateTime?      // when the driver WhatsApp was last sent (for daily cron dedup)
   assignedAt    DateTime       @default(now())
 
   @@map("assignments")
