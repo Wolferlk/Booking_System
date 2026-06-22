@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { extractBookingFromText, classifyPNLCategories } from '@/lib/openai'
+import { extractBookingFromText, classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -56,10 +56,9 @@ export async function POST(req: NextRequest) {
   let parsedData: Record<string, unknown> = {}
 
   if (type === 'pnl' && (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) && extractedText.trim()) {
-    // Step 1: Parse numerical data directly from xlsx (fast, accurate)
+    // Excel: parse numbers directly, then AI-classify categories
     const result = parsePNLXlsx(buffer)
 
-    // Step 2: Use OpenAI to intelligently classify each activity into the correct category
     if (result.lineItems.length > 0 && process.env.OPENAI_API_KEY) {
       try {
         const activities = result.lineItems.map(l => l.activity)
@@ -69,12 +68,39 @@ export async function POST(req: NextRequest) {
           category: aiCategories[i] ?? item.category,
         }))
       } catch (err) {
-        // Fall back to keyword-based categories if AI fails — already set by parsePNLXlsx
         console.error('OpenAI category classification failed, using keyword fallback:', err)
       }
     }
 
     parsedData = result as unknown as Record<string, unknown>
+
+  } else if (type === 'pnl' && (fileName.endsWith('.pdf') || fileName.endsWith('.docx') || fileName.endsWith('.doc') || fileName.endsWith('.csv') || fileName.endsWith('.txt')) && extractedText.trim()) {
+    // PDF / DOCX / CSV: AI full extraction
+    if (!process.env.OPENAI_API_KEY) {
+      return buildApiError('OpenAI API key not configured — cannot extract PNL from this file type')
+    }
+    const ai = await extractPNLFromText(extractedText)
+    const rawLines = Array.isArray(ai.lineItems) ? (ai.lineItems as Record<string, unknown>[]) : []
+    const lineItems = rawLines
+      .map(l => ({
+        activity:   String(l.activity   ?? ''),
+        category:   String(l.category   ?? 'OTHER'),
+        mmtRate:    Number(l.mmtRate    ?? 0),
+        sicRate:    Number(l.sicRate    ?? 0),
+        pvtRatePP:  Number(l.pvtRatePP  ?? 0),
+        adEntrance: Number(l.adEntrance ?? 0),
+        chEntrance: Number(l.chEntrance ?? 0),
+        otherRate:  Number(l.otherRate  ?? 0),
+      }))
+      .filter(l => l.activity && (l.mmtRate || l.sicRate || l.pvtRatePP || l.adEntrance || l.otherRate))
+
+    parsedData = {
+      bookingRef:  ai.bookingRef ?? null,
+      paxAdults:   typeof ai.paxAdults   === 'number' ? ai.paxAdults   : 0,
+      paxChildren: typeof ai.paxChildren === 'number' ? ai.paxChildren : 0,
+      lineItems,
+    }
+
   } else if (type === 'booking') {
     parsedData = await extractBookingFromText(extractedText)
   } else {
