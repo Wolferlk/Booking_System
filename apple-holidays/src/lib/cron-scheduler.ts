@@ -204,12 +204,20 @@ async function jobOneDrivePoll() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Master switch — change to true to re-enable all cron jobs ────────────────
+const CRON_ENABLED = false
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Scheduler entry point — called once from instrumentation.ts on server boot
 // ─────────────────────────────────────────────────────────────────────────────
 
 let started = false
 
 export function startCronJobs() {
+  if (!CRON_ENABLED) {
+    console.log('[Scheduler] Hard-disabled — set CRON_ENABLED = true to re-enable')
+    return
+  }
   if (started) return
   started = true
 

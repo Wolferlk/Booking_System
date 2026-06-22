@@ -1,4 +1,11 @@
+// ── Master switch — change to true to re-enable all background automation ─────
+const BACKGROUND_AUTOMATION_ENABLED = false
+
 export async function register() {
+  if (!BACKGROUND_AUTOMATION_ENABLED) {
+    console.log('[Instrumentation] Background automation is OFF — set BACKGROUND_AUTOMATION_ENABLED = true to re-enable')
+    return
+  }
   // Only run on the Node.js server side (not Edge or client)
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     const { autoSubscribe } = await import('@/lib/mail-processor')
