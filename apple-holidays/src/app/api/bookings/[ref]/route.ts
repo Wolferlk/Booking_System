@@ -281,7 +281,7 @@ export async function DELETE(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (role !== 'SUPER_ADMIN') return buildApiError('Only Super Admin can delete bookings', 403)
+  if (role !== 'SUPER_ADMIN' && role !== 'ULTRA_SUPER_ADMIN') return buildApiError('Only Super Admin can delete bookings', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)

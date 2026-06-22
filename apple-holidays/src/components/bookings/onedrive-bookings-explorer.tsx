@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronRight, HardDrive, RefreshCw, Search,
   Loader2, AlertCircle, FileText, TrendingUp, Zap, Eye,
   CheckCircle, Clock, ExternalLink, FolderOpen, Folder,
-  X, RotateCcw, BookOpen, CalendarDays,
+  X, RotateCcw, BookOpen, CalendarDays, Trash2,
 } from 'lucide-react'
 import { Card, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
@@ -297,13 +297,14 @@ function StatusPill({ status }: { status: BookingNode['status'] }) {
 // ── Booking row ────────────────────────────────────────────────────────────────
 
 function BookingRow({
-  booking, processing, onProcess, onView, onRecreate,
+  booking, processing, onProcess, onView, onRecreate, onDelete,
 }: {
   booking: BookingNode
   processing: boolean
   onProcess: (ref: string) => void
   onView: (ref: string) => void
   onRecreate: (ref: string) => void
+  onDelete: (ref: string, deleteBooking: boolean) => void
 }) {
   const borderColor = {
     processed: 'border-l-emerald-400',
