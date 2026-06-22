@@ -727,7 +727,7 @@ export default function MailInboxPage() {
         }
       />
 
-      <div className="p-6 max-w-5xl space-y-4">
+      <div className="p-6  space-y-4">
 
         {/* ── View switcher ─────────────────────────────────────────────── */}
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">

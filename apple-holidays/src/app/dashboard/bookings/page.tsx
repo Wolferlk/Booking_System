@@ -346,7 +346,7 @@ function BookingsPageInner() {
                         {/* Country */}
                         <td>
                           {b.operationCountry && COUNTRY_BADGE[b.operationCountry] ? (
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${COUNTRY_BADGE[b.operationCountry].color}`}>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-none text-[11px] font-medium border ${COUNTRY_BADGE[b.operationCountry].color}`}>
                               {COUNTRY_BADGE[b.operationCountry].flag} {COUNTRY_BADGE[b.operationCountry].label}
                             </span>
                           ) : (
@@ -390,7 +390,7 @@ function BookingsPageInner() {
                         </td>
 
                         {/* Status */}
-                        <td><StatusBadge status={b.status} /></td>
+                        <td><StatusBadge className="rounded-none" status={b.status} /></td>
 
                         {/* Created */}
                         <td>
