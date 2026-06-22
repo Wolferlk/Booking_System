@@ -2299,7 +2299,7 @@ interface OpChecklistProps {
   status: BookingStatus
   hasPnl: boolean
   ticketCount: number
-  agendaItems: { assignment?: { driverName?: string | null } | null }[]
+  agendaItems: { assignment?: { id?: string; driverName?: string | null; driverId?: string | null } | null }[]
 }
 
 const CHECKLIST: {
@@ -2335,8 +2335,12 @@ const CHECKLIST: {
     label:  'Driver Allocated',
     key:    'driver',
     icon:   '🚗',
-    done:   p => getCurrentStep(p.status) >= 10,
-    active: p => getCurrentStep(p.status) >= 8 && getCurrentStep(p.status) < 10,
+    done:   p => getCurrentStep(p.status) >= 10
+                 || p.agendaItems.some(item => item.assignment != null && (item.assignment.driverId != null || item.assignment.driverName != null)),
+    active: p => {
+      const hasDrivers = p.agendaItems.some(item => item.assignment != null && (item.assignment.driverId != null || item.assignment.driverName != null))
+      return !hasDrivers && getCurrentStep(p.status) >= 8 && getCurrentStep(p.status) < 10
+    },
   },
   {
     label:  'QC1 Pass',
