@@ -362,6 +362,19 @@ async function processTCAndPNL(
   result:     ScanResult,
   folderUrl?: string,
 ): Promise<void> {
+  // If "new files only" mode is on, skip folders that already have a processed TC event
+  const newFilesOnlySetting = await prisma.systemSetting.findUnique({ where: { key: 'onedrive_new_files_only' } })
+  if (newFilesOnlySetting?.value === 'true') {
+    const alreadyProcessed = await prisma.oneDriveEvent.findFirst({
+      where: { bookingRef, eventType: 'TC_PROCESSED', status: 'PROCESSED' },
+      select: { id: true },
+    })
+    if (alreadyProcessed) {
+      console.log(`    ⏭  [${bookingRef}] Skipping (already processed + new-files-only mode is ON)`)
+      return
+    }
+  }
+
   const tcFile  = files.find(f => isTCFile(f.name))
   const pnlFile = files.find(f => isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda'))
 
@@ -720,9 +733,17 @@ async function processPNLFile(
 
   const buffer = await downloadDriveItem(driveId, item.id)
 
+  // Check if AI PNL extraction is enabled (default: true)
+  const pnlExtractSetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_pnl_auto_extract' } })
+  const pnlAIExtractEnabled = pnlExtractSetting?.value !== 'false'
+
   let parsed: Awaited<ReturnType<typeof parsePNLXlsx>>
 
   if (/\.pdf$/i.test(item.name)) {
+    if (!pnlAIExtractEnabled) {
+      console.log(`[OneDrive] ${bookingRef}: AI PNL extraction disabled — skipping PDF PNL`)
+      return 0
+    }
     console.log(`[OneDrive] ${bookingRef}: PNL is PDF — extracting text then AI`)
     const pdfData = await pdfParse(buffer)
     const text    = pdfData.text
@@ -734,6 +755,10 @@ async function processPNLFile(
     console.log(`[OneDrive] ${bookingRef}: PDF PNL → ${parsed.lineItems.length} lines via AI`)
 
   } else if (/\.docx?$/i.test(item.name)) {
+    if (!pnlAIExtractEnabled) {
+      console.log(`[OneDrive] ${bookingRef}: AI PNL extraction disabled — skipping Word PNL`)
+      return 0
+    }
     console.log(`[OneDrive] ${bookingRef}: PNL is Word doc — extracting text then AI`)
     const text = await extractTextFromDocx(buffer)
     if (!text || text.trim().length < 20) {
@@ -773,12 +798,17 @@ async function processPNLFile(
   const paxAdults   = parsed.paxAdults   || booking.paxAdults
   const paxChildren = parsed.paxChildren || booking.paxChildren
 
-  // AI category classification
+  // AI category classification (respects ai_pnl_auto_classify setting)
   if (lines.length > 0 && process.env.OPENAI_API_KEY) {
-    try {
-      const cats = await classifyPNLCategories(lines.map(l => l.activity))
-      lines = lines.map((l, i) => ({ ...l, category: cats[i] ?? l.category }))
-    } catch { /* keep existing categories */ }
+    const classifySetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_pnl_auto_classify' } })
+    if (classifySetting?.value !== 'false') {
+      try {
+        const cats = await classifyPNLCategories(lines.map(l => l.activity))
+        lines = lines.map((l, i) => ({ ...l, category: cats[i] ?? l.category }))
+      } catch { /* keep existing categories */ }
+    } else {
+      console.log(`[OneDrive] ${bookingRef}: AI PNL classify disabled — keeping keyword categories`)
+    }
   }
 
   let pnl = await prisma.pNL.findUnique({ where: { bookingId: booking.id } })

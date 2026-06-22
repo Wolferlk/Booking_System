@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -20,6 +20,81 @@ interface Settings {
   less_credit_mode?: string
   auto_mail_enabled?: string
   auto_onedrive_enabled?: string
+  // AI Token Controls
+  ai_auto_agenda_generate?: string
+  ai_pnl_auto_extract?: string
+  ai_pnl_auto_classify?: string
+  onedrive_new_files_only?: string
+}
+
+function AIToggleRow({
+  icon, label, description, tokenNote, enabled, saving, locked, color, invertColor, onToggle,
+}: {
+  icon: React.ReactNode
+  label: string
+  description: string
+  tokenNote: string
+  enabled: boolean
+  saving: boolean
+  locked: boolean
+  color: 'purple' | 'blue' | 'indigo' | 'teal'
+  invertColor?: boolean
+  onToggle: () => void
+}) {
+  const colorMap = {
+    purple: { on: 'bg-purple-500', off: 'bg-slate-300', badge: 'bg-purple-100 text-purple-700 border-purple-200', icon: 'text-purple-500' },
+    blue:   { on: 'bg-blue-500',   off: 'bg-slate-300', badge: 'bg-blue-100 text-blue-700 border-blue-200',     icon: 'text-blue-500'   },
+    indigo: { on: 'bg-indigo-500', off: 'bg-slate-300', badge: 'bg-indigo-100 text-indigo-700 border-indigo-200', icon: 'text-indigo-500' },
+    teal:   { on: 'bg-teal-500',   off: 'bg-slate-300', badge: 'bg-teal-100 text-teal-700 border-teal-200',     icon: 'text-teal-500'   },
+  }
+  const c = colorMap[color]
+  // For "New Files Only" toggle, ON means saving, so color shows green when enabled
+  const isActive = invertColor ? enabled : enabled
+  const bgColor  = isActive ? c.on : c.off
+
+  return (
+    <div className="flex items-start justify-between gap-4 py-3 border-b border-slate-100 last:border-0">
+      <div className="flex items-start gap-3 flex-1">
+        <div className={`mt-0.5 flex-shrink-0 ${c.icon}`}>{icon}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold text-slate-800">{label}</p>
+            {!enabled && (
+              <span className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border ${c.badge}`}>
+                {invertColor ? 'Active — saving tokens' : 'OFF — saving tokens'}
+              </span>
+            )}
+            {enabled && !invertColor && (
+              <span className="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-200">
+                AI Active
+              </span>
+            )}
+            {!enabled && invertColor && (
+              <span className="inline-flex items-center text-xs font-medium px-2 py-0.5 rounded-full border bg-slate-100 text-slate-500 border-slate-200">
+                Sync All
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{description}</p>
+          <p className="text-xs text-emerald-600 font-medium mt-1">💡 {tokenNote}</p>
+        </div>
+      </div>
+      <button
+        onClick={onToggle}
+        disabled={saving || locked}
+        className={`relative inline-flex h-7 w-12 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-400 disabled:opacity-40 disabled:cursor-not-allowed ${bgColor}`}
+      >
+        <span
+          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ${enabled ? 'translate-x-6' : 'translate-x-1'}`}
+        />
+        {saving && (
+          <span className="absolute inset-0 flex items-center justify-center">
+            <Loader2 className="w-3 h-3 animate-spin text-white" />
+          </span>
+        )}
+      </button>
+    </div>
+  )
 }
 
 export default function ConfigPage() {
@@ -66,7 +141,7 @@ export default function ConfigPage() {
     }
   }
 
-  async function saveProtectedAutomationSetting(key: 'auto_mail_enabled' | 'auto_onedrive_enabled', value: string) {
+  async function saveProtectedSetting(key: string, value: string) {
     if (!criticalPassword.trim()) {
       toast.error('Enter the critical services password first')
       return
@@ -79,8 +154,20 @@ export default function ConfigPage() {
   const testEmail2        = settings.test_email_2  ?? DEFAULT_TEST_EMAIL_2
   const testWa            = settings.test_whatsapp ?? DEFAULT_TEST_WHATSAPP
   // Default ON — only false when explicitly set to 'false'
-  const autoMailEnabled     = settings.auto_mail_enabled     !== 'false'
-  const autoOnedriveEnabled = settings.auto_onedrive_enabled !== 'false'
+  const autoMailEnabled       = settings.auto_mail_enabled     !== 'false'
+  const autoOnedriveEnabled   = settings.auto_onedrive_enabled !== 'false'
+  // AI Token Control settings — default ON, except onedrive_new_files_only (default OFF)
+  const aiAgendaEnabled     = settings.ai_auto_agenda_generate !== 'false'
+  const aiPnlExtractEnabled = settings.ai_pnl_auto_extract     !== 'false'
+  const aiPnlClassifyEnabled= settings.ai_pnl_auto_classify    !== 'false'
+  const onedriveNewOnly     = settings.onedrive_new_files_only === 'true'
+
+  // Token savings estimate (tokens/month, rough)
+  const savedTokens =
+    (!aiAgendaEnabled     ? 4_500_000 : 0) +
+    (!aiPnlExtractEnabled ? 918_750   : 0) +
+    (!aiPnlClassifyEnabled? 552_500   : 0) +
+    (onedriveNewOnly      ? 2_000_000 : 0)
 
   if (loading) {
     return (
@@ -256,7 +343,7 @@ export default function ConfigPage() {
                 </span>
                 <button
                   disabled={saving === 'auto_mail_enabled' || !criticalPassword.trim()}
-                  onClick={() => saveProtectedAutomationSetting('auto_mail_enabled', autoMailEnabled ? 'false' : 'true')}
+                  onClick={() => saveProtectedSetting('auto_mail_enabled', autoMailEnabled ? 'false' : 'true')}
                   className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${autoMailEnabled ? 'bg-green-500' : 'bg-slate-300'}`}
                 >
                   {saving === 'auto_mail_enabled' && (
@@ -288,7 +375,7 @@ export default function ConfigPage() {
                 </span>
                 <button
                   disabled={saving === 'auto_onedrive_enabled' || !criticalPassword.trim()}
-                  onClick={() => saveProtectedAutomationSetting('auto_onedrive_enabled', autoOnedriveEnabled ? 'false' : 'true')}
+                  onClick={() => saveProtectedSetting('auto_onedrive_enabled', autoOnedriveEnabled ? 'false' : 'true')}
                   className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${autoOnedriveEnabled ? 'bg-blue-500' : 'bg-slate-300'}`}
                 >
                   {saving === 'auto_onedrive_enabled' && (
@@ -302,6 +389,112 @@ export default function ConfigPage() {
             <div className="flex items-start gap-2 text-xs text-slate-400 pt-1">
               <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
               <p>Turning off automation does not affect manual scans or the admin OneDrive monitor page — only the automatic scheduled processing is paused.</p>
+            </div>
+
+          </CardBody>
+        </Card>
+
+        {/* ── AI Token Controls ── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between w-full">
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <Bot className="w-4 h-4 text-purple-500" /> AI Token Controls
+              </h3>
+              {savedTokens > 0 && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
+                  <TrendingUp className="w-3 h-3" />
+                  ~{(savedTokens / 1_000_000).toFixed(1)}M tokens/mo saved
+                </span>
+              )}
+            </div>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+
+            <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3 text-xs text-purple-700 flex items-start gap-2">
+              <BrainCircuit className="w-4 h-4 flex-shrink-0 mt-0.5 text-purple-500" />
+              <span>
+                These toggles control which automatic AI (GPT-4o) calls run in the background.
+                Turning off a setting <strong>does not break anything</strong> — it just skips that AI step to save costs.
+                Requires the critical services password to change.
+              </span>
+            </div>
+
+            {/* Password field (reuse same state from Automation section) */}
+            {!criticalPassword.trim() && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 flex items-center gap-2">
+                <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+                Enter the critical services password in the <strong>Automation Settings</strong> section above to unlock these toggles.
+              </div>
+            )}
+
+            {/* AI Auto Agenda Generate */}
+            <AIToggleRow
+              icon={<BrainCircuit className="w-4 h-4" />}
+              label="Auto-Generate Agenda"
+              description={aiAgendaEnabled
+                ? 'GPT-4o generates a full movement chart for every new booking from email — ~7,500 tokens per email.'
+                : 'Agenda generation is OFF — only a skeleton agenda is created. Manually generate from the booking page.'}
+              tokenNote="~7,500 tokens saved per TC email"
+              enabled={aiAgendaEnabled}
+              saving={saving === 'ai_auto_agenda_generate'}
+              locked={!criticalPassword.trim()}
+              color="purple"
+              onToggle={() => saveProtectedSetting('ai_auto_agenda_generate', aiAgendaEnabled ? 'false' : 'true')}
+            />
+
+            {/* AI PNL Extraction */}
+            <AIToggleRow
+              icon={<FileSearch className="w-4 h-4" />}
+              label="AI PNL Extraction (PDF/Word)"
+              description={aiPnlExtractEnabled
+                ? 'GPT-4o reads PDF and Word PNL files from OneDrive — ~3,675 tokens per file.'
+                : 'PDF/Word PNL extraction via AI is OFF — only Excel/CSV files are parsed (no AI needed).'}
+              tokenNote="~3,675 tokens saved per PNL file"
+              enabled={aiPnlExtractEnabled}
+              saving={saving === 'ai_pnl_auto_extract'}
+              locked={!criticalPassword.trim()}
+              color="blue"
+              onToggle={() => saveProtectedSetting('ai_pnl_auto_extract', aiPnlExtractEnabled ? 'false' : 'true')}
+            />
+
+            {/* AI PNL Classify */}
+            <AIToggleRow
+              icon={<Tags className="w-4 h-4" />}
+              label="AI PNL Category Classify"
+              description={aiPnlClassifyEnabled
+                ? 'GPT-4o-mini classifies each PNL line into a category (Hotel, Transport, etc.) — ~650 tokens per booking.'
+                : 'AI classification is OFF — keyword-based fallback is used instead (free, slightly less accurate).'}
+              tokenNote="~650 tokens saved per PNL classification"
+              enabled={aiPnlClassifyEnabled}
+              saving={saving === 'ai_pnl_auto_classify'}
+              locked={!criticalPassword.trim()}
+              color="indigo"
+              onToggle={() => saveProtectedSetting('ai_pnl_auto_classify', aiPnlClassifyEnabled ? 'false' : 'true')}
+            />
+
+            {/* OneDrive New Files Only */}
+            <AIToggleRow
+              icon={<FolderSync className="w-4 h-4" />}
+              label="OneDrive: New Files Only"
+              description={onedriveNewOnly
+                ? 'Only newly created/updated files are processed — folders already fully processed are skipped. Saves tokens and time on each sync.'
+                : 'Every sync re-checks all folders, including ones already processed. Useful for re-processing but costs more tokens.'}
+              tokenNote="~2M+ tokens saved per month by skipping re-processed folders"
+              enabled={onedriveNewOnly}
+              saving={saving === 'onedrive_new_files_only'}
+              locked={!criticalPassword.trim()}
+              color="teal"
+              onToggle={() => saveProtectedSetting('onedrive_new_files_only', onedriveNewOnly ? 'false' : 'true')}
+              invertColor
+            />
+
+            <div className="flex items-start gap-2 text-xs text-slate-400 pt-1 border-t border-slate-100">
+              <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <p>
+                Manual processing (e.g., &quot;Process File&quot; button in Drive Bookings, or manual agenda generation) is always available regardless of these settings.
+                These only affect <strong>automatic background processing</strong>.
+              </p>
             </div>
 
           </CardBody>

@@ -9,6 +9,11 @@ const PROTECTED_KEYS = new Set([
   'less_credit_mode',
   'auto_mail_enabled',
   'auto_onedrive_enabled',
+  // AI Token Controls
+  'ai_auto_agenda_generate',
+  'ai_pnl_auto_extract',
+  'ai_pnl_auto_classify',
+  'onedrive_new_files_only',
 ])
 
 export async function GET() {

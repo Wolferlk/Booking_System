@@ -309,8 +309,18 @@ export async function upsertAgenda(
   }
 
   try {
-    // 1st attempt: AI-generated movement chart
-    let agendaItems = await buildAgendaItems(extracted, bookingRef)
+    // Check if AI agenda generation is enabled (default: true)
+    const agendaSetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_auto_agenda_generate' } })
+    const agendaAIEnabled = agendaSetting?.value !== 'false'
+
+    // 1st attempt: AI-generated movement chart (skipped if setting is OFF)
+    let agendaItems: any[] = agendaAIEnabled
+      ? await buildAgendaItems(extracted, bookingRef)
+      : []
+
+    if (!agendaAIEnabled) {
+      console.log(`[Automation] AI agenda generation disabled for ${bookingRef} — using skeleton only`)
+    }
 
     // 2nd attempt (fallback): build a minimal skeleton from raw booking data
     if (!agendaItems.length) {
@@ -616,11 +626,17 @@ async function syncPnL(
   }
 
   if (pnlLines.length > 0 && process.env.OPENAI_API_KEY) {
-    try {
-      const aiCats = await classifyPNLCategories(pnlLines.map(l => l.activity))
-      pnlLines = pnlLines.map((l, i) => ({ ...l, category: aiCats[i] ?? l.category }))
-    } catch {
-      // Keep extracted categories when classification fails.
+    const classifySetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_pnl_auto_classify' } })
+    const classifyEnabled = classifySetting?.value !== 'false'
+    if (classifyEnabled) {
+      try {
+        const aiCats = await classifyPNLCategories(pnlLines.map(l => l.activity))
+        pnlLines = pnlLines.map((l, i) => ({ ...l, category: aiCats[i] ?? l.category }))
+      } catch {
+        // Keep extracted categories when classification fails.
+      }
+    } else {
+      console.log('[Automation] AI PNL classify disabled — keeping keyword-based categories')
     }
   }
 
