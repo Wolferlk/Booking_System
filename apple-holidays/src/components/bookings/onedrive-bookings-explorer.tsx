@@ -37,6 +37,7 @@ interface BookingNode {
   status: 'processed' | 'pending' | 'error' | 'partial'
   hasTC: boolean
   hasPNL: boolean
+  hasSkipped: boolean
   fileCount: number
   errorCount: number
   webUrl?: string | null
@@ -190,9 +191,10 @@ function buildTree(events: DriveEvent[]): DriveNode[] {
       if (!yearMap[year]) yearMap[year] = {}
       if (!yearMap[year][month]) yearMap[year][month] = []
 
-      const hasTC    = evts.some((e: DriveEvent) => e.eventType === 'TC_PROCESSED'  && e.status === 'PROCESSED')
-      const hasPNL   = evts.some((e: DriveEvent) => e.eventType === 'PNL_PROCESSED' && e.status === 'PROCESSED')
-      const hasError = evts.some((e: DriveEvent) => e.status === 'ERROR')
+      const hasTC      = evts.some((e: DriveEvent) => e.eventType === 'TC_PROCESSED'  && e.status === 'PROCESSED')
+      const hasPNL     = evts.some((e: DriveEvent) => e.eventType === 'PNL_PROCESSED' && e.status === 'PROCESSED')
+      const hasError   = evts.some((e: DriveEvent) => e.status === 'ERROR')
+      const hasSkipped = evts.some((e: DriveEvent) => e.eventType === 'SKIPPED'       && e.status === 'SKIPPED')
       const fileEvents = evts.filter((e: DriveEvent) => e.eventType !== 'FOLDER_DETECTED' && e.status === 'PROCESSED')
 
       const status: BookingNode['status'] = hasTC
@@ -216,6 +218,7 @@ function buildTree(events: DriveEvent[]): DriveNode[] {
         status,
         hasTC,
         hasPNL,
+        hasSkipped,
         fileCount: fileEvents.length,
         errorCount: evts.filter((e: DriveEvent) => e.status === 'ERROR').length,
         webUrl,
@@ -294,12 +297,13 @@ function StatusPill({ status }: { status: BookingNode['status'] }) {
 // ── Booking row ────────────────────────────────────────────────────────────────
 
 function BookingRow({
-  booking, processing, onProcess, onView,
+  booking, processing, onProcess, onView, onRecreate,
 }: {
   booking: BookingNode
   processing: boolean
   onProcess: (ref: string) => void
   onView: (ref: string) => void
+  onRecreate: (ref: string) => void
 }) {
   const borderColor = {
     processed: 'border-l-emerald-400',
@@ -352,6 +356,11 @@ function BookingRow({
               <FileText className="w-2.5 h-2.5" /> TC
             </span>
           )}
+          {booking.hasSkipped && (
+            <span className="flex items-center gap-1 text-[10px] text-violet-500 font-medium">
+              <AlertCircle className="w-2.5 h-2.5" /> TC skipped
+            </span>
+          )}
           {booking.hasPNL && (
             <span className="flex items-center gap-1 text-[10px] text-purple-600 font-medium">
               <TrendingUp className="w-2.5 h-2.5" /> P&L
@@ -395,7 +404,7 @@ function BookingRow({
           </button>
         )}
 
-        {booking.status === 'pending' && (
+        {booking.status === 'pending' && !booking.hasSkipped && (
           <button
             onClick={() => onProcess(booking.ref)}
             disabled={processing}
@@ -404,6 +413,18 @@ function BookingRow({
             {processing
               ? <><Loader2 className="w-3 h-3 animate-spin" /> Processing…</>
               : <><Zap className="w-3 h-3" /> Process File</>}
+          </button>
+        )}
+
+        {booking.hasSkipped && (
+          <button
+            onClick={() => onRecreate(booking.ref)}
+            disabled={processing}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100 disabled:opacity-50 transition-colors"
+          >
+            {processing
+              ? <><Loader2 className="w-3 h-3 animate-spin" /> Recreating…</>
+              : <><RotateCcw className="w-3 h-3" /> Recreate Booking</>}
           </button>
         )}
 
@@ -426,7 +447,7 @@ function BookingRow({
 // ── Month section ──────────────────────────────────────────────────────────────
 
 function MonthSection({
-  month, open, onToggle, bookings, processing, onProcess, onView, search,
+  month, open, onToggle, bookings, processing, onProcess, onView, onRecreate, search,
 }: {
   month: MonthNode
   open: boolean
@@ -435,6 +456,7 @@ function MonthSection({
   processing: Set<string>
   onProcess: (ref: string) => void
   onView: (ref: string) => void
+  onRecreate: (ref: string) => void
   search: string
 }) {
   const createdCnt = bookings.filter(b => b.status === 'processed').length
@@ -477,6 +499,7 @@ function MonthSection({
               processing={processing.has(booking.ref)}
               onProcess={onProcess}
               onView={onView}
+              onRecreate={onRecreate}
             />
           ))}
           {bookings.length === 0 && search && (
@@ -494,7 +517,7 @@ function MonthSection({
 
 function YearSection({
   year, driveKey, open, openMonths, onToggleYear, onToggleMonth,
-  processing, onProcess, onView, search,
+  processing, onProcess, onView, onRecreate, search,
 }: {
   year: YearNode
   driveKey: string
@@ -505,6 +528,7 @@ function YearSection({
   processing: Set<string>
   onProcess: (ref: string) => void
   onView: (ref: string) => void
+  onRecreate: (ref: string) => void
   search: string
 }) {
   const allBookings = year.months.flatMap(m => m.bookings)
@@ -553,6 +577,7 @@ function YearSection({
                 processing={processing}
                 onProcess={onProcess}
                 onView={onView}
+                onRecreate={onRecreate}
                 search={search}
               />
             )
@@ -567,7 +592,7 @@ function YearSection({
 
 function DriveCard({
   drive, open, openYears, openMonths, onToggle, onToggleYear, onToggleMonth,
-  processing, onProcess, onView, search,
+  processing, onProcess, onView, onRecreate, search,
 }: {
   drive: DriveNode
   open: boolean
@@ -579,6 +604,7 @@ function DriveCard({
   processing: Set<string>
   onProcess: (ref: string) => void
   onView: (ref: string) => void
+  onRecreate: (ref: string) => void
   search: string
 }) {
   const meta = DRIVE_META[drive.key] ?? FALLBACK_META
@@ -667,6 +693,7 @@ function DriveCard({
                   processing={processing}
                   onProcess={onProcess}
                   onView={onView}
+                  onRecreate={onRecreate}
                   search={search}
                 />
               )
@@ -849,6 +876,41 @@ export default function OneDriveBookingsExplorer() {
     router.push(`/dashboard/bookings/${ref}`)
   }
 
+  async function recreateBooking(ref: string) {
+    if (processing.has(ref)) return
+    setProcessing(prev => new Set<string>(Array.from(prev).concat(ref)))
+    try {
+      const res  = await fetch('/api/onedrive/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ bookingRef: ref }),
+      })
+      const json = await res.json() as {
+        success: boolean; error?: string
+        data?: { results?: { bookingsCreated: number; bookingsUpdated: number }[] }
+      }
+      if (!json.success) throw new Error(json.error ?? 'Recreate failed')
+
+      const results = json.data?.results ?? []
+      const created = results.some(r => r.bookingsCreated > 0)
+
+      if (created) {
+        toast.success(`Booking ${ref} recreated — click "View Booking" to open it`)
+      } else {
+        toast.warning(`Could not recreate ${ref} — make sure a .docx TC file is in the OneDrive folder, then try again`)
+      }
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `Failed to recreate ${ref}`)
+    } finally {
+      setProcessing(prev => {
+        const next = new Set<string>(Array.from(prev))
+        next.delete(ref)
+        return next
+      })
+    }
+  }
+
   function toggleSet<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, key: T) {
     setter(prev => {
       const next = new Set<T>(Array.from(prev))
@@ -975,6 +1037,7 @@ export default function OneDriveBookingsExplorer() {
               processing={processing}
               onProcess={processBooking}
               onView={viewBooking}
+              onRecreate={recreateBooking}
               search={search}
             />
           ))}

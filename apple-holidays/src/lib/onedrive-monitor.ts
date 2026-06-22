@@ -382,14 +382,31 @@ async function processTCAndPNL(
     console.log(`    📄 TC  file: "${tcFile.name}"`)
     try {
       const r = await processTCFile(driveId, tcFile, bookingRef, cfg.country, folderUrl)
-      if (r.isNew) { result.bookingsCreated += 1; console.log(`    ✅ Booking CREATED: ${bookingRef}`) }
-      else          { result.bookingsUpdated += 1; console.log(`    ✅ Booking UPDATED: ${bookingRef}`) }
-      result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
-      await upsertOneDriveEvent({
-        driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
-        itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
-        eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
-      })
+
+      // Verify the booking actually exists in DB before marking as TC_PROCESSED.
+      // processTCFile returns { isNew: false } for PDF TCs without creating a booking,
+      // which would otherwise show "Created" on the Drive Bookings page with no booking behind it.
+      const bookingExists = await prisma.booking.findUnique({ where: { bookingRef }, select: { id: true } })
+
+      if (bookingExists) {
+        if (r.isNew) { result.bookingsCreated += 1; console.log(`    ✅ Booking CREATED: ${bookingRef}`) }
+        else          { result.bookingsUpdated += 1; console.log(`    ✅ Booking UPDATED: ${bookingRef}`) }
+        result.events.push({ ref: bookingRef, type: 'TC', file: tcFile.name })
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+          eventType: 'TC_PROCESSED', bookingRef, status: 'PROCESSED',
+        })
+      } else {
+        // TC was detected but no booking was created (e.g. PDF with no text, or no dates extracted)
+        console.warn(`    ⚠️  TC file processed but booking ${bookingRef} not found in DB — marking as SKIPPED`)
+        await upsertOneDriveEvent({
+          driveType: cfg.key, itemId: tcFile.id, itemName: tcFile.name,
+          itemPath: buildPath(tcFile), webUrl: tcFile.webUrl,
+          eventType: 'SKIPPED', bookingRef, status: 'SKIPPED',
+          errorMessage: 'TC file detected but booking could not be created (PDF without extractable text, or missing dates)',
+        })
+      }
     } catch (err) {
       result.errors += 1
       const msg = err instanceof Error ? err.message : String(err)

@@ -26,7 +26,6 @@ interface Flight {
   toApt: string
   arrTime?: string | null
   airline?: string | null
-  class?: string | null
 }
 
 interface Accommodation {
@@ -204,13 +203,13 @@ export default function PrintAgendaPage() {
           </div>
           <div>
             <p style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Apple Holidays</p>
-            <p style={{ fontSize: 8.5, color: '#64748b', marginTop: 1 }}>MMT Vietnam  ·  Movement Chart &amp; Booking Summary</p>
+            <p style={{ fontSize: 8.5, color: '#64748b', marginTop: 1 }}>  Movement Chart &amp; Booking Summary</p>
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <p style={{ fontWeight: 800, fontSize: 18, fontFamily: 'monospace', color: '#d97706' }}>{ref}</p>
           {booking.isNumber && (
-            <p style={{ fontSize: 8.5, color: '#2563eb', fontFamily: 'monospace', fontWeight: 700, marginTop: 2 }}>IS: {booking.isNumber}</p>
+            <p style={{ fontSize: 8.5, color: '#2563eb', fontFamily: 'monospace', fontWeight: 700, marginTop: 2 }}> : {booking.isNumber}</p>
           )}
           {booking.agentBookingId && (
             <p style={{ fontSize: 8, color: '#7c3aed', fontFamily: 'monospace', marginTop: 1 }}>Ref: {booking.agentBookingId}</p>
@@ -252,7 +251,7 @@ export default function PrintAgendaPage() {
       {/* ══════════════════════════════════════════════════════
           CONTACT INFO
       ══════════════════════════════════════════════════════ */}
-      {(booking.contactPhone || booking.contactWhatsapp || booking.contactEmail || booking.agentPhone || booking.agentEmail) && (
+      {(booking.contactPhone || booking.contactWhatsapp || booking.contactEmail || booking.agentPhone) && (
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
           marginBottom: 14, border: '1px solid #e2e8f0', borderRadius: 6, padding: '8px 10px',
@@ -279,12 +278,6 @@ export default function PrintAgendaPage() {
             <div>
               <p style={{ fontSize: 7.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Agent Phone</p>
               <p style={{ fontSize: 9, color: '#0f172a', marginTop: 1 }}>{booking.agentPhone as string}</p>
-            </div>
-          )}
-          {booking.agentEmail && (
-            <div>
-              <p style={{ fontSize: 7.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Agent Email</p>
-              <p style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>{booking.agentEmail as string}</p>
             </div>
           )}
         </div>
@@ -330,7 +323,7 @@ export default function PrintAgendaPage() {
           <table>
             <thead>
               <tr>
-                {['Flight No.', 'Date', 'From', 'Dep.', 'To', 'Arr.', 'Class'].map(h => (
+                {['Flight No.', 'Date', 'From', 'Dep.', 'To', 'Arr.'].map(h => (
                   <th key={h} style={S.th}>{h}</th>
                 ))}
               </tr>
@@ -344,7 +337,6 @@ export default function PrintAgendaPage() {
                   <td style={{ ...S.td, fontWeight: 700, color: '#059669' }}>{f.depTime ?? '—'}</td>
                   <td style={{ ...S.td, fontWeight: 700 }}>{f.toApt}</td>
                   <td style={{ ...S.td, fontWeight: 700, color: '#dc2626' }}>{f.arrTime ?? '—'}</td>
-                  <td style={S.td}>{(f as { class?: string | null }).class ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -415,7 +407,7 @@ export default function PrintAgendaPage() {
               <tr>
                 <th style={{ ...S.th, width: '9%' }}>Date</th>
                 <th style={{ ...S.th, width: '9%' }}>Location</th>
-                <th style={{ ...S.th, width: showDrivers ? '17%' : '25%' }}>From → To</th>
+                <th style={{ ...S.th, width: showDrivers ? '17%' : '25%' }}>Hotel Name</th>
                 <th style={{ ...S.th, width: '7%' }}>Meal</th>
                 <th style={{ ...S.th, width: '6%' }}>Meet</th>
                 <th style={{ ...S.th, width: '9%' }}>Service</th>
@@ -435,22 +427,22 @@ export default function PrintAgendaPage() {
                     </td>
                     <td style={{ ...S.td, fontSize: 8.5 }}>{item.location || '—'}</td>
                     <td style={{ ...S.td, fontSize: 8.5 }}>
-                      {item.fromPoint && item.toPoint ? (
-                        <><span style={{ color: '#94a3b8' }}>{item.fromPoint}</span> → <b>{item.toPoint}</b></>
-                      ) : (item.toPoint || item.fromPoint || '—')}
+                      {item.toPoint || item.location || item.fromPoint || '—'}
                     </td>
                     <td style={{ ...S.td, fontSize: 8 }}>{item.mealPlan || '—'}</td>
                     <td style={{ ...S.td, fontSize: 8.5, fontWeight: item.meetingTime ? 700 : 400, color: item.meetingTime ? '#059669' : '#94a3b8' }}>
                       {item.meetingTime || '—'}
                     </td>
                     <td style={S.td}>
-                      <span style={{
-                        display: 'inline-block', padding: '2px 5px', borderRadius: 3,
-                        fontSize: 7.5, fontWeight: 700, color: clr,
-                        background: `${clr}18`, border: `1px solid ${clr}38`,
-                      }}>
-                        {SVC_LABEL[svc] ?? svc}
-                      </span>
+                      {svc === 'OWN_ARRANGEMENT' ? null : (
+                        <span style={{
+                          display: 'inline-block', padding: '2px 5px', borderRadius: 3,
+                          fontSize: 7.5, fontWeight: 700, color: clr,
+                          background: `${clr}18`, border: `1px solid ${clr}38`,
+                        }}>
+                          {SVC_LABEL[svc] ?? svc}
+                        </span>
+                      )}
                     </td>
                     <td style={{ ...S.td, fontSize: 8, lineHeight: 1.45 }}>
                       {item.details || '—'}

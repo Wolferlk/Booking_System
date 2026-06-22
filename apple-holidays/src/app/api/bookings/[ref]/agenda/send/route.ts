@@ -94,17 +94,11 @@ function buildAgendaHtml(
     return `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
       <td style="padding:5px 6px;font-size:8.5px;font-weight:700;color:#374151;white-space:nowrap;border-bottom:1px solid #e2e8f0">${fmtDate(item.date)}</td>
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.location ?? '—'}</td>
-      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${
-        item.fromPoint && item.toPoint
-          ? `<span style="color:#64748b">${item.fromPoint}</span> → ${item.toPoint}`
-          : item.toPoint ?? item.fromPoint ?? '—'
-      }</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.toPoint ?? item.location ?? item.fromPoint ?? '—'}</td>
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.mealPlan ?? '—'}</td>
       <td style="padding:5px 6px;font-size:8.5px;font-weight:${item.meetingTime ? '700' : '400'};color:#374151;border-bottom:1px solid #e2e8f0">${item.meetingTime ?? '—'}</td>
       <td style="padding:5px 6px;border-bottom:1px solid #e2e8f0">
-        <span style="display:inline-block;padding:2px 5px;border-radius:3px;font-size:7.5px;font-weight:700;color:${clr};background:${clr}18;border:1px solid ${clr}35">
-          ${SVC_LABEL[svc] ?? svc}
-        </span>
+        ${svc === 'OWN_ARRANGEMENT' ? '' : `<span style="display:inline-block;padding:2px 5px;border-radius:3px;font-size:7.5px;font-weight:700;color:${clr};background:${clr}18;border:1px solid ${clr}35">${SVC_LABEL[svc] ?? svc}</span>`}
       </td>
       <td style="padding:5px 6px;font-size:8px;color:#374151;line-height:1.4;border-bottom:1px solid #e2e8f0">${item.details ?? '—'}</td>
       ${driverCell}
@@ -153,7 +147,7 @@ function buildAgendaHtml(
       <tr>
         <th style="${thStyle}width:9%">Date</th>
         <th style="${thStyle}width:10%">Location</th>
-        <th style="${thStyle}width:${showDrivers ? '17%' : '26%'}">From → To</th>
+        <th style="${thStyle}width:${showDrivers ? '17%' : '26%'}">Hotel Name</th>
         <th style="${thStyle}width:7%">Meal</th>
         <th style="${thStyle}width:6%">Meet</th>
         <th style="${thStyle}width:10%">Service</th>
