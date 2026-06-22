@@ -120,3 +120,8 @@ A booking is the central entity. It owns:
 - `ContactLog[]`, `Reminder[]`, `CustomerFeedback` — TE team interactions
 
 `BookingVersion` snapshots the raw document on each amendment. `StatusEvent` is the append-only transition audit trail.
+
+
+oska@1023!@@*
+
+oska@1023 - LapPw

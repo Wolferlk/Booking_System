@@ -306,6 +306,8 @@ function BookingRow({
   onRecreate: (ref: string) => void
   onDelete: (ref: string, deleteBooking: boolean) => void
 }) {
+  const [confirmDelete, setConfirmDelete] = React.useState(false)
+
   const borderColor = {
     processed: 'border-l-emerald-400',
     pending:   'border-l-amber-400',
@@ -440,6 +442,53 @@ function BookingRow({
               : <><RotateCcw className="w-3 h-3" /> Retry</>}
           </button>
         )}
+
+        {/* Delete — inline confirm to avoid accidental removal */}
+        {!confirmDelete ? (
+          <button
+            onClick={() => setConfirmDelete(true)}
+            disabled={processing}
+            title="Remove from Drive Bookings"
+            className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <div className="flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+            <span className="text-[10px] text-red-600 font-semibold whitespace-nowrap">Remove?</span>
+            {booking.status === 'processed' || booking.status === 'partial' ? (
+              <>
+                <button
+                  onClick={() => { setConfirmDelete(false); onDelete(booking.ref, false) }}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 hover:bg-amber-200 font-semibold transition-colors"
+                  title="Remove drive entry only — keep the booking"
+                >
+                  Entry only
+                </button>
+                <button
+                  onClick={() => { setConfirmDelete(false); onDelete(booking.ref, true) }}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 font-semibold transition-colors"
+                  title="Delete booking and remove drive entry"
+                >
+                  + Booking
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => { setConfirmDelete(false); onDelete(booking.ref, false) }}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 font-semibold transition-colors"
+              >
+                Yes, remove
+              </button>
+            )}
+            <button
+              onClick={() => setConfirmDelete(false)}
+              className="p-0.5 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -448,7 +497,7 @@ function BookingRow({
 // ── Month section ──────────────────────────────────────────────────────────────
 
 function MonthSection({
-  month, open, onToggle, bookings, processing, onProcess, onView, onRecreate, search,
+  month, open, onToggle, bookings, processing, onProcess, onView, onRecreate, onDelete, search,
 }: {
   month: MonthNode
   open: boolean
@@ -458,6 +507,7 @@ function MonthSection({
   onProcess: (ref: string) => void
   onView: (ref: string) => void
   onRecreate: (ref: string) => void
+  onDelete: (ref: string, deleteBooking: boolean) => void
   search: string
 }) {
   const createdCnt = bookings.filter(b => b.status === 'processed').length
@@ -501,6 +551,7 @@ function MonthSection({
               onProcess={onProcess}
               onView={onView}
               onRecreate={onRecreate}
+              onDelete={onDelete}
             />
           ))}
           {bookings.length === 0 && search && (
@@ -518,7 +569,7 @@ function MonthSection({
 
 function YearSection({
   year, driveKey, open, openMonths, onToggleYear, onToggleMonth,
-  processing, onProcess, onView, onRecreate, search,
+  processing, onProcess, onView, onRecreate, onDelete, search,
 }: {
   year: YearNode
   driveKey: string
@@ -530,6 +581,7 @@ function YearSection({
   onProcess: (ref: string) => void
   onView: (ref: string) => void
   onRecreate: (ref: string) => void
+  onDelete: (ref: string, deleteBooking: boolean) => void
   search: string
 }) {
   const allBookings = year.months.flatMap(m => m.bookings)
@@ -579,6 +631,7 @@ function YearSection({
                 onProcess={onProcess}
                 onView={onView}
                 onRecreate={onRecreate}
+                onDelete={onDelete}
                 search={search}
               />
             )
@@ -593,7 +646,7 @@ function YearSection({
 
 function DriveCard({
   drive, open, openYears, openMonths, onToggle, onToggleYear, onToggleMonth,
-  processing, onProcess, onView, onRecreate, search,
+  processing, onProcess, onView, onRecreate, onDelete, search,
 }: {
   drive: DriveNode
   open: boolean
@@ -606,6 +659,7 @@ function DriveCard({
   onProcess: (ref: string) => void
   onView: (ref: string) => void
   onRecreate: (ref: string) => void
+  onDelete: (ref: string, deleteBooking: boolean) => void
   search: string
 }) {
   const meta = DRIVE_META[drive.key] ?? FALLBACK_META
@@ -695,6 +749,7 @@ function DriveCard({
                   onProcess={onProcess}
                   onView={onView}
                   onRecreate={onRecreate}
+                  onDelete={onDelete}
                   search={search}
                 />
               )
@@ -912,6 +967,27 @@ export default function OneDriveBookingsExplorer() {
     }
   }
 
+  async function deleteEntry(ref: string, deleteBooking: boolean) {
+    if (processing.has(ref)) return
+    setProcessing(prev => new Set<string>(Array.from(prev).concat(ref)))
+    try {
+      const params = new URLSearchParams({ ref, deleteBooking: String(deleteBooking) })
+      const res  = await fetch(`/api/onedrive/remove?${params}`, { method: 'DELETE' })
+      const json = await res.json() as { success: boolean; error?: string; message?: string }
+      if (!json.success) throw new Error(json.error ?? 'Remove failed')
+      toast.success(json.message ?? `${ref} removed`)
+      await load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : `Failed to remove ${ref}`)
+    } finally {
+      setProcessing(prev => {
+        const next = new Set<string>(Array.from(prev))
+        next.delete(ref)
+        return next
+      })
+    }
+  }
+
   function toggleSet<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, key: T) {
     setter(prev => {
       const next = new Set<T>(Array.from(prev))
@@ -1039,6 +1115,7 @@ export default function OneDriveBookingsExplorer() {
               onProcess={processBooking}
               onView={viewBooking}
               onRecreate={recreateBooking}
+              onDelete={deleteEntry}
               search={search}
             />
           ))}

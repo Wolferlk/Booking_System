@@ -863,9 +863,18 @@ export default function AgendaPage() {
                             {SERVICE_TYPES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                           </select>
                         </div>
+                        <div>
+                          <label className="form-label text-xs">Meal Plan</label>
+                          <input
+                            className="form-input text-sm py-1.5"
+                            value={item.mealPlan}
+                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, mealPlan: e.target.value } : x))}
+                            placeholder="B / L / D / BL / BD / LD"
+                          />
+                        </div>
 
                         {/* Details / Timings — expandable with AI button */}
-                        <div className="col-span-2 sm:col-span-3 lg:col-span-5">
+                        <div className="col-span-2 sm:col-span-3 lg:col-span-4">
                           <div className="flex items-center justify-between mb-1">
                             <label className="form-label text-xs mb-0">Details / Timings (Pickup &amp; Drop)</label>
                             <button

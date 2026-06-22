@@ -94,7 +94,8 @@ function buildAgendaHtml(
     return `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
       <td style="padding:5px 6px;font-size:8.5px;font-weight:700;color:#374151;white-space:nowrap;border-bottom:1px solid #e2e8f0">${fmtDate(item.date)}</td>
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.location ?? '—'}</td>
-      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.toPoint ?? item.location ?? item.fromPoint ?? '—'}</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.fromPoint ?? '—'}</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.toPoint ?? '—'}</td>
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.mealPlan ?? '—'}</td>
       <td style="padding:5px 6px;font-size:8.5px;font-weight:${item.meetingTime ? '700' : '400'};color:#374151;border-bottom:1px solid #e2e8f0">${item.meetingTime ?? '—'}</td>
       <td style="padding:5px 6px;border-bottom:1px solid #e2e8f0">
@@ -147,11 +148,12 @@ function buildAgendaHtml(
       <tr>
         <th style="${thStyle}width:9%">Date</th>
         <th style="${thStyle}width:10%">Location</th>
-        <th style="${thStyle}width:${showDrivers ? '17%' : '26%'}">Hotel Name</th>
+        <th style="${thStyle}width:${showDrivers ? '11%' : '16%'}">From</th>
+        <th style="${thStyle}width:${showDrivers ? '11%' : '16%'}">To</th>
         <th style="${thStyle}width:7%">Meal</th>
         <th style="${thStyle}width:6%">Meet</th>
         <th style="${thStyle}width:10%">Service</th>
-        <th style="${thStyle}width:${showDrivers ? '21%' : '32%'}">Details</th>
+        <th style="${thStyle}width:${showDrivers ? '17%' : '26%'}">Details</th>
         ${driverTh}
       </tr>
     </thead>
