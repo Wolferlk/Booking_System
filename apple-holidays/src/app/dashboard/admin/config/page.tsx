@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import AiUsageMonitor from '@/components/settings/ai-usage-monitor'
 
 const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
 const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
@@ -361,11 +362,11 @@ export default function ConfigPage() {
                   <HardDrive className={`w-4 h-4 ${autoOnedriveEnabled ? 'text-blue-600' : 'text-slate-400'}`} />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-slate-800">Auto OneDrive Processing</p>
+                  <p className="text-sm font-semibold text-slate-800">Auto OneDrive Poll &amp; Processing</p>
                   <p className="text-xs text-slate-500 mt-0.5">
                     {autoOnedriveEnabled
-                      ? 'System is monitoring OneDrive folders every 10 min — new TC/PNL files auto-create bookings.'
-                      : 'OneDrive monitoring is paused — new files will not be processed automatically.'}
+                      ? 'Auto-poll is ACTIVE — OneDrive is scanned every 10 min and new TC/PNL files auto-create bookings.'
+                      : 'Auto-poll is PAUSED — OneDrive will not be scanned automatically. Manual sync still works.'}
                   </p>
                 </div>
               </div>
@@ -416,17 +417,31 @@ export default function ConfigPage() {
               <span>
                 These toggles control which automatic AI (GPT-4o) calls run in the background.
                 Turning off a setting <strong>does not break anything</strong> — it just skips that AI step to save costs.
-                Requires the critical services password to change.
               </span>
             </div>
 
-            {/* Password field (reuse same state from Automation section) */}
-            {!criticalPassword.trim() && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 flex items-center gap-2">
-                <Lock className="w-3.5 h-3.5 flex-shrink-0" />
-                Enter the critical services password in the <strong>Automation Settings</strong> section above to unlock these toggles.
+            {/* Inline password field so saves work without scrolling */}
+            <div className="flex items-center gap-2">
+              <Lock className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+              <div className="relative flex-1">
+                <input
+                  type={showCriticalPassword ? 'text' : 'password'}
+                  placeholder="Critical services password required to change these"
+                  value={criticalPassword}
+                  onChange={e => setCriticalPassword(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-300 pr-8"
+                />
+                <button
+                  onClick={() => setShowCriticalPassword(v => !v)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showCriticalPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
               </div>
-            )}
+              {criticalPassword.trim() && (
+                <span className="text-xs text-emerald-600 font-medium flex-shrink-0">Unlocked</span>
+              )}
+            </div>
 
             {/* AI Auto Agenda Generate */}
             <AIToggleRow
@@ -527,6 +542,21 @@ export default function ConfigPage() {
               <li className="flex gap-2"><MessageCircle className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" /><span><strong>WhatsApp:</strong> Pre-fills the number with the test WhatsApp number instead of the customer&apos;s number.</span></li>
               <li className="flex gap-2"><Users className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" /><span><strong>Real mode:</strong> Uses the actual agent email, contact email, and customer WhatsApp extracted from each booking.</span></li>
             </ul>
+          </CardBody>
+        </Card>
+
+        {/* ── OpenAI Usage Monitor ── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between w-full">
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-purple-500" /> OpenAI Token Usage
+              </h3>
+              <span className="text-xs text-slate-400">Live statistics from the database</span>
+            </div>
+          </CardHeader>
+          <CardBody className="p-5">
+            <AiUsageMonitor />
           </CardBody>
         </Card>
 

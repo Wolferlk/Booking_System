@@ -701,7 +701,7 @@ async function processTCFile(
 type ParsedPNL = Awaited<ReturnType<typeof parsePNLXlsx>>
 
 async function aiParsePNLText(text: string, bookingRef: string): Promise<ParsedPNL> {
-  const aiResult = await extractPNLFromText(text)
+  const aiResult = await extractPNLFromText(text, bookingRef)
   const rawLines = Array.isArray(aiResult.lineItems)
     ? (aiResult.lineItems as Record<string, unknown>[])
     : []

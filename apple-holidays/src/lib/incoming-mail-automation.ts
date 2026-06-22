@@ -65,7 +65,9 @@ function loadConditions(): string {
 }
 
 async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFromEmail>>, bookingRef: string): Promise<any[]> {
-  const openai = (await import('@/lib/openai')).default
+  const openaiModule = await import('@/lib/openai')
+  const openai = openaiModule.default
+  const { logAiUsage } = openaiModule
   const conditions = loadConditions()
 
   const docText = JSON.stringify({
@@ -101,6 +103,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
+  await logAiUsage({ callType: 'agenda_generation', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'email' })
 
   const content = response.choices[0]?.message?.content
   if (!content) return []

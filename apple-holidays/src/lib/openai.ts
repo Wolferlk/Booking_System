@@ -6,6 +6,51 @@ const openai = new OpenAI({
 
 export default openai
 
+// ─── AI Usage Logger ─────────────────────────────────────────────────────
+
+const COST_PER_M = {
+  'gpt-4o':       { input: 2.50,  output: 10.00 },
+  'gpt-4o-mini':  { input: 0.15,  output: 0.60  },
+}
+
+export async function logAiUsage(params: {
+  callType: string
+  model: string
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined
+  bookingRef?: string | null
+  source?: string
+}) {
+  if (!params.usage) return
+  const rates = COST_PER_M[params.model as keyof typeof COST_PER_M] ?? { input: 2.50, output: 10.00 }
+  const cost = (params.usage.prompt_tokens / 1_000_000 * rates.input) +
+               (params.usage.completion_tokens / 1_000_000 * rates.output)
+
+  const ref = params.bookingRef ? ` [${params.bookingRef}]` : ''
+  console.log(
+    `\x1b[35m[AI]\x1b[0m ${params.callType} (${params.model})` +
+    `  prompt:\x1b[33m${params.usage.prompt_tokens}\x1b[0m` +
+    `  completion:\x1b[33m${params.usage.completion_tokens}\x1b[0m` +
+    `  total:\x1b[33m${params.usage.total_tokens}\x1b[0m` +
+    `  cost:\x1b[32m$${cost.toFixed(4)}\x1b[0m${ref}`
+  )
+
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    await prisma.aiUsageLog.create({
+      data: {
+        callType:         params.callType,
+        model:            params.model,
+        promptTokens:     params.usage.prompt_tokens,
+        completionTokens: params.usage.completion_tokens,
+        totalTokens:      params.usage.total_tokens,
+        estimatedCostUsd: cost,
+        bookingRef:       params.bookingRef ?? null,
+        source:           params.source ?? null,
+      },
+    })
+  } catch { /* never let logging crash the main flow */ }
+}
+
 // ─── System prompts ──────────────────────────────────────────────────────
 
 const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
@@ -138,7 +183,7 @@ Schema:
 
 // ─── Extraction functions ────────────────────────────────────────────────
 
-export async function extractBookingFromText(documentText: string): Promise<Record<string, unknown>> {
+export async function extractBookingFromText(documentText: string, bookingRef?: string): Promise<Record<string, unknown>> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
@@ -151,6 +196,7 @@ export async function extractBookingFromText(documentText: string): Promise<Reco
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
+  await logAiUsage({ callType: 'booking_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'onedrive' })
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
@@ -200,6 +246,7 @@ ${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
     temperature: 0,
   })
 
+  await logAiUsage({ callType: 'pnl_classify', model: 'gpt-4o-mini', usage: response.usage, source: 'pnl' })
   const content = response.choices[0]?.message?.content
   if (!content) return activities.map(() => 'OTHER')
 
@@ -210,7 +257,7 @@ ${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
   return result
 }
 
-export async function extractPNLFromText(sheetText: string): Promise<Record<string, unknown>> {
+export async function extractPNLFromText(sheetText: string, bookingRef?: string): Promise<Record<string, unknown>> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
@@ -223,6 +270,7 @@ export async function extractPNLFromText(sheetText: string): Promise<Record<stri
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
+  await logAiUsage({ callType: 'pnl_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'upload' })
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
@@ -324,6 +372,7 @@ The fileBase64 is not provided for PDF. Return empty JSON: {}`,
       max_tokens: 400,
       response_format: { type: 'json_object' },
     })
+    await logAiUsage({ callType: 'ticket_details', model: 'gpt-4o', usage: response.usage, source: 'manual' })
     const content = response.choices[0]?.message?.content ?? '{}'
     return JSON.parse(content)
   } catch {
@@ -350,5 +399,6 @@ Booking context: ${bookingContext.slice(0, 4000)}`,
     max_tokens: 500,
   })
 
+  await logAiUsage({ callType: 'ai_suggestion', model: 'gpt-4o', usage: response.usage, source: 'manual' })
   return response.choices[0]?.message?.content ?? 'Unable to generate response.'
 }
