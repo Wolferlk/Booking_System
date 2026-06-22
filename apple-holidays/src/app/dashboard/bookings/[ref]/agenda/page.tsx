@@ -398,9 +398,14 @@ export default function AgendaPage() {
       const res  = await fetch(`/api/bookings/${ref}/agenda/describe`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: item.date, location: item.location,
-          fromPoint: item.fromPoint, toPoint: item.toPoint,
-          meetingTime: item.meetingTime, serviceType: item.serviceType,
+          date:            item.date,
+          location:        item.location,
+          fromPoint:       item.fromPoint,
+          toPoint:         item.toPoint,
+          meetingTime:     item.meetingTime,
+          serviceType:     item.serviceType,
+          mealPlan:        item.mealPlan,
+          existingDetails: item.details,
         }),
       })
       const json = await res.json()
