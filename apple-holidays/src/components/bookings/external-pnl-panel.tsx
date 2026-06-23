@@ -147,6 +147,34 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
 
   const canEdit = ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
+  // Auto ticket creation state
+  const [creatingAllTickets,  setCreatingAllTickets]  = useState(false)
+  const [allTicketsResult,    setAllTicketsResult]    = useState<{ created: number; skipped: number } | null>(null)
+
+  // ── Bulk create tickets from PNL ────────────────────────────────────────
+  const createAllTicketsFromPnl = useCallback(async (silent = false) => {
+    if (!canEdit) return
+    setCreatingAllTickets(true)
+    try {
+      const res  = await fetch(`/api/bookings/${bookingRef}/ext-pnl/create-tickets`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      const { created, skipped } = json.data as { created: number; skipped: number }
+      setAllTicketsResult({ created, skipped })
+      // Also mark those items as created in per-item state
+      if (created > 0) {
+        if (!silent) toast.success(`${created} ticket${created !== 1 ? 's' : ''} created from PNL`)
+        else         toast.success(`${created} ticket${created !== 1 ? 's' : ''} auto-created from linked PNL`)
+      } else if (!silent) {
+        toast.info('All PNL items already have tickets')
+      }
+    } catch (err) {
+      if (!silent) toast.error(err instanceof Error ? err.message : 'Failed to create tickets')
+    } finally {
+      setCreatingAllTickets(false)
+    }
+  }, [bookingRef, canEdit])
+
   // ── Load ──────────────────────────────────────────────────────────────────
   const loadLink = useCallback(async () => {
     setLink('loading')
@@ -222,6 +250,8 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
       setQuery('')
       setResults([])
       toast.success('Accounts PNL linked')
+      // Auto-create tickets from PNL items on first link
+      await createAllTicketsFromPnl(true)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Link failed')
     } finally { setLinking(null) }
@@ -293,11 +323,26 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
         {/* Header */}
         <CardHeader
           action={
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-[10px] text-slate-400 font-medium">
                 <Clock className="w-3 h-3 inline mr-1" />
                 {formatDateTime((link as ExtPnlLink).lastFetchedAt)}
               </span>
+              {canEdit && items.length > 0 && (
+                <button
+                  onClick={() => createAllTicketsFromPnl(false)}
+                  disabled={creatingAllTickets}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 transition-colors"
+                  title="Create booking tickets for all PNL line items (skips already-created)"
+                >
+                  {creatingAllTickets
+                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                    : <PlusCircle className="w-3 h-3" />}
+                  {allTicketsResult
+                    ? `Tickets (${allTicketsResult.created} created)`
+                    : 'Create All Tickets'}
+                </button>
+              )}
               <button
                 onClick={refetch}
                 disabled={fetching}

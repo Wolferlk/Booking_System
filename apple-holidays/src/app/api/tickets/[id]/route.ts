@@ -61,6 +61,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const {
     type, supplier, qty, costPerUnit, currency, reference, notes,
     category, transferType, vehicleType, vehicleNumber, driverName, driverPhone,
+    fileUrl, fileName, fileType,
   } = body
 
   const parsedQty  = qty  != null ? Number(qty)  : undefined
@@ -90,6 +91,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       ...(vehicleNumber!= null && { vehicleNumber: vehicleNumber || null }),
       ...(driverName   != null && { driverName: driverName || null }),
       ...(driverPhone  != null && { driverPhone: driverPhone || null }),
+      ...(fileUrl      != null && { fileUrl: fileUrl || null }),
+      ...(fileName     != null && { fileName: fileName || null }),
+      ...(fileType     != null && { fileType: fileType || null }),
     },
     include: {
       booking: { select: { bookingRef: true } },

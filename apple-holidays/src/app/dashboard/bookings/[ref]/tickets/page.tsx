@@ -10,6 +10,7 @@ import {
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
   Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
   Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle, HardDrive,
+  Database,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -235,15 +236,24 @@ export default function TicketsPage() {
 
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [deleting,      setDeleting]      = useState<string | null>(null)
-  const [bulkDeleting, setBulkDeleting] = useState(false)
-  const [selectedIds,   setSelectedIds]   = useState<Set<string>>(new Set())
-  const [bulkModal,     setBulkModal]     = useState(false)
-  const [bulkForm,      setBulkForm]      = useState({ reference: '', supplier: '', notes: '' })
-  const [bulkActivating, setBulkActivating] = useState(false)
+  const [bulkDeleting,        setBulkDeleting]        = useState(false)
+  const [selectedIds,         setSelectedIds]         = useState<Set<string>>(new Set())
+  const [bulkModal,           setBulkModal]           = useState(false)
+  const [bulkForm,            setBulkForm]            = useState({ reference: '', supplier: '', notes: '' })
+  const [bulkActivating,      setBulkActivating]      = useState(false)
+  const [bulkReceiptUploading, setBulkReceiptUploading] = useState(false)
+  const bulkReceiptRef = useRef<HTMLInputElement>(null)
 
   const canCreate   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canPurchase = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canUpload   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canPnlSync  = ['AC_USER', 'BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  // ── Accounts PNL import state ─────────────────────────────────────────────
+  const [pnlLinked,    setPnlLinked]    = useState(false)
+  const [pnlImporting, setPnlImporting] = useState(false)
+  const [pnlSyncing,   setPnlSyncing]   = useState(false)
+  const [pnlResult,    setPnlResult]    = useState<{ created: number; updated: number; skipped: number } | null>(null)
 
   async function load() {
     try {
@@ -251,6 +261,61 @@ export default function TicketsPage() {
       const json = await res.json()
       if (json.success) setTickets(json.data)
     } finally { setLoading(false) }
+  }
+
+  // Check if Accounts PNL is linked and auto-create missing tickets on first load
+  useEffect(() => {
+    if (!ref || !canPnlSync) return
+    async function checkAndAutoCreate() {
+      try {
+        const res  = await fetch(`/api/bookings/${ref}/ext-pnl`)
+        const json = await res.json()
+        if (!json.success || !json.data) return
+        setPnlLinked(true)
+        // Auto-create tickets (only creates missing ones, safe to call every load)
+        const cr = await fetch(`/api/bookings/${ref}/ext-pnl/create-tickets`, { method: 'POST' })
+        const cj = await cr.json()
+        if (cj.success && (cj.data.created > 0)) {
+          setPnlResult(cj.data)
+          toast.success(`${cj.data.created} ticket${cj.data.created !== 1 ? 's' : ''} auto-created from Accounts PNL`)
+          load()
+        } else if (cj.success) {
+          setPnlResult(cj.data)
+        }
+      } catch { /* silent — PNL check is best-effort */ }
+    }
+    checkAndAutoCreate()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ref])
+
+  // Manual import: create any still-missing tickets
+  async function importFromPnl() {
+    setPnlImporting(true)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/ext-pnl/create-tickets`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setPnlResult(json.data)
+      toast.success(json.message ?? `${json.data.created} tickets created from PNL`)
+      if (json.data.created > 0) load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Import failed')
+    } finally { setPnlImporting(false) }
+  }
+
+  // Re-sync: update draft tickets with latest PNL data + create new ones
+  async function resyncFromPnl() {
+    setPnlSyncing(true)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/ext-pnl/create-tickets?resync=true`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setPnlResult(json.data)
+      toast.success(json.message ?? `Re-synced from PNL`)
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Re-sync failed')
+    } finally { setPnlSyncing(false) }
   }
 
   useEffect(() => { load() }, [ref])
@@ -548,6 +613,62 @@ export default function TicketsPage() {
     } finally { setBulkDeleting(false) }
   }
 
+  // ── Bulk receipt upload + AI extract ─────────────────────────────────────
+
+  async function handleBulkReceipt(file: File) {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    setBulkReceiptUploading(true)
+    try {
+      // Upload + AI extract using the first selected ticket
+      const fd = new FormData()
+      fd.append('file', file)
+      const res  = await fetch(`/api/tickets/${ids[0]}/extract`, { method: 'POST', body: fd })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+
+      const { fileUrl, fileName, fileType, extracted } = json.data as {
+        fileUrl: string; fileName: string; fileType: string
+        extracted: { reference?: string; supplier?: string; driverName?: string; driverPhone?: string; vehicleType?: string; vehicleNumber?: string; notes?: string }
+      }
+
+      // Build the new note fragment from extracted fields
+      const extractedFragment = [
+        extracted.reference    ? `Ref: ${extracted.reference}`          : '',
+        extracted.supplier     ? `Supplier: ${extracted.supplier}`      : '',
+        extracted.driverName   ? `Driver: ${extracted.driverName}`      : '',
+        extracted.driverPhone  ? `Phone: ${extracted.driverPhone}`      : '',
+        extracted.vehicleType  ? `Vehicle: ${extracted.vehicleType}`    : '',
+        extracted.vehicleNumber? `Plate: ${extracted.vehicleNumber}`    : '',
+        extracted.notes        ? extracted.notes                        : '',
+      ].filter(Boolean).join(' · ')
+
+      // Apply to every selected ticket: merge notes, set reference if empty
+      await Promise.all(ids.map(id => {
+        const t = tickets.find(tk => tk.id === id)
+        const merged = [t?.notes, extractedFragment].filter(Boolean).join(' · ')
+        return fetch(`/api/tickets/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileUrl, fileName, fileType,
+            ...(extracted.reference && !t?.reference && { reference: extracted.reference }),
+            ...(merged && { notes: merged }),
+          }),
+        })
+      }))
+
+      toast.success(`Receipt applied to ${ids.length} ticket${ids.length > 1 ? 's' : ''} — data extracted`)
+      setSelectedIds(new Set())
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Receipt upload failed')
+    } finally {
+      setBulkReceiptUploading(false)
+      if (bulkReceiptRef.current) bulkReceiptRef.current.value = ''
+    }
+  }
+
   // ── Computed ───────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -575,7 +696,39 @@ export default function TicketsPage() {
         title={`Tickets & Vouchers — ${ref}`}
         subtitle={`${active.length} active · ${purchased} purchased · ${pending} pending · ${inactive.length} pending activation`}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Accounts PNL import buttons */}
+            {canPnlSync && pnlLinked && (
+              <>
+                <button
+                  onClick={importFromPnl}
+                  disabled={pnlImporting || pnlSyncing}
+                  className="btn btn-sm flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+                  title="Create tickets for any PNL items that don't have a ticket yet"
+                >
+                  {pnlImporting
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <Database className="w-3.5 h-3.5" />}
+                  Import from PNL
+                  {pnlResult && pnlResult.skipped > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 rounded-full">
+                      {pnlResult.skipped} exist
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={resyncFromPnl}
+                  disabled={pnlImporting || pnlSyncing}
+                  className="btn btn-sm flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50"
+                  title="Re-sync all draft tickets with latest Accounts PNL data"
+                >
+                  {pnlSyncing
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  Re-sync PNL
+                </button>
+              </>
+            )}
             {active.length > 0 && (
               <Link href={`/print/tickets/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                 <Printer className="w-4 h-4" /> Print Tickets
@@ -614,8 +767,96 @@ export default function TicketsPage() {
           e.target.value = ''
         }}
       />
+      {/* Bulk receipt: hidden input — uploads one file to all selected tickets */}
+      <input
+        ref={bulkReceiptRef}
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png,.webp,.gif"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0]
+          if (file) handleBulkReceipt(file)
+          e.target.value = ''
+        }}
+      />
 
       <div className="p-8 space-y-6 max-w-6xl">
+
+        {/* ── Accounts PNL status banner ───────────────────────────────────── */}
+        {canPnlSync && pnlLinked && (
+          <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm">
+            <Database className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <span className="font-semibold text-emerald-800">Accounts PNL linked</span>
+              {pnlResult ? (
+                <span className="text-emerald-700 ml-2">
+                  — {pnlResult.created > 0 && `${pnlResult.created} created`}
+                  {pnlResult.updated > 0 && ` · ${pnlResult.updated} updated`}
+                  {pnlResult.skipped > 0 && ` · ${pnlResult.skipped} already exist`}
+                </span>
+              ) : (pnlImporting || pnlSyncing) ? (
+                <span className="text-emerald-600 ml-2 flex items-center gap-1 inline-flex">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Processing…
+                </span>
+              ) : (
+                <span className="text-emerald-600 ml-2">Tickets auto-synced on load</span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={importFromPnl}
+                disabled={pnlImporting || pnlSyncing}
+                className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-40 flex items-center gap-1"
+              >
+                {pnlImporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                Import Missing
+              </button>
+              <span className="text-emerald-300">|</span>
+              <button
+                onClick={resyncFromPnl}
+                disabled={pnlImporting || pnlSyncing}
+                className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-40 flex items-center gap-1"
+              >
+                {pnlSyncing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                Re-sync All
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Global selection action bar ──────────────────────────────────── */}
+        {canCreate && selectedIds.size > 0 && (
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-brand-50 border border-brand-200 rounded-xl">
+            <span className="text-sm font-semibold text-brand-800">{selectedIds.size} ticket{selectedIds.size > 1 ? 's' : ''} selected</span>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                onClick={() => bulkReceiptRef.current?.click()}
+                disabled={bulkReceiptUploading}
+                className="btn btn-sm flex items-center gap-1.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50 text-xs"
+                title="Upload one receipt and apply to all selected tickets (AI will extract data)"
+              >
+                {bulkReceiptUploading
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Upload className="w-3.5 h-3.5" />}
+                Add Receipt ({selectedIds.size})
+              </button>
+              <button
+                onClick={deleteSelected}
+                disabled={bulkDeleting}
+                className="btn btn-sm flex items-center gap-1.5 bg-white border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50 text-xs"
+              >
+                {bulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Delete ({selectedIds.size})
+              </button>
+              <button
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-slate-400 hover:text-slate-600"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Pending Activation ────────────────────────────────────────────── */}
         {inactive.length > 0 && (
@@ -626,9 +867,9 @@ export default function TicketsPage() {
                   <input
                     type="checkbox"
                     className="w-4 h-4 rounded border-slate-300 accent-brand-500"
-                    checked={selectedIds.size === inactive.length && inactive.length > 0}
+                    checked={inactive.length > 0 && inactive.every(t => selectedIds.has(t.id))}
                     onChange={() => toggleSelectAll(inactive.map(t => t.id))}
-                    title="Select all"
+                    title="Select all pending"
                   />
                 )}
                 <Sparkles className="w-4 h-4 text-amber-500" />
@@ -643,15 +884,6 @@ export default function TicketsPage() {
                     <Zap className="w-3.5 h-3.5" /> Activate Selected ({selectedIds.size})
                   </button>
                 )}
-                  {canCreate && selectedIds.size > 0 && (
-                    <button
-                      onClick={deleteSelected}
-                      disabled={bulkDeleting}
-                      className="btn btn-secondary btn-sm text-xs text-red-500 hover:text-red-700"
-                    >
-                      {bulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Delete Selected ({selectedIds.size})
-                    </button>
-                  )}
                 {canCreate && inactive.length > 1 && (
                   <button onClick={activateAll} disabled={activating === 'all'} className="btn btn-secondary btn-sm text-xs">
                     {activating === 'all' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
@@ -817,9 +1049,20 @@ export default function TicketsPage() {
         {otherActive.length > 0 && (
           <div>
             {(inactive.length > 0 || mealTickets.length > 0) && (
-              <h2 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-green-500" /> Active Tickets
-              </h2>
+              <div className="flex items-center gap-2 mb-3">
+                {canCreate && (
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-slate-300 accent-brand-500"
+                    checked={otherActive.every(t => selectedIds.has(t.id)) && otherActive.length > 0}
+                    onChange={() => toggleSelectAll(otherActive.map(t => t.id))}
+                    title="Select all active"
+                  />
+                )}
+                <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-green-500" /> Active Tickets
+                </h2>
+              </div>
             )}
             <div className="space-y-3">
               {otherActive.map(t => {
@@ -827,8 +1070,16 @@ export default function TicketsPage() {
                 const payOk  = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
                 const MealIc = mealIcon(t.type)
                 return (
-                  <Card key={t.id} className="p-5">
+                  <Card key={t.id} className={`p-5 transition-colors ${selectedIds.has(t.id) ? 'ring-2 ring-brand-300 bg-brand-50' : ''}`}>
                     <div className="flex items-start gap-4">
+                      {canCreate && (
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 mt-1 rounded border-slate-300 accent-brand-500 flex-shrink-0"
+                          checked={selectedIds.has(t.id)}
+                          onChange={() => toggleSelect(t.id)}
+                        />
+                      )}
                       <div className="flex-1 min-w-0">
                         {/* Header row */}
                         <div className="flex items-start gap-3">
