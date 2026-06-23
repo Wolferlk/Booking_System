@@ -76,7 +76,7 @@ const COUNTRY_ROLES: Record<OperationCountry, UserRole[]> = {
   ALL:                ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
 }
 
-const SELECTABLE_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA']
+const SELECTABLE_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'ALL']
 
 const EMPTY_FORM = {
   name: '', email: '', phone: '', role: 'BT_USER' as UserRole,
@@ -833,19 +833,31 @@ export default function UsersPage() {
                 value={form.country}
                 onChange={e => {
                   const c = e.target.value as OperationCountry
-                  // Reset role if it's not valid for the new country
                   const validRoles = COUNTRY_ROLES[c]
-                  const newRole = validRoles.includes(form.role) ? form.role : validRoles[0]
-                  setForm(x => ({ ...x, country: c, role: newRole }))
+                  // ALL → default to ULTRA_SUPER_ADMIN; otherwise keep role if valid
+                  const newRole = c === 'ALL'
+                    ? 'ULTRA_SUPER_ADMIN'
+                    : (validRoles.includes(form.role) ? form.role : validRoles[0])
+                  setForm(x => ({ ...x, country: c, role: newRole as UserRole }))
                 }}
               >
                 {SELECTABLE_COUNTRIES.map(c => (
                   <option key={c} value={c}>{COUNTRY_META[c].flag} {COUNTRY_META[c].label}</option>
                 ))}
               </select>
-              <p className="text-[11px] text-slate-500 mt-1">
-                This user will only see data for the selected country.
-              </p>
+              {form.country === 'ALL' ? (
+                <div className="mt-2 flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+                  <Globe className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-amber-700 font-medium">
+                    All Countries — this user will have access to every country and all bookings system-wide.
+                    Only assign to trusted administrators.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-500 mt-1">
+                  This user will only see data for the selected country.
+                </p>
+              )}
             </div>
           ) : (
             /* SUPER_ADMIN — show locked country badge, no edit */

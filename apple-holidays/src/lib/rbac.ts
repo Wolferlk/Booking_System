@@ -125,7 +125,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   AC_USER: [
     'booking:read', 'booking:edit',
-    'agenda:read',
+    'agenda:create', 'agenda:read', 'agenda:edit',
     'ticket:read',
     'pnl:create', 'pnl:read', 'pnl:edit', 'pnl:confirm_payment', 'pnl:view_profit',
     'payment:read',
