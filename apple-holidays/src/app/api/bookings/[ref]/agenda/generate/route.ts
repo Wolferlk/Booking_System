@@ -11,21 +11,35 @@ import path from 'path'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
 
 function loadConditions(): string {
-  try {
-    return fs.readFileSync(CONDITIONS_PATH, 'utf-8')
-  } catch {
-    return ''
-  }
+  try { return fs.readFileSync(CONDITIONS_PATH, 'utf-8') } catch { return '' }
 }
 
-/** Format flight details into a compact string for the prompt */
 function formatFlight(f: {
   flightNo: string; airline?: string | null
-  fromApt: string; depTime: string
-  toApt: string; arrTime: string
+  fromApt: string; depTime: string; toApt: string; arrTime: string
 }): string {
   const airline = f.airline ? ` (${f.airline})` : ''
-  return `Flight: ${f.flightNo}${airline} | ${f.fromApt} → ${f.toApt} | Dep: ${f.depTime} | Arr: ${f.arrTime}`
+  return `✈ Flight ${f.flightNo}${airline} | ${f.fromApt} → ${f.toApt} | Dep: ${f.depTime} | Arr: ${f.arrTime}`
+}
+
+/**
+ * Normalise an airport point to "CODE Airport" or "City Airport".
+ * - Bare 3-letter IATA code (e.g. "PQC") → "PQC Airport"
+ * - City/name without "Airport" → append " Airport"
+ * - Already has "Airport" → unchanged
+ * - Hotel / pier / non-airport → unchanged
+ */
+function normaliseAirportPoint(raw: string, isAirport: boolean): string {
+  if (!raw || !isAirport) return raw
+  const s = raw.trim()
+  // Already labelled
+  if (/airport/i.test(s)) return s
+  // Bare 3-letter IATA code
+  if (/^[A-Z]{3}$/.test(s)) return `${s} Airport`
+  // Short string that looks like a code with extra chars
+  if (/^[A-Z]{3}\b/.test(s)) return `${s} Airport`
+  // Full city/country name — just append Airport
+  return `${s} Airport`
 }
 
 export async function POST(
@@ -44,15 +58,14 @@ export async function POST(
     where: { bookingRef: params.ref },
     include: {
       passengers: true,
-      flights: { orderBy: { date: 'asc' } },
+      flights:      { orderBy: { date: 'asc' } },
       accommodations: { orderBy: { checkIn: 'asc' } },
       itineraryItems: { orderBy: { dayNo: 'asc' } },
     },
   })
-
   if (!booking) return buildApiError('Booking not found', 404)
 
-  // ── Extract document text (if TQ file was uploaded) ───────────────────────
+  // ── Extract document text (when TQ file uploaded) ────────────────────────
   let tqDocumentText = ''
 
   const contentType = req.headers.get('content-type') ?? ''
@@ -63,52 +76,43 @@ export async function POST(
 
     const buffer = Buffer.from(await file.arrayBuffer())
     const fileName = file.name.toLowerCase()
-
     if (fileName.endsWith('.docx')) {
       tqDocumentText = await extractTextFromDocx(buffer)
     } else if (fileName.endsWith('.txt')) {
       tqDocumentText = buffer.toString('utf-8')
     } else {
-      return buildApiError('Upload a .docx or .txt tour confirmation file')
+      return buildApiError('Upload a .docx or .txt Travel Quotation or TC file')
     }
   }
 
-  // ── Build structured booking context (always included) ────────────────────
-  const flightsByDate: Record<string, typeof booking.flights[0][]> = {}
-  for (const f of booking.flights) {
-    const key = new Date(f.date).toISOString().slice(0, 10)
-    if (!flightsByDate[key]) flightsByDate[key] = []
-    flightsByDate[key].push(f)
-  }
-
+  // ── Structured booking context ────────────────────────────────────────────
   const structuredData = {
-    bookingRef: booking.bookingRef,
-    arrivalDate: booking.arrivalDate,
+    bookingRef:    booking.bookingRef,
+    arrivalDate:   booking.arrivalDate,
     departureDate: booking.departureDate,
-    paxAdults: booking.paxAdults,
-    paxChildren: booking.paxChildren,
+    paxAdults:     booking.paxAdults,
+    paxChildren:   booking.paxChildren,
     accommodations: booking.accommodations.map(a => ({
       hotel: a.hotel, city: a.city,
-      checkIn: new Date(a.checkIn).toISOString().slice(0, 10),
+      checkIn:  new Date(a.checkIn).toISOString().slice(0, 10),
       checkOut: new Date(a.checkOut).toISOString().slice(0, 10),
       nights: a.nights, roomType: a.roomType, mealType: a.mealType,
     })),
-    // Flights — each entry includes formatted details for easy injection into agenda
     flights: booking.flights.map(f => ({
-      date: new Date(f.date).toISOString().slice(0, 10),
-      flightNo: f.flightNo,
-      airline: f.airline,
-      fromApt: f.fromApt,
-      depTime: f.depTime,
-      toApt: f.toApt,
-      arrTime: f.arrTime,
+      date:      new Date(f.date).toISOString().slice(0, 10),
+      flightNo:  f.flightNo,
+      airline:   f.airline,
+      fromApt:   f.fromApt,
+      depTime:   f.depTime,
+      toApt:     f.toApt,
+      arrTime:   f.arrTime,
       formatted: formatFlight(f),
     })),
-    // Itinerary from Travel Quotation — titles MUST be used as activity names
+    // Day topics + full descriptions from the Travel Quotation
     itineraryItems: booking.itineraryItems.map(i => ({
-      dayNo: i.dayNo,
-      date: new Date(i.date).toISOString().slice(0, 10),
-      title: i.title,
+      dayNo:       i.dayNo,
+      date:        new Date(i.date).toISOString().slice(0, 10),
+      title:       i.title,
       description: i.description ?? null,
     })),
   }
@@ -120,125 +124,141 @@ export async function POST(
   const conditions = loadConditions()
 
   const systemPrompt = `You are a Vietnam/Asia tour operations expert for AppleHolidays (MMT).
-Generate a detailed day-by-day movement chart. You will receive two sections of data:
-1. structured_booking_data — always present; contains flights, accommodations, and TQ itinerary items
-2. tq_document_text — present if a Travel Quotation file was uploaded (may be empty)
+Generate a day-by-day movement chart from the booking data provided.
+Two data sources are given: structured_booking_data (always) and tq_document_text (if uploaded).
 
-OPERATIONAL RULES (follow exactly):
-${conditions}
+${conditions ? `OPERATIONAL RULES:\n${conditions}\n` : ''}
 
-═══════════════════════════════════════════════════════════════════════
-ITINERARY TITLES — HIGHEST PRIORITY RULE:
-The structured_booking_data.itineraryItems array contains the EXACT day-by-day activity titles
-extracted from the Travel Quotation. These are the AUTHORITATIVE topic names.
+════════════════════════════════════════════════════════════════
+FIELD DEFINITIONS — READ CAREFULLY:
 
-For EVERY agenda day:
-1. Find the matching itineraryItem by date (or dayNo if dates differ slightly)
-2. Use the itineraryItem.title VERBATIM as the "location" field (do NOT paraphrase it)
-   Examples of correct location values:
-   - "Full-day Halong Cozy Bay Cruise Day Tour (SIC transfer + SIC cruise)"
-   - "Ninh Binh Bai Dinh Trang An Hang Mua SIC"
-   - "Bana Hills with Golden Bridge SIC"
-   - "Airport to Hotel | Private Transfers"
-3. Use the itineraryItem.description (if present) to enrich the "details" field
-4. If no matching itineraryItem exists for a date, derive the title from tq_document_text
+● "location"  = The EXACT day topic/title from the Travel Quotation.
+                Copy itineraryItem.title verbatim — do NOT shorten, paraphrase, or generalise it.
+                Examples:
+                  "Full-day Halong Cozy Bay Cruise Day Tour (SIC transfer + SIC cruise)"
+                  "Ninh Binh Bai Dinh Trang An Hang Mua SIC"
+                  "Bana Hills with Golden Bridge SIC"
+                  "Marble Mountain - Hoi An Ancient Town with Dinner SIC"
+                  "Airport to Hotel | Private Transfers"
+                  "Hotel to Airport | Private Transfers"
 
-If itineraryItems is empty (no TQ processed yet), use tq_document_text to infer day activities.
+● "fromPoint" = Exact pickup point: hotel name, "CODE Airport", pier name.
+● "toPoint"   = Exact destination: hotel name, "CODE Airport", attraction/pier name.
+● "details"   = TWO PARTS MERGED INTO ONE PARAGRAPH (see details rules below).
+● "mealPlan"  = "B", "L", "D", "BL", "BD", "LD", "BLD" — only when explicitly included.
+● "meetingTime" = "HH:MM" (required for PVT_TRANSFER and SIC_TRANSFER; null for OWN_ARRANGEMENT).
+● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "OWN_ARRANGEMENT".
 
-═══════════════════════════════════════════════════════════════════════
-FLIGHT DETAILS — MANDATORY FOR AIRPORT TRANSFER DAYS:
-The structured_booking_data.flights array contains actual flight data.
+════════════════════════════════════════════════════════════════
+DETAILS FIELD — TWO-PART STRUCTURE (MANDATORY):
 
-For ANY agenda day that involves an airport arrival OR departure:
-1. Find the matching flight(s) from flights[] where flight.date matches the agenda date
-2. ALWAYS include the flight details in the "details" field using this format:
-   "[Flight: VJ815 (VietJet Air) | HAN → SGN | Dep: 09:35 | Arr: 11:30]"
-   Each flight has a pre-formatted "formatted" field — use it directly.
-3. Set fromPoint or toPoint to the airport code (e.g. "HAN Airport", "SGN Airport", "CMB Airport")
-4. meetingTime for arrival: flight.arrTime + 30 min
-5. meetingTime for departure: flight.depTime − 3 hours
+PART 1 — TQ Description (corrected):
+  Take itineraryItem.description verbatim, correct grammar and spelling, improve clarity.
+  Preserve all original activities, attractions, and inclusions — do NOT add or remove anything.
+  If description is null or empty, write a 1–2 sentence summary from the title.
 
-IMPORTANT: If itinerary title says "Airport to Hotel" or "Hotel to Airport", it is ALWAYS a
-flight day — look up the flight by date from the flights array and include all details.
+PART 2 — Operational / Logistic Info:
+  Add: pickup time, exact pickup spot, vehicle type, journey duration, driver instructions,
+  drop-off point. For airport days: include the full formatted flight line.
 
-═══════════════════════════════════════════════════════════════════════
-Return a JSON object with key "items" containing an array. Each item MUST have ALL fields:
-{
-  "date": "YYYY-MM-DD",
-  "location": "EXACT itinerary title from TQ (never generic, never empty)",
-  "fromPoint": "exact pickup — hotel name, airport code, pier name",
-  "toPoint": "exact destination — hotel name, airport code, attraction name",
-  "details": "<RICH OPERATIONAL TEXT — 2–4 sentences, 50–100 words>",
-  "mealPlan": "B | L | D | BL | BD | LD | BLD | null",
-  "meetingTime": "HH:MM — REQUIRED for all transfers and tours, null only for OWN_ARRANGEMENT",
-  "serviceType": "PVT_TRANSFER | SIC_TRANSFER | OWN_ARRANGEMENT"
-}
-
-DETAILS FIELD must include:
-1. Exact pickup time and spot (hotel lobby, arrivals hall, pier gate)
-2. Vehicle/transport mode ("Air-conditioned private car", "SIC shared minibus", "cruise ship")
-3. Approximate journey time or distance
-4. Guest instructions (name board at airport, luggage help, check-in reminder, SIC readiness)
-5. Drop-off location
-6. For airport days: the full flight line from the formatted flight string
+Merge PART 1 and PART 2 into 3–6 natural sentences in a single paragraph.
+The description content comes FIRST, then the logistics at the end.
 
 DETAILS EXAMPLES:
-- Airport arrival (PVT): "Private airport pickup at [meetingTime] (~30 min after landing). [Flight details]. Driver waiting at arrivals hall with name board. Air-conditioned private car to [hotel], approx 40 min. Driver assists with luggage."
-- Airport departure (PVT): "Pickup from hotel lobby at [meetingTime] (3 hrs before [depTime]). [Flight details]. Private car to airport, driver assists with bags. Have passports and docs ready. Drop-off at departures."
-- SIC tour: "SIC pickup at hotel lobby at [meetingTime] — be in lobby 5 min early. Shared AC minibus. Tour: [location/title]. Guide provided. Return ~[time]. [Meals]."
-- Private tour/transfer: "Private pickup at [fromPoint] at [meetingTime]. AC private vehicle to [toPoint], ~[X] hrs. [Highlights from description]. Driver assists with luggage."
-- Leisure/OWN: "Free day in [location]. No guide or transport. [Highlights from description]. Hotel concierge available."
+— Airport arrival (PVT):
+  "Private airport transfer from [CODE] Airport to [hotel]. ✈ Flight VJ815 (VietJet) | SGN → HAN | Dep: 06:10 | Arr: 08:20.
+   Driver will be waiting at the arrivals hall holding a name board. Private air-conditioned car, journey approx. 40 minutes.
+   Driver assists with luggage. Check-in at hotel after arrival."
 
-SERVICE TYPE:
-- Airport/flight day → PVT_TRANSFER (NEVER SIC for airport)
-- "SIC" in title → SIC_TRANSFER
-- "Private" or "PVT" in title → PVT_TRANSFER
-- Leisure / free day / at own pace / OWN → OWN_ARRANGEMENT, meetingTime = null
-- Cruise → PVT_TRANSFER (embarkation/disembarkation)
+— Airport departure (PVT):
+  "Private transfer from [hotel] to [CODE] Airport for departure flight. ✈ Flight VJ123 | HAN → SGN | Dep: 14:30 | Arr: 16:45.
+   Pickup from hotel lobby at [meetingTime] (3 hours before departure). Please have passports and boarding documents ready.
+   Driver assists with check-in baggage. Drop-off at departures terminal."
 
-MEETING TIME:
-- International arrival: arrTime + 30 min
-- Domestic arrival: arrTime + 30 min
-- Departure: depTime − 3 hours
-- SIC full-day tour: 07:30
-- SIC half-day morning: 08:00
-- SIC half-day afternoon: 13:00
-- Private full-day: 08:00
-- Cruise embarkation: 07:30
-- OWN_ARRANGEMENT: null
+— SIC full-day tour (merge description + logistics):
+  "Explore Ninh Binh's iconic landscapes: visit Bai Dinh Pagoda (Vietnam's largest pagoda complex),
+   take a scenic boat ride through Trang An's karst caves, and hike to the panoramic viewpoint at Hang Mua.
+   Lunch included at a local restaurant. SIC pickup from hotel lobby at 07:30 — please be in the lobby 5 minutes early.
+   Shared air-conditioned minibus with English-speaking guide. Return to hotel approximately 18:30."
+
+— Private full-day tour:
+  "Visit the ancient town of Hoi An, a UNESCO World Heritage Site, strolling the lantern-lit streets and exploring
+   Japanese merchant houses and the iconic Japanese Covered Bridge. Dinner included at a riverside restaurant.
+   Private pickup from hotel at 08:00. Air-conditioned private car. Return to hotel by 21:00."
+
+— Cruise day:
+  "Full day aboard Halong Cozy Bay Cruise on the stunning UNESCO-listed Halong Bay. Explore limestone caves,
+   enjoy kayaking, fresh seafood lunch and dinner included on board, and watch the sunset from the sundeck.
+   SIC pickup from hotel lobby at 07:30. Shared AC minibus to Tuan Chau pier (~2.5 hrs). Board cruise at 12:00."
+
+════════════════════════════════════════════════════════════════
+AIRPORT POINTS — MANDATORY FORMAT:
+For ANY item involving an airport (arrival, departure, transit):
+  - fromPoint or toPoint MUST use format: "CODE Airport" or "City Airport"
+  - Examples: "PQC Airport", "HAN Airport", "SGN Airport", "CMB Airport", "KUL Airport", "SIN Airport"
+  - If code is known use 3-letter IATA code: PQC = Phu Quoc, HAN = Hanoi, SGN = Ho Chi Minh City,
+    DAD = Da Nang, HUI = Hue, CXR = Nha Trang, CMB = Colombo, KUL = Kuala Lumpur, SIN = Singapore
+  - NEVER set airport points without the word "Airport"
+
+════════════════════════════════════════════════════════════════
+FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
+  1. Find matching flight(s) in flights[] where flight.date = agenda item date.
+  2. Include the pre-formatted flight.formatted string in the details field.
+  3. meetingTime: arrival → arrTime + 30 min; departure → depTime − 3 hours.
+  4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
+
+════════════════════════════════════════════════════════════════
+SERVICE TYPE RULES:
+  - Airport day → PVT_TRANSFER always
+  - "SIC" in title → SIC_TRANSFER
+  - "Private" / "PVT" / "cruise" in title → PVT_TRANSFER
+  - Leisure / free day / at own pace / OWN → OWN_ARRANGEMENT, meetingTime = null
+
+MEETING TIME DEFAULTS:
+  - Arrival transfer: flight arrTime + 30 min
+  - Departure transfer: flight depTime − 3 hours
+  - SIC full-day: 07:30  |  SIC half-day AM: 08:00  |  SIC half-day PM: 13:00
+  - SIC cruise embarkation: 07:30  |  Private full-day: 08:00
+  - OWN_ARRANGEMENT: null
 
 ADDITIONAL RULES:
-- Generate one item per day from arrivalDate to departureDate
-- Split multi-city movement into separate items per leg
-- Meals: only set if explicitly included in the package`
+  - One item per day (arrivalDate → departureDate inclusive); split multi-city days as separate legs
+  - Meals: only set if explicitly included in the package for that day
+  - Never leave location empty or generic
 
-  const userContent = `Generate the tour agenda for booking ${params.ref}.
+════════════════════════════════════════════════════════════════
+Return ONLY a JSON object: { "items": [ { all 7 fields required } ] }`
 
---- structured_booking_data ---
+  const userContent = `Generate the movement chart for booking ${params.ref}.
+
+=== structured_booking_data ===
 ${JSON.stringify(structuredData, null, 2)}
 
---- tq_document_text ---
-${tqDocumentText ? tqDocumentText.slice(0, 8000) : '(No document uploaded — use itineraryItems from structured_booking_data above)'}`
+=== tq_document_text ===
+${tqDocumentText
+    ? tqDocumentText.slice(0, 9000)
+    : '(No document uploaded — derive all content from itineraryItems in structured_booking_data)'
+  }`
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userContent },
+      { role: 'user',   content: userContent },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
 
-  const content = response.choices[0]?.message?.content
-  if (!content) return buildApiError('AI returned empty response')
+  const aiContent = response.choices[0]?.message?.content
+  if (!aiContent) return buildApiError('AI returned empty response')
 
-  const parsed = JSON.parse(content)
+  const parsed = JSON.parse(aiContent)
   const rawItems: Record<string, unknown>[] = Array.isArray(parsed) ? parsed
     : parsed.items ?? parsed.agenda ?? parsed.days ?? []
 
-  // Post-process: hard-enforce airport → PVT_TRANSFER, leisure → OWN_ARRANGEMENT
-  const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight)\b/i
+  // ── Post-process ─────────────────────────────────────────────────────────
+  const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight|✈)\b/i
   const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
 
   const items = rawItems.map(item => {
@@ -247,13 +267,24 @@ ${tqDocumentText ? tqDocumentText.slice(0, 8000) : '(No document uploaded — us
     const loc  = String(item.location  ?? '')
     const det  = String(item.details   ?? '')
 
-    if (AIRPORT_RE.test(from) || AIRPORT_RE.test(to) || AIRPORT_RE.test(det) || AIRPORT_RE.test(loc)) {
-      return { ...item, serviceType: 'PVT_TRANSFER' }
+    const isAirportItem = AIRPORT_RE.test(from) || AIRPORT_RE.test(to)
+      || AIRPORT_RE.test(det) || AIRPORT_RE.test(loc)
+
+    let serviceType = String(item.serviceType ?? 'OWN_ARRANGEMENT')
+    let meetingTime = item.meetingTime as string | null | undefined
+
+    if (isAirportItem) {
+      serviceType = 'PVT_TRANSFER'
+    } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+      serviceType = 'OWN_ARRANGEMENT'
+      meetingTime = null
     }
-    if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
-      return { ...item, serviceType: 'OWN_ARRANGEMENT', meetingTime: null }
-    }
-    return item
+
+    // Normalise airport fromPoint / toPoint labels
+    const normFrom = normaliseAirportPoint(from, isAirportItem)
+    const normTo   = normaliseAirportPoint(to, isAirportItem)
+
+    return { ...item, serviceType, meetingTime, fromPoint: normFrom, toPoint: normTo }
   })
 
   return buildApiSuccess({ items }, `Generated ${items.length} agenda items`)
