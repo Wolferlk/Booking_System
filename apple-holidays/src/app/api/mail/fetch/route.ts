@@ -8,7 +8,7 @@ import { listCachedMailboxEmails, syncMailboxEmailsToDb } from '@/lib/mail-cache
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const limit   = Math.min(Number(req.nextUrl.searchParams.get('limit') ?? '50'), 500)
   const folder  = (req.nextUrl.searchParams.get('folder') ?? 'all') as 'inbox' | 'all'
