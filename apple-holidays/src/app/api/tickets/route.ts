@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
+import { countryScope } from '@/lib/country-detection'
 import type { UserRole, OperationCountry } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
     const booking = await prisma.booking.findUnique({ where: { bookingRef } })
     if (booking) where.bookingId = booking.id
   } else if (effectiveCountry) {
-    where.booking = { operationCountry: effectiveCountry }
+    where.booking = { operationCountry: { in: countryScope(effectiveCountry)! } }
   }
 
   const tickets = await prisma.ticket.findMany({

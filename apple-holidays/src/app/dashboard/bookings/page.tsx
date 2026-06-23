@@ -64,6 +64,8 @@ interface Booking {
 const COUNTRY_BADGE: Record<string, { flag: string; label: string; color: string }> = {
   VIETNAM:            { flag: '🇻🇳', label: 'Vietnam',   color: 'bg-red-500/10 text-red-400 border-red-500/20' },
   SRILANKA:           { flag: '🇱🇰', label: 'Sri Lanka', color: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' },
+  SINGAPORE:          { flag: '🇸🇬', label: 'Singapore', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  MALAYSIA:           { flag: '🇲🇾', label: 'Malaysia',  color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
   SINGAPORE_MALAYSIA: { flag: '🇸🇬', label: 'SG & MY',   color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
   ALL:                { flag: '🌐', label: 'All',        color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 }

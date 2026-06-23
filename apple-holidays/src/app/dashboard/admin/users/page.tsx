@@ -64,6 +64,8 @@ const ALL_ROLES = Object.entries(ROLE_LABELS) as [UserRole, string][]
 const COUNTRY_META: Record<OperationCountry, { label: string; flag: string; color: string }> = {
   VIETNAM:            { label: 'Vietnam',              flag: '🇻🇳',     color: 'bg-red-500/15 text-red-400 border-red-500/30' },
   SRILANKA:           { label: 'Sri Lanka',            flag: '🇱🇰',     color: 'bg-yellow-500/15 text-yellow-600 border-yellow-500/30' },
+  SINGAPORE:          { label: 'Singapore',            flag: '🇸🇬',     color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
+  MALAYSIA:           { label: 'Malaysia',             flag: '🇲🇾',     color: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
   SINGAPORE_MALAYSIA: { label: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
   ALL:                { label: 'All Countries',        flag: '🌍',      color: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
 }
@@ -72,11 +74,13 @@ const COUNTRY_META: Record<OperationCountry, { label: string; flag: string; colo
 const COUNTRY_ROLES: Record<OperationCountry, UserRole[]> = {
   VIETNAM:            ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'],
   SRILANKA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
+  SINGAPORE:          ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
+  MALAYSIA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
   SINGAPORE_MALAYSIA: ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
   ALL:                ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
 }
 
-const SELECTABLE_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'ALL']
+const SELECTABLE_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE', 'MALAYSIA', 'SINGAPORE_MALAYSIA', 'ALL']
 
 const EMPTY_FORM = {
   name: '', email: '', phone: '', role: 'BT_USER' as UserRole,

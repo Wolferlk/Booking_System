@@ -37,7 +37,8 @@ interface CloudFilePickerProps {
 
   open: boolean
   onClose: () => void
-  onSelect: (file: CloudFile) => void
+  /** folderPath is the breadcrumb trail of the folder the file was picked from (e.g. "Reservation / Singapore Drive") */
+  onSelect: (file: CloudFile, folderPath?: string) => void
   filterExtensions?: string[]
   title?: string
   selectLabel?: string
@@ -191,7 +192,7 @@ export default function CloudFilePicker({
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="btn btn-secondary">Cancel</button>
             <button
-              onClick={() => selected && onSelect(selected)}
+              onClick={() => selected && onSelect(selected, breadcrumbs.map(b => b.name).join(' / '))}
               disabled={!selected}
               className="btn btn-primary"
             >

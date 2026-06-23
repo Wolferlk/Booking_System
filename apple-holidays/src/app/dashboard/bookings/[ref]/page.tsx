@@ -698,11 +698,15 @@ Wishing you a wonderful trip! ✈️
                   <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
                     booking.operationCountry === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-200' :
                     booking.operationCountry === 'SRILANKA'           ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                    booking.operationCountry === 'SINGAPORE'          ? 'bg-blue-50 text-blue-600 border-blue-200' :
+                    booking.operationCountry === 'MALAYSIA'           ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
                     booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-200' :
                     'bg-slate-100 text-slate-500 border-slate-200'
                   }`}>
                     {booking.operationCountry === 'VIETNAM'            ? '🇻🇳 Vietnam' :
                      booking.operationCountry === 'SRILANKA'           ? '🇱🇰 Sri Lanka' :
+                     booking.operationCountry === 'SINGAPORE'          ? '🇸🇬 Singapore' :
+                     booking.operationCountry === 'MALAYSIA'           ? '🇲🇾 Malaysia' :
                      booking.operationCountry === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 Singapore & Malaysia' :
                      '🌐 All Countries'}
                   </span>
@@ -968,6 +972,8 @@ Wishing you a wonderful trip! ✈️
                 className={`text-xs font-semibold rounded-full px-3 py-1 border cursor-pointer appearance-none pr-6 ${
                   booking.operationCountry === 'VIETNAM'            ? 'bg-red-500/10 text-red-500 border-red-500/25' :
                   booking.operationCountry === 'SRILANKA'           ? 'bg-yellow-500/10 text-yellow-600 border-yellow-500/25' :
+                  booking.operationCountry === 'SINGAPORE'          ? 'bg-blue-500/10 text-blue-500 border-blue-500/25' :
+                  booking.operationCountry === 'MALAYSIA'           ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/25' :
                   booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-500/10 text-blue-500 border-blue-500/25' :
                   'bg-slate-100 text-slate-400 border-slate-200'
                 }`}
@@ -976,7 +982,9 @@ Wishing you a wonderful trip! ✈️
                 <option value="">🌍 Country not set</option>
                 <option value="VIETNAM">🇻🇳 Vietnam</option>
                 <option value="SRILANKA">🇱🇰 Sri Lanka</option>
-                <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia</option>
+                <option value="SINGAPORE">🇸🇬 Singapore</option>
+                <option value="MALAYSIA">🇲🇾 Malaysia</option>
+                <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia (legacy)</option>
               </select>
             </div>
           </div>

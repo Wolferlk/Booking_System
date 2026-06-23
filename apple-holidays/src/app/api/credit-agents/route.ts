@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
+import { countryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@prisma/client'
 
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
     : (userCountry || null)
 
   const agents = await prisma.creditAgent.findMany({
-    where: effectiveCountry ? { country: effectiveCountry } : {},
+    where: effectiveCountry ? { country: { in: countryScope(effectiveCountry)! } } : {},
     orderBy: { name: 'asc' },
     include: {
       payments: {

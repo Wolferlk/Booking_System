@@ -13,6 +13,8 @@ const COLORS = ['#eab308', '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#ef4444'
 const COUNTRY_META: Record<string, { name: string; flag: string; code: string }> = {
   VIETNAM:            { name: 'Vietnam',              flag: '🇻🇳', code: 'MMT_VN' },
   SRILANKA:           { name: 'Sri Lanka',            flag: '🇱🇰', code: 'MMT_LK' },
+  SINGAPORE:          { name: 'Singapore',            flag: '🇸🇬', code: 'MMT_SG' },
+  MALAYSIA:           { name: 'Malaysia',             flag: '🇲🇾', code: 'MMT_MY' },
   SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY' },
 }
 

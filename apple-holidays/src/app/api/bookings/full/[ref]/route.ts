@@ -15,7 +15,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { canSeeAllCountries } from '@/lib/rbac'
-import { detectCountryFromRef } from '@/lib/country-detection'
+import { detectCountryFromRef, isInCountryScope } from '@/lib/country-detection'
 import type { OperationCountry } from '@/lib/country-detection'
 
 // ─── Full booking include ────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ export async function GET(
 
   const role = session.user.role
   const userCountry = session.user.country as OperationCountry | undefined
-  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && booking.operationCountry !== userCountry) {
+  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && !isInCountryScope(booking.operationCountry, userCountry)) {
     return buildApiError('Forbidden', 403)
   }
 
@@ -135,7 +135,7 @@ export async function POST(
   if (!operationCountry) {
     return buildApiError('Booking country could not be determined from bookingRef')
   }
-  if (sessionCountry && sessionCountry !== 'ALL' && operationCountry !== sessionCountry) {
+  if (sessionCountry && sessionCountry !== 'ALL' && !isInCountryScope(operationCountry, sessionCountry)) {
     return buildApiError('Forbidden — booking country must match your assigned country', 403)
   }
 
@@ -201,7 +201,7 @@ export async function PUT(
 
   const role = session.user.role
   const userCountry = session.user.country as OperationCountry | undefined
-  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && booking.operationCountry !== userCountry) {
+  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && !isInCountryScope(booking.operationCountry, userCountry)) {
     return buildApiError('Forbidden', 403)
   }
 

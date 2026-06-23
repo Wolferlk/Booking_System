@@ -25,6 +25,8 @@ enum OperationCountry {
   VIETNAM
   SRILANKA
   SINGAPORE_MALAYSIA
+  SINGAPORE
+  MALAYSIA
 }
 
 enum BookingStatus {

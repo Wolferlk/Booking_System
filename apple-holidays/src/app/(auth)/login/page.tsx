@@ -13,15 +13,15 @@ import {
 const COUNTRY_PARAM_TO_FILTER: Record<string, string> = {
   vietnam:   'VIETNAM',
   srilanka:  'SRILANKA',
-  singapore: 'SINGAPORE_MALAYSIA',
-  malaysia:  'SINGAPORE_MALAYSIA',
+  singapore: 'SINGAPORE',
+  malaysia:  'MALAYSIA',
 }
 
 const DESTINATION_META: Record<string, { label: string; flag: string; code: string }> = {
-  vietnam:   { label: 'Vietnam',              flag: '🇻🇳',     code: 'MMT_VN' },
-  srilanka:  { label: 'Sri Lanka',            flag: '🇱🇰',     code: 'MMT_LK' },
-  malaysia:  { label: 'Malaysia',             flag: '🇲🇾',     code: 'MMT_MY' },
-  singapore: { label: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY' },
+  vietnam:   { label: 'Vietnam',    flag: '🇻🇳', code: 'MMT_VN' },
+  srilanka:  { label: 'Sri Lanka',  flag: '🇱🇰', code: 'MMT_LK' },
+  malaysia:  { label: 'Malaysia',   flag: '🇲🇾', code: 'MMT_MY' },
+  singapore: { label: 'Singapore',  flag: '🇸🇬', code: 'MMT_SG' },
 }
 
 const ROLE_META: Record<string, {

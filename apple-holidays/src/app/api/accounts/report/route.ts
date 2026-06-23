@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
+import { countryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@prisma/client'
 
@@ -28,9 +29,14 @@ export async function GET(req: NextRequest) {
 
   // Country scoping
   if (!canSeeAllCountries(role, userCountry ?? 'ALL')) {
-    if (userCountry && userCountry !== 'ALL') andClauses.push({ operationCountry: userCountry })
+    const scope = countryScope(userCountry)
+    if (scope) andClauses.push({ operationCountry: { in: scope } })
   } else if (countryOverride && countryOverride !== 'ALL') {
-    andClauses.push({ operationCountry: countryOverride })
+    if (countryOverride === 'SINGAPORE_MALAYSIA') {
+      andClauses.push({ operationCountry: { in: countryScope(countryOverride)! } })
+    } else {
+      andClauses.push({ operationCountry: countryOverride })
+    }
   }
 
   if (status) andClauses.push({ status })

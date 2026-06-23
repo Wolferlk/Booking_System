@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import bcrypt from 'bcryptjs'
 import type { UserRole, OperationCountry } from '@prisma/client'
 import { isRoleAllowedInCountry } from '@/lib/rbac'
+import { isInCountryScope } from '@/lib/country-detection'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
@@ -24,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   if (!user) return buildApiError('User not found', 404)
 
   const sessionCountry = session.user.country as OperationCountry
-  if (session.user.role === 'SUPER_ADMIN' && sessionCountry !== 'ALL' && user.country !== sessionCountry) {
+  if (session.user.role === 'SUPER_ADMIN' && sessionCountry !== 'ALL' && !isInCountryScope(user.country, sessionCountry)) {
     return buildApiError('Forbidden', 403)
   }
 
@@ -46,7 +47,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const sessionCountry = session.user.country as OperationCountry
   const isGlobalAdmin = session.user.role === 'SUPER_ADMIN' && sessionCountry === 'ALL'
 
-  if (!isGlobalAdmin && session.user.role !== 'ULTRA_SUPER_ADMIN' && existing.country !== sessionCountry) {
+  if (!isGlobalAdmin && session.user.role !== 'ULTRA_SUPER_ADMIN' && !isInCountryScope(existing.country, sessionCountry)) {
     return buildApiError('Forbidden — you can only manage users in your country', 403)
   }
 
@@ -146,7 +147,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!existing) return buildApiError('User not found', 404)
 
   const sessionCountry = session.user.country as OperationCountry
-  if (session.user.role === 'SUPER_ADMIN' && sessionCountry !== 'ALL' && existing.country !== sessionCountry) {
+  if (session.user.role === 'SUPER_ADMIN' && sessionCountry !== 'ALL' && !isInCountryScope(existing.country, sessionCountry)) {
     return buildApiError('Forbidden', 403)
   }
 

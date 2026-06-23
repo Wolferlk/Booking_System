@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { countryScope } from '@/lib/country-detection'
 import type { OperationCountry } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
   const userCountry = session.user.country as OperationCountry | undefined
   const countryOverride = searchParams.get('country') as OperationCountry | null
   const effectiveCountry = (!userCountry || userCountry === 'ALL') ? countryOverride : userCountry
-  const countryWhere = effectiveCountry ? { country: effectiveCountry } : {}
+  const countryWhere = effectiveCountry ? { country: { in: countryScope(effectiveCountry)! } } : {}
 
   let drivers
   try {

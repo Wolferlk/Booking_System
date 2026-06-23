@@ -27,7 +27,7 @@ import { extractBookingFromEmail } from '@/lib/mail-processor'
 import { classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string; numpages: number }>
-import { detectCountryFromRef } from '@/lib/country-detection'
+import { detectCountryFromRef, detectCountryFromPath } from '@/lib/country-detection'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
 import type { OperationCountry } from '@prisma/client'
@@ -68,20 +68,22 @@ export const DRIVE_CONFIGS: DriveConfig[] = [
     rootFolder_sp: process.env.ONEDRIVE_SL_ROOT ?? 'SL Share Drive_',
   },
   {
-    key:     'MY',
-    label:   'Malaysia',
-    country: 'SINGAPORE_MALAYSIA',
-    type:    'personal',
-    userUpn: process.env.ONEDRIVE_MY_USER ?? 'geetha.lakshmi@aahaas.com',
-    // rootFolder omitted — scan from drive root; booking folders detected by MY-prefix regex
+    key:        'MY',
+    label:      'Malaysia',
+    country:    'MALAYSIA',
+    type:       'personal',
+    userUpn:    process.env.ONEDRIVE_MY_USER ?? 'geetha.lakshmi@aahaas.com',
+    // Singapore & Malaysia share one OneDrive — scope each to its own sub-folder so
+    // browsing/scanning is country-specific (same approach as VN's 'VN OPERATION').
+    rootFolder: process.env.ONEDRIVE_MY_ROOT ?? 'Reservation/Malaysia Drive',
   },
   {
-    key:     'SG',
-    label:   'Singapore',
-    country: 'SINGAPORE_MALAYSIA',
-    type:    'personal',
-    userUpn: process.env.ONEDRIVE_SG_USER ?? 'geetha.lakshmi@aahaas.com',
-    // rootFolder omitted — scan from drive root; booking folders detected by SG-prefix regex
+    key:        'SG',
+    label:      'Singapore',
+    country:    'SINGAPORE',
+    type:       'personal',
+    userUpn:    process.env.ONEDRIVE_SG_USER ?? 'geetha.lakshmi@aahaas.com',
+    rootFolder: process.env.ONEDRIVE_SG_ROOT ?? 'Reservation/Singapore Drive',
   },
 ]
 
@@ -643,8 +645,11 @@ async function processTCFile(
   const existing    = await prisma.booking.findUnique({ where: { bookingRef } })
   const isNew       = !existing
 
+  // Singapore & Malaysia share one physical OneDrive; the SG/MY sub-folder (in the
+  // folder URL) plus the booking-ref prefix tell them apart. Fall back to the
+  // drive config country only if neither signal is present.
   const detectedCountry =
-    detectCountryFromRef(bookingRef) ?? country
+    detectCountryFromRef(bookingRef) ?? detectCountryFromPath(folderUrl) ?? country
 
   const commonData = {
     agentBookingId:    extracted.agentBookingId    ?? undefined,

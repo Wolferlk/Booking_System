@@ -717,6 +717,8 @@ export default function AccountsPNLPage() {
                                   <span className="font-mono text-xs">
                                     {b.operationCountry === 'VIETNAM'            ? '🇻🇳 VN'
                                     : b.operationCountry === 'SRILANKA'           ? '🇱🇰 SL'
+                                    : b.operationCountry === 'SINGAPORE'          ? '🇸🇬 SG'
+                                    : b.operationCountry === 'MALAYSIA'           ? '🇲🇾 MY'
                                     : b.operationCountry === 'SINGAPORE_MALAYSIA' ? '🇸🇬 SG/MY'
                                     : b.operationCountry}
                                   </span>

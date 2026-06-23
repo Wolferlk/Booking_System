@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
+import { countryLabel } from '@/lib/country-detection'
 import Image from 'next/image'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ interface BookingInfo {
   arrivalDate: string
   departureDate: string
   tourDestination?: string | null
+  operationCountry?: string | null
   agentBookingId?: string | null
   isNumber?: string | null
   contactPhone?: string | null
@@ -239,7 +241,7 @@ export default function PrintAgendaPage() {
         {[
           { label: 'Tour Operator / Agent', value: booking.agent ?? '—' },
           { label: 'File Handler',          value: booking.fileHandler ?? '—' },
-          { label: 'Destination',           value: booking.tourDestination ?? '—' },
+          { label: 'Destination',           value: booking.tourDestination?.trim() || (booking.operationCountry ? countryLabel(booking.operationCountry as never) : '—') },
           { label: 'Lead Passenger',        value: lead?.name ?? '—' },
         ].map(({ label, value }) => (
           <div key={label}>
@@ -283,7 +285,15 @@ export default function PrintAgendaPage() {
       ══════════════════════════════════════════════════════ */}
       {booking.passengers.length > 0 && (
         <div style={{ marginBottom: 2 }}>
-          <div style={S.sectionTitle}>👥 Passengers ({booking.passengers.length})</div>
+          <div style={S.sectionTitle}>
+            <span>👥 Passengers</span>
+            {/* <span style={{ background: '#d97706', color: '#fff', padding: '1px 9px', borderRadius: 10, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3 }}>
+              {totalPax} PAX
+            </span> */}
+            <span style={{ fontSize: 9.5, fontWeight: 800,background: '#d97706',padding: '1px 9px', color: '#fff',borderRadius: 10, textTransform: 'none', letterSpacing: 0 }}>
+              {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}
+            </span>
+          </div>
           <table>
             <thead>
               <tr>
@@ -376,24 +386,6 @@ export default function PrintAgendaPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════
-          EMERGENCY CONTACTS
-      ══════════════════════════════════════════════════════ */}
-      {booking.emergencyContacts.length > 0 && (
-        <div style={{ marginBottom: 2 }}>
-          <div style={{ ...S.sectionTitle, borderTop: '2px solid #dc2626' }}>🚨 Emergency Contacts</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, padding: '8px 10px', background: '#fff7f7', border: '1px solid #fee2e2', borderTop: 'none', borderRadius: '0 0 5px 5px' }}>
-            {booking.emergencyContacts.map(ec => (
-              <div key={ec.id} style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 5, padding: '5px 10px', minWidth: 140 }}>
-                <p style={{ fontSize: 9, fontWeight: 700, color: '#991b1b' }}>{ec.name}</p>
-                <p style={{ fontSize: 8.5, color: '#374151', marginTop: 1 }}>{ec.phone ?? '—'}</p>
-                {ec.role && <p style={{ fontSize: 7.5, color: '#94a3b8', marginTop: 1 }}>{ec.role}</p>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════
           MOVEMENT CHART (AGENDA)
       ══════════════════════════════════════════════════════ */}
       {items.length > 0 && (
@@ -475,6 +467,24 @@ export default function PrintAgendaPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          EMERGENCY CONTACTS — shown at the bottom of the sheet
+      ══════════════════════════════════════════════════════ */}
+      {booking.emergencyContacts.length > 0 && (
+        <div style={{ marginBottom: 2 }}>
+          <div style={{ ...S.sectionTitle, borderTop: '2px solid #dc2626' }}>🚨 Emergency Contacts</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, padding: '8px 10px', background: '#fff7f7', border: '1px solid #fee2e2', borderTop: 'none', borderRadius: '0 0 5px 5px' }}>
+            {booking.emergencyContacts.map(ec => (
+              <div key={ec.id} style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 5, padding: '5px 10px', minWidth: 140 }}>
+                <p style={{ fontSize: 9, fontWeight: 700, color: '#991b1b' }}>{ec.name}</p>
+                <p style={{ fontSize: 8.5, color: '#374151', marginTop: 1 }}>{ec.phone ?? '—'}</p>
+                {ec.role && <p style={{ fontSize: 7.5, color: '#94a3b8', marginTop: 1 }}>{ec.role}</p>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

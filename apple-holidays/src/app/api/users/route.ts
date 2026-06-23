@@ -6,8 +6,9 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import bcrypt from 'bcryptjs'
 import type { UserRole, OperationCountry } from '@prisma/client'
 import { isRoleAllowedInCountry } from '@/lib/rbac'
+import { countryScope } from '@/lib/country-detection'
 
-const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'ALL']
+const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA', 'ALL']
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -21,9 +22,12 @@ export async function GET(req: NextRequest) {
   // ULTRA_SUPER_ADMIN (country=ALL) can filter via ?country= param
   let countryWhere: Record<string, unknown> = {}
   if (sessionCountry && sessionCountry !== 'ALL') {
-    countryWhere = { country: sessionCountry }
+    // SG/MY admins manage the whole Singapore+Malaysia group
+    countryWhere = { country: { in: countryScope(sessionCountry)! } }
   } else if (countryOverride && countryOverride !== 'ALL') {
-    countryWhere = { country: countryOverride }
+    countryWhere = countryOverride === 'SINGAPORE_MALAYSIA'
+      ? { country: { in: countryScope(countryOverride)! } }
+      : { country: countryOverride }
   }
 
   const users = await prisma.user.findMany({
