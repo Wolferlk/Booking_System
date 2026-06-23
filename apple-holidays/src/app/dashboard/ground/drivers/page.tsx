@@ -49,6 +49,13 @@ const BANKS_BY_COUNTRY: Record<string, string[]> = {
     'Sampath Bank', 'Seylan Bank', 'Nations Trust Bank (NTB)', 'NDB Bank',
     'DFCC Bank', 'Pan Asia Bank', 'Union Bank', 'Amana Bank', 'Other',
   ],
+  SINGAPORE: [
+    'DBS', 'OCBC', 'UOB', 'Standard Chartered', 'Citibank', 'HSBC', 'Maybank', 'CIMB', 'Other',
+  ],
+  MALAYSIA: [
+    'Maybank', 'CIMB', 'RHB', 'Public Bank', 'Hong Leong Bank', 'Bank Islam',
+    'AmBank', 'Standard Chartered', 'HSBC', 'Bank Mandiri', 'Other',
+  ],
   SINGAPORE_MALAYSIA: [
     'DBS', 'OCBC', 'UOB', 'Maybank', 'CIMB', 'Standard Chartered',
     'Citibank', 'HSBC', 'RHB', 'Bank Mandiri', 'Other',
@@ -58,24 +65,32 @@ const BANKS_BY_COUNTRY: Record<string, string[]> = {
 const BANK_LABELS: Record<string, string> = {
   VIETNAM:            '🇻🇳 Vietnamese Bank Account',
   SRILANKA:           '🇱🇰 Sri Lanka Bank Account',
+  SINGAPORE:          '🇸🇬 Singapore Bank Account',
+  MALAYSIA:           '🇲🇾 Malaysia Bank Account',
   SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 Singapore / Malaysia Bank Account',
 }
 
 const HOLDER_PLACEHOLDERS: Record<string, string> = {
   VIETNAM:            'NGUYEN VAN MINH',
   SRILANKA:           'KASUN PERERA',
+  SINGAPORE:          'RAVI KUMAR',
+  MALAYSIA:           'AHMAD BIN ISMAIL',
   SINGAPORE_MALAYSIA: 'RAVI KUMAR',
 }
 
 const BRANCH_PLACEHOLDERS: Record<string, string> = {
   VIETNAM:            'Ho Chi Minh City',
   SRILANKA:           'Colombo',
+  SINGAPORE:          'Singapore CBD',
+  MALAYSIA:           'Kuala Lumpur',
   SINGAPORE_MALAYSIA: 'Singapore CBD',
 }
 
 const SWIFT_PLACEHOLDERS: Record<string, string> = {
   VIETNAM:            'BFTVVNVX',
   SRILANKA:           'BCEYLKLX',
+  SINGAPORE:          'DBSSSGSG',
+  MALAYSIA:           'MBBEMYKL',
   SINGAPORE_MALAYSIA: 'DBSSSGSG',
 }
 
@@ -417,11 +432,15 @@ export default function DriversPage() {
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                               driver.country === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-100' :
                               driver.country === 'SRILANKA'           ? 'bg-yellow-50 text-yellow-700 border-yellow-100' :
+                              driver.country === 'SINGAPORE'          ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                              driver.country === 'MALAYSIA'           ? 'bg-emerald-50 text-emerald-600 border-emerald-100' :
                               driver.country === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-100' :
                               'bg-slate-100 text-slate-500 border-slate-200'
                             }`}>
                               {driver.country === 'VIETNAM' ? '🇻🇳 Vietnam' :
                                driver.country === 'SRILANKA' ? '🇱🇰 Sri Lanka' :
+                               driver.country === 'SINGAPORE' ? '🇸🇬 Singapore' :
+                               driver.country === 'MALAYSIA' ? '🇲🇾 Malaysia' :
                                driver.country === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 SG/MY' : driver.country}
                             </span>
                           )}
@@ -692,7 +711,9 @@ export default function DriversPage() {
                     <option value="">Not set</option>
                     <option value="VIETNAM">🇻🇳 Vietnam</option>
                     <option value="SRILANKA">🇱🇰 Sri Lanka</option>
-                    <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia</option>
+                    <option value="SINGAPORE">🇸🇬 Singapore</option>
+                    <option value="MALAYSIA">🇲🇾 Malaysia</option>
+                    <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia (legacy)</option>
                   </select>
                 </div>
               )}

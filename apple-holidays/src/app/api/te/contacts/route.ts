@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
+import { countryScope } from '@/lib/country-detection'
 import type { UserRole, OperationCountry } from '@prisma/client'
 
 const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
     : (userCountry || null)
 
   const where: Record<string, unknown> = effectiveCountry
-    ? { booking: { operationCountry: effectiveCountry } }
+    ? { booking: { operationCountry: { in: countryScope(effectiveCountry)! } } }
     : {}
 
   const logs = await prisma.contactLog.findMany({

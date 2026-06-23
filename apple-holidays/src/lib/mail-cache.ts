@@ -2,7 +2,7 @@ import { prisma } from './prisma'
 import type { MailMessage } from '@prisma/client'
 import type { MailboxKind, ProcessedEmail } from './mail-processor'
 import { fetchUnprocessedEmailsForUser } from './mail-processor'
-import { detectCountryFromText, type OperationCountry } from './country-detection'
+import { detectCountryFromText, countryScope, type OperationCountry } from './country-detection'
 
 type MailboxFilter = 'all' | 'tq' | 'pnl'
 type FolderFilter = 'all' | 'inbox'
@@ -171,8 +171,9 @@ export async function listCachedMailboxEmails(params: {
   const model = mm()
   if (!model) return []
 
-  const countryFilter = params.operationCountry
-    ? { OR: [{ operationCountry: params.operationCountry }, { operationCountry: null }] }
+  const countryScopeList = countryScope(params.operationCountry)
+  const countryFilter = countryScopeList
+    ? { OR: [{ operationCountry: { in: countryScopeList } }, { operationCountry: null }] }
     : {}
 
   const rows = await model.findMany({

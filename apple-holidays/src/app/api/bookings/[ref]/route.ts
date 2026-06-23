@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
 export async function GET(
@@ -53,7 +54,7 @@ export async function GET(
 
   const userCountry = session.user.country as string | undefined
   if (role !== 'CLIENT' && !canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL') {
-    if (booking.operationCountry !== userCountry) {
+    if (!isInCountryScope(booking.operationCountry, userCountry)) {
       return buildApiError('Forbidden', 403)
     }
   }
@@ -96,7 +97,7 @@ export async function PUT(
   if (!booking) return buildApiError('Booking not found', 404)
 
   const userCountry = session.user.country as string | undefined
-  if (!canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL' && booking.operationCountry !== userCountry) {
+  if (!canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL' && !isInCountryScope(booking.operationCountry, userCountry)) {
     return buildApiError('Forbidden', 403)
   }
 

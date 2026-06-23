@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
+import { countryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
 const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
@@ -38,25 +39,28 @@ export async function GET(req: NextRequest) {
   const userCountry = (session.user as any).country as string | undefined
   const countryOverride = req.nextUrl.searchParams.get('country')
 
-  // Build booking-level country filter to pass through the agenda → booking relation
-  // SINGAPORE and MALAYSIA are sub-filters of SINGAPORE_MALAYSIA, distinguished by bookingRef prefix
-  function buildCountryWhere(country: string): Record<string, unknown> {
+  // Admin explicit narrowing: SINGAPORE / MALAYSIA match their own value PLUS any
+  // legacy SINGAPORE_MALAYSIA bookings carrying the matching ref prefix.
+  function adminCountryWhere(country: string): Record<string, unknown> {
     if (country === 'SINGAPORE') {
-      return { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'SG' } }
+      return { OR: [{ operationCountry: 'SINGAPORE' }, { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'SG' } }] }
     }
     if (country === 'MALAYSIA') {
-      return { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'MY' } }
+      return { OR: [{ operationCountry: 'MALAYSIA' }, { operationCountry: 'SINGAPORE_MALAYSIA', bookingRef: { startsWith: 'MY' } }] }
+    }
+    if (country === 'SINGAPORE_MALAYSIA') {
+      return { operationCountry: { in: countryScope(country)! } }
     }
     return { operationCountry: country }
   }
 
   let bookingCountryWhere: Record<string, unknown> | undefined
   if (!canSeeAllCountries(role, userCountry as any)) {
-    if (userCountry && userCountry !== 'ALL') {
-      bookingCountryWhere = buildCountryWhere(userCountry)
-    }
+    // Country-scoped users see their whole scope (SG/MY users see the combined group)
+    const scope = countryScope(userCountry)
+    if (scope) bookingCountryWhere = { operationCountry: { in: scope } }
   } else if (countryOverride && countryOverride !== 'ALL') {
-    bookingCountryWhere = buildCountryWhere(countryOverride)
+    bookingCountryWhere = adminCountryWhere(countryOverride)
   }
 
   const { searchParams } = req.nextUrl

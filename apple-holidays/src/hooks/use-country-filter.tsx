@@ -5,8 +5,9 @@ import { useSession } from 'next-auth/react'
 import type { OperationCountry } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
-// SINGAPORE and MALAYSIA are sub-filters of SINGAPORE_MALAYSIA — filtered by bookingRef prefix
-export type CountryFilter = OperationCountry | 'ALL' | 'SINGAPORE' | 'MALAYSIA'
+// SINGAPORE and MALAYSIA are now first-class stored operationCountry values.
+// SINGAPORE_MALAYSIA remains as the legacy combined value.
+export type CountryFilter = OperationCountry | 'ALL'
 
 interface CountryFilterContextValue {
   countryFilter: CountryFilter

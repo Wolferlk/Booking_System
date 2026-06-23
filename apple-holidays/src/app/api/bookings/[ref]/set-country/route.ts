@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
-import { OPERATION_COUNTRIES } from '@/lib/country-detection'
+import { OPERATION_COUNTRIES, isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
 export async function PATCH(
@@ -31,10 +31,10 @@ export async function PATCH(
 
   const userCountry = session.user.country as string | undefined
   if (!canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL') {
-    if (booking.operationCountry !== userCountry) {
+    if (!isInCountryScope(booking.operationCountry, userCountry)) {
       return buildApiError('Forbidden', 403)
     }
-    if (country && country !== userCountry) {
+    if (country && !isInCountryScope(country, userCountry)) {
       return buildApiError('Forbidden — you can only assign bookings to your own country', 403)
     }
   }

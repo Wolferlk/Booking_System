@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
-import { detectCountryFromRef } from '@/lib/country-detection'
+import { detectCountryFromRef, countryScope, isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -39,11 +39,18 @@ export async function GET(req: NextRequest) {
   if (role === 'CLIENT') {
     andClauses.push({ clientUserId: session.user.id })
   } else if (!canSeeAllCountries(role, userCountry as any)) {
-    // Country-scoped users only see their own country's bookings — never include unassigned
-    if (userCountry && userCountry !== 'ALL') andClauses.push({ operationCountry: userCountry })
+    // Country-scoped users only see their own scope's bookings — never include unassigned.
+    // SG/MY users see the whole Singapore+Malaysia group (incl. legacy combined).
+    const scope = countryScope(userCountry)
+    if (scope) andClauses.push({ operationCountry: { in: scope } })
   } else if (countryOverride && countryOverride !== 'ALL') {
-    // Admin users may narrow to a specific country via explicit param
-    andClauses.push({ operationCountry: countryOverride })
+    // Admin users may narrow to a specific country via explicit param.
+    // SINGAPORE / MALAYSIA stay exact (granular); the combined value expands to the group.
+    if (countryOverride === 'SINGAPORE_MALAYSIA') {
+      andClauses.push({ operationCountry: { in: countryScope(countryOverride)! } })
+    } else {
+      andClauses.push({ operationCountry: countryOverride })
+    }
   }
 
   if (status) {
@@ -188,7 +195,7 @@ export async function POST(req: NextRequest) {
   if (existing) return buildApiError(`Booking ref ${bookingRef} already exists`)
 
   // Country resolution: explicit body value → ref prefix → session country
-  const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA']
+  const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA']
   const validatedBodyCountry = VALID_COUNTRIES.includes(bodyCountry as OperationCountry)
     ? (bodyCountry as OperationCountry)
     : null
@@ -201,7 +208,7 @@ export async function POST(req: NextRequest) {
   if (!operationCountry) {
     return buildApiError('Please select a destination country before creating the booking')
   }
-  if (sessionCountry && sessionCountry !== 'ALL' && operationCountry !== sessionCountry) {
+  if (sessionCountry && sessionCountry !== 'ALL' && !isInCountryScope(operationCountry, sessionCountry)) {
     return buildApiError('Forbidden — booking country must match your assigned country', 403)
   }
 

@@ -37,13 +37,13 @@ export const ROLE_COLORS: Record<UserRole, string> = {
 
 // Country-role guardrails used by admin provisioning and backend access checks.
 export const ROLE_COUNTRY_SCOPE: Record<UserRole, OperationCountry[]> = {
-  BT_USER:           ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA'],
+  BT_USER:           ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA'],
   GT_USER:           ['VIETNAM'],
   TE_USER:           ['VIETNAM'],
-  GT_TE_USER:        ['SRILANKA', 'SINGAPORE_MALAYSIA'],
+  GT_TE_USER:        ['SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA'],
   AC_USER:           ['ALL'],
   CLIENT:            ['ALL'],
-  SUPER_ADMIN:       ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'ALL'],
+  SUPER_ADMIN:       ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA', 'ALL'],
   ULTRA_SUPER_ADMIN: ['ALL'],
 }
 

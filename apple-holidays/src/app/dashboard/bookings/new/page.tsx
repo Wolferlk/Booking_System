@@ -10,13 +10,14 @@ import Button from '@/components/ui/button'
 import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import { generateBookingRef } from '@/lib/utils'
+import { detectCountryFromPath, detectCountryFromRef, countryLabel } from '@/lib/country-detection'
 
 // ─── Drive options per destination country ────────────────────────────────────
 const COUNTRY_DRIVES = [
   { label: 'Vietnam',   driveKey: 'VN', driveLabel: 'Vietnam (VN OPERATION)',   country: 'VIETNAM' },
   { label: 'Sri Lanka', driveKey: 'SL', driveLabel: 'Sri Lanka (SL Share Drive)', country: 'SRILANKA' },
-  { label: 'Malaysia',  driveKey: 'MY', driveLabel: 'Malaysia',                  country: 'SINGAPORE_MALAYSIA' },
-  { label: 'Singapore', driveKey: 'SG', driveLabel: 'Singapore',                 country: 'SINGAPORE_MALAYSIA' },
+  { label: 'Malaysia',  driveKey: 'MY', driveLabel: 'Malaysia',                  country: 'MALAYSIA' },
+  { label: 'Singapore', driveKey: 'SG', driveLabel: 'Singapore',                 country: 'SINGAPORE' },
 ] as const
 
 type DriveKey = typeof COUNTRY_DRIVES[number]['driveKey']
@@ -134,7 +135,7 @@ export default function NewBookingPage() {
   }
 
   // ── File selected from OneDrive picker ────────────────────────────────────
-  async function handleDriveFileSelected(file: CloudFile) {
+  async function handleDriveFileSelected(file: CloudFile, folderPath?: string) {
     setDrivePickerOpen(false)
     if (!selectedDriveKey) return
     setAiLoading(true)
@@ -147,7 +148,21 @@ export default function NewBookingPage() {
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       handleAIParsed(json.data.extracted)
-      toast.success(`Booking details extracted from "${file.name}"`)
+
+      // The MY and SG buttons open the SAME OneDrive — Singapore vs Malaysia is
+      // determined by the sub-folder ("…/Singapore Drive" vs "…/Malaysia Drive").
+      // Detect from the folder path first, then the file URL, then the booking ref.
+      const extractedRef = (json.data.extracted?.bookingRef as string) || ''
+      const detected =
+        detectCountryFromPath(folderPath) ||
+        detectCountryFromPath(file.webUrl) ||
+        (extractedRef ? detectCountryFromRef(extractedRef) : null)
+      if (detected && detected !== selectedCountry) {
+        setSelectedCountry(detected)
+        toast.success(`Extracted from "${file.name}" — detected ${countryLabel(detected)}`)
+      } else {
+        toast.success(`Booking details extracted from "${file.name}"`)
+      }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Extraction failed')
     } finally {

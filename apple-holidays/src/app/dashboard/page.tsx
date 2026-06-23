@@ -33,6 +33,20 @@ const COUNTRY_META: Record<string, {
     text: 'text-yellow-700',
     badge: 'bg-yellow-100 text-yellow-700 border-yellow-200',
   },
+  SINGAPORE: {
+    name: 'Singapore', flag: '🇸🇬', code: 'MMT_SG',
+    gradient: 'from-blue-500/10 to-blue-600/5',
+    border: 'border-blue-500/20',
+    text: 'text-blue-700',
+    badge: 'bg-blue-100 text-blue-700 border-blue-200',
+  },
+  MALAYSIA: {
+    name: 'Malaysia', flag: '🇲🇾', code: 'MMT_MY',
+    gradient: 'from-emerald-500/10 to-emerald-600/5',
+    border: 'border-emerald-500/20',
+    text: 'text-emerald-700',
+    badge: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  },
   SINGAPORE_MALAYSIA: {
     name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY',
     gradient: 'from-blue-500/10 to-blue-600/5',
