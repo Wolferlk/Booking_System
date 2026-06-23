@@ -97,7 +97,7 @@ interface BookingDetails {
   paxChildren: number
   arrivalDate: string
   departureDate: string
-  passengers: { id: string; name: string; type: string; age?: number | null; passport?: string | null; nationality?: string | null; contact?: string | null; isLead?: boolean }[]
+  passengers: { id: string; name: string; type: string; age?: number | null; passport?: string | null; nationality?: string | null; contact?: string | null; isLead?: boolean; mealPreference?: string | null }[]
   flights: { id: string; flightNo: string; date: string; fromApt: string; depTime?: string | null; toApt: string; arrTime?: string | null; airline?: string | null }[]
   accommodations: { id: string; hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string | null; mealType?: string | null }[]
   emergencyContacts: { id: string; name: string; phone?: string | null; role?: string | null }[]
@@ -664,6 +664,7 @@ export default function AgendaPage() {
                           {booking.passengers.some(p => p.type === 'CHILD' && p.age != null) && (
                             <th className="px-4 py-2 text-left font-semibold">Age</th>
                           )}
+                          <th className="px-4 py-2 text-left font-semibold">Meal Preference</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -680,6 +681,11 @@ export default function AgendaPage() {
                                   : '—'}
                               </td>
                             )}
+                            <td className="px-4 py-2.5 text-slate-500">
+                              {p.mealPreference && p.mealPreference.trim() !== ''
+                                ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">{p.mealPreference}</span>
+                                : '—'}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
