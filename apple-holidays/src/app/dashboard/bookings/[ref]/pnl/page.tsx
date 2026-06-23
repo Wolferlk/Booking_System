@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { formatCurrency, formatDateTime, computePNLLineTotal, isCreditAgent } from '@/lib/utils'
 import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
+import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import type { UserRole } from '@prisma/client'
 
 const CATEGORIES = ['HOTEL', 'TICKETS', 'GUIDES', 'MEALS', 'CRUISE', 'WATER', 'TRANSPORT', 'TAX_FEES', 'FLIGHT_TICKETS', 'OTHER']
@@ -557,6 +558,11 @@ export default function PNLPage() {
               </div>
             </div>
           </Card>
+        )}
+
+        {/* Accounts PNL (Reetha) — live external record linked to this booking */}
+        {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <ExternalPnlPanel bookingRef={ref} role={role} />
         )}
 
         {/* Line items table */}

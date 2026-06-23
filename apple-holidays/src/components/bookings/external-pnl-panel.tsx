@@ -6,7 +6,7 @@ import {
   RefreshCw, Link2, Unlink, Search, Loader2, CheckCircle2,
   AlertCircle, Clock, TrendingUp, TrendingDown, DollarSign,
   X, Database, ChevronDown, ChevronUp, Hash, Calendar,
-  Users, Package, Tag, Globe, BarChart2,
+  Users, Package, Tag, Globe, BarChart2, PlusCircle,
 } from 'lucide-react'
 import { Card, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -134,6 +134,8 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   const [fetching, setFetching]   = useState(false)
   const [unlinking, setUnlinking] = useState(false)
   const [showItems, setShowItems] = useState(true)
+  const [creatingTicket, setCreatingTicket] = useState<number | null>(null)
+  const [createdTickets, setCreatedTickets] = useState<Set<number>>(new Set())
 
   // Manual search
   const [searchOpen, setSearchOpen] = useState(false)
@@ -223,6 +225,48 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Link failed')
     } finally { setLinking(null) }
+  }
+
+  // ── Create ticket from PNL item ───────────────────────────────────────────
+  async function createTicketFromItem(item: PnlItem) {
+    setCreatingTicket(item.id)
+    try {
+      const serviceName = item.hotel_name ?? item.transport_name ?? item.service_name ?? item.type ?? 'PNL Item'
+      const category = item.type?.toLowerCase().includes('hotel') ? 'HOTEL'
+        : item.type?.toLowerCase().includes('transport') ? 'TRANSPORT'
+        : item.hotel_name ? 'HOTEL'
+        : item.transport_name ? 'TRANSPORT'
+        : 'OTHER'
+
+      const res = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bookingRef,
+          type: serviceName,
+          category,
+          qty: 1,
+          supplier: item.agent_name ?? undefined,
+          totalCost: item.amount_converted ?? item.amount_original ?? undefined,
+          currency: item.currency ?? 'USD',
+          notes: [
+            item.item_details,
+            item.check_in_date ? `Check-in: ${item.check_in_date}` : null,
+            item.check_out_date ? `Check-out: ${item.check_out_date}` : null,
+            item.client_name ? `Client: ${item.client_name}` : null,
+            `PNL Item #${item.id}`,
+          ].filter(Boolean).join(' · '),
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setCreatedTickets(prev => { const next = new Set(prev); next.add(item.id); return next })
+      toast.success(`Ticket created: ${serviceName}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create ticket')
+    } finally {
+      setCreatingTicket(null)
+    }
   }
 
   // ─── Loading ──────────────────────────────────────────────────────────────
@@ -405,6 +449,7 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                       <th>Control No</th>
                       <th>Details</th>
                       <th>Status</th>
+                      {canEdit && <th>Ticket</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -439,6 +484,27 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                             ? <Badge color={statusColor(item.status)}>{item.status}</Badge>
                             : '—'}
                         </td>
+                        {canEdit && (
+                          <td>
+                            {createdTickets.has(item.id) ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-semibold">
+                                <CheckCircle2 className="w-3 h-3" /> Created
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => createTicketFromItem(item)}
+                                disabled={creatingTicket === item.id}
+                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-brand-600 hover:text-brand-800 disabled:opacity-50 whitespace-nowrap"
+                                title="Create a ticket from this PNL item"
+                              >
+                                {creatingTicket === item.id
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : <PlusCircle className="w-3 h-3" />}
+                                Ticket
+                              </button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -453,7 +519,7 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                           <td className="text-right font-mono">{sumOrig.toFixed(2)}</td>
                           <td />
                           <td className="text-right font-mono text-blue-700">{sumConv.toFixed(2)}</td>
-                          <td colSpan={4} />
+                          <td colSpan={canEdit ? 5 : 4} />
                         </tr>
                       </tfoot>
                     )

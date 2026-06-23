@@ -25,6 +25,7 @@ import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
+import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -102,6 +103,29 @@ export default function BookingDetailPage() {
   const [editContactModal, setEditContactModal] = useState(false)
   const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', agentAddress: '', contactEmail: '', contactPhone: '', contactWhatsapp: '', contactAddress: '' })
   const [savingContact, setSavingContact] = useState(false)
+
+  // OneDrive folder assignment
+  const [folderEditOpen, setFolderEditOpen] = useState(false)
+  const [savingFolder, setSavingFolder] = useState(false)
+
+  async function saveFolder(url: string | null) {
+    setSavingFolder(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/folder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderUrl: url || null }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setBooking((prev: any) => ({ ...prev, onedriveFolderUrl: url || null }))
+      setFolderEditOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save folder')
+    } finally {
+      setSavingFolder(false)
+    }
+  }
 
   async function loadTestMode() {
     try {
@@ -745,19 +769,42 @@ Wishing you a wonderful trip! ✈️
                 </Button>
               )}
 
-              {/* OneDrive folder link */}
-              {booking.onedriveFolderUrl && (
-                <a
-                  href={String(booking.onedriveFolderUrl)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn btn-sm bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
-                >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M20.5 10.6A4.5 4.5 0 0 0 16.5 7a4.5 4.5 0 0 0-4.35 3.4A3 3 0 0 0 9 13a3 3 0 0 0 3 3h8.5a2.5 2.5 0 0 0 0-5h-.5a4.5 4.5 0 0 0-.5-0.4z"/>
-                  </svg>
-                  Drive
-                </a>
+              {/* OneDrive folder link + assignment */}
+              {booking.onedriveFolderUrl ? (
+                <div className="flex items-center gap-1">
+                  <a
+                    href={String(booking.onedriveFolderUrl)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-sm bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M20.5 10.6A4.5 4.5 0 0 0 16.5 7a4.5 4.5 0 0 0-4.35 3.4A3 3 0 0 0 9 13a3 3 0 0 0 3 3h8.5a2.5 2.5 0 0 0 0-5h-.5a4.5 4.5 0 0 0-.5-0.4z"/>
+                    </svg>
+                    Drive
+                  </a>
+                  {['BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+                    <button
+                      onClick={() => setFolderEditOpen(true)}
+                      className="btn btn-sm btn-secondary px-1.5"
+                      title="Change folder"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              ) : (
+                ['BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+                  <button
+                    onClick={() => setFolderEditOpen(true)}
+                    className="btn btn-sm bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M20.5 10.6A4.5 4.5 0 0 0 16.5 7a4.5 4.5 0 0 0-4.35 3.4A3 3 0 0 0 9 13a3 3 0 0 0 3 3h8.5a2.5 2.5 0 0 0 0-5h-.5a4.5 4.5 0 0 0-.5-0.4z"/>
+                    </svg>
+                    Assign Drive Folder
+                  </button>
+                )
               )}
 
               {/* Links to sub-pages */}
@@ -1512,6 +1559,11 @@ Wishing you a wonderful trip! ✈️
           </Card>
         )}
 
+        {/* Accounts PNL (Reetha) — auto-linked or manually linked external record */}
+        {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <ExternalPnlPanel bookingRef={ref} role={role} />
+        )}
+
         {/* Status history */}
         <Card>
           <CardHeader><h3 className="text-sm font-semibold text-slate-900">Activity Log</h3></CardHeader>
@@ -1534,6 +1586,20 @@ Wishing you a wonderful trip! ✈️
           </CardBody>
         </Card>
       </div>
+
+      {/* OneDrive folder picker */}
+      {folderEditOpen && (
+        <OneDriveFolderPicker
+          open={folderEditOpen}
+          onClose={() => setFolderEditOpen(false)}
+          onSelect={(url) => saveFolder(url || null)}
+          bookingRef={ref}
+          isNumber={booking?.isNumber}
+          agentBookingId={booking?.agentBookingId}
+          arrivalDate={booking?.arrivalDate ? new Date(booking.arrivalDate).toISOString().slice(0, 10) : undefined}
+          currentUrl={booking?.onedriveFolderUrl ? String(booking.onedriveFolderUrl) : null}
+        />
+      )}
 
       {/* Change request / Client Confirm modal */}
       <Modal
