@@ -41,9 +41,8 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: 'credentials',
       credentials: {
-        email:           { label: 'Email',                    type: 'email' },
-        password:        { label: 'Password',                 type: 'password' },
-        criticalPassword: { label: 'Critical Services Password', type: 'password' },
+        email:    { label: 'Email',    type: 'email' },
+        password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null
@@ -56,18 +55,6 @@ export const authOptions: NextAuthOptions = {
 
         const isValid = await bcrypt.compare(credentials.password, user.password)
         if (!isValid) return null
-
-        // ULTRA_SUPER_ADMIN requires an additional critical services password
-        if (user.role === 'ULTRA_SUPER_ADMIN') {
-          const criticalPw = process.env.CRITICAL_SERVICES_PASSWORD
-          if (!criticalPw) {
-            console.error('[Auth] CRITICAL_SERVICES_PASSWORD env var not set')
-            return null
-          }
-          if (!credentials.criticalPassword || credentials.criticalPassword !== criticalPw) {
-            return null
-          }
-        }
 
         return {
           id:      user.id,

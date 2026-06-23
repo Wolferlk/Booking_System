@@ -3,6 +3,15 @@ import { NextResponse } from 'next/server'
 import type { UserRole } from '@prisma/client'
 
 const ADMIN_ROLES: UserRole[] = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const MAIL_INBOX_ROLES: UserRole[] = [
+  'BT_USER',
+  'GT_USER',
+  'TE_USER',
+  'GT_TE_USER',
+  'AC_USER',
+  'SUPER_ADMIN',
+  'ULTRA_SUPER_ADMIN',
+]
 
 export default withAuth(
   function middleware(req) {
@@ -27,13 +36,13 @@ export default withAuth(
 
     // Admin-only routes
     if (pathname.startsWith('/dashboard/admin')) {
-      // ULTRA_SUPER_ADMIN and SUPER_ADMIN always allowed
-      if (ADMIN_ROLES.includes(role)) return NextResponse.next()
-
-      // BT_USER allowed on mail-inbox only
-      if (role === 'BT_USER' && pathname.startsWith('/dashboard/admin/mail-inbox')) {
+      // Mail Inbox is available to all internal staff roles
+      if (pathname.startsWith('/dashboard/admin/mail-inbox') && MAIL_INBOX_ROLES.includes(role)) {
         return NextResponse.next()
       }
+
+      // ULTRA_SUPER_ADMIN and SUPER_ADMIN always allowed
+      if (ADMIN_ROLES.includes(role)) return NextResponse.next()
 
       return NextResponse.redirect(new URL('/dashboard', req.url))
     }

@@ -63,14 +63,13 @@ export default function UltraAdminPage() {
           <div className="flex items-center justify-center gap-3 mt-5">
             <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs font-semibold">
               <ShieldAlert className="w-3.5 h-3.5" />
-              Critical Services Access Required
+              All-countries access
             </div>
           </div>
 
           <p className="text-slate-500 text-sm mt-5 max-w-md mx-auto leading-relaxed">
             This portal grants access to all countries and all system modules.
-            A <span className="text-amber-400 font-semibold">Critical Services Password</span> is required
-            in addition to your regular credentials.
+            Use your regular Ultra Super Admin credentials to continue.
           </p>
         </div>
 
@@ -101,7 +100,6 @@ export default function UltraAdminPage() {
           <h3 className="text-xl font-black text-white mb-1.5 tracking-tight">Ultra Super Admin</h3>
           <p className="text-xs text-slate-400 leading-relaxed mb-5">
             Full global system access — all countries, all modules, user management, and critical operations.
-            Requires a two-factor critical services password.
           </p>
 
           {/* Features */}

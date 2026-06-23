@@ -125,3 +125,4 @@ A booking is the central entity. It owns:
 Anydesk-osada
 oska@1023!@@*
 oska@1023 - LapPw
+npm install --legacy-peer-deps

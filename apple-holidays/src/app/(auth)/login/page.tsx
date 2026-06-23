@@ -32,7 +32,6 @@ const ROLE_META: Record<string, {
   bg: string
   border: string
   description: string
-  requiresCriticalPassword?: boolean
 }> = {
   BT_USER: {
     label: 'Booking Team',
@@ -104,8 +103,7 @@ const ROLE_META: Record<string, {
     color: 'text-amber-300',
     bg: 'bg-amber-500/10',
     border: 'border-amber-400/30',
-    description: 'All-countries system access — requires critical services password',
-    requiresCriticalPassword: true,
+    description: 'All-countries system access',
   },
 }
 
@@ -119,9 +117,7 @@ function LoginForm() {
 
   const [email,            setEmail]            = useState('')
   const [password,         setPassword]         = useState('')
-  const [criticalPassword, setCriticalPassword] = useState('')
   const [showPw,           setShowPw]           = useState(false)
-  const [showCritical,     setShowCritical]      = useState(false)
   const [loading,          setLoading]          = useState(false)
 
   useEffect(() => {
@@ -138,15 +134,10 @@ function LoginForm() {
       const result = await signIn('credentials', {
         email,
         password,
-        criticalPassword: roleMeta?.requiresCriticalPassword ? criticalPassword : '',
         redirect: false,
       })
       if (result?.error) {
-        if (roleMeta?.requiresCriticalPassword) {
-          toast.error('Invalid credentials or critical services password')
-        } else {
-          toast.error('Invalid email or password')
-        }
+        toast.error('Invalid email or password')
       } else {
         const countryFilter = COUNTRY_PARAM_TO_FILTER[countryParam]
         if (countryFilter) {
@@ -212,13 +203,6 @@ function LoginForm() {
         </div>
 
         <div className="bg-white/4 backdrop-blur-md border border-white/8 rounded-2xl p-8 shadow-2xl">
-          {roleMeta?.requiresCriticalPassword && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/25 text-amber-400 text-xs mb-5">
-              <Lock className="w-3.5 h-3.5 flex-shrink-0" />
-              This account requires a Critical Services Password in addition to your regular password.
-            </div>
-          )}
-
           <h2 className="text-white font-bold text-lg mb-6 text-center">
             {roleMeta ? `Sign in as ${roleMeta.label}` : 'Sign In'}
           </h2>
@@ -252,28 +236,6 @@ function LoginForm() {
                 </button>
               </div>
             </div>
-
-            {roleMeta?.requiresCriticalPassword && (
-              <div>
-                <label className="block text-sm font-medium text-amber-400/80 mb-1.5 flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5" />
-                  Critical Services Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showCritical ? 'text' : 'password'}
-                    value={criticalPassword}
-                    onChange={e => setCriticalPassword(e.target.value)}
-                    required
-                    className="w-full rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all pr-12"
-                    placeholder="Critical services password"
-                  />
-                  <button type="button" onClick={() => setShowCritical(!showCritical)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-200 transition-colors">
-                    {showCritical ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-            )}
 
             <button
               type="submit"
