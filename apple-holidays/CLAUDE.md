@@ -122,6 +122,6 @@ A booking is the central entity. It owns:
 `BookingVersion` snapshots the raw document on each amendment. `StatusEvent` is the append-only transition audit trail.
 
 
+Anydesk-osada
 oska@1023!@@*
-
 oska@1023 - LapPw

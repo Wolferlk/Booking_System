@@ -290,6 +290,7 @@ model Booking {
   tickets               Ticket[]
   contactLogs           ContactLog[]
   customerFeedback      CustomerFeedback?
+  externalPnlLink       ExternalPnlLink?
 
   @@index([status])
   @@index([arrivalDate])
@@ -883,4 +884,26 @@ model AiUsageLog {
   @@index([callType])
   @@index([bookingRef])
   @@map("ai_usage_logs")
+}
+
+// ─── External PNL Link (Accounts team invoice_processor DB) ──────────────────
+
+model ExternalPnlLink {
+  id             String   @id @default(cuid())
+  bookingId      String   @unique
+  booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  externalPnlId  Int               // pnl_records.id in invoice_processor DB
+  matchedBy      String            // "is_number" | "tour_ref" | "invoice_number" | "manual"
+  matchedValue   String            // The value that triggered the match
+
+  cachedRecord   Json              // Full pnl_records row snapshot
+  cachedItems    Json              // pnl_items rows snapshot
+
+  lastFetchedAt  DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([externalPnlId])
+  @@map("external_pnl_links")
 }

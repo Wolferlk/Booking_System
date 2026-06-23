@@ -102,7 +102,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   TE_USER: [
     'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
     'booking:ground_review', 'booking:verify', 'booking:cancel',
-    'agenda:read',
+    'agenda:create', 'agenda:read', 'agenda:edit',
     'ticket:read',
     'pnl:create', 'pnl:read', 'pnl:edit',
     'payment:create', 'payment:read',

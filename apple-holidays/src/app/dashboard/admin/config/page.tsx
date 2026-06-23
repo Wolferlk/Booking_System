@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3 } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -107,6 +107,25 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState<string | null>(null)
   const [criticalPassword, setCriticalPassword] = useState('')
   const [showCriticalPassword, setShowCriticalPassword] = useState(false)
+
+  const [extPnlSyncing, setExtPnlSyncing] = useState(false)
+  const [extPnlResult, setExtPnlResult]   = useState<{ total: number; linked: number; refreshed: number; skipped: number; errors: number } | null>(null)
+
+  async function syncAllExtPnl() {
+    setExtPnlSyncing(true)
+    setExtPnlResult(null)
+    try {
+      const res  = await fetch('/api/admin/ext-pnl/sync-all', { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setExtPnlResult(json.data)
+      toast.success(`Accounts PNL sync complete — ${json.data.linked} new links, ${json.data.refreshed} refreshed`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Sync failed')
+    } finally {
+      setExtPnlSyncing(false)
+    }
+  }
 
   useEffect(() => {
     if (status === 'loading') return
@@ -557,6 +576,52 @@ export default function ConfigPage() {
           </CardHeader>
           <CardBody className="p-5">
             <AiUsageMonitor />
+          </CardBody>
+        </Card>
+
+        {/* Accounts PNL Sync */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-500" /> Accounts PNL Database Sync
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+            <p className="text-sm text-slate-600">
+              Scans all bookings and attempts to auto-link each one to a matching record in the Accounts
+              team&apos;s <code className="bg-slate-100 px-1 rounded text-xs">invoice_processor</code> database.
+              Matching is tried in order: IS Number → Tour Ref → Invoice Number. Already-linked bookings
+              get their cached snapshot refreshed.
+            </p>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={syncAllExtPnl}
+                disabled={extPnlSyncing}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              >
+                {extPnlSyncing
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Syncing all bookings…</>
+                  : <><RefreshCw className="w-4 h-4" /> Sync All Bookings with Accounts PNL</>}
+              </button>
+            </div>
+
+            {extPnlResult && (
+              <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-emerald-800 space-y-0.5">
+                  <p className="font-semibold">Sync complete — {extPnlResult.total} bookings processed</p>
+                  <p>
+                    <span className="font-medium">{extPnlResult.linked}</span> newly linked ·{' '}
+                    <span className="font-medium">{extPnlResult.refreshed}</span> refreshed ·{' '}
+                    <span className="font-medium">{extPnlResult.skipped}</span> no match ·{' '}
+                    <span className={extPnlResult.errors > 0 ? 'text-red-700 font-semibold' : ''}>
+                      {extPnlResult.errors} errors
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
           </CardBody>
         </Card>
 

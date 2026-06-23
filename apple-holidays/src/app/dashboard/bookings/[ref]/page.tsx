@@ -24,6 +24,7 @@ import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
+import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -965,15 +966,8 @@ Wishing you a wonderful trip! ✈️
           />
         )}
 
-        {/* OneDrive Files — show to all internal staff */}
-        {['GT_USER', 'TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <OneDriveFiles
-            bookingRef={ref}
-            canSync={['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
-          />
-        )}
 
-        {/* Open change requests */}
+
         {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
           <div className="flex items-start gap-3 px-5 py-4 bg-orange-50 border border-orange-200 rounded-xl">
             <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />

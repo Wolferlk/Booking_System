@@ -163,8 +163,8 @@ export default function AgendaPage() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const canEdit   = ['BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const canAssign = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canEdit   = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canAssign = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   async function downloadAgendaPdf(withDrivers: boolean) {
     setDownloading(withDrivers ? 'with' : 'without')
