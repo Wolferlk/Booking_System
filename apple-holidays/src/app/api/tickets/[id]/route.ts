@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
-const CAN_EDIT: UserRole[] = ['GT_USER', 'TE_USER', 'SUPER_ADMIN']
+const CAN_EDIT: UserRole[] = ['GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
@@ -17,11 +17,33 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     include: {
       booking: { select: { bookingRef: true, arrivalDate: true, agent: true } },
       agendaItem: { select: { date: true, location: true } },
-      pnlLine: { select: { activity: true, paymentStatus: true, paymentRefNumber: true, category: true } },
+      pnlLine: {
+        select: {
+          activity: true, paymentStatus: true, paymentRefNumber: true, category: true,
+          mmtRate: true, sicRate: true, pvtRatePP: true,
+          adEntrance: true, chEntrance: true, otherRate: true,
+          pnl: { select: { paxAdults: true, paxChildren: true } },
+        },
+      },
     },
   })
   if (!ticket) return buildApiError('Ticket not found', 404)
   return buildApiSuccess(ticket)
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return buildApiError('Unauthorized', 401)
+
+  const role = session.user.role as UserRole
+  if (!CAN_EDIT.includes(role)) return buildApiError('Forbidden', 403)
+
+  const { id } = await params
+  const existing = await prisma.ticket.findUnique({ where: { id } })
+  if (!existing) return buildApiError('Ticket not found', 404)
+
+  await prisma.ticket.delete({ where: { id } })
+  return buildApiSuccess(null, 'Ticket deleted')
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -36,7 +58,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!existing) return buildApiError('Ticket not found', 404)
 
   const body = await req.json()
-  const { type, supplier, qty, costPerUnit, currency, reference, notes } = body
+  const {
+    type, supplier, qty, costPerUnit, currency, reference, notes,
+    category, transferType, vehicleType, vehicleNumber, driverName, driverPhone,
+  } = body
 
   const parsedQty  = qty  != null ? Number(qty)  : undefined
   const parsedCost = costPerUnit != null ? (costPerUnit === '' ? null : Number(costPerUnit)) : undefined
@@ -51,14 +76,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   const ticket = await prisma.ticket.update({
     where: { id },
     data: {
-      ...(type      != null && { type }),
-      ...(supplier  != null && { supplier: supplier || null }),
-      ...(parsedQty != null && { qty: parsedQty }),
-      ...(parsedCost !== undefined && { costPerUnit: parsedCost }),
-      ...(totalCost  !== undefined && { totalCost }),
-      ...(currency  != null && { currency }),
-      ...(reference != null && { reference: reference || null }),
-      ...(notes     != null && { notes: notes || null }),
+      ...(type         != null && { type }),
+      ...(supplier     != null && { supplier: supplier || null }),
+      ...(parsedQty    != null && { qty: parsedQty }),
+      ...(parsedCost   !== undefined && { costPerUnit: parsedCost }),
+      ...(totalCost    !== undefined && { totalCost }),
+      ...(currency     != null && { currency }),
+      ...(reference    != null && { reference: reference || null }),
+      ...(notes        != null && { notes: notes || null }),
+      ...(category     != null && { category: category || null }),
+      ...(transferType != null && { transferType: transferType || null }),
+      ...(vehicleType  != null && { vehicleType: vehicleType || null }),
+      ...(vehicleNumber!= null && { vehicleNumber: vehicleNumber || null }),
+      ...(driverName   != null && { driverName: driverName || null }),
+      ...(driverPhone  != null && { driverPhone: driverPhone || null }),
     },
     include: {
       booking: { select: { bookingRef: true } },

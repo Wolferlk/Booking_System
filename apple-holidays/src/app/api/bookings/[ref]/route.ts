@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
+import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import type { UserRole } from '@prisma/client'
@@ -51,6 +51,13 @@ export async function GET(
 
   if (!booking) return buildApiError('Booking not found', 404)
 
+  const userCountry = session.user.country as string | undefined
+  if (role !== 'CLIENT' && !canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL') {
+    if (booking.operationCountry !== userCountry) {
+      return buildApiError('Forbidden', 403)
+    }
+  }
+
   if (role === 'CLIENT') {
     if (booking.clientUserId !== session.user.id) return buildApiError('Forbidden', 403)
     if (!isClientPortalUnlocked(booking.arrivalDate)) return buildApiError('Client portal not yet available', 403)
@@ -78,15 +85,20 @@ export async function PUT(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  const isSuperAdmin = role === 'SUPER_ADMIN'
-  // GT, BT, TE can edit accommodation/vehicle fields during change requests
+  const isSuperAdmin = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  // GT, BT, TE, GT_TE can edit accommodation/vehicle fields during change requests
   const canEdit = isSuperAdmin || hasPermission(role, 'booking:edit') ||
-    ['GT_USER', 'BT_USER', 'TE_USER'].includes(role)
+    ['GT_USER', 'BT_USER', 'TE_USER', 'GT_TE_USER'].includes(role)
 
   if (!canEdit) return buildApiError('Forbidden', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
+
+  const userCountry = session.user.country as string | undefined
+  if (!canSeeAllCountries(role, userCountry as any) && userCountry && userCountry !== 'ALL' && booking.operationCountry !== userCountry) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const body = await req.json()
   const {
@@ -95,8 +107,10 @@ export async function PUT(
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
     // Contact info fields (editable at any booking status)
-    agentEmail, agentPhone, agentWhatsapp,
-    contactEmail, contactPhone, contactWhatsapp,
+    agentEmail, agentPhone, agentWhatsapp, agentAddress,
+    contactEmail, contactPhone, contactWhatsapp, contactAddress,
+    // Country (always editable)
+    operationCountry,
     // Super Admin can also update passengers, flights, accommodations
     passengers, flights, accommodations,
     // GT/BT/TE can update accommodation room types and vehicle changes
@@ -111,9 +125,10 @@ export async function PUT(
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
 
-  // Contact info updates are allowed at any booking status
-  const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined ||
-    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined) &&
+  // Contact info and country updates are allowed at any booking status
+  const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
+    contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
+    operationCountry !== undefined) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
@@ -142,9 +157,12 @@ export async function PUT(
       ...(agentEmail !== undefined && { agentEmail }),
       ...(agentPhone !== undefined && { agentPhone }),
       ...(agentWhatsapp !== undefined && { agentWhatsapp }),
+      ...(agentAddress !== undefined && { agentAddress }),
       ...(contactEmail !== undefined && { contactEmail }),
       ...(contactPhone !== undefined && { contactPhone }),
       ...(contactWhatsapp !== undefined && { contactWhatsapp }),
+      ...(contactAddress !== undefined && { contactAddress }),
+      ...(operationCountry !== undefined && { operationCountry }),
       ...(isSuperAdmin && { version: { increment: 1 } }),
     },
   })
@@ -263,7 +281,7 @@ export async function DELETE(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (role !== 'SUPER_ADMIN') return buildApiError('Only Super Admin can delete bookings', 403)
+  if (role !== 'SUPER_ADMIN' && role !== 'ULTRA_SUPER_ADMIN') return buildApiError('Only Super Admin can delete bookings', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)

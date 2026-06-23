@@ -6,7 +6,7 @@ import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
-  AlertCircle, Clock, Loader2,
+  AlertCircle, Clock, Loader2, Save,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical,
@@ -22,6 +22,9 @@ import { getAvailableTransitions } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
+import BookingQCPanel from '@/components/bookings/booking-qc-panel'
+import OneDriveFiles from '@/components/bookings/onedrive-files'
+import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -80,9 +83,24 @@ export default function BookingDetailPage() {
   const [testMode, setTestMode] = useState<boolean>(false)
   const [testSettings, setTestSettings] = useState({ testEmail1: 'sasiofficial25@gmail.com', testEmail2: 'sasindu@aahaas.com', testWhatsapp: '94778231121' })
 
+  // QC auto-send
+  const [qcAutoSending, setQcAutoSending] = useState(false)
+
+  // Meal preference inline editing
+  const [mealPrefs, setMealPrefs] = useState<Record<string, string>>({})
+  const [mealPrefsDirty, setMealPrefsDirty] = useState(false)
+  const [savingMealPrefs, setSavingMealPrefs] = useState(false)
+  const [expandedMeal, setExpandedMeal] = useState<Set<string>>(new Set())
+
+  // Customer feedback modal (triggered on Complete Trip)
+  const [feedbackModal, setFeedbackModal] = useState(false)
+  const [feedbackRating, setFeedbackRating] = useState(0)
+  const [feedbackComment, setFeedbackComment] = useState('')
+  const [feedbackSaving, setFeedbackSaving] = useState(false)
+
   // Contact info editing
   const [editContactModal, setEditContactModal] = useState(false)
-  const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', contactEmail: '', contactPhone: '', contactWhatsapp: '' })
+  const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', agentAddress: '', contactEmail: '', contactPhone: '', contactWhatsapp: '', contactAddress: '' })
   const [savingContact, setSavingContact] = useState(false)
 
   async function loadTestMode() {
@@ -124,10 +142,19 @@ export default function BookingDetailPage() {
         agentEmail:     String(booking.agentEmail     ?? ''),
         agentPhone:     String(booking.agentPhone     ?? ''),
         agentWhatsapp:  String(booking.agentWhatsapp  ?? ''),
+        agentAddress:   String(booking.agentAddress   ?? ''),
         contactEmail:   String(booking.contactEmail   ?? ''),
         contactPhone:   String(booking.contactPhone   ?? ''),
         contactWhatsapp: String(booking.contactWhatsapp ?? ''),
+        contactAddress: String(booking.contactAddress ?? ''),
       })
+      // Initialise meal preference map from loaded passengers
+      const prefs: Record<string, string> = {}
+      for (const p of (booking.passengers ?? [])) {
+        prefs[p.id as string] = (p.mealPreference as string) ?? ''
+      }
+      setMealPrefs(prefs)
+      setMealPrefsDirty(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [booking])
@@ -198,10 +225,10 @@ export default function BookingDetailPage() {
     booking.contactEmail ? { label: `Customer: ${booking.contactEmail}`, value: String(booking.contactEmail) } : null,
   ].filter((x): x is { label: string; value: string } => x !== null)
 
-  const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canEditBooking = ['GT_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN'].includes(role)
+  const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canEditBooking = ['GT_USER', 'GT_TE_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
-  const canEditFlights = ['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role)
+  const canEditFlights = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   function openEditFlight() {
     setFlightEditList(
@@ -404,12 +431,14 @@ Wishing you a wonderful trip! ✈️
 
   function openEditContact() {
     setContactForm({
-      agentEmail: String(booking.agentEmail ?? ''),
-      agentPhone: String(booking.agentPhone ?? ''),
-      agentWhatsapp: String(booking.agentWhatsapp ?? ''),
-      contactEmail: String(booking.contactEmail ?? ''),
-      contactPhone: String(booking.contactPhone ?? ''),
+      agentEmail:     String(booking.agentEmail     ?? ''),
+      agentPhone:     String(booking.agentPhone     ?? ''),
+      agentWhatsapp:  String(booking.agentWhatsapp  ?? ''),
+      agentAddress:   String(booking.agentAddress   ?? ''),
+      contactEmail:   String(booking.contactEmail   ?? ''),
+      contactPhone:   String(booking.contactPhone   ?? ''),
       contactWhatsapp: String(booking.contactWhatsapp ?? ''),
+      contactAddress: String(booking.contactAddress ?? ''),
     })
     setEditContactModal(true)
   }
@@ -417,10 +446,17 @@ Wishing you a wonderful trip! ✈️
   async function saveContactEdits() {
     setSavingContact(true)
     try {
+      // WhatsApp must never have a + prefix; fall back to phone if empty
+      const stripPlus = (v: string) => v.replace(/\+/g, '').trim()
+      const payload = {
+        ...contactForm,
+        agentWhatsapp:   stripPlus(contactForm.agentWhatsapp   || contactForm.agentPhone),
+        contactWhatsapp: stripPlus(contactForm.contactWhatsapp || contactForm.contactPhone),
+      }
       const res = await fetch(`/api/bookings/${ref}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(contactForm),
+        body: JSON.stringify(payload),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
@@ -430,6 +466,28 @@ Wishing you a wonderful trip! ✈️
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSavingContact(false) }
+  }
+
+  async function saveMealPreferences() {
+    setSavingMealPrefs(true)
+    try {
+      const updates = Object.entries(mealPrefs).map(([id, mealPreference]) => ({
+        id,
+        mealPreference: mealPreference || null,
+      }))
+      const res = await fetch(`/api/bookings/${ref}/passengers`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Meal preferences saved')
+      setMealPrefsDirty(false)
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setSavingMealPrefs(false) }
   }
 
   async function openWhatsApp() {
@@ -443,6 +501,41 @@ Wishing you a wonderful trip! ✈️
     setWaMessage(buildConfirmationMessage(firstName))
     setWaAttachPdf(true)
     setWaModal(true)
+  }
+
+  async function handleQCAutoSend() {
+    setQcAutoSending(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/qc-send`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Type-1 messages sent (Email + WhatsApp)')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setQcAutoSending(false)
+    }
+  }
+
+  async function saveFeedbackAndComplete() {
+    setFeedbackSaving(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rating: feedbackRating || null, comment: feedbackComment }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Trip completed and feedback saved')
+      setFeedbackModal(false)
+      setFeedbackRating(0)
+      setFeedbackComment('')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally { setFeedbackSaving(false) }
   }
 
   async function openEmailModal() {
@@ -538,9 +631,32 @@ Wishing you a wonderful trip! ✈️
         <Card className="p-6">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
             <div>
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+                {booking.isNumber && (
+                  <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                    <Ticket className="w-3 h-3" /> IS: {booking.isNumber as string}
+                  </span>
+                )}
+                {booking.agentBookingId && (
+                  <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded">
+                    <UserCheck className="w-3 h-3" /> Agent: {booking.agentBookingId as string}
+                  </span>
+                )}
                 <StatusBadge status={status} />
+                {booking.operationCountry && (
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
+                    booking.operationCountry === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-200' :
+                    booking.operationCountry === 'SRILANKA'           ? 'bg-yellow-50 text-yellow-700 border-yellow-200' :
+                    booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-200' :
+                    'bg-slate-100 text-slate-500 border-slate-200'
+                  }`}>
+                    {booking.operationCountry === 'VIETNAM'            ? '🇻🇳 Vietnam' :
+                     booking.operationCountry === 'SRILANKA'           ? '🇱🇰 Sri Lanka' :
+                     booking.operationCountry === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 Singapore & Malaysia' :
+                     '🌐 All Countries'}
+                  </span>
+                )}
                 {Boolean(booking.amendmentNote) && (
                   <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
                     {String(booking.amendmentNote)}
@@ -577,6 +693,15 @@ Wishing you a wonderful trip! ✈️
             {/* Action buttons */}
             <div className="flex flex-wrap gap-2">
               {transitions.map(t => {
+                // New step-through statuses use the advance-status endpoint
+                const ADVANCE_STEPS: BookingStatus[] = [
+                  'TE_REVIEWED', 'DRIVER_ALLOCATED', 'QC1_PASS',
+                  'TICKETS_ISSUED', 'QC2_PASS', 'MSG_SENT_CUSTOMER', 'FEEDBACK_DONE',
+                ]
+
+                const isAdvanceStep = ADVANCE_STEPS.includes(t.to)
+                const isComplete = t.to === 'COMPLETED'
+
                 const key = t.to === 'CHANGE_REQUESTED' ? 'change-request'
                   : t.from === 'CHANGE_REQUESTED' && t.to === 'BT_CONFIRMED' ? 'resubmit'
                   : t.to === 'GT_REVIEW' ? 'submit-ground'
@@ -585,13 +710,14 @@ Wishing you a wonderful trip! ✈️
                   : t.to === 'OPERATIONS_READY' ? 'mark-operations-ready'
                   : t.to === 'CLIENT_LIVE' ? 'client-live'
                   : t.to === 'IN_PROGRESS' ? 'in-progress'
-                  : t.to === 'COMPLETED' ? 'complete'
+                  : isAdvanceStep ? `advance-step-${t.to}`
+                  : isComplete ? 'complete-feedback'
                   : ''
 
                 if (!key) return null
 
-                // Keys that open the note modal before calling their endpoint
-                const needsNote = ['change-request', 'resubmit', 'verify'].includes(key)
+                const needsNote = ['change-request', 'resubmit'].includes(key)
+                const isTeConfirm = key === 'verify'
 
                 return (
                   <Button
@@ -599,12 +725,24 @@ Wishing you a wonderful trip! ✈️
                     variant={t.to === 'CHANGE_REQUESTED' ? 'danger' : 'primary'}
                     size="sm"
                     loading={actionLoading === key}
+                    className={isTeConfirm ? '!bg-emerald-600 !border-emerald-700 hover:!bg-emerald-700 font-bold tracking-wide' : undefined}
                     onClick={() => {
-                      if (needsNote) { setPendingAction(key); setNote(''); setChangeModal(true) }
-                      else doTransition(key)
+                      if (needsNote) {
+                        setPendingAction(key); setNote(''); setChangeModal(true)
+                      } else if (isTeConfirm) {
+                        doTransition('verify')
+                      } else if (isAdvanceStep) {
+                        doTransition('advance-status', { to: t.to })
+                      } else if (isComplete) {
+                        setFeedbackRating(0)
+                        setFeedbackComment('')
+                        setFeedbackModal(true)
+                      } else {
+                        doTransition(key)
+                      }
                     }}
                   >
-                    {t.label}
+                    {isTeConfirm ? '✓ TE Confirm' : t.label}
                   </Button>
                 )
               })}
@@ -616,15 +754,30 @@ Wishing you a wonderful trip! ✈️
                 </Button>
               )}
 
+              {/* OneDrive folder link */}
+              {booking.onedriveFolderUrl && (
+                <a
+                  href={String(booking.onedriveFolderUrl)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn-sm bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 flex items-center gap-1.5"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.5 10.6A4.5 4.5 0 0 0 16.5 7a4.5 4.5 0 0 0-4.35 3.4A3 3 0 0 0 9 13a3 3 0 0 0 3 3h8.5a2.5 2.5 0 0 0 0-5h-.5a4.5 4.5 0 0 0-.5-0.4z"/>
+                  </svg>
+                  Drive
+                </a>
+              )}
+
               {/* Links to sub-pages */}
               <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
-                <MapPin className="w-3.5 h-3.5" /> Movement Chart
+                <MapPin className="w-3.5 h-3.5" /> Agenda
               </Link>
               <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
                 <Ticket className="w-3.5 h-3.5" /> Tickets
               </Link>
               {/* Drivers — GT can assign drivers from the Agenda page */}
-              {['GT_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link
                   href={`/dashboard/bookings/${ref}/agenda`}
                   className={`btn btn-sm ${
@@ -636,7 +789,7 @@ Wishing you a wonderful trip! ✈️
                   <UserCheck className="w-3.5 h-3.5" /> Drivers
                 </Link>
               )}
-              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>
@@ -646,12 +799,12 @@ Wishing you a wonderful trip! ✈️
                   <Edit2 className="w-3.5 h-3.5" /> Edit
                 </button>
               )}
-              {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/print/booking/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
               )}
-              {['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openWhatsApp}
                   className="btn btn-sm bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5"
@@ -659,7 +812,7 @@ Wishing you a wonderful trip! ✈️
                   <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
                 </button>
               )}
-              {['TE_USER', 'SUPER_ADMIN'].includes(role) && (
+              {['TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openEmailModal}
                   className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
@@ -688,9 +841,142 @@ Wishing you a wonderful trip! ✈️
           <div className="mt-6 pt-5 border-t border-slate-100">
             <BookingLifecycle status={status} />
           </div>
+
+          {/* Operation Checklist */}
+          <OperationChecklist
+            status={status}
+            hasPnl={!!(pnl && (booking.pnl as any)?.lineItems?.length > 0)}
+            ticketCount={(booking.tickets as any[])?.length ?? 0}
+            agendaItems={(booking.tourAgenda as any)?.items ?? []}
+          />
         </Card>
 
-        {/* Open change requests */}
+        {/* TC Confirmation Details — always shown */}
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="w-4 h-4 text-brand-400" />
+            <h3 className="text-sm font-semibold text-slate-900">Tour Confirmation Details</h3>
+            {/* Inline country selector — always editable */}
+            <div className="ml-auto flex items-center gap-1.5">
+              <select
+                value={(booking.operationCountry as string) ?? ''}
+                onChange={async (e) => {
+                  const val = e.target.value || null
+                  try {
+                    const res = await fetch(`/api/bookings/${ref}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ operationCountry: val }),
+                    })
+                    const json = await res.json()
+                    if (!json.success) throw new Error(json.error)
+                    toast.success('Country updated')
+                    await load()
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Update failed')
+                  }
+                }}
+                className={`text-xs font-semibold rounded-full px-3 py-1 border cursor-pointer appearance-none pr-6 ${
+                  booking.operationCountry === 'VIETNAM'            ? 'bg-red-500/10 text-red-500 border-red-500/25' :
+                  booking.operationCountry === 'SRILANKA'           ? 'bg-yellow-500/10 text-yellow-600 border-yellow-500/25' :
+                  booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-500/10 text-blue-500 border-blue-500/25' :
+                  'bg-slate-100 text-slate-400 border-slate-200'
+                }`}
+                style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%239ca3af\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
+              >
+                <option value="">🌍 Country not set</option>
+                <option value="VIETNAM">🇻🇳 Vietnam</option>
+                <option value="SRILANKA">🇱🇰 Sri Lanka</option>
+                <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Tour Ref</p>
+              <p className="text-sm font-mono font-semibold text-slate-900">{booking.bookingRef as string}</p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">IS Number</p>
+              {booking.isNumber
+                ? <p className="text-sm font-mono font-semibold text-brand-600">{booking.isNumber as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reference Number</p>
+              {booking.agentBookingId
+                ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Destination</p>
+              {booking.tourDestination
+                ? <p className="text-sm text-slate-700">{booking.tourDestination as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            {booking.dealName && (
+              <div className="col-span-2">
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Deal Name</p>
+                <p className="text-sm font-medium text-slate-800">{booking.dealName as string}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Travel Date</p>
+              <p className="text-sm text-slate-700">
+                {formatDate(booking.arrivalDate as string)} → {formatDate(booking.departureDate as string)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">File Handler</p>
+              {booking.fileHandler
+                ? <p className="text-sm text-slate-700">{booking.fileHandler as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Checked By</p>
+              {booking.checkedBy
+                ? <p className="text-sm text-slate-700">{booking.checkedBy as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reconfirm By</p>
+              {booking.reconfirmBy
+                ? <p className="text-sm text-slate-700">{booking.reconfirmBy as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Guests&apos; Language Preference</p>
+              {booking.languagePreference
+                ? <p className="text-sm text-slate-700">{booking.languagePreference as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Special Occasions</p>
+              {booking.specialOccasions
+                ? <p className="text-sm text-slate-700">{booking.specialOccasions as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div className="col-span-2 md:col-span-3">
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Chauffeur / Tour Guide Contact</p>
+              {booking.chauffeurContact
+                ? <p className="text-sm text-slate-700 whitespace-pre-line">{booking.chauffeurContact as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+          </div>
+        </Card>
+
+        {/* QC Panel — visible to operations/TE/admin */}
+        {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <BookingQCPanel
+            booking={booking}
+            onAutoSend={handleQCAutoSend}
+            autoSending={qcAutoSending}
+            daysUntilTrip={daysUntil}
+          />
+        )}
+
+
+
         {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
           <div className="flex items-start gap-3 px-5 py-4 bg-orange-50 border border-orange-200 rounded-xl">
             <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
@@ -708,28 +994,149 @@ Wishing you a wonderful trip! ✈️
         {/* Three-column detail grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-          {/* Passengers */}
+          {/* Passengers + Meal Preferences */}
           <Card>
-            <CardHeader>
+            <CardHeader
+              action={
+                mealPrefsDirty && canEditBooking ? (
+                  <button
+                    onClick={saveMealPreferences}
+                    disabled={savingMealPrefs}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    {savingMealPrefs
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
+                      : <><Save className="w-3 h-3" /> Save Meal Prefs</>}
+                  </button>
+                ) : undefined
+              }
+            >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <Users className="w-4 h-4 text-slate-400" /> Passengers
               </h3>
             </CardHeader>
             <CardBody className="p-0">
-              {passengers.map((p) => (
-                <div key={p.id as string} className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 last:border-0">
-                  <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0">
-                    {(p.name as string).slice(0, 1)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">
-                      {p.name as string}
-                      {p.isLead && <span className="ml-2 text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">Lead</span>}
-                    </p>
-                    <p className="text-xs text-slate-500">{p.type as string} · {p.age ? `Age ${p.age}` : 'Age N/A'}</p>
-                  </div>
-                </div>
-              ))}
+              {(() => {
+                const MEAL_OPTIONS = [
+                  { label: 'Non-Veg',      value: 'Non-Vegetarian', colour: 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100',   active: 'bg-orange-500 text-white border-orange-500' },
+                  { label: 'Vegetarian',   value: 'Vegetarian',     colour: 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100',       active: 'bg-green-600 text-white border-green-600' },
+                  { label: 'Vegan',        value: 'Vegan',          colour: 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100', active: 'bg-emerald-600 text-white border-emerald-600' },
+                  { label: 'Halal',        value: 'Halal',          colour: 'bg-teal-50 text-teal-700 border-teal-200 hover:bg-teal-100',           active: 'bg-teal-600 text-white border-teal-600' },
+                  { label: 'Jain',         value: 'Jain',           colour: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',       active: 'bg-amber-500 text-white border-amber-500' },
+                  { label: 'Gluten-Free',  value: 'Gluten-Free',    colour: 'bg-yellow-50 text-yellow-700 border-yellow-200 hover:bg-yellow-100',   active: 'bg-yellow-500 text-white border-yellow-500' },
+                  { label: 'No Pork',      value: 'No Pork',        colour: 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100',               active: 'bg-red-500 text-white border-red-500' },
+                  { label: 'No Beef',      value: 'No Beef',        colour: 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100',           active: 'bg-rose-500 text-white border-rose-500' },
+                  { label: 'Seafood-Free', value: 'Seafood-Free',   colour: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',           active: 'bg-blue-500 text-white border-blue-500' },
+                  { label: 'Diabetic',     value: 'Diabetic',       colour: 'bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100',   active: 'bg-purple-500 text-white border-purple-500' },
+                ]
+
+                function togglePref(passengerId: string, value: string) {
+                  setMealPrefs(prev => {
+                    const current = (prev[passengerId] ?? '').split(',').map(s => s.trim()).filter(Boolean)
+                    const next = current.includes(value)
+                      ? current.filter(v => v !== value)
+                      : [...current, value]
+                    return { ...prev, [passengerId]: next.join(', ') }
+                  })
+                  setMealPrefsDirty(true)
+                }
+
+                return passengers.map((p) => {
+                  const pid = p.id as string
+                  const pref = mealPrefs[pid] ?? ''
+                  const selected = pref.split(',').map(s => s.trim()).filter(Boolean)
+                  const isOpen = expandedMeal.has(pid)
+
+                  function toggleOpen() {
+                    setExpandedMeal(prev => {
+                      const next = new Set(prev)
+                      next.has(pid) ? next.delete(pid) : next.add(pid)
+                      return next
+                    })
+                  }
+
+                  return (
+                    <div key={pid} className="border-b border-slate-100 last:border-0">
+                      {/* Passenger name row */}
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <div className="w-8 h-8 rounded-full bg-brand-100 flex items-center justify-center text-brand-700 text-xs font-bold flex-shrink-0">
+                          {(p.name as string).slice(0, 1)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-900">
+                            {p.name as string}
+                            {p.isLead && <span className="ml-2 text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded-full">Lead</span>}
+                          </p>
+                          <p className="text-xs text-slate-500">{p.type as string}{p.age ? ` · Age ${p.age}` : ''}</p>
+                        </div>
+                        {/* Meal toggle — shows selected chips inline when collapsed, chevron to expand */}
+                        <button
+                          type="button"
+                          onClick={toggleOpen}
+                          className="flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-700 transition-colors flex-shrink-0"
+                        >
+                          {selected.length > 0 && !isOpen && (
+                            <div className="flex flex-wrap gap-1 max-w-[120px]">
+                              {selected.slice(0, 2).map(v => {
+                                const opt = MEAL_OPTIONS.find(o => o.value === v)
+                                return (
+                                  <span key={v} className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${opt ? opt.active : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                    {v}
+                                  </span>
+                                )
+                              })}
+                              {selected.length > 2 && <span className="text-[10px] text-slate-400">+{selected.length - 2}</span>}
+                            </div>
+                          )}
+                          {!selected.length && !isOpen && (
+                            <span className="text-[11px] text-slate-300 font-medium">🍽 Set meal</span>
+                          )}
+                          {isOpen
+                            ? <ChevronRight className="w-3.5 h-3.5 rotate-90 text-slate-400" />
+                            : <ChevronRight className="w-3.5 h-3.5 text-slate-300" />}
+                        </button>
+                      </div>
+
+                      {/* Expandable meal preference chips */}
+                      {isOpen && (
+                        <div className="px-4 pb-3 ml-11">
+                          <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">🍽 Meal Preferences</p>
+                          {canEditBooking ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {MEAL_OPTIONS.map(opt => {
+                                const isOn = selected.includes(opt.value)
+                                return (
+                                  <button
+                                    key={opt.value}
+                                    type="button"
+                                    onClick={() => togglePref(pid, opt.value)}
+                                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-all ${isOn ? opt.active : opt.colour}`}
+                                  >
+                                    {isOn && <span className="mr-0.5">✓</span>}{opt.label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ) : selected.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {selected.map(v => {
+                                const opt = MEAL_OPTIONS.find(o => o.value === v)
+                                return (
+                                  <span key={v} className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border ${opt ? opt.active : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                                    {v}
+                                  </span>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-300 italic">Not specified</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              })()}
             </CardBody>
           </Card>
 
@@ -832,7 +1239,14 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="+94 77 123 4567"
                           value={contactForm.agentPhone}
-                          onChange={e => setContactForm(f => ({ ...f, agentPhone: e.target.value }))} />
+                          onChange={e => {
+                            const phone = e.target.value
+                            setContactForm(f => ({
+                              ...f,
+                              agentPhone: phone,
+                              agentWhatsapp: f.agentWhatsapp ? f.agentWhatsapp : phone.replace(/\+/g, ''),
+                            }))
+                          }} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -840,7 +1254,15 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="94771234567 (no +)"
                           value={contactForm.agentWhatsapp}
-                          onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value }))} />
+                          onChange={e => setContactForm(f => ({ ...f, agentWhatsapp: e.target.value.replace(/\+/g, '') }))} />
+                      </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
+                          <MapPin className="w-3.5 h-3.5" /> Office Address
+                        </label>
+                        <textarea className="form-textarea resize-none text-sm" rows={2} placeholder="Agent office address"
+                          value={contactForm.agentAddress}
+                          onChange={e => setContactForm(f => ({ ...f, agentAddress: e.target.value }))} />
                       </div>
                     </div>
                   ) : (
@@ -875,7 +1297,17 @@ Wishing you a wonderful trip! ✈️
                           <button onClick={() => { navigator.clipboard.writeText(booking.agentWhatsapp as string); toast.success('WhatsApp number copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
                         </div>
                       )}
-                      {!booking.agentEmail && !booking.agentPhone && !booking.agentWhatsapp && (
+                      {booking.agentAddress && (
+                        <div className="flex items-start gap-3">
+                          <MapPin className="w-4 h-4 text-slate-300 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-400">Office Address</p>
+                            <p className="text-sm text-slate-700 whitespace-pre-line leading-snug">{booking.agentAddress as string}</p>
+                          </div>
+                          <button onClick={() => { navigator.clipboard.writeText(booking.agentAddress as string); toast.success('Address copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
+                        </div>
+                      )}
+                      {!booking.agentEmail && !booking.agentPhone && !booking.agentWhatsapp && !booking.agentAddress && (
                         <p className="text-xs text-slate-400 italic">No agent contact info</p>
                       )}
                     </div>
@@ -908,7 +1340,14 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="+94 77 123 4567"
                           value={contactForm.contactPhone}
-                          onChange={e => setContactForm(f => ({ ...f, contactPhone: e.target.value }))} />
+                          onChange={e => {
+                            const phone = e.target.value
+                            setContactForm(f => ({
+                              ...f,
+                              contactPhone: phone,
+                              contactWhatsapp: f.contactWhatsapp ? f.contactWhatsapp : phone.replace(/\+/g, ''),
+                            }))
+                          }} />
                       </div>
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -916,7 +1355,15 @@ Wishing you a wonderful trip! ✈️
                         </label>
                         <input className="form-input" type="tel" placeholder="94771234567 (no +)"
                           value={contactForm.contactWhatsapp}
-                          onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value }))} />
+                          onChange={e => setContactForm(f => ({ ...f, contactWhatsapp: e.target.value.replace(/\+/g, '') }))} />
+                      </div>
+                      <div>
+                        <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
+                          <MapPin className="w-3.5 h-3.5" /> Home Address
+                        </label>
+                        <textarea className="form-textarea resize-none text-sm" rows={2} placeholder="Customer home/mailing address"
+                          value={contactForm.contactAddress}
+                          onChange={e => setContactForm(f => ({ ...f, contactAddress: e.target.value }))} />
                       </div>
                     </div>
                   ) : (
@@ -951,7 +1398,17 @@ Wishing you a wonderful trip! ✈️
                           <button onClick={() => { navigator.clipboard.writeText(booking.contactWhatsapp as string); toast.success('WhatsApp number copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
                         </div>
                       )}
-                      {!booking.contactEmail && !booking.contactPhone && !booking.contactWhatsapp && (
+                      {booking.contactAddress && (
+                        <div className="flex items-start gap-3">
+                          <MapPin className="w-4 h-4 text-slate-300 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-400">Home Address</p>
+                            <p className="text-sm text-slate-700 whitespace-pre-line leading-snug">{booking.contactAddress as string}</p>
+                          </div>
+                          <button onClick={() => { navigator.clipboard.writeText(booking.contactAddress as string); toast.success('Address copied') }} className="text-slate-300 hover:text-slate-500 flex-shrink-0"><Copy className="w-3.5 h-3.5" /></button>
+                        </div>
+                      )}
+                      {!booking.contactEmail && !booking.contactPhone && !booking.contactWhatsapp && !booking.contactAddress && (
                         <p className="text-xs text-slate-400 italic">No guest contact info</p>
                       )}
                     </div>
@@ -1463,6 +1920,68 @@ Wishing you a wonderful trip! ✈️
         </div>
       </Modal>
 
+      {/* ── Customer Feedback Modal (Complete Trip) ─────────────────── */}
+      <Modal
+        open={feedbackModal}
+        onClose={() => setFeedbackModal(false)}
+        title="Customer Feedback — Complete Trip"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setFeedbackModal(false)}>Cancel</Button>
+            <Button
+              variant="primary"
+              loading={feedbackSaving}
+              onClick={saveFeedbackAndComplete}
+            >
+              Save &amp; Complete Trip
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-700">
+              Record the customer&apos;s feedback before completing the trip. This will be saved by the TE team.
+            </p>
+          </div>
+
+          {/* Star rating */}
+          <div>
+            <label className="form-label mb-2">Customer Rating</label>
+            <div className="flex items-center gap-2">
+              {[1, 2, 3, 4, 5].map(star => (
+                <button
+                  key={star}
+                  type="button"
+                  onClick={() => setFeedbackRating(star === feedbackRating ? 0 : star)}
+                  className={`text-2xl transition-transform hover:scale-110 ${
+                    star <= feedbackRating ? 'text-yellow-400' : 'text-slate-200'
+                  }`}
+                >
+                  ★
+                </button>
+              ))}
+              {feedbackRating > 0 && (
+                <span className="text-sm text-slate-500 ml-1">{feedbackRating} / 5</span>
+              )}
+            </div>
+          </div>
+
+          {/* Comment */}
+          <div>
+            <label className="form-label">Customer Review / Comment</label>
+            <textarea
+              className="form-textarea"
+              rows={4}
+              placeholder="Write the customer's feedback here..."
+              value={feedbackComment}
+              onChange={e => setFeedbackComment(e.target.value)}
+            />
+          </div>
+        </div>
+      </Modal>
+
       {/* ── Edit Flight Details Modal ────────────────────────────────── */}
       <Modal
         open={editFlightModal}
@@ -1742,7 +2261,7 @@ Wishing you a wonderful trip! ✈️
       </Modal>
 
       {/* ── WhatsApp mini chat widget ─────────────────────────────────── */}
-      {['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(role) && (
+      {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
         <WhatsAppMiniChat bookingRef={ref} booking={booking} />
       )}
 
@@ -1919,6 +2438,157 @@ Wishing you a wonderful trip! ✈️
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+// ─── Operation Checklist ──────────────────────────────────────────────────────
+
+import { CheckCircle2, XCircle, MinusCircle } from 'lucide-react'
+import { getCurrentStep } from '@/lib/state-machine'
+
+interface OpChecklistProps {
+  status: BookingStatus
+  hasPnl: boolean
+  ticketCount: number
+  agendaItems: { assignment?: { id?: string; driverName?: string | null; driverId?: string | null } | null }[]
+}
+
+const CHECKLIST: {
+  label: string
+  key: string
+  icon: string
+  done: (p: OpChecklistProps) => boolean
+  active: (p: OpChecklistProps) => boolean
+  link?: string
+}[] = [
+  {
+    label:  'Need Review by TE Team',
+    key:    'te-review',
+    icon:   '🧑‍✈️',
+    done:   p => getCurrentStep(p.status) > 3,
+    active: p => p.status === 'GT_REVIEW',
+  },
+  {
+    label:  'Client Verified',
+    key:    'gt-verified',
+    icon:   '✅',
+    done:   p => getCurrentStep(p.status) > 4,
+    active: p => p.status === 'GT_VERIFIED',
+  },
+  {
+    label:  'P&L Added',
+    key:    'pnl',
+    icon:   '📊',
+    done:   p => p.hasPnl,
+    active: p => !p.hasPnl && getCurrentStep(p.status) >= 5,
+  },
+  {
+    label:  'Driver Allocated',
+    key:    'driver',
+    icon:   '🚗',
+    done:   p => getCurrentStep(p.status) >= 10
+                 || p.agendaItems.some(item => item.assignment != null && (item.assignment.driverId != null || item.assignment.driverName != null)),
+    active: p => {
+      const hasDrivers = p.agendaItems.some(item => item.assignment != null && (item.assignment.driverId != null || item.assignment.driverName != null))
+      return !hasDrivers && getCurrentStep(p.status) >= 8 && getCurrentStep(p.status) < 10
+    },
+  },
+  {
+    label:  'QC1 Pass',
+    key:    'qc1',
+    icon:   '🛡️',
+    done:   p => getCurrentStep(p.status) >= 11,
+    active: p => p.status === 'DRIVER_ALLOCATED',
+  },
+  {
+    label:  'Tickets Activated',
+    key:    'tickets',
+    icon:   '🎫',
+    done:   p => getCurrentStep(p.status) >= 12 || p.ticketCount > 0,
+    active: p => p.status === 'QC1_PASS',
+  },
+  {
+    label:  'QC2 Pass',
+    key:    'qc2',
+    icon:   '🔍',
+    done:   p => getCurrentStep(p.status) >= 13,
+    active: p => p.status === 'TICKETS_ISSUED',
+  },
+  {
+    label:  'Message Sent to Customer',
+    key:    'msg',
+    icon:   '💬',
+    done:   p => getCurrentStep(p.status) >= 14,
+    active: p => p.status === 'QC2_PASS',
+  },
+  {
+    label:  'Feedback Done',
+    key:    'feedback',
+    icon:   '⭐',
+    done:   p => getCurrentStep(p.status) >= 15,
+    active: p => p.status === 'MSG_SENT_CUSTOMER',
+  },
+  {
+    label:  'Completed',
+    key:    'completed',
+    icon:   '🏁',
+    done:   p => p.status === 'COMPLETED',
+    active: p => p.status === 'FEEDBACK_DONE',
+  },
+]
+
+function OperationChecklist(props: OpChecklistProps) {
+  const doneCount = CHECKLIST.filter(c => c.done(props)).length
+
+  return (
+    <div className="mt-5 pt-5 border-t border-slate-100">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+          Operation Checklist
+        </h4>
+        <span className="text-xs font-semibold text-slate-500">
+          {doneCount} / {CHECKLIST.length} complete
+        </span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full bg-slate-100 rounded-full h-1.5 mb-4 overflow-hidden">
+        <div
+          className="h-full bg-brand-500 rounded-full transition-all duration-500"
+          style={{ width: `${(doneCount / CHECKLIST.length) * 100}%` }}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        {CHECKLIST.map(c => {
+          const done   = c.done(props)
+          const active = !done && c.active(props)
+
+          return (
+            <div
+              key={c.key}
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs font-medium transition-all ${
+                done
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : active
+                    ? 'bg-amber-50 border-amber-300 text-amber-700 ring-1 ring-amber-300 ring-offset-1'
+                    : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}
+            >
+              <span className="text-base leading-none flex-shrink-0">{c.icon}</span>
+              <span className="leading-tight flex-1 min-w-0">{c.label}</span>
+              {done ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+              ) : active ? (
+                <MinusCircle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 animate-pulse" />
+              ) : (
+                <XCircle className="w-3.5 h-3.5 text-slate-300 flex-shrink-0" />
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

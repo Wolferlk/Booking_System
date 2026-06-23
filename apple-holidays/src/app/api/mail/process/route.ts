@@ -8,10 +8,15 @@ import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { prisma } from '@/lib/prisma'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
+import { upsertCachedMailMessage } from '@/lib/mail-cache'
+import type { ProcessedEmail } from '@/lib/mail-processor'
+import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 
 function generateRef(base: string | null): string {
   if (base) {
-    const clean = base.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
+    // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
+    const stripped = base.replace(/[A-Z]+$/i, '')
+    const clean = (stripped.length >= 4 ? stripped : base).replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
     if (clean.length >= 4) return clean
   }
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
@@ -20,7 +25,7 @@ function generateRef(base: string | null): string {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
   const { rawBody, subject, emailType, graphId, mailboxUser, emailTo, emailCc, sourceMailFrom, sourceMailDate } = body as {
@@ -33,6 +38,18 @@ export async function POST(req: NextRequest) {
     emailCc?: string[]
     sourceMailFrom?: string
     sourceMailDate?: string
+    bodyHtml?: string
+    date?: string
+    folder?: string
+    from?: string
+    fromName?: string
+    to?: string[]
+    cc?: string[]
+    isRead?: boolean
+    hasAttachments?: boolean
+    importance?: string
+    conversationId?: string
+    uid?: number
   }
   if (!rawBody) return buildApiError('rawBody is required')
 
@@ -41,7 +58,75 @@ export async function POST(req: NextRequest) {
   const emailCcList = (emailCc ?? []).filter(Boolean)
   const allCcEmails = Array.from(new Set([...emailToList, ...emailCcList]))
 
+  // ── Dedup: if backend already processed this email, return cached result ──────
+  // This prevents duplicate OpenAI calls when the backend (webhook/IMAP IDLE/cron)
+  // already extracted and saved the booking before the user's browser loaded.
+  if (graphId) {
+    const cached = await prisma.systemSetting.findUnique({
+      where: { key: `processed_email_${graphId}` },
+    })
+    if (cached) {
+      const [cachedRef, cachedAt] = cached.value.split('|')
+      const booking = await prisma.booking.findFirst({
+        where: { bookingRef: cachedRef },
+        select: {
+          id: true, createdAt: true, ccEmails: true,
+          pnl: { select: { lineItems: { select: { id: true } } } },
+        },
+      }).catch(() => null)
+      let cachedCcEmails: string[] = allCcEmails
+      try {
+        cachedCcEmails = booking?.ccEmails ? JSON.parse(booking.ccEmails) : allCcEmails
+      } catch {
+        cachedCcEmails = allCcEmails
+      }
+      return buildApiSuccess({
+        bookingRef:      cachedRef,
+        bookingId:       booking?.id ?? '',
+        isNew:           false,
+        pnlLines:        booking?.pnl?.lineItems?.length ?? 0,
+        agendaItems:     0,
+        status:          'GT_REVIEW',
+        xlsxUsed:        false,
+        bookingCreatedAt: booking?.createdAt?.toISOString() ?? null,
+        processedAt:     cachedAt ?? null,
+        extracted:       null,
+        ccEmails:        cachedCcEmails,
+      }, `Booking ${cachedRef} already processed by backend`)
+    }
+  }
+
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
+  const emailSnapshot: ProcessedEmail | null = graphId && mailboxUser
+    ? {
+        uid: body.uid ?? 0,
+        graphId,
+        subject: subject ?? '',
+        from: body.from ?? '',
+        fromName: body.fromName ?? '',
+        to: Array.isArray(body.to) ? body.to : [],
+        cc: Array.isArray(body.cc) ? body.cc : [],
+        date: body.date ?? new Date().toISOString(),
+        type,
+        rawBody,
+        bodyHtml: body.bodyHtml ?? '',
+        folder: body.folder ?? 'Inbox',
+        isRead: body.isRead ?? false,
+        hasAttachments: body.hasAttachments ?? false,
+        importance: body.importance ?? 'normal',
+        conversationId: body.conversationId ?? '',
+        parsed: null,
+      }
+    : null
+
+  if (emailSnapshot && mailboxUser) {
+    await upsertCachedMailMessage({
+      email: emailSnapshot,
+      mailboxUser,
+      mailboxKind: type,
+      status: 'RECEIVED',
+    }).catch(() => {})
+  }
 
   // ── 1. Extract via OpenAI (email body) ────────────────────────────────────
   let extracted: ExtractedBooking
@@ -50,6 +135,14 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     const isQuota = msg.includes('insufficient_quota') || msg.includes('429') || msg.includes('exceeded your current quota')
+    if (emailSnapshot && mailboxUser) {
+      await upsertCachedMailMessage({
+        email: emailSnapshot,
+        mailboxUser,
+        mailboxKind: type,
+        status: 'ERROR',
+      }).catch(() => {})
+    }
     if (isQuota) {
       return buildApiError('OpenAI quota exceeded — please add billing credits at platform.openai.com/account/billing', 503)
     }
@@ -85,7 +178,19 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // For Tour Confirmation: only accept Tour Ref — reject IS/VN numbers
+  if (type === 'TOUR_CONFIRMATION' && extracted.bookingRef) {
+    if (/^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
+      extracted.bookingRef = null
+    }
+  }
+
   const rawBookingRef = generateRef(extracted.bookingRef)
+
+  // Detect operation country from IS/VN/SG/MY number prefix or subject/body keywords
+  const detectedCountry =
+    detectCountryFromRef(rawBookingRef) ??
+    detectCountryFromText(subject ?? '', rawBody)
 
   // ── 2. Find or create booking ─────────────────────────────────────────────
   // Try exact match first, then numeric-suffix fallback
@@ -137,6 +242,15 @@ export async function POST(req: NextRequest) {
     // Store as PNL_WAITING — when the TQ arrives, the UI will auto-retry linking.
     if (type === 'PNL') {
       const numericRef = rawBookingRef.replace(/[^0-9]/g, '')
+      if (emailSnapshot && mailboxUser) {
+        await upsertCachedMailMessage({
+          email: emailSnapshot,
+          mailboxUser,
+          mailboxKind: type,
+          bookingRef: numericRef,
+          status: 'WAITING',
+        }).catch(() => {})
+      }
       return buildApiSuccess(
         {
           status:      'PNL_WAITING',
@@ -158,34 +272,34 @@ export async function POST(req: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       data: {
         bookingRef,
-        agentBookingId: extracted.agentBookingId,
-        agent:          extracted.agent ?? 'Unknown Agent',
-        fileHandler:    extracted.fileHandler,
-        arrivalDate:    new Date(extracted.arrivalDate),
-        departureDate:  new Date(extracted.departureDate),
-        paxAdults:      extracted.paxAdults,
-        paxChildren:    extracted.paxChildren,
-        quotedTotal:    extracted.quotedTotal ?? undefined,
-        currency:       extracted.currency ?? 'USD',
-        terms:          extracted.terms,
-        exclusions:     extracted.exclusions,
-        status:         'GT_REVIEW',
-        createdById:    session.user.id,
-        // Contact fields from AI extraction
-        agentEmail:      extracted.agentEmail      ?? null,
-        agentPhone:      extracted.agentPhone      ?? null,
-        agentWhatsapp:   extracted.agentWhatsapp   ?? null,
-        agentCountry:    extracted.agentCountry    ?? null,
-        contactEmail:    extracted.contactEmail    ?? null,
-        contactPhone:    extracted.contactPhone    ?? null,
-        contactWhatsapp: extracted.contactWhatsapp ?? null,
-        contactCountry:  extracted.contactCountry  ?? null,
-        // CC email list from the email's To+CC headers
-        ccEmails:          allCcEmails.length > 0 ? JSON.stringify(allCcEmails) : null,
-        // Source email metadata
+        agentBookingId:   extracted.agentBookingId,
+        agent:            extracted.agent ?? 'Unknown Agent',
+        fileHandler:      extracted.fileHandler,
+        arrivalDate:      new Date(extracted.arrivalDate),
+        departureDate:    new Date(extracted.departureDate),
+        paxAdults:        extracted.paxAdults,
+        paxChildren:      extracted.paxChildren,
+        quotedTotal:      extracted.quotedTotal ?? undefined,
+        currency:         extracted.currency ?? 'USD',
+        terms:            extracted.terms,
+        exclusions:       extracted.exclusions,
+        agentEmail:       extracted.agentEmail,
+        agentPhone:       extracted.agentPhone,
+        agentWhatsapp:    extracted.agentWhatsapp,
+        agentCountry:     extracted.agentCountry,
+        agentAddress:     extracted.agentAddress,
+        contactEmail:     extracted.contactEmail,
+        contactPhone:     extracted.contactPhone,
+        contactWhatsapp:  extracted.contactWhatsapp,
+        contactCountry:   extracted.contactCountry,
+        contactAddress:   extracted.contactAddress,
+        operationCountry: detectedCountry ?? undefined,
+        ccEmails:         allCcEmails.length > 0 ? JSON.stringify(allCcEmails) : null,
         sourceMailSubject: subject ?? null,
         sourceMailFrom:    sourceMailFrom ?? null,
         sourceMailDate:    sourceMailDate ?? null,
+        status:           'GT_REVIEW',
+        createdById:      session.user.id,
       } as any,
     })
     bookingId = created.id
@@ -281,7 +395,7 @@ export async function POST(req: NextRequest) {
     }
     await prisma.pNLLineItem.deleteMany({ where: { pnlId: pnl.id } })
 
-    const ticketCats = ['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS']
+    const ticketCats = ['HOTEL', 'TRANSPORT', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS']
     for (let i = 0; i < classifiedLines.length; i++) {
       const l = classifiedLines[i]
       const created = await prisma.pNLLineItem.create({
@@ -351,6 +465,18 @@ export async function POST(req: NextRequest) {
   }).catch(() => null)
 
   const processedAt = new Date().toISOString()
+
+  if (emailSnapshot && mailboxUser) {
+    await upsertCachedMailMessage({
+      email: emailSnapshot,
+      mailboxUser,
+      mailboxKind: type,
+      bookingRef,
+      operationCountry: detectedCountry,
+      status: 'PROCESSED',
+      processedAt,
+    }).catch(() => {})
+  }
 
   return buildApiSuccess({
     bookingRef,

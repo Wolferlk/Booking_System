@@ -4,14 +4,53 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import {
   FileText, Clock, AlertCircle, CreditCard, TrendingUp,
-  Globe, Users, Loader2, ArrowRight, CheckCircle2,
+  Globe, Users, Loader2, ArrowRight, CheckCircle2, Lock,
+  Car, Ticket, ShieldCheck, Star, MessageSquare,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, StatCard, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
 import type { UserRole, BookingStatus } from '@prisma/client'
+
+const COUNTRY_META: Record<string, {
+  name: string; flag: string; code: string
+  gradient: string; border: string; text: string; badge: string
+}> = {
+  VIETNAM: {
+    name: 'Vietnam', flag: '🇻🇳', code: 'MMT_VN',
+    gradient: 'from-red-500/10 to-red-600/5',
+    border: 'border-red-500/20',
+    text: 'text-red-700',
+    badge: 'bg-red-100 text-red-700 border-red-200',
+  },
+  SRILANKA: {
+    name: 'Sri Lanka', flag: '🇱🇰', code: 'MMT_LK',
+    gradient: 'from-yellow-500/10 to-yellow-600/5',
+    border: 'border-yellow-500/20',
+    text: 'text-yellow-700',
+    badge: 'bg-yellow-100 text-yellow-700 border-yellow-200',
+  },
+  SINGAPORE_MALAYSIA: {
+    name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY',
+    gradient: 'from-blue-500/10 to-blue-600/5',
+    border: 'border-blue-500/20',
+    text: 'text-blue-700',
+    badge: 'bg-blue-100 text-blue-700 border-blue-200',
+  },
+}
+
+const ROLE_LABELS: Record<string, string> = {
+  BT_USER:           'Booking Team',
+  GT_USER:           'Ground Team',
+  TE_USER:           'Travel Experience Team',
+  GT_TE_USER:        'Ground & Travel Experience',
+  AC_USER:           'Accounts Team',
+  SUPER_ADMIN:       'Country Admin',
+  ULTRA_SUPER_ADMIN: 'Ultra Super Admin',
+}
 
 interface Stats {
   totalBookings: number
@@ -33,6 +72,7 @@ interface RecentBooking {
   arrivalDate: string
   paxAdults: number
   paxChildren: number
+  operationCountry: string | null
   passengers: { name: string }[]
   createdBy: { name: string }
 }
@@ -40,6 +80,7 @@ interface RecentBooking {
 export default function DashboardPage() {
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
+  const { countryFilter, canFilter } = useCountryFilter()
   const [stats, setStats] = useState<Stats | null>(null)
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,9 +88,10 @@ export default function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
+        const cqs = countryFilter && countryFilter !== 'ALL' ? `country=${countryFilter}` : ''
         const [statsRes, bookingsRes] = await Promise.all([
-          fetch('/api/dashboard/stats'),
-          fetch('/api/bookings?limit=5'),
+          fetch(`/api/dashboard/stats${cqs ? `?${cqs}` : ''}`),
+          fetch(`/api/bookings?limit=5${cqs ? `&${cqs}` : ''}`),
         ])
         const [statsJson, bookingsJson] = await Promise.all([
           statsRes.json(),
@@ -62,19 +104,48 @@ export default function DashboardPage() {
       }
     }
     load()
-  }, [])
+  }, [countryFilter])
 
   const isAdmin = role === 'SUPER_ADMIN'
   const isAccounts = role === 'AC_USER'
+  const countryMeta = countryFilter && countryFilter !== 'ALL' ? COUNTRY_META[countryFilter] : null
 
   return (
     <div>
       <Header
         title={`Welcome back, ${session?.user?.name?.split(' ')[0]} 👋`}
-        subtitle="Here's what's happening with your bookings today"
+        subtitle={
+          countryMeta
+            ? `${countryMeta.flag} ${ROLE_LABELS[role ?? ''] ?? role} · ${countryMeta.name} Operations`
+            : "Here's what's happening with your bookings today"
+        }
       />
 
       <div className="p-8 space-y-8">
+        {/* Country context banner */}
+        {countryMeta && (
+          <div className={`flex items-center gap-4 px-6 py-5 rounded-2xl border bg-gradient-to-r ${countryMeta.gradient} ${countryMeta.border}`}>
+            <span className="text-5xl leading-none flex-shrink-0">{countryMeta.flag}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Operating Region</p>
+              <p className="text-2xl font-bold text-slate-900 mt-0.5 leading-tight">{countryMeta.name}</p>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">{countryMeta.code}</p>
+            </div>
+            <div className="flex flex-col items-end gap-2 flex-shrink-0">
+              {!canFilter ? (
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 bg-white/70 backdrop-blur-sm px-3 py-1.5 rounded-full border border-slate-200/80">
+                  <Lock className="w-3 h-3" /> Country Locked
+                </div>
+              ) : (
+                <div className="text-xs font-semibold text-slate-500 bg-white/60 px-3 py-1.5 rounded-full border border-slate-200/80">
+                  Filtered to {countryMeta.name}
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400">All stats &amp; bookings shown below are for this region</p>
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
@@ -102,7 +173,7 @@ export default function DashboardPage() {
                 color="yellow"
               />
               <StatCard
-                label="Upcoming Trips (30d)"
+                label="Upcoming Trips (7d)"
                 value={stats?.upcomingTrips ?? 0}
                 icon={<Globe className="w-5 h-5" />}
                 color="purple"
@@ -160,7 +231,14 @@ export default function DashboardPage() {
                     </Link>
                   }
                 >
-                  <h3 className="text-base font-semibold text-slate-900">Recent Bookings</h3>
+                  <h3 className="text-base font-semibold text-slate-900">
+                    {countryMeta ? (
+                      <>
+                        <span className="mr-1.5">{countryMeta.flag}</span>
+                        Recent {countryMeta.name} Bookings
+                      </>
+                    ) : 'Recent Bookings'}
+                  </h3>
                 </CardHeader>
                 <CardBody className="p-0">
                   {recentBookings.length === 0 ? (
@@ -174,9 +252,14 @@ export default function DashboardPage() {
                             className="flex items-center gap-4 px-6 py-3.5 hover:bg-slate-50 transition-colors"
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-sm font-semibold text-slate-900">{b.bookingRef}</span>
                                 <StatusBadge status={b.status} />
+                                {!countryMeta && b.operationCountry && COUNTRY_META[b.operationCountry] && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold border ${COUNTRY_META[b.operationCountry].badge}`}>
+                                    {COUNTRY_META[b.operationCountry].flag} {COUNTRY_META[b.operationCountry].code}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-xs text-slate-500 mt-0.5">
                                 {b.passengers[0]?.name ?? b.agent ?? '—'} · {formatDate(b.arrivalDate)}
@@ -194,33 +277,7 @@ export default function DashboardPage() {
               </Card>
 
               {/* Booking status breakdown */}
-              <Card>
-                <CardHeader>
-                  <h3 className="text-base font-semibold text-slate-900">Bookings by Status</h3>
-                </CardHeader>
-                <CardBody>
-                  {stats?.byStatus && Object.keys(stats.byStatus).length > 0 ? (
-                    <div className="space-y-3">
-                      {Object.entries(stats.byStatus)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([status, count]) => (
-                          <div key={status} className="flex items-center gap-3">
-                            <StatusBadge status={status as BookingStatus} />
-                            <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
-                              <div
-                                className="h-full bg-brand-500 rounded-full transition-all"
-                                style={{ width: `${(count / (stats?.totalBookings || 1)) * 100}%` }}
-                              />
-                            </div>
-                            <span className="text-sm font-semibold text-slate-700 w-6 text-right">{count}</span>
-                          </div>
-                        ))}
-                    </div>
-                  ) : (
-                    <p className="text-center text-slate-400 text-sm py-8">No data yet</p>
-                  )}
-                </CardBody>
-              </Card>
+              <BookingsByStatus byStatus={stats?.byStatus ?? {}} totalBookings={stats?.totalBookings ?? 0} />
             </div>
 
             {/* Quick actions by role */}
@@ -262,5 +319,143 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+  )
+}
+
+// ─── Bookings by Status ────────────────────────────────────────────────────────
+
+const PIPELINE_STATUSES: {
+  status: BookingStatus
+  label: string
+  icon: React.ReactNode
+  bar: string        // Tailwind bg colour for the bar fill
+  badge: string      // pill bg + text colours
+  dot: string        // dot colour
+}[] = [
+  {
+    status:  'GT_REVIEW',
+    label:   'Need Review by TE Team',
+    icon:    <AlertCircle className="w-3.5 h-3.5" />,
+    bar:     'bg-amber-400',
+    badge:   'bg-amber-100 text-amber-800 border border-amber-200',
+    dot:     'bg-amber-400',
+  },
+  {
+    status:  'DRIVER_ALLOCATED',
+    label:   'Driver Allocated',
+    icon:    <Car className="w-3.5 h-3.5" />,
+    bar:     'bg-sky-500',
+    badge:   'bg-sky-100 text-sky-800 border border-sky-200',
+    dot:     'bg-sky-500',
+  },
+  {
+    status:  'TICKETS_ISSUED',
+    label:   'Tickets Activated',
+    icon:    <Ticket className="w-3.5 h-3.5" />,
+    bar:     'bg-fuchsia-500',
+    badge:   'bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200',
+    dot:     'bg-fuchsia-500',
+  },
+  {
+    status:  'QC1_PASS',
+    label:   'QC1 Pass',
+    icon:    <ShieldCheck className="w-3.5 h-3.5" />,
+    bar:     'bg-violet-500',
+    badge:   'bg-violet-100 text-violet-800 border border-violet-200',
+    dot:     'bg-violet-500',
+  },
+  {
+    status:  'FEEDBACK_DONE',
+    label:   'Feedback',
+    icon:    <MessageSquare className="w-3.5 h-3.5" />,
+    bar:     'bg-lime-500',
+    badge:   'bg-lime-100 text-lime-800 border border-lime-200',
+    dot:     'bg-lime-500',
+  },
+  {
+    status:  'COMPLETED',
+    label:   'Completed',
+    icon:    <Star className="w-3.5 h-3.5" />,
+    bar:     'bg-emerald-500',
+    badge:   'bg-emerald-100 text-emerald-800 border border-emerald-200',
+    dot:     'bg-emerald-500',
+  },
+]
+
+function BookingsByStatus({ byStatus, totalBookings }: { byStatus: Record<string, number>; totalBookings: number }) {
+  // The denominator is the max count among the shown statuses so bars scale relative to each other
+  const shownCounts = PIPELINE_STATUSES.map(p => byStatus[p.status] ?? 0)
+  const maxCount    = Math.max(...shownCounts, 1)
+  const shownTotal  = shownCounts.reduce((a, b) => a + b, 0)
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-semibold text-slate-900">Bookings by Status</h3>
+          <span className="text-xs text-slate-400 font-medium">{totalBookings} total</span>
+        </div>
+      </CardHeader>
+      <CardBody className="space-y-0 p-0">
+        {PIPELINE_STATUSES.map((p, idx) => {
+          const count   = byStatus[p.status] ?? 0
+          const pct     = Math.round((count / maxCount) * 100)
+          const ofTotal = totalBookings > 0 ? Math.round((count / totalBookings) * 100) : 0
+
+          return (
+            <Link
+              key={p.status}
+              href={`/dashboard/bookings?status=${p.status}`}
+              className={`flex items-center gap-3 px-5 py-3.5 group hover:bg-slate-50 transition-colors ${
+                idx < PIPELINE_STATUSES.length - 1 ? 'border-b border-slate-100' : ''
+              }`}
+            >
+              {/* Dot + label */}
+              <div className="flex items-center gap-2.5 w-52 flex-shrink-0 min-w-0">
+                <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${p.dot}`} />
+                <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${p.badge}`}>
+                  {p.icon}
+                  {p.label}
+                </span>
+              </div>
+
+              {/* Progress bar */}
+              <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${count > 0 ? p.bar : 'bg-slate-200'}`}
+                  style={{ width: count > 0 ? `${Math.max(pct, 2)}%` : '0%' }}
+                />
+              </div>
+
+              {/* Count + percentage */}
+              <div className="flex items-center gap-2 flex-shrink-0 w-16 justify-end">
+                <span className={`text-base font-bold tabular-nums ${count > 0 ? 'text-slate-800' : 'text-slate-300'}`}>
+                  {count}
+                </span>
+                <span className="text-[10px] text-slate-400 font-medium w-7 text-right">
+                  {count > 0 ? `${ofTotal}%` : ''}
+                </span>
+              </div>
+
+              {/* Chevron */}
+              <ArrowRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 flex-shrink-0 transition-colors" />
+            </Link>
+          )
+        })}
+
+        {/* Footer: total shown vs total bookings */}
+        <div className="px-5 py-3 bg-slate-50 rounded-b-xl border-t border-slate-100 flex items-center justify-between">
+          <span className="text-xs text-slate-500">
+            Showing {shownTotal} of {totalBookings} active bookings
+          </span>
+          <Link
+            href="/dashboard/bookings"
+            className="text-xs font-semibold text-brand-600 hover:text-brand-700 flex items-center gap-1"
+          >
+            View all <ArrowRight className="w-3 h-3" />
+          </Link>
+        </div>
+      </CardBody>
+    </Card>
   )
 }

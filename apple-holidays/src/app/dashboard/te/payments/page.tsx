@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Plus, Loader2, CreditCard } from 'lucide-react'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -19,6 +20,7 @@ interface Payment {
 }
 
 export default function PaymentsPage() {
+  const { countryFilter } = useCountryFilter()
   const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(true)
   const [modal, setModal] = useState(false)
@@ -29,10 +31,12 @@ export default function PaymentsPage() {
   })
 
   useEffect(() => {
-    fetch('/api/payments').then(r => r.json())
+    const params = new URLSearchParams()
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+    fetch(`/api/payments?${params}`).then(r => r.json())
       .then(j => { if (j.success) setPayments(j.data) })
       .finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   async function recordPayment() {
     setSaving(true)

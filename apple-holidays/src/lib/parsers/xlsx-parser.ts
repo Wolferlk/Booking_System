@@ -21,20 +21,24 @@ export function parseXlsxToJson(buffer: Buffer): unknown[][] {
 
 export function detectCategory(activity: string): string {
   const a = activity.toLowerCase()
+  // Private transfers always → TRANSPORT (must be before hotel check)
+  if (a.includes('private transfer') || a.includes('private transfers')) return 'TRANSPORT'
+  // Airport ↔ anything with "transfer" keyword → TRANSPORT
+  if ((a.includes('airport') || a.includes('to airport') || a.includes('from airport')) && a.includes('transfer')) return 'TRANSPORT'
   // Cruise/boat (before transport — "Ha Long Cruise" should not become TRANSPORT)
   if (a.includes('cruise') || a.includes('halong') || a.includes('ha long') || a.includes('boat trip') || a.includes('yacht') || a.includes('junk')) return 'CRUISE'
-  // Hotel + accommodation (before transport — "Airport to Hotel Transfer" → HOTEL)
-  if (a.includes('hotel') || a.includes('accommodation') || a.includes('resort') || a.includes('villa') || a.includes('hostel') || a.includes('homestay') || a.includes('check in') || a.includes('check-in') || a.includes('check out') || a.includes('check-out')) return 'HOTEL'
   // Flight tickets
   if (a.includes('flight') || a.includes('airline') || a.includes('air ticket') || a.includes('domestic flight') || a.includes('vj ') || a.includes(' vn ')) return 'FLIGHT_TICKETS'
-  // Entrance tickets (before guides — "Ba Na Ticket" → TICKETS not GUIDES)
+  // Entrance tickets (before guides/hotel — "Ba Na Ticket" → TICKETS not GUIDES)
   if (a.includes('ticket') || a.includes('entrance') || a.includes('admission') || a.includes('cable car') || a.includes('theme park') || a.includes('night show') || a.includes('pass')) return 'TICKETS'
+  // Pure accommodation (no transfer/airport context)
+  if (a.includes('hotel') || a.includes('accommodation') || a.includes('resort') || a.includes('villa') || a.includes('hostel') || a.includes('homestay') || a.includes('check in') || a.includes('check-in') || a.includes('check out') || a.includes('check-out')) return 'HOTEL'
   // Water activities
   if (a.includes('water') || a.includes('kayak') || a.includes('snorkel') || a.includes('dive') || a.includes('swim') || a.includes('surf')) return 'WATER'
   // Guide services / walking tours
   if (a.includes('guide') || a.includes('walking tour') || a.includes('city tour') || a.includes('sightseeing') || a.includes('old quarter')) return 'GUIDES'
-  // Ground transport
-  if (a.includes('transfer') || a.includes('cab') || a.includes('taxi') || a.includes('airport') || a.includes('bus') || a.includes('transport') || a.includes('private car') || a.includes('limousine')) return 'TRANSPORT'
+  // Remaining ground transport
+  if (a.includes('transfer') || a.includes('cab') || a.includes('taxi') || a.includes('airport') || a.includes('bus') || a.includes('transport') || a.includes('private car') || a.includes('limousine') || a.includes('shuttle')) return 'TRANSPORT'
   // General tours/trips (after tickets and guides)
   if (a.includes('tour') || a.includes('trip') || a.includes('trekking') || a.includes('hiking') || a.includes('fansipan') || a.includes('sapa')) return 'GUIDES'
   // Meals

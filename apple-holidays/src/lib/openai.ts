@@ -6,6 +6,51 @@ const openai = new OpenAI({
 
 export default openai
 
+// ─── AI Usage Logger ─────────────────────────────────────────────────────
+
+const COST_PER_M = {
+  'gpt-4o':       { input: 2.50,  output: 10.00 },
+  'gpt-4o-mini':  { input: 0.15,  output: 0.60  },
+}
+
+export async function logAiUsage(params: {
+  callType: string
+  model: string
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | null | undefined
+  bookingRef?: string | null
+  source?: string
+}) {
+  if (!params.usage) return
+  const rates = COST_PER_M[params.model as keyof typeof COST_PER_M] ?? { input: 2.50, output: 10.00 }
+  const cost = (params.usage.prompt_tokens / 1_000_000 * rates.input) +
+               (params.usage.completion_tokens / 1_000_000 * rates.output)
+
+  const ref = params.bookingRef ? ` [${params.bookingRef}]` : ''
+  console.log(
+    `\x1b[35m[AI]\x1b[0m ${params.callType} (${params.model})` +
+    `  prompt:\x1b[33m${params.usage.prompt_tokens}\x1b[0m` +
+    `  completion:\x1b[33m${params.usage.completion_tokens}\x1b[0m` +
+    `  total:\x1b[33m${params.usage.total_tokens}\x1b[0m` +
+    `  cost:\x1b[32m$${cost.toFixed(4)}\x1b[0m${ref}`
+  )
+
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    await prisma.aiUsageLog.create({
+      data: {
+        callType:         params.callType,
+        model:            params.model,
+        promptTokens:     params.usage.prompt_tokens,
+        completionTokens: params.usage.completion_tokens,
+        totalTokens:      params.usage.total_tokens,
+        estimatedCostUsd: cost,
+        bookingRef:       params.bookingRef ?? null,
+        source:           params.source ?? null,
+      },
+    })
+  } catch { /* never let logging crash the main flow */ }
+}
+
 // ─── System prompts ──────────────────────────────────────────────────────
 
 const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
@@ -38,6 +83,15 @@ Schema:
   "contactPhone": "string or null — personal mobile/phone of the lead tourist",
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
+
+  "isNumber": "string or null — IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122 (labeled 'IS Number' or 'Confirmation Number' in TC header)",
+  "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
+  "tourDestination": "string or null — destination country/city e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia' (labeled 'Destination' in TC)",
+  "chauffeurContact": "string or null — chauffeur or tour guide contact details (labeled 'Chauffeur/Tour guide contact' in TC)",
+  "languagePreference": "string or null — guests' language preference (labeled 'Guests Language Preference' or similar)",
+  "specialOccasions": "string or null — special occasions e.g. honeymoon, birthday (labeled 'Special Occasions' in TC)",
+  "checkedBy": "string or null — name of person who checked/verified the TC (labeled 'Checked by' in TC)",
+  "reconfirmBy": "string or null — deadline or person for reconfirmation (labeled 'Reconfirm by' in TC)",
 
   "passengers": [
     {
@@ -129,7 +183,7 @@ Schema:
 
 // ─── Extraction functions ────────────────────────────────────────────────
 
-export async function extractBookingFromText(documentText: string): Promise<Record<string, unknown>> {
+export async function extractBookingFromText(documentText: string, bookingRef?: string): Promise<Record<string, unknown>> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
@@ -142,6 +196,7 @@ export async function extractBookingFromText(documentText: string): Promise<Reco
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
+  await logAiUsage({ callType: 'booking_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'onedrive' })
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
@@ -155,11 +210,11 @@ export async function classifyPNLCategories(activities: string[]): Promise<strin
   const prompt = `You are a Vietnam travel operations expert classifying P&L line items for AppleHolidays (MMT Vietnam).
 
 CATEGORIES (pick exactly one per activity):
-- HOTEL: hotel/resort stays, airport-to-hotel transfers, hotel check-in/check-out transfers, accommodation
-- TRANSPORT: pure ground transport NOT hotel-related (cab, private car between cities, day trip vehicle hire)
-- CRUISE: Ha Long Bay cruise, boat trips, yacht, river cruise, junk boat
-- GUIDES: guided walking tours, city tours, day tours with guide, sightseeing
-- TICKETS: entrance tickets, admission, cable car, theme park, night shows, "Ba Na", attraction passes
+- HOTEL: accommodation stays only — hotel/resort/villa/homestay check-in or check-out (NO transfers)
+- TRANSPORT: ANY transfer or vehicle service — private transfers, airport↔hotel transfers, cab, taxi, private car, bus, SIC transfer, limousine, shuttle
+- CRUISE: Ha Long Bay cruise, boat trips, yacht, river cruise, junk boat, overnight cruise
+- GUIDES: guided day tours, sightseeing tours, city tours, walking tours, SIC tours (not cruise/tickets)
+- TICKETS: entrance tickets, admission, cable car, theme park, night shows, "Ba Na", attraction passes, combo tickets
 - WATER: water sports, kayaking, snorkeling, diving, swimming, surfing
 - FLIGHT_TICKETS: airline/domestic flight tickets
 - MEALS: restaurant meals, food tours (NOT meals included in a package)
@@ -167,12 +222,14 @@ CATEGORIES (pick exactly one per activity):
 - OTHER: anything else
 
 IMPORTANT RULES:
-- "Airport to [Hotel name]" or "[Hotel] to Airport" → HOTEL (hotel-related transfer)
-- "Ha Long / Halong / cruise / boat" → CRUISE
-- "Fansipan / trekking / hiking" → GUIDES
-- "Ticket / entrance / Ba Na / cable car" → TICKETS
-- "Two-way transfer between cities" → TRANSPORT
-- "Cab service / Grab / taxi" → TRANSPORT
+- "Private Transfer" / "Private Transfers" → ALWAYS TRANSPORT, even if the name contains "Hotel" or "Airport"
+- "[Hotel] to Airport" or "Airport to [Hotel]" → TRANSPORT (it is a vehicle service, not accommodation)
+- "SIC transfer" alone → TRANSPORT; "SIC tour/cruise" → GUIDES or CRUISE
+- Pure hotel/resort name with no transfer keyword → HOTEL
+- "Ha Long / Halong / cruise / boat / overnight cruise" → CRUISE
+- "Fansipan / trekking / hiking / sightseeing" → GUIDES
+- "Ticket / entrance / cable car / theme park / VinWonders / Aquatopia / Safari combo" → TICKETS
+- "Two-way transfer between cities / cab / Grab / taxi / limousine" → TRANSPORT
 
 Return JSON: { "categories": ["HOTEL", "CRUISE", ...] } — same order as input, one per activity.
 
@@ -189,6 +246,7 @@ ${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
     temperature: 0,
   })
 
+  await logAiUsage({ callType: 'pnl_classify', model: 'gpt-4o-mini', usage: response.usage, source: 'pnl' })
   const content = response.choices[0]?.message?.content
   if (!content) return activities.map(() => 'OTHER')
 
@@ -199,7 +257,7 @@ ${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
   return result
 }
 
-export async function extractPNLFromText(sheetText: string): Promise<Record<string, unknown>> {
+export async function extractPNLFromText(sheetText: string, bookingRef?: string): Promise<Record<string, unknown>> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
@@ -212,6 +270,7 @@ export async function extractPNLFromText(sheetText: string): Promise<Record<stri
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
+  await logAiUsage({ callType: 'pnl_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'upload' })
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
@@ -253,6 +312,74 @@ Return ONLY a JSON array.`,
   return Array.isArray(parsed) ? parsed : parsed.items ?? parsed.agenda ?? []
 }
 
+export async function extractTicketDetails(
+  fileBase64: string,
+  mimeType: string,
+  ticketType: string,
+): Promise<{
+  reference?: string
+  supplier?: string
+  date?: string
+  notes?: string
+  driverName?: string
+  driverPhone?: string
+  vehicleType?: string
+  vehicleNumber?: string
+}> {
+  const isImage = mimeType.startsWith('image/')
+  const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
+    ? [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${fileBase64}`, detail: 'high' },
+            },
+            {
+              type: 'text',
+              text: `This is a ticket, voucher, or confirmation document for: "${ticketType}".
+Extract the following as JSON (use null for anything not found):
+{
+  "reference": "booking/confirmation/ticket reference number",
+  "supplier": "company or provider name",
+  "date": "date of service (YYYY-MM-DD or as shown)",
+  "notes": "any important instructions, meeting point, dress code, or details",
+  "driverName": "driver name if this is a transfer/transport ticket",
+  "driverPhone": "driver phone if visible",
+  "vehicleType": "vehicle type if this is a transfer (Car, Van, Bus, etc.)",
+  "vehicleNumber": "vehicle number plate if visible"
+}
+Return only valid JSON.`,
+            },
+          ],
+        },
+      ]
+    : [
+        {
+          role: 'user',
+          content: `This is a PDF ticket/voucher for: "${ticketType}". The text content is below. Extract key details as JSON (null for missing):
+{"reference": null, "supplier": null, "date": null, "notes": null, "driverName": null, "driverPhone": null, "vehicleType": null, "vehicleNumber": null}
+The fileBase64 is not provided for PDF. Return empty JSON: {}`,
+        },
+      ]
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages,
+      temperature: 0,
+      max_tokens: 400,
+      response_format: { type: 'json_object' },
+    })
+    await logAiUsage({ callType: 'ticket_details', model: 'gpt-4o', usage: response.usage, source: 'manual' })
+    const content = response.choices[0]?.message?.content ?? '{}'
+    return JSON.parse(content)
+  } catch {
+    return {}
+  }
+}
+
 export async function getBookingAISuggestion(
   question: string,
   bookingContext: string,
@@ -272,5 +399,6 @@ Booking context: ${bookingContext.slice(0, 4000)}`,
     max_tokens: 500,
   })
 
+  await logAiUsage({ callType: 'ai_suggestion', model: 'gpt-4o', usage: response.usage, source: 'manual' })
   return response.choices[0]?.message?.content ?? 'Unable to generate response.'
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import { ClipboardCheck, Calendar, Users, Clock, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardBody } from '@/components/ui/card'
@@ -12,6 +13,7 @@ import { formatDate, getDaysUntilTrip } from '@/lib/utils'
 
 export default function TEReviewPage() {
   const { data: session } = useSession()
+  const { countryFilter } = useCountryFilter()
   const router = useRouter()
   const role = session?.user?.role ?? ''
 
@@ -21,15 +23,17 @@ export default function TEReviewPage() {
   const [filter, setFilter] = useState<'GT_REVIEW' | 'GT_VERIFIED' | 'all'>('GT_REVIEW')
 
   useEffect(() => {
-    if (role && !['TE_USER', 'SUPER_ADMIN'].includes(role)) {
+    if (role && !['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
       router.replace('/dashboard')
       return
     }
-    fetch('/api/bookings?status=GT_REVIEW,GT_VERIFIED,CHANGE_REQUESTED&limit=100')
+    const params = new URLSearchParams({ status: 'GT_REVIEW,GT_VERIFIED,CHANGE_REQUESTED', limit: '100' })
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+    fetch(`/api/bookings?${params}`)
       .then(r => r.json())
       .then(j => { if (j.success) setBookings(j.data?.bookings ?? j.data ?? []) })
       .finally(() => setLoading(false))
-  }, [role])
+  }, [role, countryFilter])
 
   const filtered = filter === 'all'
     ? bookings

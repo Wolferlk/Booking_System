@@ -8,6 +8,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 interface Booking {
   id: string; bookingRef: string; agent: string | null; status: string
@@ -19,15 +20,17 @@ interface Booking {
 export default function GroundReviewPage() {
   const router = useRouter()
   const { data: session } = useSession()
+  const { countryFilter } = useCountryFilter()
   const [bookings, setBookings] = useState<Booking[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/bookings?status=GT_REVIEW')
+    const cqs = countryFilter && countryFilter !== 'ALL' ? `&country=${countryFilter}` : ''
+    fetch(`/api/bookings?status=GT_REVIEW${cqs}`)
       .then(r => r.json())
       .then(j => { if (j.success) setBookings(j.data.bookings) })
       .finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   return (
     <div>

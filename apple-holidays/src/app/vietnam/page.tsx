@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ChevronLeft, FileText, Truck, MapPin,
-  BarChart2, Globe, Shield, ArrowRight,
+  Shield, ArrowRight,
   Users, CheckCircle2, UserCog,
 } from 'lucide-react'
 
@@ -13,8 +13,8 @@ const ROLES = [
     id: 'BT_USER',
     label: 'Booking Team',
     sublabel: 'BT_USER',
-    email: 'bt@apple.com',
-    description: 'Create & manage travel bookings, handle change requests and passenger details.',
+    email: 'vn-bt@apple.com',
+    description: 'Create & manage Vietnam travel bookings, handle change requests and passenger details.',
     icon: FileText,
     gradient: 'from-blue-500/20 to-blue-700/10',
     border: 'border-blue-500/30 hover:border-blue-400/50',
@@ -28,7 +28,7 @@ const ROLES = [
     id: 'GT_USER',
     label: 'Ground Team',
     sublabel: 'GT_USER',
-    email: 'gt@apple.com',
+    email: 'vn-gt@apple.com',
     description: 'Review and assign ground logistics — drivers, vehicles and tour agenda.',
     icon: Truck,
     gradient: 'from-emerald-500/20 to-emerald-700/10',
@@ -43,7 +43,7 @@ const ROLES = [
     id: 'TE_USER',
     label: 'Travel Experiences',
     sublabel: 'TE_USER',
-    email: 'te@apple.com',
+    email: 'vn-te@apple.com',
     description: 'Guest communication, pre-trip reminders, final recheck and payment collection.',
     icon: MapPin,
     gradient: 'from-purple-500/20 to-purple-700/10',
@@ -55,41 +55,11 @@ const ROLES = [
     features: ['Contact Log', 'Reminders', 'Payments'],
   },
   {
-    id: 'AC_USER',
-    label: 'Accounts Team',
-    sublabel: 'AC_USER',
-    email: 'ac@apple.com',
-    description: 'Manage profit & loss, confirm P&L line payments and view revenue dashboards.',
-    icon: BarChart2,
-    gradient: 'from-amber-500/20 to-amber-700/10',
-    border: 'border-amber-500/30 hover:border-amber-400/50',
-    iconBg: 'bg-amber-500/15',
-    iconColor: 'text-amber-400',
-    accent: 'text-amber-400',
-    glow: 'hover:shadow-amber-500/10',
-    features: ['P&L Management', 'Payment Confirmation', 'Profit Dashboard'],
-  },
-  {
-    id: 'CLIENT',
-    label: 'Client View',
-    sublabel: 'Customer / Agent',
-    email: 'client@apple.com',
-    description: 'Traveller & agent portal — view trip itinerary, payments and emergency contacts.',
-    icon: Globe,
-    gradient: 'from-cyan-500/20 to-cyan-700/10',
-    border: 'border-cyan-500/30 hover:border-cyan-400/50',
-    iconBg: 'bg-cyan-500/15',
-    iconColor: 'text-cyan-400',
-    accent: 'text-cyan-400',
-    glow: 'hover:shadow-cyan-500/10',
-    features: ['My Trip', 'Day-by-Day Agenda', 'Payments & Contacts'],
-  },
-  {
     id: 'SUPER_ADMIN',
-    label: 'Super Admin',
+    label: 'Vietnam Admin',
     sublabel: 'SUPER_ADMIN',
-    email: 'admin@apple.com',
-    description: 'Full system access — all modules, user management and complete audit log.',
+    email: 'vn-admin@apple.com',
+    description: 'Full access to Vietnam operations — all modules, user management and audit log.',
     icon: Shield,
     gradient: 'from-red-500/20 to-orange-700/10',
     border: 'border-red-500/30 hover:border-red-400/50',
@@ -136,7 +106,7 @@ export default function VietnamPage() {
             </div>
             <div>
               <p className="text-white font-bold text-sm leading-tight">AppleHolidays</p>
-              <p className="text-slate-500 text-[10px] uppercase tracking-wider">MMT Vietnam</p>
+              <p className="text-slate-500 text-[10px] uppercase tracking-wider">Vietnam</p>
             </div>
           </div>
 
@@ -159,7 +129,7 @@ export default function VietnamPage() {
             <span className="text-6xl filter drop-shadow-lg">🇻🇳</span>
             <div className="text-left">
               <h1 className="text-5xl font-black text-white tracking-tight leading-tight">
-                MMT Vietnam
+               Vietnam
               </h1>
               <p className="text-slate-400 text-xl mt-0.5">Booking & Operations System</p>
             </div>
@@ -172,23 +142,23 @@ export default function VietnamPage() {
             </div>
             <div className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-500/10 border border-brand-500/25 text-brand-400 text-xs font-semibold">
               <Users className="w-3.5 h-3.5" />
-              6 Role Portals
+              4 Role Portals
             </div>
           </div>
 
           <p className="text-slate-500 text-sm mt-5 max-w-lg mx-auto">
-            Select your role below to enter your portal. Each role has a dedicated dashboard with tailored tools and permissions.
+            Select your role to enter the operations portal.
           </p>
         </div>
 
         {/* Role grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 max-w-5xl mx-auto">
           {ROLES.map(role => {
             const Icon = role.icon
             return (
               <button
                 key={role.id}
-                onClick={() => router.push(`/login?role=${role.id}`)}
+                onClick={() => router.push(`/login?country=vietnam&role=${role.id}`)}
                 className={`
                   group relative rounded-2xl border p-7 text-left transition-all duration-300 outline-none
                   bg-gradient-to-br ${role.gradient} bg-slate-900/80 backdrop-blur-sm

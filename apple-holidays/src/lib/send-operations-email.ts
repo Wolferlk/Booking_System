@@ -2,6 +2,8 @@ import { prisma } from '@/lib/prisma'
 import { generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { sendMailViaGraph, getAgentEmail, buildOperationsReadyEmail } from '@/lib/send-mail'
 
+const TQ_CC_EMAIL = 'confirm.booking@aahaas.com'
+
 /**
  * Generates the Operations Ready PDF (includes tickets + drivers) and sends the email.
  * Triggered automatically when booking moves to OPERATIONS_READY.
@@ -39,9 +41,11 @@ export async function sendOperationsReadyEmail(ref: string): Promise<void> {
 
   const agentEmail = getAgentEmail(booking as { agentEmail?: string | null })
   const bodyHtml   = buildOperationsReadyEmail(booking)
+  const ccEmails   = agentEmail !== TQ_CC_EMAIL ? [TQ_CC_EMAIL] : []
 
   await sendMailViaGraph({
     to: agentEmail,
+    cc: ccEmails.length > 0 ? ccEmails : undefined,
     subject: `Operations Ready — ${ref} (${booking.agent ?? 'Apple Holidays'})`,
     bodyHtml,
     attachment: {
@@ -51,5 +55,5 @@ export async function sendOperationsReadyEmail(ref: string): Promise<void> {
     },
   })
 
-  console.log(`[email] Operations Ready email sent to ${agentEmail} for booking ${ref}`)
+  console.log(`[email] Operations Ready email sent to ${agentEmail}${ccEmails.length ? ` CC: ${ccEmails.join(', ')}` : ''} for booking ${ref}`)
 }

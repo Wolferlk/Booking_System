@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import {
@@ -82,11 +83,12 @@ function CategoryIcon({ cat, className = 'w-4 h-4' }: { cat: string; className?:
 
 export default function TETicketsPage() {
   const { data: session } = useSession()
+  const { countryFilter } = useCountryFilter()
   const role = session?.user?.role as UserRole
-  const canEdit     = ['GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canCreate   = ['GT_USER', 'TE_USER', 'SUPER_ADMIN'].includes(role)
-  const canPurchase = ['GT_USER', 'SUPER_ADMIN'].includes(role)
-  const canUpload   = ['GT_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit     = ['GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canCreate   = ['GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canPurchase = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canUpload   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   const [tickets, setTickets]         = useState<Ticket[]>([])
   const [loading, setLoading]         = useState(true)
@@ -113,11 +115,13 @@ export default function TETicketsPage() {
 
   const load = useCallback(async () => {
     try {
-      const res  = await fetch('/api/tickets')
+      const params = new URLSearchParams()
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      const res  = await fetch(`/api/tickets?${params}`)
       const json = await res.json()
       if (json.success) setTickets(json.data)
     } finally { setLoading(false) }
-  }, [])
+  }, [countryFilter])
 
   useEffect(() => { load() }, [load])
 

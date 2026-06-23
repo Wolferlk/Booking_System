@@ -5,6 +5,9 @@ import { sendMailViaGraph, getAgentEmail, buildAgentConfirmationEmail } from '@/
 const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
 const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
 
+// Internal CC addresses — always included on production sends
+const TQ_CC_EMAIL  = 'confirm.booking@aahaas.com'
+
 async function getMailSettings(): Promise<{
   useTestData: boolean
   testEmail1: string
@@ -75,10 +78,11 @@ export async function sendAgentConfirmationEmail(
     // Always include contactEmail (guest); add caller-supplied extras
     const contactEmail = (booking as { contactEmail?: string | null }).contactEmail
     const extraCc = opts?.cc ?? []
-    const combined = [...storedCc, ...extraCc]
-    if (contactEmail && contactEmail !== toEmail) combined.push(contactEmail)
-
-    // Deduplicate and exclude toEmail
+    const autoCc = contactEmail && contactEmail !== toEmail ? [contactEmail] : []
+    // Always CC the TQ mailbox for traceability (sender is already confirm.booking@aahaas.com
+    // but the inbox copy may be filtered — an explicit CC lands in a separate thread)
+    const internalCc = toEmail !== TQ_CC_EMAIL ? [TQ_CC_EMAIL] : []
+    const combined = [...storedCc, ...autoCc, ...internalCc, ...extraCc]
     ccEmails = Array.from(new Set(combined)).filter(e => Boolean(e) && e !== toEmail)
   }
 

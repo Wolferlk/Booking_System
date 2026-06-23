@@ -9,6 +9,7 @@ import {
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Link from 'next/link'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 interface Stats {
   total: number
@@ -74,6 +75,7 @@ function defaultDates() {
 }
 
 export default function TEAnalyticsPage() {
+  const { countryFilter } = useCountryFilter()
   const def = defaultDates()
   const [fromA, setFromA] = useState(def.thisStart)
   const [toA,   setToA]   = useState(def.thisEnd)
@@ -85,7 +87,8 @@ export default function TEAnalyticsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const url = `/api/te/analytics?fromA=${fromA}&toA=${toA}&fromB=${fromB}&toB=${toB}`
+      let url = `/api/te/analytics?fromA=${fromA}&toA=${toA}&fromB=${fromB}&toB=${toB}`
+      if (countryFilter && countryFilter !== 'ALL') url += `&country=${countryFilter}`
       const res  = await fetch(url)
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
@@ -95,7 +98,7 @@ export default function TEAnalyticsPage() {
     } finally {
       setLoading(false)
     }
-  }, [fromA, toA, fromB, toB])
+  }, [fromA, toA, fromB, toB, countryFilter])
 
   useEffect(() => { load() }, [load])
 

@@ -13,9 +13,18 @@ enum UserRole {
   BT_USER
   GT_USER
   TE_USER
+  GT_TE_USER
   AC_USER
   CLIENT
   SUPER_ADMIN
+  ULTRA_SUPER_ADMIN
+}
+
+enum OperationCountry {
+  ALL
+  VIETNAM
+  SRILANKA
+  SINGAPORE_MALAYSIA
 }
 
 enum BookingStatus {
@@ -28,6 +37,13 @@ enum BookingStatus {
   OPERATIONS_READY
   CLIENT_LIVE
   IN_PROGRESS
+  TE_REVIEWED
+  DRIVER_ALLOCATED
+  QC1_PASS
+  TICKETS_ISSUED
+  QC2_PASS
+  MSG_SENT_CUSTOMER
+  FEEDBACK_DONE
   COMPLETED
   CANCELLED
   AMENDED
@@ -88,19 +104,32 @@ enum CreditPaymentStatus {
   OVERDUE
 }
 
+enum MailboxKind {
+  TOUR_CONFIRMATION
+  PNL
+}
+
+enum MailMessageStatus {
+  RECEIVED
+  PROCESSED
+  WAITING
+  ERROR
+}
+
 // ─── User ────────────────────────────────────────────────────────────────
 
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String           @id @default(cuid())
+  email         String           @unique
   name          String
-  password      String    @db.Text
+  password      String           @db.Text
   role          UserRole
+  country       OperationCountry @default(ALL)
   phone         String?
   avatar        String?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
 
   bookingsCreated   Booking[]       @relation("CreatedBy")
   statusEvents      StatusEvent[]
@@ -112,6 +141,7 @@ model User {
   activityLogs      ActivityLog[]
   driverPayments        DriverPayment[]       @relation("ProcessedByUser")
   creditAgentPayments   CreditAgentPayment[]  @relation("CreditPaymentProcessor")
+  feedbackSaved         CustomerFeedback[]    @relation("FeedbackSavedBy")
 
   @@map("users")
 }
@@ -133,6 +163,42 @@ model ActivityLog {
   @@index([entityId])
   @@index([createdAt])
   @@map("activity_logs")
+}
+
+// ─── Mail cache ──────────────────────────────────────────────────────────
+
+model MailMessage {
+  id             String           @id @default(cuid())
+  graphId        String           @unique
+  mailboxUser    String
+  mailboxKind    MailboxKind
+  uid            Int?
+  subject        String
+  fromAddress    String
+  fromName       String
+  toRecipients   Json?
+  ccRecipients   Json?
+  receivedAt     DateTime
+  folder         String
+  isRead         Boolean          @default(false)
+  hasAttachments Boolean          @default(false)
+  importance     String           @default("normal")
+  conversationId String?
+  type           String
+  rawBody        String           @db.LongText
+  bodyHtml       String           @db.LongText
+  bookingRef       String?
+  operationCountry OperationCountry?
+  status           MailMessageStatus @default(RECEIVED)
+  processedAt    DateTime?
+  lastSyncedAt   DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime         @default(now())
+
+  @@index([mailboxUser, receivedAt])
+  @@index([mailboxUser, status])
+  @@index([bookingRef])
+  @@map("mail_messages")
 }
 
 // ─── Booking ─────────────────────────────────────────────────────────────
@@ -160,6 +226,19 @@ model Booking {
   exclusions            String?       @db.Text
   policyNotes           String?       @db.Text
 
+  // Country this booking belongs to (detected from IS number / email subject)
+  operationCountry      OperationCountry?
+
+  // TC (Tour Confirmation) extracted fields
+  isNumber              String?           // e.g. VN19005, IS48377, SG22232
+  dealName              String?           // e.g. "Rakshitha - Vietnam - 060626"
+  tourDestination       String?           // e.g. "Vietnam", "Sri Lanka"
+  chauffeurContact      String?           @db.Text
+  languagePreference    String?
+  specialOccasions      String?           @db.Text
+  checkedBy             String?
+  reconfirmBy           String?
+
   // Agent contact details (extracted from email)
   agentEmail            String?
   agentPhone            String?
@@ -184,9 +263,17 @@ model Booking {
   sourceDocUrl          String?       @db.Text
   sourceDocName         String?
 
+  // OneDrive folder link for this booking
+  onedriveFolderUrl     String?       @db.Text
+
   clientPortalUnlockedAt DateTime?
   recheckCompletedAt    DateTime?
   recheckCompletedBy    String?
+
+  // QC tracking
+  qcPassedAt        DateTime?
+  qcAutoEmailSentAt DateTime?
+  qcAutoWaSentAt    DateTime?
 
   createdById           String
   createdBy             User          @relation("CreatedBy", fields: [createdById], references: [id])
@@ -208,6 +295,9 @@ model Booking {
   versions              BookingVersion[]
   emergencyContacts     EmergencyContact[]
   tickets               Ticket[]
+  contactLogs           ContactLog[]
+  customerFeedback      CustomerFeedback?
+  externalPnlLink       ExternalPnlLink?
 
   @@index([status])
   @@index([arrivalDate])
@@ -220,13 +310,14 @@ model Passenger {
   id          String        @id @default(cuid())
   bookingId   String
   booking     Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  name        String
-  type        PassengerType @default(ADULT)
-  age         Int?
-  isLead      Boolean       @default(false)
-  passport    String?
-  nationality String?
-  contact     String?
+  name           String
+  type           PassengerType @default(ADULT)
+  age            Int?
+  isLead         Boolean       @default(false)
+  passport       String?
+  nationality    String?
+  contact        String?
+  mealPreference String?
 
   @@map("passengers")
 }
@@ -330,17 +421,23 @@ model AgendaItem {
 }
 
 model Assignment {
-  id            String     @id @default(cuid())
-  agendaItemId  String     @unique
-  agendaItem    AgendaItem @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+  id            String         @id @default(cuid())
+  agendaItemId  String         @unique
+  agendaItem    AgendaItem     @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
   driverId      String?
-  driver        Driver?    @relation(fields: [driverId], references: [id])
+  driver        Driver?        @relation(fields: [driverId], references: [id])
+  vendorId      String?
+  vendor        VehicleVendor? @relation(fields: [vendorId], references: [id])
+  vendorName    String?
   driverName    String?
   driverPhone   String?
   vehicleType   String?
   vehiclePlate  String?
-  notes         String?    @db.Text
-  assignedAt    DateTime   @default(now())
+  notes         String?        @db.Text
+  driverRate    Decimal?       @db.Decimal(10,2)  // MMT cost rate for this movement
+  rateCurrency  String?        @default("USD")
+  waSentAt      DateTime?      // when the driver WhatsApp was last sent (for daily cron dedup)
+  assignedAt    DateTime       @default(now())
 
   @@map("assignments")
 }
@@ -367,6 +464,16 @@ model Ticket {
   purchasedAt   DateTime?
   reference     String?
   notes         String?      @db.Text
+
+  // Manual category override (if null, falls back to pnlLine.category)
+  category      String?
+
+  // Transfer-specific details (for TRANSPORT category)
+  transferType  String?      // SIC | PVT
+  vehicleType   String?      // Car, Van, Bus, Minibus, Boat, etc.
+  vehicleNumber String?      // Number plate
+  driverName    String?
+  driverPhone   String?
 
   // Ticket file upload (PDF or image)
   fileUrl       String?      @db.Text
@@ -504,6 +611,7 @@ model ContactLog {
   id          String   @id @default(cuid())
   bookingId   String
   userId      String
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   user        User     @relation(fields: [userId], references: [id])
   type        String
   subject     String
@@ -545,7 +653,10 @@ model Driver {
   vehicle         Vehicle?  @relation(fields: [vehicleId], references: [id])
   vehicleId       String?   @unique
 
-  // Vietnamese bank account details
+  // Operation country (team scoping)
+  country         OperationCountry?
+
+  // Bank account details
   bankName        String?
   bankAccountNo   String?
   bankHolder      String?
@@ -586,15 +697,17 @@ model Vehicle {
 }
 
 model VehicleVendor {
-  id        String    @id @default(cuid())
-  name      String
-  phone     String?
-  email     String?
-  address   String?
-  isActive  Boolean   @default(true)
-  vehicles  Vehicle[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id          String            @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  isActive    Boolean           @default(true)
+  country     OperationCountry?
+  vehicles    Vehicle[]
+  assignments Assignment[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   @@map("vehicle_vendors")
 }
@@ -629,6 +742,7 @@ model CreditAgent {
   currency      String               @default("USD")
   notes         String?              @db.Text
   isActive      Boolean              @default(true)
+  country       OperationCountry?
 
   payments      CreditAgentPayment[]
 
@@ -696,4 +810,107 @@ model WhatsAppMessage {
   @@index([phone])
   @@index([waMessageId])
   @@map("whatsapp_messages")
+}
+
+// ─── Customer Feedback ───────────────────────────────────────────────────
+
+model CustomerFeedback {
+  id          String   @id @default(cuid())
+  bookingId   String   @unique
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  rating      Int?
+  comment     String?  @db.Text
+  savedById   String
+  savedBy     User     @relation("FeedbackSavedBy", fields: [savedById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("customer_feedback")
+}
+
+// ─── OneDrive Integration ────────────────────────────────────────────────
+
+enum OneDriveEventType {
+  FOLDER_DETECTED
+  TC_PROCESSED
+  PNL_PROCESSED
+  FILE_DETECTED
+  ERROR
+  SKIPPED
+}
+
+enum OneDriveEventStatus {
+  PENDING
+  PROCESSED
+  ERROR
+  SKIPPED
+}
+
+model OneDriveEvent {
+  id           String              @id @default(cuid())
+  driveType    String              // VN | SL | SG | MY
+  itemId       String              // Graph item ID
+  itemName     String              // file/folder name
+  itemPath     String              @db.Text // full path in drive
+  webUrl       String?             @db.Text
+  eventType    OneDriveEventType
+  bookingRef   String?
+  status       OneDriveEventStatus @default(PENDING)
+  errorMessage String?             @db.Text
+  rawData      String?             @db.LongText
+  processedAt  DateTime?
+  createdAt    DateTime            @default(now())
+
+  @@index([bookingRef])
+  @@index([driveType, status])
+  @@index([itemId])
+  @@map("onedrive_events")
+}
+
+model OneDriveDeltaToken {
+  driveKey  String   @id         // e.g. "VN" | "SL"
+  token     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@map("onedrive_delta_tokens")
+}
+
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  callType         String   // booking_extraction | pnl_extraction | pnl_classify | agenda_generation | ticket_details | ai_suggestion | onedrive_pnl_parse | other
+  model            String   // gpt-4o | gpt-4o-mini
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  estimatedCostUsd Float
+  bookingRef       String?
+  source           String?  // email | onedrive | manual | api
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([callType])
+  @@index([bookingRef])
+  @@map("ai_usage_logs")
+}
+
+// ─── External PNL Link (Accounts team invoice_processor DB) ──────────────────
+
+model ExternalPnlLink {
+  id             String   @id @default(cuid())
+  bookingId      String   @unique
+  booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  externalPnlId  Int               // pnl_records.id in invoice_processor DB
+  matchedBy      String            // "is_number" | "tour_ref" | "invoice_number" | "manual"
+  matchedValue   String            // The value that triggered the match
+
+  cachedRecord   Json              // Full pnl_records row snapshot
+  cachedItems    Json              // pnl_items rows snapshot
+
+  lastFetchedAt  DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([externalPnlId])
+  @@map("external_pnl_links")
 }

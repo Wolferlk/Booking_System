@@ -5,7 +5,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: 'AppleHolidays — Travel Booking System',
-  description: 'MMT Vietnam Travel Booking & Operations Management',
+  description: 'Multi-Destination Travel Booking & Operations Management for Vietnam, Sri Lanka, Malaysia and Singapore',
   icons: { icon: '/favicon.ico' },
 }
 

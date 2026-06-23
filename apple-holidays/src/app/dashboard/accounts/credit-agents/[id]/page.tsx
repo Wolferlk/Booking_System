@@ -127,7 +127,7 @@ export default function CreditAgentDetailPage() {
   const router  = useRouter()
   const { data: session } = useSession()
   const role        = session?.user?.role ?? ''
-  const canEdit     = ['AC_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit     = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const isSuperAdmin = role === 'SUPER_ADMIN'
 
   const [agent,    setAgent]    = useState<CreditAgent | null>(null)

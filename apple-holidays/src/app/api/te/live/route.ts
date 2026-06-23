@@ -2,15 +2,31 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { canSeeAllCountries } from '@/lib/rbac'
 import { prisma } from '@/lib/prisma'
+import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['TE_USER', 'BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) {
+  if (!['TE_USER', 'BT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
+  }
+
+  const role = session.user.role as UserRole
+  const userCountry = (session.user as any).country as string | undefined
+  const countryOverride = req.nextUrl.searchParams.get('country')
+
+  const countryWhere: Record<string, unknown> = {}
+  if (!canSeeAllCountries(role, userCountry as any)) {
+    // Country-scoped users: strict match only — never include unassigned (null) bookings
+    if (userCountry && userCountry !== 'ALL') {
+      countryWhere.operationCountry = userCountry
+    }
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    countryWhere.operationCountry = countryOverride
   }
 
   const { searchParams } = req.nextUrl
@@ -41,6 +57,7 @@ export async function GET(req: NextRequest) {
   // (arrivalDate <= rangeEnd AND departureDate >= rangeStart)
   const bookings = await prisma.booking.findMany({
     where: {
+      ...countryWhere,
       status:        { notIn: ['CANCELLED', 'DRAFT'] },
       arrivalDate:   { lte: rangeEnd },
       departureDate: { gte: rangeStart },

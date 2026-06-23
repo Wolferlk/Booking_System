@@ -9,6 +9,7 @@ import {
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { format } from 'date-fns'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 interface LogEntry {
   id: string
@@ -40,11 +41,13 @@ const ENTITY_ICONS: Record<string, React.ComponentType<{ className?: string }>> 
 }
 
 const ROLE_COLORS: Record<string, string> = {
-  SUPER_ADMIN: 'text-red-600', BT_USER: 'text-blue-600', GT_USER: 'text-emerald-600',
+  SUPER_ADMIN: 'text-red-600', ULTRA_SUPER_ADMIN: 'text-amber-500 font-bold',
+  BT_USER: 'text-blue-600', GT_USER: 'text-emerald-600', GT_TE_USER: 'text-teal-600',
   TE_USER: 'text-purple-600', AC_USER: 'text-amber-600', CLIENT: 'text-cyan-600',
 }
 
 export default function AuditLogPage() {
+  const { countryFilter } = useCountryFilter()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -58,13 +61,15 @@ export default function AuditLogPage() {
     try {
       const params = new URLSearchParams({ limit: String(limit), page: String(page) })
       if (filterAction) params.set('action', filterAction)
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
       const res = await fetch(`/api/admin/activity?${params}`)
       const data = await res.json()
       if (data.success) { setLogs(data.data.logs); setTotal(data.data.total) }
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [page, filterAction])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [page, filterAction, countryFilter])
 
   const filtered = search
     ? logs.filter(l =>

@@ -11,6 +11,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 interface Slot {
   agendaItemId:  string
@@ -66,16 +67,18 @@ const SVC_LABEL: Record<string, string> = {
 
 export default function AssignmentsPage() {
   const router = useRouter()
+  const { countryFilter } = useCountryFilter()
   const [slots,   setSlots]   = useState<Slot[]>([])
   const [loading, setLoading] = useState(true)
   const [filter,  setFilter]  = useState<'all' | 'unassigned' | 'assigned'>('all')
 
   useEffect(() => {
-    fetch('/api/ground/assignments')
+    const cqs = countryFilter && countryFilter !== 'ALL' ? `?country=${countryFilter}` : ''
+    fetch(`/api/ground/assignments${cqs}`)
       .then(r => r.json())
       .then(j => { if (j.success) setSlots(j.data); else toast.error(j.error ?? 'Failed') })
       .finally(() => setLoading(false))
-  }, [])
+  }, [countryFilter])
 
   const today = new Date().toISOString().slice(0, 10)
   const upcoming = slots.filter(s => s.date.slice(0, 10) >= today)

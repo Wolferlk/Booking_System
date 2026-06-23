@@ -3,8 +3,10 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
+import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
+import { detectCountryFromRef } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
+import type { OperationCountry } from '@/lib/country-detection'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -13,6 +15,9 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const search = searchParams.get('search')
+  const refSearch = searchParams.get('refSearch')   // IS number / VN ref / agent ID
+  const dateFrom = searchParams.get('dateFrom')     // createdAt range start
+  const dateTo   = searchParams.get('dateTo')       // createdAt range end
   const page = parseInt(searchParams.get('page') ?? '1')
   const limit = parseInt(searchParams.get('limit') ?? '20')
   const dateFilter = searchParams.get('dateFilter') ?? ''
@@ -26,22 +31,60 @@ export async function GET(req: NextRequest) {
     : 'arrivalDate'
 
   const role = session.user.role as UserRole
+  const userCountry = (session.user as any).country as string | undefined
+  const countryOverride = searchParams.get('country')
 
-  const where: Record<string, unknown> = {}
+  const andClauses: Record<string, unknown>[] = []
 
   if (role === 'CLIENT') {
-    where.clientUserId = session.user.id
+    andClauses.push({ clientUserId: session.user.id })
+  } else if (!canSeeAllCountries(role, userCountry as any)) {
+    // Country-scoped users only see their own country's bookings — never include unassigned
+    if (userCountry && userCountry !== 'ALL') andClauses.push({ operationCountry: userCountry })
+  } else if (countryOverride && countryOverride !== 'ALL') {
+    // Admin users may narrow to a specific country via explicit param
+    andClauses.push({ operationCountry: countryOverride })
   }
 
-  if (status) where.status = status
+  if (status) {
+    const statuses = status.split(',').filter(Boolean)
+    andClauses.push(statuses.length === 1 ? { status: statuses[0] } : { status: { in: statuses } })
+  }
 
   if (search) {
-    where.OR = [
-      { bookingRef: { contains: search } },
-      { agent: { contains: search } },
-      { fileHandler: { contains: search } },
-      { passengers: { some: { name: { contains: search } } } },
-    ]
+    andClauses.push({
+      OR: [
+        { bookingRef:     { contains: search } },
+        { agent:          { contains: search } },
+        { fileHandler:    { contains: search } },
+        { isNumber:       { contains: search } },
+        { agentBookingId: { contains: search } },
+        { passengers: { some: { name: { contains: search } } } },
+      ],
+    })
+  }
+
+  // Ref / IS number / agent ID dedicated search
+  if (refSearch) {
+    andClauses.push({
+      OR: [
+        { bookingRef:     { contains: refSearch } },
+        { isNumber:       { contains: refSearch } },
+        { agentBookingId: { contains: refSearch } },
+      ],
+    })
+  }
+
+  // Created-at date range
+  if (dateFrom || dateTo) {
+    const createdRange: Record<string, Date> = {}
+    if (dateFrom) createdRange.gte = new Date(dateFrom)
+    if (dateTo) {
+      const end = new Date(dateTo)
+      end.setHours(23, 59, 59, 999)
+      createdRange.lte = end
+    }
+    andClauses.push({ createdAt: createdRange })
   }
 
   // Date period filter applied to arrivalDate
@@ -49,23 +92,29 @@ export async function GET(req: NextRequest) {
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     if (dateFilter === 'today') {
-      where.arrivalDate = {
+      andClauses.push({
+        arrivalDate: {
         gte: todayStart,
         lt: new Date(todayStart.getTime() + 86_400_000),
-      }
+        },
+      })
     } else if (dateFilter === 'this_week') {
       const startOfWeek = new Date(todayStart)
       startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
       const endOfWeek = new Date(startOfWeek)
       endOfWeek.setDate(startOfWeek.getDate() + 7)
-      where.arrivalDate = { gte: startOfWeek, lt: endOfWeek }
+      andClauses.push({ arrivalDate: { gte: startOfWeek, lt: endOfWeek } })
     } else if (dateFilter === 'this_month') {
-      where.arrivalDate = {
+      andClauses.push({
+        arrivalDate: {
         gte: new Date(now.getFullYear(), now.getMonth(), 1),
         lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
-      }
+        },
+      })
     }
   }
+
+  const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 
   const [total, bookings] = await Promise.all([
     prisma.booking.count({ where }),
@@ -78,6 +127,8 @@ export async function GET(req: NextRequest) {
         passengers: { where: { isLead: true }, take: 1 },
         createdBy: { select: { id: true, name: true, role: true } },
         _count: { select: { changeRequests: true } },
+        pnl: { select: { id: true } },
+        tourAgenda: { select: { id: true } },
       },
     }),
   ])
@@ -110,6 +161,8 @@ export async function POST(req: NextRequest) {
     terms,
     exclusions,
     policyNotes,
+    // Country explicitly selected by user (overrides ref-based detection)
+    operationCountry: bodyCountry,
     // Contact details (extracted by AI or entered manually)
     agentEmail,
     agentPhone,
@@ -133,6 +186,24 @@ export async function POST(req: NextRequest) {
   // Check uniqueness
   const existing = await prisma.booking.findUnique({ where: { bookingRef } })
   if (existing) return buildApiError(`Booking ref ${bookingRef} already exists`)
+
+  // Country resolution: explicit body value → ref prefix → session country
+  const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA']
+  const validatedBodyCountry = VALID_COUNTRIES.includes(bodyCountry as OperationCountry)
+    ? (bodyCountry as OperationCountry)
+    : null
+  const detectedCountry = detectCountryFromRef(bookingRef)
+  const sessionCountry = session.user.country as OperationCountry | undefined
+  const operationCountry =
+    validatedBodyCountry ??
+    detectedCountry ??
+    (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
+  if (!operationCountry) {
+    return buildApiError('Please select a destination country before creating the booking')
+  }
+  if (sessionCountry && sessionCountry !== 'ALL' && operationCountry !== sessionCountry) {
+    return buildApiError('Forbidden — booking country must match your assigned country', 403)
+  }
 
   const cancellationDeadline = getCancellationDeadline(arrivalDate)
 
@@ -160,6 +231,7 @@ export async function POST(req: NextRequest) {
       contactWhatsapp: contactWhatsapp || null,
       contactCountry: contactCountry  || null,
       cancellationDeadline,
+      operationCountry,
       createdById: session.user.id,
       passengers: {
         create: passengers.map((p: Record<string, unknown>) => ({
@@ -170,6 +242,7 @@ export async function POST(req: NextRequest) {
           passport: p.passport as string | undefined,
           nationality: p.nationality as string | undefined,
           contact: p.contact as string | undefined,
+          mealPreference: (p.mealPreference as string) || null,
         })),
       },
       flights: {

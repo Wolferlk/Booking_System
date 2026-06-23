@@ -3,20 +3,29 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { hasPermission } from '@/lib/rbac'
-import type { UserRole } from '@prisma/client'
+import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
+import type { UserRole, OperationCountry } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
 
+  const role = session.user.role as UserRole
+  const userCountry = session.user.country as OperationCountry | undefined
   const { searchParams } = req.nextUrl
   const bookingRef = searchParams.get('bookingRef')
+  const countryOverride = searchParams.get('country') as OperationCountry | null
+
+  const effectiveCountry = canSeeAllCountries(role, userCountry ?? 'ALL')
+    ? (countryOverride || null)
+    : (userCountry || null)
 
   const where: Record<string, unknown> = {}
   if (bookingRef) {
     const booking = await prisma.booking.findUnique({ where: { bookingRef } })
     if (booking) where.bookingId = booking.id
+  } else if (effectiveCountry) {
+    where.booking = { operationCountry: effectiveCountry }
   }
 
   const tickets = await prisma.ticket.findMany({
@@ -24,7 +33,14 @@ export async function GET(req: NextRequest) {
     include: {
       booking: { select: { bookingRef: true, arrivalDate: true } },
       agendaItem: { select: { date: true, location: true, toPoint: true } },
-      pnlLine: { select: { activity: true, paymentStatus: true, paymentRefNumber: true, category: true } },
+      pnlLine: {
+        select: {
+          activity: true, paymentStatus: true, paymentRefNumber: true, category: true,
+          mmtRate: true, sicRate: true, pvtRatePP: true,
+          adEntrance: true, chEntrance: true, otherRate: true,
+          pnl: { select: { paxAdults: true, paxChildren: true } },
+        },
+      },
     },
     orderBy: { createdAt: 'desc' },
   })

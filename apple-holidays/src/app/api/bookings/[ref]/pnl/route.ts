@@ -9,6 +9,7 @@ import type { UserRole, PNLCategory } from '@prisma/client'
 // Categories that should generate an auto-ticket for the ground team
 const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
   HOTEL:          'Hotel Voucher',
+  TRANSPORT:      'Transfer Voucher',
   TICKETS:        'Entrance Ticket',
   GUIDES:         'Guide Service',
   CRUISE:         'Cruise Ticket',
@@ -35,12 +36,23 @@ export async function GET(
 
   const pnl = await prisma.pNL.findUnique({
     where: { bookingId: booking.id },
-    include: { lineItems: { orderBy: { sortOrder: 'asc' } } },
+    include: {
+      lineItems: {
+        orderBy: { sortOrder: 'asc' },
+      },
+    },
   })
 
   if (!pnl) return buildApiSuccess(null)
 
-  return buildApiSuccess({ ...computePNLTotals(pnl), bookingAgent: booking.agent })
+  return buildApiSuccess({
+    ...computePNLTotals(pnl),
+    bookingAgent: booking.agent,
+    sourceDocUrl: pnl.sourceDocUrl,
+    lockedAt: pnl.lockedAt,
+    createdAt: pnl.createdAt,
+    updatedAt: pnl.updatedAt,
+  })
 }
 
 export async function POST(

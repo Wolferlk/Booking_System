@@ -3,8 +3,27 @@ import { logActivity, ACTION } from '@/lib/activity'
 import { classifyPNLCategories } from '@/lib/openai'
 import { extractBookingFromEmail, type ProcessedEmail, type MailboxKind, type EmailAttachment } from '@/lib/mail-processor'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
+import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 import fs from 'fs'
 import path from 'path'
+
+// ── Terminal logging helpers ──────────────────────────────────────────────────
+
+const SEP = '─'.repeat(60)
+
+function mailLog(label: string, value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return
+  const pad = 14
+  console.log(`[Mail]  ${label.padEnd(pad)}: ${value}`)
+}
+
+function mailHeader(type: string, subject: string, from: string, fromName: string) {
+  console.log(`\n${SEP}`)
+  console.log(` NEW EMAIL  →  ${type}`)
+  console.log(`  From    : ${fromName ? `${fromName} <${from}>` : from}`)
+  console.log(`  Subject : ${subject}`)
+  console.log(SEP)
+}
 
 type SyncResult = {
   bookingRef: string
@@ -13,13 +32,16 @@ type SyncResult = {
   isNew: boolean
   pnlLines: number
   agendaItems: number
+  status: 'GT_REVIEW' | 'PNL_WAITING'
 }
 
 const TICKETABLE_CATEGORIES = new Set(['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS'])
 
 function generateRef(base: string | null): string {
   if (base) {
-    const clean = base.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
+    // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
+    const stripped = base.replace(/[A-Z]+$/i, '')
+    const clean = (stripped.length >= 4 ? stripped : base).replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
     if (clean.length >= 4) return clean
   }
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
@@ -43,7 +65,9 @@ function loadConditions(): string {
 }
 
 async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFromEmail>>, bookingRef: string): Promise<any[]> {
-  const openai = (await import('@/lib/openai')).default
+  const openaiModule = await import('@/lib/openai')
+  const openai = openaiModule.default
+  const { logAiUsage } = openaiModule
   const conditions = loadConditions()
 
   const docText = JSON.stringify({
@@ -64,19 +88,45 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
         role: 'system',
         content: `Vietnam tour operations expert. Generate movement chart from booking data.
 RULES: ${conditions}
-Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM — required for PVT/SIC","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
+
+SERVICE TYPE — MANDATORY (override all other logic):
+- Airport/flight transfer → serviceType="PVT_TRANSFER" ALWAYS, no exceptions
+- Leisure day / free time / at leisure / hotel stay only → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- Explicitly SIC/shared → serviceType="SIC_TRANSFER"
+- Private tour, cruise, inter-city with vehicle → serviceType="PVT_TRANSFER"
+- Ticket-only / self-guided → serviceType="OWN_ARRANGEMENT", meetingTime=null
+
+Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
       },
       { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
   })
+  await logAiUsage({ callType: 'agenda_generation', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'email' })
 
   const content = response.choices[0]?.message?.content
   if (!content) return []
   try {
     const parsed = JSON.parse(content) as { items?: any[] }
-    return Array.isArray(parsed) ? parsed : (parsed.items ?? [])
+    const rawItems: any[] = Array.isArray(parsed) ? parsed : (parsed.items ?? [])
+
+    const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight)\b/i
+    const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement|check.?in|check.?out)\b/i
+
+    return rawItems.map((item: any) => {
+      const from = String(item.fromPoint ?? '')
+      const to   = String(item.toPoint   ?? '')
+      const det  = String(item.details   ?? '')
+      const loc  = String(item.location  ?? '')
+      if (AIRPORT_RE.test(from) || AIRPORT_RE.test(to) || AIRPORT_RE.test(det)) {
+        return { ...item, serviceType: 'PVT_TRANSFER' }
+      }
+      if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+        return { ...item, serviceType: 'OWN_ARRANGEMENT', meetingTime: null }
+      }
+      return item
+    })
   } catch {
     return []
   }
@@ -188,6 +238,7 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
         name: p.name,
         type: (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
         isLead: p.isLead ?? false,
+        mealPreference: (p as Record<string, unknown>).mealPreference as string ?? null,
       })),
     })
   }
@@ -261,8 +312,18 @@ export async function upsertAgenda(
   }
 
   try {
-    // 1st attempt: AI-generated movement chart
-    let agendaItems = await buildAgendaItems(extracted, bookingRef)
+    // Check if AI agenda generation is enabled (default: true)
+    const agendaSetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_auto_agenda_generate' } })
+    const agendaAIEnabled = agendaSetting?.value !== 'false'
+
+    // 1st attempt: AI-generated movement chart (skipped if setting is OFF)
+    let agendaItems: any[] = agendaAIEnabled
+      ? await buildAgendaItems(extracted, bookingRef)
+      : []
+
+    if (!agendaAIEnabled) {
+      console.log(`[Automation] AI agenda generation disabled for ${bookingRef} — using skeleton only`)
+    }
 
     // 2nd attempt (fallback): build a minimal skeleton from raw booking data
     if (!agendaItems.length) {
@@ -311,6 +372,10 @@ async function syncTourConfirmation(
   extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
   createdById: string,
 ): Promise<SyncResult> {
+  // Reject IS/VN numbers — only Tour Ref is valid for booking creation
+  if (extracted.bookingRef && /^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
+    extracted.bookingRef = null
+  }
   const bookingRef = generateRef(extracted.bookingRef)
   const existing = await prisma.booking.findUnique({ where: { bookingRef } })
   const isNew = !existing
@@ -319,30 +384,47 @@ async function syncTourConfirmation(
     throw new Error(`Missing arrival/departure dates for tour confirmation ${bookingRef}`)
   }
 
+  // Detect country from booking ref prefix (VN/IS/SG/MY), IS number, or email text
+  const detectedCountry =
+    detectCountryFromRef(bookingRef) ??
+    (extracted.isNumber ? detectCountryFromRef(extracted.isNumber) : null) ??
+    (extracted as any)._detectedCountry ??
+    null
+
   const bookingData = {
     bookingRef,
-    agentBookingId: extracted.agentBookingId,
-    agent: extracted.agent ?? 'Unknown Agent',
-    fileHandler: extracted.fileHandler,
-    arrivalDate: new Date(extracted.arrivalDate),
-    departureDate: new Date(extracted.departureDate),
-    paxAdults: extracted.paxAdults,
-    paxChildren: extracted.paxChildren,
-    quotedTotal: extracted.quotedTotal ?? 0,
-    currency: extracted.currency ?? 'USD',
-    terms: extracted.terms,
-    exclusions: extracted.exclusions,
-    agentEmail: extracted.agentEmail,
-    agentPhone: extracted.agentPhone,
-    agentWhatsapp: extracted.agentWhatsapp,
-    agentCountry: extracted.agentCountry,
-    agentAddress: extracted.agentAddress,
-    contactEmail: extracted.contactEmail,
-    contactPhone: extracted.contactPhone,
-    contactWhatsapp: extracted.contactWhatsapp,
-    contactCountry: extracted.contactCountry,
-    contactAddress: extracted.contactAddress,
-    status: 'GT_REVIEW' as const,
+    agentBookingId:   extracted.agentBookingId,
+    agent:            extracted.agent ?? 'Unknown Agent',
+    fileHandler:      extracted.fileHandler,
+    arrivalDate:      new Date(extracted.arrivalDate),
+    departureDate:    new Date(extracted.departureDate),
+    paxAdults:        extracted.paxAdults,
+    paxChildren:      extracted.paxChildren,
+    quotedTotal:      extracted.quotedTotal ?? 0,
+    currency:         extracted.currency ?? 'USD',
+    terms:            extracted.terms,
+    exclusions:       extracted.exclusions,
+    agentEmail:       extracted.agentEmail,
+    agentPhone:       extracted.agentPhone,
+    agentWhatsapp:    extracted.agentWhatsapp,
+    agentCountry:     extracted.agentCountry,
+    agentAddress:     extracted.agentAddress,
+    contactEmail:     extracted.contactEmail,
+    contactPhone:     extracted.contactPhone,
+    contactWhatsapp:  extracted.contactWhatsapp,
+    contactCountry:   extracted.contactCountry,
+    contactAddress:   extracted.contactAddress,
+    operationCountry: detectedCountry ?? undefined,
+    status:           'GT_REVIEW' as const,
+    // TC-specific fields
+    isNumber:           extracted.isNumber         ?? undefined,
+    dealName:           extracted.dealName         ?? undefined,
+    tourDestination:    extracted.tourDestination  ?? undefined,
+    chauffeurContact:   extracted.chauffeurContact ?? undefined,
+    languagePreference: extracted.languagePreference ?? undefined,
+    specialOccasions:   extracted.specialOccasions ?? undefined,
+    checkedBy:          extracted.checkedBy        ?? undefined,
+    reconfirmBy:        extracted.reconfirmBy      ?? undefined,
     ...(isNew ? { createdById } : {}),
   }
 
@@ -372,6 +454,14 @@ async function syncTourConfirmation(
         contactWhatsapp: bookingData.contactWhatsapp,
         contactCountry: bookingData.contactCountry,
         contactAddress: bookingData.contactAddress,
+        isNumber:            bookingData.isNumber,
+        dealName:            bookingData.dealName,
+        tourDestination:     bookingData.tourDestination,
+        chauffeurContact:    bookingData.chauffeurContact,
+        languagePreference:  bookingData.languagePreference,
+        specialOccasions:    bookingData.specialOccasions,
+        checkedBy:           bookingData.checkedBy,
+        reconfirmBy:         bookingData.reconfirmBy,
         status: 'GT_REVIEW',
       },
     })
@@ -379,6 +469,21 @@ async function syncTourConfirmation(
   await replaceBookingChildren(booking.id, extracted)
 
   const agendaItems = await upsertAgenda(booking.id, bookingRef, extracted)
+
+  // ── Terminal output ───────────────────────────────────────────────────────
+  console.log(`[Mail]  Booking ref  : ${bookingRef}  (${isNew ? 'CREATED NEW' : 'UPDATED existing'})`)
+  mailLog('Agent',        extracted.agent)
+  mailLog('Deal',         extracted.dealName)
+  mailLog('Destination',  extracted.tourDestination)
+  mailLog('Arrive',       extracted.arrivalDate)
+  mailLog('Depart',       extracted.departureDate)
+  mailLog('Pax',          `${extracted.paxAdults} adult${extracted.paxAdults !== 1 ? 's' : ''}${extracted.paxChildren ? ` + ${extracted.paxChildren} child${extracted.paxChildren !== 1 ? 'ren' : ''}` : ''}`)
+  mailLog('Passengers',   extracted.passengers.length ? extracted.passengers.map(p => p.name).join(', ') : null)
+  mailLog('Flights',      extracted.flights.length ? `${extracted.flights.length} flight(s)` : null)
+  mailLog('Hotels',       extracted.accommodations.length ? extracted.accommodations.map(a => a.hotel).join(' → ') : null)
+  mailLog('Agenda items', agendaItems > 0 ? `${agendaItems} generated` : 'none')
+  console.log(`[Mail]  ✓ DONE${SEP.slice(8)}\n`)
+  // ─────────────────────────────────────────────────────────────────────────
 
   await logActivity({
     userId: createdById,
@@ -395,6 +500,7 @@ async function syncTourConfirmation(
     isNew,
     pnlLines: 0,
     agendaItems,
+    status: 'GT_REVIEW' as const,
   }
 }
 
@@ -440,12 +546,19 @@ async function syncPnL(
 
   if (!booking) {
     // PNL emails never contain travel dates — they only carry cost data.
-    // We cannot create a booking from PNL alone; the TQ must arrive first.
+    // Return PNL_WAITING so the caller stores the email for retry (without writing
+    // the dedup key). When the TQ booking arrives the cron will re-process it.
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      throw new Error(
-        `PNL received for IS Number "${bookingRef}" but no matching TQ booking found. ` +
-        `Process the Travel Quotation email first.`,
-      )
+      console.log(`[Mail]  PNL Tour No "${rawBookingRef}" — no matching booking yet, will retry when TQ arrives`)
+      return {
+        bookingRef: rawBookingRef,
+        bookingId:  '',
+        mode:       'PNL' as const,
+        isNew:      false,
+        pnlLines:   0,
+        agendaItems: 0,
+        status:     'PNL_WAITING' as const,
+      }
     }
 
     const created = await prisma.booking.create({
@@ -516,11 +629,17 @@ async function syncPnL(
   }
 
   if (pnlLines.length > 0 && process.env.OPENAI_API_KEY) {
-    try {
-      const aiCats = await classifyPNLCategories(pnlLines.map(l => l.activity))
-      pnlLines = pnlLines.map((l, i) => ({ ...l, category: aiCats[i] ?? l.category }))
-    } catch {
-      // Keep extracted categories when classification fails.
+    const classifySetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_pnl_auto_classify' } })
+    const classifyEnabled = classifySetting?.value !== 'false'
+    if (classifyEnabled) {
+      try {
+        const aiCats = await classifyPNLCategories(pnlLines.map(l => l.activity))
+        pnlLines = pnlLines.map((l, i) => ({ ...l, category: aiCats[i] ?? l.category }))
+      } catch {
+        // Keep extracted categories when classification fails.
+      }
+    } else {
+      console.log('[Automation] AI PNL classify disabled — keeping keyword-based categories')
     }
   }
 
@@ -583,6 +702,17 @@ async function syncPnL(
     })
   }
 
+  // ── Terminal output ───────────────────────────────────────────────────────
+  console.log(`[Mail]  Booking ref  : ${bookingRef}`)
+  mailLog('Pax',       `${paxAdults} adult${paxAdults !== 1 ? 's' : ''}${paxChildren ? ` + ${paxChildren} child${paxChildren !== 1 ? 'ren' : ''}` : ''}`)
+  mailLog('PNL lines',  createdLines.length.toString())
+  for (const line of pnlLines.slice(0, 15)) {
+    console.log(`[Mail]    ${String(line.category).padEnd(14)}  ${line.activity}`)
+  }
+  if (pnlLines.length > 15) console.log(`[Mail]    ... and ${pnlLines.length - 15} more`)
+  console.log(`[Mail]  ✓ DONE${SEP.slice(8)}\n`)
+  // ─────────────────────────────────────────────────────────────────────────
+
   await logActivity({
     userId: createdById,
     action: ACTION.BOOKING_UPDATED,
@@ -598,6 +728,7 @@ async function syncPnL(
     isNew: false,
     pnlLines: createdLines.length,
     agendaItems: 0,
+    status: 'GT_REVIEW' as const,
   }
 }
 
@@ -606,11 +737,23 @@ export async function processIncomingMail(
   type: MailboxKind,
   attachments: EmailAttachment[] = [],
 ): Promise<SyncResult> {
-  const createdById = await getAutomationUserId()
   const normalizedType = normalizeType(type)
+
+  // ── Print header so every email is visible in the terminal immediately ───
+  mailHeader(normalizedType, email.subject, email.from, email.fromName)
+  if (attachments.length > 0) {
+    console.log(`[Mail]  Attachments  : ${attachments.map(a => a.name).join(', ')}`)
+  }
+  console.log(`[Mail]  Extracting data via OpenAI...`)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const createdById = await getAutomationUserId()
   const extracted = await extractBookingFromEmail(email.rawBody, normalizedType)
 
+  // Attach detected country to extracted object so syncTourConfirmation can use it
   if (normalizedType === 'TOUR_CONFIRMATION') {
+    const country = detectCountryFromText(email.subject, email.rawBody)
+    ;(extracted as any)._detectedCountry = country
     return syncTourConfirmation(extracted, createdById)
   }
 
@@ -624,10 +767,10 @@ export async function processMailboxEmail(
 ): Promise<{ bookingRef: string; bookingId: string; pnlLines: number; agendaItems: number; status: string }> {
   const result = await processIncomingMail(email, type, attachments)
   return {
-    bookingRef: result.bookingRef,
-    bookingId: result.bookingId,
-    pnlLines: result.pnlLines,
+    bookingRef:  result.bookingRef,
+    bookingId:   result.bookingId,
+    pnlLines:    result.pnlLines,
     agendaItems: result.agendaItems,
-    status: 'GT_REVIEW',
+    status:      result.status,
   }
 }

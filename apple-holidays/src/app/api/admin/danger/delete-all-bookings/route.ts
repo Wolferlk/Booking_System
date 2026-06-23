@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   // ── Auth: SUPER_ADMIN only ───────────────────────────────────────────────
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden — Super Admin only', 403)
+  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden — Super Admin only', 403)
 
   // ── Validate critical password ───────────────────────────────────────────
   const { password } = (await req.json()) as { password?: string }

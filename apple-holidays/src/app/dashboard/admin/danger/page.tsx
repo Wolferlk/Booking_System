@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   ShieldAlert, Trash2, Loader2, Eye, EyeOff,
-  AlertTriangle, Lock, CheckCircle2,
+  AlertTriangle, Lock, CheckCircle2, FlaskConical, Users, Zap,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -14,6 +14,9 @@ import { useRouter } from 'next/navigation'
 // ─── Confirmation steps ───────────────────────────────────────────────────────
 
 const CONFIRM_PHRASE = 'DELETE ALL'
+const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
+const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
+const DEFAULT_TEST_WHATSAPP = '94778231121'
 
 export default function DangerZonePage() {
   const { data: session, status } = useSession()
@@ -22,7 +25,7 @@ export default function DangerZonePage() {
   // Guard — redirect non-super-admins
   useEffect(() => {
     if (status === 'loading') return
-    if (!session || session.user.role !== 'SUPER_ADMIN') router.replace('/dashboard')
+    if (!session || !['SUPER_ADMIN','ULTRA_SUPER_ADMIN'].includes(session.user.role)) router.replace('/dashboard')
   }, [session, status, router])
 
   // ── Booking count ────────────────────────────────────────────────────────
@@ -36,6 +39,21 @@ export default function DangerZonePage() {
         }
       })
       .catch(() => {})
+  }, [])
+
+  const [settings, setSettings] = useState<Record<string, string>>({})
+  const [settingsLoading, setSettingsLoading] = useState(true)
+  const [savingSetting, setSavingSetting] = useState<string | null>(null)
+  const [criticalPassword, setCriticalPassword] = useState('')
+  const [showCriticalPassword, setShowCriticalPassword] = useState(false)
+  useEffect(() => {
+    fetch('/api/admin/settings')
+      .then(r => r.json())
+      .then(json => {
+        if (json.success) setSettings(json.data ?? {})
+      })
+      .catch(() => {})
+      .finally(() => setSettingsLoading(false))
   }, [])
 
   // ── Delete modal state ───────────────────────────────────────────────────
@@ -57,6 +75,29 @@ export default function DangerZonePage() {
     setShowPw(false)
     setDone(false)
     setShowModal(true)
+  }
+
+  async function saveProtectedSetting(key: string, value: string) {
+    if (!criticalPassword.trim()) {
+      toast.error('Enter the critical operations password first')
+      return
+    }
+    setSavingSetting(key)
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, value, password: criticalPassword }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Failed to save setting')
+      setSettings(prev => ({ ...prev, [key]: value }))
+      toast.success('Danger setting updated')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to update setting')
+    } finally {
+      setSavingSetting(null)
+    }
   }
 
   async function handleDelete() {
@@ -88,11 +129,11 @@ export default function DangerZonePage() {
     )
   }
 
-  if (!session || session.user.role !== 'SUPER_ADMIN') return null
+  if (!session || !['SUPER_ADMIN','ULTRA_SUPER_ADMIN'].includes(session.user.role)) return null
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Header title="Danger Zone" subtitle="Irreversible system operations — Super Admin only" />
+      <Header title="Danger Zone" subtitle="Irreversible system operations — Admin & Ultra Super Admin" />
 
       <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
 
@@ -109,10 +150,133 @@ export default function DangerZonePage() {
           </div>
         </div>
 
-        {/* ── Delete all bookings card ── */}
-        <Card className="border-2 border-red-200 overflow-hidden">
-          <div className="bg-red-600 px-5 py-3 flex items-center gap-2">
-            <Trash2 className="w-4 h-4 text-white" />
+      {/* ── Protected mail settings ── */}
+        <Card className="border-2 border-amber-200 overflow-hidden">
+          <div className="bg-amber-500 px-5 py-3 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-white" />
+            <span className="font-bold text-white text-sm">Danger Settings</span>
+          </div>
+
+          <div className="p-5 space-y-4">
+            <p className="text-sm text-slate-700">
+              Use the same critical operations password here before switching any dangerous mail mode.
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                <Lock className="w-3 h-3 inline mr-1" />
+                Critical Operations Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showCriticalPassword ? 'text' : 'password'}
+                  value={criticalPassword}
+                  onChange={e => setCriticalPassword(e.target.value)}
+                  placeholder="Enter password"
+                  className="w-full pr-10 px-3 py-2.5 text-sm rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400 transition-colors"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCriticalPassword(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showCriticalPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="flex items-center gap-3 min-w-0">
+                  {settings.use_test_data === 'true'
+                    ? <FlaskConical className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                    : <Users className="w-5 h-5 text-green-500 flex-shrink-0" />
+                  }
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {settings.use_test_data === 'true' ? 'Test Data Mode On' : 'Test Data Mode Off'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Routes customer mail to test addresses only.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  disabled={savingSetting === 'use_test_data' || !criticalPassword.trim()}
+                  onClick={() => saveProtectedSetting('use_test_data', settings.use_test_data === 'true' ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${
+                    settings.use_test_data === 'true' ? 'bg-amber-500' : 'bg-green-500'
+                  }`}
+                >
+                  {savingSetting === 'use_test_data' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    settings.use_test_data === 'true' ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between p-4 rounded-xl border border-slate-200 bg-slate-50">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Zap className={`w-5 h-5 flex-shrink-0 ${settings.less_credit_mode === 'true' ? 'text-amber-500' : 'text-slate-400'}`} />
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {settings.less_credit_mode === 'true' ? 'Less Credit Mode On' : 'Less Credit Mode Off'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Only recent inbox mail is auto-processed to save credits.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  disabled={savingSetting === 'less_credit_mode' || !criticalPassword.trim()}
+                  onClick={() => saveProtectedSetting('less_credit_mode', settings.less_credit_mode === 'true' ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${
+                    settings.less_credit_mode === 'true' ? 'bg-amber-500' : 'bg-slate-300'
+                  }`}
+                >
+                  {savingSetting === 'less_credit_mode' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                    settings.less_credit_mode === 'true' ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-2">
+                Current Values
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-amber-800">
+                <div className="rounded-md bg-white/70 px-3 py-2 border border-amber-100">
+                  <span className="block font-semibold">Test Email 1</span>
+                  <span className="font-mono">{settings.test_email_1 ?? DEFAULT_TEST_EMAIL_1}</span>
+                </div>
+                <div className="rounded-md bg-white/70 px-3 py-2 border border-amber-100">
+                  <span className="block font-semibold">Test Email 2</span>
+                  <span className="font-mono">{settings.test_email_2 ?? DEFAULT_TEST_EMAIL_2}</span>
+                </div>
+                <div className="rounded-md bg-white/70 px-3 py-2 border border-amber-100">
+                  <span className="block font-semibold">Test WhatsApp</span>
+                  <span className="font-mono">{settings.test_whatsapp ?? DEFAULT_TEST_WHATSAPP}</span>
+                </div>
+              </div>
+            </div>
+
+            {settingsLoading && (
+              <p className="text-xs text-slate-400">Loading protected settings…</p>
+            )}
+          </div>
+        </Card>
+
+      {/* ── Delete all bookings card ── */}
+      <Card className="border-2 border-red-200 overflow-hidden">
+        <div className="bg-red-600 px-5 py-3 flex items-center gap-2">
+          <Trash2 className="w-4 h-4 text-white" />
             <span className="font-bold text-white text-sm">Delete All Bookings</span>
           </div>
 

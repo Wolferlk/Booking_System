@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 import {
   Loader2, Plus, Edit2, Trash2, ChevronRight,
   Users, AlertTriangle, Calendar,
@@ -58,9 +59,10 @@ export default function CreditAgentsPage() {
   const router = useRouter()
   const { data: session } = useSession()
   const role = session?.user?.role ?? ''
-  const canEdit    = ['AC_USER', 'SUPER_ADMIN'].includes(role)
+  const canEdit    = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const isSuperAdmin = role === 'SUPER_ADMIN'
 
+  const { countryFilter } = useCountryFilter()
   const [agents, setAgents]   = useState<CreditAgent[]>([])
   const [loading, setLoading] = useState(true)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
@@ -74,13 +76,15 @@ export default function CreditAgentsPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/credit-agents')
+      const params = new URLSearchParams()
+      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      const res = await fetch(`/api/credit-agents?${params}`)
       const json = await res.json()
       if (json.success) setAgents(json.data)
       else toast.error(json.error ?? 'Failed to load')
     } catch { toast.error('Network error') }
     finally { setLoading(false) }
-  }, [])
+  }, [countryFilter])
 
   useEffect(() => { load() }, [load])
 

@@ -3,25 +3,40 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
+import { getCachedProcessedMail } from '@/lib/mail-cache'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['BT_USER', 'SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const { graphIds } = await req.json() as { graphIds: string[] }
   if (!Array.isArray(graphIds) || graphIds.length === 0) return buildApiSuccess([])
 
+  const processed = await getCachedProcessedMail(graphIds)
+
+  async function enrichWithBookingCreatedAt(
+    items: { graphId: string; bookingRef: string; processedAt: string | null }[],
+  ) {
+    const refs = items.map(i => i.bookingRef).filter(Boolean)
+    const bookings = refs.length > 0
+      ? await prisma.booking.findMany({ where: { bookingRef: { in: refs } }, select: { bookingRef: true, createdAt: true } })
+      : []
+    const map = new Map(bookings.map(b => [b.bookingRef, b.createdAt.toISOString()]))
+    return items.map(i => ({ ...i, bookingCreatedAt: i.bookingRef ? (map.get(i.bookingRef) ?? null) : null }))
+  }
+
+  if (processed.length > 0) return buildApiSuccess(await enrichWithBookingCreatedAt(processed))
+
   const keys = graphIds.map(id => `processed_email_${id}`)
   const rows = await prisma.systemSetting.findMany({ where: { key: { in: keys } } })
-
-  const processed = rows.map(row => {
+  const fallback = rows.map(row => {
     const graphId = row.key.replace('processed_email_', '')
     const [bookingRef, processedAt] = row.value.split('|')
     return { graphId, bookingRef, processedAt: processedAt ?? null }
   })
 
-  return buildApiSuccess(processed)
+  return buildApiSuccess(await enrichWithBookingCreatedAt(fallback))
 }

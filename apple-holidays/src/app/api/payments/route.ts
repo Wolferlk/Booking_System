@@ -4,20 +4,30 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
-import type { UserRole } from '@prisma/client'
+import { canSeeAllCountries } from '@/lib/rbac'
+import type { UserRole, OperationCountry } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
 
+  const role = session.user.role as UserRole
+  const userCountry = session.user.country as OperationCountry | undefined
   const { searchParams } = req.nextUrl
   const bookingRef = searchParams.get('bookingRef')
   const status = searchParams.get('status')
+  const countryOverride = searchParams.get('country') as OperationCountry | null
+
+  const effectiveCountry = canSeeAllCountries(role, userCountry ?? 'ALL')
+    ? (countryOverride || null)
+    : (userCountry || null)
 
   const where: Record<string, unknown> = {}
   if (bookingRef) {
     const booking = await prisma.booking.findUnique({ where: { bookingRef } })
     if (booking) where.bookingId = booking.id
+  } else if (effectiveCountry) {
+    where.booking = { operationCountry: effectiveCountry }
   }
   if (status) where.status = status
 

@@ -7,6 +7,7 @@ import {
   extractEmailSourceTextForUser,
 } from '@/lib/mail-processor'
 import { processMailboxEmail } from '@/lib/incoming-mail-automation'
+import { upsertCachedMailMessage } from '@/lib/mail-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -82,7 +83,7 @@ async function processNotifications(notifications: GraphNotification[], secret: 
       continue
     }
 
-    console.log(`[Webhook] new ${mailboxKind} email (${mailboxUser}), graphId:`, graphId)
+    console.log(`[Webhook] notification received — ${mailboxKind} (${mailboxUser})`)
 
     const email = await fetchMessageByIdForUser(mailboxUser, graphId)
     if (!email) {
@@ -90,20 +91,50 @@ async function processNotifications(notifications: GraphNotification[], secret: 
       continue
     }
 
+    console.log(`[Webhook] email fetched — "${email.subject}" from ${email.from}`)
+
+    await upsertCachedMailMessage({
+      email,
+      mailboxUser,
+      mailboxKind,
+      status: 'RECEIVED',
+    }).catch(() => {})
+
     try {
       const { rawText, attachments } = await extractEmailSourceTextForUser(mailboxUser, email)
       const result = await processMailboxEmail({ ...email, rawBody: rawText }, mailboxKind, attachments)
 
-      await prisma.systemSetting.upsert({
-        where:  { key: dedupKey },
-        update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
-        create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
-      })
-
-      console.log(`[Webhook] ✓ processed ${mailboxKind} → booking ${result.bookingRef}`)
+      if (result.status === 'PNL_WAITING') {
+        // No matching TQ booking yet — store as WAITING so the 5-min cron retries it
+        // Do NOT write the dedup key, allowing future re-processing when TQ arrives
+        await upsertCachedMailMessage({
+          email, mailboxUser, mailboxKind,
+          bookingRef: result.bookingRef, status: 'WAITING',
+        }).catch(() => {})
+        console.log(`[Webhook] PNL Tour No ${result.bookingRef} — waiting for TQ booking, will retry`)
+      } else {
+        await prisma.systemSetting.upsert({
+          where:  { key: dedupKey },
+          update: { value: `${result.bookingRef}|${new Date().toISOString()}` },
+          create: { key: dedupKey, value: `${result.bookingRef}|${new Date().toISOString()}` },
+        })
+        await upsertCachedMailMessage({
+          email, mailboxUser, mailboxKind,
+          bookingRef: result.bookingRef,
+          status: 'PROCESSED',
+          processedAt: new Date().toISOString(),
+        }).catch(() => {})
+        console.log(`[Webhook] ✓ processed ${mailboxKind} → booking ${result.bookingRef}`)
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       console.error('[Webhook] processing failed:', msg)
+      await upsertCachedMailMessage({
+        email,
+        mailboxUser,
+        mailboxKind,
+        status: 'ERROR',
+      }).catch(() => {})
       await prisma.systemSetting.upsert({
         where:  { key: 'webhook_last_error' },
         update: { value: `${new Date().toISOString()} | ${mailboxUser} | ${graphId} | ${msg.slice(0, 500)}` },

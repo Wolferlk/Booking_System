@@ -36,7 +36,7 @@ export async function PUT(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['GT_USER', 'SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
 
   const driver = await prisma.driver.findUnique({ where: { id: params.id } })
   if (!driver) return buildApiError('Driver not found', 404)
@@ -44,9 +44,12 @@ export async function PUT(
   const body = await req.json()
   const {
     name, phone, email, licenseNo, isActive, photoUrl,
-    vehicleId,
+    vehicleId, country,
     bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
   } = body
+
+  // Only ALL-country users can change the driver's country
+  const userCountry = session.user.country as string | undefined
 
   const updated = await prisma.driver.update({
     where: { id: params.id },
@@ -58,6 +61,7 @@ export async function PUT(
       ...(isActive !== undefined && { isActive }),
       ...(photoUrl !== undefined && { photoUrl }),
       ...(vehicleId !== undefined && { vehicleId: vehicleId || null }),
+      ...(country !== undefined && (!userCountry || userCountry === 'ALL') && { country: country || null }),
       ...(bankName !== undefined && { bankName }),
       ...(bankAccountNo !== undefined && { bankAccountNo }),
       ...(bankHolder !== undefined && { bankHolder }),
