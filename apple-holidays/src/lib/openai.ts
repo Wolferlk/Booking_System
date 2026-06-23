@@ -59,8 +59,8 @@ Return ONLY valid JSON matching the schema below. If a field is not found, use n
 
 Schema:
 {
-  "bookingRef": "string (prefer Tour Ref / Tour No when present, e.g. 469182CNTL)",
-  "agentBookingId": "string or null",
+  "bookingRef": "string — the TC Tour Ref / Tour No exactly as printed (e.g. '469182CNTL', '463720CNTL||SG22228', '459773CNTL / VN19428'). Copy verbatim including any || or / separators.",
+  "agentBookingId": "string or null — agent's own booking/order reference if different from the TC Tour Ref",
   "agent": "string (e.g. Make My Trip)",
   "fileHandler": "string or null",
   "arrivalDate": "ISO date string YYYY-MM-DD",
@@ -84,7 +84,7 @@ Schema:
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
 
-  "isNumber": "string or null — IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122 (labeled 'IS Number' or 'Confirmation Number' in TC header)",
+  "isNumber": "string or null — IS/VN/SG/MY/MY number e.g. VN19005, IS48377, SG22232, MY23122. Search EVERYWHERE: labeled 'IS Number', 'Confirmation Number', 'Booking No', or embedded in Tour Ref after '||' or ' / ' (e.g. '463720CNTL||SG22228' → SG22228, '459773CNTL / VN19428' → VN19428). ALWAYS extract if any such code is present.",
   "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
   "tourDestination": "string or null — destination country/city e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia' (labeled 'Destination' in TC)",
   "chauffeurContact": "string or null — chauffeur or tour guide contact details (labeled 'Chauffeur/Tour guide contact' in TC)",
@@ -156,7 +156,10 @@ Contact classification rules:
 - WhatsApp numbers are often explicitly labeled "WA:" or are the same as the customer mobile
 
 Be precise and complete. Do not invent data.
-Important: if the document includes both a Tour Ref and an IS Number, use the Tour Ref as bookingRef because the PNL email will link back to it.`
+Important:
+- bookingRef must be the exact TC Tour Ref printed on the document (copy verbatim, including any || or / separators).
+- Always extract isNumber if any IS/VN/SG/MY code appears anywhere in the document, including embedded in the Tour Ref.
+- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.`
 
 const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.
 Extract P&L (profit & loss) data from the provided Excel/CSV content.

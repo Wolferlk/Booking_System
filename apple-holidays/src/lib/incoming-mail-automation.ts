@@ -37,14 +37,36 @@ type SyncResult = {
 
 const TICKETABLE_CATEGORIES = new Set(['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS'])
 
-function generateRef(base: string | null): string {
-  if (base) {
-    // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
-    const stripped = base.replace(/[A-Z]+$/i, '')
-    const clean = (stripped.length >= 4 ? stripped : base).replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 10)
-    if (clean.length >= 4) return clean
-  }
+// Always generate an internal AH-prefixed ref — never expose TC Tour Ref as the system ref
+function generateRef(): string {
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
+}
+
+// IS Number pattern: VN / IS / SG / MY / AH followed by digits
+const IS_NUMBER_RE = /^(VN|IS|SG|MY|AH)\d{3,}/i
+
+/**
+ * Some TC Tour Refs embed the IS Number after `||` or ` / `.
+ * e.g. "463720CNTL||SG22228" or "459773CNTL / VN19428"
+ * Returns { tourRef: "463720CNTL", isNumber: "SG22228" } or { tourRef: raw, isNumber: null }
+ */
+function splitTourRef(raw: string | null): { tourRef: string | null; isNumber: string | null } {
+  if (!raw) return { tourRef: null, isNumber: null }
+  // Check for || separator
+  const pipeIdx = raw.indexOf('||')
+  if (pipeIdx !== -1) {
+    const before = raw.slice(0, pipeIdx).trim()
+    const after  = raw.slice(pipeIdx + 2).trim()
+    if (IS_NUMBER_RE.test(after)) return { tourRef: before || null, isNumber: after.toUpperCase() }
+  }
+  // Check for " / " separator (e.g. "459773CNTL / VN19428")
+  const slashIdx = raw.indexOf(' / ')
+  if (slashIdx !== -1) {
+    const before = raw.slice(0, slashIdx).trim()
+    const after  = raw.slice(slashIdx + 3).trim()
+    if (IS_NUMBER_RE.test(after)) return { tourRef: before || null, isNumber: after.toUpperCase() }
+  }
+  return { tourRef: raw, isNumber: null }
 }
 
 function normalizeType(type: MailboxKind): 'TOUR_CONFIRMATION' | 'PNL' {
@@ -372,28 +394,43 @@ async function syncTourConfirmation(
   extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
   createdById: string,
 ): Promise<SyncResult> {
-  // Reject IS/VN numbers — only Tour Ref is valid for booking creation
-  if (extracted.bookingRef && /^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
-    extracted.bookingRef = null
+  // Split TC Tour Ref: may embed IS Number after || or " / "
+  const { tourRef: tcTourRef, isNumber: embeddedIsNumber } = splitTourRef(extracted.bookingRef as string | null)
+
+  // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref
+  const resolvedIsNumber: string | null = (extracted.isNumber as string | null) ?? embeddedIsNumber ?? null
+
+  // Use the TC Tour Ref (before || split) as the external reference number
+  const resolvedAgentBookingId: string | null = tcTourRef ?? (extracted.agentBookingId as string | null) ?? null
+
+  // Try to find an existing booking to update (e.g. amendment of an existing TC):
+  // 1. Match by agentBookingId (TC Tour Ref)
+  // 2. Match by isNumber
+  let existing = resolvedAgentBookingId
+    ? await prisma.booking.findFirst({ where: { agentBookingId: resolvedAgentBookingId } })
+    : null
+  if (!existing && resolvedIsNumber) {
+    existing = await prisma.booking.findFirst({ where: { isNumber: resolvedIsNumber }, orderBy: { createdAt: 'desc' } })
   }
-  const bookingRef = generateRef(extracted.bookingRef)
-  const existing = await prisma.booking.findUnique({ where: { bookingRef } })
+
+  // Always generate a fresh AH ref for new bookings; reuse existing ref for amendments
+  const bookingRef = existing?.bookingRef ?? generateRef()
   const isNew = !existing
 
   if (!extracted.arrivalDate || !extracted.departureDate) {
     throw new Error(`Missing arrival/departure dates for tour confirmation ${bookingRef}`)
   }
 
-  // Detect country from booking ref prefix (VN/IS/SG/MY), IS number, or email text
+  // Detect country from IS number prefix (VN/IS/SG/MY), TC Tour Ref, or email text
   const detectedCountry =
-    detectCountryFromRef(bookingRef) ??
-    (extracted.isNumber ? detectCountryFromRef(extracted.isNumber) : null) ??
+    (resolvedIsNumber ? detectCountryFromRef(resolvedIsNumber) : null) ??
+    (tcTourRef        ? detectCountryFromRef(tcTourRef)         : null) ??
     (extracted as any)._detectedCountry ??
     null
 
   const bookingData = {
     bookingRef,
-    agentBookingId:   extracted.agentBookingId,
+    agentBookingId:   resolvedAgentBookingId,
     agent:            extracted.agent ?? 'Unknown Agent',
     fileHandler:      extracted.fileHandler,
     arrivalDate:      new Date(extracted.arrivalDate),
@@ -417,7 +454,7 @@ async function syncTourConfirmation(
     operationCountry: detectedCountry ?? undefined,
     status:           'GT_REVIEW' as const,
     // TC-specific fields
-    isNumber:           extracted.isNumber         ?? undefined,
+    isNumber:           resolvedIsNumber            ?? undefined,
     dealName:           extracted.dealName         ?? undefined,
     tourDestination:    extracted.tourDestination  ?? undefined,
     chauffeurContact:   extracted.chauffeurContact ?? undefined,
@@ -517,21 +554,30 @@ async function syncPnL(
   }
 
   // Prefer the ref embedded in the XLSX (row 1, col 1) over the OpenAI extraction
-  const rawBookingRef = generateRef(xlsxParsed?.bookingRef ?? extracted.bookingRef)
+  const rawTcRef = (xlsxParsed?.bookingRef ?? extracted.bookingRef ?? '') as string
 
-  // Try exact match first, then fallback to numeric-suffix search.
-  // This handles edge cases where the PNL gives "19679" but TQ was stored as "VN19679",
-  // or where spaces/dashes caused a slightly different normalization.
-  let booking = await prisma.booking.findUnique({ where: { bookingRef: rawBookingRef } })
-  if (!booking) {
-    const numericPart = rawBookingRef.replace(/[^0-9]/g, '')
+  // Split || or " / " from PNL Tour Ref to get IS Number too
+  const { tourRef: pnlTourRef, isNumber: pnlEmbeddedIsNumber } = splitTourRef(rawTcRef || null)
+  const pnlIsNumber: string | null = (extracted.isNumber as string | null) ?? pnlEmbeddedIsNumber ?? null
+
+  // Match in order:
+  // 1. agentBookingId = TC Tour Ref (most reliable since we now always store TC Tour Ref there)
+  // 2. isNumber = extracted IS Number from PNL
+  // 3. bookingRef exact/numeric fallback (legacy AH-ref bookings)
+  let booking = pnlTourRef
+    ? await prisma.booking.findFirst({ where: { agentBookingId: pnlTourRef }, orderBy: { createdAt: 'desc' } })
+    : null
+  if (!booking && pnlIsNumber) {
+    booking = await prisma.booking.findFirst({ where: { isNumber: pnlIsNumber }, orderBy: { createdAt: 'desc' } }) ?? null
+  }
+  if (!booking && rawTcRef) {
+    // Legacy numeric fallback
+    const numericPart = rawTcRef.replace(/[^0-9]/g, '')
     if (numericPart.length >= 4) {
-      // endsWith handles "VN19679" prefix case (PNL gives "19679")
       booking = await prisma.booking.findFirst({
         where: { bookingRef: { endsWith: numericPart } },
         orderBy: { createdAt: 'desc' },
       }) ?? null
-      // startsWith handles "469083CNTL" suffix case (PNL gives "469083", TQ stored "469083CNTL")
       if (!booking) {
         booking = await prisma.booking.findFirst({
           where: { bookingRef: { startsWith: numericPart } },
@@ -541,17 +587,17 @@ async function syncPnL(
     }
   }
 
-  // Use the ref from the found booking (may differ from rawBookingRef via fallback)
-  const bookingRef = booking?.bookingRef ?? rawBookingRef
+  // Use the ref from the found booking (may differ from rawTcRef via fallback)
+  const bookingRef = booking?.bookingRef ?? rawTcRef
 
   if (!booking) {
     // PNL emails never contain travel dates — they only carry cost data.
     // Return PNL_WAITING so the caller stores the email for retry (without writing
     // the dedup key). When the TQ booking arrives the cron will re-process it.
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      console.log(`[Mail]  PNL Tour No "${rawBookingRef}" — no matching booking yet, will retry when TQ arrives`)
+      console.log(`[Mail]  PNL Tour No "${rawTcRef}" — no matching booking yet, will retry when TQ arrives`)
       return {
-        bookingRef: rawBookingRef,
+        bookingRef: rawTcRef,
         bookingId:  '',
         mode:       'PNL' as const,
         isNew:      false,

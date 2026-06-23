@@ -106,6 +106,8 @@ export async function PUT(
     arrivalDate, departureDate, paxAdults, paxChildren,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
+    // TC identifier fields (editable by BT/GT/SA)
+    isNumber,
     // Contact info fields (editable at any booking status)
     agentEmail, agentPhone, agentWhatsapp, agentAddress,
     contactEmail, contactPhone, contactWhatsapp, contactAddress,
@@ -125,11 +127,11 @@ export async function PUT(
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
 
-  // Contact info and country updates are allowed at any booking status
+  // Contact info, country, and TC identifier updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
     contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
-    operationCountry !== undefined) &&
-    !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
+    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined) &&
+    !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
     !accommodationUpdates && !flightUpdates && !flightAdds && !flightDeletes
@@ -142,6 +144,7 @@ export async function PUT(
     where: { bookingRef: params.ref },
     data: {
       ...(agentBookingId !== undefined && { agentBookingId }),
+      ...(isNumber      !== undefined && { isNumber }),
       ...(agent !== undefined && { agent }),
       ...(fileHandler !== undefined && { fileHandler }),
       ...(arrivalDate !== undefined && { arrivalDate: new Date(arrivalDate) }),

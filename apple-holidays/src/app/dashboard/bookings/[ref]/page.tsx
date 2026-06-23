@@ -108,6 +108,41 @@ export default function BookingDetailPage() {
   const [folderEditOpen, setFolderEditOpen] = useState(false)
   const [savingFolder, setSavingFolder] = useState(false)
 
+  // TC identifier inline editing (IS Number / Reference Number / Tour Ref)
+  const [tcEditOpen,    setTcEditOpen]    = useState(false)
+  const [tcEditForm,    setTcEditForm]    = useState({ isNumber: '', agentBookingId: '', bookingRef: '' })
+  const [tcEditSaving,  setTcEditSaving]  = useState(false)
+
+  async function saveTcIdentifiers() {
+    setTcEditSaving(true)
+    try {
+      const body: Record<string, string | null> = {}
+      if (tcEditForm.isNumber.trim() !== (booking?.isNumber ?? ''))
+        body.isNumber = tcEditForm.isNumber.trim() || null
+      if (tcEditForm.agentBookingId.trim() !== (booking?.agentBookingId ?? ''))
+        body.agentBookingId = tcEditForm.agentBookingId.trim() || null
+      // bookingRef edit only for super admins — include only if changed
+      const isSA = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+      if (isSA && tcEditForm.bookingRef.trim() && tcEditForm.bookingRef.trim() !== ref)
+        body.bookingRef = tcEditForm.bookingRef.trim()
+      if (Object.keys(body).length === 0) { setTcEditOpen(false); return }
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Identifiers updated')
+      await load()
+      setTcEditOpen(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setTcEditSaving(false)
+    }
+  }
+
   async function saveFolder(url: string | null) {
     setSavingFolder(true)
     try {
@@ -894,6 +929,22 @@ Wishing you a wonderful trip! ✈️
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-brand-400" />
             <h3 className="text-sm font-semibold text-slate-900">Tour Confirmation Details</h3>
+            {['BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && !tcEditOpen && (
+              <button
+                onClick={() => {
+                  setTcEditForm({
+                    isNumber:       String(booking?.isNumber ?? ''),
+                    agentBookingId: String(booking?.agentBookingId ?? ''),
+                    bookingRef:     ref,
+                  })
+                  setTcEditOpen(true)
+                }}
+                className="ml-1 p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-700"
+                title="Edit identifiers"
+              >
+                <Edit2 className="w-3.5 h-3.5" />
+              </button>
+            )}
             {/* Inline country selector — always editable */}
             <div className="ml-auto flex items-center gap-1.5">
               <select
@@ -929,6 +980,52 @@ Wishing you a wonderful trip! ✈️
               </select>
             </div>
           </div>
+          {/* TC identifier edit form */}
+          {tcEditOpen && (
+            <div className="mb-4 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <p className="text-xs font-semibold text-slate-700 mb-1">Edit Booking Identifiers</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">IS Number</label>
+                  <input
+                    className="form-input w-full text-sm font-mono"
+                    placeholder="e.g. VN19428, MY23139, SG22228"
+                    value={tcEditForm.isNumber}
+                    onChange={e => setTcEditForm(f => ({ ...f, isNumber: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">Reference Number (TC Tour Ref)</label>
+                  <input
+                    className="form-input w-full text-sm font-mono"
+                    placeholder="e.g. 463720CNTL"
+                    value={tcEditForm.agentBookingId}
+                    onChange={e => setTcEditForm(f => ({ ...f, agentBookingId: e.target.value }))}
+                  />
+                </div>
+                {['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+                  <div>
+                    <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">Tour Ref (internal)</label>
+                    <input
+                      className="form-input w-full text-sm font-mono"
+                      value={tcEditForm.bookingRef}
+                      onChange={e => setTcEditForm(f => ({ ...f, bookingRef: e.target.value }))}
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={saveTcIdentifiers}
+                  disabled={tcEditSaving}
+                  className="btn btn-sm btn-primary"
+                >
+                  {tcEditSaving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setTcEditOpen(false)} className="btn btn-sm btn-secondary">Cancel</button>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
             <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Tour Ref</p>
@@ -938,7 +1035,7 @@ Wishing you a wonderful trip! ✈️
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">IS Number</p>
               {booking.isNumber
                 ? <p className="text-sm font-mono font-semibold text-brand-600">{booking.isNumber as string}</p>
-                : <p className="text-sm text-slate-300">—</p>}
+                : <p className="text-sm text-slate-300 italic text-xs">Not set — click <Edit2 className="inline w-3 h-3" /> to add</p>}
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reference Number</p>
