@@ -285,7 +285,15 @@ export default function PrintAgendaPage() {
       ══════════════════════════════════════════════════════ */}
       {booking.passengers.length > 0 && (
         <div style={{ marginBottom: 2 }}>
-          <div style={S.sectionTitle}>👥 Passengers ({booking.passengers.length})</div>
+          <div style={S.sectionTitle}>
+            <span>👥 Passengers</span>
+            {/* <span style={{ background: '#d97706', color: '#fff', padding: '1px 9px', borderRadius: 10, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3 }}>
+              {totalPax} PAX
+            </span> */}
+            <span style={{ fontSize: 9.5, fontWeight: 800,background: '#d97706',padding: '1px 9px', color: '#fff',borderRadius: 10, textTransform: 'none', letterSpacing: 0 }}>
+              {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}
+            </span>
+          </div>
           <table>
             <thead>
               <tr>
