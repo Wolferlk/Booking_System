@@ -1,5 +1,5 @@
-// ── Master switch — change to true to re-enable all background automation ─────
-const BACKGROUND_AUTOMATION_ENABLED = false
+// ── Master switch ─────────────────────────────────────────────────────────────
+const BACKGROUND_AUTOMATION_ENABLED = true
 
 export async function register() {
   if (!BACKGROUND_AUTOMATION_ENABLED) {

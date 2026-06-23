@@ -33,6 +33,8 @@ DB_DATABASE=invoice_processor
 DB_USERNAME=root
 DB_PASSWORD="&l+>XV7=Q@iF&B9s"
 
+#One p&l Record Has Many PNL Items 
+
 Table for pnl : pnl_records , pnl_items
 
 Table: pnl_items

@@ -204,8 +204,8 @@ async function jobOneDrivePoll() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ── Master switch — change to true to re-enable all cron jobs ────────────────
-const CRON_ENABLED = false
+// ── Master switch ─────────────────────────────────────────────────────────────
+const CRON_ENABLED = true
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scheduler entry point — called once from instrumentation.ts on server boot
