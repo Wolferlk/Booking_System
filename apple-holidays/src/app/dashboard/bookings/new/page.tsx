@@ -205,7 +205,7 @@ export default function NewBookingPage() {
   return (
     <div>
       <Header title="New Booking" subtitle="Create a booking from quotation or enter manually" />
-      <div className="p-8 space-y-6 max-w-5xl">
+      <div className="p-8 space-y-6 ">
 
         {/* ── AI Document Parser ──────────────────────────────────────────── */}
         <Card>
@@ -541,7 +541,7 @@ export default function NewBookingPage() {
           <Section title="Accommodation">
             <div className="space-y-3">
               {hotels.map((h, i) => (
-                <div key={i} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 p-3 bg-slate-50 rounded-lg">
+                <div key={i} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3 bg-slate-50 rounded-lg">
                   {[
                     { label: 'City',      key: 'city',     placeholder: 'Hanoi' },
                     { label: 'Hotel Name',key: 'hotel',    placeholder: 'Hotel Name' },
@@ -555,7 +555,7 @@ export default function NewBookingPage() {
                         onChange={e => setHotels(hs => hs.map((hx, j) => j === i ? { ...hx, [field.key]: e.target.value } : hx))} />
                     </div>
                   ))}
-                  <div className="grid grid-cols-3 gap-2 col-span-2 lg:col-span-1">
+                  <div className="grid grid-cols-3 gap-2 col-span-full">
                     {[
                       { label: 'Check-in',  key: 'checkIn',  type: 'date' },
                       { label: 'Check-out', key: 'checkOut', type: 'date' },

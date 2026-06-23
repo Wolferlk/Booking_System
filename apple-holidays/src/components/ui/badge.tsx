@@ -41,12 +41,13 @@ export function Badge({ children, color = 'gray', className, dot }: BadgeProps) 
   )
 }
 
-export function StatusBadge({ status }: { status: BookingStatus }) {
+export function StatusBadge({ status, className }: { status: BookingStatus, className?: string }) {
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold',
         STATUS_COLORS[status],
+        className 
       )}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-current" />

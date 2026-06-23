@@ -15,6 +15,7 @@ interface Passenger {
   nationality?: string | null
   contact?: string | null
   isLead?: boolean
+  mealPreference?: string | null
 }
 
 interface Flight {
@@ -286,7 +287,7 @@ export default function PrintAgendaPage() {
           <table>
             <thead>
               <tr>
-                {['Name', 'Type'].map(h => (
+                {['Name', 'Type', 'Meal Preference'].map(h => (
                   <th key={h} style={S.th}>{h}</th>
                 ))}
               </tr>
@@ -301,6 +302,11 @@ export default function PrintAgendaPage() {
                     )}
                   </td>
                   <td style={S.td}>{p.type ?? 'ADULT'}</td>
+                  <td style={S.td}>
+                    {p.mealPreference && p.mealPreference.trim() !== ''
+                      ? <span style={{ display: 'inline-block', fontSize: 7.5, fontWeight: 700, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '1px 5px', borderRadius: 3 }}>{p.mealPreference}</span>
+                      : '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
