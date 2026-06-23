@@ -40,7 +40,8 @@ function buildAgendaHtml(
     departureDate?: string | null
     paxAdults?: number | null
     paxChildren?: number | null
-    passengers?: { name: string; isLead?: boolean }[]
+    passengers?: { name: string; isLead?: boolean; type?: string | null; mealPreference?: string | null }[]
+    emergencyContacts?: { name: string; phone?: string | null; role?: string | null }[]
   },
   items: {
     date: string
@@ -112,6 +113,45 @@ function buildAgendaHtml(
     ? `<th style="${thStyle}width:18%">Driver / Vehicle</th>`
     : ''
 
+  // ── Passengers table (with meal preference) ──
+  const passengers = booking.passengers ?? []
+  const passengersHtml = passengers.length > 0
+    ? `<div style="margin-top:14px">
+        <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid #d97706;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">👥 Passengers (${passengers.length})</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="${thStyle}">Name</th>
+              <th style="${thStyle}">Type</th>
+              <th style="${thStyle}">Meal Preference</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${passengers.map((p, i) => `<tr style="background:${p.isLead ? '#fefce8' : i % 2 === 0 ? '#fff' : '#f8fafc'}">
+              <td style="padding:5px 7px;font-size:8.5px;font-weight:700;color:#374151;border-bottom:1px solid #f1f5f9">${p.name}${p.isLead ? ' <span style="font-size:7px;font-weight:700;color:#d97706;background:#fef3c7;padding:1px 4px;border-radius:3px">LEAD</span>' : ''}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${p.type ?? 'ADULT'}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${p.mealPreference && p.mealPreference.trim() !== '' ? `<span style="display:inline-block;font-size:7.5px;font-weight:700;color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;padding:1px 5px;border-radius:3px">${p.mealPreference}</span>` : '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`
+    : ''
+
+  // ── Emergency contacts ──
+  const emergencyContacts = booking.emergencyContacts ?? []
+  const emergencyHtml = emergencyContacts.length > 0
+    ? `<div style="margin-top:14px">
+        <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid #dc2626;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">🚨 Emergency Contacts</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:#fff7f7;border:1px solid #fee2e2;border-top:none;border-radius:0 0 5px 5px">
+          ${emergencyContacts.map(ec => `<div style="background:#fff;border:1px solid #fecaca;border-radius:5px;padding:5px 10px;min-width:140px">
+            <p style="font-size:9px;font-weight:700;color:#991b1b">${ec.name}</p>
+            <p style="font-size:8.5px;color:#374151;margin-top:1px">${ec.phone ?? '—'}</p>
+            ${ec.role ? `<p style="font-size:7.5px;color:#94a3b8;margin-top:1px">${ec.role}</p>` : ''}
+          </div>`).join('')}
+        </div>
+      </div>`
+    : ''
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -142,6 +182,8 @@ function buildAgendaHtml(
     <span style="font-size:9.5px;font-weight:700;color:#1e293b">${lead.name}</span>
   </div>` : ''}
 
+  ${passengersHtml}
+
   <!-- TABLE -->
   <table style="margin-top:8px">
     <thead>
@@ -159,6 +201,8 @@ function buildAgendaHtml(
     </thead>
     <tbody>${rows}</tbody>
   </table>
+
+  ${emergencyHtml}
 
   <!-- FOOTER -->
   <div style="margin-top:18px;border-top:1px solid #e2e8f0;padding-top:7px;display:flex;justify-content:space-between">
@@ -195,6 +239,7 @@ export async function POST(
     where: { bookingRef: params.ref },
     include: {
       passengers: { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
+      emergencyContacts: true,
       tourAgenda: {
         include: {
           items: {
