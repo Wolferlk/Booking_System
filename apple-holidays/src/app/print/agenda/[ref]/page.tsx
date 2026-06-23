@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
+import { countryLabel } from '@/lib/country-detection'
 import Image from 'next/image'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ interface BookingInfo {
   arrivalDate: string
   departureDate: string
   tourDestination?: string | null
+  operationCountry?: string | null
   agentBookingId?: string | null
   isNumber?: string | null
   contactPhone?: string | null
@@ -239,7 +241,7 @@ export default function PrintAgendaPage() {
         {[
           { label: 'Tour Operator / Agent', value: booking.agent ?? '—' },
           { label: 'File Handler',          value: booking.fileHandler ?? '—' },
-          { label: 'Destination',           value: booking.tourDestination ?? '—' },
+          { label: 'Destination',           value: booking.tourDestination?.trim() || (booking.operationCountry ? countryLabel(booking.operationCountry as never) : '—') },
           { label: 'Lead Passenger',        value: lead?.name ?? '—' },
         ].map(({ label, value }) => (
           <div key={label}>
