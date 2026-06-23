@@ -103,7 +103,7 @@ export async function POST(
       // Excel / CSV
       try {
         const raw = parsePNLXlsx(buffer)
-        parsed = { ...raw, lineItems: raw.lineItems }
+        parsed = { ...raw, bookingRef: raw.bookingRef ?? undefined, lineItems: raw.lineItems }
       } catch {
         return buildApiError('File is not parseable as a PNL (try xlsx, docx, or pdf)', 422)
       }

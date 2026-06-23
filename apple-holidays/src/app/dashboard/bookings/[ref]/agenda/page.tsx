@@ -609,17 +609,20 @@ export default function AgendaPage() {
                   {showUpload && (
                     <div className="absolute right-0 top-10 z-20 w-80 bg-white border border-slate-200 rounded-xl shadow-lg p-4">
                       <p className="text-sm font-semibold text-slate-800 mb-1">Generate Movement Chart with AI</p>
-                      <p className="text-xs text-slate-500 mb-3">Upload a tour confirmation (.docx) or regenerate from booking data</p>
+                      <p className="text-xs text-slate-500 mb-3">
+                        Upload a Travel Quotation or TC document — day topics, descriptions, and flight details are auto-extracted.
+                      </p>
                       <input ref={fileInputRef} type="file" accept=".docx,.txt" className="hidden"
                         onChange={e => { const f = e.target.files?.[0]; if (f) generateFromFile(f); e.target.value = '' }} />
                       <div className="space-y-2">
                         <button onClick={() => fileInputRef.current?.click()}
                           className="w-full flex items-center gap-2 p-3 rounded-lg border-2 border-dashed border-brand-200 hover:border-brand-400 hover:bg-brand-50 transition-colors text-sm font-medium text-brand-600">
-                          <Upload className="w-4 h-4" /> Upload TC Document (.docx)
+                          <Upload className="w-4 h-4" />
+                          <span>Upload Travel Quotation / TC (.docx)</span>
                         </button>
                         <button onClick={() => { setShowUpload(false); generateFromBooking() }}
                           className="w-full flex items-center gap-2 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors text-sm text-slate-600">
-                          <Wand2 className="w-4 h-4" /> Regenerate from Booking Data
+                          <Wand2 className="w-4 h-4" /> Generate from Booking Data (uses stored TQ itinerary)
                         </button>
                       </div>
                     </div>
