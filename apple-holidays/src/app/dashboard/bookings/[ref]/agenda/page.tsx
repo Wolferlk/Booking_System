@@ -329,7 +329,6 @@ export default function AgendaPage() {
     setSaving(true)
     try {
       await persistItems(items)
-      toast.success('Driver allocation saved')
       router.push(`/dashboard/bookings/${ref}`)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
@@ -608,7 +607,7 @@ export default function AgendaPage() {
                   )}
                 </div>
                 <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={saveAgenda}>
-                  Save driver allocation
+                  Save
                 </Button>
               </>
             )}
@@ -616,7 +615,7 @@ export default function AgendaPage() {
         }
       />
 
-      <div className="p-8 space-y-4 max-w-5xl">
+      <div className="p-8 space-y-4">
 
         {/* ── BOOKING INFO PANELS ── */}
         {booking && (
@@ -890,7 +889,7 @@ export default function AgendaPage() {
                             </button>
                           </div>
                           <textarea
-                            className="form-textarea text-sm py-1.5 resize-none"
+                            className="form-textarea text-sm py-1.5 resize h-auto"
                             rows={2}
                             value={item.details}
                             onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, details: e.target.value } : x))}
@@ -898,7 +897,7 @@ export default function AgendaPage() {
                           />
                         </div>
 
-                        <div className="flex items-end gap-2">
+                        <div className="flex items-start gap-2 justify-end col-span-full mt-1">
                           <button onClick={() => setItems(is => is.filter((_, j) => j !== i))}
                             className="text-red-400 hover:text-red-600 mb-1">
                             <Trash2 className="w-4 h-4" />

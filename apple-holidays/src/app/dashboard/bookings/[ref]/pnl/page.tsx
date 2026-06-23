@@ -430,7 +430,7 @@ export default function PNLPage() {
         }
       />
 
-      <div className="p-8 space-y-6 max-w-7xl">
+      <div className="p-8 space-y-6 ">
 
         {/* BT_USER info banner */}
         {role === 'BT_USER' && (
@@ -779,6 +779,7 @@ export default function PNLPage() {
         open={showImportModal}
         onClose={() => setShowImportModal(false)}
         title="Import P&L"
+        size="2xl"
       >
         <div className="space-y-5">
           <div className="grid gap-3 md:grid-cols-2">
