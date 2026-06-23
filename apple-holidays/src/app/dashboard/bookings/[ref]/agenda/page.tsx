@@ -9,7 +9,7 @@ import {
   Search, X, CheckCircle2, Phone, AlertTriangle, Users, Plane,
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, CreditCard, Info, Building2,
-  FileDown, MessageCircle, Send, ChevronRight,
+  FileDown, MessageCircle, Send, ChevronRight, GripVertical,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -128,6 +128,9 @@ export default function AgendaPage() {
   const [expandedDetails, setExpandedDetails] = useState<Set<number>>(new Set())
   // Per-item AI describe loading
   const [describingIdx,  setDescribingIdx]  = useState<number | null>(null)
+  // Drag-to-reorder state
+  const [dragIndex,      setDragIndex]      = useState<number | null>(null)
+  const [dragOverIndex,  setDragOverIndex]  = useState<number | null>(null)
   // Driver view modal
   const [driverModal,    setDriverModal]    = useState(false)
   const [fullDriver,     setFullDriver]     = useState<FullDriver | null>(null)
@@ -467,6 +470,22 @@ export default function AgendaPage() {
       if (json.success) setFullDriver(json.data as FullDriver)
       else toast.error('Could not load driver details')
     } finally { setLoadingDriver(false) }
+  }
+
+  // Reorder a movement item from one position to another. Dates are anchored to
+  // POSITIONS, not items — after the move each item adopts the date of the slot
+  // it lands in (so dragging an 08.04 item above an 08.03 item swaps the dates).
+  function moveItem(from: number, to: number) {
+    if (from === to || from < 0 || to < 0) return
+    setItems(prev => {
+      if (from >= prev.length || to >= prev.length) return prev
+      const positionalDates = prev.map(it => it.date)   // dates in their current slots
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      // Re-anchor each slot's original date back onto whatever item now sits there
+      return next.map((it, idx) => ({ ...it, date: positionalDates[idx] ?? it.date }))
+    })
   }
 
   function toggleDetails(idx: number) {
@@ -820,8 +839,35 @@ export default function AgendaPage() {
           const detailsOpen = expandedDetails.has(i)
 
           return (
-            <Card key={i} className="overflow-hidden">
-              <div className="flex">
+            <Card
+              key={i}
+              className={`overflow-hidden transition-all ${
+                dragIndex === i ? 'opacity-40' : ''
+              } ${
+                dragOverIndex === i && dragIndex !== null && dragIndex !== i
+                  ? 'ring-2 ring-brand-400 ring-offset-1' : ''
+              }`}
+            >
+              <div
+                className="flex"
+                onDragOver={canEdit ? (e) => { e.preventDefault(); if (dragOverIndex !== i) setDragOverIndex(i) } : undefined}
+                onDrop={canEdit ? (e) => {
+                  e.preventDefault()
+                  if (dragIndex !== null) moveItem(dragIndex, i)
+                  setDragIndex(null); setDragOverIndex(null)
+                } : undefined}
+              >
+                {canEdit && (
+                  <div
+                    draggable
+                    onDragStart={(e) => { setDragIndex(i); e.dataTransfer.effectAllowed = 'move' }}
+                    onDragEnd={() => { setDragIndex(null); setDragOverIndex(null) }}
+                    title="Drag to reorder — dates stay with the position"
+                    className="w-7 flex-shrink-0 flex items-center justify-center bg-slate-50 border-r border-slate-100 cursor-grab active:cursor-grabbing hover:bg-slate-100 transition-colors"
+                  >
+                    <GripVertical className="w-4 h-4 text-slate-300" />
+                  </div>
+                )}
                 <div className={`w-1.5 flex-shrink-0 ${
                   item.serviceType === 'PVT_TRANSFER' ? 'bg-blue-400' :
                   item.serviceType === 'SIC_TRANSFER' ? 'bg-green-400' : 'bg-slate-200'
