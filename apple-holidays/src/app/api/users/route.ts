@@ -31,18 +31,33 @@ export async function GET(req: NextRequest) {
       : { country: countryOverride }
   }
 
-  const users = await prisma.user.findMany({
-    where: countryWhere,
-    select: {
-      id: true, email: true, name: true, role: true, country: true, countries: true,
-      phone: true, avatar: true, isActive: true,
-      createdAt: true, updatedAt: true,
-      _count: {
-        select: { bookingsCreated: true, activityLogs: true },
-      },
+  const selectBase = {
+    id: true, email: true, name: true, role: true, country: true,
+    phone: true, avatar: true, isActive: true,
+    createdAt: true, updatedAt: true,
+    _count: {
+      select: { bookingsCreated: true, activityLogs: true },
     },
-    orderBy: { createdAt: 'desc' },
-  })
+  } as const
+
+  let users
+  try {
+    users = await prisma.user.findMany({
+      where: countryWhere,
+      select: {
+        ...selectBase,
+        countries: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  } catch (err) {
+    console.warn('[users GET] falling back without countries field:', err)
+    users = await prisma.user.findMany({
+      where: countryWhere,
+      select: selectBase,
+      orderBy: { createdAt: 'desc' },
+    })
+  }
 
   return buildApiSuccess(users)
 }
