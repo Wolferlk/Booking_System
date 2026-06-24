@@ -73,6 +73,6 @@ export async function GET(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[Drive Browse] ${driveKey} error:`, msg)
-    return buildApiError(`Failed to list drive: ${msg}`, 502)
+    return buildApiError(`Failed to list drive: ${msg}`, 500)
   }
 }
