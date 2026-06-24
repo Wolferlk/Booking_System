@@ -498,31 +498,25 @@ export default function AgendaPage() {
         subtitle={generating ? 'Generating…' : `${items.length} item${items.length !== 1 ? 's' : ''}`}
         actions={
           <div className="flex gap-2 flex-wrap">
-            {/* PDF Download — all users */}
+            {/* PDF Download — all users, full details */}
             <div className="relative" ref={pdfMenuRef}>
               <button
                 onClick={() => setShowPdfMenu(v => !v)}
                 className="btn btn-secondary btn-sm flex items-center gap-1.5"
               >
                 <FileDown className="w-4 h-4" />
-                Print Preview
+                Download PDF
                 <ChevronRight className="w-3 h-3 rotate-90" />
               </button>
               {showPdfMenu && (
                 <div className="absolute right-0 top-10 z-30 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">Choose Preview</p>
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">Full Details</p>
                   <div className="border-t border-slate-100">
                     <button
                       onClick={() => { setShowPdfMenu(false); window.open(`/print/agenda/${ref}?drivers=true`, '_blank') }}
                       className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-600 transition-colors"
                     >
-                      <Eye className="w-4 h-4 text-slate-400" /> Print Preview (with drivers)
-                    </button>
-                    <button
-                      onClick={() => { setShowPdfMenu(false); window.open(`/print/agenda/${ref}?drivers=false`, '_blank') }}
-                      className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-600 transition-colors border-t border-slate-100"
-                    >
-                      <Eye className="w-4 h-4 text-slate-400" /> Print Preview (no drivers)
+                      <Eye className="w-4 h-4 text-slate-400" /> Download with all details
                     </button>
                   </div>
                 </div>
