@@ -98,7 +98,7 @@ Return ONLY valid JSON (no markdown fences) with these fields:
   "contactPhone": "string or null",
   "contactWhatsapp": "string or null",
   "passengers": [{ "name": "string", "type": "ADULT|CHILD", "age": number|null, "isLead": boolean, "passport": "string or null", "nationality": "string or null" }],
-  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "string", "depTime": "HH:MM", "toApt": "string", "arrTime": "HH:MM", "airline": "string" }],
+  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "string", "depTime": "HH:MM", "toApt": "string", "arrTime": "HH:MM", "airline": "string", "notes": "string or null" }],
   "accommodations": [{ "city": "string", "hotel": "string", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string", "mealType": "string", "address": "string" }],
   "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "string", "description": "string" }],
   "emergencyContacts": [{ "name": "string", "phone": "string", "role": "string" }]

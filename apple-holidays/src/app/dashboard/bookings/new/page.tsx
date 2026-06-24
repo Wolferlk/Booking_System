@@ -25,7 +25,7 @@ type DriveKey = typeof COUNTRY_DRIVES[number]['driveKey']
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Passenger { name: string; type: string; age: string; isLead: boolean; passport: string; nationality: string }
-interface Flight { flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string }
+interface Flight { flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string; notes: string }
 interface Hotel { city: string; hotel: string; checkIn: string; checkOut: string; nights: string; roomType: string; mealType: string; address: string }
 interface ItineraryItem { dayNo: string; date: string; title: string; description: string }
 interface EmergencyContact { name: string; phone: string; role: string }
@@ -79,7 +79,7 @@ export default function NewBookingPage() {
     { name: '', type: 'ADULT', age: '', isLead: true, passport: '', nationality: '' },
   ])
   const [flights,           setFlights]           = useState<Flight[]>([
-    { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '' },
+    { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '', notes: '' },
   ])
   const [hotels,            setHotels]            = useState<Hotel[]>([
     { city: '', hotel: '', checkIn: '', checkOut: '', nights: '', roomType: '', mealType: '', address: '' },
@@ -122,7 +122,18 @@ export default function NewBookingPage() {
     if (pax?.length) setPassengers(pax.map(p => ({ ...p, age: String(p.age ?? ''), isLead: Boolean(p.isLead) })))
 
     const fl = data.flights as Flight[] | undefined
-    if (fl?.length) setFlights(fl.map(f => ({ ...f, date: (f.date as string)?.slice(0, 10) || '' })))
+    if (fl?.length) {
+      setFlights(fl.map(f => ({
+        flightNo: String(f.flightNo ?? ''),
+        date: String(f.date ?? '').slice(0, 10),
+        fromApt: String(f.fromApt ?? ''),
+        depTime: String(f.depTime ?? ''),
+        toApt: String(f.toApt ?? ''),
+        arrTime: String(f.arrTime ?? ''),
+        airline: String(f.airline ?? ''),
+        notes: String(f.notes ?? ''),
+      })))
+    }
 
     const ac = data.accommodations as Hotel[] | undefined
     if (ac?.length) setHotels(ac.map(h => ({ ...h, nights: String((h as unknown as Record<string, unknown>).nights ?? '') })))
@@ -527,6 +538,7 @@ export default function NewBookingPage() {
                     { label: 'Dep',       key: 'depTime',  type: 'time',  placeholder: '' },
                     { label: 'To',        key: 'toApt',    type: 'text',  placeholder: 'SGN' },
                     { label: 'Arr',       key: 'arrTime',  type: 'time',  placeholder: '' },
+                    { label: 'Airline',   key: 'airline',  type: 'text',  placeholder: 'Vietnam Airlines' },
                   ].map(field => (
                     <div key={field.key}>
                       <label className="form-label text-xs">{field.label}</label>
@@ -535,6 +547,15 @@ export default function NewBookingPage() {
                         onChange={e => setFlights(fs => fs.map((fx, j) => j === i ? { ...fx, [field.key]: e.target.value } : fx))} />
                     </div>
                   ))}
+                  <div className="sm:col-span-2 lg:col-span-7">
+                    <label className="form-label text-xs">Notes</label>
+                    <input
+                      className="form-input text-sm"
+                      placeholder="Optional flight notes"
+                      value={f.notes}
+                      onChange={e => setFlights(fs => fs.map((fx, j) => j === i ? { ...fx, notes: e.target.value } : fx))}
+                    />
+                  </div>
                   <div className="flex items-end pb-0.5">
                     {flights.length > 1 && (
                       <button type="button" onClick={() => setFlights(fs => fs.filter((_, j) => j !== i))}
@@ -546,7 +567,7 @@ export default function NewBookingPage() {
                 </div>
               ))}
               <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
-                onClick={() => setFlights(fs => [...fs, { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '' }])}>
+                onClick={() => setFlights(fs => [...fs, { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '', notes: '' }])}>
                 Add Flight
               </Button>
             </div>

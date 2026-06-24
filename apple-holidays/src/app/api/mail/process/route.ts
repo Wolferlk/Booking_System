@@ -292,6 +292,7 @@ export async function POST(req: NextRequest) {
           toApt:    f.toApt,
           arrTime:  f.arrTime ?? '',
           airline:  f.airline ?? null,
+          notes:    (f as { notes?: string }).notes ?? null,
         })),
       })
     }

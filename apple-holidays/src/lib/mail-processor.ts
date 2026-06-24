@@ -77,7 +77,7 @@ export interface ExtractedBooking {
   contactCountry: string | null
   contactAddress: string | null
   passengers: { name: string; type: string; isLead: boolean }[]
-  flights: { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string }[]
+  flights: { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string; notes?: string }[]
   accommodations: { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string; mealType?: string }[]
   itineraryItems: { dayNo: number; date: string; title: string; description?: string }[]
   emergencyContacts: { name: string; phone?: string; role?: string }[]
@@ -184,7 +184,7 @@ Return ONLY valid JSON matching this exact schema:
   "contactAddress": "lead customer home/mailing address or null",
   "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false, "mealPreference": "string or null — e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement', 'Special Meal' fields per passenger, or a booking-level note. Return null if not specified." }],
-  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "IATA code", "depTime": "HH:MM or null", "toApt": "IATA code", "arrTime": "HH:MM or null", "airline": "string or null" }],
+  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "IATA code", "depTime": "HH:MM or null", "toApt": "IATA code", "arrTime": "HH:MM or null", "airline": "string or null", "notes": "string or null" }],
   "accommodations": [{ "hotel": "hotel name", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
   "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "short activity title", "description": "detailed description or null" }],
   "pnlLines": []
