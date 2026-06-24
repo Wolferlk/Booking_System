@@ -12,6 +12,7 @@ interface Passenger {
   id: string
   name: string
   type?: string | null
+  age?: number | null
   passport?: string | null
   nationality?: string | null
   contact?: string | null
@@ -65,6 +66,13 @@ interface AgendaItem {
     driverPhone?: string | null
     vehicleType?: string | null
     vehiclePlate?: string | null
+    vendor?: { name: string; phone?: string | null } | null
+    driver?: {
+      id: string
+      name: string
+      phone?: string | null
+      vehicle?: { type?: string | null; plateNo?: string | null } | null
+    } | null
   } | null
 }
 
@@ -300,6 +308,24 @@ export default function PrintAgendaPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════
+          EMERGENCY CONTACTS SUMMARY
+      ══════════════════════════════════════════════════════ */}
+      {booking.emergencyContacts.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ ...S.sectionTitle, borderTop: '2px solid #dc2626' }}>🚨 Emergency Contacts</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, padding: '8px 10px', background: '#fff7f7', border: '1px solid #fee2e2', borderTop: 'none', borderRadius: '0 0 5px 5px' }}>
+            {booking.emergencyContacts.map(ec => (
+              <div key={ec.id} style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 5, padding: '5px 10px', minWidth: 140 }}>
+                <p style={{ fontSize: 9, fontWeight: 700, color: '#991b1b' }}>{ec.name}</p>
+                <p style={{ fontSize: 8.5, color: '#374151', marginTop: 1 }}>{ec.phone ?? '—'}</p>
+                {ec.role && <p style={{ fontSize: 7.5, color: '#94a3b8', marginTop: 1 }}>{ec.role}</p>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
           PASSENGERS
       ══════════════════════════════════════════════════════ */}
       {booking.passengers.length > 0 && (
@@ -316,7 +342,7 @@ export default function PrintAgendaPage() {
           <table>
             <thead>
               <tr>
-                {['Name', 'Type', 'Meal Preference'].map(h => (
+                {['Name', 'Type', 'Passport No.', 'Nationality', 'Contact', 'Meal Preference'].map(h => (
                   <th key={h} style={S.th}>{h}</th>
                 ))}
               </tr>
@@ -331,6 +357,9 @@ export default function PrintAgendaPage() {
                     )}
                   </td>
                   <td style={S.td}>{p.type ?? 'ADULT'}</td>
+                  <td style={{ ...S.td, fontFamily: 'monospace' }}>{p.passport ?? '—'}</td>
+                  <td style={S.td}>{p.nationality ?? '—'}</td>
+                  <td style={S.td}>{p.contact ?? '—'}</td>
                   <td style={S.td}>
                     {p.mealPreference && p.mealPreference.trim() !== ''
                       ? <span style={{ display: 'inline-block', fontSize: 7.5, fontWeight: 700, color: '#047857', background: '#ecfdf5', border: '1px solid #a7f3d0', padding: '1px 5px', borderRadius: 3 }}>{p.mealPreference}</span>
@@ -432,6 +461,12 @@ export default function PrintAgendaPage() {
                 const a   = item.assignment
                 const svc = item.serviceType
                 const clr = SVC_COLOR[svc] ?? '#94a3b8'
+                const displayVendorName = a?.vendorName ?? a?.vendor?.name ?? null
+                const displayVendorPhone = a?.vendor?.phone ?? null
+                const displayDriverName = a?.driverName ?? a?.driver?.name ?? null
+                const displayDriverPhone = a?.driverPhone ?? a?.driver?.phone ?? null
+                const displayVehicleType = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
+                const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
                 return (
                   <tr key={idx} style={{ background: idx % 2 === 0 ? '#fff' : '#f8fafc' }}>
                     <td style={{ ...S.td, fontWeight: 700, whiteSpace: 'nowrap', fontSize: 8.5 }}>
@@ -464,17 +499,18 @@ export default function PrintAgendaPage() {
                     </td>
                     {showDrivers && (
                       <td style={{ ...S.td, fontSize: 8 }}>
-                        {a?.vendorId ? (
+                        {a?.vendorId || displayVendorName ? (
                           <>
-                            <p style={{ fontWeight: 700, color: '#7c3aed' }}>{a.vendorName}</p>
-                            {a.driverName && <p style={{ marginTop: 1 }}>{a.driverName}{a.driverPhone ? ` · ${a.driverPhone}` : ''}</p>}
-                            {a.vehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1 }}>{a.vehicleType} {a.vehiclePlate}</p>}
+                            <p style={{ fontWeight: 700, color: '#7c3aed' }}>{displayVendorName ?? '—'}</p>
+                            {displayVendorPhone && <p style={{ marginTop: 1, color: '#64748b' }}>{displayVendorPhone}</p>}
+                            {displayDriverName && <p style={{ marginTop: 1 }}>{displayDriverName}{displayDriverPhone ? ` · ${displayDriverPhone}` : ''}</p>}
+                            {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1 }}>{displayVehicleType} {displayVehiclePlate}</p>}
                           </>
-                        ) : a?.driverName ? (
+                        ) : displayDriverName ? (
                           <>
-                            <p style={{ fontWeight: 700, color: '#1d4ed8' }}>{a.driverName}</p>
-                            {a.driverPhone && <p style={{ color: '#64748b', marginTop: 1 }}>{a.driverPhone}</p>}
-                            {a.vehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1 }}>{a.vehicleType} {a.vehiclePlate}</p>}
+                            <p style={{ fontWeight: 700, color: '#1d4ed8' }}>{displayDriverName}</p>
+                            {displayDriverPhone && <p style={{ color: '#64748b', marginTop: 1 }}>{displayDriverPhone}</p>}
+                            {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1 }}>{displayVehicleType} {displayVehiclePlate}</p>}
                           </>
                         ) : (
                           <span style={{ color: '#cbd5e1', fontStyle: 'italic' }}>Not assigned</span>

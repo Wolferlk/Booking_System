@@ -22,7 +22,25 @@ export async function GET(
         include: {
           items: {
             orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
-            include: { assignment: true, tickets: true },
+            include: {
+              assignment: {
+                include: {
+                  driver: {
+                    include: {
+                      vehicle: true,
+                    },
+                  },
+                  vendor: {
+                    select: {
+                      id: true,
+                      name: true,
+                      phone: true,
+                    },
+                  },
+                },
+              },
+              tickets: true,
+            },
           },
         },
       },
@@ -236,7 +254,27 @@ export async function PUT(
         }
       }
     }
-    const updated = await prisma.agendaItem.findUnique({ where: { id: itemId }, include: { assignment: true } })
+    const updated = await prisma.agendaItem.findUnique({
+      where: { id: itemId },
+      include: {
+        assignment: {
+          include: {
+            driver: {
+              include: {
+                vehicle: true,
+              },
+            },
+            vendor: {
+              select: {
+                id: true,
+                name: true,
+                phone: true,
+              },
+            },
+          },
+        },
+      },
+    })
     return buildApiSuccess(updated, 'Assignment saved')
   }
 
@@ -252,7 +290,24 @@ export async function PUT(
       ...(body.meetingTime !== undefined && { meetingTime: body.meetingTime }),
       ...(body.serviceType && { serviceType: body.serviceType }),
     },
-    include: { assignment: true },
+    include: {
+      assignment: {
+        include: {
+          driver: {
+            include: {
+              vehicle: true,
+            },
+          },
+          vendor: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+            },
+          },
+        },
+      },
+    },
   })
 
   return buildApiSuccess(updated, 'Agenda item updated')

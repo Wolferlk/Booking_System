@@ -57,15 +57,60 @@ function fmtDate(d: string | null | undefined): string {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+function esc(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function buildAgendaHtml(
   ref: string,
   booking: {
     agent?: string | null
+    fileHandler?: string | null
     arrivalDate?: string | null
     departureDate?: string | null
     paxAdults?: number | null
     paxChildren?: number | null
-    passengers?: { name: string; isLead?: boolean; type?: string | null; mealPreference?: string | null }[]
+    bookingRef?: string
+    isNumber?: string | null
+    agentBookingId?: string | null
+    operationCountry?: string | null
+    tourDestination?: string | null
+    contactPhone?: string | null
+    contactWhatsapp?: string | null
+    contactEmail?: string | null
+    passengers?: {
+      name: string
+      isLead?: boolean
+      type?: string | null
+      mealPreference?: string | null
+      passport?: string | null
+      nationality?: string | null
+      contact?: string | null
+    }[]
+    flights?: {
+      flightNo: string
+      date: string
+      fromApt: string
+      depTime?: string | null
+      toApt: string
+      arrTime?: string | null
+      airline?: string | null
+    }[]
+    accommodations?: {
+      hotel: string
+      city: string
+      checkIn: string
+      checkOut: string
+      nights: number
+      roomType?: string | null
+      mealType?: string | null
+    }[]
     emergencyContacts?: { name: string; phone?: string | null; role?: string | null }[]
   },
   items: {
@@ -78,12 +123,20 @@ function buildAgendaHtml(
     meetingTime?: string | null
     serviceType?: string | null
     assignment?: {
+      driverId?: string | null
       vendorId?: string | null
       vendorName?: string | null
       driverName?: string | null
       driverPhone?: string | null
       vehicleType?: string | null
       vehiclePlate?: string | null
+      vendor?: { name: string; phone?: string | null } | null
+      driver?: {
+        id: string
+        name: string
+        phone?: string | null
+        vehicle?: { type?: string | null; plateNo?: string | null } | null
+      } | null
     } | null
   }[],
   showDrivers: boolean,
@@ -101,33 +154,40 @@ function buildAgendaHtml(
 
   const lead = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
   const totalPax = (booking.paxAdults ?? 0) + (booking.paxChildren ?? 0)
+  const destination = booking.tourDestination?.trim() || booking.operationCountry?.trim() || '—'
 
   const rows = items.map((item, idx) => {
     const a   = item.assignment
     const svc = item.serviceType ?? 'OWN_ARRANGEMENT'
     const clr = SVC_COLOR[svc] ?? '#94a3b8'
+    const displayVendorName = a?.vendorName ?? a?.vendor?.name ?? null
+    const displayVendorPhone = a?.vendor?.phone ?? null
+    const displayDriverName = a?.driverName ?? a?.driver?.name ?? null
+    const displayDriverPhone = a?.driverPhone ?? a?.driver?.phone ?? null
+    const displayVehicleType = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
+    const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
     const driverCell = showDrivers
       ? `<td style="padding:5px 6px;font-size:8px;color:#374151;border-bottom:1px solid #e2e8f0;">${
-          a?.vendorId
-            ? `<b style="color:#7c3aed">${a.vendorName ?? ''}</b>${a.driverName ? `<br/>${a.driverName}${a.driverPhone ? ' · ' + a.driverPhone : ''}` : ''}${a.vehiclePlate ? `<br/><span style="font-family:monospace;color:#64748b">${a.vehicleType ?? ''} ${a.vehiclePlate}</span>` : ''}`
-            : a?.driverName
-              ? `<b style="color:#1d4ed8">${a.driverName}</b>${a.driverPhone ? `<br/>${a.driverPhone}` : ''}${a.vehiclePlate ? `<br/><span style="font-family:monospace;color:#64748b">${a.vehicleType ?? ''} ${a.vehiclePlate}</span>` : ''}`
+          a?.vendorId || displayVendorName
+            ? `<b style="color:#7c3aed">${esc(displayVendorName)}</b>${displayVendorPhone ? `<br/>${esc(displayVendorPhone)}` : ''}${displayDriverName ? `<br/>${esc(displayDriverName)}${displayDriverPhone ? ' · ' + esc(displayDriverPhone) : ''}` : ''}${displayVehiclePlate ? `<br/><span style="font-family:monospace;color:#64748b">${esc(displayVehicleType)} ${esc(displayVehiclePlate)}</span>` : ''}`
+            : displayDriverName
+              ? `<b style="color:#1d4ed8">${esc(displayDriverName)}</b>${displayDriverPhone ? `<br/>${esc(displayDriverPhone)}` : ''}${displayVehiclePlate ? `<br/><span style="font-family:monospace;color:#64748b">${esc(displayVehicleType)} ${esc(displayVehiclePlate)}</span>` : ''}`
               : `<span style="color:#cbd5e1;font-style:italic">Not assigned</span>`
         }</td>`
       : ''
 
     return `<tr style="background:${idx % 2 === 0 ? '#fff' : '#f8fafc'}">
       <td style="padding:5px 6px;font-size:8.5px;font-weight:700;color:#374151;white-space:nowrap;border-bottom:1px solid #e2e8f0">${fmtDate(item.date)}</td>
-      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.location ?? '—'}</td>
-      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.fromPoint ?? '—'}</td>
-      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.toPoint ?? '—'}</td>
-      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${item.mealPlan ?? '—'}</td>
-      <td style="padding:5px 6px;font-size:8.5px;font-weight:${item.meetingTime ? '700' : '400'};color:#374151;border-bottom:1px solid #e2e8f0">${item.meetingTime ?? '—'}</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.location)}</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.fromPoint)}</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.toPoint)}</td>
+      <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.mealPlan)}</td>
+      <td style="padding:5px 6px;font-size:8.5px;font-weight:${item.meetingTime ? '700' : '400'};color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.meetingTime)}</td>
       <td style="padding:5px 6px;border-bottom:1px solid #e2e8f0">
         ${svc === 'OWN_ARRANGEMENT' ? '' : `<span style="display:inline-block;padding:2px 5px;border-radius:3px;font-size:7.5px;font-weight:700;color:${clr};background:${clr}18;border:1px solid ${clr}35">${SVC_LABEL[svc] ?? svc}</span>`}
       </td>
-      <td style="padding:5px 6px;font-size:8px;color:#374151;line-height:1.4;border-bottom:1px solid #e2e8f0">${item.details ?? '—'}</td>
+      <td style="padding:5px 6px;font-size:8px;color:#374151;line-height:1.4;border-bottom:1px solid #e2e8f0">${esc(item.details)}</td>
       ${driverCell}
     </tr>`
   }).join('')
@@ -136,6 +196,97 @@ function buildAgendaHtml(
 
   const driverTh = showDrivers
     ? `<th style="${thStyle}width:18%">Driver / Vehicle</th>`
+    : ''
+
+  const bookingSummaryHtml = `<div style="margin-top:12px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">
+    <div><p style="font-size:7.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Agent</p><p style="font-size:9px;color:#0f172a;font-weight:700;margin-top:1px">${esc(booking.agent)}</p></div>
+    <div><p style="font-size:7.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">File Handler</p><p style="font-size:9px;color:#0f172a;font-weight:700;margin-top:1px">${esc(booking.fileHandler)}</p></div>
+    <div><p style="font-size:7.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Destination</p><p style="font-size:9px;color:#0f172a;font-weight:700;margin-top:1px">${esc(destination)}</p></div>
+    <div><p style="font-size:7.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Lead Passenger</p><p style="font-size:9px;color:#0f172a;font-weight:700;margin-top:1px">${esc(lead?.name)}</p></div>
+  </div>`
+
+  const contactsHtml = (booking.contactPhone || booking.contactWhatsapp || booking.contactEmail)
+    ? `<div style="margin-top:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px">
+        ${booking.contactPhone ? `<div><p style="font-size:7.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Customer Phone</p><p style="font-size:9px;color:#0f172a;margin-top:1px">${esc(booking.contactPhone)}</p></div>` : ''}
+        ${booking.contactWhatsapp ? `<div><p style="font-size:7.5px;color:#16a34a;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Customer WhatsApp</p><p style="font-size:9px;color:#0f172a;margin-top:1px">${esc(booking.contactWhatsapp)}</p></div>` : ''}
+        ${booking.contactEmail ? `<div><p style="font-size:7.5px;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">Customer Email</p><p style="font-size:9px;color:#2563eb;margin-top:1px">${esc(booking.contactEmail)}</p></div>` : ''}
+      </div>`
+    : ''
+
+  const emergencyContacts = booking.emergencyContacts ?? []
+  const emergencyContactsHtml = emergencyContacts.length > 0
+    ? `<div style="margin-top:10px">
+        <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#fff7f7;border-top:2px solid #dc2626;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">🚨 Emergency Contacts</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:#fff7f7;border:1px solid #fee2e2;border-top:none;border-radius:0 0 5px 5px">
+          ${emergencyContacts.map(ec => `<div style="background:#fff;border:1px solid #fecaca;border-radius:5px;padding:5px 10px;min-width:140px">
+            <p style="font-size:9px;font-weight:700;color:#991b1b">${esc(ec.name)}</p>
+            <p style="font-size:8.5px;color:#374151;margin-top:1px">${esc(ec.phone)}</p>
+            ${ec.role ? `<p style="font-size:7.5px;color:#94a3b8;margin-top:1px">${esc(ec.role)}</p>` : ''}
+          </div>`).join('')}
+        </div>
+      </div>`
+    : ''
+
+  const flights = booking.flights ?? []
+  const flightsHtml = flights.length > 0
+    ? `<div style="margin-top:14px">
+        <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid #2563eb;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">✈️ Flights (${flights.length})</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="${thStyle}">Flight No.</th>
+              <th style="${thStyle}">Date</th>
+              <th style="${thStyle}">From</th>
+              <th style="${thStyle}">Dep.</th>
+              <th style="${thStyle}">To</th>
+              <th style="${thStyle}">Arr.</th>
+              <th style="${thStyle}">Airline</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${flights.map(f => `<tr>
+              <td style="padding:5px 7px;font-size:8.5px;font-weight:700;color:#1d4ed8;border-bottom:1px solid #f1f5f9">${esc(f.flightNo)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9;white-space:nowrap">${fmtDate(f.date)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(f.fromApt)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#059669;border-bottom:1px solid #f1f5f9">${esc(f.depTime)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(f.toApt)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#dc2626;border-bottom:1px solid #f1f5f9">${esc(f.arrTime)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(f.airline)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`
+    : ''
+
+  const accommodations = booking.accommodations ?? []
+  const accommodationsHtml = accommodations.length > 0
+    ? `<div style="margin-top:14px">
+        <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid #0891b2;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">🏨 Accommodation (${accommodations.length})</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="${thStyle}">Hotel</th>
+              <th style="${thStyle}">City</th>
+              <th style="${thStyle}">Check-in</th>
+              <th style="${thStyle}">Check-out</th>
+              <th style="${thStyle}">Nights</th>
+              <th style="${thStyle}">Room Type</th>
+              <th style="${thStyle}">Meal Plan</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${accommodations.map(a => `<tr>
+              <td style="padding:5px 7px;font-size:8.5px;font-weight:700;color:#0f172a;border-bottom:1px solid #f1f5f9">${esc(a.hotel)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(a.city)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9;white-space:nowrap">${fmtDate(a.checkIn)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9;white-space:nowrap">${fmtDate(a.checkOut)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9;text-align:center">${esc(a.nights)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(a.roomType)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(a.mealType)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`
     : ''
 
   // ── Passengers table (with meal preference) ──
@@ -148,14 +299,20 @@ function buildAgendaHtml(
             <tr>
               <th style="${thStyle}">Name</th>
               <th style="${thStyle}">Type</th>
+              <th style="${thStyle}">Passport</th>
+              <th style="${thStyle}">Nationality</th>
+              <th style="${thStyle}">Contact</th>
               <th style="${thStyle}">Meal Preference</th>
             </tr>
           </thead>
           <tbody>
             ${passengers.map((p, i) => `<tr style="background:${p.isLead ? '#fefce8' : i % 2 === 0 ? '#fff' : '#f8fafc'}">
-              <td style="padding:5px 7px;font-size:8.5px;font-weight:700;color:#374151;border-bottom:1px solid #f1f5f9">${p.name}${p.isLead ? ' <span style="font-size:7px;font-weight:700;color:#d97706;background:#fef3c7;padding:1px 4px;border-radius:3px">LEAD</span>' : ''}</td>
-              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${p.type ?? 'ADULT'}</td>
-              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${p.mealPreference && p.mealPreference.trim() !== '' ? `<span style="display:inline-block;font-size:7.5px;font-weight:700;color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;padding:1px 5px;border-radius:3px">${p.mealPreference}</span>` : '—'}</td>
+              <td style="padding:5px 7px;font-size:8.5px;font-weight:700;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.name)}${p.isLead ? ' <span style="font-size:7px;font-weight:700;color:#d97706;background:#fef3c7;padding:1px 4px;border-radius:3px">LEAD</span>' : ''}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.type ?? 'ADULT')}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9;font-family:monospace">${esc(p.passport)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.nationality)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.contact)}</td>
+              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${p.mealPreference && p.mealPreference.trim() !== '' ? `<span style="display:inline-block;font-size:7.5px;font-weight:700;color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;padding:1px 5px;border-radius:3px">${esc(p.mealPreference)}</span>` : '—'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -163,7 +320,6 @@ function buildAgendaHtml(
     : ''
 
   // ── Emergency contacts ──
-  const emergencyContacts = booking.emergencyContacts ?? []
   const emergencyHtml = emergencyContacts.length > 0
     ? `<div style="margin-top:14px">
         <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid #dc2626;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">🚨 Emergency Contacts</div>
@@ -195,19 +351,24 @@ function buildAgendaHtml(
       <p style="font-size:9px;color:#64748b">MMT Vietnam · Movement Chart</p>
     </div>
     <div style="text-align:right">
-      <p style="font-weight:800;font-size:15px;font-family:monospace;color:#d97706">${ref}</p>
-      ${booking.agent ? `<p style="font-size:9px;color:#64748b;margin-top:2px">${booking.agent}</p>` : ''}
+      <p style="font-weight:800;font-size:15px;font-family:monospace;color:#d97706">${esc(ref)}</p>
+      ${booking.agent ? `<p style="font-size:9px;color:#64748b;margin-top:2px">${esc(booking.agent)}</p>` : ''}
       <p style="font-size:8px;color:#94a3b8;margin-top:2px">${fmtDate(booking.arrivalDate)} – ${fmtDate(booking.departureDate)} · ${totalPax} pax</p>
       ${!showDrivers ? '<p style="font-size:8px;color:#94a3b8;font-style:italic">Driver info hidden</p>' : ''}
     </div>
   </div>
 
+  ${bookingSummaryHtml}
+  ${contactsHtml}
+  ${emergencyContactsHtml}
   ${lead ? `<div style="margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:5px 10px;display:inline-block">
     <span style="font-size:8.5px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Lead Passenger: </span>
-    <span style="font-size:9.5px;font-weight:700;color:#1e293b">${lead.name}</span>
+    <span style="font-size:9.5px;font-weight:700;color:#1e293b">${esc(lead.name)}</span>
   </div>` : ''}
 
   ${passengersHtml}
+  ${flightsHtml}
+  ${accommodationsHtml}
 
   <!-- TABLE -->
   <table style="margin-top:8px">
@@ -263,13 +424,32 @@ export async function POST(
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: params.ref },
     include: {
+      flights: { orderBy: { date: 'asc' } },
+      accommodations: { orderBy: { checkIn: 'asc' } },
       passengers: { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
       emergencyContacts: true,
       tourAgenda: {
         include: {
           items: {
             orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
-            include: { assignment: true },
+            include: {
+              assignment: {
+                include: {
+                  driver: {
+                    include: {
+                      vehicle: true,
+                    },
+                  },
+                  vendor: {
+                    select: {
+                      id: true,
+                      name: true,
+                      phone: true,
+                    },
+                  },
+                },
+              },
+            },
           },
         },
       },
