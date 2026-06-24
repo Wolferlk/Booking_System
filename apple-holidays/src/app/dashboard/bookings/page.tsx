@@ -307,7 +307,7 @@ function BookingsPageInner() {
                         Created <SortIcon field="createdAt" sortBy={sortBy} sortDir={sortDir} />
                       </button>
                     </th>
-                    <th>PNL</th>
+                    {/* <th>PNL</th> */}
                     <th>Agenda</th>
                     <th />
                   </tr>
@@ -403,7 +403,7 @@ function BookingsPageInner() {
                         </td>
 
                         {/* PNL — clickable if merged */}
-                        <td onClick={e => e.stopPropagation()}>
+                        {/* <td onClick={e => e.stopPropagation()}>
                           {b.pnl ? (
                             <Link
                               href={`/dashboard/bookings/${b.bookingRef}/pnl`}
@@ -416,7 +416,7 @@ function BookingsPageInner() {
                               <XCircle className="w-3 h-3" /> No PNL
                             </span>
                           )}
-                        </td>
+                        </td> */}
 
                         {/* Agenda — only if agenda exists */}
                         <td onClick={e => e.stopPropagation()}>
