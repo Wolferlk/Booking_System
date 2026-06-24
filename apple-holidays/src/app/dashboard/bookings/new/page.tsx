@@ -96,8 +96,8 @@ export default function NewBookingPage() {
     if (!data) return
     setForm(prev => ({
       ...prev,
-      bookingRef:     (data.bookingRef     as string) || prev.bookingRef,
-      agentBookingId: (data.agentBookingId as string) || prev.agentBookingId,
+      bookingRef:     prev.bookingRef,
+      agentBookingId: (data.agentBookingId as string) || (data.bookingRef as string) || prev.agentBookingId,
       agent:          (data.agent          as string) || prev.agent,
       fileHandler:    (data.fileHandler    as string) || prev.fileHandler,
       arrivalDate:    (data.arrivalDate    as string)?.slice(0, 10) || prev.arrivalDate,
