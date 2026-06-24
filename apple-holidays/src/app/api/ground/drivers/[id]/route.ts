@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -37,7 +38,9 @@ export async function PUT(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const driver = await prisma.driver.findUnique({ where: { id: params.id } })
   if (!driver) return buildApiError('Driver not found', 404)
@@ -52,25 +55,34 @@ export async function PUT(
   // Only ALL-country users can change the driver's country
   const userCountry = session.user.country as string | undefined
 
-  const updated = await prisma.driver.update({
-    where: { id: params.id },
-    data: {
-      ...(name !== undefined && { name }),
-      ...(phone !== undefined && { phone }),
-      ...(email !== undefined && { email }),
-      ...(licenseNo !== undefined && { licenseNo }),
-      ...(isActive !== undefined && { isActive }),
-      ...(photoUrl !== undefined && { photoUrl }),
-      ...(vehicleId !== undefined && { vehicleId: vehicleId || null }),
-      ...(country !== undefined && (!userCountry || userCountry === 'ALL') && { country: country || null }),
-      ...(bankName !== undefined && { bankName }),
-      ...(bankAccountNo !== undefined && { bankAccountNo }),
-      ...(bankHolder !== undefined && { bankHolder }),
-      ...(bankBranch !== undefined && { bankBranch }),
-      ...(bankCode !== undefined && { bankCode }),
-    },
-    include: { vehicle: { include: { vendor: true } } },
-  })
+  let updated
+  try {
+    updated = await prisma.driver.update({
+      where: { id: params.id },
+      data: {
+        ...(name !== undefined && { name }),
+        ...(phone !== undefined && { phone }),
+        ...(email !== undefined && { email }),
+        ...(licenseNo !== undefined && { licenseNo }),
+        ...(isActive !== undefined && { isActive }),
+        ...(photoUrl !== undefined && { photoUrl }),
+        ...(vehicleId !== undefined && { vehicleId: vehicleId || null }),
+        ...(country !== undefined && (!userCountry || userCountry === 'ALL') && { country: country || null }),
+        ...(bankName !== undefined && { bankName }),
+        ...(bankAccountNo !== undefined && { bankAccountNo }),
+        ...(bankHolder !== undefined && { bankHolder }),
+        ...(bankBranch !== undefined && { bankBranch }),
+        ...(bankCode !== undefined && { bankCode }),
+      },
+      include: { vehicle: { include: { vendor: true } } },
+    })
+  } catch (error) {
+    return handlePrismaApiError(
+      error,
+      'Failed to update driver',
+      'Driver details conflict with an existing record or the selected vehicle is already assigned',
+    )
+  }
 
   await logActivity({
     userId: session.user.id,

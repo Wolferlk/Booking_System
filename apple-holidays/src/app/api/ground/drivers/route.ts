@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { countryScope } from '@/lib/country-detection'
+import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { OperationCountry } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -87,7 +88,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const body = await req.json()
   const { name, phone, email, licenseNo, vehicleId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive, photoUrl, country } = body
@@ -97,23 +100,32 @@ export async function POST(req: NextRequest) {
   const userCountry = session.user.country as OperationCountry | undefined
   const driverCountry = (!userCountry || userCountry === 'ALL') ? (country || null) : userCountry
 
-  const driver = await prisma.driver.create({
-    data: {
-      name, phone,
-      email:        email        || null,
-      licenseNo:    licenseNo    || null,
-      isActive:     isActive     ?? true,
-      photoUrl:     photoUrl     || null,
-      vehicleId:    vehicleId    || null,
-      country:      driverCountry || null,
-      bankName:     bankName     || null,
-      bankAccountNo: bankAccountNo || null,
-      bankHolder:   bankHolder   || null,
-      bankBranch:   bankBranch   || null,
-      bankCode:     bankCode     || null,
-    },
-    include: { vehicle: { include: { vendor: true } } },
-  })
+  let driver
+  try {
+    driver = await prisma.driver.create({
+      data: {
+        name, phone,
+        email:         email         || null,
+        licenseNo:     licenseNo     || null,
+        isActive:      isActive      ?? true,
+        photoUrl:      photoUrl      || null,
+        vehicleId:     vehicleId     || null,
+        country:       driverCountry || null,
+        bankName:      bankName      || null,
+        bankAccountNo: bankAccountNo || null,
+        bankHolder:    bankHolder    || null,
+        bankBranch:    bankBranch    || null,
+        bankCode:      bankCode      || null,
+      },
+      include: { vehicle: { include: { vendor: true } } },
+    })
+  } catch (error) {
+    return handlePrismaApiError(
+      error,
+      'Failed to add driver',
+      'A driver with these details already exists or the selected vehicle is already assigned',
+    )
+  }
 
   await logActivity({
     userId: session.user.id,

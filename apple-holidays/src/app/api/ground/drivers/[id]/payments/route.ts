@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { UserRole, DriverPaymentType } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -31,7 +32,9 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['GT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const driver = await prisma.driver.findUnique({ where: { id: params.id } })
   if (!driver) return buildApiError('Driver not found', 404)
@@ -41,16 +44,21 @@ export async function POST(
 
   if (!amount || !type) return buildApiError('amount and type are required')
 
-  const payment = await prisma.driverPayment.create({
-    data: {
-      driverId: params.id,
-      amount: Number(amount),
-      type: type as DriverPaymentType,
-      description: description ?? null,
-      refNumber: refNumber ?? null,
-      paidById: session.user.id,
-    },
-  })
+  let payment
+  try {
+    payment = await prisma.driverPayment.create({
+      data: {
+        driverId: params.id,
+        amount: Number(amount),
+        type: type as DriverPaymentType,
+        description: description ?? null,
+        refNumber: refNumber ?? null,
+        paidById: session.user.id,
+      },
+    })
+  } catch (error) {
+    return handlePrismaApiError(error, 'Failed to record payment', 'A payment with these details already exists')
+  }
 
   // Update driver advance balance for ADVANCE type
   if (type === 'ADVANCE') {

@@ -122,6 +122,9 @@ export default function DriversPage() {
 
   const userCountry = session?.user?.country ?? 'ALL'
   const isAllCountry = !userCountry || userCountry === 'ALL'
+  const defaultDriverCountry = isAllCountry
+    ? (countryFilter !== 'ALL' ? countryFilter : '')
+    : userCountry
 
   const [form, setForm] = useState({
     name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '',
@@ -245,7 +248,21 @@ export default function DriversPage() {
   }
 
   function openAdd() {
-    setForm({ name: '', phone: '', email: '', licenseNo: '', isActive: true, photoUrl: '', vehicleId: '', country: '', bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '' })
+    setForm({
+      name: '',
+      phone: '',
+      email: '',
+      licenseNo: '',
+      isActive: true,
+      photoUrl: '',
+      vehicleId: '',
+      country: defaultDriverCountry,
+      bankName: '',
+      bankAccountNo: '',
+      bankHolder: '',
+      bankBranch: '',
+      bankCode: '',
+    })
     setVehForm({ plateNo: '', type: 'van', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '' })
     setShowNewVehicle(false)
     setShowAdd(true)

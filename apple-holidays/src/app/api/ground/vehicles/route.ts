@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { handlePrismaApiError } from '@/lib/prisma-error'
 
 export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
@@ -27,26 +28,33 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const body = await req.json()
   const { type, plateNo, brand, model, capacity, description, photoOutside, photoInside, vendorId } = body
   if (!type || !plateNo) return buildApiError('type and plateNo are required')
 
-  const vehicle = await prisma.vehicle.create({
-    data: {
-      type,
-      plateNo,
-      brand: brand || null,
-      model: model || null,
-      capacity: Number(capacity) || 4,
-      description: description || null,
-      photoOutside: photoOutside || null,
-      photoInside: photoInside || null,
-      vendorId: vendorId || null,
-    },
-    include: { driver: true, vendor: true },
-  })
+  let vehicle
+  try {
+    vehicle = await prisma.vehicle.create({
+      data: {
+        type,
+        plateNo,
+        brand: brand || null,
+        model: model || null,
+        capacity: Number(capacity) || 4,
+        description: description || null,
+        photoOutside: photoOutside || null,
+        photoInside: photoInside || null,
+        vendorId: vendorId || null,
+      },
+      include: { driver: true, vendor: true },
+    })
+  } catch (error) {
+    return handlePrismaApiError(error, 'Failed to add vehicle', 'Vehicle plate number already exists')
+  }
 
   return buildApiSuccess(vehicle, 'Vehicle added')
 }
