@@ -4,23 +4,31 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
+import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { addDays } from 'date-fns'
 import type { UserRole } from '@prisma/client'
 
 export async function GET(req: NextRequest) {
+  try {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
   const userCountry = (session.user as any).country as string | undefined
+  const userCountries = (session.user as any).countries as string[] | undefined
   const countryOverride = req.nextUrl.searchParams.get('country')
 
   // Build a country where-clause to apply to all booking queries
   const countryWhere: Record<string, unknown> = {}
   if (!canSeeAllCountries(role, userCountry as any)) {
-    if (userCountry && userCountry !== 'ALL') countryWhere.operationCountry = userCountry
+    // Multi-country users: union of all assigned country scopes
+    const multiScope = userCountryScope(userCountry, userCountries)
+    if (multiScope) countryWhere.operationCountry = { in: multiScope }
   } else if (countryOverride && countryOverride !== 'ALL') {
-    countryWhere.operationCountry = countryOverride
+    // Admins filtering by a specific country — expand SG/MY group properly
+    const scope = countryScope(countryOverride)
+    if (scope) countryWhere.operationCountry = { in: scope }
+    else countryWhere.operationCountry = countryOverride
   }
 
   const now = new Date()
@@ -64,22 +72,24 @@ export async function GET(req: NextRequest) {
   })
   const filteredIds = filteredBookings.map(b => b.id)
 
-  const allPnl = await prisma.pNL.findMany({
-    where: filteredIds.length > 0 ? { bookingId: { in: filteredIds } } : {},
-    include: { lineItems: true },
-  })
-
   let totalRevenue = 0
   let totalCost = 0
-  for (const pnl of allPnl) {
-    for (const line of pnl.lineItems) {
-      totalRevenue += Number(line.mmtRate)
-      const totalPax = pnl.paxAdults + pnl.paxChildren
-      const cost =
-        (Number(line.sicRate) + Number(line.pvtRatePP) + Number(line.otherRate)) * totalPax +
-        Number(line.adEntrance) * pnl.paxAdults +
-        Number(line.chEntrance) * pnl.paxChildren
-      totalCost += cost
+
+  if (filteredIds.length > 0) {
+    const allPnl = await prisma.pNL.findMany({
+      where: { bookingId: { in: filteredIds } },
+      include: { lineItems: true },
+    })
+    for (const pnl of allPnl) {
+      for (const line of pnl.lineItems) {
+        totalRevenue += Number(line.mmtRate)
+        const totalPax = pnl.paxAdults + pnl.paxChildren
+        const cost =
+          (Number(line.sicRate) + Number(line.pvtRatePP) + Number(line.otherRate)) * totalPax +
+          Number(line.adEntrance) * pnl.paxAdults +
+          Number(line.chEntrance) * pnl.paxChildren
+        totalCost += cost
+      }
     }
   }
 
@@ -94,4 +104,8 @@ export async function GET(req: NextRequest) {
     totalProfit: totalRevenue - totalCost,
     byStatus,
   })
+  } catch (err) {
+    console.error('[Stats API] error:', err)
+    return buildApiError(err instanceof Error ? err.message : 'Internal server error', 500)
+  }
 }

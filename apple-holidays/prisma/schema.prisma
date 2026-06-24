@@ -127,6 +127,7 @@ model User {
   password      String           @db.Text
   role          UserRole
   country       OperationCountry @default(ALL)
+  countries     String?          @db.Text
   phone         String?
   avatar        String?
   isActive      Boolean          @default(true)

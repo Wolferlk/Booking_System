@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const user = await prisma.user.findUnique({
     where: { id: params.id },
     select: {
-      id: true, email: true, name: true, role: true, country: true,
+      id: true, email: true, name: true, role: true, country: true, countries: true,
       phone: true, avatar: true, isActive: true,
       createdAt: true, updatedAt: true,
       _count: { select: { bookingsCreated: true, activityLogs: true } },
@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { id } = params
   const body = await req.json()
-  const { name, email, phone, role, isActive, password, country } = body
+  const { name, email, phone, role, isActive, password, country, countries } = body
 
   const existing = await prisma.user.findUnique({ where: { id } })
   if (!existing) return buildApiError('User not found', 404)
@@ -65,11 +65,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     ? (country as OperationCountry)
     : existing.country
 
-  if (country !== undefined) {
+  if (country !== undefined || countries !== undefined) {
     if (session.user.role !== 'ULTRA_SUPER_ADMIN') {
       return buildApiError('Forbidden — only Ultra Super Admin can change country', 403)
     }
-    updateData.country = country as OperationCountry
+    if (country !== undefined) updateData.country = country as OperationCountry
+    if (countries !== undefined) {
+      // countries: OperationCountry[] or null to clear multi-country
+      if (countries === null || (Array.isArray(countries) && countries.length === 0)) {
+        updateData.countries = null
+      } else if (Array.isArray(countries)) {
+        updateData.countries = JSON.stringify(countries)
+      }
+    }
   }
 
   if (role !== undefined) {

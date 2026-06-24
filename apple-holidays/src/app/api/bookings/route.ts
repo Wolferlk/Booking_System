@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
-import { detectCountryFromRef, countryScope, isInCountryScope } from '@/lib/country-detection'
+import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
 
   const role = session.user.role as UserRole
   const userCountry = (session.user as any).country as string | undefined
+  const userCountries = (session.user as any).countries as string[] | undefined
   const countryOverride = searchParams.get('country')
 
   const andClauses: Record<string, unknown>[] = []
@@ -39,18 +40,15 @@ export async function GET(req: NextRequest) {
   if (role === 'CLIENT') {
     andClauses.push({ clientUserId: session.user.id })
   } else if (!canSeeAllCountries(role, userCountry as any)) {
-    // Country-scoped users only see their own scope's bookings — never include unassigned.
-    // SG/MY users see the whole Singapore+Malaysia group (incl. legacy combined).
-    const scope = countryScope(userCountry)
+    // Country-scoped users (including multi-country) only see their assigned scope.
+    const scope = userCountryScope(userCountry, userCountries)
     if (scope) andClauses.push({ operationCountry: { in: scope } })
   } else if (countryOverride && countryOverride !== 'ALL') {
     // Admin users may narrow to a specific country via explicit param.
-    // SINGAPORE / MALAYSIA stay exact (granular); the combined value expands to the group.
-    if (countryOverride === 'SINGAPORE_MALAYSIA') {
-      andClauses.push({ operationCountry: { in: countryScope(countryOverride)! } })
-    } else {
-      andClauses.push({ operationCountry: countryOverride })
-    }
+    // Always expand using countryScope so SG/MY/SG_MY all resolve correctly.
+    const scope = countryScope(countryOverride)
+    if (scope) andClauses.push({ operationCountry: { in: scope } })
+    else andClauses.push({ operationCountry: countryOverride })
   }
 
   if (status) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
+import { toast } from 'sonner'
 import {
   FileText, Clock, AlertCircle, CreditCard, TrendingUp,
   Globe, Users, Loader2, ArrowRight, CheckCircle2, Lock,
@@ -107,12 +108,26 @@ export default function DashboardPage() {
           fetch(`/api/dashboard/stats${cqs ? `?${cqs}` : ''}`),
           fetch(`/api/bookings?limit=5${cqs ? `&${cqs}` : ''}`),
         ])
+        const parseJson = async (res: Response) => {
+          const text = await res.text()
+          if (!text.trim()) throw new Error(`Empty response from ${res.url || 'server'}`)
+          try {
+            return JSON.parse(text) as { success?: boolean; data?: unknown; error?: string }
+          } catch {
+            throw new Error(text.slice(0, 180) || `Invalid JSON from ${res.url || 'server'}`)
+          }
+        }
+
         const [statsJson, bookingsJson] = await Promise.all([
-          statsRes.json(),
-          bookingsRes.json(),
+          parseJson(statsRes),
+          parseJson(bookingsRes),
         ])
+        if (!statsRes.ok) throw new Error((statsJson.error as string) || `Stats request failed (${statsRes.status})`)
+        if (!bookingsRes.ok) throw new Error((bookingsJson.error as string) || `Bookings request failed (${bookingsRes.status})`)
         if (statsJson.success) setStats(statsJson.data)
         if (bookingsJson.success) setRecentBookings(bookingsJson.data.bookings)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Dashboard failed to load')
       } finally {
         setLoading(false)
       }

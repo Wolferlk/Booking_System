@@ -28,6 +28,7 @@ interface UserRecord {
   name: string
   role: UserRole
   country: OperationCountry
+  countries: string | null
   phone: string | null
   avatar: string | null
   isActive: boolean
@@ -80,13 +81,20 @@ const COUNTRY_ROLES: Record<OperationCountry, UserRole[]> = {
   ALL:                ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
 }
 
-const SELECTABLE_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE', 'MALAYSIA', 'SINGAPORE_MALAYSIA', 'ALL']
-
 const EMPTY_FORM = {
   name: '', email: '', phone: '', role: 'BT_USER' as UserRole,
   country: 'VIETNAM' as OperationCountry,
+  countries: [] as OperationCountry[],
   isActive: true, password: '', confirmPassword: '',
 }
+
+const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; flag: string; label: string }[] = [
+  { value: 'VIETNAM',            flag: '🇻🇳', label: 'Vietnam' },
+  { value: 'SRILANKA',           flag: '🇱🇰', label: 'Sri Lanka' },
+  { value: 'SINGAPORE',          flag: '🇸🇬', label: 'Singapore' },
+  { value: 'MALAYSIA',           flag: '🇲🇾', label: 'Malaysia' },
+  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', label: 'SG & MY' },
+]
 
 // ─── Password strength ────────────────────────────────────────────────────────
 
@@ -241,7 +249,9 @@ export default function UsersPage() {
 
   function openEdit(u: UserRecord) {
     setSelected(u)
-    setForm({ name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, country: u.country ?? 'VIETNAM', isActive: u.isActive, password: '', confirmPassword: '' })
+    let parsedCountries: OperationCountry[] = []
+    if (u.countries) { try { parsedCountries = JSON.parse(u.countries) } catch { /* ignore */ } }
+    setForm({ name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, country: u.country ?? 'VIETNAM', countries: parsedCountries, isActive: u.isActive, password: '', confirmPassword: '' })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
     setMode('edit')
   }
@@ -308,6 +318,7 @@ export default function UsersPage() {
         phone: form.phone.trim() || null,
         role: form.role,
         country: form.country,
+        countries: form.countries.length > 0 ? form.countries : null,
         isActive: form.isActive,
       }
       if (mode === 'add' || (mode === 'edit' && resetPwd)) {
@@ -604,14 +615,30 @@ export default function UsersPage() {
 
                         {/* Country */}
                         <td className="px-4 py-3">
-                          {u.country && COUNTRY_META[u.country] ? (
-                            <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[u.country].color)}>
-                              <span>{COUNTRY_META[u.country].flag}</span>
-                              <span>{COUNTRY_META[u.country].label}</span>
-                            </span>
-                          ) : (
-                            <span className="text-slate-400 text-xs">—</span>
-                          )}
+                          {(() => {
+                            let parsed: OperationCountry[] = []
+                            if (u.countries) { try { parsed = JSON.parse(u.countries) } catch { /* ignore */ } }
+                            if (parsed.length > 0) {
+                              return (
+                                <div className="flex flex-wrap gap-1">
+                                  {parsed.map(c => COUNTRY_META[c] ? (
+                                    <span key={c} className={cn('inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border', COUNTRY_META[c].color)}>
+                                      <span>{COUNTRY_META[c].flag}</span>
+                                      <span>{COUNTRY_META[c].label}</span>
+                                    </span>
+                                  ) : null)}
+                                </div>
+                              )
+                            }
+                            return u.country && COUNTRY_META[u.country] ? (
+                              <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[u.country].color)}>
+                                <span>{COUNTRY_META[u.country].flag}</span>
+                                <span>{COUNTRY_META[u.country].label}</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 text-xs">—</span>
+                            )
+                          })()}
                         </td>
 
                         {/* Status toggle */}
@@ -828,40 +855,82 @@ export default function UsersPage() {
 
           {/* Country (Ultra Super Admin only — SUPER_ADMIN is locked to their country) */}
           {(session?.user?.role as string) === 'ULTRA_SUPER_ADMIN' ? (
-            <div>
+            <div className="space-y-3">
               <label className="form-label flex items-center gap-1.5">
-                <Globe className="w-3.5 h-3.5 text-slate-400" /> Operating Country *
+                <Globe className="w-3.5 h-3.5 text-slate-400" /> Operating Countries *
               </label>
-              <select
-                className="form-select"
-                value={form.country}
-                onChange={e => {
-                  const c = e.target.value as OperationCountry
-                  const validRoles = COUNTRY_ROLES[c]
-                  // ALL → default to ULTRA_SUPER_ADMIN; otherwise keep role if valid
-                  const newRole = c === 'ALL'
-                    ? 'ULTRA_SUPER_ADMIN'
-                    : (validRoles.includes(form.role) ? form.role : validRoles[0])
-                  setForm(x => ({ ...x, country: c, role: newRole as UserRole }))
-                }}
-              >
-                {SELECTABLE_COUNTRIES.map(c => (
-                  <option key={c} value={c}>{COUNTRY_META[c].flag} {COUNTRY_META[c].label}</option>
-                ))}
-              </select>
-              {form.country === 'ALL' ? (
-                <div className="mt-2 flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+
+              {/* Multi-country checkboxes */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {MULTI_COUNTRY_OPTIONS.map(opt => {
+                  const checked = form.countries.includes(opt.value)
+                  return (
+                    <label key={opt.value} className={cn(
+                      'flex items-center gap-2 px-3 py-2.5 rounded-lg border cursor-pointer transition-all select-none',
+                      checked
+                        ? 'border-brand-400 bg-brand-50 text-brand-800'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                    )}>
+                      <input
+                        type="checkbox"
+                        className="sr-only"
+                        checked={checked}
+                        onChange={() => {
+                          setForm(x => {
+                            const next = checked
+                              ? x.countries.filter(c => c !== opt.value)
+                              : [...x.countries, opt.value]
+                            // Derive primary country from first in list (or ALL if none)
+                            const primary: OperationCountry = next.length > 0 ? next[0] : 'ALL'
+                            const validRoles = COUNTRY_ROLES[primary]
+                            const newRole = primary === 'ALL'
+                              ? 'ULTRA_SUPER_ADMIN'
+                              : (validRoles.includes(x.role) ? x.role : validRoles[0]) as UserRole
+                            return { ...x, countries: next, country: primary, role: newRole }
+                          })
+                        }}
+                      />
+                      <span className="text-base">{opt.flag}</span>
+                      <span className="text-xs font-medium">{opt.label}</span>
+                      {checked && <span className="ml-auto w-3.5 h-3.5 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0"><svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 8 8"><path d="M1 4l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></span>}
+                    </label>
+                  )
+                })}
+                {/* All countries shortcut */}
+                <label className={cn(
+                  'flex items-center gap-2 px-3 py-2.5 rounded-lg border cursor-pointer transition-all select-none',
+                  form.country === 'ALL' && form.countries.length === 0
+                    ? 'border-amber-400 bg-amber-50 text-amber-800'
+                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50',
+                )}>
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={form.country === 'ALL' && form.countries.length === 0}
+                    onChange={() => setForm(x => ({ ...x, country: 'ALL', countries: [], role: 'ULTRA_SUPER_ADMIN' as UserRole }))}
+                  />
+                  <span className="text-base">🌍</span>
+                  <span className="text-xs font-medium">All Countries</span>
+                </label>
+              </div>
+
+              {form.countries.length > 0 ? (
+                <div className="flex flex-wrap gap-1 p-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-[10px] text-slate-400 mr-1 self-center">Access:</span>
+                  {form.countries.map(c => COUNTRY_META[c] ? (
+                    <span key={c} className={cn('inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[c].color)}>
+                      {COUNTRY_META[c].flag} {COUNTRY_META[c].label}
+                    </span>
+                  ) : null)}
+                </div>
+              ) : form.country === 'ALL' ? (
+                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
                   <Globe className="w-3.5 h-3.5 text-amber-600 flex-shrink-0 mt-0.5" />
                   <p className="text-[11px] text-amber-700 font-medium">
-                    All Countries — this user will have access to every country and all bookings system-wide.
-                    Only assign to trusted administrators.
+                    All Countries — full system-wide access. Only assign to trusted administrators.
                   </p>
                 </div>
-              ) : (
-                <p className="text-[11px] text-slate-500 mt-1">
-                  This user will only see data for the selected country.
-                </p>
-              )}
+              ) : null}
             </div>
           ) : (
             /* SUPER_ADMIN — show locked country badge, no edit */

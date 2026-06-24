@@ -87,6 +87,26 @@ export function isInCountryScope(target: string | null | undefined, viewer: stri
   return !scope || (target != null && scope.includes(target as OperationCountry))
 }
 
+/**
+ * Union scope for users assigned multiple countries.
+ * `countries` (new multi-country JSON field) takes precedence over single `country`.
+ * Returns null when the user sees all countries (ALL or empty assignments).
+ */
+export function userCountryScope(
+  country: string | null | undefined,
+  countries: string[] | null | undefined,
+): OperationCountry[] | null {
+  const list = countries && countries.length > 0 ? countries : country ? [country] : []
+  if (list.length === 0 || list.includes('ALL')) return null
+  const combined = new Set<OperationCountry>()
+  for (const c of list) {
+    const scope = countryScope(c)
+    if (!scope) return null  // ANY entry = ALL means no filter
+    for (const v of scope) combined.add(v)
+  }
+  return combined.size > 0 ? [...combined] : null
+}
+
 export function countryLabel(country: OperationCountry | null | undefined): string {
   switch (country) {
     case 'VIETNAM':            return 'Vietnam'

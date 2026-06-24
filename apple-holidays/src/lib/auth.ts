@@ -14,6 +14,7 @@ declare module 'next-auth' {
       name: string
       role: UserRole
       country: OperationCountry
+      countries?: OperationCountry[] | null
       avatar?: string | null
     }
   }
@@ -23,6 +24,7 @@ declare module 'next-auth' {
     name: string
     role: UserRole
     country: OperationCountry
+    countries?: OperationCountry[] | null
     avatar?: string | null
   }
 }
@@ -32,6 +34,7 @@ declare module 'next-auth/jwt' {
     id: string
     role: UserRole
     country: OperationCountry
+    countries?: OperationCountry[] | null
     avatar?: string | null
   }
 }
@@ -56,13 +59,19 @@ export const authOptions: NextAuthOptions = {
         const isValid = await bcrypt.compare(credentials.password, user.password)
         if (!isValid) return null
 
+        let parsedCountries: OperationCountry[] | null = null
+        if (user.countries) {
+          try { parsedCountries = JSON.parse(user.countries) } catch { /* ignore */ }
+        }
+
         return {
-          id:      user.id,
-          email:   user.email,
-          name:    user.name,
-          role:    user.role,
-          country: user.country,
-          avatar:  user.avatar,
+          id:        user.id,
+          email:     user.email,
+          name:      user.name,
+          role:      user.role,
+          country:   user.country,
+          countries: parsedCountries,
+          avatar:    user.avatar,
         }
       },
     }),
@@ -70,19 +79,21 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id      = user.id
-        token.role    = user.role
-        token.country = user.country
-        token.avatar  = user.avatar
+        token.id        = user.id
+        token.role      = user.role
+        token.country   = user.country
+        token.countries = user.countries
+        token.avatar    = user.avatar
       }
       return token
     },
     async session({ session, token }) {
       if (token) {
-        session.user.id      = token.id
-        session.user.role    = token.role
-        session.user.country = token.country
-        session.user.avatar  = token.avatar
+        session.user.id        = token.id
+        session.user.role      = token.role
+        session.user.country   = token.country
+        session.user.countries = token.countries
+        session.user.avatar    = token.avatar
       }
       return session
     },
