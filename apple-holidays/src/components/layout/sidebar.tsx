@@ -262,9 +262,18 @@ export default function Sidebar() {
         <ul className="space-y-0.5 px-2">
           {navItems.map(item => {
             const Icon = ICON_MAP[item.icon]
-            const isActive = item.href === '/dashboard'
-              ? pathname === '/dashboard'
-              : pathname.startsWith(item.href)
+            const isActive = (() => {
+              if (item.href === '/dashboard') return pathname === '/dashboard'
+              if (pathname === item.href) return true
+              if (!pathname.startsWith(item.href + '/')) return false
+              // Check if there's a more specific route that also matches
+              const hasMoreSpecificMatch = navItems.some(other =>
+                other.href !== item.href &&
+                other.href.startsWith(item.href) &&
+                pathname.startsWith(other.href)
+              )
+              return !hasMoreSpecificMatch
+            })()
 
             if (item.danger) {
               return (
