@@ -35,7 +35,13 @@ export async function POST(
   const { itemId, itemName } = (await req.json()) as { itemId: string; itemName: string }
   if (!itemId || !itemName) return buildApiError('itemId and itemName are required')
 
-  const resolved = await resolveDriveByKey(driveKey)
+  let resolved
+  try {
+    resolved = await resolveDriveByKey(driveKey)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return buildApiError(`Could not resolve drive: ${msg}`, 502)
+  }
   if (!resolved) return buildApiError('Could not resolve drive', 500)
   const { driveId } = resolved
 

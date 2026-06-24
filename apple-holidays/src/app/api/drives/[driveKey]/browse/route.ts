@@ -33,11 +33,11 @@ export async function GET(
     return buildApiError(`Unknown drive key: ${driveKey}`, 400)
   }
 
-  const resolved = await resolveDriveByKey(driveKey)
-  if (!resolved) return buildApiError('Could not resolve drive', 500)
-  const { driveId, cfg } = resolved
-
   try {
+    const resolved = await resolveDriveByKey(driveKey)
+    if (!resolved) return buildApiError(`Could not resolve drive for key "${driveKey}"`, 500)
+    const { driveId, cfg } = resolved
+
     let items: DriveItem[]
     if (folderId) {
       // Sub-folder navigation by item ID
@@ -72,6 +72,7 @@ export async function GET(
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return buildApiError(`Failed to list drive: ${msg}`, 500)
+    console.error(`[Drive Browse] ${driveKey} error:`, msg)
+    return buildApiError(`Failed to list drive: ${msg}`, 502)
   }
 }
