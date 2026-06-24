@@ -169,6 +169,25 @@ export default function PrintAgendaPage() {
   }, [ref])
 
   useEffect(() => {
+    if (!booking) return
+    const safe = (value: string | null | undefined) => String(value ?? '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+
+    const lead = booking.passengers.find(p => p.isLead) ?? booking.passengers[0]
+    const title = [booking.isNumber ?? '', booking.bookingRef, lead?.name ?? '']
+      .map(safe)
+      .filter(Boolean)
+      .join('_') || 'Agenda'
+
+    document.title = title
+  }, [booking])
+
+  useEffect(() => {
     if (ready) setTimeout(() => window.print(), 600)
   }, [ready])
 

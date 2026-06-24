@@ -794,6 +794,16 @@ export async function processIncomingMail(
   // ─────────────────────────────────────────────────────────────────────────
 
   const createdById = await getAutomationUserId()
+
+  // If PNL mail extraction is disabled, skip without calling OpenAI
+  if (normalizedType === 'PNL') {
+    const pnlSetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_pnl_auto_extract' } })
+    if (pnlSetting?.value === 'false') {
+      console.log(`[Mail]  PNL skipped — ai_pnl_auto_extract is OFF${SEP.slice(8)}\n`)
+      return { bookingRef: '', bookingId: '', mode: 'PNL', isNew: false, pnlLines: 0, agendaItems: 0, status: 'GT_REVIEW' as const }
+    }
+  }
+
   const extracted = await extractBookingFromEmail(email.rawBody, normalizedType)
 
   // Attach detected country to extracted object so syncTourConfirmation can use it

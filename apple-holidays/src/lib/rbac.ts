@@ -93,14 +93,14 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'pnl:create', 'pnl:read', 'pnl:edit',
   ],
   GT_USER: [
-    'booking:read', 'booking:edit',
+    'booking:create', 'booking:read', 'booking:edit',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'assignment:create', 'assignment:edit',
     'ticket:create', 'ticket:read', 'ticket:purchase',
     'pnl:read',
   ],
   TE_USER: [
-    'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
+    'booking:create', 'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
     'booking:ground_review', 'booking:verify', 'booking:cancel',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'ticket:read',
@@ -112,7 +112,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   // Combined Ground + Travel Experience (Sri Lanka, Singapore/Malaysia)
   GT_TE_USER: [
-    'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
+    'booking:create', 'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
     'booking:ground_review', 'booking:verify', 'booking:cancel',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'assignment:create', 'assignment:edit',
@@ -124,7 +124,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'recheck:confirm',
   ],
   AC_USER: [
-    'booking:read', 'booking:edit',
+    'booking:create', 'booking:read', 'booking:edit',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'ticket:read',
     'pnl:create', 'pnl:read', 'pnl:edit', 'pnl:confirm_payment', 'pnl:view_profit',
@@ -211,6 +211,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
   ],
   GT_USER: [
     { label: 'Dashboard',      href: '/dashboard',                  icon: 'LayoutDashboard' },
+    { label: 'New Booking',    href: '/dashboard/bookings/new',     icon: 'PlusCircle' },
     { label: 'Review Queue',   href: '/dashboard/ground/review',    icon: 'ClipboardCheck' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',   icon: 'Ticket' },
@@ -218,6 +219,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
   ],
   TE_USER: [
     { label: 'Dashboard',  href: '/dashboard',              icon: 'LayoutDashboard' },
+    { label: 'New Booking', href: '/dashboard/bookings/new', icon: 'PlusCircle' },
     { label: 'Bookings',   href: '/dashboard/bookings',     icon: 'FileText' },
     { label: 'Contacts',   href: '/dashboard/te/contacts',  icon: 'Phone' },
     { label: 'Reminders',  href: '/dashboard/te/reminders', icon: 'Bell' },
@@ -225,6 +227,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
   ],
   GT_TE_USER: [
     { label: 'Dashboard',      href: '/dashboard',                    icon: 'LayoutDashboard' },
+    { label: 'New Booking',    href: '/dashboard/bookings/new',       icon: 'PlusCircle' },
     { label: 'Bookings',       href: '/dashboard/bookings',           icon: 'FileText' },
     { label: 'Review Queue',   href: '/dashboard/ground/review',      icon: 'ClipboardCheck' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
@@ -234,6 +237,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
   ],
   AC_USER: [
     { label: 'Dashboard',      href: '/dashboard',                     icon: 'LayoutDashboard' },
+    { label: 'New Booking',    href: '/dashboard/bookings/new',        icon: 'PlusCircle' },
     { label: 'Bookings',       href: '/dashboard/bookings',            icon: 'FileText' },
     { label: 'P&L',            href: '/dashboard/accounts/pnl',       icon: 'BarChart2' },
     { label: 'Profit',         href: '/dashboard/accounts/profit',    icon: 'TrendingUp' },

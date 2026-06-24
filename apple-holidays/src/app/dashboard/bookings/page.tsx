@@ -136,7 +136,7 @@ function BookingsPageInner() {
   }
 
   const role      = session?.user?.role
-  const canCreate = ['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role ?? '')
+  const canCreate = !!role && role !== 'CLIENT'
 
   return (
     <div>

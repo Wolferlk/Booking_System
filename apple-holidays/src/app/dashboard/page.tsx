@@ -301,7 +301,7 @@ export default function DashboardPage() {
               </CardHeader>
               <CardBody>
                 <div className="flex flex-wrap gap-3">
-                  {(role === 'BT_USER' || role === 'SUPER_ADMIN') && (
+                  {role && role !== 'CLIENT' && (
                     <Link href="/dashboard/bookings/new" className="btn-primary btn text-sm">
                       <FileText className="w-4 h-4" /> New Booking
                     </Link>

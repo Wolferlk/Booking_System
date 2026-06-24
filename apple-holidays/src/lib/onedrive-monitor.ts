@@ -753,19 +753,18 @@ async function processPNLFile(
 ): Promise<number> {
   console.log(`[OneDrive] Processing PNL: ${item.name} → ${bookingRef}`)
 
-  const buffer = await downloadDriveItem(driveId, item.id)
-
-  // Check if AI PNL extraction is enabled (default: true)
+  // Check if PNL extraction is enabled before downloading anything
   const pnlExtractSetting = await prisma.systemSetting.findUnique({ where: { key: 'ai_pnl_auto_extract' } })
-  const pnlAIExtractEnabled = pnlExtractSetting?.value !== 'false'
+  if (pnlExtractSetting?.value === 'false') {
+    console.log(`[OneDrive] ${bookingRef}: PNL processing disabled (ai_pnl_auto_extract = false) — skipping`)
+    return 0
+  }
+
+  const buffer = await downloadDriveItem(driveId, item.id)
 
   let parsed: Awaited<ReturnType<typeof parsePNLXlsx>>
 
   if (/\.pdf$/i.test(item.name)) {
-    if (!pnlAIExtractEnabled) {
-      console.log(`[OneDrive] ${bookingRef}: AI PNL extraction disabled — skipping PDF PNL`)
-      return 0
-    }
     console.log(`[OneDrive] ${bookingRef}: PNL is PDF — extracting text then AI`)
     const pdfData = await pdfParse(buffer)
     const text    = pdfData.text
@@ -777,10 +776,6 @@ async function processPNLFile(
     console.log(`[OneDrive] ${bookingRef}: PDF PNL → ${parsed.lineItems.length} lines via AI`)
 
   } else if (/\.docx?$/i.test(item.name)) {
-    if (!pnlAIExtractEnabled) {
-      console.log(`[OneDrive] ${bookingRef}: AI PNL extraction disabled — skipping Word PNL`)
-      return 0
-    }
     console.log(`[OneDrive] ${bookingRef}: PNL is Word doc — extracting text then AI`)
     const text = await extractTextFromDocx(buffer)
     if (!text || text.trim().length < 20) {

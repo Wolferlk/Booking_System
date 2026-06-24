@@ -480,11 +480,11 @@ export default function ConfigPage() {
             {/* AI PNL Extraction */}
             <AIToggleRow
               icon={<FileSearch className="w-4 h-4" />}
-              label="AI PNL Extraction (PDF/Word)"
+              label="PNL from Mails &amp; Files"
               description={aiPnlExtractEnabled
-                ? 'GPT-4o reads PDF and Word PNL files from OneDrive — ~3,675 tokens per file.'
-                : 'PDF/Word PNL extraction via AI is OFF — only Excel/CSV files are parsed (no AI needed).'}
-              tokenNote="~3,675 tokens saved per PNL file"
+                ? 'PNL is read automatically from incoming emails and OneDrive files (PDF/Word/Excel). Turn OFF to use only Account DB PNL.'
+                : 'PNL extraction from emails and OneDrive files is OFF — only Account DB PNL is used (no AI cost for PNL).'}
+              tokenNote="Stops all automatic PNL from mails and OneDrive — use Account DB instead"
               enabled={aiPnlExtractEnabled}
               saving={saving === 'ai_pnl_auto_extract'}
               locked={!criticalPassword.trim()}

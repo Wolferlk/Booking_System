@@ -25,6 +25,31 @@ export const maxDuration = 120
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 const WHATSAPP_PROXY   = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 
+function safeFilePart(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function buildAgendaFileName(booking: {
+  bookingRef?: string
+  isNumber?: string | null
+  passengers?: { name: string; isLead?: boolean }[]
+}): string {
+  const leadPassenger = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
+  const parts = [
+    booking.isNumber?.trim() || null,
+    booking.bookingRef?.trim() || null,
+    leadPassenger?.name ?? null,
+  ].map(safeFilePart).filter(Boolean)
+
+  return `${parts.join('_') || 'agenda'}.pdf`
+}
+
 // ── HTML builder ──────────────────────────────────────────────────────────────
 
 function fmtDate(d: string | null | undefined): string {
@@ -264,7 +289,7 @@ export async function POST(
   )
 
   const driverTag  = showDrivers ? 'WithDrivers' : 'NoDrivers'
-  const filename   = `${params.ref}-Agenda-${driverTag}-${Date.now()}.pdf`
+  const filename   = buildAgendaFileName(booking as never)
 
   let pdfBuffer: Buffer
   try {
@@ -294,14 +319,14 @@ export async function POST(
     // Save PDF to public dir for URL-based delivery
     const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'whatsapp')
     await mkdir(uploadDir, { recursive: true })
-    await writeFile(path.join(uploadDir, filename), pdfBuffer)
+    await writeFile(path.join(uploadDir, `${driverTag}-${filename}`), pdfBuffer)
 
     const baseUrl = (
       process.env.NEXT_PUBLIC_APP_URL?.trim() ||
       process.env.APP_URL?.trim() ||
       req.nextUrl.origin
     ).replace(/\/+$/, '')
-    const fileUrl = `${baseUrl}/uploads/whatsapp/${encodeURIComponent(filename)}`
+    const fileUrl = `${baseUrl}/uploads/whatsapp/${encodeURIComponent(`${driverTag}-${filename}`)}`
 
     const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()

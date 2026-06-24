@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!hasPermission(role, 'booking:create')) {
+  if (role === 'CLIENT' || !hasPermission(role, 'booking:create')) {
     return buildApiError('Forbidden', 403)
   }
 

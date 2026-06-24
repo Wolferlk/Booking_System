@@ -43,6 +43,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ],
   GT_USER: [
     { label: 'Dashboard',      href: '/dashboard',                          icon: 'LayoutDashboard' },
+    { label: 'New Booking',    href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments',       icon: 'MapPin' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',           icon: 'Ticket' },
@@ -54,6 +55,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ],
   TE_USER: [
     { label: 'Dashboard',          href: '/dashboard',                          icon: 'LayoutDashboard' },
+    { label: 'New Booking',        href: '/dashboard/bookings/new',            icon: 'PlusCircle' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                  icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',             icon: 'BarChart2' },
     { label: 'Review Queue',       href: '/dashboard/te/review',                icon: 'ClipboardCheck' },
@@ -69,6 +71,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ],
   AC_USER: [
     { label: 'Dashboard',       href: '/dashboard',                          icon: 'LayoutDashboard' },
+    { label: 'New Booking',     href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'All Bookings',    href: '/dashboard/bookings',                 icon: 'FileText' },
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
@@ -106,6 +109,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ],
   GT_TE_USER: [
     { label: 'Dashboard',          href: '/dashboard',                    icon: 'LayoutDashboard' },
+    { label: 'New Booking',        href: '/dashboard/bookings/new',       icon: 'PlusCircle' },
     { label: 'All Bookings',       href: '/dashboard/bookings',           icon: 'FileText' },
     { label: 'Live Overview',      href: '/dashboard/te/live',            icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',       icon: 'BarChart2' },

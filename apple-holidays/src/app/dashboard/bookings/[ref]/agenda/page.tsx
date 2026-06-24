@@ -144,7 +144,6 @@ export default function AgendaPage() {
   const [sendMessage,     setSendMessage]    = useState('')
   const [sendSubject,     setSendSubject]    = useState('')
   const [sending,         setSending]        = useState(false)
-  const [downloading,     setDownloading]    = useState<'with' | 'without' | null>(null)
   const [showPdfMenu,     setShowPdfMenu]    = useState(false)
   // Rate input for driver assignment
   const [rateInput,         setRateInput]        = useState('')
@@ -168,28 +167,6 @@ export default function AgendaPage() {
 
   const canEdit   = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-
-  async function downloadAgendaPdf(withDrivers: boolean) {
-    setDownloading(withDrivers ? 'with' : 'without')
-    try {
-      const res = await fetch(`/api/bookings/${ref}/agenda/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'download', showDrivers: withDrivers }),
-      })
-      if (!res.ok) { toast.error('PDF generation failed'); return }
-      const blob     = await res.blob()
-      const url      = URL.createObjectURL(blob)
-      const a        = document.createElement('a')
-      a.href         = url
-      a.download     = `${ref}-Agenda-${withDrivers ? 'WithDrivers' : 'NoDrivers'}.pdf`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch { toast.error('Download failed') }
-    finally  { setDownloading(null); setShowPdfMenu(false) }
-  }
 
   async function sendAgenda() {
     if (!sendTo.trim()) { toast.error('Enter a recipient'); return }
@@ -528,28 +505,12 @@ export default function AgendaPage() {
                 className="btn btn-secondary btn-sm flex items-center gap-1.5"
               >
                 <FileDown className="w-4 h-4" />
-                Download PDF
+                Print Preview
                 <ChevronRight className="w-3 h-3 rotate-90" />
               </button>
               {showPdfMenu && (
                 <div className="absolute right-0 top-10 z-30 w-60 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">Choose PDF Type</p>
-                  <button
-                    onClick={() => downloadAgendaPdf(true)}
-                    disabled={downloading === 'with'}
-                    className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors"
-                  >
-                    {downloading === 'with' ? <Loader2 className="w-4 h-4 animate-spin text-brand-500" /> : <Car className="w-4 h-4 text-sky-500" />}
-                    <span className="flex-1 text-left">With Driver Allocation</span>
-                  </button>
-                  <button
-                    onClick={() => downloadAgendaPdf(false)}
-                    disabled={downloading === 'without'}
-                    className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-slate-50 text-sm text-slate-700 transition-colors border-t border-slate-100"
-                  >
-                    {downloading === 'without' ? <Loader2 className="w-4 h-4 animate-spin text-brand-500" /> : <FileDown className="w-4 h-4 text-slate-400" />}
-                    <span className="flex-1 text-left">Without Driver Info</span>
-                  </button>
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">Choose Preview</p>
                   <div className="border-t border-slate-100">
                     <button
                       onClick={() => { setShowPdfMenu(false); window.open(`/print/agenda/${ref}?drivers=true`, '_blank') }}
