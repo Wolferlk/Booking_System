@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canTransition } from '@/lib/state-machine'
 import type { BookingStatus, UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 // Valid step-through statuses handled by this route
 const STEP_STATUSES: BookingStatus[] = [
   'TE_REVIEWED',

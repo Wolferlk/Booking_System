@@ -8,6 +8,7 @@ import type { UserRole, OperationCountry } from '@prisma/client'
 import { isRoleAllowedInCountry } from '@/lib/rbac'
 import { isInCountryScope } from '@/lib/country-detection'
 
+export const dynamic = 'force-dynamic'
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

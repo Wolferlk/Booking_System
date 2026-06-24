@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { searchPnlRecords } from '@/lib/accounts-db'
 
+export const dynamic = 'force-dynamic'
 /** GET ?q=<search-term> — search the Accounts external PNL database by any identifier. */
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)

@@ -8,6 +8,7 @@ import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
 import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 
+export const dynamic = 'force-dynamic'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 
 function computeQCStatus(booking: {

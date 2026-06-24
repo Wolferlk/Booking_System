@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { CANCELLABLE_STATES } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function POST(
   req: NextRequest,
   { params }: { params: { ref: string } },

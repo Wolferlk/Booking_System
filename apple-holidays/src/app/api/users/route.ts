@@ -8,6 +8,7 @@ import type { UserRole, OperationCountry } from '@prisma/client'
 import { isRoleAllowedInCountry } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 
+export const dynamic = 'force-dynamic'
 const VALID_COUNTRIES: OperationCountry[] = ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA', 'ALL']
 
 export async function GET(req: NextRequest) {

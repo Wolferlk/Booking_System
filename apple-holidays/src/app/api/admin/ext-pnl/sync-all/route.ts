@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { findPnlByIdentifiers, fetchPnlById } from '@/lib/accounts-db'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /** POST — iterate all bookings and attempt to auto-link or refresh their
  *  external PNL data.  Only SUPER_ADMIN / ULTRA_SUPER_ADMIN may call this. */
 export async function POST(_req: NextRequest) {

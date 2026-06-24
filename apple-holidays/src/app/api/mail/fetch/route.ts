@@ -5,6 +5,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getConfiguredMailboxes } from '@/lib/mail-processor'
 import { listCachedMailboxEmails, syncMailboxEmailsToDb } from '@/lib/mail-cache'
 
+export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

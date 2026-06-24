@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 // TE_USER requests changes from Booking Team (GT_REVIEW → CHANGE_REQUESTED)
 export async function POST(
   req: NextRequest,

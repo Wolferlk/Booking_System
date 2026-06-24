@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, isClientPortalUnlocked } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function GET(
   req: NextRequest,
   { params }: { params: { ref: string } },

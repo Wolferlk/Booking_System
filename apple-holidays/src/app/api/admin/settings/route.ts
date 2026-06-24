@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 
+export const dynamic = 'force-dynamic'
 const PROTECTED_KEYS = new Set([
   'use_test_data',
   'less_credit_mode',

@@ -8,6 +8,7 @@ import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { addDays } from 'date-fns'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   try {
   const session = await getServerSession(authOptions)

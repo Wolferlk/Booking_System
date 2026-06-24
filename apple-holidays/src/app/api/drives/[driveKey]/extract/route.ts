@@ -16,6 +16,7 @@ import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
+export const dynamic = 'force-dynamic'
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ driveKey: string }> },

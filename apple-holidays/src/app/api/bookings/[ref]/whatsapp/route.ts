@@ -7,6 +7,7 @@ import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-
 import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 
+export const dynamic = 'force-dynamic'
 const WHATSAPP_API    = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 

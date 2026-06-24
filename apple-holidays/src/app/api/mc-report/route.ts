@@ -7,6 +7,7 @@ import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 // Merges optional search + country conditions into a single booking WHERE clause

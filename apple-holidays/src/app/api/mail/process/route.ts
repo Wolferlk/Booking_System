@@ -12,6 +12,7 @@ import { upsertCachedMailMessage } from '@/lib/mail-cache'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 
+export const dynamic = 'force-dynamic'
 function generateRef(base: string | null): string {
   if (base) {
     // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)

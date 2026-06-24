@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendWhatsAppText, formatDriverMovementMessage, normalisePhone } from '@/lib/whatsapp'
 
+export const dynamic = 'force-dynamic'
 // Vietnam offset is UTC+7; cron fires at 23:00 UTC = 06:00 local
 const TZ_OFFSET_MS = 7 * 60 * 60 * 1000
 

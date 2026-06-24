@@ -8,6 +8,7 @@ import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope 
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
+export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

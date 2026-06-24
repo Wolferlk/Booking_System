@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getSubscriptionStatus, autoSubscribe } from '@/lib/mail-processor'
 
+export const dynamic = 'force-dynamic'
 // GET — return current subscription status
 export async function GET() {
   const session = await getServerSession(authOptions)

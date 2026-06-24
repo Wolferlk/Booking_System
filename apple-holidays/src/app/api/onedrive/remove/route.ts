@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /**
  * DELETE /api/onedrive/remove?ref=VN19866[&deleteBooking=true]
  *

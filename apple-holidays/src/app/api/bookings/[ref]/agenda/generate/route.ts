@@ -8,6 +8,7 @@ import openai from '@/lib/openai'
 import fs from 'fs'
 import path from 'path'
 
+export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
 
 function loadConditions(): string {

@@ -3,6 +3,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 
+export const dynamic = 'force-dynamic'
 const CALL_LABELS: Record<string, string> = {
   booking_extraction:  'Booking Extraction',
   pnl_extraction:      'PNL Extraction',

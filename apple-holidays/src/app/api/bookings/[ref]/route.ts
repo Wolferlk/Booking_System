@@ -9,6 +9,7 @@ import { logActivity, ACTION } from '@/lib/activity'
 import { isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function GET(
   req: NextRequest,
   { params }: { params: { ref: string } },

@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { fetchPnlById } from '@/lib/accounts-db'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /**
  * POST /api/accounts/pnl-link
  * Body: { externalPnlId: number, bookingRef: string }

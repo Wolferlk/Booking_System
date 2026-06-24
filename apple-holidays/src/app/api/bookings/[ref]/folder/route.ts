@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /** PATCH { folderUrl: string | null } — assign or clear the OneDrive booking folder URL. */
 export async function PATCH(
   req: NextRequest,

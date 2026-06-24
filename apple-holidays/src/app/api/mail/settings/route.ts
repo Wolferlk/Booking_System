@@ -4,6 +4,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getLessCreditModeEnabled, RECENT_MAIL_WINDOW_MINUTES, LESS_CREDIT_MODE_KEY } from '@/lib/mail-mode'
 import { prisma } from '@/lib/prisma'
 
+export const dynamic = 'force-dynamic'
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

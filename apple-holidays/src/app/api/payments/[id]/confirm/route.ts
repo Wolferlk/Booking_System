@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, isCreditAgent } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { differenceInDays } from 'date-fns'
 
+export const dynamic = 'force-dynamic'
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },

@@ -7,6 +7,7 @@ import { hasPermission } from '@/lib/rbac'
 import { sendWhatsAppText, formatDriverMovementMessage, normalisePhone } from '@/lib/whatsapp'
 import type { UserRole, ServiceType } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function GET(
   req: NextRequest,
   { params }: { params: { ref: string } },

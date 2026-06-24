@@ -5,6 +5,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { classifyPNLCategories } from '@/lib/openai'
 import { detectCategory } from '@/lib/parsers/xlsx-parser'
 
+export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

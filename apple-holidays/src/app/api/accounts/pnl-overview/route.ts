@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { fetchAllPnlRecords, fetchPnlRecordsFiltered } from '@/lib/accounts-db'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /**
  * GET /api/accounts/pnl-overview
  *

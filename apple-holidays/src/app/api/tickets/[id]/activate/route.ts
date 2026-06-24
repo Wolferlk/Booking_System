@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 
+export const dynamic = 'force-dynamic'
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },

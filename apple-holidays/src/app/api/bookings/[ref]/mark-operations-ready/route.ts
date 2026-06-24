@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { sendOperationsReadyEmail } from '@/lib/send-operations-email'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 // GT_USER / TE_USER advances GT_VERIFIED → OPERATIONS_READY after allocating drivers
 export async function POST(
   _req: NextRequest,

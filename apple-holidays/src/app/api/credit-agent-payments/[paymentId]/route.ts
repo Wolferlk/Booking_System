@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { UserRole, CreditPaymentStatus } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function PUT(
   req: NextRequest,
   { params }: { params: { paymentId: string } },

@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { fetchPnlById } from '@/lib/accounts-db'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /** POST { externalPnlId: number } — manually link a booking to a specific
  *  external PNL record by ID.  Replaces any existing link. */
 export async function POST(

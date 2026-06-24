@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { findPnlByIdentifiers, fetchPnlById } from '@/lib/accounts-db'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 /** GET — return the cached external PNL link for a booking. If none exists,
  *  attempt auto-linking by matching booking identifiers against the Accounts DB. */
 export async function GET(

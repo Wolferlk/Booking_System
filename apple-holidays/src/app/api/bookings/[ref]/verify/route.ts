@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 // TE_USER: confirms with client → GT_REVIEW → GT_VERIFIED ("Client Confirmed")
 export async function POST(
   req: NextRequest,

@@ -8,6 +8,7 @@ import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
+export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

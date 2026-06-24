@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 // Categories that should generate an auto-ticket for the ground team
 const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
   HOTEL:          'Hotel Voucher',

@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import type { UserRole, DriverPaymentType } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } },

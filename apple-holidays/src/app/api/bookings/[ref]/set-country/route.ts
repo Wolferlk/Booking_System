@@ -7,6 +7,7 @@ import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { OPERATION_COUNTRIES, isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
+export const dynamic = 'force-dynamic'
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { ref: string } },

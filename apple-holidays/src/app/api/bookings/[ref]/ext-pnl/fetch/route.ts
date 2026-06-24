@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { fetchPnlById } from '@/lib/accounts-db'
 
+export const dynamic = 'force-dynamic'
 /** POST — force a live re-fetch of the external PNL data for this booking.
  *  Updates the cached snapshot without changing the matched link. */
 export async function POST(

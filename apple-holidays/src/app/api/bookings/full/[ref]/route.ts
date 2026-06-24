@@ -18,6 +18,7 @@ import { canSeeAllCountries } from '@/lib/rbac'
 import { detectCountryFromRef, isInCountryScope } from '@/lib/country-detection'
 import type { OperationCountry } from '@/lib/country-detection'
 
+export const dynamic = 'force-dynamic'
 // ─── Full booking include ────────────────────────────────────────────────────
 
 const FULL_INCLUDE = {

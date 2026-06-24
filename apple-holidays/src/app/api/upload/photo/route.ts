@@ -5,6 +5,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
 
+export const dynamic = 'force-dynamic'
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg']
 const MAX_SIZE = 5 * 1024 * 1024 // 5MB
 
