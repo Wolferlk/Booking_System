@@ -26,10 +26,13 @@ export async function GET(req: NextRequest) {
     const multiScope = userCountryScope(userCountry, userCountries)
     if (multiScope) countryWhere.operationCountry = { in: multiScope }
   } else if (countryOverride && countryOverride !== 'ALL') {
-    // Admins filtering by a specific country — expand SG/MY group properly
-    const scope = countryScope(countryOverride)
-    if (scope) countryWhere.operationCountry = { in: scope }
-    else countryWhere.operationCountry = countryOverride
+    // Admin explicit filter: SINGAPORE / MALAYSIA stay EXACT so each counts on its own;
+    // only the legacy combined value expands to the whole SG/MY group.
+    if (countryOverride === 'SINGAPORE_MALAYSIA') {
+      countryWhere.operationCountry = { in: countryScope(countryOverride)! }
+    } else {
+      countryWhere.operationCountry = countryOverride
+    }
   }
 
   const now = new Date()
