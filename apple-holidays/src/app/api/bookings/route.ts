@@ -45,11 +45,13 @@ export async function GET(req: NextRequest) {
     const scope = userCountryScope(userCountry, userCountries)
     if (scope) andClauses.push({ operationCountry: { in: scope } })
   } else if (countryOverride && countryOverride !== 'ALL') {
-    // Admin users may narrow to a specific country via explicit param.
-    // Always expand using countryScope so SG/MY/SG_MY all resolve correctly.
-    const scope = countryScope(countryOverride)
-    if (scope) andClauses.push({ operationCountry: { in: scope } })
-    else andClauses.push({ operationCountry: countryOverride })
+    // Admin explicit filter: SINGAPORE / MALAYSIA stay EXACT so each shows on its own;
+    // only the legacy combined value expands to the whole SG/MY group.
+    if (countryOverride === 'SINGAPORE_MALAYSIA') {
+      andClauses.push({ operationCountry: { in: countryScope(countryOverride)! } })
+    } else {
+      andClauses.push({ operationCountry: countryOverride })
+    }
   }
 
   if (status) {

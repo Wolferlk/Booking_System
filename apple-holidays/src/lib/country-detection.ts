@@ -104,7 +104,7 @@ export function userCountryScope(
     if (!scope) return null  // ANY entry = ALL means no filter
     for (const v of scope) combined.add(v)
   }
-  return combined.size > 0 ? [...combined] : null
+  return combined.size > 0 ? Array.from(combined) : null
 }
 
 export function countryLabel(country: OperationCountry | null | undefined): string {
