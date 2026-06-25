@@ -11,14 +11,14 @@ function getOpenAIKey() {
   return apiKey
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
-
-
 // const openai = new OpenAI({
-//   apiKey: getOpenAIKey(),
+//   apiKey: process.env.OPENAI_API_KEY,
 // })
+
+
+const openai = new OpenAI({
+  apiKey: getOpenAIKey(),
+})
 
 export default openai
 
