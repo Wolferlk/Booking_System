@@ -55,6 +55,9 @@ enum ServiceType {
   PVT_TRANSFER
   SIC_TRANSFER
   OWN_ARRANGEMENT
+  FLIGHT
+  INTERNAL_TOUR
+  ACCOMMODATION
 }
 
 enum TicketStatus {
@@ -407,6 +410,8 @@ model AgendaItem {
   details      String?     @db.Text
   mealPlan     String?
   meetingTime  String?
+  timeFrom     String?
+  timeTo       String?
   serviceType  ServiceType @default(OWN_ARRANGEMENT)
   sortOrder    Int         @default(0)
 

@@ -37,8 +37,9 @@ type SyncResult = {
 
 const TICKETABLE_CATEGORIES = new Set(['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS'])
 
-// Always generate an internal AH-prefixed ref — never expose TC Tour Ref as the system ref
-function generateRef(): string {
+// Use IS number (VN/IS/SG/MY prefix) as the system ref when available; fall back to AH-prefixed ref
+function generateRef(isNumber?: string | null): string {
+  if (isNumber && IS_NUMBER_RE.test(isNumber)) return isNumber.toUpperCase()
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
 }
 
@@ -108,17 +109,24 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
     messages: [
       {
         role: 'system',
-        content: `Vietnam tour operations expert. Generate movement chart from booking data.
+        content: `Vietnam/Asia tour operations expert. Generate movement chart from booking data.
 RULES: ${conditions}
 
-SERVICE TYPE — MANDATORY (override all other logic):
-- Airport/flight transfer → serviceType="PVT_TRANSFER" ALWAYS, no exceptions
-- Leisure day / free time / at leisure / hotel stay only → serviceType="OWN_ARRANGEMENT", meetingTime=null
-- Explicitly SIC/shared → serviceType="SIC_TRANSFER"
-- Private tour, cruise, inter-city with vehicle → serviceType="PVT_TRANSFER"
-- Ticket-only / self-guided → serviceType="OWN_ARRANGEMENT", meetingTime=null
+SERVICE TYPE — MANDATORY (use exactly one of these values):
+- Airport/flight transfer, inter-city flights → serviceType="FLIGHT", meetingTime = depTime minus 3 hours
+- Arrival/departure airport road transfer → serviceType="PVT_TRANSFER"
+- Internal tour (day trip, cruise, guided tour, SIC) explicitly SIC/shared → serviceType="SIC_TRANSFER"
+- Private tour, private cruise, private inter-city transfer → serviceType="PVT_TRANSFER"
+- Hotel check-in / check-out / accommodation stay only → serviceType="ACCOMMODATION", meetingTime=null
+- Internal tour (day trip, cruise, guided tour) private → serviceType="INTERNAL_TOUR"
+- Leisure day / free time / at leisure / own pace → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- Ticket-only / self-guided / entrance only → serviceType="OWN_ARRANGEMENT", meetingTime=null
 
-Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
+SIC TIME RANGE — For SIC_TRANSFER items, always include timeFrom and timeTo fields:
+- timeFrom: pickup/meeting time (e.g. "07:30")
+- timeTo: estimated return time (e.g. "18:00")
+
+Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string|null","toPoint":"string|null","details":"string|null","mealPlan":"string|null","meetingTime":"HH:MM or null","timeFrom":"HH:MM or null","timeTo":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT|FLIGHT|INTERNAL_TOUR|ACCOMMODATION"}] }`,
       },
       { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
     ],
@@ -133,21 +141,43 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
     const parsed = JSON.parse(content) as { items?: any[] }
     const rawItems: any[] = Array.isArray(parsed) ? parsed : (parsed.items ?? [])
 
-    const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight)\b/i
-    const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement|check.?in|check.?out)\b/i
+    const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
+    const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
+    const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
+    const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay|accommodation)\b/i
+    const SIC_RE           = /\bsic\b/i
+    const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
 
     return rawItems.map((item: any) => {
       const from = String(item.fromPoint ?? '')
       const to   = String(item.toPoint   ?? '')
       const det  = String(item.details   ?? '')
       const loc  = String(item.location  ?? '')
-      if (AIRPORT_RE.test(from) || AIRPORT_RE.test(to) || AIRPORT_RE.test(det)) {
-        return { ...item, serviceType: 'PVT_TRANSFER' }
+      let serviceType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'OWN_ARRANGEMENT'
+
+      if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+        serviceType = 'FLIGHT'
+      } else if (AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)) {
+        serviceType = 'PVT_TRANSFER'
+      } else if (SIC_RE.test(loc)) {
+        serviceType = 'SIC_TRANSFER'
+      } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+        serviceType = 'OWN_ARRANGEMENT'
+      } else if (ACCOMMODATION_RE.test(det) || ACCOMMODATION_RE.test(loc)) {
+        serviceType = 'ACCOMMODATION'
       }
-      if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
-        return { ...item, serviceType: 'OWN_ARRANGEMENT', meetingTime: null }
+
+      const meetingTime = serviceType === 'OWN_ARRANGEMENT' || serviceType === 'ACCOMMODATION'
+        ? null
+        : (item.meetingTime ?? null)
+
+      return {
+        ...item,
+        serviceType,
+        meetingTime,
+        timeFrom: item.timeFrom ?? null,
+        timeTo:   item.timeTo   ?? null,
       }
-      return item
     })
   } catch {
     return []
@@ -365,7 +395,8 @@ export async function upsertAgenda(
     for (const item of agendaItems as any[]) {
       if (!item.date) continue
       try {
-        await prisma.agendaItem.create({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (prisma.agendaItem as any).create({
           data: {
             agendaId:    agenda.id,
             date:        new Date(item.date),
@@ -375,7 +406,9 @@ export async function upsertAgenda(
             details:     item.details ?? null,
             mealPlan:    item.mealPlan ?? null,
             meetingTime: item.meetingTime ?? null,
-            serviceType: (item.serviceType ?? 'OWN_ARRANGEMENT') as 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT',
+            timeFrom:    item.timeFrom ?? null,
+            timeTo:      item.timeTo ?? null,
+            serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
           },
         })
       } catch (itemErr) {
@@ -413,8 +446,8 @@ async function syncTourConfirmation(
     existing = await prisma.booking.findFirst({ where: { isNumber: resolvedIsNumber }, orderBy: { createdAt: 'desc' } })
   }
 
-  // Always generate a fresh AH ref for new bookings; reuse existing ref for amendments
-  const bookingRef = existing?.bookingRef ?? generateRef()
+  // Prefer IS number as bookingRef; fall back to AH-prefixed ref for new bookings
+  const bookingRef = existing?.bookingRef ?? generateRef(resolvedIsNumber)
   const isNew = !existing
 
   if (!extracted.arrivalDate || !extracted.departureDate) {

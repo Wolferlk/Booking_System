@@ -148,7 +148,9 @@ FIELD DEFINITIONS — READ CAREFULLY:
 ● "details"   = TWO PARTS MERGED INTO ONE PARAGRAPH (see details rules below).
 ● "mealPlan"  = "B", "L", "D", "BL", "BD", "LD", "BLD" — only when explicitly included.
 ● "meetingTime" = "HH:MM" (required for PVT_TRANSFER and SIC_TRANSFER; null for OWN_ARRANGEMENT).
-● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "OWN_ARRANGEMENT".
+● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "FLIGHT" | "INTERNAL_TOUR" | "ACCOMMODATION" | "OWN_ARRANGEMENT".
+● "timeFrom"    = "HH:MM" pickup/start time for SIC_TRANSFER items only; null for all others.
+● "timeTo"      = "HH:MM" estimated return/end time for SIC_TRANSFER items only; null for all others.
 
 ════════════════════════════════════════════════════════════════
 DETAILS FIELD — TWO-PART STRUCTURE (MANDATORY):
@@ -209,10 +211,13 @@ FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
   4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
 
 ════════════════════════════════════════════════════════════════
-SERVICE TYPE RULES:
-  - Airport day → PVT_TRANSFER always
-  - "SIC" in title → SIC_TRANSFER
-  - "Private" / "PVT" / "cruise" in title → PVT_TRANSFER
+SERVICE TYPE RULES (use EXACTLY one of these values):
+  - Domestic/internal flight → FLIGHT; meetingTime = depTime minus 3 hours
+  - Airport road transfer (arrival or departure) → PVT_TRANSFER always
+  - "SIC" in title → SIC_TRANSFER; set timeFrom (pickup) and timeTo (return)
+  - Private tour / cruise / day trip → INTERNAL_TOUR
+  - "Private" / "PVT" inter-city road transfer → PVT_TRANSFER
+  - Hotel check-in / accommodation stay → ACCOMMODATION; meetingTime = null
   - Leisure / free day / at own pace / OWN → OWN_ARRANGEMENT, meetingTime = null
 
 MEETING TIME DEFAULTS:
@@ -228,7 +233,7 @@ ADDITIONAL RULES:
   - Never leave location empty or generic
 
 ════════════════════════════════════════════════════════════════
-Return ONLY a JSON object: { "items": [ { all 7 fields required } ] }`
+Return ONLY a JSON object: { "items": [ { all 9 fields required: date, location, fromPoint, toPoint, details, mealPlan, meetingTime, timeFrom, timeTo, serviceType } ] }`
 
   const userContent = `Generate the movement chart for booking ${params.ref}.
 
@@ -259,8 +264,12 @@ ${tqDocumentText
     : parsed.items ?? parsed.agenda ?? parsed.days ?? []
 
   // ── Post-process ─────────────────────────────────────────────────────────
-  const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight|✈)\b/i
-  const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
+  const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
+  const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
+  const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
+  const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay)\b/i
+  const SIC_RE           = /\bsic\b/i
+  const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
 
   const items = rawItems.map(item => {
     const from = String(item.fromPoint ?? '')
@@ -268,24 +277,39 @@ ${tqDocumentText
     const loc  = String(item.location  ?? '')
     const det  = String(item.details   ?? '')
 
-    const isAirportItem = AIRPORT_RE.test(from) || AIRPORT_RE.test(to)
-      || AIRPORT_RE.test(det) || AIRPORT_RE.test(loc)
+    const isAirportRoad = AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)
 
-    let serviceType = String(item.serviceType ?? 'OWN_ARRANGEMENT')
+    let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'OWN_ARRANGEMENT'
     let meetingTime = item.meetingTime as string | null | undefined
 
-    if (isAirportItem) {
+    // Override with deterministic rules (content signals beat AI classification)
+    if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+      serviceType = 'FLIGHT'
+    } else if (isAirportRoad) {
       serviceType = 'PVT_TRANSFER'
+    } else if (SIC_RE.test(loc)) {
+      serviceType = 'SIC_TRANSFER'
     } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
       serviceType = 'OWN_ARRANGEMENT'
+      meetingTime = null
+    } else if (ACCOMMODATION_RE.test(det) || ACCOMMODATION_RE.test(loc)) {
+      serviceType = 'ACCOMMODATION'
       meetingTime = null
     }
 
     // Normalise airport fromPoint / toPoint labels
-    const normFrom = normaliseAirportPoint(from, isAirportItem)
-    const normTo   = normaliseAirportPoint(to, isAirportItem)
+    const normFrom = normaliseAirportPoint(from, isAirportRoad)
+    const normTo   = normaliseAirportPoint(to, isAirportRoad)
 
-    return { ...item, serviceType, meetingTime, fromPoint: normFrom, toPoint: normTo }
+    return {
+      ...item,
+      serviceType,
+      meetingTime,
+      timeFrom: item.timeFrom ?? null,
+      timeTo:   item.timeTo   ?? null,
+      fromPoint: normFrom,
+      toPoint: normTo,
+    }
   })
 
   return buildApiSuccess({ items }, `Generated ${items.length} agenda items`)

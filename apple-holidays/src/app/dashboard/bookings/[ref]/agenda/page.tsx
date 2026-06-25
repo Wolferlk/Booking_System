@@ -20,9 +20,12 @@ import { formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
 const SERVICE_TYPES = [
-  { value: 'PVT_TRANSFER',    label: 'PVT Transfer',    color: 'blue'  as const },
-  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',    color: 'green' as const },
-  { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement', color: 'gray'  as const },
+  { value: 'PVT_TRANSFER',    label: 'PVT Transfer',    color: 'blue'   as const },
+  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',    color: 'green'  as const },
+  { value: 'FLIGHT',          label: 'Flight',          color: 'indigo' as const },
+  { value: 'INTERNAL_TOUR',   label: 'Internal Tour',   color: 'purple' as const },
+  { value: 'ACCOMMODATION',   label: 'Accommodation',   color: 'amber'  as const },
+  { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement', color: 'gray'   as const },
 ]
 
 interface AgendaItem {
@@ -34,6 +37,8 @@ interface AgendaItem {
   details: string
   mealPlan: string
   meetingTime: string
+  timeFrom: string
+  timeTo: string
   serviceType: string
   assignment?: {
     driverId?: string | null
@@ -205,13 +210,15 @@ export default function AgendaPage() {
           const i = raw as Partial<{
             id: string; date: string; location: string; fromPoint: string
             toPoint: string; details: string; mealPlan: string
-            meetingTime: string; serviceType: string; assignment: AgendaItem['assignment']
+            meetingTime: string; timeFrom: string; timeTo: string
+            serviceType: string; assignment: AgendaItem['assignment']
           }>
           return {
             id: i.id, date: i.date?.slice(0, 10) ?? '', location: i.location ?? '',
             fromPoint: i.fromPoint ?? '', toPoint: i.toPoint ?? '',
             details: i.details ?? '', mealPlan: i.mealPlan ?? '',
-            meetingTime: i.meetingTime ?? '', serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
+            meetingTime: i.meetingTime ?? '', timeFrom: i.timeFrom ?? '',
+            timeTo: i.timeTo ?? '', serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
             assignment: i.assignment,
           }
         }))
@@ -258,7 +265,8 @@ export default function AgendaPage() {
       date: (item.date as string)?.slice(0, 10) ?? '',
       fromPoint: item.fromPoint ?? '', toPoint: item.toPoint ?? '',
       details: item.details ?? '', mealPlan: item.mealPlan ?? '',
-      meetingTime: item.meetingTime ?? '', serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
+      meetingTime: item.meetingTime ?? '', timeFrom: (item as any).timeFrom ?? '',
+      timeTo: (item as any).timeTo ?? '', serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
     }))
   }
 
@@ -448,19 +456,16 @@ export default function AgendaPage() {
     } finally { setLoadingDriver(false) }
   }
 
-  // Reorder a movement item from one position to another. Dates are anchored to
-  // POSITIONS, not items — after the move each item adopts the date of the slot
-  // it lands in (so dragging an 08.04 item above an 08.03 item swaps the dates).
+  // Reorder a movement item from one position to another.
+  // Each item keeps its OWN date — only the display order changes.
   function moveItem(from: number, to: number) {
     if (from === to || from < 0 || to < 0) return
     setItems(prev => {
       if (from >= prev.length || to >= prev.length) return prev
-      const positionalDates = prev.map(it => it.date)   // dates in their current slots
       const next = [...prev]
       const [moved] = next.splice(from, 1)
       next.splice(to, 0, moved)
-      // Re-anchor each slot's original date back onto whatever item now sits there
-      return next.map((it, idx) => ({ ...it, date: positionalDates[idx] ?? it.date }))
+      return next
     })
   }
 
@@ -832,8 +837,11 @@ export default function AgendaPage() {
                   </div>
                 )}
                 <div className={`w-1.5 flex-shrink-0 ${
-                  item.serviceType === 'PVT_TRANSFER' ? 'bg-blue-400' :
-                  item.serviceType === 'SIC_TRANSFER' ? 'bg-green-400' : 'bg-slate-200'
+                  item.serviceType === 'PVT_TRANSFER'    ? 'bg-blue-400'   :
+                  item.serviceType === 'SIC_TRANSFER'    ? 'bg-green-400'  :
+                  item.serviceType === 'FLIGHT'          ? 'bg-indigo-400' :
+                  item.serviceType === 'INTERNAL_TOUR'   ? 'bg-purple-400' :
+                  item.serviceType === 'ACCOMMODATION'   ? 'bg-amber-400'  : 'bg-slate-200'
                 }`} />
 
                 <div className="flex-1 p-5">
@@ -872,6 +880,20 @@ export default function AgendaPage() {
                             {SERVICE_TYPES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                           </select>
                         </div>
+                        {item.serviceType === 'SIC_TRANSFER' && (
+                          <>
+                            <div>
+                              <label className="form-label text-xs">Time From</label>
+                              <input type="time" className="form-input text-sm py-1.5" value={item.timeFrom}
+                                onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, timeFrom: e.target.value } : x))} />
+                            </div>
+                            <div>
+                              <label className="form-label text-xs">Time To</label>
+                              <input type="time" className="form-input text-sm py-1.5" value={item.timeTo}
+                                onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, timeTo: e.target.value } : x))} />
+                            </div>
+                          </>
+                        )}
                         <div>
                           <label className="form-label text-xs">Meal Plan</label>
                           <input
@@ -986,6 +1008,11 @@ export default function AgendaPage() {
                           )}
                           {item.meetingTime && (
                             <span className="text-xs text-slate-500">Meet: {item.meetingTime}</span>
+                          )}
+                          {item.serviceType === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo) && (
+                            <span className="text-xs text-slate-500">
+                              {item.timeFrom && `From: ${item.timeFrom}`}{item.timeFrom && item.timeTo && ' · '}{item.timeTo && `To: ${item.timeTo}`}
+                            </span>
                           )}
                         </div>
 
@@ -1315,7 +1342,7 @@ export default function AgendaPage() {
           <Button variant="secondary" icon={<Plus className="w-4 h-4" />}
             onClick={() => setItems(is => [...is, {
               date: '', location: '', fromPoint: '', toPoint: '',
-              details: '', mealPlan: '', meetingTime: '', serviceType: 'OWN_ARRANGEMENT',
+              details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: 'OWN_ARRANGEMENT',
             }])}>
             Add Movement Item
           </Button>

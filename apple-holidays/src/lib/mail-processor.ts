@@ -164,9 +164,9 @@ Return ONLY valid JSON matching this exact schema:
   "currency": "USD",
   "terms": "full terms and conditions text or null",
   "exclusions": "exclusions text or null",
-  "isNumber": "IS/VN/SG/MY number exactly as written (e.g. VN19785, IS48375, SG22232) — look for 'IS Number:' label in the confirmation body. Return null if not found.",
+  "isNumber": "IS/VN/SG/MY number exactly as written (e.g. VN19785, IS48375, SG22232, MY40586) — look for 'IS Number:' label in the confirmation body. MUST start with VN, IS, SG, or MY followed by digits only. Return null if not found.",
   "dealName": "Deal name or booking title from the email subject or confirmation header (e.g. 'Rakshitha - Vietnam - 060626', 'Arpit Jain - Sri Lanka'). Strip the agent booking ID and country prefix/suffix from the subject line if present.",
-  "tourDestination": "Primary destination country or region (e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia'). Infer from IS number prefix (VN=Vietnam, IS=Sri Lanka, SG/MY=Singapore & Malaysia) or email content.",
+  "tourDestination": "Exact primary destination country or region as named in the TC (e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia', 'Bali'). Infer from IS number prefix (VN=Vietnam, IS=Sri Lanka, SG/MY=Singapore & Malaysia) or email content. Do NOT shorten or truncate.",
   "chauffeurContact": "Chauffeur or tour guide contact information as listed in the confirmation — may be a name and phone, or 'Will Advice'. Return null if not found.",
   "languagePreference": "Guest preferred language (e.g. 'English', 'Hindi', 'Tamil'). Look for 'Language Preference' or similar field. Return null if not specified.",
   "specialOccasions": "Any special occasions mentioned (e.g. 'Honeymoon', 'Anniversary', 'Birthday'). Return null if not mentioned.",
@@ -184,17 +184,45 @@ Return ONLY valid JSON matching this exact schema:
   "contactAddress": "lead customer home/mailing address or null",
   "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false, "mealPreference": "string or null — e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement', 'Special Meal' fields per passenger, or a booking-level note. Return null if not specified." }],
-  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "IATA code", "depTime": "HH:MM or null", "toApt": "IATA code", "arrTime": "HH:MM or null", "airline": "string or null", "notes": "string or null" }],
-  "accommodations": [{ "hotel": "hotel name", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
-  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "short activity title", "description": "detailed description or null" }],
+  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "3-letter IATA code", "depTime": "HH:MM or null", "toApt": "3-letter IATA code", "arrTime": "HH:MM or null", "airline": "string or null", "notes": "string or null" }],
+  "accommodations": [{ "hotel": "exact full hotel name as written in TC", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
+  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "EXACT complete tour/activity title — copy verbatim from TC, do NOT shorten or paraphrase", "description": "exact description from TC document verbatim — do NOT omit, shorten or summarise. Return null only if no description exists.", "serviceType": "PVT_TRANSFER|SIC_TRANSFER|FLIGHT|INTERNAL_TOUR|ACCOMMODATION|OWN_ARRANGEMENT" }],
   "pnlLines": []
 }
 
+IS NUMBER EXTRACTION (CRITICAL):
+- The IS Number is always labelled "IS Number:" in the TC body. Examples: VN40123, VN41678, IS23492, IS34050, IS10567, MY40586, MY6785, SG57685, SG38456
+- Prefix rules: VN = Vietnam, IS = Sri Lanka, SG = Singapore, MY = Malaysia
+- Extract EXACTLY as written, including the prefix letters (e.g. "VN19785" not "19785")
+- Remove spaces: "VN 19785" → "VN19785"
+- Return null ONLY if truly absent — never guess or fabricate
+
+ITINERARY EXTRACTION (CRITICAL):
+- Extract EVERY single day and service from the TC: airport transfers, SIC tours, private tours, internal flights, hotel stays, cruises, day trips
+- "title" must be the COMPLETE official tour name from the TC — never shorten or paraphrase (e.g. "Full-day Halong Cozy Bay Cruise Day Tour (SIC transfer + SIC cruise)" not "Halong Cruise")
+- "description" must be the exact description text from the TC — copy it verbatim
+- "serviceType" classification:
+  - Airport transfer (arrival/departure road transfer) → "PVT_TRANSFER"
+  - Internal/domestic flight → "FLIGHT"
+  - SIC/shared tour or transfer → "SIC_TRANSFER"
+  - Private tour, private cruise, private day trip → "INTERNAL_TOUR"
+  - Hotel check-in/stay → "ACCOMMODATION"
+  - Leisure / free day / own arrangement → "OWN_ARRANGEMENT"
+  - Anything private with a vehicle (non-airport) → "PVT_TRANSFER"
+
+DATE EXTRACTION:
+- Support all formats: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, Month DD YYYY, DD Month YYYY, YYYY-MM-DD
+- Always convert to YYYY-MM-DD in output
+- Assign correct date to EACH itinerary item, flight, and accommodation
+
+LOCATION ACCURACY:
+- tourDestination: exact country/region as stated in the TC — never abbreviate or generalise
+- itineraryItems location: exact city, area, or landmark as stated in the TC
+
 IMPORTANT: Use ONLY the Tour Ref as bookingRef. Strip any trailing non-numeric suffix before returning (e.g. 469182CNTL → "469182", 463658CNTL → "463658"). Do NOT use IS Number, VN Number, or any agent reference as bookingRef. If no Tour Ref is found, return null for bookingRef.
-IS NUMBER: The IS Number appears on a line labelled "IS Number" in the tour confirmation body. It starts with a prefix (VN for Vietnam, IS for Sri Lanka, SG for Singapore, MY for Malaysia) followed by digits. Always extract it exactly as written including the prefix (e.g. "VN19785", "IS48375").
 DEAL NAME: Usually found in the email subject between the agent booking ID and date codes — e.g. subject "Quotation | 402011387896 | Rakshitha - Vietnam - 060626 | ..." → dealName is "Rakshitha - Vietnam - 060626".
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
-For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, CMB=Colombo, etc.).
+For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, CMB=Colombo, KUL=Kuala Lumpur, SIN=Singapore, BOM=Mumbai, DEL=Delhi, etc.).
 Date format must be YYYY-MM-DD strictly.
 CONTACT EXTRACTION: Scan all of — email From/Reply-To headers, email signatures, booking form fields, "Contact Details" / "Guest Info" sections, and footers. Extract BOTH agent (sender company) and customer/tourist (traveller) contacts separately.
 GUEST PHONE FIELDS: MakeMyTrip and similar agents include fields like "Lead Pax Contact Number", "Guest Contact Number", or "Lead Passenger Contact" — these are the tourist/customer phone numbers; always map them to contactPhone/contactWhatsapp.
