@@ -145,6 +145,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
 
@@ -333,4 +334,9 @@ export async function POST(req: NextRequest) {
   })
 
   return buildApiSuccess(booking, 'Booking created successfully')
+  } catch (err: unknown) {
+    console.error('[POST /api/bookings]', err)
+    const message = err instanceof Error ? err.message : String(err)
+    return buildApiError(`Internal server error: ${message}`, 500)
+  }
 }
