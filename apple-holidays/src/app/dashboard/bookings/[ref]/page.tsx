@@ -906,7 +906,7 @@ Wishing you a wonderful trip! ✈️
                   <Send className="w-3.5 h-3.5" /> Send Email
                 </button>
               )}
-              {role === 'SUPER_ADMIN' && !['COMPLETED'].includes(status) && (
+              {['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && !['COMPLETED'].includes(status) && (
                 <button
                   onClick={async () => {
                     if (!confirm(`Permanently delete booking ${ref}? This cannot be undone.`)) return
