@@ -9,7 +9,6 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
-import { generateBookingRef } from '@/lib/utils'
 import { detectCountryFromPath, detectCountryFromRef, countryLabel } from '@/lib/country-detection'
 
 // ─── Drive options per destination country ────────────────────────────────────
@@ -21,6 +20,13 @@ const COUNTRY_DRIVES = [
 ] as const
 
 type DriveKey = typeof COUNTRY_DRIVES[number]['driveKey']
+
+// ─── IS Number normalization ──────────────────────────────────────────────────
+function normalizeISNumber(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const cleaned = raw.replace(/\s+/g, '').toUpperCase()
+  return /^(VN|IS|SG|MY)\d+$/.test(cleaned) ? cleaned : null
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,9 +57,9 @@ export default function NewBookingPage() {
     }
   }, [selectedDriveKey])
 
-  // Form state
+  // Form state — bookingRef starts empty, filled from IS Number on AI extraction
   const [form, setForm] = useState({
-    bookingRef: generateBookingRef(),
+    bookingRef: '',
     agentBookingId: '',
     agent: 'Make My Trip',
     fileHandler: '',
@@ -73,6 +79,14 @@ export default function NewBookingPage() {
     contactEmail: '',
     contactPhone: '',
     contactWhatsapp: '',
+    // Additional TC sections
+    valueAddedServices: '',
+    packageIncludes: '',
+    packageExcludes: '',
+    importantNotes: '',
+    tips: '',
+    otherNote: '',
+    clientRequest: '',
   })
 
   const [passengers,        setPassengers]        = useState<Passenger[]>([
@@ -94,9 +108,14 @@ export default function NewBookingPage() {
   // ── Apply extracted data to form ──────────────────────────────────────────
   function handleAIParsed(data: Record<string, unknown>) {
     if (!data) return
+
+    // IS Number is the booking reference — normalize and use directly
+    const extractedISNumber = normalizeISNumber(data.isNumber as string | null)
+
     setForm(prev => ({
       ...prev,
-      bookingRef:     prev.bookingRef,
+      // bookingRef = IS Number (the extracted IS Number is the canonical booking reference)
+      bookingRef:     extractedISNumber || prev.bookingRef,
       agentBookingId: (data.agentBookingId as string) || (data.bookingRef as string) || prev.agentBookingId,
       agent:          (data.agent          as string) || prev.agent,
       fileHandler:    (data.fileHandler    as string) || prev.fileHandler,
@@ -116,6 +135,14 @@ export default function NewBookingPage() {
       contactEmail:   (data.contactEmail   as string) || prev.contactEmail,
       contactPhone:   (data.contactPhone   as string) || prev.contactPhone,
       contactWhatsapp:(data.contactWhatsapp as string) || prev.contactWhatsapp,
+      // Additional TC sections
+      valueAddedServices: (data.valueAddedServices as string) || prev.valueAddedServices,
+      packageIncludes:    (data.packageIncludes    as string) || prev.packageIncludes,
+      packageExcludes:    (data.packageExcludes    as string) || prev.packageExcludes,
+      importantNotes:     (data.importantNotes     as string) || prev.importantNotes,
+      tips:               (data.tips               as string) || prev.tips,
+      otherNote:          (data.otherNote          as string) || prev.otherNote,
+      clientRequest:      (data.clientRequest      as string) || prev.clientRequest,
     }))
 
     const pax = data.passengers as Passenger[] | undefined
@@ -160,9 +187,6 @@ export default function NewBookingPage() {
       if (!json.success) throw new Error(json.error)
       handleAIParsed(json.data.extracted)
 
-      // The MY and SG buttons open the SAME OneDrive — Singapore vs Malaysia is
-      // determined by the sub-folder ("…/Singapore Drive" vs "…/Malaysia Drive").
-      // Detect from the folder path first, then the file URL, then the booking ref.
       const extractedRef = (json.data.extracted?.bookingRef as string) || ''
       const detected =
         detectCountryFromPath(folderPath) ||
@@ -188,6 +212,12 @@ export default function NewBookingPage() {
     try {
       if (!selectedCountry) {
         toast.error('Please select a destination country before creating the booking')
+        setSaving(false)
+        return
+      }
+
+      if (!form.bookingRef.trim()) {
+        toast.error('Booking Reference is required. Upload a TC document to extract the IS Number, or enter it manually.')
         setSaving(false)
         return
       }
@@ -238,7 +268,7 @@ export default function NewBookingPage() {
           <CardHeader>
             <h3 className="text-base font-semibold text-slate-900">AI Document Parser</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Upload or select a tour confirmation — AI will auto-fill the form below.
+              Upload or select a tour confirmation — AI will auto-fill the form below. The IS Number from the document becomes the Booking Reference.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -410,9 +440,15 @@ export default function NewBookingPage() {
                 </div>
               </div>
               <div>
-                <label className="form-label">Booking Ref *</label>
-                <input className="form-input font-mono" required value={form.bookingRef}
-                  onChange={e => setForm(p => ({ ...p, bookingRef: e.target.value }))} />
+                <label className="form-label">Booking Ref (IS Number) *</label>
+                <input
+                  className="form-input font-mono"
+                  required
+                  placeholder="e.g. VN19005, IS48377, SG22232"
+                  value={form.bookingRef}
+                  onChange={e => setForm(p => ({ ...p, bookingRef: e.target.value.trim().toUpperCase() }))}
+                />
+                <p className="text-xs text-slate-400 mt-0.5">Filled automatically from the IS Number in the TC document</p>
               </div>
               <div>
                 <label className="form-label">MMT / Agent Booking ID</label>
@@ -664,11 +700,32 @@ export default function NewBookingPage() {
             </div>
           </Section>
 
-          {/* Terms */}
-          <Section title="Terms & Policy">
+          {/* Package Sections */}
+          <Section title="Package Details">
             <div className="grid gap-4">
               <div>
-                <label className="form-label">Terms & Conditions</label>
+                <label className="form-label">Value Added Services</label>
+                <textarea className="form-textarea" rows={2} value={form.valueAddedServices}
+                  onChange={e => setForm(p => ({ ...p, valueAddedServices: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Above Package Includes</label>
+                <textarea className="form-textarea" rows={3} value={form.packageIncludes}
+                  onChange={e => setForm(p => ({ ...p, packageIncludes: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">The Above Package Excludes</label>
+                <textarea className="form-textarea" rows={3} value={form.packageExcludes}
+                  onChange={e => setForm(p => ({ ...p, packageExcludes: e.target.value }))} />
+              </div>
+            </div>
+          </Section>
+
+          {/* Terms & Notes */}
+          <Section title="Terms, Notes & Client Requests">
+            <div className="grid gap-4">
+              <div>
+                <label className="form-label">Terms &amp; Conditions</label>
                 <textarea className="form-textarea" rows={3} value={form.terms}
                   onChange={e => setForm(p => ({ ...p, terms: e.target.value }))} />
               </div>
@@ -681,6 +738,26 @@ export default function NewBookingPage() {
                 <label className="form-label">Policy Notes</label>
                 <textarea className="form-textarea" rows={2} value={form.policyNotes}
                   onChange={e => setForm(p => ({ ...p, policyNotes: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Important Notes</label>
+                <textarea className="form-textarea" rows={2} value={form.importantNotes}
+                  onChange={e => setForm(p => ({ ...p, importantNotes: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Tips</label>
+                <textarea className="form-textarea" rows={2} value={form.tips}
+                  onChange={e => setForm(p => ({ ...p, tips: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Other Note</label>
+                <textarea className="form-textarea" rows={2} value={form.otherNote}
+                  onChange={e => setForm(p => ({ ...p, otherNote: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Client Request</label>
+                <textarea className="form-textarea" rows={2} value={form.clientRequest}
+                  onChange={e => setForm(p => ({ ...p, clientRequest: e.target.value }))} />
               </div>
             </div>
           </Section>

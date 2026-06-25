@@ -55,6 +55,14 @@ export interface ExtractedBooking {
   currency: string
   terms: string | null
   exclusions: string | null
+  // Additional TC sections
+  valueAddedServices: string | null
+  packageIncludes: string | null
+  packageExcludes: string | null
+  importantNotes: string | null
+  tips: string | null
+  otherNote: string | null
+  clientRequest: string | null
   // TC confirmation specific fields
   isNumber: string | null
   dealName: string | null
@@ -152,7 +160,7 @@ Extract ALL booking details from this email thread. Focus on the MOST RECENT tou
 
 Return ONLY valid JSON matching this exact schema:
 {
-  "bookingRef": "Tour Ref numeric part ONLY — strip any trailing letters like CNTL (e.g. 469182CNTL → \"469182\"). Return null if no Tour Ref is present. Do NOT use IS Number or VN Number.",
+  "bookingRef": "Tour Ref IS any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
   "agentBookingId": "Agent's booking ID / reference number from the email subject or booking form (e.g. 402011138462)",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip, Tours Experts)",
   "fileHandler": "File handler or account manager name listed in the confirmation (e.g. Sangeetha Priya, Yogi, Shehan Jayakody)",
@@ -219,7 +227,8 @@ LOCATION ACCURACY:
 - tourDestination: exact country/region as stated in the TC — never abbreviate or generalise
 - itineraryItems location: exact city, area, or landmark as stated in the TC
 
-IMPORTANT: Use ONLY the Tour Ref as bookingRef. Strip any trailing non-numeric suffix before returning (e.g. 469182CNTL → "469182", 463658CNTL → "463658"). Do NOT use IS Number, VN Number, or any agent reference as bookingRef. If no Tour Ref is found, return null for bookingRef.
+IMPORTANT:   "bookingRef": "set as IS number  any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
+
 DEAL NAME: Usually found in the email subject between the agent booking ID and date codes — e.g. subject "Quotation | 402011387896 | Rakshitha - Vietnam - 060626 | ..." → dealName is "Rakshitha - Vietnam - 060626".
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, CMB=Colombo, KUL=Kuala Lumpur, SIN=Singapore, BOM=Mumbai, DEL=Delhi, etc.).
@@ -255,7 +264,7 @@ CRITICAL — Booking Reference:
 
 Return ONLY valid JSON (no markdown):
 {
-  "bookingRef": "Tour No or IS Number cleaned (e.g. 469083, IS48369, VN19679)",
+  "bookingRef": "Tour No or IS Number cleaned (e.g. SG46903, IS48369, VN19679)",
   "paxAdults": number,
   "paxChildren": number,
   "pnlLines": [
@@ -324,6 +333,13 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     currency:         parsed.currency         ?? 'USD',
     terms:            parsed.terms            ?? null,
     exclusions:       parsed.exclusions       ?? null,
+    valueAddedServices: (parsed as Record<string, unknown>).valueAddedServices as string | null ?? null,
+    packageIncludes:    (parsed as Record<string, unknown>).packageIncludes    as string | null ?? null,
+    packageExcludes:    (parsed as Record<string, unknown>).packageExcludes    as string | null ?? null,
+    importantNotes:     (parsed as Record<string, unknown>).importantNotes     as string | null ?? null,
+    tips:               (parsed as Record<string, unknown>).tips               as string | null ?? null,
+    otherNote:          (parsed as Record<string, unknown>).otherNote          as string | null ?? null,
+    clientRequest:      (parsed as Record<string, unknown>).clientRequest      as string | null ?? null,
     isNumber:         parsed.isNumber         ?? null,
     dealName:         parsed.dealName         ?? null,
     tourDestination:  parsed.tourDestination  ?? null,

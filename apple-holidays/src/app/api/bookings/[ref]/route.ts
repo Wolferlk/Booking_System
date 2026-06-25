@@ -108,6 +108,9 @@ export async function PUT(
     arrivalDate, departureDate, paxAdults, paxChildren,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
+    // Additional TC sections
+    valueAddedServices, packageIncludes, packageExcludes,
+    importantNotes, tips, otherNote, clientRequest,
     // TC identifier fields (editable by BT/GT/SA)
     isNumber,
     // Contact info fields (editable at any booking status)
@@ -159,6 +162,13 @@ export async function PUT(
       ...(exclusions !== undefined && { exclusions }),
       ...(policyNotes !== undefined && { policyNotes }),
       ...(amendmentNote !== undefined && { amendmentNote }),
+      ...(valueAddedServices !== undefined && { valueAddedServices }),
+      ...(packageIncludes    !== undefined && { packageIncludes }),
+      ...(packageExcludes    !== undefined && { packageExcludes }),
+      ...(importantNotes     !== undefined && { importantNotes }),
+      ...(tips               !== undefined && { tips }),
+      ...(otherNote          !== undefined && { otherNote }),
+      ...(clientRequest      !== undefined && { clientRequest }),
       ...(agentEmail !== undefined && { agentEmail }),
       ...(agentPhone !== undefined && { agentPhone }),
       ...(agentWhatsapp !== undefined && { agentWhatsapp }),

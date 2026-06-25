@@ -1,7 +1,18 @@
 import OpenAI from 'openai'
 
+function getOpenAIKey() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
+  if (!apiKey) return undefined
+
+  if (/^https?:\/\//i.test(apiKey)) {
+    throw new Error('Invalid OPENAI_API_KEY: expected an OpenAI secret key, but found a URL.')
+  }
+
+  return apiKey
+}
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: getOpenAIKey(),
 })
 
 export default openai
@@ -57,6 +68,32 @@ const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assi
 Extract structured booking data from the provided tour confirmation document text.
 Return ONLY valid JSON matching the schema below. If a field is not found, use null.
 
+## CRITICAL — IS Number Extraction (HIGHEST PRIORITY)
+
+The IS Number is the MOST IMPORTANT field. It is always labelled exactly as:
+  IS Number: VN40123
+  IS Number: IS23492
+  IS Number: MY40586
+  IS Number: SG57685
+
+Supported prefixes and their meaning:
+  VN = Vietnam
+  IS = Sri Lanka
+  SG = Singapore
+  MY = Malaysia
+
+Rules for isNumber:
+- Search the ENTIRE document for the label "IS Number:" followed by the code.
+- Also check: embedded in Tour Ref after "||" or " / " (e.g. "463720CNTL||SG22228" → SG22228).
+- Also check: "Confirmation Number:", "Booking No:", "Reference No:" sections.
+- Remove ANY spaces between prefix and digits (e.g. "VN 19785" → "VN19785", "IS 40567" → "IS40567").
+- Preserve prefix letters exactly (uppercase).
+- NEVER generate or fabricate an IS Number.
+- Return null ONLY if the IS Number is truly absent from the document.
+
+Valid examples: VN19785, IS40567, SG56789, MY12345
+Invalid (reject): 19785, 40567, VNXXXX, IS-40567
+
 Schema:
 {
   "bookingRef": "string — the TC Tour Ref / Tour No exactly as printed (e.g. '469182CNTL', '463720CNTL||SG22228', '459773CNTL / VN19428'). Copy verbatim including any || or / separators.",
@@ -70,9 +107,17 @@ Schema:
   "quotedTotal": "number",
   "currency": "string (default USD)",
   "amendmentNote": "string or null",
-  "terms": "string or null",
-  "exclusions": "string or null",
+  "terms": "string or null — full Terms and Conditions text",
+  "exclusions": "string or null — The Above Package Excludes section",
   "policyNotes": "string or null",
+
+  "valueAddedServices": "string or null — 'Value Added Services' section text verbatim",
+  "packageIncludes": "string or null — 'Above Package Includes' section text verbatim",
+  "packageExcludes": "string or null — 'The Above Package Excludes' section text verbatim (same as exclusions but kept separately for display)",
+  "importantNotes": "string or null — 'IMPORTANT NOTES' or 'Important Note' section text verbatim",
+  "tips": "string or null — 'TIPS' section text verbatim",
+  "otherNote": "string or null — 'Other Note' or 'Other Notes' section text verbatim",
+  "clientRequest": "string or null — 'Client Request' or 'Special Request' section text verbatim",
 
   "agentEmail": "string or null — email address of the travel agent / booking company (found in From:, CC:, agent signature, or booking header)",
   "agentPhone": "string or null — phone/mobile number of the travel agent or company",
@@ -84,7 +129,7 @@ Schema:
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
 
-  "isNumber": "string or null — IS/VN/SG/MY/MY number e.g. VN19005, IS48377, SG22232, MY23122. Search EVERYWHERE: labeled 'IS Number', 'Confirmation Number', 'Booking No', or embedded in Tour Ref after '||' or ' / ' (e.g. '463720CNTL||SG22228' → SG22228, '459773CNTL / VN19428' → VN19428). ALWAYS extract if any such code is present.",
+  "isNumber": "string or null — CRITICAL: IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122. Extract EXACTLY as written, remove spaces (VN 19785 → VN19785). Labeled 'IS Number:' in the document. ALWAYS extract if present. Return null only if truly absent.",
   "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
   "tourDestination": "string or null — destination country/city e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia' (labeled 'Destination' in TC)",
   "chauffeurContact": "string or null — chauffeur or tour guide contact details (labeled 'Chauffeur/Tour guide contact' in TC)",
@@ -158,8 +203,9 @@ Contact classification rules:
 Be precise and complete. Do not invent data.
 Important:
 - bookingRef must be the exact TC Tour Ref printed on the document (copy verbatim, including any || or / separators).
-- Always extract isNumber if any IS/VN/SG/MY code appears anywhere in the document, including embedded in the Tour Ref.
-- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.`
+- isNumber is CRITICAL — always extract if any IS/VN/SG/MY code appears anywhere in the document.
+- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.
+- For valueAddedServices, packageIncludes, packageExcludes, importantNotes, tips, otherNote, clientRequest: copy the section content verbatim as a single string. If the section is absent, return null.`
 
 const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.
 Extract P&L (profit & loss) data from the provided Excel/CSV content.
@@ -184,16 +230,35 @@ Schema:
   ]
 }`
 
+// ─── IS Number helpers ────────────────────────────────────────────────────
+
+const IS_NUMBER_PATTERN = /^(VN|IS|SG|MY)\s*\d+$/i
+
+export function normalizeISNumber(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const cleaned = raw.replace(/\s+/g, '').toUpperCase()
+  return IS_NUMBER_PATTERN.test(cleaned) ? cleaned : null
+}
+
+export function extractISNumberFromText(text: string): string | null {
+  const match = text.match(/IS\s*Number\s*[:\-]\s*((VN|IS|SG|MY)\s*\d+)/i)
+  if (match) return normalizeISNumber(match[1])
+  return null
+}
+
 // ─── Extraction functions ────────────────────────────────────────────────
 
 export async function extractBookingFromText(documentText: string, bookingRef?: string): Promise<Record<string, unknown>> {
+  // Regex pre-extraction as ground truth for IS Number (AI may miss it)
+  const regexISNumber = extractISNumberFromText(documentText)
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: BOOKING_EXTRACTION_PROMPT },
       {
         role: 'user',
-        content: `Extract booking data from this document:\n\n${documentText.slice(0, 12000)}`,
+        content: `Extract booking data from this document:\n\n${documentText.slice(0, 14000)}`,
       },
     ],
     response_format: { type: 'json_object' },
@@ -203,7 +268,13 @@ export async function extractBookingFromText(documentText: string, bookingRef?: 
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
-  return JSON.parse(content)
+  const result = JSON.parse(content) as Record<string, unknown>
+
+  // Normalize the AI-extracted IS Number; fall back to regex if AI missed it
+  const aiISNumber = normalizeISNumber(result.isNumber as string | null)
+  result.isNumber = aiISNumber ?? regexISNumber
+
+  return result
 }
 
 // Intelligently classify activity names into P&L categories using GPT

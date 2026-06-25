@@ -259,6 +259,15 @@ model Booking {
   contactCountry        String?
   contactAddress        String?       @db.Text
 
+  // Additional booking sections extracted from Travel Confirmations
+  valueAddedServices    String?       @db.Text
+  packageIncludes       String?       @db.Text
+  packageExcludes       String?       @db.Text
+  importantNotes        String?       @db.Text
+  tips                  String?       @db.Text
+  otherNote             String?       @db.Text
+  clientRequest         String?       @db.Text
+
   sourceDocUrl          String?       @db.Text
   sourceDocName         String?
 

@@ -53,6 +53,8 @@ export default function BookingDetailPage() {
     paxAdults: '2', paxChildren: '0',
     quotedTotal: '', currency: 'USD',
     terms: '', exclusions: '', policyNotes: '', amendmentNote: '',
+    valueAddedServices: '', packageIncludes: '', packageExcludes: '',
+    importantNotes: '', tips: '', otherNote: '', clientRequest: '',
   })
   const [savingBooking, setSavingBooking] = useState(false)
 
@@ -378,6 +380,13 @@ export default function BookingDetailPage() {
       exclusions: String(booking.exclusions ?? ''),
       policyNotes: String(booking.policyNotes ?? ''),
       amendmentNote: String(booking.amendmentNote ?? ''),
+      valueAddedServices: String(booking.valueAddedServices ?? ''),
+      packageIncludes:    String(booking.packageIncludes    ?? ''),
+      packageExcludes:    String(booking.packageExcludes    ?? ''),
+      importantNotes:     String(booking.importantNotes     ?? ''),
+      tips:               String(booking.tips               ?? ''),
+      otherNote:          String(booking.otherNote          ?? ''),
+      clientRequest:      String(booking.clientRequest      ?? ''),
     })
     setEditBookingModal(true)
   }
@@ -1629,6 +1638,38 @@ Wishing you a wonderful trip! ✈️
           </Card>
         )}
 
+        {/* Package & Notes sections — show if any are populated */}
+        {(booking.valueAddedServices || booking.packageIncludes || booking.packageExcludes ||
+          booking.importantNotes || booking.tips || booking.otherNote || booking.clientRequest ||
+          booking.terms || booking.exclusions || booking.policyNotes) && (
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-slate-400" /> Package Details &amp; Notes
+              </h3>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              {[
+                { label: 'Value Added Services',      value: booking.valueAddedServices },
+                { label: 'Above Package Includes',    value: booking.packageIncludes },
+                { label: 'The Above Package Excludes',value: booking.packageExcludes },
+                { label: 'Terms & Conditions',        value: booking.terms },
+                { label: 'Exclusions',                value: booking.exclusions },
+                { label: 'Policy Notes',              value: booking.policyNotes },
+                { label: 'Important Notes',           value: booking.importantNotes },
+                { label: 'Tips',                      value: booking.tips },
+                { label: 'Other Note',                value: booking.otherNote },
+                { label: 'Client Request',            value: booking.clientRequest },
+              ].filter(f => f.value).map(f => (
+                <div key={f.label}>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">{f.label}</p>
+                  <p className="text-sm text-slate-700 whitespace-pre-line">{f.value as string}</p>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        )}
+
         {/* P&L Summary (if available + permitted) */}
         {pnl && (
           <Card>
@@ -1828,6 +1869,41 @@ Wishing you a wonderful trip! ✈️
               <label className="form-label">Exclusions</label>
               <textarea rows={2} className="form-textarea" value={bookingForm.exclusions}
                 onChange={e => setBookingForm(f => ({ ...f, exclusions: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Value Added Services</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.valueAddedServices}
+                onChange={e => setBookingForm(f => ({ ...f, valueAddedServices: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Above Package Includes</label>
+              <textarea rows={3} className="form-textarea" value={bookingForm.packageIncludes}
+                onChange={e => setBookingForm(f => ({ ...f, packageIncludes: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">The Above Package Excludes</label>
+              <textarea rows={3} className="form-textarea" value={bookingForm.packageExcludes}
+                onChange={e => setBookingForm(f => ({ ...f, packageExcludes: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Important Notes</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.importantNotes}
+                onChange={e => setBookingForm(f => ({ ...f, importantNotes: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Tips</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.tips}
+                onChange={e => setBookingForm(f => ({ ...f, tips: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Other Note</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.otherNote}
+                onChange={e => setBookingForm(f => ({ ...f, otherNote: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Client Request</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.clientRequest}
+                onChange={e => setBookingForm(f => ({ ...f, clientRequest: e.target.value }))} />
             </div>
             <div className="col-span-2">
               <label className="form-label">Amendment Note</label>
