@@ -146,30 +146,55 @@ export default function NewBookingPage() {
     }))
 
     const pax = data.passengers as Passenger[] | undefined
-    if (pax?.length) setPassengers(pax.map(p => ({ ...p, age: String(p.age ?? ''), isLead: Boolean(p.isLead) })))
+    if (pax?.length) setPassengers(pax.map(p => ({
+      name:        String(p.name        ?? ''),
+      type:        String(p.type        ?? 'ADULT'),
+      age:         String(p.age         ?? ''),
+      isLead:      Boolean(p.isLead),
+      passport:    String(p.passport    ?? ''),
+      nationality: String(p.nationality ?? ''),
+    })))
 
     const fl = data.flights as Flight[] | undefined
     if (fl?.length) {
       setFlights(fl.map(f => ({
         flightNo: String(f.flightNo ?? ''),
-        date: String(f.date ?? '').slice(0, 10),
-        fromApt: String(f.fromApt ?? ''),
-        depTime: String(f.depTime ?? ''),
-        toApt: String(f.toApt ?? ''),
-        arrTime: String(f.arrTime ?? ''),
-        airline: String(f.airline ?? ''),
-        notes: String(f.notes ?? ''),
+        date:     String(f.date     ?? '').slice(0, 10),
+        fromApt:  String(f.fromApt  ?? ''),
+        depTime:  String(f.depTime  ?? ''),
+        toApt:    String(f.toApt    ?? ''),
+        arrTime:  String(f.arrTime  ?? ''),
+        airline:  String(f.airline  ?? ''),
+        notes:    String(f.notes    ?? ''),
       })))
     }
 
-    const ac = data.accommodations as Hotel[] | undefined
-    if (ac?.length) setHotels(ac.map(h => ({ ...h, nights: String((h as unknown as Record<string, unknown>).nights ?? '') })))
+    const ac = data.accommodations as Record<string, unknown>[] | undefined
+    if (ac?.length) setHotels(ac.map(h => ({
+      city:     String(h.city     ?? ''),
+      hotel:    String(h.hotel    ?? ''),
+      checkIn:  String(h.checkIn  ?? ''),
+      checkOut: String(h.checkOut ?? ''),
+      nights:   String(h.nights   ?? ''),
+      roomType: String(h.roomType ?? ''),
+      mealType: String(h.mealType ?? ''),
+      address:  String(h.address  ?? ''),
+    })))
 
     const it = data.itineraryItems as ItineraryItem[] | undefined
-    if (it?.length) setItinerary(it.map(i => ({ ...i, dayNo: String(i.dayNo), date: (i.date as string)?.slice(0, 10) || '' })))
+    if (it?.length) setItinerary(it.map(i => ({
+      dayNo:       String(i.dayNo       ?? ''),
+      date:        String(i.date        ?? '').slice(0, 10),
+      title:       String(i.title       ?? ''),
+      description: String(i.description ?? ''),
+    })))
 
-    const ec = data.emergencyContacts as EmergencyContact[] | undefined
-    if (ec?.length) setEmergencyContacts(ec)
+    const ec = data.emergencyContacts as Record<string, unknown>[] | undefined
+    if (ec?.length) setEmergencyContacts(ec.map(e => ({
+      name:  String(e.name  ?? ''),
+      phone: String(e.phone ?? ''),
+      role:  String(e.role  ?? ''),
+    })))
   }
 
   // ── File selected from OneDrive picker ────────────────────────────────────
