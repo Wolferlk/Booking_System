@@ -308,24 +308,6 @@ export default function PrintAgendaPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════
-          EMERGENCY CONTACTS SUMMARY
-      ══════════════════════════════════════════════════════ */}
-      {booking.emergencyContacts.length > 0 && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ ...S.sectionTitle, borderTop: '2px solid #dc2626' }}>🚨 Emergency Contacts</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap' as const, gap: 6, padding: '8px 10px', background: '#fff7f7', border: '1px solid #fee2e2', borderTop: 'none', borderRadius: '0 0 5px 5px' }}>
-            {booking.emergencyContacts.map(ec => (
-              <div key={ec.id} style={{ background: '#fff', border: '1px solid #fecaca', borderRadius: 5, padding: '5px 10px', minWidth: 140 }}>
-                <p style={{ fontSize: 9, fontWeight: 700, color: '#991b1b' }}>{ec.name}</p>
-                <p style={{ fontSize: 8.5, color: '#374151', marginTop: 1 }}>{ec.phone ?? '—'}</p>
-                {ec.role && <p style={{ fontSize: 7.5, color: '#94a3b8', marginTop: 1 }}>{ec.role}</p>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════
           PASSENGERS
       ══════════════════════════════════════════════════════ */}
       {booking.passengers.length > 0 && (

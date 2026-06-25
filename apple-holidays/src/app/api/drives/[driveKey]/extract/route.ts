@@ -13,6 +13,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolveDriveByKey, DRIVE_CONFIGS } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractBookingFromText } from '@/lib/openai'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
