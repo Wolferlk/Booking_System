@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type FormEvent, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe } from 'lucide-react'
@@ -29,6 +29,15 @@ interface Flight { flightNo: string; date: string; fromApt: string; depTime: str
 interface Hotel { city: string; hotel: string; checkIn: string; checkOut: string; nights: string; roomType: string; mealType: string; address: string }
 interface ItineraryItem { dayNo: string; date: string; title: string; description: string }
 interface EmergencyContact { name: string; phone: string; role: string }
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold text-slate-900">{title}</h3></CardHeader>
+      <CardBody>{children}</CardBody>
+    </Card>
+  )
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -182,7 +191,7 @@ export default function NewBookingPage() {
   }
 
   // ── Submit ────────────────────────────────────────────────────────────────
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
     try {
@@ -218,13 +227,6 @@ export default function NewBookingPage() {
       setSaving(false)
     }
   }
-
-  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <Card>
-      <CardHeader><h3 className="text-base font-semibold text-slate-900">{title}</h3></CardHeader>
-      <CardBody>{children}</CardBody>
-    </Card>
-  )
 
   const activeDrive = COUNTRY_DRIVES.find(d => d.driveKey === selectedDriveKey)
 
