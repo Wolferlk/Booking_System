@@ -14,6 +14,7 @@ import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge, Badge } from '@/components/ui/badge'
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -714,12 +715,13 @@ export default function AccountsPNLPage() {
                               <td>{b.quotedTotal ? formatCurrency(b.quotedTotal, b.currency) : '—'}</td>
                               <td>
                                 {b.operationCountry && (
-                                  <span className="font-mono text-xs">
-                                    {b.operationCountry === 'VIETNAM'            ? '🇻🇳 VN'
-                                    : b.operationCountry === 'SRILANKA'           ? '🇱🇰 SL'
-                                    : b.operationCountry === 'SINGAPORE'          ? '🇸🇬 SG'
-                                    : b.operationCountry === 'MALAYSIA'           ? '🇲🇾 MY'
-                                    : b.operationCountry === 'SINGAPORE_MALAYSIA' ? '🇸🇬 SG/MY'
+                                  <span className="inline-flex items-center gap-1 font-mono text-xs">
+                                    <CountryFlag country={b.operationCountry} className="w-4 h-3" />
+                                    {b.operationCountry === 'VIETNAM' ? 'VN'
+                                    : b.operationCountry === 'SRILANKA' ? 'SL'
+                                    : b.operationCountry === 'SINGAPORE' ? 'SG'
+                                    : b.operationCountry === 'MALAYSIA' ? 'MY'
+                                    : b.operationCountry === 'SINGAPORE_MALAYSIA' ? 'SG/MY'
                                     : b.operationCountry}
                                   </span>
                                 )}

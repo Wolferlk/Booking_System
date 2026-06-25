@@ -18,6 +18,8 @@ import Button from '@/components/ui/button'
 import BookingLifecycle from '@/components/bookings/booking-lifecycle'
 import Modal from '@/components/ui/modal'
 import { formatDate, formatCurrency, getDaysUntilTrip } from '@/lib/utils'
+import { CountryFlag } from '@/components/ui/country-flag'
+import { countryLabel } from '@/lib/country-detection'
 import { getAvailableTransitions } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
@@ -703,12 +705,10 @@ Wishing you a wonderful trip! ✈️
                     booking.operationCountry === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-200' :
                     'bg-slate-100 text-slate-500 border-slate-200'
                   }`}>
-                    {booking.operationCountry === 'VIETNAM'            ? '🇻🇳 Vietnam' :
-                     booking.operationCountry === 'SRILANKA'           ? '🇱🇰 Sri Lanka' :
-                     booking.operationCountry === 'SINGAPORE'          ? '🇸🇬 Singapore' :
-                     booking.operationCountry === 'MALAYSIA'           ? '🇲🇾 Malaysia' :
-                     booking.operationCountry === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 Singapore & Malaysia' :
-                     '🌐 All Countries'}
+                    <span className="inline-flex items-center gap-1">
+                      <CountryFlag country={booking.operationCountry} className="w-4 h-3" />
+                      {countryLabel(booking.operationCountry as import('@/lib/country-detection').OperationCountry)}
+                    </span>
                   </span>
                 )}
                 {Boolean(booking.amendmentNote) && (
@@ -979,12 +979,12 @@ Wishing you a wonderful trip! ✈️
                 }`}
                 style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%239ca3af\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'right 8px center' }}
               >
-                <option value="">🌍 Country not set</option>
-                <option value="VIETNAM">🇻🇳 Vietnam</option>
-                <option value="SRILANKA">🇱🇰 Sri Lanka</option>
-                <option value="SINGAPORE">🇸🇬 Singapore</option>
-                <option value="MALAYSIA">🇲🇾 Malaysia</option>
-                <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia (legacy)</option>
+                <option value="">Country not set</option>
+                <option value="VIETNAM">Vietnam</option>
+                <option value="SRILANKA">Sri Lanka</option>
+                <option value="SINGAPORE">Singapore</option>
+                <option value="MALAYSIA">Malaysia</option>
+                <option value="SINGAPORE_MALAYSIA">Singapore &amp; Malaysia (legacy)</option>
               </select>
             </div>
           </div>

@@ -7,8 +7,8 @@ import { getInitials } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
 interface HeaderProps {
-  title: string
-  subtitle?: string
+  title: React.ReactNode
+  subtitle?: React.ReactNode
   actions?: React.ReactNode
 }
 

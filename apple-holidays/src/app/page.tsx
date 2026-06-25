@@ -3,13 +3,14 @@
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { MapPin, ArrowRight, Plane, Globe2 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 const DESTINATIONS = [
   {
     id: 'vietnam',
     name: 'Vietnam',
     code: 'MMT_VN',
-    flag: '🇻🇳',
+    country: 'VIETNAM',
     description: 'Ho Chi Minh · Hanoi · Da Nang · Hoi An',
     active: true,
     href: '/vietnam',
@@ -25,7 +26,7 @@ const DESTINATIONS = [
     id: 'srilanka',
     name: 'Sri Lanka',
     code: 'MMT_LK',
-    flag: '🇱🇰',
+    country: 'SRILANKA',
     description: 'Colombo · Kandy · Sigiriya · Galle',
     active: true,
     href: '/srilanka',
@@ -41,7 +42,7 @@ const DESTINATIONS = [
     id: 'singapore',
     name: 'Singapore & Malaysia',
     code: 'MMT_SG_MY',
-    flag: '🇸🇬🇲🇾',
+    country: 'SINGAPORE_MALAYSIA',
     description: 'Marina Bay · Sentosa · KL · Langkawi · Penang',
     active: true,
     href: '/singapore',
@@ -57,7 +58,7 @@ const DESTINATIONS = [
     id: 'ultra',
     name: 'All Countries',
     code: 'ULTRA_ADMIN',
-    flag: '🌐',
+    country: null,
     description: 'Global view · All operations · Critical access',
     active: true,
     href: '/ultra',
@@ -168,7 +169,7 @@ export default function HomePage() {
             >
               {/* Flag & tag row */}
               <div className="flex items-start justify-between mb-5">
-                <span className="text-5xl filter drop-shadow-sm">{dest.flag}</span>
+                <CountryFlag country={dest.country} className="w-14 h-10 drop-shadow-sm" />
                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wider uppercase ${dest.tagBg} flex items-center gap-1`}>
                   {dest.active && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dest.dot} animate-pulse`} />}
                   {dest.tag}

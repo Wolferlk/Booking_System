@@ -14,14 +14,15 @@ import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
 import { useCountryFilter, type CountryFilter } from '@/hooks/use-country-filter'
 import type { UserRole } from '@prisma/client'
+import { CountryFlag } from '@/components/ui/country-flag'
 
-const COUNTRY_PILLS: { value: CountryFilter; flag: string; short: string }[] = [
-  { value: 'ALL',                flag: '🌍', short: 'All' },
-  { value: 'VIETNAM',            flag: '🇻🇳', short: 'VN' },
-  { value: 'SRILANKA',           flag: '🇱🇰', short: 'LK' },
-  { value: 'SINGAPORE',          flag: '🇸🇬', short: 'SG' },
-  { value: 'MALAYSIA',           flag: '🇲🇾', short: 'MY' },
-  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', short: 'SG & MY' },
+const COUNTRY_PILLS: { value: CountryFilter; short: string }[] = [
+  { value: 'ALL',                short: 'All' },
+  { value: 'VIETNAM',            short: 'VN' },
+  { value: 'SRILANKA',           short: 'LK' },
+  { value: 'SINGAPORE',          short: 'SG' },
+  { value: 'MALAYSIA',           short: 'MY' },
+  { value: 'SINGAPORE_MALAYSIA', short: 'SG & MY' },
 ]
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -204,7 +205,7 @@ export default function Sidebar() {
                       : 'bg-slate-800/60 border border-slate-700/40 text-slate-500 hover:text-slate-300 hover:bg-slate-700/60',
                   )}
                 >
-                  <span className="text-base leading-none">{pill.flag}</span>
+                  <CountryFlag country={pill.value} className="w-5 h-4" />
                   <span>{pill.short}</span>
                 </button>
               ))}
@@ -213,12 +214,12 @@ export default function Sidebar() {
         )}
         {/* Locked country — all non-Ultra users */}
         {!canFilter && role && role !== 'CLIENT' && (() => {
-          const COUNTRY_META: Record<string, { name: string; code: string; flag: string; color: string }> = {
-            VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    flag: '🇻🇳',     color: 'border-red-500/25 bg-red-500/8' },
-            SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    flag: '🇱🇰',     color: 'border-yellow-500/25 bg-yellow-500/8' },
-            SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', flag: '🇸🇬🇲🇾', color: 'border-blue-500/25 bg-blue-500/8' },
-            SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG',    flag: '🇸🇬',     color: 'border-blue-500/25 bg-blue-500/8' },
-            MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    flag: '🇲🇾',     color: 'border-emerald-500/25 bg-emerald-500/8' },
+          const COUNTRY_META: Record<string, { name: string; code: string; color: string }> = {
+            VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    color: 'border-red-500/25 bg-red-500/8' },
+            SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    color: 'border-yellow-500/25 bg-yellow-500/8' },
+            SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', color: 'border-blue-500/25 bg-blue-500/8' },
+            SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG',    color: 'border-blue-500/25 bg-blue-500/8' },
+            MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    color: 'border-emerald-500/25 bg-emerald-500/8' },
           }
           const meta = countryFilter && countryFilter !== 'ALL'
             ? COUNTRY_META[countryFilter]
@@ -230,7 +231,7 @@ export default function Sidebar() {
               </p>
               {meta ? (
                 <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${meta.color}`}>
-                  <span className="text-2xl leading-none flex-shrink-0">{meta.flag}</span>
+                  <CountryFlag country={countryFilter} className="w-8 h-6 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <p className="text-white text-xs font-bold leading-tight truncate">{meta.name}</p>
                     <p className="text-slate-500 text-[9px] uppercase tracking-wider mt-0.5">{meta.code}</p>

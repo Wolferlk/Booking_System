@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   ChevronLeft, Lock, ArrowRight, CheckCircle2, Globe2, ShieldAlert,
 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 export default function UltraAdminPage() {
   const router = useRouter()
@@ -124,8 +125,14 @@ export default function UltraAdminPage() {
           {/* Country flags */}
           <div className="flex items-center gap-3 mb-6 px-4 py-3 rounded-xl bg-white/3 border border-white/8">
             <Globe2 className="w-4 h-4 text-slate-500 flex-shrink-0" />
-            <span className="text-xs text-slate-400">
-              🇻🇳 Vietnam &nbsp;·&nbsp; 🇱🇰 Sri Lanka &nbsp;·&nbsp; 🇸🇬 Singapore &nbsp;·&nbsp; 🇲🇾 Malaysia
+            <span className="text-xs text-slate-400 inline-flex items-center gap-1.5 flex-wrap">
+              <CountryFlag country="VIETNAM" className="w-4 h-3" /> Vietnam
+              &nbsp;·&nbsp;
+              <CountryFlag country="SRILANKA" className="w-4 h-3" /> Sri Lanka
+              &nbsp;·&nbsp;
+              <CountryFlag country="SINGAPORE" className="w-4 h-3" /> Singapore
+              &nbsp;·&nbsp;
+              <CountryFlag country="MALAYSIA" className="w-4 h-3" /> Malaysia
             </span>
           </div>
 

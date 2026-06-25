@@ -13,6 +13,7 @@ import Button from '@/components/ui/button'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,7 @@ interface YearNode {
 interface DriveNode {
   key: string
   label: string
-  flag: string
+  country: string
   years: YearNode[]
   totalBookings: number
   processedCount: number
@@ -71,12 +72,12 @@ interface DriveNode {
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const DRIVE_META: Record<string, {
-  label: string; flag: string
+  label: string; country: string
   border: string; badge: string; text: string
   headerBg: string; headerBorder: string
 }> = {
   VN: {
-    label: 'Vietnam',   flag: '🇻🇳',
+    label: 'Vietnam',   country: 'VIETNAM',
     border: 'border-red-200',
     badge: 'bg-red-100 text-red-700 border border-red-200',
     text: 'text-red-700',
@@ -84,7 +85,7 @@ const DRIVE_META: Record<string, {
     headerBorder: 'border-red-100',
   },
   SL: {
-    label: 'Sri Lanka', flag: '🇱🇰',
+    label: 'Sri Lanka', country: 'SRILANKA',
     border: 'border-green-200',
     badge: 'bg-green-100 text-green-700 border border-green-200',
     text: 'text-green-700',
@@ -92,7 +93,7 @@ const DRIVE_META: Record<string, {
     headerBorder: 'border-green-100',
   },
   SG: {
-    label: 'Singapore', flag: '🇸🇬',
+    label: 'Singapore', country: 'SINGAPORE',
     border: 'border-blue-200',
     badge: 'bg-blue-100 text-blue-700 border border-blue-200',
     text: 'text-blue-700',
@@ -100,7 +101,7 @@ const DRIVE_META: Record<string, {
     headerBorder: 'border-blue-100',
   },
   MY: {
-    label: 'Malaysia',  flag: '🇲🇾',
+    label: 'Malaysia',  country: 'MALAYSIA',
     border: 'border-amber-200',
     badge: 'bg-amber-100 text-amber-700 border border-amber-200',
     text: 'text-amber-700',
@@ -118,7 +119,7 @@ const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct
 const DRIVE_ORDER = ['VN','SL','SG','MY']
 
 const FALLBACK_META = {
-  label: '', flag: '🌍',
+  label: '', country: '',
   border: 'border-slate-200',
   badge: 'bg-slate-100 text-slate-600 border border-slate-200',
   text: 'text-slate-600',
@@ -252,7 +253,7 @@ function buildTree(events: DriveEvent[]): DriveNode[] {
     drives.push({
       key: driveKey,
       label: meta.label || driveKey,
-      flag: meta.flag,
+      country: meta.country,
       years,
       totalBookings:  allBookings.length,
       processedCount: allBookings.filter(b => b.status === 'processed').length,
@@ -677,7 +678,7 @@ function DriveCard({
           'hover:brightness-[0.97]',
         )}
       >
-        <span className="text-2xl leading-none flex-shrink-0">{drive.flag}</span>
+        <CountryFlag country={drive.country} className="w-8 h-6 flex-shrink-0" />
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center gap-2">
             <span className="text-base font-bold text-slate-800">{drive.label}</span>

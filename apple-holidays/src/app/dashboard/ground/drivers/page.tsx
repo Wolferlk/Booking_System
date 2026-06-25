@@ -15,6 +15,8 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { CountryFlag } from '@/components/ui/country-flag'
+import { countryLabel } from '@/lib/country-detection'
 
 interface Vehicle {
   id: string; type: string; plateNo: string; capacity: number
@@ -63,11 +65,11 @@ const BANKS_BY_COUNTRY: Record<string, string[]> = {
 }
 
 const BANK_LABELS: Record<string, string> = {
-  VIETNAM:            '🇻🇳 Vietnamese Bank Account',
-  SRILANKA:           '🇱🇰 Sri Lanka Bank Account',
-  SINGAPORE:          '🇸🇬 Singapore Bank Account',
-  MALAYSIA:           '🇲🇾 Malaysia Bank Account',
-  SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 Singapore / Malaysia Bank Account',
+  VIETNAM:            'Vietnamese Bank Account',
+  SRILANKA:           'Sri Lanka Bank Account',
+  SINGAPORE:          'Singapore Bank Account',
+  MALAYSIA:           'Malaysia Bank Account',
+  SINGAPORE_MALAYSIA: 'Singapore / Malaysia Bank Account',
 }
 
 const HOLDER_PLACEHOLDERS: Record<string, string> = {
@@ -454,11 +456,10 @@ export default function DriversPage() {
                               driver.country === 'SINGAPORE_MALAYSIA' ? 'bg-blue-50 text-blue-600 border-blue-100' :
                               'bg-slate-100 text-slate-500 border-slate-200'
                             }`}>
-                              {driver.country === 'VIETNAM' ? '🇻🇳 Vietnam' :
-                               driver.country === 'SRILANKA' ? '🇱🇰 Sri Lanka' :
-                               driver.country === 'SINGAPORE' ? '🇸🇬 Singapore' :
-                               driver.country === 'MALAYSIA' ? '🇲🇾 Malaysia' :
-                               driver.country === 'SINGAPORE_MALAYSIA' ? '🇸🇬🇲🇾 SG/MY' : driver.country}
+                              <span className="inline-flex items-center gap-1">
+                              <CountryFlag country={driver.country} className="w-4 h-3" />
+                              {countryLabel(driver.country as import('@/lib/country-detection').OperationCountry)}
+                            </span>
                             </span>
                           )}
                         </div>
@@ -726,11 +727,11 @@ export default function DriversPage() {
                   <select value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))}
                     className="form-select">
                     <option value="">Not set</option>
-                    <option value="VIETNAM">🇻🇳 Vietnam</option>
-                    <option value="SRILANKA">🇱🇰 Sri Lanka</option>
-                    <option value="SINGAPORE">🇸🇬 Singapore</option>
-                    <option value="MALAYSIA">🇲🇾 Malaysia</option>
-                    <option value="SINGAPORE_MALAYSIA">🇸🇬🇲🇾 Singapore &amp; Malaysia (legacy)</option>
+                    <option value="VIETNAM">Vietnam</option>
+                    <option value="SRILANKA">Sri Lanka</option>
+                    <option value="SINGAPORE">Singapore</option>
+                    <option value="MALAYSIA">Malaysia</option>
+                    <option value="SINGAPORE_MALAYSIA">Singapore &amp; Malaysia (legacy)</option>
                   </select>
                 </div>
               )}
@@ -835,6 +836,7 @@ export default function DriversPage() {
           <div>
             <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
               <Building2 className="w-4 h-4 text-amber-500" />
+              {formCountry && <CountryFlag country={formCountry} className="w-4 h-3" />}
               {BANK_LABELS[formCountry] ?? 'Bank Account'}
             </h3>
             <div className="grid grid-cols-2 gap-4">

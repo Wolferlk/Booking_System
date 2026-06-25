@@ -10,6 +10,7 @@ import {
   ArrowRight, FileSpreadsheet, X, ChevronRight,
 } from 'lucide-react'
 import type { ProcessedEmail } from '@/lib/mail-processor'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 // ── CSS ───────────────────────────────────────────────────────────────────────
 const CSS = `
@@ -84,10 +85,10 @@ interface ProcessResult {
   }
 }
 
-const COUNTRY_META:Record<string,{label:string;flag:string;bar:string;glow:string;border:string;grad:string}> = {
-  VIETNAM:            {label:'Vietnam',       flag:'🇻🇳', bar:'bg-red-500',    glow:'text-red-400',    border:'border-red-500/25',  grad:'from-red-600/15'},
-  SRILANKA:           {label:'Sri Lanka',     flag:'🇱🇰', bar:'bg-yellow-500', glow:'text-yellow-400', border:'border-yellow-500/25',grad:'from-yellow-600/15'},
-  SINGAPORE_MALAYSIA: {label:'SG & Malaysia', flag:'🇸🇬🇲🇾',bar:'bg-blue-500',   glow:'text-blue-400',   border:'border-blue-500/25',  grad:'from-blue-600/15'},
+const COUNTRY_META:Record<string,{label:string;bar:string;glow:string;border:string;grad:string}> = {
+  VIETNAM:            {label:'Vietnam',       bar:'bg-red-500',    glow:'text-red-400',    border:'border-red-500/25',  grad:'from-red-600/15'},
+  SRILANKA:           {label:'Sri Lanka',     bar:'bg-yellow-500', glow:'text-yellow-400', border:'border-yellow-500/25',grad:'from-yellow-600/15'},
+  SINGAPORE_MALAYSIA: {label:'SG & Malaysia', bar:'bg-blue-500',   glow:'text-blue-400',   border:'border-blue-500/25',  grad:'from-blue-600/15'},
 }
 const STATUS_DOT:Record<string,string> = {
   DRAFT:'bg-slate-400',SUBMITTED:'bg-blue-400',GT_REVIEW:'bg-orange-400',
@@ -129,15 +130,15 @@ function Background(){
 
 // ── Ticker ────────────────────────────────────────────────────────────────────
 function Ticker({data}:{data:OverviewData|null}){
-  const items=data?[
+  const items:React.ReactNode[]=data?[
     `🟢 ${data.lifetime.total.toLocaleString()} TOTAL BOOKINGS`,
     `✈️ ${data.today.flights} FLIGHTS TODAY`,
     `🛬 ${data.today.checkIns} CHECK-INS`,
     `🛫 ${data.today.checkOuts} DEPARTURES`,
     `👥 ${data.today.totalPax} PAX ARRIVING`,
-    `🇻🇳 VIETNAM ${(data.lifetime.byCountry.VIETNAM??0).toLocaleString()}`,
-    `🇱🇰 SRI LANKA ${(data.lifetime.byCountry.SRILANKA??0).toLocaleString()}`,
-    `🇸🇬 SG & MY ${(data.lifetime.byCountry.SINGAPORE_MALAYSIA??0).toLocaleString()}`,
+    <span key="vn" className="inline-flex items-center gap-1"><CountryFlag country="VIETNAM" className="w-3.5 h-2.5" />VIETNAM {(data.lifetime.byCountry.VIETNAM??0).toLocaleString()}</span>,
+    <span key="lk" className="inline-flex items-center gap-1"><CountryFlag country="SRILANKA" className="w-3.5 h-2.5" />SRI LANKA {(data.lifetime.byCountry.SRILANKA??0).toLocaleString()}</span>,
+    <span key="sg" className="inline-flex items-center gap-1"><CountryFlag country="SINGAPORE_MALAYSIA" className="w-3.5 h-2.5" />SG & MY {(data.lifetime.byCountry.SINGAPORE_MALAYSIA??0).toLocaleString()}</span>,
     `📊 ${(data.lifetime.byStatus.OPERATIONS_READY??0)+(data.lifetime.byStatus.CLIENT_LIVE??0)} LIVE OPS`,
   ]:['● LOADING LIVE OPERATIONS DATA…']
   const doubled=[...items,...items]
@@ -147,7 +148,7 @@ function Ticker({data}:{data:OverviewData|null}){
       <div className="absolute right-0 w-20 z-10 h-full bg-gradient-to-l from-[#030711] to-transparent"/>
       <div className="anim-ticker flex items-center whitespace-nowrap">
         {doubled.map((t,i)=>(
-          <span key={i} className="text-[10px] text-brand-400/70 font-bold tracking-[.2em] px-10">{t}</span>
+          <span key={i} className="text-[10px] text-brand-400/70 font-bold tracking-[.2em] px-10 inline-flex items-center gap-1">{t}</span>
         ))}
       </div>
     </div>
@@ -369,7 +370,7 @@ function StatsScreen({data,loading}:{data:OverviewData|null;loading:boolean}){
               <div key={k} className={`relative rounded-2xl border ${m.border} bg-gradient-to-br ${m.grad} bg-slate-950/70 p-6 overflow-hidden anim-left`} style={{animationDelay:`${i*80}ms`}}>
                 <div className="scanbar"/>
                 <div className="flex items-start justify-between mb-5">
-                  <span className="text-4xl anim-float" style={{animationDelay:`${i*900}ms`}}>{m.flag}</span>
+                  <span className="anim-float" style={{animationDelay:`${i*900}ms`}}><CountryFlag country={k} className="w-12 h-8" /></span>
                   <span className="text-[10px] text-slate-500 font-black">{pct}%</span>
                 </div>
                 <p className={`text-5xl font-black text-white tabular-nums anim-count`} style={{animationDelay:`${i*100+200}ms`}}>
@@ -428,7 +429,7 @@ function OpsScreen({data,loading,onNavigate}:{data:OverviewData|null;loading:boo
                       <td className="px-4 py-3"><button onClick={()=>onNavigate(f.booking.bookingRef)} className="font-mono text-brand-400 text-xs font-black hover:text-brand-300 transition-colors">{f.booking.bookingRef}</button></td>
                       <td className="px-4 py-3 text-xs text-slate-500 max-w-[140px] truncate">{f.booking.agent??'—'}</td>
                       <td className="px-4 py-3 text-xs text-slate-400">{f.booking.paxAdults}A{f.booking.paxChildren>0?` ${f.booking.paxChildren}C`:''}</td>
-                      <td className="px-4 py-3 text-xs">{cm&&<span className={cm.glow}>{cm.flag} {cm.label}</span>}</td>
+                      <td className="px-4 py-3 text-xs">{cm&&<span className={`inline-flex items-center gap-1 ${cm.glow}`}><CountryFlag country={f.booking.operationCountry} className="w-4 h-3" />{cm.label}</span>}</td>
                       <td className="px-4 py-3"><span className="flex items-center gap-1.5 text-xs text-slate-500"><span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[f.booking.status]??'bg-slate-600'}`}/>{sl(f.booking.status)}</span></td>
                     </tr>
                   )
@@ -457,7 +458,7 @@ function OpsScreen({data,loading,onNavigate}:{data:OverviewData|null;loading:boo
                 style={{animationDelay:`${i*30}ms`}}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-mono text-brand-400 text-xs font-black">{b.bookingRef}</span>
-                  {cm&&<span className="text-sm">{cm.flag}</span>}
+                  {cm&&<CountryFlag country={b.operationCountry} className="w-5 h-4" />}
                 </div>
                 <p className="text-slate-300 text-xs truncate">{b.agent??'—'}</p>
                 <div className="flex items-center justify-between mt-3">

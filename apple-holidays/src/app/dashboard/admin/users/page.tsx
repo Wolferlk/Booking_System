@@ -19,6 +19,7 @@ import { ROLE_LABELS } from '@/lib/rbac'
 import { formatDate, formatDateTime, getInitials, cn } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { UserRole, OperationCountry } from '@prisma/client'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,13 +63,13 @@ const ROLE_BG: Record<UserRole, string> = {
 
 const ALL_ROLES = Object.entries(ROLE_LABELS) as [UserRole, string][]
 
-const COUNTRY_META: Record<OperationCountry, { label: string; flag: string; color: string }> = {
-  VIETNAM:            { label: 'Vietnam',              flag: '🇻🇳',     color: 'bg-red-500/15 text-red-400 border-red-500/30' },
-  SRILANKA:           { label: 'Sri Lanka',            flag: '🇱🇰',     color: 'bg-yellow-500/15 text-yellow-600 border-yellow-500/30' },
-  SINGAPORE:          { label: 'Singapore',            flag: '🇸🇬',     color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
-  MALAYSIA:           { label: 'Malaysia',             flag: '🇲🇾',     color: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
-  SINGAPORE_MALAYSIA: { label: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
-  ALL:                { label: 'All Countries',        flag: '🌍',      color: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
+const COUNTRY_META: Record<OperationCountry, { label: string; color: string }> = {
+  VIETNAM:            { label: 'Vietnam',              color: 'bg-red-500/15 text-red-400 border-red-500/30' },
+  SRILANKA:           { label: 'Sri Lanka',            color: 'bg-yellow-500/15 text-yellow-600 border-yellow-500/30' },
+  SINGAPORE:          { label: 'Singapore',            color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
+  MALAYSIA:           { label: 'Malaysia',             color: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30' },
+  SINGAPORE_MALAYSIA: { label: 'Singapore & Malaysia', color: 'bg-blue-500/15 text-blue-600 border-blue-500/30' },
+  ALL:                { label: 'All Countries',        color: 'bg-amber-500/15 text-amber-600 border-amber-500/30' },
 }
 
 // Roles available per country (used to filter the role dropdown when adding/editing)
@@ -88,12 +89,12 @@ const EMPTY_FORM = {
   isActive: true, password: '', confirmPassword: '',
 }
 
-const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; flag: string; label: string }[] = [
-  { value: 'VIETNAM',            flag: '🇻🇳', label: 'Vietnam' },
-  { value: 'SRILANKA',           flag: '🇱🇰', label: 'Sri Lanka' },
-  { value: 'SINGAPORE',          flag: '🇸🇬', label: 'Singapore' },
-  { value: 'MALAYSIA',           flag: '🇲🇾', label: 'Malaysia' },
-  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', label: 'SG & MY' },
+const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; label: string }[] = [
+  { value: 'VIETNAM',            label: 'Vietnam' },
+  { value: 'SRILANKA',           label: 'Sri Lanka' },
+  { value: 'SINGAPORE',          label: 'Singapore' },
+  { value: 'MALAYSIA',           label: 'Malaysia' },
+  { value: 'SINGAPORE_MALAYSIA', label: 'SG & MY' },
 ]
 
 // ─── Password strength ────────────────────────────────────────────────────────
@@ -623,7 +624,7 @@ export default function UsersPage() {
                                 <div className="flex flex-wrap gap-1">
                                   {parsed.map(c => COUNTRY_META[c] ? (
                                     <span key={c} className={cn('inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-semibold border', COUNTRY_META[c].color)}>
-                                      <span>{COUNTRY_META[c].flag}</span>
+                                      <CountryFlag country={c} className="w-3.5 h-2.5" />
                                       <span>{COUNTRY_META[c].label}</span>
                                     </span>
                                   ) : null)}
@@ -632,7 +633,7 @@ export default function UsersPage() {
                             }
                             return u.country && COUNTRY_META[u.country] ? (
                               <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[u.country].color)}>
-                                <span>{COUNTRY_META[u.country].flag}</span>
+                                <CountryFlag country={u.country} className="w-4 h-3" />
                                 <span>{COUNTRY_META[u.country].label}</span>
                               </span>
                             ) : (
@@ -753,7 +754,7 @@ export default function UsersPage() {
                 { icon: <Mail className="w-4 h-4" />,     label: 'Email',         value: selected.email,           color: 'text-blue-500' },
                 { icon: <Phone className="w-4 h-4" />,    label: 'Phone',         value: selected.phone ?? '—',    color: 'text-green-500' },
                 { icon: <Shield className="w-4 h-4" />,   label: 'Role',          value: ROLE_LABELS[selected.role], color: 'text-purple-500' },
-                { icon: <Globe className="w-4 h-4" />,    label: 'Country',       value: selected.country ? `${COUNTRY_META[selected.country]?.flag ?? ''} ${COUNTRY_META[selected.country]?.label ?? selected.country}` : '—', color: 'text-cyan-500' },
+                { icon: <Globe className="w-4 h-4" />,    label: 'Country',       value: selected.country ? <span className="inline-flex items-center gap-1"><CountryFlag country={selected.country} className="w-4 h-3" />{COUNTRY_META[selected.country]?.label ?? selected.country}</span> : '—', color: 'text-cyan-500' },
                 { icon: <CheckCircle className="w-4 h-4" />, label: 'Status',     value: selected.isActive ? 'Active' : 'Inactive', color: selected.isActive ? 'text-emerald-500' : 'text-red-500' },
                 { icon: <Calendar className="w-4 h-4" />, label: 'Joined',        value: formatDate(selected.createdAt),   color: 'text-slate-400' },
                 { icon: <RefreshCw className="w-4 h-4" />, label: 'Last Updated', value: formatDateTime(selected.updatedAt), color: 'text-slate-400' },
@@ -890,7 +891,7 @@ export default function UsersPage() {
                           })
                         }}
                       />
-                      <span className="text-base">{opt.flag}</span>
+                      <CountryFlag country={opt.value} className="w-5 h-4" />
                       <span className="text-xs font-medium">{opt.label}</span>
                       {checked && <span className="ml-auto w-3.5 h-3.5 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0"><svg className="w-2 h-2 text-white" fill="none" viewBox="0 0 8 8"><path d="M1 4l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg></span>}
                     </label>
@@ -918,8 +919,8 @@ export default function UsersPage() {
                 <div className="flex flex-wrap gap-1 p-2 rounded-lg bg-slate-50 border border-slate-200">
                   <span className="text-[10px] text-slate-400 mr-1 self-center">Access:</span>
                   {form.countries.map(c => COUNTRY_META[c] ? (
-                    <span key={c} className={cn('inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[c].color)}>
-                      {COUNTRY_META[c].flag} {COUNTRY_META[c].label}
+                    <span key={c} className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border', COUNTRY_META[c].color)}>
+                      <CountryFlag country={c} className="w-4 h-3" /> {COUNTRY_META[c].label}
                     </span>
                   ) : null)}
                 </div>
@@ -940,7 +941,7 @@ export default function UsersPage() {
               </label>
               {form.country && COUNTRY_META[form.country] ? (
                 <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 bg-slate-50">
-                  <span className="text-lg">{COUNTRY_META[form.country].flag}</span>
+                  <CountryFlag country={form.country} className="w-8 h-6" />
                   <span className="text-sm font-medium text-slate-700">{COUNTRY_META[form.country].label}</span>
                   <Lock className="w-3 h-3 text-slate-400 ml-auto" />
                 </div>
@@ -1079,11 +1080,11 @@ export default function UsersPage() {
           <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 flex items-start gap-3">
             <Shield className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-blue-700">
+              <p className="text-xs font-semibold text-blue-700 inline-flex items-center gap-1 flex-wrap">
                 {ROLE_LABELS[form.role]}
-                {form.country && form.country !== 'ALL' && COUNTRY_META[form.country]
-                  ? ` — ${COUNTRY_META[form.country].flag} ${COUNTRY_META[form.country].label}`
-                  : ''}
+                {form.country && form.country !== 'ALL' && COUNTRY_META[form.country] && (
+                  <> — <CountryFlag country={form.country} className="w-4 h-3" /> {COUNTRY_META[form.country].label}</>
+                )}
               </p>
               <p className="text-[11px] text-blue-600 mt-0.5">
                 {form.role === 'ULTRA_SUPER_ADMIN' && '🌐 System owner — all-countries access, all modules, user management & danger zone. Requires critical password on login.'}

@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
+import { CountryFlag } from '@/components/ui/country-flag'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -61,13 +62,13 @@ interface Booking {
   operationCountry: string | null
 }
 
-const COUNTRY_BADGE: Record<string, { flag: string; label: string; color: string }> = {
-  VIETNAM:            { flag: '🇻🇳', label: 'Vietnam',   color: 'bg-red-500/10 text-red-400 border-red-500/20' },
-  SRILANKA:           { flag: '🇱🇰', label: 'Sri Lanka', color: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' },
-  SINGAPORE:          { flag: '🇸🇬', label: 'Singapore', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
-  MALAYSIA:           { flag: '🇲🇾', label: 'Malaysia',  color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
-  SINGAPORE_MALAYSIA: { flag: '🇸🇬', label: 'SG & MY',   color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
-  ALL:                { flag: '🌐', label: 'All',        color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
+const COUNTRY_BADGE: Record<string, { label: string; color: string }> = {
+  VIETNAM:            { label: 'Vietnam',   color: 'bg-red-500/10 text-red-400 border-red-500/20' },
+  SRILANKA:           { label: 'Sri Lanka', color: 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' },
+  SINGAPORE:          { label: 'Singapore', color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  MALAYSIA:           { label: 'Malaysia',  color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
+  SINGAPORE_MALAYSIA: { label: 'SG & MY',   color: 'bg-blue-500/10 text-blue-400 border-blue-500/20' },
+  ALL:                { label: 'All',       color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 }
 
 function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortField; sortDir: SortDir }) {
@@ -349,7 +350,7 @@ function BookingsPageInner() {
                         <td>
                           {b.operationCountry && COUNTRY_BADGE[b.operationCountry] ? (
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-none text-[11px] font-medium border ${COUNTRY_BADGE[b.operationCountry].color}`}>
-                              {COUNTRY_BADGE[b.operationCountry].flag} {COUNTRY_BADGE[b.operationCountry].label}
+                              <CountryFlag country={b.operationCountry} className="w-4 h-3" /> {COUNTRY_BADGE[b.operationCountry].label}
                             </span>
                           ) : (
                             <span className="text-xs text-slate-300">—</span>
