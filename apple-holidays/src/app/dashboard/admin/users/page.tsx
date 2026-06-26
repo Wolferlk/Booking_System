@@ -569,7 +569,7 @@ export default function UsersPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
-                      <th className="text-left px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px] w-8">#</th>
+                      <th className="text-left px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">#</th>
                       <SortTh field="name" label="User" />
                       <th className="text-left px-4 py-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Contact</th>
                       <SortTh field="role" label="Role" />
