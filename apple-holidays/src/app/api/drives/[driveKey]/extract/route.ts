@@ -17,7 +17,9 @@ import { extractBookingFromText } from '@/lib/openai'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
-export const dynamic = 'force-dynamic'
+export const dynamic    = 'force-dynamic'
+export const maxDuration = 60
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ driveKey: string }> },

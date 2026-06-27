@@ -198,7 +198,7 @@ Return ONLY valid JSON matching this exact schema:
   "contactAddress": "lead customer home/mailing address or null",
   "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false, "age": "number or null", "passport": "passport document number ONLY — e.g. 'N1234567' or 'A9876543'. NEVER put a phone number here. If you see a phone/mobile number next to a passenger, put it in 'contact', not 'passport'. Return null if no passport number is found.", "nationality": "string or null — passenger nationality/country", "contact": "string or null — personal phone, mobile or WhatsApp of this specific passenger (NOT a passport number). Return null if not found.", "mealPreference": "string or null — e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement', 'Special Meal' fields per passenger, or a booking-level note. Return null if not specified." }],
-  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "3-letter IATA code", "depTime": "HH:MM or null", "toApt": "3-letter IATA code", "arrTime": "HH:MM or null", "airline": "string or null", "notes": "string or null" }],
+  "flights": [{ "flightNo": "EXACT flight number as printed — e.g. 'VJ815', '6E204', 'SQ456'. Normalise: remove spaces between airline code and number ('VJ 815' → 'VJ815'). Never fabricate a number.", "date": "YYYY-MM-DD — the DEPARTURE date of this flight leg", "fromApt": "3-letter IATA departure airport code — NEVER city name", "depTime": "HH:MM 24-hour — convert 12h to 24h ('06:10 AM' → '06:10', '02:30 PM' → '14:30'). Null only if truly absent.", "toApt": "3-letter IATA arrival airport code", "arrTime": "HH:MM 24-hour arrival time. If arrival is next day, still return the time (e.g. '01:15'). Null only if truly absent.", "airline": "full airline name or null", "notes": "any extra info (terminal, baggage, stops) or null" }],
   "accommodations": [{ "hotel": "exact full hotel name as written in TC", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
   "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "EXACT complete tour/activity title — copy verbatim from TC, do NOT shorten, paraphrase or substitute generic labels. NEVER use 'Various Attractions', 'City Tour', 'Day Tour' or similar generic replacements. Copy the full official name exactly as written.", "description": "exact description from TC document verbatim — do NOT omit, shorten or summarise. Return null only if no description exists.", "serviceType": "PVT_TRANSFER|SIC_TRANSFER|FLIGHT|INTERNAL_TOUR|ACCOMMODATION|OWN_ARRANGEMENT" }],
   "pnlLines": []
@@ -237,6 +237,15 @@ IMPORTANT:   "bookingRef": "set as IS number  any trailing letters like VN , IS 
 
 DEAL NAME: Usually found in the email subject between the agent booking ID and date codes — e.g. subject "Quotation | 402011387896 | Rakshitha - Vietnam - 060626 | ..." → dealName is "Rakshitha - Vietnam - 060626".
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
+FLIGHT EXTRACTION (CRITICAL — extract EVERY flight leg):
+- Scan for: "Flight", "Flight No", "Flight Number", "Air Ticket", "Airline", "✈", table columns with flight codes
+- Extract EACH flight leg separately (e.g. outbound + return = 2 entries)
+- Flight number formats in TCs: "VJ815", "VJ 815", "VietJet 815", "6E 204", "SQ456" — always normalise to code+number with no space
+- IATA airport codes: HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh City, HUI=Hue, CXR=Nha Trang, PQC=Phu Quoc, VII=Vinh, BMV=Buon Ma Thuot, VCA=Can Tho, CMB=Colombo, KUL=Kuala Lumpur, SIN=Singapore, BOM/BOM=Mumbai, DEL=Delhi, MAA=Chennai, HYD=Hyderabad, BLR=Bangalore, CCU=Kolkata, DXB=Dubai, AUH=Abu Dhabi
+- If airport code is not given but city/airport name is, convert to IATA code
+- Times: always 24-hour HH:MM. Convert "6:10 AM" → "06:10", "2:30 PM" → "14:30", "0610" → "06:10"
+- Date: use the DEPARTURE date. If the TC shows flight as part of a day's schedule, use that day's date
+- NEVER skip flights — if a flight appears anywhere in the TC, include it in flights[]
 For airports, use 3-letter IATA codes (HAN=Hanoi, DAD=Da Nang, SGN=Ho Chi Minh, CMB=Colombo, KUL=Kuala Lumpur, SIN=Singapore, BOM=Mumbai, DEL=Delhi, etc.).
 Date format must be YYYY-MM-DD strictly.
 CONTACT EXTRACTION: Scan all of — email From/Reply-To headers, email signatures, booking form fields, "Contact Details" / "Guest Info" sections, and footers. Extract BOTH agent (sender company) and customer/tourist (traveller) contacts separately.

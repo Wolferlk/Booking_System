@@ -210,11 +210,15 @@ export default function NewBookingPage() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ itemId: file.id, itemName: file.name }),
       })
-      const json = await res.json()
+      const raw = await res.text()
+      if (!raw.trim()) throw new Error('Server returned an empty response — extraction may have timed out. Please try again.')
+      let json: { success: boolean; data?: { extracted: Record<string, unknown> }; error?: string }
+      try { json = JSON.parse(raw) } catch { throw new Error('Server returned an invalid response. Please try again.') }
       if (!json.success) throw new Error(json.error)
-      handleAIParsed(json.data.extracted)
+      const extracted = json.data?.extracted ?? {}
+      handleAIParsed(extracted)
 
-      const extractedRef = (json.data.extracted?.bookingRef as string) || ''
+      const extractedRef = (extracted.bookingRef as string) || ''
       const detected =
         detectCountryFromPath(folderPath) ||
         detectCountryFromPath(file.webUrl) ||
