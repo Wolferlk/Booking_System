@@ -14,15 +14,18 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+  if (!['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
     return buildApiError('Forbidden', 403)
   }
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
-  if (booking.status !== 'FEEDBACK_DONE') {
-    return buildApiError('Booking must be in Feedback Done status to complete')
+  // Accept from MSG_SENT_CUSTOMER (skips FEEDBACK_DONE), FEEDBACK_DONE, or QC2_PASS
+  const FEEDBACK_ELIGIBLE = ['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS']
+  if (!FEEDBACK_ELIGIBLE.includes(booking.status)) {
+    return buildApiError('Booking must be at or past Message Sent status to record feedback')
   }
+  const fromState = booking.status
 
   const body = await req.json() as { rating?: number; comment?: string }
   const rating = body.rating ? Number(body.rating) : null
@@ -54,7 +57,7 @@ export async function POST(
     prisma.statusEvent.create({
       data: {
         bookingId: booking.id,
-        fromState: 'FEEDBACK_DONE',
+        fromState: fromState as never,
         toState: 'COMPLETED',
         actorId: session.user.id,
         note: 'Trip completed with customer feedback',

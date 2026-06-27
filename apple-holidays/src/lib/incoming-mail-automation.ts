@@ -487,8 +487,12 @@ async function syncTourConfirmation(
   // Split TC Tour Ref: may embed IS Number after || or " / "; CNTL part goes to cntlNumber
   const { tourRef: tcTourRef, isNumber: embeddedIsNumber, cntlNumber: embeddedCntlNumber } = splitTourRef(extracted.bookingRef as string | null)
 
-  // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref
-  const resolvedIsNumber: string | null = (extracted.isNumber as string | null) ?? embeddedIsNumber ?? null
+  // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref;
+  // finally check if tourRef itself IS an IS/VN/SG/MY number (AI put it in bookingRef only)
+  const resolvedIsNumber: string | null =
+    (extracted.isNumber as string | null) ??
+    embeddedIsNumber ??
+    (tcTourRef && IS_NUMBER_RE.test(tcTourRef) ? tcTourRef.toUpperCase() : null)
 
   // CNTL number: from AI extraction or embedded in TC Tour Ref
   const resolvedCntlNumber: string | null = extracted.cntlNumber ?? embeddedCntlNumber ?? null

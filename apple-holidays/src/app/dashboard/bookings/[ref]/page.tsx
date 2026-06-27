@@ -764,9 +764,10 @@ Wishing you a wonderful trip! ✈️
             <div className="flex flex-wrap gap-2">
               {transitions.map(t => {
                 // New step-through statuses use the advance-status endpoint
+                // QC1_PASS and QC2_PASS are auto-triggered — never show as manual buttons
                 const ADVANCE_STEPS: BookingStatus[] = [
-                  'TE_REVIEWED', 'DRIVER_ALLOCATED', 'QC1_PASS',
-                  'TICKETS_ISSUED', 'QC2_PASS', 'MSG_SENT_CUSTOMER', 'FEEDBACK_DONE',
+                  'TE_REVIEWED', 'DRIVER_ALLOCATED',
+                  'TICKETS_ISSUED', 'MSG_SENT_CUSTOMER', 'FEEDBACK_DONE',
                 ]
 
                 const isAdvanceStep = ADVANCE_STEPS.includes(t.to)
@@ -797,10 +798,11 @@ Wishing you a wonderful trip! ✈️
                     loading={actionLoading === key}
                     className={isTeConfirm ? '!bg-emerald-600 !border-emerald-700 hover:!bg-emerald-700 font-bold tracking-wide' : undefined}
                     onClick={() => {
-                      if (needsNote) {
+                      if (needsNote || isTeConfirm) {
                         setPendingAction(key); setNote(''); setChangeModal(true)
-                      } else if (isTeConfirm) {
-                        doTransition('verify')
+                      } else if (isAdvanceStep && t.to === 'FEEDBACK_DONE') {
+                        // Feedback Done → open feedback modal so user can write + complete
+                        setFeedbackRating(0); setFeedbackComment(''); setFeedbackModal(true)
                       } else if (isAdvanceStep) {
                         doTransition('advance-status', { to: t.to })
                       } else if (isComplete) {
@@ -816,6 +818,18 @@ Wishing you a wonderful trip! ✈️
                   </Button>
                 )
               })}
+
+              {/* Get Feedback — always visible after trip is in operational post-phase */}
+              {(['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS', 'COMPLETED'] as string[]).includes(status) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="!bg-yellow-50 !border-yellow-300 !text-yellow-800 hover:!bg-yellow-100"
+                  onClick={() => { setFeedbackRating(0); setFeedbackComment(''); setFeedbackModal(true) }}
+                >
+                  ⭐ Get Feedback
+                </Button>
+              )}
 
               {/* Cancel */}
               {!['COMPLETED', 'CANCELLED'].includes(status) && ['BT_USER', 'SUPER_ADMIN', 'TE_USER'].includes(role) && (

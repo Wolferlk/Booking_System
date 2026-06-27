@@ -226,11 +226,16 @@ export async function POST(req: NextRequest) {
 
   const cancellationDeadline = getCancellationDeadline(arrivalDate)
 
+  // Auto-populate isNumber from bookingRef if it matches IS/VN/SG/MY pattern
+  const IS_NUMBER_RE = /^(IS|VN|SG|MY)\d+/i
+  const resolvedIsNumber = body.isNumber?.trim() || (IS_NUMBER_RE.test(bookingRef) ? bookingRef : null)
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const booking = await (prisma.booking.create as any)({
     data: {
       bookingRef,
       agentBookingId,
+      isNumber: resolvedIsNumber || null,
       cntlNumber: cntlNumber || null,
       agent,
       fileHandler,

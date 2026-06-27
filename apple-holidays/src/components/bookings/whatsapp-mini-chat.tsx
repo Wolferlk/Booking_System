@@ -24,7 +24,8 @@ interface Props {
 
 type PanelState = 'closed' | 'open' | 'minimized'
 
-const POLL_INTERVAL = 8000 // 8 s
+const POLL_INTERVAL_OPEN = 3000  // 3 s when panel is open (real-time feel)
+const POLL_INTERVAL_MIN  = 8000  // 8 s when minimized
 
 export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
   const [panel, setPanel]             = useState<PanelState>('closed')
@@ -58,14 +59,15 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
         const incoming: WaMessage[] = json.data
         setMessages(incoming)
 
-        if (quiet && panel === 'minimized') {
-          const newCount = incoming.filter(m => m.direction === 'inbound').length
-          const diff     = newCount - prevCountRef.current
-          if (diff > 0) setUnread(u => u + diff)
-          prevCountRef.current = newCount
-        } else {
-          prevCountRef.current = incoming.filter(m => m.direction === 'inbound').length
+        const inboundCount = incoming.filter(m => m.direction === 'inbound').length
+        if (quiet) {
+          const diff = inboundCount - prevCountRef.current
+          if (diff > 0) {
+            if (panel === 'minimized') setUnread(u => u + diff)
+            else toast.info(`${diff} new message${diff > 1 ? 's' : ''} from client`, { duration: 3000 })
+          }
         }
+        prevCountRef.current = inboundCount
       }
     } finally {
       if (!quiet) setLoadingHistory(false)
@@ -76,7 +78,8 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
   useEffect(() => {
     if (panel === 'open' || panel === 'minimized') {
       fetchMessages()
-      pollRef.current = setInterval(() => fetchMessages(true), POLL_INTERVAL)
+      const interval = panel === 'open' ? POLL_INTERVAL_OPEN : POLL_INTERVAL_MIN
+      pollRef.current = setInterval(() => fetchMessages(true), interval)
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
@@ -175,7 +178,13 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
               <MessageCircle className="w-4 h-4" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-bold leading-tight">WhatsApp</p>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-bold leading-tight">WhatsApp</p>
+                <span className="flex items-center gap-1 text-[10px] text-green-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-300 animate-pulse inline-block" />
+                  Live
+                </span>
+              </div>
               <p className="text-[11px] text-green-100 truncate font-mono">{bookingRef}</p>
             </div>
             <button
