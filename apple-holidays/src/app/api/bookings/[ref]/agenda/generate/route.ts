@@ -128,29 +128,48 @@ export async function POST(
 Generate a day-by-day movement chart from the booking data provided.
 Two data sources are given: structured_booking_data (always) and tq_document_text (if uploaded).
 
+CRITICAL: One day can have ONE OR MORE agenda items (multiple transfers/tours on the same date).
+Never collapse multiple movements into one. Read the TQ carefully and extract EVERY transfer,
+tour, and movement — even if they are on the same day.
+
 ${conditions ? `OPERATIONAL RULES:\n${conditions}\n` : ''}
 
 ════════════════════════════════════════════════════════════════
 FIELD DEFINITIONS — READ CAREFULLY:
 
-● "location"  = The EXACT day topic/title from the Travel Quotation.
-                Copy itineraryItem.title verbatim — do NOT shorten, paraphrase, or generalise it.
+● "location"  = City or area name ONLY (e.g., "Hanoi", "Da Nang", "Ha Long", "Hoi An",
+                "Ho Chi Minh City", "Colombo", "Singapore").
+                Do NOT put the activity title here. Just the geographic location name.
                 Examples:
-                  "Full-day Halong Cozy Bay Cruise Day Tour (SIC transfer + SIC cruise)"
-                  "Ninh Binh Bai Dinh Trang An Hang Mua SIC"
-                  "Bana Hills with Golden Bridge SIC"
-                  "Marble Mountain - Hoi An Ancient Town with Dinner SIC"
-                  "Airport to Hotel | Private Transfers"
-                  "Hotel to Airport | Private Transfers"
+                  "Ha Long"          (for a cruise day)
+                  "Da Nang"          (for a city tour)
+                  "Hanoi"            (for an arrival transfer)
+                  "Ninh Binh"        (for a Ninh Binh day trip)
+                  "Ho Chi Minh City" (for HCMC departure)
 
 ● "fromPoint" = Exact pickup point: hotel name, "CODE Airport", pier name.
-● "toPoint"   = Exact destination: hotel name, "CODE Airport", attraction/pier name.
+● "toPoint"   = For TRANSFERS: exact destination (hotel name, "CODE Airport", pier name).
+                For TOURS/ACTIVITIES: the SHORT activity caption — what the activity IS called.
+                Examples:
+                  "Halong Bay Cruise"          (for a cruise day)
+                  "Ba Na Hills & Golden Bridge" (for Ba Na day trip)
+                  "Hoi An Ancient Town"         (for Hoi An tour)
+                  "Marble Mountain"             (for Marble Mountain visit)
+                  "HAN Airport"                 (for airport transfer)
+                  "Vinpearl Land"               (for theme park visit)
 ● "details"   = TWO PARTS MERGED INTO ONE PARAGRAPH (see details rules below).
 ● "mealPlan"  = "B", "L", "D", "BL", "BD", "LD", "BLD" — only when explicitly included.
-● "meetingTime" = "HH:MM" (required for PVT_TRANSFER and SIC_TRANSFER; null for OWN_ARRANGEMENT).
+● "meetingTime" = "HH:MM" — the ACTUAL departure/pickup time of the transport.
+                For SIC: exact bus/vehicle departure time.
+                For PVT: exact pickup time from hotel.
+                Null for OWN_ARRANGEMENT and ACCOMMODATION.
 ● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "FLIGHT" | "INTERNAL_TOUR" | "ACCOMMODATION" | "OWN_ARRANGEMENT".
-● "timeFrom"    = "HH:MM" pickup/start time for SIC_TRANSFER items only; null for all others.
-● "timeTo"      = "HH:MM" estimated return/end time for SIC_TRANSFER items only; null for all others.
+● "timeFrom"    = For SIC_TRANSFER ONLY: earliest time guest should arrive at pickup point
+                  (30 minutes BEFORE the bus/vehicle departs = meetingTime minus 30 min).
+                  Format "HH:MM". Null for all other service types.
+● "timeTo"      = For SIC_TRANSFER ONLY: bus/vehicle departure time (same as meetingTime).
+                  Format "HH:MM". Null for all other service types.
+                  Example: bus leaves 08:30 → timeFrom="08:00", timeTo="08:30", meetingTime="08:30"
 
 ════════════════════════════════════════════════════════════════
 DETAILS FIELD — TWO-PART STRUCTURE (MANDATORY):
@@ -214,23 +233,49 @@ FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
 SERVICE TYPE RULES (use EXACTLY one of these values):
   - Domestic/internal flight → FLIGHT; meetingTime = depTime minus 3 hours
   - Airport road transfer (arrival or departure) → PVT_TRANSFER always
-  - "SIC" in title → SIC_TRANSFER; set timeFrom (pickup) and timeTo (return)
-  - Private tour / cruise / day trip → INTERNAL_TOUR
+  - "SIC" in title → SIC_TRANSFER; set timeFrom (30 min before departure) and timeTo (departure)
+  - Private tour / cruise / day trip (not SIC) → INTERNAL_TOUR
   - "Private" / "PVT" inter-city road transfer → PVT_TRANSFER
   - Hotel check-in / accommodation stay → ACCOMMODATION; meetingTime = null
   - Leisure / free day / at own pace / OWN → OWN_ARRANGEMENT, meetingTime = null
 
+FIRST AND LAST ITEM RULE (CRITICAL):
+  - The FIRST agenda item (arrival day) MUST be PVT_TRANSFER (airport → hotel)
+    unless the first day is clearly a flight or OWN_ARRANGEMENT.
+  - The LAST agenda item (departure day) MUST be PVT_TRANSFER (hotel → airport)
+    unless it is clearly a flight or OWN_ARRANGEMENT.
+  - If the TQ does not mention the service type for arrival/departure transfers,
+    DEFAULT to PVT_TRANSFER (Private Transfer).
+
+MULTI-TRANSFER DAYS:
+  - A single day can have MULTIPLE agenda items (e.g., airport arrival transfer + hotel check-in,
+    or a morning tour + evening dinner transfer).
+  - Never skip a transfer because another item exists on the same day.
+  - Split every distinct movement into its own item with its own date.
+
 MEETING TIME DEFAULTS:
   - Arrival transfer: flight arrTime + 30 min
   - Departure transfer: flight depTime − 3 hours
-  - SIC full-day: 07:30  |  SIC half-day AM: 08:00  |  SIC half-day PM: 13:00
-  - SIC cruise embarkation: 07:30  |  Private full-day: 08:00
-  - OWN_ARRANGEMENT: null
+  - SIC full-day: meetingTime=07:30, timeFrom=07:00, timeTo=07:30
+  - SIC half-day AM: meetingTime=08:00, timeFrom=07:30, timeTo=08:00
+  - SIC half-day PM: meetingTime=13:00, timeFrom=12:30, timeTo=13:00
+  - SIC cruise embarkation: meetingTime=07:30, timeFrom=07:00, timeTo=07:30
+  - Private full-day: meetingTime=08:00
+  - OWN_ARRANGEMENT: meetingTime=null, timeFrom=null, timeTo=null
+
+SERVICE TYPE DEFAULTS when not clearly mentioned:
+  - If title mentions "Private" or "PVT" → PVT_TRANSFER or INTERNAL_TOUR
+  - If title mentions "SIC" → SIC_TRANSFER
+  - If title is about activities/sightseeing without vehicle info → INTERNAL_TOUR
+  - First transfer of trip (arrival) → PVT_TRANSFER
+  - Last transfer of trip (departure) → PVT_TRANSFER
+  - All other ambiguous transfers → PVT_TRANSFER
 
 ADDITIONAL RULES:
-  - One item per day (arrivalDate → departureDate inclusive); split multi-city days as separate legs
+  - Cover every day from arrivalDate to departureDate inclusive
+  - Split multi-city days as separate items (each movement = one item)
   - Meals: only set if explicitly included in the package for that day
-  - Never leave location empty or generic
+  - Never leave location empty — always put the city/area name
 
 ════════════════════════════════════════════════════════════════
 Return ONLY a JSON object: { "items": [ { all 9 fields required: date, location, fromPoint, toPoint, details, mealPlan, meetingTime, timeFrom, timeTo, serviceType } ] }`
@@ -271,6 +316,15 @@ ${tqDocumentText
   const SIC_RE           = /\bsic\b/i
   const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
 
+  // Helper: subtract minutes from HH:MM string
+  function subtractMinutes(time: string, mins: number): string {
+    const [h, m] = time.split(':').map(Number)
+    const total  = h * 60 + m - mins
+    const hh     = Math.max(0, Math.floor(total / 60))
+    const mm     = Math.max(0, total % 60)
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+  }
+
   const items = rawItems.map(item => {
     const from = String(item.fromPoint ?? '')
     const to   = String(item.toPoint   ?? '')
@@ -281,13 +335,15 @@ ${tqDocumentText
 
     let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'OWN_ARRANGEMENT'
     let meetingTime = item.meetingTime as string | null | undefined
+    let timeFrom    = item.timeFrom   as string | null | undefined
+    let timeTo      = item.timeTo     as string | null | undefined
 
     // Override with deterministic rules (content signals beat AI classification)
     if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
       serviceType = 'FLIGHT'
     } else if (isAirportRoad) {
       serviceType = 'PVT_TRANSFER'
-    } else if (SIC_RE.test(loc)) {
+    } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
       serviceType = 'SIC_TRANSFER'
     } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
       serviceType = 'OWN_ARRANGEMENT'
@@ -297,6 +353,25 @@ ${tqDocumentText
       meetingTime = null
     }
 
+    // For SIC: ensure timeFrom/timeTo (join-window) are set
+    if (serviceType === 'SIC_TRANSFER') {
+      if (meetingTime && (!timeFrom || !timeTo)) {
+        // Auto-calculate 30-min window: timeFrom = meetingTime - 30min, timeTo = meetingTime
+        timeFrom = subtractMinutes(String(meetingTime), 30)
+        timeTo   = String(meetingTime)
+      } else if (timeFrom && !timeTo) {
+        // Only timeFrom set — derive timeTo as timeFrom + 30min
+        const [h, m] = String(timeFrom).split(':').map(Number)
+        const total  = h * 60 + m + 30
+        timeTo = `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+        if (!meetingTime) meetingTime = timeTo
+      }
+    } else {
+      // Non-SIC items: clear timeFrom/timeTo
+      timeFrom = null
+      timeTo   = null
+    }
+
     // Normalise airport fromPoint / toPoint labels
     const normFrom = normaliseAirportPoint(from, isAirportRoad)
     const normTo   = normaliseAirportPoint(to, isAirportRoad)
@@ -304,13 +379,29 @@ ${tqDocumentText
     return {
       ...item,
       serviceType,
-      meetingTime,
-      timeFrom: item.timeFrom ?? null,
-      timeTo:   item.timeTo   ?? null,
-      fromPoint: normFrom,
-      toPoint: normTo,
+      meetingTime: meetingTime ?? null,
+      timeFrom:    timeFrom    ?? null,
+      timeTo:      timeTo      ?? null,
+      fromPoint:   normFrom,
+      toPoint:     normTo,
     }
   })
+
+  // ── Enforce first & last items are PVT_TRANSFER ───────────────────────────
+  const NON_TRANSFER_TYPES = new Set(['FLIGHT', 'ACCOMMODATION', 'OWN_ARRANGEMENT'])
+
+  if (items.length > 0) {
+    const first = items[0]
+    if (!NON_TRANSFER_TYPES.has(first.serviceType) && first.serviceType !== 'PVT_TRANSFER') {
+      items[0] = { ...first, serviceType: 'PVT_TRANSFER', timeFrom: null, timeTo: null }
+    }
+  }
+  if (items.length > 1) {
+    const last = items[items.length - 1]
+    if (!NON_TRANSFER_TYPES.has(last.serviceType) && last.serviceType !== 'PVT_TRANSFER') {
+      items[items.length - 1] = { ...last, serviceType: 'PVT_TRANSFER', timeFrom: null, timeTo: null }
+    }
+  }
 
   return buildApiSuccess({ items }, `Generated ${items.length} agenda items`)
 }

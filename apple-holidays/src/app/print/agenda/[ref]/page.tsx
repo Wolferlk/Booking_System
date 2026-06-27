@@ -58,6 +58,8 @@ interface AgendaItem {
   details: string
   mealPlan: string
   meetingTime: string
+  timeFrom?: string | null
+  timeTo?: string | null
   serviceType: string
   assignment?: {
     vendorId?: string | null
@@ -334,17 +336,14 @@ export default function PrintAgendaPage() {
         <div style={{ marginBottom: 2 }}>
           <div style={S.sectionTitle}>
             <span>👥 Passengers</span>
-            {/* <span style={{ background: '#d97706', color: '#fff', padding: '1px 9px', borderRadius: 10, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3 }}>
-              {totalPax} PAX
-            </span> */}
-            <span style={{ fontSize: 9.5, fontWeight: 800,background: '#d97706',padding: '1px 9px', color: '#fff',borderRadius: 10, textTransform: 'none', letterSpacing: 0 }}>
+            <span style={{ fontSize: 9.5, fontWeight: 800, background: '#d97706', padding: '1px 9px', color: '#fff', borderRadius: 10, textTransform: 'none', letterSpacing: 0 }}>
               {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}
             </span>
           </div>
           <table>
             <thead>
               <tr>
-                {['Name', 'Type', 'Passport No.', 'Nationality', 'Contact', 'Meal Preference'].map(h => (
+                {['Name', 'Type', 'Contact', 'Meal Preference'].map(h => (
                   <th key={h} style={S.th}>{h}</th>
                 ))}
               </tr>
@@ -359,8 +358,6 @@ export default function PrintAgendaPage() {
                     )}
                   </td>
                   <td style={S.td}>{p.type ?? 'ADULT'}</td>
-                  <td style={{ ...S.td, fontFamily: 'monospace' }}>{p.passport ?? '—'}</td>
-                  <td style={S.td}>{p.nationality ?? '—'}</td>
                   <td style={S.td}>{p.contact ?? '—'}</td>
                   <td style={S.td}>
                     {p.mealPreference && p.mealPreference.trim() !== ''
@@ -450,11 +447,11 @@ export default function PrintAgendaPage() {
                 <th style={{ ...S.th, width: '9%' }}>Date</th>
                 <th style={{ ...S.th, width: '9%' }}>Location</th>
                 <th style={{ ...S.th, width: showDrivers ? '11%' : '16%' }}>From</th>
-                <th style={{ ...S.th, width: showDrivers ? '11%' : '16%' }}>To</th>
+                <th style={{ ...S.th, width: showDrivers ? '11%' : '16%' }}>To / Activity</th>
                 <th style={{ ...S.th, width: '7%' }}>Meal</th>
-                <th style={{ ...S.th, width: '6%' }}>Meet</th>
+                <th style={{ ...S.th, width: '8%' }}>Meet / Window</th>
                 <th style={{ ...S.th, width: '9%' }}>Service</th>
-                <th style={{ ...S.th, width: showDrivers ? '17%' : '26%' }}>Details / Timings</th>
+                <th style={{ ...S.th, width: showDrivers ? '15%' : '24%' }}>Details / Timings</th>
                 {showDrivers && <th style={{ ...S.th, width: '18%' }}>Driver / Vehicle</th>}
               </tr>
             </thead>
@@ -469,6 +466,15 @@ export default function PrintAgendaPage() {
                 const displayDriverPhone = a?.driverPhone ?? a?.driver?.phone ?? null
                 const displayVehicleType = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
                 const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
+
+                // For SIC: show join-window (timeFrom – timeTo) instead of meetingTime alone
+                let meetDisplay = '—'
+                if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
+                  meetDisplay = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ')
+                } else if (item.meetingTime) {
+                  meetDisplay = item.meetingTime
+                }
+
                 return (
                   <tr key={idx} style={{ background: idx % 2 === 0 ? '#fff' : '#f8fafc' }}>
                     <td style={{ ...S.td, fontWeight: 700, whiteSpace: 'nowrap', fontSize: 8.5 }}>
@@ -482,8 +488,8 @@ export default function PrintAgendaPage() {
                       {item.toPoint || '—'}
                     </td>
                     <td style={{ ...S.td, fontSize: 8 }}>{normalizeMealPlan(item.mealPlan)}</td>
-                    <td style={{ ...S.td, fontSize: 8.5, fontWeight: item.meetingTime ? 700 : 400, color: item.meetingTime ? '#059669' : '#94a3b8' }}>
-                      {item.meetingTime || '—'}
+                    <td style={{ ...S.td, fontSize: 8.5, fontWeight: meetDisplay !== '—' ? 700 : 400, color: meetDisplay !== '—' ? '#059669' : '#94a3b8' }}>
+                      {meetDisplay}
                     </td>
                     <td style={S.td}>
                       {svc === 'OWN_ARRANGEMENT' ? null : (
