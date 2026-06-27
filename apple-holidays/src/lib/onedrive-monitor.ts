@@ -961,7 +961,7 @@ async function replaceBookingChildren(
         bookingId,
         dayNo: item.dayNo,
         date: new Date(item.date),
-        title: item.title,
+        title: String(item.title ?? '').slice(0, 1000),
         description: item.description ?? null,
       })),
     })

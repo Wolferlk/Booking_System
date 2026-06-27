@@ -387,7 +387,7 @@ model ItineraryItem {
   booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   dayNo         Int
   date          DateTime
-  title         String
+  title         String   @db.Text
   description   String?  @db.Text
   inclusions    String?  @db.Text
   exclusions    String?  @db.Text

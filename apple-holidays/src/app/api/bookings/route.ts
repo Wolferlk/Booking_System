@@ -302,7 +302,7 @@ export async function POST(req: NextRequest) {
         create: itineraryItems.map((i: Record<string, unknown>) => ({
           dayNo: Number(i.dayNo),
           date: new Date(i.date as string),
-          title: i.title as string,
+          title: String(i.title ?? '').slice(0, 1000),
           description: i.description as string | undefined,
           inclusions: i.inclusions ? JSON.stringify(i.inclusions) : null,
           exclusions: i.exclusions ? JSON.stringify(i.exclusions) : null,
