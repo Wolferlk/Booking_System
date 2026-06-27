@@ -46,28 +46,41 @@ function generateRef(isNumber?: string | null): string {
 // IS Number pattern: VN / IS / SG / MY / AH followed by digits
 const IS_NUMBER_RE = /^(VN|IS|SG|MY|AH)\d{3,}/i
 
+// CNTL number pattern: digits followed by CNTL, or CNTL followed by digits
+const CNTL_RE = /^\d+CNTL$|^CNTL\d+$/i
+
 /**
  * Some TC Tour Refs embed the IS Number after `||` or ` / `.
  * e.g. "463720CNTL||SG22228" or "459773CNTL / VN19428"
- * Returns { tourRef: "463720CNTL", isNumber: "SG22228" } or { tourRef: raw, isNumber: null }
+ * Returns { tourRef, isNumber, cntlNumber } where cntlNumber is populated
+ * when the tourRef portion matches a CNTL pattern.
  */
-function splitTourRef(raw: string | null): { tourRef: string | null; isNumber: string | null } {
-  if (!raw) return { tourRef: null, isNumber: null }
+function splitTourRef(raw: string | null): { tourRef: string | null; isNumber: string | null; cntlNumber: string | null } {
+  if (!raw) return { tourRef: null, isNumber: null, cntlNumber: null }
+
+  let before: string = raw
+  let embeddedIsNumber: string | null = null
+
   // Check for || separator
   const pipeIdx = raw.indexOf('||')
   if (pipeIdx !== -1) {
-    const before = raw.slice(0, pipeIdx).trim()
-    const after  = raw.slice(pipeIdx + 2).trim()
-    if (IS_NUMBER_RE.test(after)) return { tourRef: before || null, isNumber: after.toUpperCase() }
+    const b = raw.slice(0, pipeIdx).trim()
+    const a = raw.slice(pipeIdx + 2).trim()
+    if (IS_NUMBER_RE.test(a)) { before = b; embeddedIsNumber = a.toUpperCase() }
   }
-  // Check for " / " separator (e.g. "459773CNTL / VN19428")
-  const slashIdx = raw.indexOf(' / ')
-  if (slashIdx !== -1) {
-    const before = raw.slice(0, slashIdx).trim()
-    const after  = raw.slice(slashIdx + 3).trim()
-    if (IS_NUMBER_RE.test(after)) return { tourRef: before || null, isNumber: after.toUpperCase() }
+  // Check for " / " separator
+  if (!embeddedIsNumber) {
+    const slashIdx = raw.indexOf(' / ')
+    if (slashIdx !== -1) {
+      const b = raw.slice(0, slashIdx).trim()
+      const a = raw.slice(slashIdx + 3).trim()
+      if (IS_NUMBER_RE.test(a)) { before = b; embeddedIsNumber = a.toUpperCase() }
+    }
   }
-  return { tourRef: raw, isNumber: null }
+
+  const cntlNumber = CNTL_RE.test(before) ? before.toUpperCase() : null
+  const tourRef    = cntlNumber ? null : (before || null)
+  return { tourRef, isNumber: embeddedIsNumber, cntlNumber }
 }
 
 function normalizeType(type: MailboxKind): 'TOUR_CONFIRMATION' | 'PNL' {
@@ -471,21 +484,29 @@ async function syncTourConfirmation(
   extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
   createdById: string,
 ): Promise<SyncResult> {
-  // Split TC Tour Ref: may embed IS Number after || or " / "
-  const { tourRef: tcTourRef, isNumber: embeddedIsNumber } = splitTourRef(extracted.bookingRef as string | null)
+  // Split TC Tour Ref: may embed IS Number after || or " / "; CNTL part goes to cntlNumber
+  const { tourRef: tcTourRef, isNumber: embeddedIsNumber, cntlNumber: embeddedCntlNumber } = splitTourRef(extracted.bookingRef as string | null)
 
   // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref
   const resolvedIsNumber: string | null = (extracted.isNumber as string | null) ?? embeddedIsNumber ?? null
 
-  // Use the TC Tour Ref (before || split) as the external reference number
+  // CNTL number: from AI extraction or embedded in TC Tour Ref
+  const resolvedCntlNumber: string | null = extracted.cntlNumber ?? embeddedCntlNumber ?? null
+
+  // Non-CNTL agent reference (agent's own booking ID)
   const resolvedAgentBookingId: string | null = tcTourRef ?? (extracted.agentBookingId as string | null) ?? null
 
   // Try to find an existing booking to update (e.g. amendment of an existing TC):
-  // 1. Match by agentBookingId (TC Tour Ref)
-  // 2. Match by isNumber
-  let existing = resolvedAgentBookingId
-    ? await prisma.booking.findFirst({ where: { agentBookingId: resolvedAgentBookingId } })
+  // 1. Match by cntlNumber (most specific for quotation-based TCs)
+  // 2. Match by agentBookingId (non-CNTL agent refs, or legacy CNTL stored before new field)
+  // 3. Match by isNumber
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let existing = resolvedCntlNumber
+    ? await (prisma.booking.findFirst as any)({ where: { cntlNumber: resolvedCntlNumber } })
     : null
+  if (!existing && resolvedAgentBookingId) {
+    existing = await prisma.booking.findFirst({ where: { agentBookingId: resolvedAgentBookingId } })
+  }
   if (!existing && resolvedIsNumber) {
     existing = await prisma.booking.findFirst({ where: { isNumber: resolvedIsNumber }, orderBy: { createdAt: 'desc' } })
   }
@@ -508,6 +529,7 @@ async function syncTourConfirmation(
   const bookingData = {
     bookingRef,
     agentBookingId:   resolvedAgentBookingId,
+    cntlNumber:       resolvedCntlNumber,
     agent:            extracted.agent ?? 'Unknown Agent',
     fileHandler:      extracted.fileHandler,
     arrivalDate:      new Date(extracted.arrivalDate),
@@ -556,6 +578,7 @@ async function syncTourConfirmation(
       where: { bookingRef },
       data: {
         agentBookingId:     bookingData.agentBookingId,
+        cntlNumber:         bookingData.cntlNumber,
         agent:              bookingData.agent,
         fileHandler:        bookingData.fileHandler,
         arrivalDate:        bookingData.arrivalDate,

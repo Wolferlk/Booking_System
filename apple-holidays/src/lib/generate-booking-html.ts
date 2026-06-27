@@ -133,7 +133,8 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
     <div class="fields">
       <div><div class="field-label">Agent / Tour Operator</div><div class="field-value">${esc(booking.agent)}</div></div>
       <div><div class="field-label">File Handler</div><div class="field-value">${esc(booking.fileHandler)}</div></div>
-      <div><div class="field-label">Agent Booking ID</div><div class="field-value">${esc(booking.agentBookingId)}</div></div>
+      ${(booking as any).cntlNumber ? `<div><div class="field-label">CNTL No.</div><div class="field-value">${esc((booking as any).cntlNumber)}</div></div>` : ''}
+      <div><div class="field-label">Agent Ref. No.</div><div class="field-value">${esc(booking.agentBookingId)}</div></div>
       <div><div class="field-label">Arrival</div><div class="field-value">${fmt(booking.arrivalDate)}</div></div>
       <div><div class="field-label">Departure</div><div class="field-value">${fmt(booking.departureDate)}</div></div>
       <div><div class="field-label">Currency</div><div class="field-value">${esc(booking.currency)}</div></div>

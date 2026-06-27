@@ -112,7 +112,7 @@ export default function BookingDetailPage() {
 
   // TC identifier inline editing (IS Number / Reference Number / Tour Ref)
   const [tcEditOpen,    setTcEditOpen]    = useState(false)
-  const [tcEditForm,    setTcEditForm]    = useState({ isNumber: '', agentBookingId: '', bookingRef: '' })
+  const [tcEditForm,    setTcEditForm]    = useState({ isNumber: '', agentBookingId: '', cntlNumber: '', bookingRef: '' })
   const [tcEditSaving,  setTcEditSaving]  = useState(false)
 
   async function saveTcIdentifiers() {
@@ -123,6 +123,8 @@ export default function BookingDetailPage() {
         body.isNumber = tcEditForm.isNumber.trim() || null
       if (tcEditForm.agentBookingId.trim() !== (booking?.agentBookingId ?? ''))
         body.agentBookingId = tcEditForm.agentBookingId.trim() || null
+      if (tcEditForm.cntlNumber.trim() !== (booking?.cntlNumber ?? ''))
+        body.cntlNumber = tcEditForm.cntlNumber.trim() || null
       // bookingRef edit only for super admins — include only if changed
       const isSA = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
       if (isSA && tcEditForm.bookingRef.trim() && tcEditForm.bookingRef.trim() !== ref)
@@ -692,6 +694,11 @@ Wishing you a wonderful trip! ✈️
             <div>
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+                {(booking as any).cntlNumber && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                      <Ticket className="w-3 h-3" /> CNTL: {(booking as any).cntlNumber}
+                    </span>
+                  )}
                 {booking.isNumber && (
                   <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
                     <Ticket className="w-3 h-3" /> IS: {booking.isNumber as string}
@@ -948,6 +955,7 @@ Wishing you a wonderful trip! ✈️
                   setTcEditForm({
                     isNumber:       String(booking?.isNumber ?? ''),
                     agentBookingId: String(booking?.agentBookingId ?? ''),
+                    cntlNumber:     String(booking?.cntlNumber ?? ''),
                     bookingRef:     ref,
                   })
                   setTcEditOpen(true)
@@ -1001,21 +1009,30 @@ Wishing you a wonderful trip! ✈️
           {tcEditOpen && (
             <div className="mb-4 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <p className="text-xs font-semibold text-slate-700 mb-1">Edit Booking Identifiers</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">IS Number</label>
                   <input
                     className="form-input w-full text-sm font-mono"
-                    placeholder="e.g. VN19428, MY23139, SG22228"
+                    placeholder="e.g. VN19428, IS48375 , MY23139, SG22228"
                     value={tcEditForm.isNumber}
                     onChange={e => setTcEditForm(f => ({ ...f, isNumber: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">CNLT / Reference No. (TC Tour Ref)</label>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">CNTL No.</label>
                   <input
                     className="form-input w-full text-sm font-mono"
-                    placeholder="e.g. 463720CNTL"
+                    placeholder="e.g. 463720CNTL, CNTL459773"
+                    value={tcEditForm.cntlNumber}
+                    onChange={e => setTcEditForm(f => ({ ...f, cntlNumber: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">Agent Ref. No.</label>
+                  <input
+                    className="form-input w-full text-sm font-mono"
+                    placeholder="Agent booking reference"
                     value={tcEditForm.agentBookingId}
                     onChange={e => setTcEditForm(f => ({ ...f, agentBookingId: e.target.value }))}
                   />
@@ -1055,7 +1072,13 @@ Wishing you a wonderful trip! ✈️
                 : <p className="text-sm text-slate-300 italic text-xs">Not set — click <Edit2 className="inline w-3 h-3" /> to add</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">CNLT / Ref. No.</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">CNTL No.</p>
+              {(booking as any).cntlNumber
+                ? <p className="text-sm font-mono font-semibold text-violet-600">{(booking as any).cntlNumber}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent Ref. No.</p>
               {booking.agentBookingId
                 ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId as string}</p>
                 : <p className="text-sm text-slate-300">—</p>}

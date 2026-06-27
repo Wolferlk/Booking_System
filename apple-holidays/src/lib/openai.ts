@@ -102,7 +102,8 @@ Invalid (reject): 19785, 40567, VNXXXX, IS-40567
 Schema:
 {
   "bookingRef": "string — the TC Tour Ref / Tour No exactly as printed (e.g. '469182CNTL', '463720CNTL||SG22228', '459773CNTL / VN19428'). Copy verbatim including any || or / separators.",
-  "agentBookingId": "string or null — agent's own booking/order reference if different from the TC Tour Ref",
+  "cntlNumber": "string or null — CNTL/Quotation number if present (digits+CNTL or CNTL+digits, e.g. '463720CNTL', 'CNTL459773'). Extract from bookingRef or document if present. Return null if absent.",
+  "agentBookingId": "string or null — agent's own non-CNTL booking/order reference. Do NOT put CNTL numbers here.",
   "agent": "string (e.g. Make My Trip)",
   "fileHandler": "string or null",
   "arrivalDate": "ISO date string YYYY-MM-DD",

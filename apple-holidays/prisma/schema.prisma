@@ -213,6 +213,7 @@ model Booking {
   id                    String        @id @default(cuid())
   bookingRef            String        @unique
   agentBookingId        String?
+  cntlNumber            String?       // CNTL/Quotation number (e.g. 463720CNTL, CNTL459773)
   agent                 String?
   fileHandler           String?
   version               Int           @default(1)

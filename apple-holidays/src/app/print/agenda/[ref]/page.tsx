@@ -87,6 +87,7 @@ interface BookingInfo {
   tourDestination?: string | null
   operationCountry?: string | null
   agentBookingId?: string | null
+  cntlNumber?: string | null
   isNumber?: string | null
   contactPhone?: string | null
   contactWhatsapp?: string | null
@@ -239,10 +240,13 @@ export default function PrintAgendaPage() {
         <div style={{ textAlign: 'right' }}>
           <p style={{ fontWeight: 800, fontSize: 18, fontFamily: 'monospace', color: '#d97706' }}>{ref}</p>
           {booking.isNumber && (
-            <p style={{ fontSize: 8.5, color: '#2563eb', fontFamily: 'monospace', fontWeight: 700, marginTop: 2 }}> : {booking.isNumber}</p>
+            <p style={{ fontSize: 8.5, color: '#2563eb', fontFamily: 'monospace', fontWeight: 700, marginTop: 2 }}>IS: {booking.isNumber}</p>
+          )}
+          {booking.cntlNumber && (
+            <p style={{ fontSize: 8, color: '#7c3aed', fontFamily: 'monospace', fontWeight: 700, marginTop: 1 }}>CNTL: {booking.cntlNumber}</p>
           )}
           {booking.agentBookingId && (
-            <p style={{ fontSize: 8, color: '#7c3aed', fontFamily: 'monospace', marginTop: 1 }}>Ref: {booking.agentBookingId}</p>
+            <p style={{ fontSize: 8, color: '#64748b', fontFamily: 'monospace', marginTop: 1 }}>Ref: {booking.agentBookingId}</p>
           )}
           <p style={{ fontSize: 8, color: '#64748b', marginTop: 3 }}>
             {formatDate(booking.arrivalDate)} — {formatDate(booking.departureDate)}

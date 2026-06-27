@@ -64,6 +64,7 @@ export interface ExtractedBooking {
   otherNote: string | null
   clientRequest: string | null
   // TC confirmation specific fields
+  cntlNumber: string | null
   isNumber: string | null
   dealName: string | null
   tourDestination: string | null
@@ -161,7 +162,8 @@ Extract ALL booking details from this email thread. Focus on the MOST RECENT tou
 Return ONLY valid JSON matching this exact schema:
 {
   "bookingRef": "Tour Ref IS any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
-  "agentBookingId": "Agent's booking ID / reference number from the email subject or booking form (e.g. 402011138462)",
+  "cntlNumber": "CNTL/Quotation number if present — digits followed by CNTL or CNTL followed by digits (e.g. '463720CNTL', '459773CNTL', 'CNTL459773'). Return null if no CNTL number exists.",
+  "agentBookingId": "Agent's non-CNTL booking ID / reference number from the email subject or booking form (e.g. 402011138462). Do NOT put CNTL numbers here — use cntlNumber for those.",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip, Tours Experts)",
   "fileHandler": "File handler or account manager name listed in the confirmation (e.g. Sangeetha Priya, Yogi, Shehan Jayakody)",
   "arrivalDate": "YYYY-MM-DD",
@@ -340,6 +342,7 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     tips:               (parsed as Record<string, unknown>).tips               as string | null ?? null,
     otherNote:          (parsed as Record<string, unknown>).otherNote          as string | null ?? null,
     clientRequest:      (parsed as Record<string, unknown>).clientRequest      as string | null ?? null,
+    cntlNumber:       (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
     isNumber:         parsed.isNumber         ?? null,
     dealName:         parsed.dealName         ?? null,
     tourDestination:  parsed.tourDestination  ?? null,
@@ -405,9 +408,7 @@ function extractTourRefFromText(text: string): string | null {
   const match = text.match(/tour\s*ref(?:erence)?\s*[:=#-]?\s*([A-Z0-9][A-Z0-9-]*)/i)
   const ref = cleanReference(match?.[1])
   if (!ref) return null
-  // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
-  const stripped = ref.replace(/[A-Z]+$/i, '')
-  return stripped.length >= 4 ? stripped : null
+  return ref.length >= 4 ? ref : null
 }
 
 function extractPnlTourNoFromText(text: string): string | null {

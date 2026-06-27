@@ -104,7 +104,7 @@ export async function PUT(
 
   const body = await req.json()
   const {
-    agentBookingId, agent, fileHandler,
+    agentBookingId, cntlNumber, agent, fileHandler,
     arrivalDate, departureDate, paxAdults, paxChildren,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
@@ -135,7 +135,7 @@ export async function PUT(
   // Contact info, country, and TC identifier updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
     contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
-    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined) &&
+    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined || cntlNumber !== undefined) &&
     !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
@@ -149,6 +149,7 @@ export async function PUT(
     where: { bookingRef: params.ref },
     data: {
       ...(agentBookingId !== undefined && { agentBookingId }),
+      ...(cntlNumber    !== undefined && { cntlNumber }),
       ...(isNumber      !== undefined && { isNumber }),
       ...(agent !== undefined && { agent }),
       ...(fileHandler !== undefined && { fileHandler }),
