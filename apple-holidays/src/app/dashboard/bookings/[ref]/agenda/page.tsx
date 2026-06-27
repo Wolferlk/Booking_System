@@ -36,12 +36,10 @@ function normalizeMealPlan(raw: string | null | undefined): string {
 }
 
 const SERVICE_TYPES = [
-  { value: 'PVT_TRANSFER',    label: 'PVT Transfer',    color: 'blue'   as const },
-  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',    color: 'green'  as const },
-  { value: 'FLIGHT',          label: 'Flight',          color: 'indigo' as const },
-  { value: 'INTERNAL_TOUR',   label: 'Internal Tour',   color: 'purple' as const },
-  { value: 'ACCOMMODATION',   label: 'Accommodation',   color: 'amber'  as const },
-  { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement', color: 'gray'   as const },
+  { value: 'PVT_TRANSFER',    label: 'Private Transfer',       color: 'blue'   as const },
+  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',           color: 'green'  as const },
+  { value: 'OWN_ARRANGEMENT', label: 'OWN Transfer',           color: 'gray'   as const },
+  { value: 'INTERNAL_TOUR',   label: 'Tickets Only Transfer',  color: 'purple' as const },
 ]
 
 interface AgendaItem {
@@ -234,7 +232,7 @@ export default function AgendaPage() {
             fromPoint: i.fromPoint ?? '', toPoint: i.toPoint ?? '',
             details: i.details ?? '', mealPlan: normalizeMealPlan(i.mealPlan),
             meetingTime: i.meetingTime ?? '', timeFrom: i.timeFrom ?? '',
-            timeTo: i.timeTo ?? '', serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
+            timeTo: i.timeTo ?? '', serviceType: i.serviceType ?? 'PVT_TRANSFER',
             assignment: i.assignment,
           }
         }))
@@ -282,7 +280,7 @@ export default function AgendaPage() {
       fromPoint: item.fromPoint ?? '', toPoint: item.toPoint ?? '',
       details: item.details ?? '', mealPlan: normalizeMealPlan(item.mealPlan),
       meetingTime: item.meetingTime ?? '', timeFrom: (item as any).timeFrom ?? '',
-      timeTo: (item as any).timeTo ?? '', serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
+      timeTo: (item as any).timeTo ?? '', serviceType: item.serviceType ?? 'PVT_TRANSFER',
     }))
   }
 
@@ -1358,7 +1356,7 @@ export default function AgendaPage() {
           <Button variant="secondary" icon={<Plus className="w-4 h-4" />}
             onClick={() => setItems(is => [...is, {
               date: '', location: '', fromPoint: '', toPoint: '',
-              details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: 'OWN_ARRANGEMENT',
+              details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: 'PVT_TRANSFER',
             }])}>
             Add Movement Item
           </Button>

@@ -163,7 +163,11 @@ FIELD DEFINITIONS — READ CAREFULLY:
                 For SIC: exact bus/vehicle departure time.
                 For PVT: exact pickup time from hotel.
                 Null for OWN_ARRANGEMENT and ACCOMMODATION.
-● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "FLIGHT" | "INTERNAL_TOUR" | "ACCOMMODATION" | "OWN_ARRANGEMENT".
+● "serviceType"  = "PVT_TRANSFER" | "SIC_TRANSFER" | "OWN_ARRANGEMENT" | "INTERNAL_TOUR".
+                  PVT_TRANSFER = Private Transfer (default when not clearly stated)
+                  SIC_TRANSFER = Shared bus/coach (mentions "SIC")
+                  OWN_ARRANGEMENT = Guest arranges own transport / free day / leisure
+                  INTERNAL_TOUR = Tickets only / entry ticket / activity without transfer
 ● "timeFrom"    = For SIC_TRANSFER ONLY: earliest time guest should arrive at pickup point
                   (30 minutes BEFORE the bus/vehicle departs = meetingTime minus 30 min).
                   Format "HH:MM". Null for all other service types.
@@ -230,14 +234,12 @@ FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
   4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
 
 ════════════════════════════════════════════════════════════════
-SERVICE TYPE RULES (use EXACTLY one of these values):
-  - Domestic/internal flight → FLIGHT; meetingTime = depTime minus 3 hours
-  - Airport road transfer (arrival or departure) → PVT_TRANSFER always
+SERVICE TYPE RULES (use EXACTLY one of these 4 values):
   - "SIC" in title → SIC_TRANSFER; set timeFrom (30 min before departure) and timeTo (departure)
-  - Private tour / cruise / day trip (not SIC) → INTERNAL_TOUR
-  - "Private" / "PVT" inter-city road transfer → PVT_TRANSFER
-  - Hotel check-in / accommodation stay → ACCOMMODATION; meetingTime = null
-  - Leisure / free day / at own pace / OWN → OWN_ARRANGEMENT, meetingTime = null
+  - "OWN" / leisure / free day / at own pace → OWN_ARRANGEMENT; meetingTime = null
+  - Entry tickets / sightseeing activities without vehicle / tickets only → INTERNAL_TOUR; meetingTime = null
+  - ALL other transfers (airport, inter-city, road, private, cruise boarding, hotel pickup) → PVT_TRANSFER
+  - Airport road transfer (arrival or departure) → ALWAYS PVT_TRANSFER
 
 FIRST AND LAST ITEM RULE (CRITICAL):
   - The FIRST agenda item (arrival day) MUST be PVT_TRANSFER (airport → hotel)
@@ -264,12 +266,10 @@ MEETING TIME DEFAULTS:
   - OWN_ARRANGEMENT: meetingTime=null, timeFrom=null, timeTo=null
 
 SERVICE TYPE DEFAULTS when not clearly mentioned:
-  - If title mentions "Private" or "PVT" → PVT_TRANSFER or INTERNAL_TOUR
   - If title mentions "SIC" → SIC_TRANSFER
-  - If title is about activities/sightseeing without vehicle info → INTERNAL_TOUR
-  - First transfer of trip (arrival) → PVT_TRANSFER
-  - Last transfer of trip (departure) → PVT_TRANSFER
-  - All other ambiguous transfers → PVT_TRANSFER
+  - If title mentions "OWN" or is a free/leisure day → OWN_ARRANGEMENT
+  - If title is about entry tickets, sightseeing only (no vehicle) → INTERNAL_TOUR
+  - EVERYTHING ELSE → PVT_TRANSFER (default; never leave ambiguous)
 
 ADDITIONAL RULES:
   - Cover every day from arrivalDate to departureDate inclusive
@@ -311,8 +311,6 @@ ${tqDocumentText
   // ── Post-process ─────────────────────────────────────────────────────────
   const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
   const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
-  const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
-  const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay)\b/i
   const SIC_RE           = /\bsic\b/i
   const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
 
@@ -333,24 +331,18 @@ ${tqDocumentText
 
     const isAirportRoad = AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)
 
-    let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'OWN_ARRANGEMENT'
+    let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'PVT_TRANSFER'
     let meetingTime = item.meetingTime as string | null | undefined
     let timeFrom    = item.timeFrom   as string | null | undefined
     let timeTo      = item.timeTo     as string | null | undefined
 
     // Override with deterministic rules (content signals beat AI classification)
-    if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
-      serviceType = 'FLIGHT'
-    } else if (isAirportRoad) {
+    // OWN_ARRANGEMENT is ONLY kept when the AI explicitly set it (TC must mention it)
+    if (isAirportRoad || FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+      // Airport or flight day → always Private Transfer
       serviceType = 'PVT_TRANSFER'
     } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
       serviceType = 'SIC_TRANSFER'
-    } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
-      serviceType = 'OWN_ARRANGEMENT'
-      meetingTime = null
-    } else if (ACCOMMODATION_RE.test(det) || ACCOMMODATION_RE.test(loc)) {
-      serviceType = 'ACCOMMODATION'
-      meetingTime = null
     }
 
     // For SIC: ensure timeFrom/timeTo (join-window) are set
@@ -388,7 +380,7 @@ ${tqDocumentText
   })
 
   // ── Enforce first & last items are PVT_TRANSFER ───────────────────────────
-  const NON_TRANSFER_TYPES = new Set(['FLIGHT', 'ACCOMMODATION', 'OWN_ARRANGEMENT'])
+  const NON_TRANSFER_TYPES = new Set(['OWN_ARRANGEMENT', 'INTERNAL_TOUR'])
 
   if (items.length > 0) {
     const first = items[0]
