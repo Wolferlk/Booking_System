@@ -814,7 +814,7 @@ Wishing you a wonderful trip! ✈️
                       }
                     }}
                   >
-                    {isTeConfirm ? '✓ TE Confirm' : t.label}
+                    {isTeConfirm ? '✓ Client Confirm' : t.label}
                   </Button>
                 )
               })}
