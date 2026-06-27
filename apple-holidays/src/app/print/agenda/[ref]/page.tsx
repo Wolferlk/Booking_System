@@ -100,6 +100,18 @@ interface BookingInfo {
   flights: Flight[]
   accommodations: Accommodation[]
   emergencyContacts: EmergencyContact[]
+  // notes & terms
+  terms?: string | null
+  exclusions?: string | null
+  policyNotes?: string | null
+  packageIncludes?: string | null
+  packageExcludes?: string | null
+  importantNotes?: string | null
+  tips?: string | null
+  otherNote?: string | null
+  clientRequest?: string | null
+  amendmentNote?: string | null
+  valueAddedServices?: string | null
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -168,6 +180,62 @@ const S = {
   },
 }
 
+// ── Note Block Component ──────────────────────────────────────────────────────
+
+function NoteBlock({
+  icon, label, content, accentColor = '#d97706', bgColor = '#fffbeb',
+}: {
+  icon: string; label: string; content: string
+  accentColor?: string; bgColor?: string
+}) {
+  if (!content || !content.trim()) return null
+  const lines = content.split('\n').filter(l => l.trim())
+  return (
+    <div style={{
+      border: `1px solid ${accentColor}40`,
+      borderLeft: `3px solid ${accentColor}`,
+      borderRadius: 5,
+      background: bgColor,
+      padding: '7px 10px',
+      pageBreakInside: 'avoid' as const,
+    }}>
+      <p style={{
+        fontSize: 8, fontWeight: 700, color: accentColor,
+        textTransform: 'uppercase' as const, letterSpacing: 0.5,
+        marginBottom: 5, display: 'flex', alignItems: 'center', gap: 4,
+      }}>
+        <span>{icon}</span> {label}
+      </p>
+      <div style={{ fontSize: 8.5, color: '#374151', lineHeight: 1.55 }}>
+        {lines.map((line, i) => {
+          const trimmed = line.trim()
+          const isBullet = /^[-•*▪►]/.test(trimmed)
+          const isNumbered = /^\d+[\.\)]/.test(trimmed)
+          const cleanText = isBullet ? trimmed.replace(/^[-•*▪►]\s*/, '') : isNumbered ? trimmed.replace(/^\d+[\.\)]\s*/, '') : trimmed
+          const num = isNumbered ? trimmed.match(/^(\d+)/)?.[1] : null
+          return (
+            <div key={i} style={{
+              display: 'flex', gap: 5, marginBottom: 2,
+              alignItems: 'flex-start',
+            }}>
+              <span style={{
+                flexShrink: 0, width: 14, height: 14,
+                background: (isBullet || isNumbered) ? `${accentColor}20` : 'transparent',
+                borderRadius: '50%',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 7, fontWeight: 700, color: accentColor, marginTop: 1,
+              }}>
+                {isBullet ? '✓' : isNumbered ? num : ''}
+              </span>
+              <span>{cleanText}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function PrintAgendaPage() {
@@ -200,7 +268,7 @@ export default function PrintAgendaPage() {
     const safe = (value: string | null | undefined) => String(value ?? '')
       .trim()
       .replace(/\s+/g, ' ')
-      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
+      .replace(/[<>:"/\\|?* -]/g, '')
       .replace(/\s+/g, '_')
       .replace(/_+/g, '_')
       .replace(/^_+|_+$/g, '')
@@ -229,6 +297,13 @@ export default function PrintAgendaPage() {
   const lead      = booking.passengers.find(p => p.isLead) ?? booking.passengers[0]
   const totalPax  = booking.paxAdults + booking.paxChildren
 
+  // Check if any notes/terms sections have content
+  const hasNotes = !!(
+    booking.packageIncludes || booking.packageExcludes || booking.terms ||
+    booking.exclusions || booking.importantNotes || booking.tips ||
+    booking.clientRequest || booking.amendmentNote || booking.otherNote || booking.policyNotes
+  )
+
   return (
     <>
       <style>{`
@@ -237,6 +312,8 @@ export default function PrintAgendaPage() {
         body { font-family: Arial, Helvetica, sans-serif; color: #1e293b; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         table { border-collapse: collapse; width: 100%; }
         @media print { .no-print { display: none !important; } }
+        .agenda-card { page-break-inside: avoid; }
+        .notes-section { page-break-inside: avoid; }
       `}</style>
 
       {/* ══════════════════════════════════════════════════════
@@ -252,7 +329,7 @@ export default function PrintAgendaPage() {
           </div>
           <div>
             <p style={{ fontWeight: 800, fontSize: 15, color: '#0f172a' }}>Apple Holidays</p>
-            <p style={{ fontSize: 8.5, color: '#64748b', marginTop: 1 }}>  Movement Chart &amp; Booking Summary</p>
+            <p style={{ fontSize: 8.5, color: '#64748b', marginTop: 1 }}>Movement Chart &amp; Booking Summary</p>
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
@@ -433,7 +510,7 @@ export default function PrintAgendaPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════
-          MOVEMENT CHART (AGENDA)
+          MOVEMENT CHART (AGENDA) — card layout
       ══════════════════════════════════════════════════════ */}
       {items.length > 0 && (
         <div style={{ marginBottom: 2 }}>
@@ -441,100 +518,238 @@ export default function PrintAgendaPage() {
             🗓️ Movement Chart — {items.length} item{items.length !== 1 ? 's' : ''}
             {showDrivers ? ' (with driver allocation)' : ' (driver info hidden)'}
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ ...S.th, width: '9%' }}>Date</th>
-                <th style={{ ...S.th, width: '9%' }}>Location</th>
-                <th style={{ ...S.th, width: showDrivers ? '11%' : '16%' }}>From</th>
-                <th style={{ ...S.th, width: showDrivers ? '11%' : '16%' }}>To / Activity</th>
-                <th style={{ ...S.th, width: '7%' }}>Meal</th>
-                <th style={{ ...S.th, width: '8%' }}>Meet / Window</th>
-                <th style={{ ...S.th, width: '9%' }}>Service</th>
-                <th style={{ ...S.th, width: showDrivers ? '15%' : '24%' }}>Details / Timings</th>
-                {showDrivers && <th style={{ ...S.th, width: '18%' }}>Driver / Vehicle</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item, idx) => {
-                const a   = item.assignment
-                const svc = item.serviceType
-                const clr = SVC_COLOR[svc] ?? '#94a3b8'
-                const displayVendorName = a?.vendorName ?? a?.vendor?.name ?? null
-                const displayVendorPhone = a?.vendor?.phone ?? null
-                const displayDriverName = a?.driverName ?? a?.driver?.name ?? null
-                const displayDriverPhone = a?.driverPhone ?? a?.driver?.phone ?? null
-                const displayVehicleType = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
-                const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
-                // For SIC: show join-window (timeFrom – timeTo) instead of meetingTime alone
-                let meetDisplay = '—'
-                if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
-                  meetDisplay = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ')
-                } else if (item.meetingTime) {
-                  meetDisplay = item.meetingTime
-                }
+          {/* Group items by date */}
+          {(() => {
+            const grouped: Record<string, AgendaItem[]> = {}
+            items.forEach(item => {
+              const key = item.date || 'unknown'
+              if (!grouped[key]) grouped[key] = []
+              grouped[key].push(item)
+            })
 
-                return (
-                  <tr key={idx} style={{ background: idx % 2 === 0 ? '#fff' : '#f8fafc' }}>
-                    <td style={{ ...S.td, fontWeight: 700, whiteSpace: 'nowrap', fontSize: 8.5 }}>
-                      {formatDate(item.date)}
-                    </td>
-                    <td style={{ ...S.td, fontSize: 8.5 }}>{item.location || '—'}</td>
-                    <td style={{ ...S.td, fontSize: 8.5 }}>
-                      {item.fromPoint || '—'}
-                    </td>
-                    <td style={{ ...S.td, fontSize: 8.5 }}>
-                      {item.toPoint || '—'}
-                    </td>
-                    <td style={{ ...S.td, fontSize: 8 }}>{normalizeMealPlan(item.mealPlan)}</td>
-                    <td style={{ ...S.td, fontSize: 8.5, fontWeight: meetDisplay !== '—' ? 700 : 400, color: meetDisplay !== '—' ? '#059669' : '#94a3b8' }}>
-                      {meetDisplay}
-                    </td>
-                    <td style={S.td}>
-                      {svc === 'OWN_ARRANGEMENT' ? null : (
-                        <span style={{
-                          display: 'inline-block', padding: '2px 5px', borderRadius: 3,
-                          fontSize: 7.5, fontWeight: 700, color: clr,
-                          background: `${clr}18`, border: `1px solid ${clr}38`,
+            return Object.entries(grouped).map(([date, dayItems]) => (
+              <div key={date} className="agenda-card" style={{
+                marginBottom: 8,
+                border: '1px solid #e2e8f0',
+                borderRadius: 6,
+                overflow: 'hidden',
+                pageBreakInside: 'avoid' as const,
+              }}>
+                {/* Day Header */}
+                <div style={{
+                  background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
+                  padding: '5px 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}>
+                  <div style={{
+                    background: '#d97706',
+                    borderRadius: 4,
+                    padding: '2px 8px',
+                    fontSize: 9,
+                    fontWeight: 800,
+                    color: '#fff',
+                    whiteSpace: 'nowrap' as const,
+                  }}>
+                    {formatDate(date)}
+                  </div>
+                  <div style={{ fontSize: 8.5, color: '#94a3b8', fontWeight: 600 }}>
+                    {dayItems[0]?.location || ''}
+                  </div>
+                </div>
+
+                {/* Day Items */}
+                {dayItems.map((item, idx) => {
+                  const a   = item.assignment
+                  const svc = item.serviceType
+                  const clr = SVC_COLOR[svc] ?? '#94a3b8'
+                  const displayVendorName   = a?.vendorName   ?? a?.vendor?.name   ?? null
+                  const displayVendorPhone  = a?.vendor?.phone ?? null
+                  const displayDriverName   = a?.driverName   ?? a?.driver?.name   ?? null
+                  const displayDriverPhone  = a?.driverPhone  ?? a?.driver?.phone  ?? null
+                  const displayVehicleType  = a?.vehicleType  ?? a?.driver?.vehicle?.type    ?? null
+                  const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
+
+                  let meetDisplay = '—'
+                  if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
+                    meetDisplay = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ')
+                  } else if (item.meetingTime) {
+                    meetDisplay = item.meetingTime
+                  }
+
+                  const hasDetails = item.details && item.details.trim()
+
+                  return (
+                    <div key={idx} style={{
+                      borderTop: idx > 0 ? '1px solid #f1f5f9' : 'none',
+                      background: idx % 2 === 0 ? '#ffffff' : '#f8fafc',
+                    }}>
+                      {/* Info Row */}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: showDrivers
+                          ? '1fr 1fr 50px 80px 90px 110px'
+                          : '1fr 1fr 50px 80px 90px',
+                        gap: 0,
+                        alignItems: 'stretch',
+                        minHeight: 28,
+                      }}>
+                        {/* From → To */}
+                        <div style={{
+                          padding: '5px 8px',
+                          borderRight: '1px solid #f1f5f9',
+                          display: 'flex',
+                          flexDirection: 'column' as const,
+                          justifyContent: 'center',
                         }}>
-                          {SVC_LABEL[svc] ?? svc}
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ ...S.td, fontSize: 8, lineHeight: 1.45 }}>
-                      {item.details || '—'}
-                    </td>
-                    {showDrivers && (
-                      <td style={{ ...S.td, fontSize: 8 }}>
-                        {a?.vendorId || displayVendorName ? (
-                          <>
-                            <p style={{ fontWeight: 700, color: '#7c3aed' }}>{displayVendorName ?? '—'}</p>
-                            {displayVendorPhone && <p style={{ marginTop: 1, color: '#64748b' }}>{displayVendorPhone}</p>}
-                            {displayDriverName && <p style={{ marginTop: 1 }}>{displayDriverName}{displayDriverPhone ? ` · ${displayDriverPhone}` : ''}</p>}
-                            {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1 }}>{displayVehicleType} {displayVehiclePlate}</p>}
-                          </>
-                        ) : displayDriverName ? (
-                          <>
-                            <p style={{ fontWeight: 700, color: '#1d4ed8' }}>{displayDriverName}</p>
-                            {displayDriverPhone && <p style={{ color: '#64748b', marginTop: 1 }}>{displayDriverPhone}</p>}
-                            {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1 }}>{displayVehicleType} {displayVehiclePlate}</p>}
-                          </>
-                        ) : (
-                          <span style={{ color: '#cbd5e1', fontStyle: 'italic' }}>Not assigned</span>
+                          <div style={{ fontSize: 7.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.3 }}>From</div>
+                          <div style={{ fontSize: 8.5, fontWeight: 700, color: '#0f172a', marginTop: 1 }}>{item.fromPoint || '—'}</div>
+                        </div>
+                        <div style={{
+                          padding: '5px 8px',
+                          borderRight: '1px solid #f1f5f9',
+                          display: 'flex',
+                          flexDirection: 'column' as const,
+                          justifyContent: 'center',
+                        }}>
+                          <div style={{ fontSize: 7.5, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.3 }}>To / Activity</div>
+                          <div style={{ fontSize: 8.5, fontWeight: 700, color: '#0f172a', marginTop: 1 }}>{item.toPoint || '—'}</div>
+                        </div>
+
+                        {/* Meal */}
+                        <div style={{
+                          padding: '5px 6px',
+                          borderRight: '1px solid #f1f5f9',
+                          display: 'flex',
+                          flexDirection: 'column' as const,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}>
+                          <div style={{ fontSize: 7, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.3 }}>Meal</div>
+                          {normalizeMealPlan(item.mealPlan) !== '—' ? (
+                            <div style={{
+                              marginTop: 2, fontSize: 7, fontWeight: 700,
+                              color: '#047857', background: '#ecfdf5',
+                              border: '1px solid #a7f3d0', borderRadius: 3,
+                              padding: '1px 3px', textAlign: 'center' as const,
+                            }}>
+                              {normalizeMealPlan(item.mealPlan).split(', ').map(m => m[0]).join('+')}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 7.5, color: '#cbd5e1' }}>—</div>
+                          )}
+                        </div>
+
+                        {/* Meet Time */}
+                        <div style={{
+                          padding: '5px 6px',
+                          borderRight: '1px solid #f1f5f9',
+                          display: 'flex',
+                          flexDirection: 'column' as const,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}>
+                          <div style={{ fontSize: 7, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.3 }}>Meet</div>
+                          <div style={{
+                            marginTop: 2, fontSize: 8,
+                            fontWeight: meetDisplay !== '—' ? 800 : 400,
+                            color: meetDisplay !== '—' ? '#059669' : '#cbd5e1',
+                          }}>
+                            {meetDisplay}
+                          </div>
+                        </div>
+
+                        {/* Service Type */}
+                        <div style={{
+                          padding: '5px 6px',
+                          borderRight: showDrivers ? '1px solid #f1f5f9' : 'none',
+                          display: 'flex',
+                          flexDirection: 'column' as const,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}>
+                          <div style={{ fontSize: 7, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: 0.3, marginBottom: 2 }}>Service</div>
+                          {svc === 'OWN_ARRANGEMENT' ? (
+                            <span style={{ fontSize: 7, color: '#94a3b8', fontStyle: 'italic' }}>Own Arr.</span>
+                          ) : (
+                            <span style={{
+                              display: 'inline-block', padding: '2px 5px', borderRadius: 3,
+                              fontSize: 7, fontWeight: 700, color: clr,
+                              background: `${clr}18`, border: `1px solid ${clr}38`,
+                              textAlign: 'center' as const,
+                            }}>
+                              {svc === 'PVT_TRANSFER' ? 'Private' : svc === 'SIC_TRANSFER' ? 'SIC' : SVC_LABEL[svc] ?? svc}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Driver / Vehicle */}
+                        {showDrivers && (
+                          <div style={{
+                            padding: '5px 7px',
+                            display: 'flex',
+                            flexDirection: 'column' as const,
+                            justifyContent: 'center',
+                          }}>
+                            {a?.vendorId || displayVendorName ? (
+                              <>
+                                <p style={{ fontWeight: 700, color: '#7c3aed', fontSize: 8 }}>{displayVendorName ?? '—'}</p>
+                                {displayVendorPhone && <p style={{ marginTop: 1, color: '#64748b', fontSize: 7.5 }}>{displayVendorPhone}</p>}
+                                {displayDriverName && <p style={{ marginTop: 1, fontSize: 7.5 }}>{displayDriverName}{displayDriverPhone ? ` · ${displayDriverPhone}` : ''}</p>}
+                                {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayVehicleType} {displayVehiclePlate}</p>}
+                              </>
+                            ) : displayDriverName ? (
+                              <>
+                                <p style={{ fontWeight: 700, color: '#1d4ed8', fontSize: 8 }}>{displayDriverName}</p>
+                                {displayDriverPhone && <p style={{ color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayDriverPhone}</p>}
+                                {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayVehicleType} {displayVehiclePlate}</p>}
+                              </>
+                            ) : (
+                              <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontSize: 7.5 }}>Not assigned</span>
+                            )}
+                          </div>
                         )}
-                      </td>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      </div>
+
+                      {/* Description Block — full width, clearly separated */}
+                      {hasDetails && (
+                        <div style={{
+                          borderTop: '1px dashed #e2e8f0',
+                          background: idx % 2 === 0 ? '#f8fafc' : '#f1f5f9',
+                          padding: '6px 10px 7px 10px',
+                          display: 'flex',
+                          gap: 6,
+                        }}>
+                          <div style={{
+                            flexShrink: 0,
+                            width: 2,
+                            background: clr,
+                            borderRadius: 2,
+                            opacity: 0.5,
+                          }} />
+                          <p style={{
+                            fontSize: 8,
+                            color: '#374151',
+                            lineHeight: 1.65,
+                            whiteSpace: 'pre-wrap' as const,
+                          }}>
+                            {item.details}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ))
+          })()}
         </div>
       )}
 
       {/* ══════════════════════════════════════════════════════
-          EMERGENCY CONTACTS — shown at the bottom of the sheet
+          EMERGENCY CONTACTS
       ══════════════════════════════════════════════════════ */}
       {booking.emergencyContacts.length > 0 && (
         <div style={{ marginBottom: 2 }}>
@@ -548,6 +763,193 @@ export default function PrintAgendaPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          NOTES & TERMS SECTIONS
+      ══════════════════════════════════════════════════════ */}
+      {hasNotes && (
+        <div style={{ marginTop: 16 }}>
+          {/* Section Header */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginBottom: 10,
+            paddingBottom: 6,
+            borderBottom: '2px solid #e2e8f0',
+          }}>
+            <div style={{
+              width: 3, height: 18, background: '#d97706', borderRadius: 2,
+            }} />
+            <p style={{
+              fontSize: 10, fontWeight: 800, color: '#0f172a',
+              textTransform: 'uppercase' as const, letterSpacing: 0.8,
+            }}>
+              Package Details &amp; Notes
+            </p>
+          </div>
+
+          {/* Amendment Note — highlighted at top if present */}
+          {booking.amendmentNote && (
+            <div style={{
+              marginBottom: 8,
+              border: '1px solid #fbbf2440',
+              borderLeft: '4px solid #d97706',
+              borderRadius: 5,
+              background: '#fffbeb',
+              padding: '7px 10px',
+              pageBreakInside: 'avoid' as const,
+            }}>
+              <p style={{
+                fontSize: 8, fontWeight: 700, color: '#b45309',
+                textTransform: 'uppercase' as const, letterSpacing: 0.5,
+                marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4,
+              }}>
+                ✏️ Amendment Note
+              </p>
+              <p style={{ fontSize: 8.5, color: '#374151', lineHeight: 1.55, whiteSpace: 'pre-wrap' as const }}>
+                {booking.amendmentNote}
+              </p>
+            </div>
+          )}
+
+          {/* Client Request — highlighted */}
+          {booking.clientRequest && (
+            <div style={{
+              marginBottom: 8,
+              border: '1px solid #3b82f640',
+              borderLeft: '4px solid #2563eb',
+              borderRadius: 5,
+              background: '#eff6ff',
+              padding: '7px 10px',
+              pageBreakInside: 'avoid' as const,
+            }}>
+              <p style={{
+                fontSize: 8, fontWeight: 700, color: '#1d4ed8',
+                textTransform: 'uppercase' as const, letterSpacing: 0.5,
+                marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4,
+              }}>
+                💬 Client Request
+              </p>
+              <p style={{ fontSize: 8.5, color: '#374151', lineHeight: 1.55, whiteSpace: 'pre-wrap' as const }}>
+                {booking.clientRequest}
+              </p>
+            </div>
+          )}
+
+          {/* Package Includes & Excludes — side by side */}
+          {(booking.packageIncludes || booking.packageExcludes) && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: booking.packageIncludes && booking.packageExcludes ? '1fr 1fr' : '1fr',
+              gap: 8,
+              marginBottom: 8,
+              pageBreakInside: 'avoid' as const,
+            }}>
+              {booking.packageIncludes && (
+                <NoteBlock
+                  icon="✅"
+                  label="Above Package Includes"
+                  content={booking.packageIncludes}
+                  accentColor="#16a34a"
+                  bgColor="#f0fdf4"
+                />
+              )}
+              {booking.packageExcludes && (
+                <NoteBlock
+                  icon="❌"
+                  label="The Above Package Excludes"
+                  content={booking.packageExcludes}
+                  accentColor="#dc2626"
+                  bgColor="#fef2f2"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Terms & Conditions and Exclusions — side by side */}
+          {(booking.terms || booking.exclusions) && (
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: booking.terms && booking.exclusions ? '1fr 1fr' : '1fr',
+              gap: 8,
+              marginBottom: 8,
+              pageBreakInside: 'avoid' as const,
+            }}>
+              {booking.terms && (
+                <NoteBlock
+                  icon="📋"
+                  label="Terms &amp; Conditions"
+                  content={booking.terms}
+                  accentColor="#7c3aed"
+                  bgColor="#faf5ff"
+                />
+              )}
+              {booking.exclusions && (
+                <NoteBlock
+                  icon="⚠️"
+                  label="Exclusions"
+                  content={booking.exclusions}
+                  accentColor="#ea580c"
+                  bgColor="#fff7ed"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Important Notes */}
+          {booking.importantNotes && (
+            <div style={{ marginBottom: 8 }}>
+              <NoteBlock
+                icon="⚡"
+                label="Important Notes"
+                content={booking.importantNotes}
+                accentColor="#dc2626"
+                bgColor="#fef2f2"
+              />
+            </div>
+          )}
+
+          {/* Tips */}
+          {booking.tips && (
+            <div style={{ marginBottom: 8 }}>
+              <NoteBlock
+                icon="💡"
+                label="Tips"
+                content={booking.tips}
+                accentColor="#0891b2"
+                bgColor="#ecfeff"
+              />
+            </div>
+          )}
+
+          {/* Policy Notes */}
+          {booking.policyNotes && (
+            <div style={{ marginBottom: 8 }}>
+              <NoteBlock
+                icon="📜"
+                label="Policy Notes"
+                content={booking.policyNotes}
+                accentColor="#7c3aed"
+                bgColor="#faf5ff"
+              />
+            </div>
+          )}
+
+          {/* Other Note */}
+          {booking.otherNote && (
+            <div style={{ marginBottom: 8 }}>
+              <NoteBlock
+                icon="📝"
+                label="Other Note"
+                content={booking.otherNote}
+                accentColor="#64748b"
+                bgColor="#f8fafc"
+              />
+            </div>
+          )}
         </div>
       )}
 
