@@ -49,6 +49,8 @@ export async function GET(
   return buildApiSuccess({
     ...computePNLTotals(pnl),
     bookingAgent: booking.agent,
+    isNumber:     booking.isNumber,
+    cntlNumber:   (booking as Record<string, unknown>).cntlNumber as string | null ?? null,
     sourceDocUrl: pnl.sourceDocUrl,
     lockedAt: pnl.lockedAt,
     createdAt: pnl.createdAt,

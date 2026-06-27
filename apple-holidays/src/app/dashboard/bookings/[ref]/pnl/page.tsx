@@ -56,6 +56,8 @@ interface PNLRecord {
   createdAt?: string
   updatedAt?: string
   bookingAgent?: string | null
+  isNumber?: string | null
+  cntlNumber?: string | null
   totalRevenue?: number
   totalCost?: number
   profit?: number
@@ -70,6 +72,8 @@ export default function PNLPage() {
 
   const [pnl, setPnl] = useState<PNLRecord | null>(null)
   const [bookingAgent, setBookingAgent] = useState<string | null>(null)
+  const [isNumber, setIsNumber] = useState<string | null>(null)
+  const [cntlNumber, setCntlNumber] = useState<string | null>(null)
   const [paxAdults, setPaxAdults] = useState('2')
   const [paxChildren, setPaxChildren] = useState('0')
   const [lines, setLines] = useState<Line[]>([])
@@ -114,6 +118,8 @@ export default function PNLPage() {
         const data = pnlJson.data as PNLRecord
         setPnl(data)
         setBookingAgent(data.bookingAgent ?? null)
+        setIsNumber(data.isNumber ?? null)
+        setCntlNumber(data.cntlNumber ?? null)
         setPaxAdults(String(data.paxAdults ?? 2))
         setPaxChildren(String(data.paxChildren ?? 0))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -402,8 +408,12 @@ export default function PNLPage() {
   return (
     <div>
       <Header
-        title={`P&L — ${ref}`}
-        subtitle="Profit & Loss Statement"
+        title={`P&L — ${isNumber ?? ref}`}
+        subtitle={[
+          'Profit & Loss Statement',
+          isNumber && isNumber !== ref ? `Booking: ${ref}` : null,
+          cntlNumber ? `CNTL: ${cntlNumber}` : null,
+        ].filter(Boolean).join(' · ')}
         actions={
           <div className="flex gap-2">
             <button
