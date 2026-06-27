@@ -61,6 +61,7 @@ export default function NewBookingPage() {
   const [form, setForm] = useState({
     bookingRef: '',
     agentBookingId: '',
+    cntlNumber: '',
     agent: 'Make My Trip',
     fileHandler: '',
     arrivalDate: '',
@@ -116,7 +117,8 @@ export default function NewBookingPage() {
       ...prev,
       // bookingRef = IS Number (the extracted IS Number is the canonical booking reference)
       bookingRef:     extractedISNumber || prev.bookingRef,
-      agentBookingId: (data.agentBookingId as string) || (data.bookingRef as string) || prev.agentBookingId,
+      agentBookingId: (data.agentBookingId as string) || prev.agentBookingId,
+      cntlNumber:     (data.cntlNumber     as string) || prev.cntlNumber,
       agent:          (data.agent          as string) || prev.agent,
       fileHandler:    (data.fileHandler    as string) || prev.fileHandler,
       arrivalDate:    (data.arrivalDate    as string)?.slice(0, 10) || prev.arrivalDate,
@@ -476,8 +478,13 @@ export default function NewBookingPage() {
                 <p className="text-xs text-slate-400 mt-0.5">Filled automatically from the IS Number in the TC document</p>
               </div>
               <div>
-                <label className="form-label">MMT / Agent Booking ID</label>
-                <input className="form-input" value={form.agentBookingId}
+                <label className="form-label">CNTL No.</label>
+                <input className="form-input font-mono" placeholder="e.g. 463720CNTL, CNTL459773" value={form.cntlNumber}
+                  onChange={e => setForm(p => ({ ...p, cntlNumber: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Agent Ref. No.</label>
+                <input className="form-input" placeholder="Agent booking reference" value={form.agentBookingId}
                   onChange={e => setForm(p => ({ ...p, agentBookingId: e.target.value }))} />
               </div>
               <div>

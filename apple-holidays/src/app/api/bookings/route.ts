@@ -159,6 +159,7 @@ export async function POST(req: NextRequest) {
   const {
     bookingRef,
     agentBookingId,
+    cntlNumber,
     agent,
     fileHandler,
     arrivalDate,
@@ -225,10 +226,12 @@ export async function POST(req: NextRequest) {
 
   const cancellationDeadline = getCancellationDeadline(arrivalDate)
 
-  const booking = await prisma.booking.create({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const booking = await (prisma.booking.create as any)({
     data: {
       bookingRef,
       agentBookingId,
+      cntlNumber: cntlNumber || null,
       agent,
       fileHandler,
       arrivalDate: new Date(arrivalDate),

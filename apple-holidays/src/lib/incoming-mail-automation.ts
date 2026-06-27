@@ -572,7 +572,8 @@ async function syncTourConfirmation(
   }
 
   const booking = isNew
-    ? await prisma.booking.create({ data: { ...bookingData, createdById } })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? await (prisma.booking.create as any)({ data: { ...bookingData, createdById } })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     : await (prisma.booking.update as any)({
       where: { bookingRef },

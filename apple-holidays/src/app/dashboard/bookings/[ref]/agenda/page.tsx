@@ -19,6 +19,22 @@ import Modal from '@/components/ui/modal'
 import { formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
+const MEAL_ABBREV: Record<string, string> = {
+  'B':   'Breakfast',
+  'L':   'Lunch',
+  'D':   'Dinner',
+  'BL':  'Breakfast, Lunch',  'LB':  'Breakfast, Lunch',
+  'BD':  'Breakfast, Dinner', 'DB':  'Breakfast, Dinner',
+  'LD':  'Lunch, Dinner',     'DL':  'Lunch, Dinner',
+  'BLD': 'Breakfast, Lunch, Dinner', 'BDL': 'Breakfast, Lunch, Dinner',
+  'LBD': 'Breakfast, Lunch, Dinner',
+}
+function normalizeMealPlan(raw: string | null | undefined): string {
+  if (!raw || !raw.trim()) return ''
+  const upper = raw.trim().toUpperCase().replace(/[\s,/]+/g, '')
+  return MEAL_ABBREV[upper] ?? raw.trim()
+}
+
 const SERVICE_TYPES = [
   { value: 'PVT_TRANSFER',    label: 'PVT Transfer',    color: 'blue'   as const },
   { value: 'SIC_TRANSFER',    label: 'SIC Transfer',    color: 'green'  as const },
@@ -1003,8 +1019,8 @@ export default function AgendaPage() {
                           </span>
                           {svcType && <Badge color={svcType.color}>{svcType.label}</Badge>}
                           {/* Only show meal plan badge if it has a value */}
-                          {item.mealPlan && item.mealPlan.trim() !== '' && (
-                            <Badge color="amber">{item.mealPlan}</Badge>
+                          {normalizeMealPlan(item.mealPlan) && (
+                            <Badge color="amber">{normalizeMealPlan(item.mealPlan)}</Badge>
                           )}
                           {item.meetingTime && (
                             <span className="text-xs text-slate-500">Meet: {item.meetingTime}</span>
