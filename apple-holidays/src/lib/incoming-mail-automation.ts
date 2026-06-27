@@ -87,6 +87,29 @@ function loadConditions(): string {
   }
 }
 
+const MEAL_ABBREV: Record<string, string> = {
+  'B':   'Breakfast',
+  'L':   'Lunch',
+  'D':   'Dinner',
+  'BL':  'Breakfast, Lunch',
+  'LB':  'Breakfast, Lunch',
+  'BD':  'Breakfast, Dinner',
+  'DB':  'Breakfast, Dinner',
+  'LD':  'Lunch, Dinner',
+  'DL':  'Lunch, Dinner',
+  'BLD': 'Breakfast, Lunch, Dinner',
+  'BDL': 'Breakfast, Lunch, Dinner',
+  'LBD': 'Breakfast, Lunch, Dinner',
+}
+
+function normalizeMealPlan(raw: string | null | undefined): string | null {
+  if (!raw || !raw.trim()) return null
+  const trimmed = raw.trim()
+  const upper = trimmed.toUpperCase().replace(/[\s,\/]+/g, '')
+  if (MEAL_ABBREV[upper]) return MEAL_ABBREV[upper]
+  return trimmed
+}
+
 async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFromEmail>>, bookingRef: string): Promise<any[]> {
   const openaiModule = await import('@/lib/openai')
   const openai = openaiModule.default
@@ -113,20 +136,32 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
 RULES: ${conditions}
 
 SERVICE TYPE — MANDATORY (use exactly one of these values):
-- Airport/flight transfer, inter-city flights → serviceType="FLIGHT", meetingTime = depTime minus 3 hours
-- Arrival/departure airport road transfer → serviceType="PVT_TRANSFER"
-- Internal tour (day trip, cruise, guided tour, SIC) explicitly SIC/shared → serviceType="SIC_TRANSFER"
+- International/domestic flight leg → serviceType="FLIGHT", meetingTime = depTime minus 3 hours, fromPoint = "Flight <flightNo>" (e.g. "Flight VZ123"), toPoint = destination airport code
+- ARRIVAL airport road transfer (airport → hotel) → serviceType="PVT_TRANSFER", meetingTime = flight arrTime PLUS 30 minutes (NOT 45), fromPoint = "Airport" or flight number, toPoint = hotel name
+- DEPARTURE airport road transfer (hotel → airport) → serviceType="PVT_TRANSFER", meetingTime = flight depTime minus 3 hours, fromPoint = hotel name, toPoint = "Airport"
+- Internal SIC tour (shared/group tour) explicitly marked SIC → serviceType="SIC_TRANSFER"
 - Private tour, private cruise, private inter-city transfer → serviceType="PVT_TRANSFER"
-- Hotel check-in / check-out / accommodation stay only → serviceType="ACCOMMODATION", meetingTime=null
-- Internal tour (day trip, cruise, guided tour) private → serviceType="INTERNAL_TOUR"
-- Leisure day / free time / at leisure / own pace → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- Hotel check-in / accommodation stay only → serviceType="ACCOMMODATION", meetingTime=null
+- Private guided day tour (not SIC) → serviceType="INTERNAL_TOUR"
+- "Own Arrangement" / leisure day / free time / at leisure — PRESERVE EXACTLY, never convert to PVT_TRANSFER → serviceType="OWN_ARRANGEMENT", meetingTime=null
 - Ticket-only / self-guided / entrance only → serviceType="OWN_ARRANGEMENT", meetingTime=null
+
+MEAL PLAN — Always use full English names (NEVER abbreviations like B, L, D):
+- "Breakfast" (not B)
+- "Lunch" (not L)
+- "Dinner" (not D)
+- "Breakfast, Lunch" (not BL)
+- "Breakfast, Dinner" (not BD)
+- "Breakfast, Lunch, Dinner" (not BLD)
+- If TC states "Not Included" or meals are not provided, use null
+
+ARRIVAL TRANSFER TIMING: meetingTime for arrival road transfer = flight arrival time + 30 minutes exactly.
 
 SIC TIME RANGE — For SIC_TRANSFER items, always include timeFrom and timeTo fields:
 - timeFrom: pickup/meeting time (e.g. "07:30")
 - timeTo: estimated return time (e.g. "18:00")
 
-Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string|null","toPoint":"string|null","details":"string|null","mealPlan":"string|null","meetingTime":"HH:MM or null","timeFrom":"HH:MM or null","timeTo":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT|FLIGHT|INTERNAL_TOUR|ACCOMMODATION"}] }`,
+Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string|null","toPoint":"string|null","details":"string|null","mealPlan":"Breakfast|Lunch|Dinner|Breakfast, Lunch|Breakfast, Dinner|Breakfast, Lunch, Dinner|null","meetingTime":"HH:MM or null","timeFrom":"HH:MM or null","timeTo":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT|FLIGHT|INTERNAL_TOUR|ACCOMMODATION"}] }`,
       },
       { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
     ],
@@ -153,9 +188,13 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       const to   = String(item.toPoint   ?? '')
       const det  = String(item.details   ?? '')
       const loc  = String(item.location  ?? '')
-      let serviceType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'OWN_ARRANGEMENT'
+      const aiType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'OWN_ARRANGEMENT'
+      let serviceType = aiType
 
-      if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+      // OWN_ARRANGEMENT from AI must be preserved — never silently convert to PVT_TRANSFER
+      if (aiType === 'OWN_ARRANGEMENT') {
+        serviceType = 'OWN_ARRANGEMENT'
+      } else if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
         serviceType = 'FLIGHT'
       } else if (AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)) {
         serviceType = 'PVT_TRANSFER'
@@ -175,6 +214,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
         ...item,
         serviceType,
         meetingTime,
+        mealPlan: normalizeMealPlan(item.mealPlan),
         timeFrom: item.timeFrom ?? null,
         timeTo:   item.timeTo   ?? null,
       }
@@ -287,10 +327,14 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
     await prisma.passenger.createMany({
       data: extracted.passengers.map(p => ({
         bookingId,
-        name: p.name,
-        type: (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
-        isLead: p.isLead ?? false,
-        mealPreference: (p as Record<string, unknown>).mealPreference as string ?? null,
+        name:           p.name,
+        type:           (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
+        isLead:         p.isLead ?? false,
+        age:            (p as Record<string, unknown>).age as number | null ?? null,
+        passport:       (p as Record<string, unknown>).passport as string | null ?? null,
+        nationality:    (p as Record<string, unknown>).nationality as string | null ?? null,
+        contact:        (p as Record<string, unknown>).contact as string | null ?? null,
+        mealPreference: (p as Record<string, unknown>).mealPreference as string | null ?? null,
       })),
     })
   }
@@ -507,20 +551,21 @@ async function syncTourConfirmation(
 
   const booking = isNew
     ? await prisma.booking.create({ data: { ...bookingData, createdById } })
-    : await prisma.booking.update({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    : await (prisma.booking.update as any)({
       where: { bookingRef },
       data: {
-        agentBookingId: bookingData.agentBookingId,
-        agent: bookingData.agent,
-        fileHandler: bookingData.fileHandler,
-        arrivalDate: bookingData.arrivalDate,
-        departureDate: bookingData.departureDate,
-        paxAdults: bookingData.paxAdults,
-        paxChildren: bookingData.paxChildren,
-        quotedTotal: bookingData.quotedTotal,
-        currency: bookingData.currency,
-        terms: bookingData.terms,
-        exclusions: bookingData.exclusions,
+        agentBookingId:     bookingData.agentBookingId,
+        agent:              bookingData.agent,
+        fileHandler:        bookingData.fileHandler,
+        arrivalDate:        bookingData.arrivalDate,
+        departureDate:      bookingData.departureDate,
+        paxAdults:          bookingData.paxAdults,
+        paxChildren:        bookingData.paxChildren,
+        quotedTotal:        bookingData.quotedTotal,
+        currency:           bookingData.currency,
+        terms:              bookingData.terms,
+        exclusions:         bookingData.exclusions,
         valueAddedServices: bookingData.valueAddedServices,
         packageIncludes:    bookingData.packageIncludes,
         packageExcludes:    bookingData.packageExcludes,
@@ -528,24 +573,24 @@ async function syncTourConfirmation(
         tips:               bookingData.tips,
         otherNote:          bookingData.otherNote,
         clientRequest:      bookingData.clientRequest,
-        agentEmail: bookingData.agentEmail,
-        agentPhone: bookingData.agentPhone,
-        agentWhatsapp: bookingData.agentWhatsapp,
-        agentCountry: bookingData.agentCountry,
-        agentAddress: bookingData.agentAddress,
-        contactEmail: bookingData.contactEmail,
-        contactPhone: bookingData.contactPhone,
-        contactWhatsapp: bookingData.contactWhatsapp,
-        contactCountry: bookingData.contactCountry,
-        contactAddress: bookingData.contactAddress,
-        isNumber:            bookingData.isNumber,
-        dealName:            bookingData.dealName,
-        tourDestination:     bookingData.tourDestination,
-        chauffeurContact:    bookingData.chauffeurContact,
-        languagePreference:  bookingData.languagePreference,
-        specialOccasions:    bookingData.specialOccasions,
-        checkedBy:           bookingData.checkedBy,
-        reconfirmBy:         bookingData.reconfirmBy,
+        agentEmail:         bookingData.agentEmail,
+        agentPhone:         bookingData.agentPhone,
+        agentWhatsapp:      bookingData.agentWhatsapp,
+        agentCountry:       bookingData.agentCountry,
+        agentAddress:       bookingData.agentAddress,
+        contactEmail:       bookingData.contactEmail,
+        contactPhone:       bookingData.contactPhone,
+        contactWhatsapp:    bookingData.contactWhatsapp,
+        contactCountry:     bookingData.contactCountry,
+        contactAddress:     bookingData.contactAddress,
+        isNumber:           bookingData.isNumber,
+        dealName:           bookingData.dealName,
+        tourDestination:    bookingData.tourDestination,
+        chauffeurContact:   bookingData.chauffeurContact,
+        languagePreference: bookingData.languagePreference,
+        specialOccasions:   bookingData.specialOccasions,
+        checkedBy:          bookingData.checkedBy,
+        reconfirmBy:        bookingData.reconfirmBy,
         status: 'GT_REVIEW',
       },
     })

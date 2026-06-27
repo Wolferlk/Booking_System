@@ -1012,7 +1012,7 @@ Wishing you a wonderful trip! ✈️
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">Reference Number (TC Tour Ref)</label>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">CNLT / Reference No. (TC Tour Ref)</label>
                   <input
                     className="form-input w-full text-sm font-mono"
                     placeholder="e.g. 463720CNTL"
@@ -1055,7 +1055,7 @@ Wishing you a wonderful trip! ✈️
                 : <p className="text-sm text-slate-300 italic text-xs">Not set — click <Edit2 className="inline w-3 h-3" /> to add</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reference Number</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">CNLT / Ref. No.</p>
               {booking.agentBookingId
                 ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId as string}</p>
                 : <p className="text-sm text-slate-300">—</p>}

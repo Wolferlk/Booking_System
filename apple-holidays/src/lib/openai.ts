@@ -149,9 +149,9 @@ Schema:
       "type": "ADULT or CHILD",
       "age": "number or null",
       "isLead": "boolean",
-      "passport": "string or null",
-      "nationality": "string or null",
-      "contact": "string or null — personal phone or WhatsApp of this specific passenger if mentioned"
+      "passport": "string or null — passport DOCUMENT NUMBER only (e.g. 'N1234567', 'A9876543'). NEVER put a phone/mobile number here. If you see a phone number next to a passenger name, put it in 'contact' instead.",
+      "nationality": "string or null — passenger nationality or country",
+      "contact": "string or null — personal phone, mobile or WhatsApp of this passenger. NEVER put a passport document number here."
     }
   ],
   "flights": [
@@ -182,8 +182,8 @@ Schema:
     {
       "dayNo": "number",
       "date": "ISO date string YYYY-MM-DD",
-      "title": "string",
-      "description": "string or null",
+      "title": "string — EXACT complete title from the TC, copied verbatim. NEVER shorten, paraphrase or replace with generic labels like 'Various Attractions' or 'City Tour'. Copy the full official tour name exactly as written.",
+      "description": "string or null — exact description text from TC, copied verbatim. Do NOT omit or summarise. Return null only if no description exists.",
       "inclusions": ["array of strings"],
       "exclusions": ["array of strings"]
     }

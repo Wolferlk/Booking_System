@@ -84,7 +84,7 @@ export interface ExtractedBooking {
   contactWhatsapp: string | null
   contactCountry: string | null
   contactAddress: string | null
-  passengers: { name: string; type: string; isLead: boolean }[]
+  passengers: { name: string; type: string; isLead: boolean; passport?: string | null; nationality?: string | null; contact?: string | null; age?: number | null }[]
   flights: { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string; notes?: string }[]
   accommodations: { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string; mealType?: string }[]
   itineraryItems: { dayNo: number; date: string; title: string; description?: string }[]
@@ -191,10 +191,10 @@ Return ONLY valid JSON matching this exact schema:
   "contactCountry": "lead customer country or nationality or null",
   "contactAddress": "lead customer home/mailing address or null",
   "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
-  "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false, "mealPreference": "string or null — e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement', 'Special Meal' fields per passenger, or a booking-level note. Return null if not specified." }],
+  "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false, "age": "number or null", "passport": "passport document number ONLY — e.g. 'N1234567' or 'A9876543'. NEVER put a phone number here. If you see a phone/mobile number next to a passenger, put it in 'contact', not 'passport'. Return null if no passport number is found.", "nationality": "string or null — passenger nationality/country", "contact": "string or null — personal phone, mobile or WhatsApp of this specific passenger (NOT a passport number). Return null if not found.", "mealPreference": "string or null — e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement', 'Special Meal' fields per passenger, or a booking-level note. Return null if not specified." }],
   "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "3-letter IATA code", "depTime": "HH:MM or null", "toApt": "3-letter IATA code", "arrTime": "HH:MM or null", "airline": "string or null", "notes": "string or null" }],
   "accommodations": [{ "hotel": "exact full hotel name as written in TC", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
-  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "EXACT complete tour/activity title — copy verbatim from TC, do NOT shorten or paraphrase", "description": "exact description from TC document verbatim — do NOT omit, shorten or summarise. Return null only if no description exists.", "serviceType": "PVT_TRANSFER|SIC_TRANSFER|FLIGHT|INTERNAL_TOUR|ACCOMMODATION|OWN_ARRANGEMENT" }],
+  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "EXACT complete tour/activity title — copy verbatim from TC, do NOT shorten, paraphrase or substitute generic labels. NEVER use 'Various Attractions', 'City Tour', 'Day Tour' or similar generic replacements. Copy the full official name exactly as written.", "description": "exact description from TC document verbatim — do NOT omit, shorten or summarise. Return null only if no description exists.", "serviceType": "PVT_TRANSFER|SIC_TRANSFER|FLIGHT|INTERNAL_TOUR|ACCOMMODATION|OWN_ARRANGEMENT" }],
   "pnlLines": []
 }
 
@@ -327,7 +327,7 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     fileHandler:      parsed.fileHandler      ?? null,
     arrivalDate:      parsed.arrivalDate      ?? null,
     departureDate:    parsed.departureDate    ?? null,
-    paxAdults:        Number(parsed.paxAdults  ?? 2),
+    paxAdults:        Number(parsed.paxAdults  ?? 0),
     paxChildren:      Number(parsed.paxChildren ?? 0),
     quotedTotal:      parsed.quotedTotal      ? Number(parsed.quotedTotal) : null,
     currency:         parsed.currency         ?? 'USD',
@@ -358,7 +358,16 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     contactWhatsapp:  parsed.contactWhatsapp  ?? regexPhone ?? null,
     contactCountry:   parsed.contactCountry   ?? null,
     contactAddress:   parsed.contactAddress   ?? null,
-    passengers:       parsed.passengers       ?? [],
+    passengers: (parsed.passengers ?? []).map((p: Record<string, unknown>) => ({
+      name:           String(p.name ?? ''),
+      type:           String(p.type ?? 'ADULT'),
+      isLead:         Boolean(p.isLead ?? false),
+      age:            p.age != null ? Number(p.age) : null,
+      passport:       (p.passport as string | null) ?? null,
+      nationality:    (p.nationality as string | null) ?? null,
+      contact:        (p.contact as string | null) ?? null,
+      mealPreference: (p.mealPreference as string | null) ?? null,
+    })),
     flights:          parsed.flights          ?? [],
     accommodations:   parsed.accommodations   ?? [],
     itineraryItems:   parsed.itineraryItems   ?? [],
