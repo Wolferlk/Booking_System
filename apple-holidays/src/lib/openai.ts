@@ -1,7 +1,23 @@
 import OpenAI from 'openai'
 
+function getOpenAIKey() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim()
+  if (!apiKey) return undefined
+
+  if (/^https?:\/\//i.test(apiKey)) {
+    throw new Error('Invalid OPENAI_API_KEY: expected an OpenAI secret key, but found a URL.')
+  }
+
+  return apiKey
+}
+
+// const openai = new OpenAI({
+//   apiKey: process.env.OPENAI_API_KEY,
+// })
+
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: getOpenAIKey(),
 })
 
 export default openai
@@ -57,10 +73,37 @@ const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assi
 Extract structured booking data from the provided tour confirmation document text.
 Return ONLY valid JSON matching the schema below. If a field is not found, use null.
 
+## CRITICAL — IS Number Extraction (HIGHEST PRIORITY)
+
+The IS Number is the MOST IMPORTANT field. It is always labelled exactly as:
+  IS Number: VN40123
+  IS Number: IS23492
+  IS Number: MY40586
+  IS Number: SG57685
+
+Supported prefixes and their meaning:
+  VN = Vietnam
+  IS = Sri Lanka
+  SG = Singapore
+  MY = Malaysia
+
+Rules for isNumber:
+- Search the ENTIRE document for the label "IS Number:" followed by the code.
+- Also check: embedded in Tour Ref after "||" or " / " (e.g. "463720CNTL||SG22228" → SG22228).
+- Also check: "Confirmation Number:", "Booking No:", "Reference No:" sections.
+- Remove ANY spaces between prefix and digits (e.g. "VN 19785" → "VN19785", "IS 40567" → "IS40567").
+- Preserve prefix letters exactly (uppercase).
+- NEVER generate or fabricate an IS Number.
+- Return null ONLY if the IS Number is truly absent from the document.
+
+Valid examples: VN19785, IS40567, SG56789, MY12345
+Invalid (reject): 19785, 40567, VNXXXX, IS-40567
+
 Schema:
 {
   "bookingRef": "string — the TC Tour Ref / Tour No exactly as printed (e.g. '469182CNTL', '463720CNTL||SG22228', '459773CNTL / VN19428'). Copy verbatim including any || or / separators.",
-  "agentBookingId": "string or null — agent's own booking/order reference if different from the TC Tour Ref",
+  "cntlNumber": "string or null — CNTL/Quotation number if present (digits+CNTL or CNTL+digits, e.g. '463720CNTL', 'CNTL459773'). Extract from bookingRef or document if present. Return null if absent.",
+  "agentBookingId": "string or null — agent's own non-CNTL booking/order reference. Do NOT put CNTL numbers here.",
   "agent": "string (e.g. Make My Trip)",
   "fileHandler": "string or null",
   "arrivalDate": "ISO date string YYYY-MM-DD",
@@ -70,9 +113,17 @@ Schema:
   "quotedTotal": "number",
   "currency": "string (default USD)",
   "amendmentNote": "string or null",
-  "terms": "string or null",
-  "exclusions": "string or null",
+  "terms": "string or null — full Terms and Conditions text",
+  "exclusions": "string or null — The Above Package Excludes section",
   "policyNotes": "string or null",
+
+  "valueAddedServices": "string or null — 'Value Added Services' section text verbatim",
+  "packageIncludes": "string or null — 'Above Package Includes' section text verbatim",
+  "packageExcludes": "string or null — 'The Above Package Excludes' section text verbatim (same as exclusions but kept separately for display)",
+  "importantNotes": "string or null — 'IMPORTANT NOTES' or 'Important Note' section text verbatim",
+  "tips": "string or null — 'TIPS' section text verbatim",
+  "otherNote": "string or null — 'Other Note' or 'Other Notes' section text verbatim",
+  "clientRequest": "string or null — 'Client Request' or 'Special Request' section text verbatim",
 
   "agentEmail": "string or null — email address of the travel agent / booking company (found in From:, CC:, agent signature, or booking header)",
   "agentPhone": "string or null — phone/mobile number of the travel agent or company",
@@ -84,7 +135,7 @@ Schema:
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
 
-  "isNumber": "string or null — IS/VN/SG/MY/MY number e.g. VN19005, IS48377, SG22232, MY23122. Search EVERYWHERE: labeled 'IS Number', 'Confirmation Number', 'Booking No', or embedded in Tour Ref after '||' or ' / ' (e.g. '463720CNTL||SG22228' → SG22228, '459773CNTL / VN19428' → VN19428). ALWAYS extract if any such code is present.",
+  "isNumber": "string or null — CRITICAL: IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122. Extract EXACTLY as written, remove spaces (VN 19785 → VN19785). Labeled 'IS Number:' in the document. ALWAYS extract if present. Return null only if truly absent.",
   "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
   "tourDestination": "string or null — destination country/city e.g. 'Vietnam', 'Sri Lanka', 'Singapore & Malaysia' (labeled 'Destination' in TC)",
   "chauffeurContact": "string or null — chauffeur or tour guide contact details (labeled 'Chauffeur/Tour guide contact' in TC)",
@@ -99,9 +150,9 @@ Schema:
       "type": "ADULT or CHILD",
       "age": "number or null",
       "isLead": "boolean",
-      "passport": "string or null",
-      "nationality": "string or null",
-      "contact": "string or null — personal phone or WhatsApp of this specific passenger if mentioned"
+      "passport": "string or null — passport DOCUMENT NUMBER only (e.g. 'N1234567', 'A9876543'). NEVER put a phone/mobile number here. If you see a phone number next to a passenger name, put it in 'contact' instead.",
+      "nationality": "string or null — passenger nationality or country",
+      "contact": "string or null — personal phone, mobile or WhatsApp of this passenger. NEVER put a passport document number here."
     }
   ],
   "flights": [
@@ -132,8 +183,8 @@ Schema:
     {
       "dayNo": "number",
       "date": "ISO date string YYYY-MM-DD",
-      "title": "string",
-      "description": "string or null",
+      "title": "string — EXACT complete title from the TC, copied verbatim. NEVER shorten, paraphrase or replace with generic labels like 'Various Attractions' or 'City Tour'. Copy the full official tour name exactly as written.",
+      "description": "string or null — exact description text from TC, copied verbatim. Do NOT omit or summarise. Return null only if no description exists.",
       "inclusions": ["array of strings"],
       "exclusions": ["array of strings"]
     }
@@ -158,8 +209,9 @@ Contact classification rules:
 Be precise and complete. Do not invent data.
 Important:
 - bookingRef must be the exact TC Tour Ref printed on the document (copy verbatim, including any || or / separators).
-- Always extract isNumber if any IS/VN/SG/MY code appears anywhere in the document, including embedded in the Tour Ref.
-- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.`
+- isNumber is CRITICAL — always extract if any IS/VN/SG/MY code appears anywhere in the document.
+- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.
+- For valueAddedServices, packageIncludes, packageExcludes, importantNotes, tips, otherNote, clientRequest: copy the section content verbatim as a single string. If the section is absent, return null.`
 
 const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.
 Extract P&L (profit & loss) data from the provided Excel/CSV content.
@@ -184,16 +236,35 @@ Schema:
   ]
 }`
 
+// ─── IS Number helpers ────────────────────────────────────────────────────
+
+const IS_NUMBER_PATTERN = /^(VN|IS|SG|MY)\s*\d+$/i
+
+export function normalizeISNumber(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const cleaned = raw.replace(/\s+/g, '').toUpperCase()
+  return IS_NUMBER_PATTERN.test(cleaned) ? cleaned : null
+}
+
+export function extractISNumberFromText(text: string): string | null {
+  const match = text.match(/IS\s*Number\s*[:\-]\s*((VN|IS|SG|MY)\s*\d+)/i)
+  if (match) return normalizeISNumber(match[1])
+  return null
+}
+
 // ─── Extraction functions ────────────────────────────────────────────────
 
 export async function extractBookingFromText(documentText: string, bookingRef?: string): Promise<Record<string, unknown>> {
+  // Regex pre-extraction as ground truth for IS Number (AI may miss it)
+  const regexISNumber = extractISNumberFromText(documentText)
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: BOOKING_EXTRACTION_PROMPT },
       {
         role: 'user',
-        content: `Extract booking data from this document:\n\n${documentText.slice(0, 12000)}`,
+        content: `Extract booking data from this document:\n\n${documentText.slice(0, 14000)}`,
       },
     ],
     response_format: { type: 'json_object' },
@@ -203,7 +274,13 @@ export async function extractBookingFromText(documentText: string, bookingRef?: 
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
-  return JSON.parse(content)
+  const result = JSON.parse(content) as Record<string, unknown>
+
+  // Normalize the AI-extracted IS Number; fall back to regex if AI missed it
+  const aiISNumber = normalizeISNumber(result.isNumber as string | null)
+  result.isNumber = aiISNumber ?? regexISNumber
+
+  return result
 }
 
 // Intelligently classify activity names into P&L categories using GPT
@@ -258,6 +335,203 @@ ${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
   // Pad if OpenAI returns fewer items than expected
   while (result.length < activities.length) result.push('OTHER')
   return result
+}
+
+// ─── IS PNL Types ────────────────────────────────────────────────────────────
+
+export interface IsPnlHotel {
+  name: string; sgl: number; dbl: number; tpl: number; cwb: number; cnb: number
+  nights: number; roomNightRate: number; total: number
+}
+export interface IsPnlTransportItem {
+  expense: string; distanceDays: number | null; rate: number | null; total: number
+}
+export interface IsPnlAttraction {
+  name: string; adultAttractionRate: number; adultVehicleRate: number
+  childAttractionRate: number; childVehicleRate: number; total: number
+}
+export interface IsPnlTransfer {
+  name: string; adultRate: number; childRate: number; total: number
+}
+export interface IsPnlOtherRate {
+  name: string; pax: number | null; rate: number | null; total: number
+}
+export interface IsPnlMeal {
+  day: string | number; breakfast: number; lunch: number; dinner: number; total: number
+}
+export interface IsPnlData {
+  tourNo: string | null; isNumber: string | null; agent: string | null
+  pax: number; nights: number; currency: string; exchangeRate: number
+  hotels: IsPnlHotel[]; hotelTotal: number
+  transport: { items: IsPnlTransportItem[]; total: number }
+  attractions: IsPnlAttraction[]; attractionTotal: number
+  tourTransfers: IsPnlTransfer[]; tourTransferTotal: number
+  otherRates: IsPnlOtherRate[]; otherRatesTotal: number
+  meals: IsPnlMeal[]; mealsTotal: number
+  costPerPersonSingle: number | null; costPerPersonDouble: number | null
+  totalTourCost: number; totalTourCostWithoutMarkup: number; profitLoss: number
+}
+
+const IS_PNL_EXTRACTION_PROMPT = `You are a Sri Lanka travel costing sheet extraction assistant for AppleHolidays.
+Extract ALL sections from this IS PNL PDF and return valid JSON matching the schema exactly.
+
+Schema:
+{
+  "tourNo": "Tour No value e.g. #467408 or null",
+  "isNumber": "IS Number value e.g. IS48333 or null",
+  "agent": "Agent name or null",
+  "pax": "number of passengers (No. Pax)",
+  "nights": "number of nights",
+  "currency": "currency code e.g. USD",
+  "exchangeRate": "exchange rate as number",
+
+  "hotels": [
+    {
+      "name": "hotel name",
+      "sgl": "SGL rate as number",
+      "dbl": "DBL rate as number",
+      "tpl": "TPL rate as number",
+      "cwb": "CWB rate as number",
+      "cnb": "CNB rate as number",
+      "nights": "number of nights",
+      "roomNightRate": "Room Night rate actually used (the non-zero rate from SGL/DBL/TPL/CWB/CNB)",
+      "total": "total cost for this hotel"
+    }
+  ],
+  "hotelTotal": "sum of all hotel totals",
+
+  "transport": {
+    "items": [
+      {
+        "expense": "expense name e.g. Travel, Bata, Paging, Highway Charges, Driver Accomodation, Guide Fee, Water Bottles, Other Cost",
+        "distanceDays": "distance in km or number of days or null",
+        "rate": "rate per km/day or null",
+        "total": "total cost as number"
+      }
+    ],
+    "total": "transport section total"
+  },
+
+  "attractions": [
+    {
+      "name": "attraction name",
+      "adultAttractionRate": "adult attraction rate",
+      "adultVehicleRate": "adult vehicle rate",
+      "childAttractionRate": "child attraction rate",
+      "childVehicleRate": "child vehicle rate",
+      "total": "total cost"
+    }
+  ],
+  "attractionTotal": "sum of attraction totals",
+
+  "tourTransfers": [
+    {
+      "name": "transfer name",
+      "adultRate": "adult rate",
+      "childRate": "child rate",
+      "total": "total cost"
+    }
+  ],
+  "tourTransferTotal": "sum of transfer totals",
+
+  "otherRates": [
+    {
+      "name": "item name e.g. Pinnawala Elephant Orphanage - Entrance Ticket",
+      "pax": "pax count or null",
+      "rate": "rate per pax or null",
+      "total": "total cost"
+    }
+  ],
+  "otherRatesTotal": "sum of other rate totals",
+
+  "meals": [
+    {
+      "day": "day number or label",
+      "breakfast": "breakfast cost",
+      "lunch": "lunch cost",
+      "dinner": "dinner cost",
+      "total": "day meal total"
+    }
+  ],
+  "mealsTotal": "sum of all meal totals",
+
+  "costPerPersonSingle": "Cost Per Person Single value or null",
+  "costPerPersonDouble": "Cost Per Person Double value or null",
+  "totalTourCost": "Total Tour Cost value",
+  "totalTourCostWithoutMarkup": "Total Tour Cost Without Markup value",
+  "profitLoss": "Profit/Loss value"
+}
+
+Rules:
+- Extract ALL items from each section even if value is 0
+- Use 0 for missing/empty numeric fields, not null
+- Include only sections that have data; empty sections can be empty arrays
+- Transport section always exists even if some sub-items are 0`
+
+export function detectISPnl(text: string): boolean {
+  return /Is\s*Number\s*[:\-]\s*(IS|VN|SG|MY)\s*\d+/i.test(text) ||
+    /Tour\s*No\s*[:\-]\s*#\d+/i.test(text)
+}
+
+export async function extractISPnlFromText(text: string, bookingRef?: string): Promise<{ isPnlData: IsPnlData; lineItems: ReturnType<typeof isPnlToLineItems> }> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: IS_PNL_EXTRACTION_PROMPT },
+      { role: 'user', content: `Extract IS PNL data from this document:\n\n${text.slice(0, 14000)}` },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  })
+  await logAiUsage({ callType: 'is_pnl_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'upload' })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('OpenAI returned empty response')
+  const isPnlData = JSON.parse(content) as IsPnlData
+  return { isPnlData, lineItems: isPnlToLineItems(isPnlData) }
+}
+
+export function isPnlToLineItems(data: IsPnlData) {
+  const lines: {
+    activity: string; category: string
+    mmtRate: number; sicRate: number; pvtRatePP: number
+    adEntrance: number; chEntrance: number; otherRate: number
+  }[] = []
+
+  for (const h of (data.hotels ?? [])) {
+    if (h.total > 0 || h.name) {
+      lines.push({ activity: h.name, category: 'HOTEL', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: h.total })
+    }
+  }
+
+  if (data.transport?.total > 0) {
+    const tItems = (data.transport.items ?? []).filter(i => i.total > 0).map(i => i.expense).join(', ')
+    lines.push({ activity: `Transport (${tItems || 'Travel, Bata, Driver'})`, category: 'TRANSPORT', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: data.transport.total })
+  }
+
+  for (const a of (data.attractions ?? [])) {
+    if (a.total > 0 || a.name) {
+      lines.push({ activity: a.name, category: 'TICKETS', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: a.adultAttractionRate + a.adultVehicleRate, chEntrance: a.childAttractionRate + a.childVehicleRate, otherRate: 0 })
+    }
+  }
+
+  for (const t of (data.tourTransfers ?? [])) {
+    if (t.total > 0 || t.name) {
+      lines.push({ activity: t.name, category: 'TRANSPORT', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: t.adultRate, chEntrance: t.childRate, otherRate: 0 })
+    }
+  }
+
+  for (const o of (data.otherRates ?? [])) {
+    if (o.total > 0 || o.name) {
+      lines.push({ activity: o.name, category: 'TICKETS', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: o.total })
+    }
+  }
+
+  if ((data.mealsTotal ?? 0) > 0) {
+    lines.push({ activity: 'Meals', category: 'MEALS', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: data.mealsTotal })
+  }
+
+  return lines
 }
 
 export async function extractPNLFromText(sheetText: string, bookingRef?: string): Promise<Record<string, unknown>> {

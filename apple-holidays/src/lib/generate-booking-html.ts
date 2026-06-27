@@ -133,7 +133,8 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
     <div class="fields">
       <div><div class="field-label">Agent / Tour Operator</div><div class="field-value">${esc(booking.agent)}</div></div>
       <div><div class="field-label">File Handler</div><div class="field-value">${esc(booking.fileHandler)}</div></div>
-      <div><div class="field-label">Agent Booking ID</div><div class="field-value">${esc(booking.agentBookingId)}</div></div>
+      ${(booking as any).cntlNumber ? `<div><div class="field-label">CNTL No.</div><div class="field-value">${esc((booking as any).cntlNumber)}</div></div>` : ''}
+      <div><div class="field-label">Agent Ref. No.</div><div class="field-value">${esc(booking.agentBookingId)}</div></div>
       <div><div class="field-label">Arrival</div><div class="field-value">${fmt(booking.arrivalDate)}</div></div>
       <div><div class="field-label">Departure</div><div class="field-value">${fmt(booking.departureDate)}</div></div>
       <div><div class="field-label">Currency</div><div class="field-value">${esc(booking.currency)}</div></div>
@@ -148,16 +149,16 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
   <div class="section">
     <div class="section-title">Passengers</div>
     <table>
-      <thead><tr><th>Name</th><th>Type</th><th>Age</th><th>Passport No.</th><th>Nationality</th><th>Expiry</th></tr></thead>
+      <thead><tr><th>Name</th><th>Type</th><th>Age</th><th>Passport No.</th><th>Nationality</th><th>Contact</th></tr></thead>
       <tbody>
         ${passengers.map((p: any) => `
         <tr>
           <td class="bold">${esc(p.name)}${p.isLead ? ' <span style="font-size:9px;background:#eff6ff;color:#1d4ed8;padding:1px 5px;border-radius:3px;font-weight:600;">Lead</span>' : ''}</td>
           <td>${esc(p.type)}</td>
-          <td>${esc(p.age)}</td>
-          <td class="mono">${esc(p.passportNo)}</td>
+          <td>${p.age ? esc(p.age) : '—'}</td>
+          <td class="mono">${esc(p.passport)}</td>
           <td>${esc(p.nationality)}</td>
-          <td>${p.passportExpiry ? fmt(p.passportExpiry) : '—'}</td>
+          <td class="mono">${esc(p.contact)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -189,7 +190,7 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
   <div class="section">
     <div class="section-title">Accommodation</div>
     <table>
-      <thead><tr><th>Hotel</th><th>City</th><th>Check-in</th><th>Check-out</th><th>Nights</th><th>Room</th></tr></thead>
+      <thead><tr><th>Hotel</th><th>City</th><th>Check-in</th><th>Check-out</th><th>Nights</th><th>Room</th><th>Meals</th></tr></thead>
       <tbody>
         ${accommodations.map((a: any) => `
         <tr>
@@ -199,6 +200,7 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
           <td>${fmt(a.checkOut)}</td>
           <td>${esc(a.nights)}</td>
           <td>${esc(a.roomType)}</td>
+          <td>${esc(a.mealType)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -223,17 +225,21 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
   <div class="section">
     <div class="section-title">Tour Agenda</div>
     <table>
-      <thead><tr><th>Date</th><th>Time</th><th>Meet</th><th>Activity</th><th>Location</th><th>Notes</th></tr></thead>
+      <thead><tr><th>Date</th><th>Time</th><th>Meet</th><th>Activity</th><th>From</th><th>Location</th><th>Meals</th><th>Notes</th></tr></thead>
       <tbody>
-        ${agendaItems.map((item: any) => `
+        ${agendaItems.map((item: any) => {
+          const timeRange = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ') || ''
+          return `
         <tr class="agenda-row">
           <td>${fmt(item.date)}</td>
-          <td>${esc(item.time)}</td>
+          <td>${esc(timeRange)}</td>
           <td>${esc(item.meetingTime)}</td>
-          <td class="bold">${esc(item.title)}</td>
+          <td class="bold">${esc(item.toPoint)}</td>
+          <td>${esc(item.fromPoint)}</td>
           <td>${esc(item.location)}</td>
-          <td class="muted">${esc(item.notes)}</td>
-        </tr>`).join('')}
+          <td>${esc(item.mealPlan)}</td>
+          <td class="muted">${esc(item.details)}</td>
+        </tr>`}).join('')}
       </tbody>
     </table>
   </div>` : ''}

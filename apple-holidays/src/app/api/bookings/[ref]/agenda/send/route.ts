@@ -84,13 +84,16 @@ function buildAgendaHtml(
     contactPhone?: string | null
     contactWhatsapp?: string | null
     contactEmail?: string | null
+    packageIncludes?: string | null
+    packageExcludes?: string | null
+    exclusions?: string | null
+    tips?: string | null
+    terms?: string | null
     passengers?: {
       name: string
       isLead?: boolean
       type?: string | null
       mealPreference?: string | null
-      passport?: string | null
-      nationality?: string | null
       contact?: string | null
     }[]
     flights?: {
@@ -121,6 +124,8 @@ function buildAgendaHtml(
     details?: string | null
     mealPlan?: string | null
     meetingTime?: string | null
+    timeFrom?: string | null
+    timeTo?: string | null
     serviceType?: string | null
     assignment?: {
       driverId?: string | null
@@ -167,6 +172,16 @@ function buildAgendaHtml(
     const displayVehicleType = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
     const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
+    // For SIC: show join-window (timeFrom – timeTo). For others: show meetingTime.
+    let meetCell = '—'
+    if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
+      const tf = item.timeFrom ?? ''
+      const tt = item.timeTo   ?? ''
+      meetCell = tf && tt ? `${tf} – ${tt}` : tf || tt
+    } else if (item.meetingTime) {
+      meetCell = String(item.meetingTime)
+    }
+
     const driverCell = showDrivers
       ? `<td style="padding:5px 6px;font-size:8px;color:#374151;border-bottom:1px solid #e2e8f0;">${
           a?.vendorId || displayVendorName
@@ -183,7 +198,7 @@ function buildAgendaHtml(
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.fromPoint)}</td>
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.toPoint)}</td>
       <td style="padding:5px 6px;font-size:8.5px;color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.mealPlan)}</td>
-      <td style="padding:5px 6px;font-size:8.5px;font-weight:${item.meetingTime ? '700' : '400'};color:#374151;border-bottom:1px solid #e2e8f0">${esc(item.meetingTime)}</td>
+      <td style="padding:5px 6px;font-size:8.5px;font-weight:${meetCell !== '—' ? '700' : '400'};color:${meetCell !== '—' ? '#059669' : '#94a3b8'};border-bottom:1px solid #e2e8f0">${esc(meetCell)}</td>
       <td style="padding:5px 6px;border-bottom:1px solid #e2e8f0">
         ${svc === 'OWN_ARRANGEMENT' ? '' : `<span style="display:inline-block;padding:2px 5px;border-radius:3px;font-size:7.5px;font-weight:700;color:${clr};background:${clr}18;border:1px solid ${clr}35">${SVC_LABEL[svc] ?? svc}</span>`}
       </td>
@@ -289,7 +304,7 @@ function buildAgendaHtml(
       </div>`
     : ''
 
-  // ── Passengers table (with meal preference) ──
+  // ── Passengers table (without passport/nationality) ──
   const passengers = booking.passengers ?? []
   const passengersHtml = passengers.length > 0
     ? `<div style="margin-top:14px">
@@ -299,8 +314,6 @@ function buildAgendaHtml(
             <tr>
               <th style="${thStyle}">Name</th>
               <th style="${thStyle}">Type</th>
-              <th style="${thStyle}">Passport</th>
-              <th style="${thStyle}">Nationality</th>
               <th style="${thStyle}">Contact</th>
               <th style="${thStyle}">Meal Preference</th>
             </tr>
@@ -309,8 +322,6 @@ function buildAgendaHtml(
             ${passengers.map((p, i) => `<tr style="background:${p.isLead ? '#fefce8' : i % 2 === 0 ? '#fff' : '#f8fafc'}">
               <td style="padding:5px 7px;font-size:8.5px;font-weight:700;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.name)}${p.isLead ? ' <span style="font-size:7px;font-weight:700;color:#d97706;background:#fef3c7;padding:1px 4px;border-radius:3px">LEAD</span>' : ''}</td>
               <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.type ?? 'ADULT')}</td>
-              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9;font-family:monospace">${esc(p.passport)}</td>
-              <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.nationality)}</td>
               <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${esc(p.contact)}</td>
               <td style="padding:5px 7px;font-size:8.5px;color:#374151;border-bottom:1px solid #f1f5f9">${p.mealPreference && p.mealPreference.trim() !== '' ? `<span style="display:inline-block;font-size:7.5px;font-weight:700;color:#047857;background:#ecfdf5;border:1px solid #a7f3d0;padding:1px 5px;border-radius:3px">${esc(p.mealPreference)}</span>` : '—'}</td>
             </tr>`).join('')}
@@ -333,6 +344,20 @@ function buildAgendaHtml(
       </div>`
     : ''
 
+  // ── Package Includes / Excludes / Exclusions / Tips ──
+  function proseSection(icon: string, title: string, content: string | null | undefined, borderColor: string): string {
+    if (!content || !content.trim()) return ''
+    return `<div style="margin-top:14px">
+      <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid ${borderColor};border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">${icon} ${title}</div>
+      <div style="padding:8px 12px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 5px 5px;font-size:8.5px;color:#374151;line-height:1.7;white-space:pre-wrap">${esc(content)}</div>
+    </div>`
+  }
+
+  const packageIncludesHtml  = proseSection('✅', 'Package Includes',  booking.packageIncludes,  '#16a34a')
+  const packageExcludesHtml  = proseSection('❌', 'Package Excludes',  booking.packageExcludes,  '#dc2626')
+  const exclusionsHtml       = proseSection('⛔', 'Exclusions',        booking.exclusions,        '#f97316')
+  const tipsHtml             = proseSection('💡', 'Tips',              booking.tips,              '#eab308')
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -348,10 +373,11 @@ function buildAgendaHtml(
   <div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #d97706;padding-bottom:10px;margin-bottom:14px">
     <div>
       <p style="font-weight:800;font-size:14px;color:#0f172a">Apple Holidays</p>
-      <p style="font-size:9px;color:#64748b">MMT Vietnam · Movement Chart</p>
+      <p style="font-size:9px;color:#64748b">Movement Chart &amp; Booking Summary</p>
     </div>
     <div style="text-align:right">
       <p style="font-weight:800;font-size:15px;font-family:monospace;color:#d97706">${esc(ref)}</p>
+      ${booking.isNumber ? `<p style="font-size:8.5px;color:#2563eb;font-family:monospace;font-weight:700;margin-top:2px">IS: ${esc(booking.isNumber)}</p>` : ''}
       ${booking.agent ? `<p style="font-size:9px;color:#64748b;margin-top:2px">${esc(booking.agent)}</p>` : ''}
       <p style="font-size:8px;color:#94a3b8;margin-top:2px">${fmtDate(booking.arrivalDate)} – ${fmtDate(booking.departureDate)} · ${totalPax} pax</p>
       ${!showDrivers ? '<p style="font-size:8px;color:#94a3b8;font-style:italic">Driver info hidden</p>' : ''}
@@ -361,41 +387,44 @@ function buildAgendaHtml(
   ${bookingSummaryHtml}
   ${contactsHtml}
   ${emergencyContactsHtml}
-  ${lead ? `<div style="margin-bottom:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:5px 10px;display:inline-block">
-    <span style="font-size:8.5px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Lead Passenger: </span>
-    <span style="font-size:9.5px;font-weight:700;color:#1e293b">${esc(lead.name)}</span>
-  </div>` : ''}
 
   ${passengersHtml}
   ${flightsHtml}
   ${accommodationsHtml}
 
-  <!-- TABLE -->
-  <table style="margin-top:8px">
-    <thead>
-      <tr>
-        <th style="${thStyle}width:9%">Date</th>
-        <th style="${thStyle}width:10%">Location</th>
-        <th style="${thStyle}width:${showDrivers ? '11%' : '16%'}">From</th>
-        <th style="${thStyle}width:${showDrivers ? '11%' : '16%'}">To</th>
-        <th style="${thStyle}width:7%">Meal</th>
-        <th style="${thStyle}width:6%">Meet</th>
-        <th style="${thStyle}width:10%">Service</th>
-        <th style="${thStyle}width:${showDrivers ? '17%' : '26%'}">Details</th>
-        ${driverTh}
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
+  <!-- MOVEMENT CHART TABLE -->
+  <div style="margin-top:14px">
+    <div style="font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.5px;padding:5px 10px;background:#f1f5f9;border-top:2px solid #0f172a;border-bottom:1px solid #e2e8f0;border-radius:5px 5px 0 0">
+      🗓️ Movement Chart${showDrivers ? ' (with driver allocation)' : ''}
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="${thStyle}width:9%">Date</th>
+          <th style="${thStyle}width:9%">Location</th>
+          <th style="${thStyle}width:${showDrivers ? '11%' : '16%'}">From</th>
+          <th style="${thStyle}width:${showDrivers ? '11%' : '16%'}">To / Activity</th>
+          <th style="${thStyle}width:7%">Meal</th>
+          <th style="${thStyle}width:8%">Meet / Window</th>
+          <th style="${thStyle}width:10%">Service</th>
+          <th style="${thStyle}width:${showDrivers ? '17%' : '26%'}">Details</th>
+          ${driverTh}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
 
   ${emergencyHtml}
+  ${packageIncludesHtml}
+  ${packageExcludesHtml}
+  ${exclusionsHtml}
+  ${tipsHtml}
 
   <!-- FOOTER -->
   <div style="margin-top:18px;border-top:1px solid #e2e8f0;padding-top:7px;display:flex;justify-content:space-between">
-    <p style="font-size:7.5px;color:#94a3b8">Generated by Apple Holidays Booking System</p>
-    <p style="font-size:7.5px;color:#94a3b8">
-      Printed: ${new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-    </p>
+    <p style="font-size:7.5px;color:#94a3b8">Apple Holidays &middot; Confidential</p>
+    <p style="font-size:7.5px;color:#94a3b8">${esc(ref)}</p>
   </div>
 </body>
 </html>`

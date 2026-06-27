@@ -13,7 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolveBookingDriveFolder } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
-import { extractTicketDetails, classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
+import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, type IsPnlData } from '@/lib/openai'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { writeFile, mkdir } from 'fs/promises'
@@ -90,16 +90,30 @@ export async function POST(
     }
     let parsed: PNLParsed
 
+    let savedIsPnlData: IsPnlData | null = null
+
     if (/\.pdf$/i.test(itemName)) {
       const text = (await pdfParse(buffer)).text ?? ''
       if (text.trim().length < 20) return buildApiError('PDF has no extractable text (scanned?)', 422)
-      const ai = await extractPNLFromText(text)
-      parsed = normalisePNLAI(ai, ref)
+      if (detectISPnl(text)) {
+        const { isPnlData, lineItems } = await extractISPnlFromText(text, ref)
+        savedIsPnlData = isPnlData
+        parsed = { bookingRef: ref, paxAdults: isPnlData.pax ?? 0, paxChildren: 0, lineItems }
+      } else {
+        const ai = await extractPNLFromText(text)
+        parsed = normalisePNLAI(ai, ref)
+      }
     } else if (/\.docx?$/i.test(itemName)) {
       const text = await extractTextFromDocx(buffer)
       if (text.trim().length < 20) return buildApiError('Word doc has no extractable text', 422)
-      const ai = await extractPNLFromText(text)
-      parsed = normalisePNLAI(ai, ref)
+      if (detectISPnl(text)) {
+        const { isPnlData, lineItems } = await extractISPnlFromText(text, ref)
+        savedIsPnlData = isPnlData
+        parsed = { bookingRef: ref, paxAdults: isPnlData.pax ?? 0, paxChildren: 0, lineItems }
+      } else {
+        const ai = await extractPNLFromText(text)
+        parsed = normalisePNLAI(ai, ref)
+      }
     } else {
       // Excel / CSV
       try {
@@ -128,11 +142,17 @@ export async function POST(
 
     // Upsert PNL
     let pnl = await prisma.pNL.findUnique({ where: { bookingId: booking.id } })
-    if (!pnl) {
-      pnl = await prisma.pNL.create({ data: { bookingId: booking.id, paxAdults, paxChildren } })
-    } else {
-      pnl = await prisma.pNL.update({ where: { id: pnl.id }, data: { paxAdults, paxChildren } })
+    const pnlWriteData = {
+      paxAdults,
+      paxChildren,
+      ...(savedIsPnlData ? { isPnlData: savedIsPnlData as unknown as import('@prisma/client').Prisma.InputJsonValue } : {}),
     }
+    if (!pnl) {
+      pnl = await (prisma.pNL as any).create({ data: { bookingId: booking.id, ...pnlWriteData } }) as NonNullable<typeof pnl>
+    } else {
+      pnl = await (prisma.pNL as any).update({ where: { id: pnl.id }, data: pnlWriteData }) as NonNullable<typeof pnl>
+    }
+    if (!pnl) return buildApiError('Failed to upsert PNL', 500)
 
     // Replace line items
     await prisma.pNLLineItem.deleteMany({ where: { pnlId: pnl.id } })

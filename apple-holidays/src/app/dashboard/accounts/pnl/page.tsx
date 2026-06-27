@@ -474,7 +474,8 @@ export default function AccountsPNLPage() {
                       <thead>
                         <tr>
                           <th>PNL ID</th>
-                          <th>Identifiers</th>
+                          <th>IS Number</th>
+                          <th>Tour Ref / Invoice</th>
                           <th>Vendor / Agent</th>
                           <th>Dates</th>
                           <th>Amounts</th>
@@ -495,11 +496,16 @@ export default function AccountsPNLPage() {
                             <tr key={row.link.id}>
                               <td className="font-mono font-bold text-slate-700">#{row.pnlRecord.id}</td>
                               <td>
+                                {row.pnlRecord.is_number
+                                  ? <span className="font-mono font-bold text-blue-700">{row.pnlRecord.is_number}</span>
+                                  : <span className="text-slate-300">—</span>}
+                              </td>
+                              <td>
                                 <div className="space-y-0.5">
-                                  {row.pnlRecord.is_number      && <div className="font-mono text-blue-700">{row.pnlRecord.is_number}</div>}
                                   {row.pnlRecord.tour_ref       && <div className="text-slate-600">{row.pnlRecord.tour_ref}</div>}
-                                  {row.pnlRecord.invoice_number && <div className="text-slate-400">{row.pnlRecord.invoice_number}</div>}
+                                  {row.pnlRecord.invoice_number && <div className="text-slate-400 font-mono">{row.pnlRecord.invoice_number}</div>}
                                   {row.pnlRecord.control_number && <div className="text-purple-600 font-mono">{row.pnlRecord.control_number}</div>}
+                                  {!row.pnlRecord.tour_ref && !row.pnlRecord.invoice_number && !row.pnlRecord.control_number && <span className="text-slate-300">—</span>}
                                 </div>
                               </td>
                               <td>
@@ -587,8 +593,8 @@ export default function AccountsPNLPage() {
                       <thead>
                         <tr>
                           <th>PNL ID</th>
-                          <th>IS Number / Tour Ref</th>
-                          <th>Invoice / Control No</th>
+                          <th>IS Number</th>
+                          <th>Tour Ref / Invoice</th>
                           <th>Vendor / Agent</th>
                           <th>PNL Date</th>
                           <th>Period</th>
@@ -606,14 +612,17 @@ export default function AccountsPNLPage() {
                           <tr key={rec.id} className="hover:bg-amber-50/30">
                             <td className="font-mono font-bold text-slate-700">#{rec.id}</td>
                             <td>
-                              {rec.is_number && <div className="font-mono text-blue-700">{rec.is_number}</div>}
-                              {rec.tour_ref  && <div className="text-slate-600">{rec.tour_ref}</div>}
-                              {!rec.is_number && !rec.tour_ref && <span className="text-slate-300">—</span>}
+                              {rec.is_number
+                                ? <span className="font-mono font-bold text-blue-700">{rec.is_number}</span>
+                                : <span className="text-slate-300">—</span>}
                             </td>
                             <td>
-                              {rec.invoice_number && <div className="font-mono">{rec.invoice_number}</div>}
-                              {rec.control_number && <div className="text-purple-600 font-mono">{rec.control_number}</div>}
-                              {!rec.invoice_number && !rec.control_number && <span className="text-slate-300">—</span>}
+                              <div className="space-y-0.5">
+                                {rec.tour_ref       && <div className="text-slate-600">{rec.tour_ref}</div>}
+                                {rec.invoice_number && <div className="font-mono text-slate-500">{rec.invoice_number}</div>}
+                                {rec.control_number && <div className="text-purple-600 font-mono">{rec.control_number}</div>}
+                                {!rec.tour_ref && !rec.invoice_number && !rec.control_number && <span className="text-slate-300">—</span>}
+                              </div>
                             </td>
                             <td>
                               <div className="font-medium">{rec.vendor_name ?? '—'}</div>

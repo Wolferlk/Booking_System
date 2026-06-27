@@ -40,7 +40,7 @@ export const TRANSITIONS: Transition[] = [
   {
     from: 'GT_REVIEW',
     to: 'GT_VERIFIED',
-    allowedRoles: ['TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Client Confirmed',
   },
   {

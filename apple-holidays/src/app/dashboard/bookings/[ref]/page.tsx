@@ -53,6 +53,8 @@ export default function BookingDetailPage() {
     paxAdults: '2', paxChildren: '0',
     quotedTotal: '', currency: 'USD',
     terms: '', exclusions: '', policyNotes: '', amendmentNote: '',
+    valueAddedServices: '', packageIncludes: '', packageExcludes: '',
+    importantNotes: '', tips: '', otherNote: '', clientRequest: '',
   })
   const [savingBooking, setSavingBooking] = useState(false)
 
@@ -110,7 +112,7 @@ export default function BookingDetailPage() {
 
   // TC identifier inline editing (IS Number / Reference Number / Tour Ref)
   const [tcEditOpen,    setTcEditOpen]    = useState(false)
-  const [tcEditForm,    setTcEditForm]    = useState({ isNumber: '', agentBookingId: '', bookingRef: '' })
+  const [tcEditForm,    setTcEditForm]    = useState({ isNumber: '', agentBookingId: '', cntlNumber: '', bookingRef: '' })
   const [tcEditSaving,  setTcEditSaving]  = useState(false)
 
   async function saveTcIdentifiers() {
@@ -121,6 +123,8 @@ export default function BookingDetailPage() {
         body.isNumber = tcEditForm.isNumber.trim() || null
       if (tcEditForm.agentBookingId.trim() !== (booking?.agentBookingId ?? ''))
         body.agentBookingId = tcEditForm.agentBookingId.trim() || null
+      if (tcEditForm.cntlNumber.trim() !== (booking?.cntlNumber ?? ''))
+        body.cntlNumber = tcEditForm.cntlNumber.trim() || null
       // bookingRef edit only for super admins — include only if changed
       const isSA = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
       if (isSA && tcEditForm.bookingRef.trim() && tcEditForm.bookingRef.trim() !== ref)
@@ -378,6 +382,13 @@ export default function BookingDetailPage() {
       exclusions: String(booking.exclusions ?? ''),
       policyNotes: String(booking.policyNotes ?? ''),
       amendmentNote: String(booking.amendmentNote ?? ''),
+      valueAddedServices: String(booking.valueAddedServices ?? ''),
+      packageIncludes:    String(booking.packageIncludes    ?? ''),
+      packageExcludes:    String(booking.packageExcludes    ?? ''),
+      importantNotes:     String(booking.importantNotes     ?? ''),
+      tips:               String(booking.tips               ?? ''),
+      otherNote:          String(booking.otherNote          ?? ''),
+      clientRequest:      String(booking.clientRequest      ?? ''),
     })
     setEditBookingModal(true)
   }
@@ -683,6 +694,11 @@ Wishing you a wonderful trip! ✈️
             <div>
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+                {(booking as any).cntlNumber && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-violet-50 text-violet-700 border border-violet-200">
+                      <Ticket className="w-3 h-3" /> CNTL: {(booking as any).cntlNumber}
+                    </span>
+                  )}
                 {booking.isNumber && (
                   <span className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
                     <Ticket className="w-3 h-3" /> IS: {booking.isNumber as string}
@@ -748,9 +764,10 @@ Wishing you a wonderful trip! ✈️
             <div className="flex flex-wrap gap-2">
               {transitions.map(t => {
                 // New step-through statuses use the advance-status endpoint
+                // QC1_PASS and QC2_PASS are auto-triggered — never show as manual buttons
                 const ADVANCE_STEPS: BookingStatus[] = [
-                  'TE_REVIEWED', 'DRIVER_ALLOCATED', 'QC1_PASS',
-                  'TICKETS_ISSUED', 'QC2_PASS', 'MSG_SENT_CUSTOMER', 'FEEDBACK_DONE',
+                  'TE_REVIEWED', 'DRIVER_ALLOCATED',
+                  'TICKETS_ISSUED', 'MSG_SENT_CUSTOMER', 'FEEDBACK_DONE',
                 ]
 
                 const isAdvanceStep = ADVANCE_STEPS.includes(t.to)
@@ -781,10 +798,11 @@ Wishing you a wonderful trip! ✈️
                     loading={actionLoading === key}
                     className={isTeConfirm ? '!bg-emerald-600 !border-emerald-700 hover:!bg-emerald-700 font-bold tracking-wide' : undefined}
                     onClick={() => {
-                      if (needsNote) {
+                      if (needsNote || isTeConfirm) {
                         setPendingAction(key); setNote(''); setChangeModal(true)
-                      } else if (isTeConfirm) {
-                        doTransition('verify')
+                      } else if (isAdvanceStep && t.to === 'FEEDBACK_DONE') {
+                        // Feedback Done → open feedback modal so user can write + complete
+                        setFeedbackRating(0); setFeedbackComment(''); setFeedbackModal(true)
                       } else if (isAdvanceStep) {
                         doTransition('advance-status', { to: t.to })
                       } else if (isComplete) {
@@ -796,10 +814,22 @@ Wishing you a wonderful trip! ✈️
                       }
                     }}
                   >
-                    {isTeConfirm ? '✓ TE Confirm' : t.label}
+                    {isTeConfirm ? '✓ Client Confirm' : t.label}
                   </Button>
                 )
               })}
+
+              {/* Get Feedback — always visible after trip is in operational post-phase */}
+              {(['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS', 'COMPLETED'] as string[]).includes(status) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="!bg-yellow-50 !border-yellow-300 !text-yellow-800 hover:!bg-yellow-100"
+                  onClick={() => { setFeedbackRating(0); setFeedbackComment(''); setFeedbackModal(true) }}
+                >
+                  ⭐ Get Feedback
+                </Button>
+              )}
 
               {/* Cancel */}
               {!['COMPLETED', 'CANCELLED'].includes(status) && ['BT_USER', 'SUPER_ADMIN', 'TE_USER'].includes(role) && (
@@ -897,7 +927,7 @@ Wishing you a wonderful trip! ✈️
                   <Send className="w-3.5 h-3.5" /> Send Email
                 </button>
               )}
-              {role === 'SUPER_ADMIN' && !['COMPLETED'].includes(status) && (
+              {['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && !['COMPLETED'].includes(status) && (
                 <button
                   onClick={async () => {
                     if (!confirm(`Permanently delete booking ${ref}? This cannot be undone.`)) return
@@ -939,6 +969,7 @@ Wishing you a wonderful trip! ✈️
                   setTcEditForm({
                     isNumber:       String(booking?.isNumber ?? ''),
                     agentBookingId: String(booking?.agentBookingId ?? ''),
+                    cntlNumber:     String(booking?.cntlNumber ?? ''),
                     bookingRef:     ref,
                   })
                   setTcEditOpen(true)
@@ -992,21 +1023,30 @@ Wishing you a wonderful trip! ✈️
           {tcEditOpen && (
             <div className="mb-4 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
               <p className="text-xs font-semibold text-slate-700 mb-1">Edit Booking Identifiers</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                 <div>
                   <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">IS Number</label>
                   <input
                     className="form-input w-full text-sm font-mono"
-                    placeholder="e.g. VN19428, MY23139, SG22228"
+                    placeholder="e.g. VN19428, IS48375 , MY23139, SG22228"
                     value={tcEditForm.isNumber}
                     onChange={e => setTcEditForm(f => ({ ...f, isNumber: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">Reference Number (TC Tour Ref)</label>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">CNTL No.</label>
                   <input
                     className="form-input w-full text-sm font-mono"
-                    placeholder="e.g. 463720CNTL"
+                    placeholder="e.g. 463720CNTL, CNTL459773"
+                    value={tcEditForm.cntlNumber}
+                    onChange={e => setTcEditForm(f => ({ ...f, cntlNumber: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold block mb-1">Agent Ref. No.</label>
+                  <input
+                    className="form-input w-full text-sm font-mono"
+                    placeholder="Agent booking reference"
                     value={tcEditForm.agentBookingId}
                     onChange={e => setTcEditForm(f => ({ ...f, agentBookingId: e.target.value }))}
                   />
@@ -1046,7 +1086,13 @@ Wishing you a wonderful trip! ✈️
                 : <p className="text-sm text-slate-300 italic text-xs">Not set — click <Edit2 className="inline w-3 h-3" /> to add</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reference Number</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">CNTL No.</p>
+              {(booking as any).cntlNumber
+                ? <p className="text-sm font-mono font-semibold text-violet-600">{(booking as any).cntlNumber}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent Ref. No.</p>
               {booking.agentBookingId
                 ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId as string}</p>
                 : <p className="text-sm text-slate-300">—</p>}
@@ -1629,6 +1675,38 @@ Wishing you a wonderful trip! ✈️
           </Card>
         )}
 
+        {/* Package & Notes sections — show if any are populated */}
+        {(booking.valueAddedServices || booking.packageIncludes || booking.packageExcludes ||
+          booking.importantNotes || booking.tips || booking.otherNote || booking.clientRequest ||
+          booking.terms || booking.exclusions || booking.policyNotes) && (
+          <Card>
+            <CardHeader>
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-slate-400" /> Package Details &amp; Notes
+              </h3>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              {[
+                { label: 'Value Added Services',      value: booking.valueAddedServices },
+                { label: 'Above Package Includes',    value: booking.packageIncludes },
+                { label: 'The Above Package Excludes',value: booking.packageExcludes },
+                { label: 'Terms & Conditions',        value: booking.terms },
+                { label: 'Exclusions',                value: booking.exclusions },
+                { label: 'Policy Notes',              value: booking.policyNotes },
+                { label: 'Important Notes',           value: booking.importantNotes },
+                { label: 'Tips',                      value: booking.tips },
+                { label: 'Other Note',                value: booking.otherNote },
+                { label: 'Client Request',            value: booking.clientRequest },
+              ].filter(f => f.value).map(f => (
+                <div key={f.label}>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">{f.label}</p>
+                  <p className="text-sm text-slate-700 whitespace-pre-line">{f.value as string}</p>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        )}
+
         {/* P&L Summary (if available + permitted) */}
         {pnl && (
           <Card>
@@ -1828,6 +1906,41 @@ Wishing you a wonderful trip! ✈️
               <label className="form-label">Exclusions</label>
               <textarea rows={2} className="form-textarea" value={bookingForm.exclusions}
                 onChange={e => setBookingForm(f => ({ ...f, exclusions: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Value Added Services</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.valueAddedServices}
+                onChange={e => setBookingForm(f => ({ ...f, valueAddedServices: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Above Package Includes</label>
+              <textarea rows={3} className="form-textarea" value={bookingForm.packageIncludes}
+                onChange={e => setBookingForm(f => ({ ...f, packageIncludes: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">The Above Package Excludes</label>
+              <textarea rows={3} className="form-textarea" value={bookingForm.packageExcludes}
+                onChange={e => setBookingForm(f => ({ ...f, packageExcludes: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Important Notes</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.importantNotes}
+                onChange={e => setBookingForm(f => ({ ...f, importantNotes: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Tips</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.tips}
+                onChange={e => setBookingForm(f => ({ ...f, tips: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Other Note</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.otherNote}
+                onChange={e => setBookingForm(f => ({ ...f, otherNote: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Client Request</label>
+              <textarea rows={2} className="form-textarea" value={bookingForm.clientRequest}
+                onChange={e => setBookingForm(f => ({ ...f, clientRequest: e.target.value }))} />
             </div>
             <div className="col-span-2">
               <label className="form-label">Amendment Note</label>

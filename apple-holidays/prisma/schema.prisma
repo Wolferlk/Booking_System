@@ -55,6 +55,9 @@ enum ServiceType {
   PVT_TRANSFER
   SIC_TRANSFER
   OWN_ARRANGEMENT
+  FLIGHT
+  INTERNAL_TOUR
+  ACCOMMODATION
 }
 
 enum TicketStatus {
@@ -210,6 +213,7 @@ model Booking {
   id                    String        @id @default(cuid())
   bookingRef            String        @unique
   agentBookingId        String?
+  cntlNumber            String?       // CNTL/Quotation number (e.g. 463720CNTL, CNTL459773)
   agent                 String?
   fileHandler           String?
   version               Int           @default(1)
@@ -255,6 +259,15 @@ model Booking {
   contactWhatsapp       String?
   contactCountry        String?
   contactAddress        String?       @db.Text
+
+  // Additional booking sections extracted from Travel Confirmations
+  valueAddedServices    String?       @db.Text
+  packageIncludes       String?       @db.Text
+  packageExcludes       String?       @db.Text
+  importantNotes        String?       @db.Text
+  tips                  String?       @db.Text
+  otherNote             String?       @db.Text
+  clientRequest         String?       @db.Text
 
   sourceDocUrl          String?       @db.Text
   sourceDocName         String?
@@ -374,7 +387,7 @@ model ItineraryItem {
   booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   dayNo         Int
   date          DateTime
-  title         String
+  title         String   @db.Text
   description   String?  @db.Text
   inclusions    String?  @db.Text
   exclusions    String?  @db.Text
@@ -407,6 +420,8 @@ model AgendaItem {
   details      String?     @db.Text
   mealPlan     String?
   meetingTime  String?
+  timeFrom     String?
+  timeTo       String?
   serviceType  ServiceType @default(OWN_ARRANGEMENT)
   sortOrder    Int         @default(0)
 
@@ -491,6 +506,7 @@ model PNL {
   paxAdults   Int           @default(0)
   paxChildren Int           @default(0)
   sourceDocUrl String?      @db.Text
+  isPnlData   Json?         // Sri Lanka IS PNL structured breakdown (hotels, transport, attractions, meals, etc.)
   lockedAt    DateTime?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt

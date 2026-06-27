@@ -104,10 +104,13 @@ export async function PUT(
 
   const body = await req.json()
   const {
-    agentBookingId, agent, fileHandler,
+    agentBookingId, cntlNumber, agent, fileHandler,
     arrivalDate, departureDate, paxAdults, paxChildren,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
+    // Additional TC sections
+    valueAddedServices, packageIncludes, packageExcludes,
+    importantNotes, tips, otherNote, clientRequest,
     // TC identifier fields (editable by BT/GT/SA)
     isNumber,
     // Contact info fields (editable at any booking status)
@@ -132,7 +135,7 @@ export async function PUT(
   // Contact info, country, and TC identifier updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
     contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
-    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined) &&
+    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined || cntlNumber !== undefined) &&
     !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
@@ -146,6 +149,7 @@ export async function PUT(
     where: { bookingRef: params.ref },
     data: {
       ...(agentBookingId !== undefined && { agentBookingId }),
+      ...(cntlNumber    !== undefined && { cntlNumber }),
       ...(isNumber      !== undefined && { isNumber }),
       ...(agent !== undefined && { agent }),
       ...(fileHandler !== undefined && { fileHandler }),
@@ -159,6 +163,13 @@ export async function PUT(
       ...(exclusions !== undefined && { exclusions }),
       ...(policyNotes !== undefined && { policyNotes }),
       ...(amendmentNote !== undefined && { amendmentNote }),
+      ...(valueAddedServices !== undefined && { valueAddedServices }),
+      ...(packageIncludes    !== undefined && { packageIncludes }),
+      ...(packageExcludes    !== undefined && { packageExcludes }),
+      ...(importantNotes     !== undefined && { importantNotes }),
+      ...(tips               !== undefined && { tips }),
+      ...(otherNote          !== undefined && { otherNote }),
+      ...(clientRequest      !== undefined && { clientRequest }),
       ...(agentEmail !== undefined && { agentEmail }),
       ...(agentPhone !== undefined && { agentPhone }),
       ...(agentWhatsapp !== undefined && { agentWhatsapp }),

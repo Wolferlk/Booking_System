@@ -37,36 +37,50 @@ type SyncResult = {
 
 const TICKETABLE_CATEGORIES = new Set(['HOTEL', 'TICKETS', 'CRUISE', 'WATER', 'GUIDES', 'FLIGHT_TICKETS'])
 
-// Always generate an internal AH-prefixed ref — never expose TC Tour Ref as the system ref
-function generateRef(): string {
+// Use IS number (VN/IS/SG/MY prefix) as the system ref when available; fall back to AH-prefixed ref
+function generateRef(isNumber?: string | null): string {
+  if (isNumber && IS_NUMBER_RE.test(isNumber)) return isNumber.toUpperCase()
   return `AH${Date.now().toString(36).toUpperCase().slice(-6)}`
 }
 
 // IS Number pattern: VN / IS / SG / MY / AH followed by digits
 const IS_NUMBER_RE = /^(VN|IS|SG|MY|AH)\d{3,}/i
 
+// CNTL number pattern: digits followed by CNTL, or CNTL followed by digits
+const CNTL_RE = /^\d+CNTL$|^CNTL\d+$/i
+
 /**
  * Some TC Tour Refs embed the IS Number after `||` or ` / `.
  * e.g. "463720CNTL||SG22228" or "459773CNTL / VN19428"
- * Returns { tourRef: "463720CNTL", isNumber: "SG22228" } or { tourRef: raw, isNumber: null }
+ * Returns { tourRef, isNumber, cntlNumber } where cntlNumber is populated
+ * when the tourRef portion matches a CNTL pattern.
  */
-function splitTourRef(raw: string | null): { tourRef: string | null; isNumber: string | null } {
-  if (!raw) return { tourRef: null, isNumber: null }
+function splitTourRef(raw: string | null): { tourRef: string | null; isNumber: string | null; cntlNumber: string | null } {
+  if (!raw) return { tourRef: null, isNumber: null, cntlNumber: null }
+
+  let before: string = raw
+  let embeddedIsNumber: string | null = null
+
   // Check for || separator
   const pipeIdx = raw.indexOf('||')
   if (pipeIdx !== -1) {
-    const before = raw.slice(0, pipeIdx).trim()
-    const after  = raw.slice(pipeIdx + 2).trim()
-    if (IS_NUMBER_RE.test(after)) return { tourRef: before || null, isNumber: after.toUpperCase() }
+    const b = raw.slice(0, pipeIdx).trim()
+    const a = raw.slice(pipeIdx + 2).trim()
+    if (IS_NUMBER_RE.test(a)) { before = b; embeddedIsNumber = a.toUpperCase() }
   }
-  // Check for " / " separator (e.g. "459773CNTL / VN19428")
-  const slashIdx = raw.indexOf(' / ')
-  if (slashIdx !== -1) {
-    const before = raw.slice(0, slashIdx).trim()
-    const after  = raw.slice(slashIdx + 3).trim()
-    if (IS_NUMBER_RE.test(after)) return { tourRef: before || null, isNumber: after.toUpperCase() }
+  // Check for " / " separator
+  if (!embeddedIsNumber) {
+    const slashIdx = raw.indexOf(' / ')
+    if (slashIdx !== -1) {
+      const b = raw.slice(0, slashIdx).trim()
+      const a = raw.slice(slashIdx + 3).trim()
+      if (IS_NUMBER_RE.test(a)) { before = b; embeddedIsNumber = a.toUpperCase() }
+    }
   }
-  return { tourRef: raw, isNumber: null }
+
+  const cntlNumber = CNTL_RE.test(before) ? before.toUpperCase() : null
+  const tourRef    = cntlNumber ? null : (before || null)
+  return { tourRef, isNumber: embeddedIsNumber, cntlNumber }
 }
 
 function normalizeType(type: MailboxKind): 'TOUR_CONFIRMATION' | 'PNL' {
@@ -84,6 +98,29 @@ function loadConditions(): string {
   } catch {
     return ''
   }
+}
+
+const MEAL_ABBREV: Record<string, string> = {
+  'B':   'Breakfast',
+  'L':   'Lunch',
+  'D':   'Dinner',
+  'BL':  'Breakfast, Lunch',
+  'LB':  'Breakfast, Lunch',
+  'BD':  'Breakfast, Dinner',
+  'DB':  'Breakfast, Dinner',
+  'LD':  'Lunch, Dinner',
+  'DL':  'Lunch, Dinner',
+  'BLD': 'Breakfast, Lunch, Dinner',
+  'BDL': 'Breakfast, Lunch, Dinner',
+  'LBD': 'Breakfast, Lunch, Dinner',
+}
+
+function normalizeMealPlan(raw: string | null | undefined): string | null {
+  if (!raw || !raw.trim()) return null
+  const trimmed = raw.trim()
+  const upper = trimmed.toUpperCase().replace(/[\s,\/]+/g, '')
+  if (MEAL_ABBREV[upper]) return MEAL_ABBREV[upper]
+  return trimmed
 }
 
 async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFromEmail>>, bookingRef: string): Promise<any[]> {
@@ -108,17 +145,36 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
     messages: [
       {
         role: 'system',
-        content: `Vietnam tour operations expert. Generate movement chart from booking data.
+        content: `Vietnam/Asia tour operations expert. Generate movement chart from booking data.
 RULES: ${conditions}
 
-SERVICE TYPE — MANDATORY (override all other logic):
-- Airport/flight transfer → serviceType="PVT_TRANSFER" ALWAYS, no exceptions
-- Leisure day / free time / at leisure / hotel stay only → serviceType="OWN_ARRANGEMENT", meetingTime=null
-- Explicitly SIC/shared → serviceType="SIC_TRANSFER"
-- Private tour, cruise, inter-city with vehicle → serviceType="PVT_TRANSFER"
-- Ticket-only / self-guided → serviceType="OWN_ARRANGEMENT", meetingTime=null
+SERVICE TYPE — MANDATORY (use exactly one of these values):
+- International/domestic flight leg → serviceType="FLIGHT", meetingTime = depTime minus 3 hours, fromPoint = "Flight <flightNo>" (e.g. "Flight VZ123"), toPoint = destination airport code
+- ARRIVAL airport road transfer (airport → hotel) → serviceType="PVT_TRANSFER", meetingTime = flight arrTime PLUS 30 minutes (NOT 45), fromPoint = "Airport" or flight number, toPoint = hotel name
+- DEPARTURE airport road transfer (hotel → airport) → serviceType="PVT_TRANSFER", meetingTime = flight depTime minus 3 hours, fromPoint = hotel name, toPoint = "Airport"
+- Internal SIC tour (shared/group tour) explicitly marked SIC → serviceType="SIC_TRANSFER"
+- Private tour, private cruise, private inter-city transfer → serviceType="PVT_TRANSFER"
+- Hotel check-in / accommodation stay only → serviceType="ACCOMMODATION", meetingTime=null
+- Private guided day tour (not SIC) → serviceType="INTERNAL_TOUR"
+- "Own Arrangement" / leisure day / free time / at leisure — PRESERVE EXACTLY, never convert to PVT_TRANSFER → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- Ticket-only / self-guided / entrance only → serviceType="OWN_ARRANGEMENT", meetingTime=null
 
-Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string","toPoint":"string","details":"string","mealPlan":"string|null","meetingTime":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT"}] }`,
+MEAL PLAN — Always use full English names (NEVER abbreviations like B, L, D):
+- "Breakfast" (not B)
+- "Lunch" (not L)
+- "Dinner" (not D)
+- "Breakfast, Lunch" (not BL)
+- "Breakfast, Dinner" (not BD)
+- "Breakfast, Lunch, Dinner" (not BLD)
+- If TC states "Not Included" or meals are not provided, use null
+
+ARRIVAL TRANSFER TIMING: meetingTime for arrival road transfer = flight arrival time + 30 minutes exactly.
+
+SIC TIME RANGE — For SIC_TRANSFER items, always include timeFrom and timeTo fields:
+- timeFrom: pickup/meeting time (e.g. "07:30")
+- timeTo: estimated return time (e.g. "18:00")
+
+Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string|null","toPoint":"string|null","details":"string|null","mealPlan":"Breakfast|Lunch|Dinner|Breakfast, Lunch|Breakfast, Dinner|Breakfast, Lunch, Dinner|null","meetingTime":"HH:MM or null","timeFrom":"HH:MM or null","timeTo":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT|FLIGHT|INTERNAL_TOUR|ACCOMMODATION"}] }`,
       },
       { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
     ],
@@ -133,21 +189,48 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
     const parsed = JSON.parse(content) as { items?: any[] }
     const rawItems: any[] = Array.isArray(parsed) ? parsed : (parsed.items ?? [])
 
-    const AIRPORT_RE = /\b(airport|terminal|apt|arr\.|dep\.|arrival|departure|fly|flight)\b/i
-    const LEISURE_RE = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement|check.?in|check.?out)\b/i
+    const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
+    const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
+    const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
+    const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay|accommodation)\b/i
+    const SIC_RE           = /\bsic\b/i
+    const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
 
     return rawItems.map((item: any) => {
       const from = String(item.fromPoint ?? '')
       const to   = String(item.toPoint   ?? '')
       const det  = String(item.details   ?? '')
       const loc  = String(item.location  ?? '')
-      if (AIRPORT_RE.test(from) || AIRPORT_RE.test(to) || AIRPORT_RE.test(det)) {
-        return { ...item, serviceType: 'PVT_TRANSFER' }
+      const aiType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'OWN_ARRANGEMENT'
+      let serviceType = aiType
+
+      // OWN_ARRANGEMENT from AI must be preserved — never silently convert to PVT_TRANSFER
+      if (aiType === 'OWN_ARRANGEMENT') {
+        serviceType = 'OWN_ARRANGEMENT'
+      } else if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
+        serviceType = 'FLIGHT'
+      } else if (AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)) {
+        serviceType = 'PVT_TRANSFER'
+      } else if (SIC_RE.test(loc)) {
+        serviceType = 'SIC_TRANSFER'
+      } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+        serviceType = 'OWN_ARRANGEMENT'
+      } else if (ACCOMMODATION_RE.test(det) || ACCOMMODATION_RE.test(loc)) {
+        serviceType = 'ACCOMMODATION'
       }
-      if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
-        return { ...item, serviceType: 'OWN_ARRANGEMENT', meetingTime: null }
+
+      const meetingTime = serviceType === 'OWN_ARRANGEMENT' || serviceType === 'ACCOMMODATION'
+        ? null
+        : (item.meetingTime ?? null)
+
+      return {
+        ...item,
+        serviceType,
+        meetingTime,
+        mealPlan: normalizeMealPlan(item.mealPlan),
+        timeFrom: item.timeFrom ?? null,
+        timeTo:   item.timeTo   ?? null,
       }
-      return item
     })
   } catch {
     return []
@@ -257,10 +340,14 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
     await prisma.passenger.createMany({
       data: extracted.passengers.map(p => ({
         bookingId,
-        name: p.name,
-        type: (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
-        isLead: p.isLead ?? false,
-        mealPreference: (p as Record<string, unknown>).mealPreference as string ?? null,
+        name:           p.name,
+        type:           (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
+        isLead:         p.isLead ?? false,
+        age:            (p as Record<string, unknown>).age as number | null ?? null,
+        passport:       (p as Record<string, unknown>).passport as string | null ?? null,
+        nationality:    (p as Record<string, unknown>).nationality as string | null ?? null,
+        contact:        (p as Record<string, unknown>).contact as string | null ?? null,
+        mealPreference: (p as Record<string, unknown>).mealPreference as string | null ?? null,
       })),
     })
   }
@@ -301,7 +388,7 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
         bookingId,
         dayNo: item.dayNo,
         date: new Date(item.date),
-        title: item.title,
+        title: String(item.title ?? '').slice(0, 1000),
         description: item.description ?? null,
       })),
     })
@@ -365,7 +452,8 @@ export async function upsertAgenda(
     for (const item of agendaItems as any[]) {
       if (!item.date) continue
       try {
-        await prisma.agendaItem.create({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (prisma.agendaItem as any).create({
           data: {
             agendaId:    agenda.id,
             date:        new Date(item.date),
@@ -375,7 +463,9 @@ export async function upsertAgenda(
             details:     item.details ?? null,
             mealPlan:    item.mealPlan ?? null,
             meetingTime: item.meetingTime ?? null,
-            serviceType: (item.serviceType ?? 'OWN_ARRANGEMENT') as 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT',
+            timeFrom:    item.timeFrom ?? null,
+            timeTo:      item.timeTo ?? null,
+            serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
           },
         })
       } catch (itemErr) {
@@ -394,27 +484,39 @@ async function syncTourConfirmation(
   extracted: Awaited<ReturnType<typeof extractBookingFromEmail>>,
   createdById: string,
 ): Promise<SyncResult> {
-  // Split TC Tour Ref: may embed IS Number after || or " / "
-  const { tourRef: tcTourRef, isNumber: embeddedIsNumber } = splitTourRef(extracted.bookingRef as string | null)
+  // Split TC Tour Ref: may embed IS Number after || or " / "; CNTL part goes to cntlNumber
+  const { tourRef: tcTourRef, isNumber: embeddedIsNumber, cntlNumber: embeddedCntlNumber } = splitTourRef(extracted.bookingRef as string | null)
 
-  // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref
-  const resolvedIsNumber: string | null = (extracted.isNumber as string | null) ?? embeddedIsNumber ?? null
+  // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref;
+  // finally check if tourRef itself IS an IS/VN/SG/MY number (AI put it in bookingRef only)
+  const resolvedIsNumber: string | null =
+    (extracted.isNumber as string | null) ??
+    embeddedIsNumber ??
+    (tcTourRef && IS_NUMBER_RE.test(tcTourRef) ? tcTourRef.toUpperCase() : null)
 
-  // Use the TC Tour Ref (before || split) as the external reference number
+  // CNTL number: from AI extraction or embedded in TC Tour Ref
+  const resolvedCntlNumber: string | null = extracted.cntlNumber ?? embeddedCntlNumber ?? null
+
+  // Non-CNTL agent reference (agent's own booking ID)
   const resolvedAgentBookingId: string | null = tcTourRef ?? (extracted.agentBookingId as string | null) ?? null
 
   // Try to find an existing booking to update (e.g. amendment of an existing TC):
-  // 1. Match by agentBookingId (TC Tour Ref)
-  // 2. Match by isNumber
-  let existing = resolvedAgentBookingId
-    ? await prisma.booking.findFirst({ where: { agentBookingId: resolvedAgentBookingId } })
+  // 1. Match by cntlNumber (most specific for quotation-based TCs)
+  // 2. Match by agentBookingId (non-CNTL agent refs, or legacy CNTL stored before new field)
+  // 3. Match by isNumber
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let existing = resolvedCntlNumber
+    ? await (prisma.booking.findFirst as any)({ where: { cntlNumber: resolvedCntlNumber } })
     : null
+  if (!existing && resolvedAgentBookingId) {
+    existing = await prisma.booking.findFirst({ where: { agentBookingId: resolvedAgentBookingId } })
+  }
   if (!existing && resolvedIsNumber) {
     existing = await prisma.booking.findFirst({ where: { isNumber: resolvedIsNumber }, orderBy: { createdAt: 'desc' } })
   }
 
-  // Always generate a fresh AH ref for new bookings; reuse existing ref for amendments
-  const bookingRef = existing?.bookingRef ?? generateRef()
+  // Prefer IS number as bookingRef; fall back to AH-prefixed ref for new bookings
+  const bookingRef = existing?.bookingRef ?? generateRef(resolvedIsNumber)
   const isNew = !existing
 
   if (!extracted.arrivalDate || !extracted.departureDate) {
@@ -431,6 +533,7 @@ async function syncTourConfirmation(
   const bookingData = {
     bookingRef,
     agentBookingId:   resolvedAgentBookingId,
+    cntlNumber:       resolvedCntlNumber,
     agent:            extracted.agent ?? 'Unknown Agent',
     fileHandler:      extracted.fileHandler,
     arrivalDate:      new Date(extracted.arrivalDate),
@@ -441,6 +544,13 @@ async function syncTourConfirmation(
     currency:         extracted.currency ?? 'USD',
     terms:            extracted.terms,
     exclusions:       extracted.exclusions,
+    valueAddedServices: extracted.valueAddedServices ?? undefined,
+    packageIncludes:    extracted.packageIncludes    ?? undefined,
+    packageExcludes:    extracted.packageExcludes    ?? undefined,
+    importantNotes:     extracted.importantNotes     ?? undefined,
+    tips:               extracted.tips               ?? undefined,
+    otherNote:          extracted.otherNote          ?? undefined,
+    clientRequest:      extracted.clientRequest      ?? undefined,
     agentEmail:       extracted.agentEmail,
     agentPhone:       extracted.agentPhone,
     agentWhatsapp:    extracted.agentWhatsapp,
@@ -466,39 +576,49 @@ async function syncTourConfirmation(
   }
 
   const booking = isNew
-    ? await prisma.booking.create({ data: { ...bookingData, createdById } })
-    : await prisma.booking.update({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ? await (prisma.booking.create as any)({ data: { ...bookingData, createdById } })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    : await (prisma.booking.update as any)({
       where: { bookingRef },
       data: {
-        agentBookingId: bookingData.agentBookingId,
-        agent: bookingData.agent,
-        fileHandler: bookingData.fileHandler,
-        arrivalDate: bookingData.arrivalDate,
-        departureDate: bookingData.departureDate,
-        paxAdults: bookingData.paxAdults,
-        paxChildren: bookingData.paxChildren,
-        quotedTotal: bookingData.quotedTotal,
-        currency: bookingData.currency,
-        terms: bookingData.terms,
-        exclusions: bookingData.exclusions,
-        agentEmail: bookingData.agentEmail,
-        agentPhone: bookingData.agentPhone,
-        agentWhatsapp: bookingData.agentWhatsapp,
-        agentCountry: bookingData.agentCountry,
-        agentAddress: bookingData.agentAddress,
-        contactEmail: bookingData.contactEmail,
-        contactPhone: bookingData.contactPhone,
-        contactWhatsapp: bookingData.contactWhatsapp,
-        contactCountry: bookingData.contactCountry,
-        contactAddress: bookingData.contactAddress,
-        isNumber:            bookingData.isNumber,
-        dealName:            bookingData.dealName,
-        tourDestination:     bookingData.tourDestination,
-        chauffeurContact:    bookingData.chauffeurContact,
-        languagePreference:  bookingData.languagePreference,
-        specialOccasions:    bookingData.specialOccasions,
-        checkedBy:           bookingData.checkedBy,
-        reconfirmBy:         bookingData.reconfirmBy,
+        agentBookingId:     bookingData.agentBookingId,
+        cntlNumber:         bookingData.cntlNumber,
+        agent:              bookingData.agent,
+        fileHandler:        bookingData.fileHandler,
+        arrivalDate:        bookingData.arrivalDate,
+        departureDate:      bookingData.departureDate,
+        paxAdults:          bookingData.paxAdults,
+        paxChildren:        bookingData.paxChildren,
+        quotedTotal:        bookingData.quotedTotal,
+        currency:           bookingData.currency,
+        terms:              bookingData.terms,
+        exclusions:         bookingData.exclusions,
+        valueAddedServices: bookingData.valueAddedServices,
+        packageIncludes:    bookingData.packageIncludes,
+        packageExcludes:    bookingData.packageExcludes,
+        importantNotes:     bookingData.importantNotes,
+        tips:               bookingData.tips,
+        otherNote:          bookingData.otherNote,
+        clientRequest:      bookingData.clientRequest,
+        agentEmail:         bookingData.agentEmail,
+        agentPhone:         bookingData.agentPhone,
+        agentWhatsapp:      bookingData.agentWhatsapp,
+        agentCountry:       bookingData.agentCountry,
+        agentAddress:       bookingData.agentAddress,
+        contactEmail:       bookingData.contactEmail,
+        contactPhone:       bookingData.contactPhone,
+        contactWhatsapp:    bookingData.contactWhatsapp,
+        contactCountry:     bookingData.contactCountry,
+        contactAddress:     bookingData.contactAddress,
+        isNumber:           bookingData.isNumber,
+        dealName:           bookingData.dealName,
+        tourDestination:    bookingData.tourDestination,
+        chauffeurContact:   bookingData.chauffeurContact,
+        languagePreference: bookingData.languagePreference,
+        specialOccasions:   bookingData.specialOccasions,
+        checkedBy:          bookingData.checkedBy,
+        reconfirmBy:        bookingData.reconfirmBy,
         status: 'GT_REVIEW',
       },
     })
