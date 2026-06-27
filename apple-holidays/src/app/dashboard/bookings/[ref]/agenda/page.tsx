@@ -232,7 +232,7 @@ export default function AgendaPage() {
           return {
             id: i.id, date: i.date?.slice(0, 10) ?? '', location: i.location ?? '',
             fromPoint: i.fromPoint ?? '', toPoint: i.toPoint ?? '',
-            details: i.details ?? '', mealPlan: i.mealPlan ?? '',
+            details: i.details ?? '', mealPlan: normalizeMealPlan(i.mealPlan),
             meetingTime: i.meetingTime ?? '', timeFrom: i.timeFrom ?? '',
             timeTo: i.timeTo ?? '', serviceType: i.serviceType ?? 'OWN_ARRANGEMENT',
             assignment: i.assignment,
@@ -280,7 +280,7 @@ export default function AgendaPage() {
       ...item,
       date: (item.date as string)?.slice(0, 10) ?? '',
       fromPoint: item.fromPoint ?? '', toPoint: item.toPoint ?? '',
-      details: item.details ?? '', mealPlan: item.mealPlan ?? '',
+      details: item.details ?? '', mealPlan: normalizeMealPlan(item.mealPlan),
       meetingTime: item.meetingTime ?? '', timeFrom: (item as any).timeFrom ?? '',
       timeTo: (item as any).timeTo ?? '', serviceType: item.serviceType ?? 'OWN_ARRANGEMENT',
     }))

@@ -100,6 +100,22 @@ interface BookingInfo {
   emergencyContacts: EmergencyContact[]
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const MEAL_ABBREV: Record<string, string> = {
+  'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
+  'BL': 'Breakfast, Lunch',   'LB': 'Breakfast, Lunch',
+  'BD': 'Breakfast, Dinner',  'DB': 'Breakfast, Dinner',
+  'LD': 'Lunch, Dinner',      'DL': 'Lunch, Dinner',
+  'BLD': 'Breakfast, Lunch, Dinner', 'BDL': 'Breakfast, Lunch, Dinner',
+  'LBD': 'Breakfast, Lunch, Dinner',
+}
+function normalizeMealPlan(raw: string | null | undefined): string {
+  if (!raw || !raw.trim()) return '—'
+  const upper = raw.trim().toUpperCase().replace(/[\s,/]+/g, '')
+  return MEAL_ABBREV[upper] ?? raw.trim()
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SVC_LABEL: Record<string, string> = {
@@ -465,7 +481,7 @@ export default function PrintAgendaPage() {
                     <td style={{ ...S.td, fontSize: 8.5 }}>
                       {item.toPoint || '—'}
                     </td>
-                    <td style={{ ...S.td, fontSize: 8 }}>{item.mealPlan || '—'}</td>
+                    <td style={{ ...S.td, fontSize: 8 }}>{normalizeMealPlan(item.mealPlan)}</td>
                     <td style={{ ...S.td, fontSize: 8.5, fontWeight: item.meetingTime ? 700 : 400, color: item.meetingTime ? '#059669' : '#94a3b8' }}>
                       {item.meetingTime || '—'}
                     </td>
