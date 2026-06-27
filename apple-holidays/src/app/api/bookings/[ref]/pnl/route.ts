@@ -51,6 +51,7 @@ export async function GET(
     bookingAgent: booking.agent,
     isNumber:     booking.isNumber,
     cntlNumber:   (booking as Record<string, unknown>).cntlNumber as string | null ?? null,
+    isPnlData:    (pnl as Record<string, unknown>).isPnlData ?? null,
     sourceDocUrl: pnl.sourceDocUrl,
     lockedAt: pnl.lockedAt,
     createdAt: pnl.createdAt,
@@ -73,9 +74,15 @@ export async function POST(
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  const { paxAdults, paxChildren, lineItems = [] } = await req.json()
+  const { paxAdults, paxChildren, lineItems = [], isPnlData } = await req.json()
 
   const existingPnl = await prisma.pNL.findUnique({ where: { bookingId: booking.id } })
+
+  const pnlCoreData = {
+    paxAdults:   Number(paxAdults   ?? booking.paxAdults),
+    paxChildren: Number(paxChildren ?? booking.paxChildren),
+    ...(isPnlData !== undefined ? { isPnlData: isPnlData ?? null } : {}),
+  }
 
   let pnl
   if (existingPnl) {
@@ -85,20 +92,13 @@ export async function POST(
       data: { pnlLineId: null },
     })
     await prisma.pNLLineItem.deleteMany({ where: { pnlId: existingPnl.id } })
-    pnl = await prisma.pNL.update({
+    pnl = await (prisma.pNL as any).update({
       where: { id: existingPnl.id },
-      data: {
-        paxAdults:  Number(paxAdults  ?? booking.paxAdults),
-        paxChildren: Number(paxChildren ?? booking.paxChildren),
-      },
+      data: pnlCoreData,
     })
   } else {
-    pnl = await prisma.pNL.create({
-      data: {
-        bookingId:  booking.id,
-        paxAdults:  Number(paxAdults  ?? booking.paxAdults),
-        paxChildren: Number(paxChildren ?? booking.paxChildren),
-      },
+    pnl = await (prisma.pNL as any).create({
+      data: { bookingId: booking.id, ...pnlCoreData },
     })
   }
   // No automatic state advancement — P&L upload is decoupled from status transitions in new flow

@@ -337,6 +337,203 @@ ${activities.map((a, i) => `${i + 1}. ${a}`).join('\n')}`
   return result
 }
 
+// ─── IS PNL Types ────────────────────────────────────────────────────────────
+
+export interface IsPnlHotel {
+  name: string; sgl: number; dbl: number; tpl: number; cwb: number; cnb: number
+  nights: number; roomNightRate: number; total: number
+}
+export interface IsPnlTransportItem {
+  expense: string; distanceDays: number | null; rate: number | null; total: number
+}
+export interface IsPnlAttraction {
+  name: string; adultAttractionRate: number; adultVehicleRate: number
+  childAttractionRate: number; childVehicleRate: number; total: number
+}
+export interface IsPnlTransfer {
+  name: string; adultRate: number; childRate: number; total: number
+}
+export interface IsPnlOtherRate {
+  name: string; pax: number | null; rate: number | null; total: number
+}
+export interface IsPnlMeal {
+  day: string | number; breakfast: number; lunch: number; dinner: number; total: number
+}
+export interface IsPnlData {
+  tourNo: string | null; isNumber: string | null; agent: string | null
+  pax: number; nights: number; currency: string; exchangeRate: number
+  hotels: IsPnlHotel[]; hotelTotal: number
+  transport: { items: IsPnlTransportItem[]; total: number }
+  attractions: IsPnlAttraction[]; attractionTotal: number
+  tourTransfers: IsPnlTransfer[]; tourTransferTotal: number
+  otherRates: IsPnlOtherRate[]; otherRatesTotal: number
+  meals: IsPnlMeal[]; mealsTotal: number
+  costPerPersonSingle: number | null; costPerPersonDouble: number | null
+  totalTourCost: number; totalTourCostWithoutMarkup: number; profitLoss: number
+}
+
+const IS_PNL_EXTRACTION_PROMPT = `You are a Sri Lanka travel costing sheet extraction assistant for AppleHolidays.
+Extract ALL sections from this IS PNL PDF and return valid JSON matching the schema exactly.
+
+Schema:
+{
+  "tourNo": "Tour No value e.g. #467408 or null",
+  "isNumber": "IS Number value e.g. IS48333 or null",
+  "agent": "Agent name or null",
+  "pax": "number of passengers (No. Pax)",
+  "nights": "number of nights",
+  "currency": "currency code e.g. USD",
+  "exchangeRate": "exchange rate as number",
+
+  "hotels": [
+    {
+      "name": "hotel name",
+      "sgl": "SGL rate as number",
+      "dbl": "DBL rate as number",
+      "tpl": "TPL rate as number",
+      "cwb": "CWB rate as number",
+      "cnb": "CNB rate as number",
+      "nights": "number of nights",
+      "roomNightRate": "Room Night rate actually used (the non-zero rate from SGL/DBL/TPL/CWB/CNB)",
+      "total": "total cost for this hotel"
+    }
+  ],
+  "hotelTotal": "sum of all hotel totals",
+
+  "transport": {
+    "items": [
+      {
+        "expense": "expense name e.g. Travel, Bata, Paging, Highway Charges, Driver Accomodation, Guide Fee, Water Bottles, Other Cost",
+        "distanceDays": "distance in km or number of days or null",
+        "rate": "rate per km/day or null",
+        "total": "total cost as number"
+      }
+    ],
+    "total": "transport section total"
+  },
+
+  "attractions": [
+    {
+      "name": "attraction name",
+      "adultAttractionRate": "adult attraction rate",
+      "adultVehicleRate": "adult vehicle rate",
+      "childAttractionRate": "child attraction rate",
+      "childVehicleRate": "child vehicle rate",
+      "total": "total cost"
+    }
+  ],
+  "attractionTotal": "sum of attraction totals",
+
+  "tourTransfers": [
+    {
+      "name": "transfer name",
+      "adultRate": "adult rate",
+      "childRate": "child rate",
+      "total": "total cost"
+    }
+  ],
+  "tourTransferTotal": "sum of transfer totals",
+
+  "otherRates": [
+    {
+      "name": "item name e.g. Pinnawala Elephant Orphanage - Entrance Ticket",
+      "pax": "pax count or null",
+      "rate": "rate per pax or null",
+      "total": "total cost"
+    }
+  ],
+  "otherRatesTotal": "sum of other rate totals",
+
+  "meals": [
+    {
+      "day": "day number or label",
+      "breakfast": "breakfast cost",
+      "lunch": "lunch cost",
+      "dinner": "dinner cost",
+      "total": "day meal total"
+    }
+  ],
+  "mealsTotal": "sum of all meal totals",
+
+  "costPerPersonSingle": "Cost Per Person Single value or null",
+  "costPerPersonDouble": "Cost Per Person Double value or null",
+  "totalTourCost": "Total Tour Cost value",
+  "totalTourCostWithoutMarkup": "Total Tour Cost Without Markup value",
+  "profitLoss": "Profit/Loss value"
+}
+
+Rules:
+- Extract ALL items from each section even if value is 0
+- Use 0 for missing/empty numeric fields, not null
+- Include only sections that have data; empty sections can be empty arrays
+- Transport section always exists even if some sub-items are 0`
+
+export function detectISPnl(text: string): boolean {
+  return /Is\s*Number\s*[:\-]\s*(IS|VN|SG|MY)\s*\d+/i.test(text) ||
+    /Tour\s*No\s*[:\-]\s*#\d+/i.test(text)
+}
+
+export async function extractISPnlFromText(text: string, bookingRef?: string): Promise<{ isPnlData: IsPnlData; lineItems: ReturnType<typeof isPnlToLineItems> }> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: IS_PNL_EXTRACTION_PROMPT },
+      { role: 'user', content: `Extract IS PNL data from this document:\n\n${text.slice(0, 14000)}` },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  })
+  await logAiUsage({ callType: 'is_pnl_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'upload' })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('OpenAI returned empty response')
+  const isPnlData = JSON.parse(content) as IsPnlData
+  return { isPnlData, lineItems: isPnlToLineItems(isPnlData) }
+}
+
+export function isPnlToLineItems(data: IsPnlData) {
+  const lines: {
+    activity: string; category: string
+    mmtRate: number; sicRate: number; pvtRatePP: number
+    adEntrance: number; chEntrance: number; otherRate: number
+  }[] = []
+
+  for (const h of (data.hotels ?? [])) {
+    if (h.total > 0 || h.name) {
+      lines.push({ activity: h.name, category: 'HOTEL', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: h.total })
+    }
+  }
+
+  if (data.transport?.total > 0) {
+    const tItems = (data.transport.items ?? []).filter(i => i.total > 0).map(i => i.expense).join(', ')
+    lines.push({ activity: `Transport (${tItems || 'Travel, Bata, Driver'})`, category: 'TRANSPORT', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: data.transport.total })
+  }
+
+  for (const a of (data.attractions ?? [])) {
+    if (a.total > 0 || a.name) {
+      lines.push({ activity: a.name, category: 'TICKETS', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: a.adultAttractionRate + a.adultVehicleRate, chEntrance: a.childAttractionRate + a.childVehicleRate, otherRate: 0 })
+    }
+  }
+
+  for (const t of (data.tourTransfers ?? [])) {
+    if (t.total > 0 || t.name) {
+      lines.push({ activity: t.name, category: 'TRANSPORT', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: t.adultRate, chEntrance: t.childRate, otherRate: 0 })
+    }
+  }
+
+  for (const o of (data.otherRates ?? [])) {
+    if (o.total > 0 || o.name) {
+      lines.push({ activity: o.name, category: 'TICKETS', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: o.total })
+    }
+  }
+
+  if ((data.mealsTotal ?? 0) > 0) {
+    lines.push({ activity: 'Meals', category: 'MEALS', mmtRate: 0, sicRate: 0, pvtRatePP: 0, adEntrance: 0, chEntrance: 0, otherRate: data.mealsTotal })
+  }
+
+  return lines
+}
+
 export async function extractPNLFromText(sheetText: string, bookingRef?: string): Promise<Record<string, unknown>> {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',

@@ -4,7 +4,8 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles, HardDrive, RefreshCw, FolderOpen, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles, HardDrive, RefreshCw, FolderOpen, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react'
+import type { IsPnlData } from '@/lib/openai'
 import Modal from '@/components/ui/modal'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -58,11 +59,30 @@ interface PNLRecord {
   bookingAgent?: string | null
   isNumber?: string | null
   cntlNumber?: string | null
+  isPnlData?: IsPnlData | null
   totalRevenue?: number
   totalCost?: number
   profit?: number
   margin?: number
   lineItems?: Line[]
+}
+
+function IsPnlSection({ title, total, currency, open, onToggle, children }: {
+  title: string; total: number; currency: string
+  open: boolean; onToggle: () => void; children: React.ReactNode
+}) {
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <button onClick={onToggle} className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left">
+        <div className="flex items-center gap-2">
+          {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+          <span className="text-sm font-semibold text-slate-800">{title}</span>
+        </div>
+        <span className="text-sm font-bold text-slate-700">{currency} {total.toFixed(2)}</span>
+      </button>
+      {open && <div className="overflow-x-auto">{children}</div>}
+    </div>
+  )
 }
 
 export default function PNLPage() {
@@ -74,6 +94,8 @@ export default function PNLPage() {
   const [bookingAgent, setBookingAgent] = useState<string | null>(null)
   const [isNumber, setIsNumber] = useState<string | null>(null)
   const [cntlNumber, setCntlNumber] = useState<string | null>(null)
+  const [isPnlData, setIsPnlData] = useState<IsPnlData | null>(null)
+  const [isPnlSections, setIsPnlSections] = useState<Record<string, boolean>>({ hotels: true, transport: true, attractions: true, transfers: true, otherRates: true, meals: true })
   const [paxAdults, setPaxAdults] = useState('2')
   const [paxChildren, setPaxChildren] = useState('0')
   const [lines, setLines] = useState<Line[]>([])
@@ -120,6 +142,7 @@ export default function PNLPage() {
         setBookingAgent(data.bookingAgent ?? null)
         setIsNumber(data.isNumber ?? null)
         setCntlNumber(data.cntlNumber ?? null)
+        setIsPnlData((data.isPnlData as IsPnlData | null) ?? null)
         setPaxAdults(String(data.paxAdults ?? 2))
         setPaxChildren(String(data.paxChildren ?? 0))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -169,9 +192,12 @@ export default function PNLPage() {
     )
   }
 
-  const totalRevenue = lines.reduce((sum, l) => sum + Number(l.mmtRate || 0), 0)
-  const totalCost    = lines.reduce((sum, l) => sum + computeTotal(l), 0)
-  const profit       = totalRevenue - totalCost
+  const lineRevenue = lines.reduce((sum, l) => sum + Number(l.mmtRate || 0), 0)
+  const lineCost    = lines.reduce((sum, l) => sum + computeTotal(l), 0)
+  // For IS PNL, use the authoritative totals from the costing sheet summary
+  const totalRevenue = isPnlData ? (isPnlData.totalTourCost ?? lineRevenue) : lineRevenue
+  const totalCost    = isPnlData ? (isPnlData.totalTourCostWithoutMarkup ?? lineCost) : lineCost
+  const profit       = isPnlData ? (isPnlData.profitLoss ?? (totalRevenue - totalCost)) : (totalRevenue - totalCost)
   const margin       = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0
 
   const handleActivityChange = useCallback((idx: number, value: string) => {
@@ -253,6 +279,7 @@ export default function PNLPage() {
         body: JSON.stringify({
           paxAdults:  Number(paxAdults),
           paxChildren: Number(paxChildren),
+          ...(isPnlData ? { isPnlData } : {}),
           lineItems: lines.map(l => ({
             activity:   l.activity,
             category:   l.category,
@@ -351,6 +378,10 @@ export default function PNLPage() {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function handleAIParsed(data: any) {
+    // IS PNL — structured Sri Lanka costing sheet
+    if (data?.isPnlData) {
+      setIsPnlData(data.isPnlData as IsPnlData)
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const items: any[] = data?.lineItems ?? []
     if (items.length) {
@@ -367,10 +398,14 @@ export default function PNLPage() {
       })))
       if (data.paxAdults)     setPaxAdults(String(data.paxAdults))
       if (data.paxChildren !== undefined) setPaxChildren(String(data.paxChildren))
-      toast.success(`${items.length} P&L lines imported from spreadsheet!`)
+      const label = data?.isPnlData ? 'IS PNL imported!' : `${items.length} P&L lines imported from spreadsheet!`
+      toast.success(label)
+      setShowImportModal(false)
+    } else if (data?.isPnlData) {
+      toast.success('IS PNL data loaded — line items mapped automatically')
       setShowImportModal(false)
     } else {
-      toast.error('No line items found in the spreadsheet')
+      toast.error('No line items found in the file')
     }
   }
 
@@ -573,6 +608,158 @@ export default function PNLPage() {
         {/* Accounts PNL (Reetha) — live external record linked to this booking */}
         {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <ExternalPnlPanel bookingRef={ref} role={role} />
+        )}
+
+        {/* IS PNL Breakdown Panel */}
+        {isPnlData && (
+          <div className="space-y-3">
+            {/* IS PNL header */}
+            <div className="flex items-center justify-between p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+              <div>
+                <p className="text-sm font-bold text-emerald-800">IS PNL — Sri Lanka Costing Sheet</p>
+                <p className="text-xs text-emerald-600 mt-0.5">
+                  {[isPnlData.tourNo && `Tour: ${isPnlData.tourNo}`, isPnlData.isNumber && `IS: ${isPnlData.isNumber}`, isPnlData.agent && `Agent: ${isPnlData.agent}`, isPnlData.pax && `${isPnlData.pax} Pax`, isPnlData.nights && `${isPnlData.nights} Nights`, isPnlData.currency].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-right text-xs">
+                <div><p className="text-emerald-500">Cost Per Person</p><p className="font-bold text-emerald-900">{isPnlData.currency} {(isPnlData.costPerPersonDouble ?? isPnlData.costPerPersonSingle ?? 0).toFixed(2)}</p></div>
+                <div><p className="text-emerald-500">Profit/Loss</p><p className={`font-bold ${isPnlData.profitLoss >= 0 ? 'text-green-700' : 'text-red-600'}`}>{isPnlData.currency} {isPnlData.profitLoss.toFixed(2)}</p></div>
+              </div>
+            </div>
+
+            {/* Hotels/Cruises */}
+            {isPnlData.hotels?.length > 0 && (
+              <IsPnlSection title="Hotels / Cruises" total={isPnlData.hotelTotal} currency={isPnlData.currency}
+                open={isPnlSections.hotels} onToggle={() => setIsPnlSections(s => ({ ...s, hotels: !s.hotels }))}>
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Hotel</th><th className="px-2 py-2 text-right">SGL</th><th className="px-2 py-2 text-right">DBL</th><th className="px-2 py-2 text-right">TPL</th><th className="px-2 py-2 text-right">CWB</th><th className="px-2 py-2 text-right">CNB</th><th className="px-2 py-2 text-right">Nights</th><th className="px-2 py-2 text-right">Rate/Night</th><th className="px-2 py-2 text-right font-semibold">Total</th></tr></thead>
+                  <tbody>{isPnlData.hotels.map((h, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-medium">{h.name}</td>
+                      <td className="px-2 py-2 text-right text-slate-500">{h.sgl > 0 ? h.sgl.toFixed(2) : '—'}</td>
+                      <td className="px-2 py-2 text-right text-slate-500">{h.dbl > 0 ? h.dbl.toFixed(2) : '—'}</td>
+                      <td className="px-2 py-2 text-right text-slate-500">{h.tpl > 0 ? h.tpl.toFixed(2) : '—'}</td>
+                      <td className="px-2 py-2 text-right text-slate-500">{h.cwb > 0 ? h.cwb.toFixed(2) : '—'}</td>
+                      <td className="px-2 py-2 text-right text-slate-500">{h.cnb > 0 ? h.cnb.toFixed(2) : '—'}</td>
+                      <td className="px-2 py-2 text-right">{h.nights}</td>
+                      <td className="px-2 py-2 text-right">{h.roomNightRate.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right font-semibold">{h.total.toFixed(2)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </IsPnlSection>
+            )}
+
+            {/* Transport */}
+            {isPnlData.transport?.items?.length > 0 && (
+              <IsPnlSection title="Transport" total={isPnlData.transport.total} currency={isPnlData.currency}
+                open={isPnlSections.transport} onToggle={() => setIsPnlSections(s => ({ ...s, transport: !s.transport }))}>
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Expense</th><th className="px-3 py-2 text-right">Distance / Days</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
+                  <tbody>{isPnlData.transport.items.map((t, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-medium">{t.expense}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{t.distanceDays ?? '—'}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{t.rate != null ? t.rate.toFixed(4) : '—'}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{t.total.toFixed(2)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </IsPnlSection>
+            )}
+
+            {/* Attractions */}
+            {isPnlData.attractions?.length > 0 && (
+              <IsPnlSection title="Attractions" total={isPnlData.attractionTotal} currency={isPnlData.currency}
+                open={isPnlSections.attractions} onToggle={() => setIsPnlSections(s => ({ ...s, attractions: !s.attractions }))}>
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Name</th><th className="px-2 py-2 text-right">Adult (Attraction)</th><th className="px-2 py-2 text-right">Adult (Vehicle)</th><th className="px-2 py-2 text-right">Child (Attraction)</th><th className="px-2 py-2 text-right">Child (Vehicle)</th><th className="px-2 py-2 text-right font-semibold">Total</th></tr></thead>
+                  <tbody>{isPnlData.attractions.map((a, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-medium">{a.name}</td>
+                      <td className="px-2 py-2 text-right">{a.adultAttractionRate.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right">{a.adultVehicleRate.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right">{a.childAttractionRate.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right">{a.childVehicleRate.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right font-semibold">{a.total.toFixed(2)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </IsPnlSection>
+            )}
+
+            {/* Tour Transfers */}
+            {isPnlData.tourTransfers?.length > 0 && (
+              <IsPnlSection title="Tour Transfers" total={isPnlData.tourTransferTotal} currency={isPnlData.currency}
+                open={isPnlSections.transfers} onToggle={() => setIsPnlSections(s => ({ ...s, transfers: !s.transfers }))}>
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Name</th><th className="px-3 py-2 text-right">Adult Rate</th><th className="px-3 py-2 text-right">Child Rate</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
+                  <tbody>{isPnlData.tourTransfers.map((t, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-medium">{t.name}</td>
+                      <td className="px-3 py-2 text-right">{t.adultRate.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right">{t.childRate.toFixed(2)}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{t.total.toFixed(2)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </IsPnlSection>
+            )}
+
+            {/* Other Rates */}
+            {isPnlData.otherRates?.length > 0 && (
+              <IsPnlSection title="Other Rates" total={isPnlData.otherRatesTotal} currency={isPnlData.currency}
+                open={isPnlSections.otherRates} onToggle={() => setIsPnlSections(s => ({ ...s, otherRates: !s.otherRates }))}>
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Item</th><th className="px-3 py-2 text-right">Pax</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
+                  <tbody>{isPnlData.otherRates.map((o, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-medium">{o.name}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{o.pax ?? '—'}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{o.rate != null ? o.rate.toFixed(2) : '—'}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{o.total.toFixed(2)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </IsPnlSection>
+            )}
+
+            {/* Meals */}
+            {isPnlData.meals?.some(m => m.total > 0) && (
+              <IsPnlSection title="Meals" total={isPnlData.mealsTotal} currency={isPnlData.currency}
+                open={isPnlSections.meals} onToggle={() => setIsPnlSections(s => ({ ...s, meals: !s.meals }))}>
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Day</th><th className="px-3 py-2 text-right">Breakfast</th><th className="px-3 py-2 text-right">Lunch</th><th className="px-3 py-2 text-right">Dinner</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
+                  <tbody>{isPnlData.meals.filter(m => m.total > 0).map((m, i) => (
+                    <tr key={i} className="border-t border-slate-100">
+                      <td className="px-3 py-2 font-medium">Day {m.day}</td>
+                      <td className="px-3 py-2 text-right">{m.breakfast > 0 ? m.breakfast.toFixed(2) : '—'}</td>
+                      <td className="px-3 py-2 text-right">{m.lunch > 0 ? m.lunch.toFixed(2) : '—'}</td>
+                      <td className="px-3 py-2 text-right">{m.dinner > 0 ? m.dinner.toFixed(2) : '—'}</td>
+                      <td className="px-3 py-2 text-right font-semibold">{m.total.toFixed(2)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </IsPnlSection>
+            )}
+
+            {/* IS PNL Summary */}
+            <Card className="p-4 border-emerald-200 bg-emerald-50/30">
+              <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wide mb-3">IS PNL Summary</h4>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                {isPnlData.costPerPersonDouble != null && (
+                  <div><p className="text-xs text-slate-500">Cost/Person (DBL)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.costPerPersonDouble.toFixed(2)}</p></div>
+                )}
+                {isPnlData.costPerPersonSingle != null && (
+                  <div><p className="text-xs text-slate-500">Cost/Person (SGL)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.costPerPersonSingle.toFixed(2)}</p></div>
+                )}
+                <div><p className="text-xs text-slate-500">Total Tour Cost (Revenue)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.totalTourCost.toFixed(2)}</p></div>
+                <div><p className="text-xs text-slate-500">Without Markup (Cost)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.totalTourCostWithoutMarkup.toFixed(2)}</p></div>
+                <div><p className="text-xs text-slate-500">Profit / Loss</p><p className={`font-bold text-lg ${isPnlData.profitLoss >= 0 ? 'text-green-700' : 'text-red-600'}`}>{isPnlData.currency} {isPnlData.profitLoss.toFixed(2)}</p></div>
+                <div><p className="text-xs text-slate-500">Margin</p><p className={`font-bold text-lg ${margin >= 10 ? 'text-green-700' : 'text-orange-600'}`}>{margin.toFixed(1)}%</p></div>
+              </div>
+            </Card>
+          </div>
         )}
 
         {/* Line items table */}
