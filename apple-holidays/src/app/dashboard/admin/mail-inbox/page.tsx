@@ -621,15 +621,31 @@ export default function MailInboxPage() {
   const displayEmails = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return emails
+
+    // Strip common suffixes so "469083CNTL" matches "469083"
+    const numericQ = q.replace(/cntl/gi, '').replace(/[^0-9]/g, '')
+    // Detect if query looks like a booking ref prefix (IS/VN/SG/MY + digits)
+    const isRefPrefix = /^(is|vn|sg|my|lk)\d*/i.test(q.trim())
+
     return emails.filter(email => {
+      // Subject
       if (email.subject.toLowerCase().includes(q)) return true
+      // Sender
       if (email.from.toLowerCase().includes(q)) return true
       if (email.fromName.toLowerCase().includes(q)) return true
+      // Search raw body for IS/VN refs or CNTL numbers (for unprocessed emails)
+      if (isRefPrefix || numericQ.length >= 4) {
+        const body = email.rawBody?.toLowerCase() ?? ''
+        if (isRefPrefix && body.includes(q)) return true
+        if (numericQ.length >= 4 && body.includes(numericQ)) return true
+        if (numericQ.length >= 4 && email.subject.toLowerCase().includes(numericQ)) return true
+      }
+      // Processed booking ref (IS/VN number)
       const ref = results.get(email.graphId)?.data?.bookingRef ?? ''
       if (ref.toLowerCase().includes(q)) return true
-      // also match Tour No format: "#469083" → search "469083"
+      // CNTL / numeric-only Tour No matching
       const numericRef = ref.replace(/[^0-9]/g, '')
-      if (numericRef && numericRef.includes(q.replace(/[^0-9]/g, ''))) return true
+      if (numericQ.length >= 4 && numericRef && numericRef.includes(numericQ)) return true
       return false
     })
   }, [emails, searchQuery, results])
@@ -834,25 +850,57 @@ export default function MailInboxPage() {
         </div>
 
         {/* ── Search ────────────────────────────────────────────────────── */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search subject, sender, Tour Ref or Tour No…"
-            className="w-full pl-9 pr-9 py-2.5 text-sm border border-slate-200 rounded-xl bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"
-          />
-          {searchQuery && (
+        <div className="space-y-2">
+          {/* Input row */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="e.g.  IS2400123  ·  VN2400123  ·  469083  ·  Tour Confirmation  ·  agent name…"
+              className="w-full pl-9 pr-28 py-2.5 text-sm border border-slate-200 rounded-xl bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"
+            />
             <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <span className="text-[10px] font-semibold text-slate-400">
-                {displayEmails.length} / {emails.length}
-              </span>
-              <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
+              {searchQuery && (
+                <>
+                  <span className="text-[10px] font-bold text-blue-500">
+                    {displayEmails.length}/{emails.length}
+                  </span>
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="text-slate-400 hover:text-slate-600 transition-colors"
+                    title="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </>
+              )}
             </div>
-          )}
+          </div>
+
+          {/* Search field hint chips */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mr-0.5">Search by:</span>
+            {([
+              { flag: '🇱🇰', label: 'IS Number',  desc: 'IS2400123',  color: 'bg-yellow-50 border-yellow-200 text-yellow-700',  tip: 'Sri Lanka booking ref — e.g. IS2400123' },
+              { flag: '🇻🇳', label: 'VN Number',  desc: 'VN2400123',  color: 'bg-red-50 border-red-200 text-red-700',            tip: 'Vietnam booking ref — e.g. VN2400123' },
+              { flag: '🇸🇬', label: 'SG Number',  desc: 'SG2400123',  color: 'bg-blue-50 border-blue-200 text-blue-700',         tip: 'Singapore booking ref — e.g. SG2400123' },
+              { flag: '🔢',  label: 'CNTL No.',   desc: '469083',     color: 'bg-slate-100 border-slate-200 text-slate-600',      tip: 'Numeric Tour/Control number from PNL — e.g. 469083 or 469083CNTL' },
+              { flag: '📧',  label: 'Subject',    desc: 'keyword',    color: 'bg-indigo-50 border-indigo-200 text-indigo-700',    tip: 'Search mail subject text' },
+              { flag: '👤',  label: 'Sender',     desc: 'name/email', color: 'bg-purple-50 border-purple-200 text-purple-700',   tip: 'Search sender name or email address' },
+            ] as { flag: string; label: string; desc: string; color: string; tip: string }[]).map(chip => (
+              <button
+                key={chip.label}
+                onClick={() => setSearchQuery(chip.desc === 'keyword' || chip.desc === 'name/email' ? '' : chip.desc)}
+                title={chip.tip}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all hover:opacity-80 cursor-pointer ${chip.color}`}
+              >
+                <span>{chip.flag}</span>
+                {chip.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* ── Live Stats ────────────────────────────────────────────────── */}
@@ -1254,7 +1302,12 @@ export default function MailInboxPage() {
               <>
                 <Search className="w-12 h-12 text-slate-300 mx-auto mb-3" />
                 <p className="text-slate-500 font-medium">No results for &ldquo;{searchQuery}&rdquo;</p>
-                <p className="text-slate-400 text-sm mt-1">Try a different subject, sender name, or Tour Ref</p>
+                <p className="text-slate-400 text-sm mt-1.5">Try searching by:</p>
+                <div className="flex flex-wrap justify-center gap-1.5 mt-2">
+                  {['IS Number (IS2400123)', 'VN Number (VN2400123)', 'CNTL No. (469083)', 'Subject keyword', 'Sender name'].map(hint => (
+                    <span key={hint} className="px-2 py-0.5 bg-slate-100 rounded-full text-[10px] text-slate-500 font-medium">{hint}</span>
+                  ))}
+                </div>
                 <button onClick={() => setSearchQuery('')} className="mt-3 text-xs text-blue-500 hover:text-blue-700 font-medium">
                   Clear search
                 </button>
