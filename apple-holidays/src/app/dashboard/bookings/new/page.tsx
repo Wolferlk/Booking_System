@@ -44,10 +44,11 @@ export default function NewBookingPage() {
   const [aiLoading, setAiLoading] = useState(false)
 
   // Drive picker state
-  const [selectedDriveKey,  setSelectedDriveKey]  = useState<DriveKey | ''>('')
-  const [drivePickerOpen,   setDrivePickerOpen]   = useState(false)
-  const [sourceMode,        setSourceMode]         = useState<'pc' | 'drive' | null>(null)
-  const [selectedCountry,   setSelectedCountry]   = useState<string>('')
+  const [selectedDriveKey,       setSelectedDriveKey]       = useState<DriveKey | ''>('')
+  const [drivePickerOpen,        setDrivePickerOpen]        = useState(false)
+  const [sourceMode,             setSourceMode]              = useState<'pc' | 'drive' | null>(null)
+  const [selectedCountry,        setSelectedCountry]        = useState<string>('')
+  const [driveSourceFolderUrl,   setDriveSourceFolderUrl]   = useState<string | null>(null)
 
   // Sync country from drive key whenever drive mode selection changes
   useEffect(() => {
@@ -200,9 +201,10 @@ export default function NewBookingPage() {
   }
 
   // ── File selected from OneDrive picker ────────────────────────────────────
-  async function handleDriveFileSelected(file: CloudFile, folderPath?: string) {
+  async function handleDriveFileSelected(file: CloudFile, folderPath?: string, folderWebUrl?: string | null) {
     setDrivePickerOpen(false)
     if (!selectedDriveKey) return
+    if (folderWebUrl) setDriveSourceFolderUrl(folderWebUrl)
     setAiLoading(true)
     try {
       const res  = await fetch(`/api/drives/${selectedDriveKey}/extract`, {
@@ -271,6 +273,16 @@ export default function NewBookingPage() {
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
+
+      // Auto-assign OneDrive folder if file was picked from a drive subfolder
+      if (driveSourceFolderUrl && json.data?.bookingRef) {
+        fetch(`/api/bookings/${json.data.bookingRef}/folder`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderUrl: driveSourceFolderUrl }),
+        }).catch(() => { /* best-effort */ })
+      }
+
       toast.success('Booking created successfully!')
       router.push(`/dashboard/bookings/${json.data.bookingRef}`)
     } catch (err: unknown) {
