@@ -12,7 +12,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
-import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
+import { formatDate, formatDateTime } from '@/lib/utils'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -299,7 +299,6 @@ function BookingsPageInner() {
                       </button>
                     </th>
                     <th>Pax</th>
-                    <th>Quoted</th>
                     <th>Status</th>
 
                     <th>
@@ -384,11 +383,6 @@ function BookingsPageInner() {
                             <Users className="w-3 h-3" />
                             {b.paxAdults + b.paxChildren}
                           </div>
-                        </td>
-
-                        {/* Quoted */}
-                        <td className="font-semibold text-slate-800">
-                          {formatCurrency(b.quotedTotal, b.currency)}
                         </td>
 
                         {/* Status */}

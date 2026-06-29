@@ -13,7 +13,7 @@ import {
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge, Badge } from '@/components/ui/badge'
-import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
+import { formatDate, formatDateTime } from '@/lib/utils'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -693,7 +693,6 @@ export default function AccountsPNLPage() {
                           <th>Arrival</th>
                           <th>Departure</th>
                           <th>Pax</th>
-                          <th>Quoted</th>
                           <th>Country</th>
                           <th>Status</th>
                           <th></th>
@@ -720,7 +719,6 @@ export default function AccountsPNLPage() {
                               <td>{formatDate(b.arrivalDate)}</td>
                               <td>{formatDate(b.departureDate)}</td>
                               <td>{b.paxAdults + b.paxChildren}</td>
-                              <td>{b.quotedTotal ? formatCurrency(b.quotedTotal, b.currency) : '—'}</td>
                               <td>
                                 {b.operationCountry && (
                                   <span className="font-mono text-xs">

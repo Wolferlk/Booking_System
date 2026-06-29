@@ -45,6 +45,7 @@ export default function BookingDetailPage() {
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
+  const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; contact: string; address: string }[]>([])
   const [savingAccom, setSavingAccom] = useState(false)
   const [editBookingModal, setEditBookingModal] = useState(false)
   const [bookingForm, setBookingForm] = useState({
@@ -420,16 +421,26 @@ export default function BookingDetailPage() {
     setSavingAccom(true)
     try {
       const accommodationUpdates = Object.entries(accomEdits).map(([id, fields]) => ({ id, ...fields }))
+      const accommodationAdds = newAccoms
+        .filter(a => a.hotel.trim() && a.city.trim() && a.checkIn && a.checkOut)
+        .map(a => {
+          const nights = Math.max(1, Math.round((new Date(a.checkOut).getTime() - new Date(a.checkIn).getTime()) / 86400000))
+          return { ...a, nights }
+        })
       const res = await fetch(`/api/bookings/${ref}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accommodationUpdates }),
+        body: JSON.stringify({
+          accommodationUpdates,
+          ...(accommodationAdds.length > 0 && { accommodationAdds }),
+        }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       toast.success('Accommodation updated')
       setEditAccomModal(false)
       setAccomEdits({})
+      setNewAccoms([])
       await load()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
@@ -1955,12 +1966,12 @@ Wishing you a wonderful trip! ✈️
       {/* Edit Accommodation Modal */}
       <Modal
         open={editAccomModal}
-        onClose={() => setEditAccomModal(false)}
+        onClose={() => { setEditAccomModal(false); setNewAccoms([]) }}
         title="Edit Accommodation Details"
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setEditAccomModal(false)}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setEditAccomModal(false); setNewAccoms([]) }}>Cancel</Button>
             <Button loading={savingAccom} onClick={saveAccomEdits}>Save Changes</Button>
           </>
         }
@@ -2003,6 +2014,75 @@ Wishing you a wonderful trip! ✈️
               </div>
             </div>
           ))}
+
+          {/* New hotel rows */}
+          {newAccoms.map((newA, idx) => (
+            <div key={idx} className="border border-brand-200 bg-brand-50/30 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-brand-600 uppercase tracking-wide">New Hotel</p>
+                <button
+                  type="button"
+                  onClick={() => setNewAccoms(prev => prev.filter((_, i) => i !== idx))}
+                  className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="form-label">City *</label>
+                  <input className="form-input" placeholder="e.g. Kuala Lumpur"
+                    value={newA.city}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, city: e.target.value } : a))} />
+                </div>
+                <div>
+                  <label className="form-label">Room Type</label>
+                  <input className="form-input" placeholder="e.g. Deluxe Twin"
+                    value={newA.roomType}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, roomType: e.target.value } : a))} />
+                </div>
+                <div className="col-span-2">
+                  <label className="form-label">Hotel Name *</label>
+                  <input className="form-input" placeholder="e.g. Holiday Inn Express..."
+                    value={newA.hotel}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, hotel: e.target.value } : a))} />
+                </div>
+                <div>
+                  <label className="form-label">Check-in *</label>
+                  <input type="date" className="form-input"
+                    value={newA.checkIn}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, checkIn: e.target.value } : a))} />
+                </div>
+                <div>
+                  <label className="form-label">Check-out *</label>
+                  <input type="date" className="form-input"
+                    value={newA.checkOut}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, checkOut: e.target.value } : a))} />
+                </div>
+                <div>
+                  <label className="form-label">Contact Number</label>
+                  <input className="form-input" placeholder="+60 ..."
+                    value={newA.contact}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, contact: e.target.value } : a))} />
+                </div>
+                <div>
+                  <label className="form-label">Address</label>
+                  <input className="form-input"
+                    value={newA.address}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, address: e.target.value } : a))} />
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {/* Add hotel button */}
+          <button
+            type="button"
+            onClick={() => setNewAccoms(prev => [...prev, { city: '', hotel: '', checkIn: '', checkOut: '', roomType: '', contact: '', address: '' }])}
+            className="flex items-center justify-center gap-2 w-full p-3 border-2 border-dashed border-slate-200 rounded-xl text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Add Another Hotel
+          </button>
         </div>
       </Modal>
 
