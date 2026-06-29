@@ -122,6 +122,8 @@ export async function PUT(
     passengers, flights, accommodations,
     // GT/BT/TE can update accommodation room types and vehicle changes
     accommodationUpdates,
+    // GT/BT/TE can add new accommodations to a booking
+    accommodationAdds,
     // TE/BT/SUPER_ADMIN can update individual flights (cancellations, reschedules)
     flightUpdates, flightAdds, flightDeletes,
   } = body
@@ -130,7 +132,7 @@ export async function PUT(
   const isFlightOnlyUpdate = (flightUpdates || flightAdds || flightDeletes) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
-    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
+    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates && !accommodationAdds
 
   // Contact info, country, and TC identifier updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
@@ -139,7 +141,7 @@ export async function PUT(
     !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
-    !accommodationUpdates && !flightUpdates && !flightAdds && !flightDeletes
+    !accommodationUpdates && !accommodationAdds && !flightUpdates && !flightAdds && !flightDeletes
 
   if (!isFlightOnlyUpdate && !isContactOnlyUpdate && !isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
     return buildApiError('Booking cannot be edited in current state')
@@ -234,6 +236,23 @@ export async function PUT(
         },
       })
     }
+  }
+
+  // GT/BT/TE can add new accommodations
+  if (accommodationAdds && Array.isArray(accommodationAdds) && accommodationAdds.length > 0) {
+    await prisma.accommodation.createMany({
+      data: (accommodationAdds as Record<string, unknown>[]).map(a => ({
+        bookingId: booking.id,
+        city:     (a.city as string) || '',
+        hotel:    (a.hotel as string) || '',
+        checkIn:  a.checkIn  ? new Date(a.checkIn  as string) : new Date(),
+        checkOut: a.checkOut ? new Date(a.checkOut as string) : new Date(),
+        nights:   typeof a.nights === 'number' ? a.nights : Number(a.nights ?? 1),
+        roomType: (a.roomType as string) || null,
+        address:  (a.address  as string) || null,
+        contact:  (a.contact  as string) || null,
+      })),
+    })
   }
 
   // TE/BT/SUPER_ADMIN: update individual flights (reschedule, cancellation, missing flights)
