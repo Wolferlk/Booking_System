@@ -103,7 +103,7 @@ Schema:
 {
   "bookingRef": "string — the TC Tour Ref / Tour No exactly as printed (e.g. '469182CNTL', '463720CNTL||SG22228', '459773CNTL / VN19428'). Copy verbatim including any || or / separators.",
   "cntlNumber": "string or null — CNTL/Quotation number if present (digits+CNTL or CNTL+digits, e.g. '463720CNTL', 'CNTL459773'). Extract from bookingRef or document if present. Return null if absent.",
-  "agentBookingId": "string or null — agent's own non-CNTL booking/order reference. Do NOT put CNTL numbers here.",
+  "agentBookingId": "string or null — the travel agent's own internal booking/order reference. Look for ANY of these labels: 'Agent Ref:', 'Agent Booking ID:', 'Agent ID:', 'NAV ID:', 'NAV No:', 'Order No:', 'Quotation No:', 'Booking No:', 'Booking Reference:'. NAV ID is a common label used by agents like MakeMyTrip — extract its value (e.g. 'NAV ID: NL2221845940502' → agentBookingId = 'NL2221845940502'). Do NOT put CNTL numbers here. Do NOT put IS/VN/SG/MY numbers here. Return null if none of these labeled references exist.",
   "agent": "string (e.g. Make My Trip)",
   "fileHandler": "string or null",
   "arrivalDate": "ISO date string YYYY-MM-DD",
@@ -210,7 +210,11 @@ Be precise and complete. Do not invent data.
 Important:
 - bookingRef must be the exact TC Tour Ref printed on the document (copy verbatim, including any || or / separators).
 - isNumber is CRITICAL — always extract if any IS/VN/SG/MY code appears anywhere in the document.
-- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.
+- agentBookingId rules:
+  * Look for ANY of these labels in the document: "Agent Ref:", "Agent ID:", "Agent Booking ID:", "NAV ID:", "NAV No:", "Order No:", "Quotation No:", "Booking No:", "Booking Reference:".
+  * "NAV ID" is a COMMON label for the agent booking reference in MakeMyTrip TCs — always extract its value into agentBookingId (e.g. "NAV ID: NL2221845940502" → agentBookingId = "NL2221845940502").
+  * NEVER put CNTL numbers (e.g. 468799CNTL) or IS/VN/SG/MY numbers (e.g. IS48357) here.
+  * If no labeled agent reference exists, return null.
 - For valueAddedServices, packageIncludes, packageExcludes, importantNotes, tips, otherNote, clientRequest: copy the section content verbatim as a single string. If the section is absent, return null.`
 
 const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.
