@@ -152,12 +152,12 @@ SERVICE TYPE — MANDATORY (use exactly one of these values):
 - International/domestic flight leg → serviceType="FLIGHT", meetingTime = depTime minus 3 hours, fromPoint = "Flight <flightNo>" (e.g. "Flight VZ123"), toPoint = destination airport code
 - ARRIVAL airport road transfer (airport → hotel) → serviceType="PVT_TRANSFER", meetingTime = flight arrTime PLUS 30 minutes (NOT 45), fromPoint = "Airport" or flight number, toPoint = hotel name
 - DEPARTURE airport road transfer (hotel → airport) → serviceType="PVT_TRANSFER", meetingTime = flight depTime minus 3 hours, fromPoint = hotel name, toPoint = "Airport"
-- Internal SIC tour (shared/group tour) explicitly marked SIC → serviceType="SIC_TRANSFER"
-- Private tour, private cruise, private inter-city transfer → serviceType="PVT_TRANSFER"
+- Internal SIC tour: the word "SIC" must be EXPLICITLY in the ACTIVITY TITLE → serviceType="SIC_TRANSFER"
+- Private tour / private transfer / waterfall / nature activity / "Private basis" → serviceType="PVT_TRANSFER"
 - Hotel check-in / accommodation stay only → serviceType="ACCOMMODATION", meetingTime=null
-- Private guided day tour (not SIC) → serviceType="INTERNAL_TOUR"
+- Private guided day tour (not SIC) → serviceType="PVT_TRANSFER"
 - "Own Arrangement" / leisure day / free time / at leisure — PRESERVE EXACTLY, never convert to PVT_TRANSFER → serviceType="OWN_ARRANGEMENT", meetingTime=null
-- Ticket-only / self-guided / entrance only → serviceType="OWN_ARRANGEMENT", meetingTime=null
+- Ticket-only / self-guided / entrance only (no vehicle transfer) → serviceType="INTERNAL_TOUR", meetingTime=activity start time or 08:00
 
 MEAL PLAN — Always use full English names (NEVER abbreviations like B, L, D):
 - "Breakfast" (not B)

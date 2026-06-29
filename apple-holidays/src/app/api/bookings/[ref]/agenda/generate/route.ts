@@ -234,12 +234,14 @@ FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
   4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
 
 ════════════════════════════════════════════════════════════════
-SERVICE TYPE RULES (use EXACTLY one of these 4 values):
-  - "SIC" in title → SIC_TRANSFER; set timeFrom (30 min before departure) and timeTo (departure)
+SERVICE TYPE RULES (use EXACTLY one of these values):
+  - The word "SIC" appears EXPLICITLY in the ACTIVITY TITLE → SIC_TRANSFER; set timeFrom/timeTo
   - "OWN" / leisure / free day / at own pace → OWN_ARRANGEMENT; meetingTime = null
   - Entry tickets / sightseeing activities without vehicle / tickets only → INTERNAL_TOUR; meetingTime = null
-  - ALL other transfers (airport, inter-city, road, private, cruise boarding, hotel pickup) → PVT_TRANSFER
+  - ALL other transfers (airport, inter-city, road, private, cruise, waterfall, nature tour, hotel pickup) → PVT_TRANSFER
   - Airport road transfer (arrival or departure) → ALWAYS PVT_TRANSFER
+  - "Private Transfer" or "Private basis" mentioned in the activity → ALWAYS PVT_TRANSFER, never SIC_TRANSFER
+  - Waterfalls, mountains, parks, nature activities WITHOUT explicit "SIC" in the title → PVT_TRANSFER
 
 FIRST AND LAST ITEM RULE (CRITICAL):
   - The FIRST agenda item (arrival day) MUST be PVT_TRANSFER (airport → hotel)
@@ -262,13 +264,17 @@ MEETING TIME DEFAULTS:
   - SIC half-day AM: meetingTime=08:00, timeFrom=07:30, timeTo=08:00
   - SIC half-day PM: meetingTime=13:00, timeFrom=12:30, timeTo=13:00
   - SIC cruise embarkation: meetingTime=07:30, timeFrom=07:00, timeTo=07:30
-  - Private full-day: meetingTime=08:00
+  - Private full-day tour: meetingTime=08:00
+  - Private half-day AM tour: meetingTime=08:00
+  - Private half-day PM tour: meetingTime=13:00
+  - INTERNAL_TOUR (ticket only, entrance): set meetingTime to the activity start time if known, else 08:00
   - OWN_ARRANGEMENT: meetingTime=null, timeFrom=null, timeTo=null
 
 SERVICE TYPE DEFAULTS when not clearly mentioned:
-  - If title mentions "SIC" → SIC_TRANSFER
+  - If ACTIVITY TITLE explicitly contains "SIC" → SIC_TRANSFER
   - If title mentions "OWN" or is a free/leisure day → OWN_ARRANGEMENT
-  - If title is about entry tickets, sightseeing only (no vehicle) → INTERNAL_TOUR
+  - If title is about entry tickets, sightseeing only (no vehicle) → INTERNAL_TOUR; meetingTime=08:00
+  - "Private" or "Private Transfer" in title/description → PVT_TRANSFER (never SIC)
   - EVERYTHING ELSE → PVT_TRANSFER (default; never leave ambiguous)
 
 ADDITIONAL RULES:
