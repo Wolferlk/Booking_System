@@ -205,11 +205,14 @@ Return ONLY valid JSON matching this exact schema:
 }
 
 IS NUMBER EXTRACTION (CRITICAL):
-- The IS Number is always labelled "IS Number:" in the TC body. Examples: VN40123, VN41678, IS23492, IS34050, IS10567, MY40586, MY6785, SG57685, SG38456
-- Prefix rules: VN = Vietnam, IS = Sri Lanka, SG = Singapore, MY = Malaysia
-- Extract EXACTLY as written, including the prefix letters (e.g. "VN19785" not "19785")
-- Remove spaces: "VN 19785" → "VN19785"
+- Look for MULTIPLE possible labels: "IS Number:", "IS No:", "Confirmation Number", "Conf No", "Conf. No.", "Tour Confirmation No"
+- MakeMyTrip emails use "Confirmation Number VN20012" — this IS the IS number, not a separate field
+- The IS number also frequently appears in the email subject after a "//" separator: "// VN20012"
+- Prefix rules: VN = Vietnam, IS = Sri Lanka, SG = Singapore, MY = Malaysia. Examples: VN40123, IS23492, MY40586, SG57685
+- Extract EXACTLY as written, including the prefix letters (e.g. "VN20012" not "20012")
+- Remove spaces: "VN 20012" → "VN20012"
 - Return null ONLY if truly absent — never guess or fabricate
+- NEVER use the agent's booking ID (e.g. "IN1B1782458946313") as the IS number — those are numeric-only or start with non-VN/IS/SG/MY prefixes
 
 ITINERARY EXTRACTION (CRITICAL):
 - Extract EVERY single day and service from the TC: airport transfers, SIC tours, private tours, internal flights, hotel stays, cruises, day trips
@@ -310,7 +313,7 @@ Category mapping:
 
 IMPORTANT: pnlLines must NOT be empty if the email contains a cost table.`
 
-export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL'): Promise<ExtractedBooking> {
+export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL', emailSubject?: string): Promise<ExtractedBooking> {
   const prompt = emailType === 'TOUR_CONFIRMATION' ? TOUR_CONFIRMATION_PROMPT : PNL_PROMPT
 
   const response = await openai.chat.completions.create({
@@ -331,10 +334,12 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     ? extractTourRefFromText(emailBody)
     : extractPnlTourNoFromText(emailBody)
 
-  // Authoritative server-side IS number: only from explicit "IS Number:" label.
-  // Overrides whatever the AI returned to prevent agent codes (e.g. VN473119)
-  // from being misidentified as IS numbers.
-  const isNumberOverride = extractIsNumberFromBody(emailBody)
+  // Authoritative server-side IS number.
+  // Body labels ("IS Number:", "Confirmation Number") take priority; subject pattern is fallback.
+  // This prevents agent codes like VN473119 from being mistaken for IS numbers.
+  const isNumberOverride =
+    extractIsNumberFromBody(emailBody) ??
+    (emailSubject ? extractIsNumberFromSubject(emailSubject) : null)
 
   const regexPhone = emailType === 'TOUR_CONFIRMATION'
     ? extractGuestPhoneFromText(emailBody)
@@ -397,13 +402,44 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   }
 }
 
-// Extract IS number ONLY from an explicit "IS Number:" / "IS No:" label in the body.
-// Never infer from tour ref or other context — avoids mistaking agent codes like VN473119.
+const IS_PREFIX_RE = /^(VN|IS|SG|MY)\d{3,}$/
+
+function cleanIS(raw: string): string | null {
+  const c = raw.replace(/\s+/g, '').toUpperCase()
+  return IS_PREFIX_RE.test(c) ? c : null
+}
+
+// Extract IS number from explicit labels in the email body.
+// Recognises:
+//   "IS Number: VN20012"          — standard AppleHolidays label
+//   "IS No. VN20012"              — abbreviated variant
+//   "Confirmation Number VN20012" — MakeMyTrip format (their "Confirmation No" = our IS number)
+//   "Conf No: SG22232"            — short MakeMyTrip variant
 function extractIsNumberFromBody(text: string): string | null {
-  const match = text.match(/\bis\s*(?:number|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i)
-  if (!match?.[1]) return null
-  const cleaned = match[1].replace(/\s+/g, '').toUpperCase()
-  return /^(VN|IS|SG|MY)\d{3,}$/.test(cleaned) ? cleaned : null
+  const patterns = [
+    /\bis\s*(?:number|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    /\bconf(?:irmation)?\s*(?:number|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+  ]
+  for (const re of patterns) {
+    const m = text.match(re)
+    if (m?.[1]) {
+      const v = cleanIS(m[1])
+      if (v) return v
+    }
+  }
+  return null
+}
+
+// Extract IS number from the email subject line.
+// Handles the common forwarded-TC format "// VN20012" at the end of the subject.
+function extractIsNumberFromSubject(subject: string): string | null {
+  // Split on one or more / or | or — delimiters, check each segment
+  const segments = subject.split(/[/|—–-]+/)
+  for (const seg of segments) {
+    const v = cleanIS(seg.trim())
+    if (v) return v
+  }
+  return null
 }
 
 function extractGuestPhoneFromText(text: string): string | null {

@@ -932,7 +932,7 @@ export async function processIncomingMail(
     }
   }
 
-  const extracted = await extractBookingFromEmail(email.rawBody, normalizedType)
+  const extracted = await extractBookingFromEmail(email.rawBody, normalizedType, email.subject)
 
   // Attach detected country to extracted object so syncTourConfirmation can use it
   if (normalizedType === 'TOUR_CONFIRMATION') {
