@@ -183,7 +183,7 @@ Schema:
     {
       "dayNo": "number",
       "date": "ISO date string YYYY-MM-DD",
-      "title": "string — EXACT complete title from the TC, copied verbatim. NEVER shorten, paraphrase or replace with generic labels like 'Various Attractions' or 'City Tour'. Copy the full official tour name exactly as written.",
+      "title": "string — the actual tour/activity/transfer name for this day. Some TCs prefix each day with a category label like 'City Tour', 'Attraction', 'Activity', 'Transfer', 'Tour' as a template field — STRIP these prefix labels; they are NOT part of the title. Example: 'City Tour Hanoi Airport to Sa Pa Transfer' → title='Hanoi Airport to Sa Pa Transfer'; 'Attraction Full-day Cat Cat – Fansipan' → title='Full-day Cat Cat – Fansipan'. Copy the remaining text verbatim after stripping the prefix. NEVER use generic labels as the whole title.",
       "description": "string or null — exact description text from TC, copied verbatim. Do NOT omit or summarise. Return null only if no description exists.",
       "inclusions": ["array of strings"],
       "exclusions": ["array of strings"]

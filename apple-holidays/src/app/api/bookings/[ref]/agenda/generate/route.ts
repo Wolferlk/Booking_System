@@ -282,6 +282,9 @@ ADDITIONAL RULES:
   - Split multi-city days as separate items (each movement = one item)
   - Meals: only set if explicitly included in the package for that day
   - Never leave location empty — always put the city/area name
+  - NEVER include passenger names, passport numbers, guest ages, or personal guest details in ANY field (details, fromPoint, toPoint, location). The movement chart is operational — it must not contain personal guest data.
+  - Package Includes service type mapping: if an item says "on Private Basis" or "Private Transfer" → PVT_TRANSFER; "Shared Transfers" or "SIC" → SIC_TRANSFER; "Half-day tour" or "Full-day" with no qualifier → PVT_TRANSFER by default.
+  - For days where the day-by-day section is in image format (not extracted), RECONSTRUCT the itinerary using Package Includes — map each Package Include line to the correct date based on hotel city and check-in/check-out dates.
 
 ════════════════════════════════════════════════════════════════
 Return ONLY a JSON object: { "items": [ { all 9 fields required: date, location, fromPoint, toPoint, details, mealPlan, meetingTime, timeFrom, timeTo, serviceType } ] }`
@@ -348,7 +351,15 @@ ${tqDocumentText
       // Airport or flight day → always Private Transfer
       serviceType = 'PVT_TRANSFER'
     } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
+      // "SIC" explicitly in location/destination → force SIC
       serviceType = 'SIC_TRANSFER'
+    } else if (serviceType === 'SIC_TRANSFER') {
+      // AI said SIC but no "SIC" in loc/to → validate against full content
+      const SHARED_RE = /\b(sic|shared|sharing)\b/i
+      if (!SHARED_RE.test(loc) && !SHARED_RE.test(to) && !SHARED_RE.test(det) && !SHARED_RE.test(from)) {
+        // No SIC/Shared signal anywhere — revert to Private
+        serviceType = 'PVT_TRANSFER'
+      }
     }
 
     // For SIC: ensure timeFrom/timeTo (join-window) are set
@@ -368,6 +379,11 @@ ${tqDocumentText
       // Non-SIC items: clear timeFrom/timeTo
       timeFrom = null
       timeTo   = null
+    }
+
+    // Default meetingTime for PVT/INTERNAL_TOUR when AI left it null
+    if ((serviceType === 'PVT_TRANSFER' || serviceType === 'INTERNAL_TOUR') && !meetingTime && !isAirportRoad) {
+      meetingTime = '08:00'
     }
 
     // Normalise airport fromPoint / toPoint labels
