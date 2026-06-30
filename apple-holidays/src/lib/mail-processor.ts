@@ -154,10 +154,47 @@ export function getConfiguredMailboxes(): MailboxConfig[] {
   return mailboxes
 }
 
-// ── OpenAI extraction ────────────────────────────────────────────────────────
+// ── Email body pre-processing ─────────────────────────────────────────────────
+
+// Isolates the "TOUR CONFIRMATION" block from an email thread.
+// Email threads embed previous replies below the current message; the TC is
+// often in a quoted reply while the most-recent message is just "please see attached".
+// We extract from the TC header to the next forwarded-message boundary.
+function extractTCSection(text: string): string {
+  const tcIdx = text.search(/\bTOUR\s+CONFIRMATION\b/i)
+  if (tcIdx === -1) return text                     // no marker — return as-is
+
+  const start   = Math.max(0, tcIdx - 800)          // include greeting context
+  const afterTC = text.slice(tcIdx)
+
+  // Reply/forward boundary: "From: Name <email@…> Sent:" or "From: Name <email@…> Date:"
+  // (After HTML-stripping, angle brackets may have spaces around them)
+  const boundary = afterTC.match(/From:\s+\S[^<\n]{0,80}<[^>]+>\s+(?:Sent|Date):/i)
+  const end = tcIdx + (boundary?.index ?? Math.min(afterTC.length, 9000))
+
+  const section = text.slice(start, end).trim()
+  return section.length > 200 ? section : text
+}
+
+// Isolates the PNL/costing block from an email thread.
+function extractPNLSection(text: string): string {
+  // Look for PNL table headers or IS Number label that appears in PNL emails
+  const pnlIdx = text.search(/(?:mmt\s*rate|sic\s*rate|pvt\s*rate|hotels\/cruises|transport.*is number)/i)
+  if (pnlIdx === -1) return text
+
+  const start   = Math.max(0, pnlIdx - 500)
+  const afterPN = text.slice(pnlIdx)
+  const boundary = afterPN.match(/From:\s+\S[^<\n]{0,80}<[^>]+>\s+(?:Sent|Date):/i)
+  const end = pnlIdx + (boundary?.index ?? Math.min(afterPN.length, 9000))
+
+  const section = text.slice(start, end).trim()
+  return section.length > 200 ? section : text
+}
+
+// ── OpenAI extraction ─────────────────────────────────────────────────────────
 
 const TOUR_CONFIRMATION_PROMPT = `You are a travel booking extraction expert for AppleHolidays (Vietnam, Sri Lanka, Singapore, Malaysia).
-Extract ALL booking details from this email thread. Focus on the MOST RECENT tour confirmation section.
+Extract ALL booking details from the Tour Confirmation section below. The text may be extracted from an email thread — ignore any surrounding email headers, greetings, or reply noise and focus on the block starting with "TOUR CONFIRMATION" or the main booking confirmation content.
 
 Return ONLY valid JSON matching this exact schema:
 {
@@ -316,11 +353,17 @@ IMPORTANT: pnlLines must NOT be empty if the email contains a cost table.`
 export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL', emailSubject?: string): Promise<ExtractedBooking> {
   const prompt = emailType === 'TOUR_CONFIRMATION' ? TOUR_CONFIRMATION_PROMPT : PNL_PROMPT
 
+  // Pre-extract the relevant section from the email thread to reduce noise.
+  // OneDrive TC files are already clean; email threads embed the TC in quoted replies.
+  const relevantBody = emailType === 'TOUR_CONFIRMATION'
+    ? extractTCSection(emailBody)
+    : extractPNLSection(emailBody)
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: prompt },
-      { role: 'user', content: `Extract from this email:\n\n${emailBody.slice(0, 14000)}` },
+      { role: 'user', content: `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}` },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
