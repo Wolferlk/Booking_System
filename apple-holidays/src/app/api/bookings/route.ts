@@ -19,8 +19,8 @@ export async function GET(req: NextRequest) {
   const refSearch = searchParams.get('refSearch')   // IS number / VN ref / agent ID
   const dateFrom = searchParams.get('dateFrom')     // createdAt range start
   const dateTo   = searchParams.get('dateTo')       // createdAt range end
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const limit = parseInt(searchParams.get('limit') ?? '20')
+  const page  = parseInt(searchParams.get('page')  ?? '1')
+  const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200)
   const dateFilter = searchParams.get('dateFilter') ?? ''
   const rawSortBy = searchParams.get('sortBy') ?? 'arrivalDate'
   const sortDir = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
