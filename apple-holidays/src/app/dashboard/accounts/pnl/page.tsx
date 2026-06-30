@@ -82,6 +82,7 @@ interface OverviewData {
   linked: LinkedRow[]
   pnlOnly: PnlRecord[]
   bookingsOnly: BookingSnap[]
+  externalDbError?: string | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -285,6 +286,7 @@ export default function AccountsPNLPage() {
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       setData(json.data)
+      if (json.data?.externalDbError) setDbError(json.data.externalDbError)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load PNL overview'
       setDbError(msg)

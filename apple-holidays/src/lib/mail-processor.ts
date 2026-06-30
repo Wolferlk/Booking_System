@@ -412,13 +412,14 @@ function cleanIS(raw: string): string | null {
 // Extract IS number from explicit labels in the email body.
 // Recognises:
 //   "IS Number: VN20012"          — standard AppleHolidays label
+//   "IS Numbe VN20012"            — truncated typo variant (missing trailing 'r')
 //   "IS No. VN20012"              — abbreviated variant
 //   "Confirmation Number VN20012" — MakeMyTrip format (their "Confirmation No" = our IS number)
 //   "Conf No: SG22232"            — short MakeMyTrip variant
 function extractIsNumberFromBody(text: string): string | null {
   const patterns = [
-    /\bis\s*(?:number|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
-    /\bconf(?:irmation)?\s*(?:number|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    /\bis\s*(?:numb(?:er?)?|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    /\bconf(?:irmation)?\s*(?:numb(?:er?)?|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
   ]
   for (const re of patterns) {
     const m = text.match(re)

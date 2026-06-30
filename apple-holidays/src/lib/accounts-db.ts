@@ -15,7 +15,11 @@ const DB_CONFIG = {
   port:           Number(process.env.ACCOUNTS_DB_PORT ?? 3306),
   database:       process.env.ACCOUNTS_DB_DATABASE ?? 'invoice_processor',
   user:           process.env.ACCOUNTS_DB_USERNAME ?? 'root',
-  password:       process.env.ACCOUNTS_DB_PASSWORD ?? '&l+>XV7=Q@iF&B9s',
+  password:
+    process.env.ACCOUNTS_DB_PASSWORD ??
+    process.env.ACCOUNTS_DACCOUNTS_DB_PASSWORDB_PASSWORD ??
+    process.env.ACCOUNTS_DB_PASSWORDB_PASSWORD ??
+    '&l+>XV7=Q@iF&B9s',
   connectTimeout: 12_000,
   // Prevent "Connection lost" silent failures
   enableKeepAlive:       false,
