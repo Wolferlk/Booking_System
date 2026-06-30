@@ -374,7 +374,7 @@ export default function MailInboxPage() {
   const [subStatus, setSubStatus]         = useState<SubStatus | null>(null)
   const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
   const [searchQuery, setSearchQuery]     = useState('')
-  const [searchInBody, setSearchInBody]   = useState(false)
+  const [searchInBody, setSearchInBody]   = useState(true)
   const [dateFrom, setDateFrom]           = useState('')
   const [dateTo, setDateTo]               = useState('')
   const [pnlStatusMap, setPnlStatusMap]   = useState<Map<string, PnlStatus>>(new Map())

@@ -331,6 +331,11 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     ? extractTourRefFromText(emailBody)
     : extractPnlTourNoFromText(emailBody)
 
+  // Authoritative server-side IS number: only from explicit "IS Number:" label.
+  // Overrides whatever the AI returned to prevent agent codes (e.g. VN473119)
+  // from being misidentified as IS numbers.
+  const isNumberOverride = extractIsNumberFromBody(emailBody)
+
   const regexPhone = emailType === 'TOUR_CONFIRMATION'
     ? extractGuestPhoneFromText(emailBody)
     : null
@@ -356,7 +361,7 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     otherNote:          (parsed as Record<string, unknown>).otherNote          as string | null ?? null,
     clientRequest:      (parsed as Record<string, unknown>).clientRequest      as string | null ?? null,
     cntlNumber:       (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
-    isNumber:         parsed.isNumber         ?? null,
+    isNumber:         isNumberOverride ?? parsed.isNumber ?? null,
     dealName:         parsed.dealName         ?? null,
     tourDestination:  parsed.tourDestination  ?? null,
     chauffeurContact: parsed.chauffeurContact ?? null,
@@ -390,6 +395,15 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     emergencyContacts: parsed.emergencyContacts ?? [],
     pnlLines:         parsed.pnlLines         ?? [],
   }
+}
+
+// Extract IS number ONLY from an explicit "IS Number:" / "IS No:" label in the body.
+// Never infer from tour ref or other context — avoids mistaking agent codes like VN473119.
+function extractIsNumberFromBody(text: string): string | null {
+  const match = text.match(/\bis\s*(?:number|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i)
+  if (!match?.[1]) return null
+  const cleaned = match[1].replace(/\s+/g, '').toUpperCase()
+  return /^(VN|IS|SG|MY)\d{3,}$/.test(cleaned) ? cleaned : null
 }
 
 function extractGuestPhoneFromText(text: string): string | null {

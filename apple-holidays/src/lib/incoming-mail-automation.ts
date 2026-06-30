@@ -487,12 +487,14 @@ async function syncTourConfirmation(
   // Split TC Tour Ref: may embed IS Number after || or " / "; CNTL part goes to cntlNumber
   const { tourRef: tcTourRef, isNumber: embeddedIsNumber, cntlNumber: embeddedCntlNumber } = splitTourRef(extracted.bookingRef as string | null)
 
-  // Prefer explicitly extracted IS Number; fall back to embedded one from Tour Ref;
-  // finally check if tourRef itself IS an IS/VN/SG/MY number (AI put it in bookingRef only)
+  // Prefer explicitly extracted IS Number (from "IS Number:" label in body via regex override,
+  // or AI extraction). Fall back to IS number embedded in Tour Ref via || or " / " separator.
+  // Do NOT fall back to tcTourRef even if it matches the pattern — agent codes like VN473119
+  // look like IS numbers but are not.
   const resolvedIsNumber: string | null =
     (extracted.isNumber as string | null) ??
     embeddedIsNumber ??
-    (tcTourRef && IS_NUMBER_RE.test(tcTourRef) ? tcTourRef.toUpperCase() : null)
+    null
 
   // CNTL number: from AI extraction or embedded in TC Tour Ref
   const resolvedCntlNumber: string | null = extracted.cntlNumber ?? embeddedCntlNumber ?? null
@@ -707,17 +709,22 @@ async function syncPnL(
     }
   }
 
-  // Use the ref from the found booking (may differ from rawTcRef via fallback)
-  const bookingRef = booking?.bookingRef ?? rawTcRef
+  // Use IS number as bookingRef when found; fall back to raw Tour No / AH ref.
+  // This ensures PNL bookings get the same IS-number-based ref as TC bookings.
+  const bookingRef =
+    booking?.bookingRef ??
+    (pnlIsNumber && IS_NUMBER_RE.test(pnlIsNumber) ? pnlIsNumber : null) ??
+    rawTcRef
 
   if (!booking) {
     // PNL emails never contain travel dates — they only carry cost data.
     // Return PNL_WAITING so the caller stores the email for retry (without writing
     // the dedup key). When the TQ booking arrives the cron will re-process it.
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      console.log(`[Mail]  PNL Tour No "${rawTcRef}" — no matching booking yet, will retry when TQ arrives`)
+      const waitingRef = pnlIsNumber ?? rawTcRef
+      console.log(`[Mail]  PNL "${waitingRef}" — no matching booking yet, will retry when TQ arrives`)
       return {
-        bookingRef: rawTcRef,
+        bookingRef: waitingRef,
         bookingId:  '',
         mode:       'PNL' as const,
         isNew:      false,
@@ -730,6 +737,7 @@ async function syncPnL(
     const created = await prisma.booking.create({
       data: {
         bookingRef,
+        isNumber:       pnlIsNumber ?? undefined,
         agentBookingId: extracted.agentBookingId,
         agent: extracted.agent ?? 'Unknown Agent',
         fileHandler: extracted.fileHandler,
