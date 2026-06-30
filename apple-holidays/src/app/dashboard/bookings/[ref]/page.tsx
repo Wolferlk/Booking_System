@@ -45,6 +45,7 @@ export default function BookingDetailPage() {
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
+  const [deletedAccomIds, setDeletedAccomIds] = useState<string[]>([])
   const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; contact: string; address: string }[]>([])
   const [savingAccom, setSavingAccom] = useState(false)
   const [editBookingModal, setEditBookingModal] = useState(false)
@@ -420,7 +421,9 @@ export default function BookingDetailPage() {
   async function saveAccomEdits() {
     setSavingAccom(true)
     try {
-      const accommodationUpdates = Object.entries(accomEdits).map(([id, fields]) => ({ id, ...fields }))
+      const accommodationUpdates = Object.entries(accomEdits)
+        .filter(([id]) => !deletedAccomIds.includes(id))
+        .map(([id, fields]) => ({ id, ...fields }))
       const accommodationAdds = newAccoms
         .filter(a => a.hotel.trim() && a.city.trim() && a.checkIn && a.checkOut)
         .map(a => {
@@ -432,6 +435,7 @@ export default function BookingDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           accommodationUpdates,
+          accommodationDeletes: deletedAccomIds,
           ...(accommodationAdds.length > 0 && { accommodationAdds }),
         }),
       })
@@ -440,6 +444,7 @@ export default function BookingDetailPage() {
       toast.success('Accommodation updated')
       setEditAccomModal(false)
       setAccomEdits({})
+      setDeletedAccomIds([])
       setNewAccoms([])
       await load()
     } catch (err: unknown) {
@@ -1385,6 +1390,8 @@ Wishing you a wonderful trip! ✈️
                   const edits: Record<string, unknown> = {}
                   accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' } })
                   setAccomEdits(edits)
+                  setDeletedAccomIds([])
+                  setNewAccoms([])
                   setEditAccomModal(true)
                 }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                   <Edit2 className="w-3 h-3" /> Edit
@@ -1966,12 +1973,12 @@ Wishing you a wonderful trip! ✈️
       {/* Edit Accommodation Modal */}
       <Modal
         open={editAccomModal}
-        onClose={() => { setEditAccomModal(false); setNewAccoms([]) }}
+        onClose={() => { setEditAccomModal(false); setNewAccoms([]); setAccomEdits({}); setDeletedAccomIds([]) }}
         title="Edit Accommodation Details"
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => { setEditAccomModal(false); setNewAccoms([]) }}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setEditAccomModal(false); setNewAccoms([]); setAccomEdits({}); setDeletedAccomIds([]) }}>Cancel</Button>
             <Button loading={savingAccom} onClick={saveAccomEdits}>Save Changes</Button>
           </>
         }
@@ -1981,11 +1988,30 @@ Wishing you a wonderful trip! ✈️
             <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
             Use this for critical room or hotel changes only. P&L is not automatically updated.
           </p>
-          {accommodations.map((a) => (
+          {accommodations
+            .filter((a) => !deletedAccomIds.includes(a.id as string))
+            .map((a) => (
             <div key={a.id as string} className="border border-slate-200 rounded-xl p-4 space-y-3">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                {a.city as string} · {formatDate(a.checkIn as string)} – {formatDate(a.checkOut as string)}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  {a.city as string} · {formatDate(a.checkIn as string)} – {formatDate(a.checkOut as string)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!window.confirm(`Delete accommodation "${String(a.hotel ?? a.city ?? 'this stay')}"?`)) return
+                    setDeletedAccomIds(prev => prev.includes(a.id as string) ? prev : [...prev, a.id as string])
+                    setAccomEdits(prev => {
+                      const next = { ...prev }
+                      delete next[a.id as string]
+                      return next
+                    })
+                  }}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-md transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="form-label">Hotel Name</label>

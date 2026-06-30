@@ -122,6 +122,8 @@ export async function PUT(
     passengers, flights, accommodations,
     // GT/BT/TE can update accommodation room types and vehicle changes
     accommodationUpdates,
+    // GT/BT/TE can delete accommodations
+    accommodationDeletes,
     // GT/BT/TE can add new accommodations to a booking
     accommodationAdds,
     // TE/BT/SUPER_ADMIN can update individual flights (cancellations, reschedules)
@@ -132,7 +134,7 @@ export async function PUT(
   const isFlightOnlyUpdate = (flightUpdates || flightAdds || flightDeletes) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
-    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates && !accommodationAdds
+    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates && !accommodationDeletes && !accommodationAdds
 
   // Contact info, country, and TC identifier updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
@@ -141,7 +143,7 @@ export async function PUT(
     !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
-    !accommodationUpdates && !accommodationAdds && !flightUpdates && !flightAdds && !flightDeletes
+    !accommodationUpdates && !accommodationDeletes && !accommodationAdds && !flightUpdates && !flightAdds && !flightDeletes
 
   if (!isFlightOnlyUpdate && !isContactOnlyUpdate && !isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
     return buildApiError('Booking cannot be edited in current state')
@@ -236,6 +238,16 @@ export async function PUT(
         },
       })
     }
+  }
+
+  // GT/BT/TE can delete accommodations by id
+  if (accommodationDeletes && Array.isArray(accommodationDeletes) && accommodationDeletes.length > 0) {
+    await prisma.accommodation.deleteMany({
+      where: {
+        bookingId: booking.id,
+        id: { in: accommodationDeletes as string[] },
+      },
+    })
   }
 
   // GT/BT/TE can add new accommodations
