@@ -9,7 +9,7 @@ import {
   CreditCard, Wallet, ChevronDown, ChevronRight,
   CheckCircle2, Edit2, Trash2, DollarSign,
   Building2, ArrowUpCircle, ArrowDownCircle, Camera,
-  MessageCircle, Send, Clock,
+  MessageCircle, Send, Clock, Link2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -385,9 +385,24 @@ export default function DriversPage() {
         title="Drivers & Vehicles"
         subtitle="Manage drivers, their vehicles, bank details and payment history"
         actions={
-          <button onClick={openAdd} className="btn-primary btn">
-            <Plus className="w-4 h-4" /> Add Driver
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const country = countryFilter !== 'ALL' ? countryFilter : (defaultDriverCountry || '')
+                const url = `${window.location.origin}/register/driver${country ? `?country=${country}` : ''}`
+                navigator.clipboard.writeText(url).then(() => toast.success('Registration link copied!')).catch(() => {
+                  prompt('Copy this link:', url)
+                })
+              }}
+              className="btn-secondary btn"
+              title="Copy driver registration link to share via WhatsApp"
+            >
+              <Link2 className="w-4 h-4" /> Copy Link
+            </button>
+            <button onClick={openAdd} className="btn-primary btn">
+              <Plus className="w-4 h-4" /> Add Driver
+            </button>
+          </div>
         }
       />
 

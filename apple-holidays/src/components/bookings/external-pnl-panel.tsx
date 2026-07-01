@@ -107,6 +107,25 @@ function fmtAmt(n: number | null | undefined, cur = 'USD') {
   }).format(Number(n))
 }
 
+function formatItemDetails(details: string | null | undefined) {
+  if (!details) return '—'
+
+  const raw = details.trim()
+  if (!raw) return '—'
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const remark = parsed.remarks ?? parsed.remark ?? parsed.note ?? parsed.details
+      if (typeof remark === 'string' && remark.trim()) return remark.trim()
+    }
+  } catch {
+    // Not JSON, fall through to the raw string
+  }
+
+  return raw
+}
+
 function statusColor(s: string | null): 'green' | 'yellow' | 'red' | 'gray' {
   if (!s) return 'gray'
   const l = s.toLowerCase()
@@ -455,7 +474,9 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                         <td className="text-right font-mono font-semibold">
                           {item.amount_original != null ? Number(item.amount_original).toFixed(2) : '—'}
                         </td>
-                        <td className="max-w-[160px] truncate text-slate-500">{item.item_details ?? '—'}</td>
+                        <td className="max-w-[220px] truncate text-slate-500" title={formatItemDetails(item.item_details)}>
+                          {formatItemDetails(item.item_details)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
