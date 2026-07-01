@@ -101,8 +101,31 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
 
-  await prisma.driver.delete({ where: { id: params.id } })
-  return buildApiSuccess(null, 'Driver deleted')
+  const role = session.user.role as UserRole
+  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+    return buildApiError('Forbidden', 403)
+  }
+
+  try {
+    // Unlink assignments before deleting (driverId is nullable, no cascade)
+    await prisma.assignment.updateMany({
+      where: { driverId: params.id },
+      data: { driverId: null },
+    })
+
+    await prisma.driver.delete({ where: { id: params.id } })
+
+    await logActivity({
+      userId: session.user.id,
+      action: ACTION.DRIVER_UPDATED,
+      entityType: 'Driver',
+      entityId: params.id,
+      details: { deleted: true },
+    })
+
+    return buildApiSuccess(null, 'Driver deleted')
+  } catch (error) {
+    return handlePrismaApiError(error, 'Failed to delete driver', 'Driver could not be deleted')
+  }
 }
