@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { Suspense, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   User, Phone, Mail, CreditCard, Car, Truck,
@@ -82,7 +82,7 @@ const EMPTY_FORM: FormState = {
   bankName: '', bankAccountNo: '', bankHolder: '', bankBranch: '', bankCode: '',
 }
 
-export default function DriverRegisterPage() {
+function DriverRegisterForm() {
   const searchParams = useSearchParams()
   const country = searchParams.get('country') ?? ''
   const meta = COUNTRY_META[country]
@@ -557,5 +557,20 @@ export default function DriverRegisterPage() {
         </form>
       </div>
     </div>
+  )
+}
+
+export default function DriverRegisterPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3 text-slate-400">
+          <Loader2 className="w-8 h-8 animate-spin" />
+          <span className="text-sm">Loading…</span>
+        </div>
+      </div>
+    }>
+      <DriverRegisterForm />
+    </Suspense>
   )
 }
