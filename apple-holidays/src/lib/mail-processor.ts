@@ -154,15 +154,57 @@ export function getConfiguredMailboxes(): MailboxConfig[] {
   return mailboxes
 }
 
-// ── OpenAI extraction ────────────────────────────────────────────────────────
+// ── Email body pre-processing ─────────────────────────────────────────────────
+
+// Isolates the "TOUR CONFIRMATION" block from an email thread.
+// Email threads embed previous replies below the current message; the TC is
+// often in a quoted reply while the most-recent message is just "please see attached".
+// We extract from the TC header to the next forwarded-message boundary.
+function extractTCSection(text: string): string {
+  const tcIdx = text.search(/\bTOUR\s+CONFIRMATION\b/i)
+  if (tcIdx === -1) return text                     // no marker — return as-is
+
+  const start   = Math.max(0, tcIdx - 1000)         // include greeting + hotel context above TC header
+
+  // Reply/forward boundary patterns (HTML-stripped or plain text email threads):
+  // 1. "From: Name <email@…> Sent/Date:" — standard Outlook thread header
+  // 2. "From: Name < email > Sent:" — with spaces around angle brackets (HTML-stripped)
+  // 3. Newline followed by "From:" at line start (forwarded message in plain text)
+  const afterTC = text.slice(tcIdx)
+  const boundary = afterTC.match(
+    /From:\s+\S[^<\n]{0,120}[<\s][\w.+-]+@[\w.-]+[>\s]\s+(?:Sent|Date)\s*:/i
+  )
+  // Allow up to 12000 chars so the full TC (hotel table, itinerary, inclusions) is captured
+  const end = tcIdx + (boundary?.index ?? Math.min(afterTC.length, 12000))
+
+  const section = text.slice(start, end).trim()
+  return section.length > 200 ? section : text
+}
+
+// Isolates the PNL/costing block from an email thread.
+function extractPNLSection(text: string): string {
+  // Look for PNL table headers or IS Number label that appears in PNL emails
+  const pnlIdx = text.search(/(?:mmt\s*rate|sic\s*rate|pvt\s*rate|hotels\/cruises|transport.*is number)/i)
+  if (pnlIdx === -1) return text
+
+  const start   = Math.max(0, pnlIdx - 500)
+  const afterPN = text.slice(pnlIdx)
+  const boundary = afterPN.match(/From:\s+\S[^<\n]{0,80}<[^>]+>\s+(?:Sent|Date):/i)
+  const end = pnlIdx + (boundary?.index ?? Math.min(afterPN.length, 9000))
+
+  const section = text.slice(start, end).trim()
+  return section.length > 200 ? section : text
+}
+
+// ── OpenAI extraction ─────────────────────────────────────────────────────────
 
 const TOUR_CONFIRMATION_PROMPT = `You are a travel booking extraction expert for AppleHolidays (Vietnam, Sri Lanka, Singapore, Malaysia).
-Extract ALL booking details from this email thread. Focus on the MOST RECENT tour confirmation section.
+Extract ALL booking details from the Tour Confirmation section below. The text may be extracted from an email thread — ignore any surrounding email headers, greetings, or reply noise and focus on the block starting with "TOUR CONFIRMATION" or the main booking confirmation content.
 
 Return ONLY valid JSON matching this exact schema:
 {
-  "bookingRef": "Tour Ref IS any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
-  "cntlNumber": "CNTL/Quotation number if present — digits followed by CNTL or CNTL followed by digits (e.g. '463720CNTL', '459773CNTL', 'CNTL459773'). Return null if no CNTL number exists.",
+  "bookingRef": "The IS Number — MUST start with VN, IS, SG, or MY followed by digits only (e.g. VN40120, IS48375, SG22232, MY40586). Look for the 'IS Number:' label in the confirmation body. Strip all spaces: 'VN 40120' → 'VN40120'. NEVER put a CNTL number (e.g. 471416CNTL) or a pure numeric agent ID here. Return null if no IS/VN/SG/MY number is found.",
+  "cntlNumber": "CNTL/Quotation number — digits followed by CNTL or CNTL followed by digits (e.g. '471416CNTL', '463720CNTL', 'CNTL459773'). Look for this in the 'Tour Ref:' field, NOT in the IS Number field. This is a SEPARATE field from bookingRef. Return null if absent.",
   "agentBookingId": "Agent's non-CNTL booking ID / reference number from the email subject or booking form (e.g. 402011138462). Do NOT put CNTL numbers here — use cntlNumber for those.",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip, Tours Experts)",
   "fileHandler": "File handler or account manager name listed in the confirmation (e.g. Sangeetha Priya, Yogi, Shehan Jayakody)",
@@ -205,11 +247,14 @@ Return ONLY valid JSON matching this exact schema:
 }
 
 IS NUMBER EXTRACTION (CRITICAL):
-- The IS Number is always labelled "IS Number:" in the TC body. Examples: VN40123, VN41678, IS23492, IS34050, IS10567, MY40586, MY6785, SG57685, SG38456
-- Prefix rules: VN = Vietnam, IS = Sri Lanka, SG = Singapore, MY = Malaysia
-- Extract EXACTLY as written, including the prefix letters (e.g. "VN19785" not "19785")
-- Remove spaces: "VN 19785" → "VN19785"
+- Look for MULTIPLE possible labels: "IS Number:", "IS No:", "Confirmation Number", "Conf No", "Conf. No.", "Tour Confirmation No"
+- MakeMyTrip emails use "Confirmation Number VN20012" — this IS the IS number, not a separate field
+- The IS number also frequently appears in the email subject after a "//" separator: "// VN20012"
+- Prefix rules: VN = Vietnam, IS = Sri Lanka, SG = Singapore, MY = Malaysia. Examples: VN40123, IS23492, MY40586, SG57685
+- Extract EXACTLY as written, including the prefix letters (e.g. "VN20012" not "20012")
+- Remove spaces: "VN 20012" → "VN20012"
 - Return null ONLY if truly absent — never guess or fabricate
+- NEVER use the agent's booking ID (e.g. "IN1B1782458946313") as the IS number — those are numeric-only or start with non-VN/IS/SG/MY prefixes
 
 ITINERARY EXTRACTION (CRITICAL):
 - Extract EVERY single day and service from the TC: airport transfers, SIC tours, private tours, internal flights, hotel stays, cruises, day trips
@@ -233,7 +278,7 @@ LOCATION ACCURACY:
 - tourDestination: exact country/region as stated in the TC — never abbreviate or generalise
 - itineraryItems location: exact city, area, or landmark as stated in the TC
 
-IMPORTANT:   "bookingRef": "set as IS number  any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
+IMPORTANT: bookingRef MUST be the IS Number ONLY — always starts with VN, IS, SG, or MY followed by digits (e.g. VN40120, IS48375, SG22232, MY40586). NEVER use CNTL numbers (e.g. 471416CNTL) or pure numeric agent IDs as bookingRef. CNTL numbers go ONLY in the cntlNumber field. If no IS/VN/SG/MY number exists in the email, return null for bookingRef.
 
 DEAL NAME: Usually found in the email subject between the agent booking ID and date codes — e.g. subject "Quotation | 402011387896 | Rakshitha - Vietnam - 060626 | ..." → dealName is "Rakshitha - Vietnam - 060626".
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
@@ -310,14 +355,20 @@ Category mapping:
 
 IMPORTANT: pnlLines must NOT be empty if the email contains a cost table.`
 
-export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL'): Promise<ExtractedBooking> {
+export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL', emailSubject?: string): Promise<ExtractedBooking> {
   const prompt = emailType === 'TOUR_CONFIRMATION' ? TOUR_CONFIRMATION_PROMPT : PNL_PROMPT
+
+  // Pre-extract the relevant section from the email thread to reduce noise.
+  // OneDrive TC files are already clean; email threads embed the TC in quoted replies.
+  const relevantBody = emailType === 'TOUR_CONFIRMATION'
+    ? extractTCSection(emailBody)
+    : extractPNLSection(emailBody)
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: prompt },
-      { role: 'user', content: `Extract from this email:\n\n${emailBody.slice(0, 14000)}` },
+      { role: 'user', content: `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}` },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
@@ -327,16 +378,47 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
 
   const parsed = JSON.parse(content) as Partial<ExtractedBooking>
+
+  // Use the TC-isolated section for server-side regex too — prevents false matches from
+  // quoted email thread replies above/below the actual TC block.
+  // (extractTCSection returns the full body unchanged when no TC marker is found.)
+  const regexText = relevantBody
+
   const tourRefOverride = emailType === 'TOUR_CONFIRMATION'
-    ? extractTourRefFromText(emailBody)
-    : extractPnlTourNoFromText(emailBody)
+    ? extractTourRefFromText(regexText)
+    : extractPnlTourNoFromText(regexText)
+
+  // Authoritative server-side IS number.
+  // Try the isolated TC section first; fall back to the full body and subject line.
+  const isNumberOverride =
+    extractIsNumberFromBody(regexText) ??
+    extractIsNumberFromBody(emailBody) ??
+    (emailSubject ? extractIsNumberFromSubject(emailSubject) : null)
 
   const regexPhone = emailType === 'TOUR_CONFIRMATION'
-    ? extractGuestPhoneFromText(emailBody)
+    ? extractGuestPhoneFromText(regexText)
     : null
 
+  // bookingRef MUST be the IS number (VN/IS/SG/MY prefix) — NEVER use tour ref or CNTL number.
+  // Priority: server-side regex from TC section/body/subject > GPT isNumber > GPT bookingRef
+  // (only if it validates as a proper IS number). Tour Ref stored in cntlNumber, not booking ID.
+  const parsedBookingRefAsIs: string | null = (() => {
+    const raw = String(parsed.bookingRef ?? '').replace(/\s+/g, '').toUpperCase()
+    return /^(VN|IS|SG|MY)\d{3,}$/.test(raw) ? raw : null
+  })()
+
+  // Some agents (e.g. 30 Sundays) put the IS number in the "Tour Ref" field directly,
+  // e.g. "Tour Ref VN40120". If the Tour Ref value is itself a valid IS number, use it.
+  const tourRefAsIs: string | null = (() => {
+    if (!tourRefOverride) return null
+    const raw = tourRefOverride.replace(/\s+/g, '').toUpperCase()
+    return /^(VN|IS|SG|MY)\d{3,}$/.test(raw) ? raw : null
+  })()
+
+  const resolvedIsNumber = isNumberOverride ?? parsed.isNumber ?? parsedBookingRefAsIs ?? tourRefAsIs ?? null
+
   return {
-    bookingRef:       tourRefOverride ?? parsed.bookingRef ?? null,
+    bookingRef:       resolvedIsNumber,
     agentBookingId:   parsed.agentBookingId   ?? null,
     agent:            parsed.agent            ?? null,
     fileHandler:      parsed.fileHandler      ?? null,
@@ -355,8 +437,12 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     tips:               (parsed as Record<string, unknown>).tips               as string | null ?? null,
     otherNote:          (parsed as Record<string, unknown>).otherNote          as string | null ?? null,
     clientRequest:      (parsed as Record<string, unknown>).clientRequest      as string | null ?? null,
-    cntlNumber:       (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
-    isNumber:         parsed.isNumber         ?? null,
+    cntlNumber:       (emailType === 'TOUR_CONFIRMATION'
+                        ? extractCntlFromBody(regexText) ?? extractCntlFromBody(emailBody)
+                        : null)
+                      ?? (tourRefOverride && /^\d+CNTL$/i.test(tourRefOverride) ? tourRefOverride.toUpperCase() : null)
+                      ?? (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
+    isNumber:         resolvedIsNumber,
     dealName:         parsed.dealName         ?? null,
     tourDestination:  parsed.tourDestination  ?? null,
     chauffeurContact: parsed.chauffeurContact ?? null,
@@ -392,6 +478,87 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   }
 }
 
+const IS_PREFIX_RE = /^(VN|IS|SG|MY)\d{3,}$/
+
+function cleanIS(raw: string): string | null {
+  const c = raw.replace(/\s+/g, '').toUpperCase()
+  return IS_PREFIX_RE.test(c) ? c : null
+}
+
+// Extract IS number from explicit labels in the email body.
+// Recognises all common formats from 30 Sundays, MakeMyTrip, and other agents.
+function extractIsNumberFromBody(text: string): string | null {
+  const patterns = [
+    // "IS Number: VN40120" / "IS Number VN 40120" / "IS No. VN40120"
+    /\bis\s*(?:numb(?:er?)?|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    // "Confirmation Number VN40120" / "Conf No: SG22232" — MakeMyTrip format
+    /\bconf(?:irmation)?\s*(?:numb(?:er?)?|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    // "IS : VN40120" — label with colon only (no "Number" word)
+    /\bis\s*:\s*([A-Z]{2}\s*\d{4,})/i,
+    // Newline-separated table cell: "IS Number\nVN40120" or "IS Number\n VN 40120"
+    /\bis\s*(?:numb(?:er?)?|no\.?)\s*[\r\n]+\s*([A-Z]{2}\s*\d{3,})/i,
+    // "IS Number VN 40120 No. of Guests" — IS number before "No. of Guests"
+    /\bis\s*(?:numb(?:er?)?|no\.?)\s+([A-Z]{2}\s*\d{3,})\s*No\.?\s*of/i,
+    // "IS Numbe IS48512" — truncated label (HTML stripping drops trailing "r" from "Number")
+    /\bis\s*numbe?\b[^a-zA-Z]{0,20}([A-Z]{2}\d{3,})/i,
+    // Broad fallback: "IS Number/Numbe/Numb" label with up to 20 non-letter chars before value
+    // Catches HTML-stripped table cells, extra punctuation, unusual whitespace between label and value
+    /\bis\s*numb(?:er?)?\b[^a-zA-Z]{0,20}([A-Z]{2}\d{3,})/i,
+    // "Booking ref VN40120" / "Booking reference VN40120" — some agents use Booking Ref label
+    /\bbooking\s+ref(?:erence)?\s*[:\s=]*([A-Z]{2}\s*\d{4,})/i,
+    // Absolute last resort: standalone IS-number-format token in the TC body
+    // VN + 5+ digits: safe because VN airline flight numbers use only 3-4 digits (VN815, VN3145)
+    // IS/SG/MY + 4+ digits: safe as these prefixes don't match common airline codes
+    /\b(VN\d{5,}|IS\d{4,}|SG\d{4,}|MY\d{4,})\b/,
+  ]
+  for (const re of patterns) {
+    const m = text.match(re)
+    if (m?.[1]) {
+      const v = cleanIS(m[1])
+      if (v) return v
+    }
+  }
+  return null
+}
+
+// Extract CNTL number from email body.
+// Handles: "471416CNTL", "CNTL471416", "Tour Ref 471416 CNTL" (space between digits and CNTL).
+function extractCntlFromBody(text: string): string | null {
+  const patterns = [
+    // "471416CNTL" — digits immediately followed by CNTL
+    /\b(\d{4,}CNTL)\b/i,
+    // "CNTL471416" — CNTL followed by digits
+    /\bCNTL(\d{4,})\b/i,
+    // "Tour Ref 471416 CNTL" or "Tour Ref: 471416 CNTL" — space between number and CNTL keyword
+    /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
+    // Quotation number patterns
+    /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,}CNTL)\b/i,
+    /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,})\s+CNTL\b/i,
+  ]
+  for (const re of patterns) {
+    const m = text.match(re)
+    if (m?.[1]) {
+      const v = m[1].replace(/\s+/g, '').toUpperCase()
+      // Normalise: if captured group is just digits, append CNTL
+      const cntl = /^\d+$/.test(v) ? `${v}CNTL` : v
+      if (/^\d+CNTL$/.test(cntl) || /^CNTL\d+$/.test(cntl)) return cntl
+    }
+  }
+  return null
+}
+
+// Extract IS number from the email subject line.
+// Handles the common forwarded-TC format "// VN20012" at the end of the subject.
+function extractIsNumberFromSubject(subject: string): string | null {
+  // Split on one or more / or | or — delimiters, check each segment
+  const segments = subject.split(/[/|—–-]+/)
+  for (const seg of segments) {
+    const v = cleanIS(seg.trim())
+    if (v) return v
+  }
+  return null
+}
+
 function extractGuestPhoneFromText(text: string): string | null {
   // Match MakeMyTrip / agent-style labels for guest/lead passenger contact numbers
   const patterns = [
@@ -420,8 +587,12 @@ function cleanReference(value: string | null | undefined): string | null {
 function extractTourRefFromText(text: string): string | null {
   const match = text.match(/tour\s*ref(?:erence)?\s*[:=#-]?\s*([A-Z0-9][A-Z0-9-]*)/i)
   const ref = cleanReference(match?.[1])
-  if (!ref) return null
-  return ref.length >= 4 ? ref : null
+  if (!ref || ref.length < 4) return null
+  // Pure numeric values are likely a CNTL number with the "CNTL" suffix split onto a new
+  // line by HTML table rendering (e.g. "471416\nCNTL" → captures only "471416").
+  // These must NOT become the bookingRef — they go to cntlNumber via extractCntlFromBody.
+  if (/^\d+$/.test(ref)) return null
+  return ref
 }
 
 function extractPnlTourNoFromText(text: string): string | null {
@@ -573,16 +744,27 @@ function parseBody(msg: GraphMessage): { text: string; html: string } {
   const content = msg.body?.content ?? ''
   const type = msg.body?.contentType ?? 'text'
   if (type === 'html') {
-    // Strip tags for plain text
+    // Strip HTML preserving document structure so field labels stay adjacent to their values.
+    // Table cells (td/th) close tags → space (keeps "IS Number SG40011" on one line).
+    // Block elements (tr/p/div/li/br) → newline (separates rows and paragraphs).
+    // This mirrors the clean text produced by docx/XLSX parsers used in OneDrive processing.
     const stripped = content
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/t[dh]\b[^>]*>/gi, ' ')                           // td/th close → space
+      .replace(/<\/t[rh]\b[^>]*>|<\/(?:p|div|li|h[1-6])\b[^>]*>/gi, '\n')  // block close → newline
+      .replace(/<[^>]+>/g, '')                                       // strip remaining tags
       .replace(/&nbsp;/g, ' ')
       .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
-      .replace(/\s{2,}/g, ' ')
+      .replace(/&#\d+;/g, '')                                        // remove numeric entities (emoji)
+      .replace(/&[a-z]{2,8};/gi, ' ')                               // remove other named entities
+      .replace(/[ \t]{2,}/g, ' ')                                    // multiple spaces → one
+      .replace(/\n[ \t]+/g, '\n')                                    // trim leading spaces after newline
+      .replace(/[ \t]+\n/g, '\n')                                    // trim trailing spaces before newline
+      .replace(/\n{3,}/g, '\n\n')                                    // max 2 consecutive newlines
       .trim()
     return { text: stripped, html: content }
   }
@@ -747,11 +929,21 @@ export async function extractEmailSourceTextForUser(
     ? await fetchMessageAttachmentsForUser(user, email.graphId)
     : []
 
-  const supportedText = await Promise.all(attachments.map(buildAttachmentText))
-  const attachmentText = supportedText.filter(Boolean).join('\n\n')
+  const supportedTexts = await Promise.all(attachments.map(buildAttachmentText))
+  const attachmentText = supportedTexts.filter(Boolean).join('\n\n')
+
+  // For TC emails that have a docx/pdf attachment: put the attachment text FIRST so
+  // extractTCSection and all regex functions find the clean document content before
+  // the noisy email thread (quoted replies, signatures, etc.).
+  // This mirrors how OneDrive processing works — it reads the TC.docx directly.
+  const hasTCDoc = email.type === 'TOUR_CONFIRMATION'
+    && attachmentText.trim().length > 200
+    && attachments.some(a => /\.(docx?|pdf)$/i.test(a.name))
 
   return {
-    rawText: [email.rawBody, attachmentText].filter(Boolean).join('\n\n'),
+    rawText: hasTCDoc
+      ? [attachmentText, email.rawBody].filter(Boolean).join('\n\n')
+      : [email.rawBody, attachmentText].filter(Boolean).join('\n\n'),
     attachments,
   }
 }

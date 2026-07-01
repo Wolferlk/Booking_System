@@ -39,7 +39,7 @@ const SERVICE_TYPES = [
   { value: 'PVT_TRANSFER',    label: 'Private Transfer',       color: 'blue'   as const },
   { value: 'SIC_TRANSFER',    label: 'SIC Transfer',           color: 'green'  as const },
   { value: 'OWN_ARRANGEMENT', label: 'OWN Transfer',           color: 'gray'   as const },
-  { value: 'INTERNAL_TOUR',   label: 'Tickets Only Transfer',  color: 'purple' as const },
+  { value: 'INTERNAL_TOUR',   label: 'Ticket Only',  color: 'purple' as const },
 ]
 
 interface AgendaItem {

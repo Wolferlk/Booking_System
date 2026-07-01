@@ -103,7 +103,7 @@ Schema:
 {
   "bookingRef": "string — the TC Tour Ref / Tour No exactly as printed (e.g. '469182CNTL', '463720CNTL||SG22228', '459773CNTL / VN19428'). Copy verbatim including any || or / separators.",
   "cntlNumber": "string or null — CNTL/Quotation number if present (digits+CNTL or CNTL+digits, e.g. '463720CNTL', 'CNTL459773'). Extract from bookingRef or document if present. Return null if absent.",
-  "agentBookingId": "string or null — agent's own non-CNTL booking/order reference. Do NOT put CNTL numbers here.",
+  "agentBookingId": "string or null — the travel agent's own internal booking/order reference. Look for ANY of these labels: 'Agent Ref:', 'Agent Booking ID:', 'Agent ID:', 'NAV ID:', 'NAV No:', 'Order No:', 'Quotation No:', 'Booking No:', 'Booking Reference:'. NAV ID is a common label used by agents like MakeMyTrip — extract its value (e.g. 'NAV ID: NL2221845940502' → agentBookingId = 'NL2221845940502'). Do NOT put CNTL numbers here. Do NOT put IS/VN/SG/MY numbers here. Return null if none of these labeled references exist.",
   "agent": "string (e.g. Make My Trip)",
   "fileHandler": "string or null",
   "arrivalDate": "ISO date string YYYY-MM-DD",
@@ -125,14 +125,14 @@ Schema:
   "otherNote": "string or null — 'Other Note' or 'Other Notes' section text verbatim",
   "clientRequest": "string or null — 'Client Request' or 'Special Request' section text verbatim",
 
-  "agentEmail": "string or null — email address of the travel agent / booking company (found in From:, CC:, agent signature, or booking header)",
-  "agentPhone": "string or null — phone/mobile number of the travel agent or company",
-  "agentWhatsapp": "string or null — WhatsApp number of the agent (if labeled WA: or WhatsApp: separately from phone)",
+  "agentEmail": "string or null — email address of the BOOKING AGENT (the company that made this reservation, e.g. Make My Trip). Found in From:/CC: email headers, or a clearly labeled 'Agent:' contact section. NEVER extract the tour operator's own letterhead email (e.g. reservation@sharmilatravels.com, info@appleholidays.com — these belong to the document issuer, not the booking agent). Return null if no agent email is found.",
+  "agentPhone": "string or null — phone of the BOOKING AGENT company. NEVER extract the tour operator's letterhead phone (e.g. the +94 11 number in the AppleHolidays/Sharmila Travels letterhead). Return null if no agent phone is found.",
+  "agentWhatsapp": "string or null — WhatsApp number of the agent ONLY if explicitly labeled 'WA:' or 'WhatsApp:' separately from the phone number. Do NOT duplicate agentPhone here.",
   "agentCountry": "string or null — country of the travel agent company",
 
   "contactEmail": "string or null — personal email of the lead tourist / end customer (found in passenger section, 'Guest Email', or different domain from agent)",
-  "contactPhone": "string or null — personal mobile/phone of the lead tourist",
-  "contactWhatsapp": "string or null — WhatsApp of the lead tourist (if labeled separately, else same as contactPhone)",
+  "contactPhone": "string or null — personal mobile/phone of the lead tourist. A phone number appearing next to the guest/passenger name is the contactPhone.",
+  "contactWhatsapp": "string or null — WhatsApp of the lead tourist ONLY if explicitly labeled 'WA:' or 'WhatsApp:' separately. Do NOT copy contactPhone into contactWhatsapp unless it is separately labeled as WhatsApp.",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
 
   "isNumber": "string or null — CRITICAL: IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122. Extract EXACTLY as written, remove spaces (VN 19785 → VN19785). Labeled 'IS Number:' in the document. ALWAYS extract if present. Return null only if truly absent.",
@@ -157,12 +157,12 @@ Schema:
   ],
   "flights": [
     {
-      "flightNo": "string",
+      "flightNo": "string — use 'UNKNOWN' if flight number is not readable (e.g. flights shown in image format)",
       "date": "ISO date string YYYY-MM-DD",
-      "fromApt": "string",
-      "depTime": "string HH:MM",
-      "toApt": "string",
-      "arrTime": "string HH:MM",
+      "fromApt": "string — use 3-letter IATA code when known, else city name",
+      "depTime": "string HH:MM — convert 12-hour (AM/PM) to 24-hour format",
+      "toApt": "string — use 3-letter IATA code when known, else city name",
+      "arrTime": "string HH:MM — convert 12-hour (AM/PM) to 24-hour format",
       "airline": "string or null"
     }
   ],
@@ -183,7 +183,7 @@ Schema:
     {
       "dayNo": "number",
       "date": "ISO date string YYYY-MM-DD",
-      "title": "string — EXACT complete title from the TC, copied verbatim. NEVER shorten, paraphrase or replace with generic labels like 'Various Attractions' or 'City Tour'. Copy the full official tour name exactly as written.",
+      "title": "string — the actual tour/activity/transfer name for this day. Some TCs prefix each day with a category label like 'City Tour', 'Attraction', 'Activity', 'Transfer', 'Tour' as a template field — STRIP these prefix labels; they are NOT part of the title. Example: 'City Tour Hanoi Airport to Sa Pa Transfer' → title='Hanoi Airport to Sa Pa Transfer'; 'Attraction Full-day Cat Cat – Fansipan' → title='Full-day Cat Cat – Fansipan'. Copy the remaining text verbatim after stripping the prefix. NEVER use generic labels as the whole title.",
       "description": "string or null — exact description text from TC, copied verbatim. Do NOT omit or summarise. Return null only if no description exists.",
       "inclusions": ["array of strings"],
       "exclusions": ["array of strings"]
@@ -199,18 +199,37 @@ Schema:
 }
 
 Contact classification rules:
-- Agent contact (agentEmail / agentPhone): belongs to the travel agency or booking company — found in email headers (From/Reply-To/CC), booking office signatures, or labelled "Agent:", "Company:", "Booking Office:"
-- Customer contact (contactEmail / contactPhone): belongs to the end traveller — found in passenger list, labelled "Guest:", "Tourist:", "Traveller:", "Customer:", or is a personal mobile number next to the lead passenger
-- If a single phone is present with no label, assign it to contactPhone
-- If a single email is present with no label, assign it to agentEmail (confirmation emails usually come from the agent)
-- Extract ALL phone numbers and emails found; classify each carefully as agent or customer
-- WhatsApp numbers are often explicitly labeled "WA:" or are the same as the customer mobile
+- This document is ISSUED BY the tour operator (AppleHolidays / Sharmila Travels). Their letterhead email (reservation@sharmilatravels.com, info@appleholidays.com, etc.) and phone (+94 11 7423700, etc.) are NOT the booking agent's contacts — do NOT put them in agentEmail or agentPhone.
+- Agent contact (agentEmail / agentPhone): the company that placed this booking (e.g. Make My Trip). Found in From:/Reply-To:/CC: email headers, or labeled "Agent:", "Company:", "Booking Office:" in the document body. If not present, return null — do NOT guess.
+- Customer contact (contactEmail / contactPhone): the end traveller. A phone number next to the guest/passenger name is contactPhone. Found in passenger section, labeled "Guest:", "Tourist:", "Traveller:", or is an Indian/overseas mobile next to the lead passenger name.
+- If a single unlabeled phone appears next to the guest name → contactPhone.
+- If a single unlabeled email appears and it matches the operator domain (sharmilatravels, appleholidays) → skip it (it's the operator's, not the agent's).
+- WhatsApp: ONLY populate agentWhatsapp or contactWhatsapp if EXPLICITLY labeled "WA:" or "WhatsApp:" — do NOT copy the phone number into WhatsApp without that label.
+- Flights: ONLY extract flight data (flightNo, airports, times) from actual flight tables in the document. Do NOT extract anything from T&C text or sentences mentioning "flight details". If no flight table exists, return flights as [].
+- Tips: ONLY extract the tips field when there is a dedicated "TIPS" or "Gratuities" section with actual tip content. "Tips and Portages" appearing inside a Package Excludes list is NOT a tips section — return tips as null in that case.
 
 Be precise and complete. Do not invent data.
 Important:
 - bookingRef must be the exact TC Tour Ref printed on the document (copy verbatim, including any || or / separators).
 - isNumber is CRITICAL — always extract if any IS/VN/SG/MY code appears anywhere in the document.
-- agentBookingId is the agent's own internal reference (separate from the TC Tour Ref), or null if absent.
+- agentBookingId rules:
+  * Look for ANY of these labels in the document: "Agent Ref:", "Agent ID:", "Agent Booking ID:", "NAV ID:", "NAV No:", "Order No:", "Quotation No:", "Booking No:", "Booking Reference:".
+  * "NAV ID" is a COMMON label for the agent booking reference in MakeMyTrip TCs — always extract its value into agentBookingId (e.g. "NAV ID: NL2221845940502" → agentBookingId = "NL2221845940502").
+  * NEVER put CNTL numbers (e.g. 468799CNTL) or IS/VN/SG/MY numbers (e.g. IS48357) here.
+  * If no labeled agent reference exists, return null.
+- flights:
+  * ONLY extract flight segments that have actual flight data (flight number, airports, times) in the document TEXT.
+  * If the Flight section says "Mentioned below", "See attached", "In image" or similar but no text flight data follows → return flights: [].
+  * For text-format (non-table) flights like "Indigo 6E 344 Kolkata - 22nd June 05:55 Chennai - 22nd June 07:20", extract each segment separately: flightNo=6E 344, fromApt=CCU, depTime=05:55, toApt=MAA, arrTime=07:20, date=2026-06-22.
+  * A "Transit Xh Ym" line means the NEXT line is a connecting segment on a different flight.
+  * Convert times to 24-hour HH:MM format (e.g. 05:00 AM → 05:00, 10:40 AM → 10:40, 04:00 PM → 16:00).
+  * NEVER create flights from T&C sentences like "If flight details not received within 48 hrs".
+- passengers:
+  * If the document has BOTH a "Lead Passenger" summary section AND a detailed passenger table (Name / Type / Age columns), use ONLY the detailed table — do NOT duplicate the lead passenger from the summary.
+  * If only a "Guests Name:" or "Lead Passenger Name:" field appears (no table), extract that as the single lead passenger.
+- tips: return null if the only mention of "tips" is inside a Package Excludes list. Only populate when a dedicated TIPS section with tip guidance/amounts exists.
+- agentEmail / agentPhone: NEVER extract the operator letterhead (sharmilatravels.com, appleholidays.com, +94 11 XXXXXXX) — these belong to the document issuer, not the booking agent.
+- contactWhatsapp / agentWhatsapp: only populate if the number is EXPLICITLY labeled WhatsApp or WA: — never duplicate the phone number without that label.
 - For valueAddedServices, packageIncludes, packageExcludes, importantNotes, tips, otherNote, clientRequest: copy the section content verbatim as a single string. If the section is absent, return null.`
 
 const PNL_EXTRACTION_PROMPT = `You are a financial data extraction assistant for AppleHolidays travel bookings.

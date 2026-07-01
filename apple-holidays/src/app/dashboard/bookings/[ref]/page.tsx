@@ -45,8 +45,12 @@ export default function BookingDetailPage() {
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
+  const [deletedAccomIds, setDeletedAccomIds] = useState<string[]>([])
   const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; contact: string; address: string }[]>([])
   const [savingAccom, setSavingAccom] = useState(false)
+  const [editPassengerModal, setEditPassengerModal] = useState(false)
+  const [passengerEditList, setPassengerEditList] = useState<PassengerEditRow[]>([])
+  const [savingPassengers, setSavingPassengers] = useState(false)
   const [editBookingModal, setEditBookingModal] = useState(false)
   const [bookingForm, setBookingForm] = useState({
     agent: '', fileHandler: '', agentBookingId: '',
@@ -64,6 +68,11 @@ export default function BookingDetailPage() {
     id: string; flightNo: string; date: string
     fromApt: string; depTime: string; toApt: string; arrTime: string
     airline: string; notes: string
+  }
+  type PassengerEditRow = {
+    _key: string; _isNew: boolean; _deleted: boolean
+    id: string; name: string; type: string; age: string
+    passport: string; nationality: string; contact: string; isLead: boolean
   }
   const [editFlightModal, setEditFlightModal] = useState(false)
   const [flightEditList, setFlightEditList] = useState<FlightEntry[]>([])
@@ -420,7 +429,9 @@ export default function BookingDetailPage() {
   async function saveAccomEdits() {
     setSavingAccom(true)
     try {
-      const accommodationUpdates = Object.entries(accomEdits).map(([id, fields]) => ({ id, ...fields }))
+      const accommodationUpdates = Object.entries(accomEdits)
+        .filter(([id]) => !deletedAccomIds.includes(id))
+        .map(([id, fields]) => ({ id, ...fields }))
       const accommodationAdds = newAccoms
         .filter(a => a.hotel.trim() && a.city.trim() && a.checkIn && a.checkOut)
         .map(a => {
@@ -432,6 +443,7 @@ export default function BookingDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           accommodationUpdates,
+          accommodationDeletes: deletedAccomIds,
           ...(accommodationAdds.length > 0 && { accommodationAdds }),
         }),
       })
@@ -440,11 +452,148 @@ export default function BookingDetailPage() {
       toast.success('Accommodation updated')
       setEditAccomModal(false)
       setAccomEdits({})
+      setDeletedAccomIds([])
       setNewAccoms([])
       await load()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSavingAccom(false) }
+  }
+
+  function openEditPassengers() {
+    const rows: PassengerEditRow[] = (booking.passengers ?? []).map((p: Record<string, unknown>, i: number) => ({
+      _key: String(p.id ?? i),
+      _isNew: false,
+      _deleted: false,
+      id: String(p.id ?? ''),
+      name: String(p.name ?? ''),
+      type: String(p.type ?? 'ADULT'),
+      age: p.age != null ? String(p.age) : '',
+      passport: String(p.passport ?? ''),
+      nationality: String(p.nationality ?? ''),
+      contact: String(p.contact ?? ''),
+      isLead: !!p.isLead,
+    }))
+
+    if (rows.length > 0 && !rows.some(r => r.isLead)) {
+      rows[0] = { ...rows[0], isLead: true }
+    }
+
+    setPassengerEditList(rows)
+    setEditPassengerModal(true)
+  }
+
+  function updatePassengerRow(key: string, field: keyof Omit<PassengerEditRow, '_key' | '_isNew' | '_deleted' | 'id'>, value: string | boolean) {
+    setPassengerEditList(prev => {
+      const next = prev.map(p => (p._key === key ? ({ ...p, [field]: value } as PassengerEditRow) : p))
+      if (field === 'isLead' && value === true) {
+        return next.map(p => (p._key === key ? { ...p, isLead: true } : { ...p, isLead: false }))
+      }
+      return next
+    })
+  }
+
+  function addPassengerRow() {
+    setPassengerEditList(prev => [...prev, {
+      _key: `new-${Date.now()}`,
+      _isNew: true,
+      _deleted: false,
+      id: '',
+      name: '',
+      type: 'ADULT',
+      age: '',
+      passport: '',
+      nationality: '',
+      contact: '',
+      isLead: prev.filter(p => !p._deleted).length === 0,
+    }])
+  }
+
+  function deletePassengerRow(key: string) {
+    setPassengerEditList(prev => prev.map(p => p._key === key ? { ...p, _deleted: true } : p))
+  }
+
+  async function savePassengerEdits() {
+    setSavingPassengers(true)
+    try {
+      const active = passengerEditList.filter(p => !p._deleted)
+      if (active.length === 0) {
+        toast.error('At least one passenger is required')
+        return
+      }
+
+      const rows = active.map(p => ({ ...p }))
+      const leadIndex = rows.findIndex(p => p.isLead)
+      if (leadIndex === -1) {
+        rows[0].isLead = true
+      } else {
+        rows.forEach((p, idx) => { p.isLead = idx === leadIndex })
+      }
+
+      if (rows.some(p => !p.name.trim())) {
+        toast.error('Passenger name is required')
+        return
+      }
+
+      const parseAge = (value: string) => {
+        if (!value.trim()) return null
+        const n = Number(value)
+        if (Number.isNaN(n)) throw new Error('Passenger age must be a number')
+        return n
+      }
+
+      const passengerUpdates = rows
+        .filter(p => !p._isNew)
+        .map(p => ({
+          id: p.id,
+          name: p.name.trim(),
+          type: p.type || 'ADULT',
+          age: parseAge(p.age),
+          passport: p.passport.trim() || null,
+          nationality: p.nationality.trim() || null,
+          contact: p.contact.trim() || null,
+          isLead: p.isLead,
+        }))
+
+      const passengerAdds = rows
+        .filter(p => p._isNew)
+        .map(p => ({
+          name: p.name.trim(),
+          type: p.type || 'ADULT',
+          age: parseAge(p.age),
+          passport: p.passport.trim() || null,
+          nationality: p.nationality.trim() || null,
+          contact: p.contact.trim() || null,
+          isLead: p.isLead,
+        }))
+
+      if (passengerUpdates.length === 0 && passengerAdds.length === 0 && !passengerEditList.some(p => p._deleted && !p._isNew)) {
+        toast.error('No passenger changes to save')
+        return
+      }
+
+      const passengerDeletes = passengerEditList.filter(p => p._deleted && !p._isNew).map(p => p.id)
+
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          passengerUpdates,
+          passengerAdds,
+          passengerDeletes,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Passengers updated')
+      setEditPassengerModal(false)
+      setPassengerEditList([])
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSavingPassengers(false)
+    }
   }
 
   function buildConfirmationMessage(firstName: string): string {
@@ -1198,16 +1347,26 @@ Wishing you a wonderful trip! ✈️
           <Card>
             <CardHeader
               action={
-                mealPrefsDirty && canEditBooking ? (
-                  <button
-                    onClick={saveMealPreferences}
-                    disabled={savingMealPrefs}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    {savingMealPrefs
-                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
-                      : <><Save className="w-3 h-3" /> Save Meal Prefs</>}
-                  </button>
+                canEditBooking ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={openEditPassengers}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 px-3 py-1.5 rounded-lg transition-colors border border-brand-200"
+                    >
+                      <Users className="w-3 h-3" /> Edit Passengers
+                    </button>
+                    {mealPrefsDirty && (
+                      <button
+                        onClick={saveMealPreferences}
+                        disabled={savingMealPrefs}
+                        className="flex items-center gap-1.5 text-xs font-semibold text-white bg-brand-600 hover:bg-brand-700 disabled:opacity-60 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        {savingMealPrefs
+                          ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</>
+                          : <><Save className="w-3 h-3" /> Save Meal Prefs</>}
+                      </button>
+                    )}
+                  </div>
                 ) : undefined
               }
             >
@@ -1385,6 +1544,8 @@ Wishing you a wonderful trip! ✈️
                   const edits: Record<string, unknown> = {}
                   accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' } })
                   setAccomEdits(edits)
+                  setDeletedAccomIds([])
+                  setNewAccoms([])
                   setEditAccomModal(true)
                 }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                   <Edit2 className="w-3 h-3" /> Edit
@@ -1966,12 +2127,12 @@ Wishing you a wonderful trip! ✈️
       {/* Edit Accommodation Modal */}
       <Modal
         open={editAccomModal}
-        onClose={() => { setEditAccomModal(false); setNewAccoms([]) }}
+        onClose={() => { setEditAccomModal(false); setNewAccoms([]); setAccomEdits({}); setDeletedAccomIds([]) }}
         title="Edit Accommodation Details"
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => { setEditAccomModal(false); setNewAccoms([]) }}>Cancel</Button>
+            <Button variant="secondary" onClick={() => { setEditAccomModal(false); setNewAccoms([]); setAccomEdits({}); setDeletedAccomIds([]) }}>Cancel</Button>
             <Button loading={savingAccom} onClick={saveAccomEdits}>Save Changes</Button>
           </>
         }
@@ -1981,11 +2142,30 @@ Wishing you a wonderful trip! ✈️
             <AlertCircle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
             Use this for critical room or hotel changes only. P&L is not automatically updated.
           </p>
-          {accommodations.map((a) => (
+          {accommodations
+            .filter((a) => !deletedAccomIds.includes(a.id as string))
+            .map((a) => (
             <div key={a.id as string} className="border border-slate-200 rounded-xl p-4 space-y-3">
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                {a.city as string} · {formatDate(a.checkIn as string)} – {formatDate(a.checkOut as string)}
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  {a.city as string} · {formatDate(a.checkIn as string)} – {formatDate(a.checkOut as string)}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!window.confirm(`Delete accommodation "${String(a.hotel ?? a.city ?? 'this stay')}"?`)) return
+                    setDeletedAccomIds(prev => prev.includes(a.id as string) ? prev : [...prev, a.id as string])
+                    setAccomEdits(prev => {
+                      const next = { ...prev }
+                      delete next[a.id as string]
+                      return next
+                    })
+                  }}
+                  className="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-md transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                </button>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="form-label">Hotel Name</label>
@@ -2083,6 +2263,124 @@ Wishing you a wonderful trip! ✈️
           >
             <Plus className="w-4 h-4" /> Add Another Hotel
           </button>
+        </div>
+      </Modal>
+
+      {/* Edit Passenger Modal */}
+      <Modal
+        open={editPassengerModal}
+        onClose={() => { setEditPassengerModal(false); setPassengerEditList([]) }}
+        title="Edit Passengers"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => { setEditPassengerModal(false); setPassengerEditList([]) }}>Cancel</Button>
+            <Button loading={savingPassengers} onClick={savePassengerEdits}>Save Changes</Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <p className="text-xs text-slate-500 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-center gap-2">
+            <Users className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+            Edit passenger details, add new passengers, or remove passengers from this booking.
+          </p>
+
+          <div className="space-y-3">
+            {passengerEditList.filter(p => !p._deleted).map((p, idx) => (
+              <div key={p._key} className="border border-slate-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Passenger {idx + 1}{p._isNew ? ' · New' : ''}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm(`Delete passenger "${p.name || 'this passenger'}"?`)) return
+                      deletePassengerRow(p._key)
+                    }}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-1 rounded-md transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="form-label">Name *</label>
+                    <input
+                      className="form-input"
+                      value={p.name}
+                      onChange={e => updatePassengerRow(p._key, 'name', e.target.value)}
+                      placeholder="Full name"
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Type</label>
+                    <select
+                      className="form-select"
+                      value={p.type}
+                      onChange={e => updatePassengerRow(p._key, 'type', e.target.value)}
+                    >
+                      <option value="ADULT">Adult</option>
+                      <option value="CHILD">Child</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Age</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={p.age}
+                      onChange={e => updatePassengerRow(p._key, 'age', e.target.value)}
+                      placeholder="Optional"
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Passport</label>
+                    <input
+                      className="form-input"
+                      value={p.passport}
+                      onChange={e => updatePassengerRow(p._key, 'passport', e.target.value)}
+                      placeholder="Passport no."
+                    />
+                  </div>
+                  <div>
+                    <label className="form-label">Nationality</label>
+                    <input
+                      className="form-input"
+                      value={p.nationality}
+                      onChange={e => updatePassengerRow(p._key, 'nationality', e.target.value)}
+                      placeholder="Nationality"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="form-label">Contact</label>
+                    <input
+                      className="form-input"
+                      value={p.contact}
+                      onChange={e => updatePassengerRow(p._key, 'contact', e.target.value)}
+                      placeholder="Phone number"
+                    />
+                  </div>
+                  <div className="sm:col-span-2 flex items-center gap-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={p.isLead}
+                        onChange={e => updatePassengerRow(p._key, 'isLead', e.target.checked)}
+                      />
+                      Lead passenger
+                    </label>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <Button type="button" variant="ghost" size="sm" icon={<Plus className="w-3 h-3" />}
+              onClick={addPassengerRow}>
+              Add Passenger
+            </Button>
+          </div>
         </div>
       </Modal>
 

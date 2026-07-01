@@ -10,7 +10,7 @@ import {
   ClipboardCheck, Inbox, Plane, Hotel, Phone,
   FileSpreadsheet, Link2, ChevronDown, ChevronUp,
   Eye, Info, Zap, CalendarClock, Merge, HourglassIcon,
-  Search, X,
+  Search, X, Calendar, ChevronLeft, ChevronRight, FileSearch,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -70,6 +70,8 @@ interface ProcessResult {
 interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
 interface MailSettings {
   lessCreditMode: boolean
+  tqEnabled: boolean
+  pnlEnabled: boolean
   recentMailWindowMinutes: number
 }
 
@@ -372,11 +374,14 @@ export default function MailInboxPage() {
   const [subStatus, setSubStatus]         = useState<SubStatus | null>(null)
   const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
   const [searchQuery, setSearchQuery]     = useState('')
+  const [searchInBody, setSearchInBody]   = useState(true)
+  const [dateFrom, setDateFrom]           = useState('')
+  const [dateTo, setDateTo]               = useState('')
   const [pnlStatusMap, setPnlStatusMap]   = useState<Map<string, PnlStatus>>(new Map())
   const [autoProcessingIds, setAutoProcessingIds] = useState<Set<string>>(new Set())
   const [mailSettings, setMailSettings]   = useState<MailSettings | null>(null)
   const [inboxSynced, setInboxSynced]     = useState(false)
-  const [savingLessCreditMode, setSavingLessCreditMode] = useState(false)
+  const [savingMailSettings, setSavingMailSettings] = useState(false)
 
   // Refs for queue management (avoid stale closures)
   const resultsRef         = useRef(results)
@@ -516,32 +521,34 @@ export default function MailInboxPage() {
       .catch(() => {})
   }, [])
 
-  const toggleLessCreditMode = useCallback(async () => {
-    if (!mailSettings) return
-    setSavingLessCreditMode(true)
+  const patchMailSettings = useCallback(async (patch: Partial<MailSettings>) => {
+    setSavingMailSettings(true)
     try {
       const res = await fetch('/api/mail/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lessCreditMode: !mailSettings.lessCreditMode }),
+        body: JSON.stringify(patch),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error as string)
       setMailSettings(json.data as MailSettings)
-      toast.success('Mail mode updated')
+      toast.success('Settings updated')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update mail mode')
+      toast.error(err instanceof Error ? err.message : 'Failed to update settings')
     } finally {
-      setSavingLessCreditMode(false)
+      setSavingMailSettings(false)
     }
-  }, [mailSettings])
+  }, [])
 
   const loadEmails = useCallback(async (silent = false) => {
     if (!silent) setFetching(true)
     else setPolling(true)
     setInboxSynced(false)
     try {
-      const res  = await fetch(`/api/mail/fetch?limit=${limit}&folder=${folder}&mailbox=${mailboxFilter}`)
+      const params = new URLSearchParams({ limit: String(limit), folder, mailbox: mailboxFilter })
+      if (dateFrom) params.set('dateFrom', dateFrom)
+      if (dateTo)   params.set('dateTo',   dateTo)
+      const res  = await fetch(`/api/mail/fetch?${params}`)
       const json = await res.json()
       if (!json.success) throw new Error(json.error as string)
       const loaded = json.data as EmailWithMailbox[]
@@ -584,7 +591,7 @@ export default function MailInboxPage() {
       setFetching(false)
       setPolling(false)
     }
-  }, [limit, folder, mailboxFilter, checkBookingPnl])
+  }, [limit, folder, mailboxFilter, dateFrom, dateTo, checkBookingPnl])
 
   useEffect(() => {
     loadEmails(false)
@@ -633,13 +640,15 @@ export default function MailInboxPage() {
       // Sender
       if (email.from.toLowerCase().includes(q)) return true
       if (email.fromName.toLowerCase().includes(q)) return true
-      // Search raw body for IS/VN refs or CNTL numbers (for unprocessed emails)
+      // Search raw body
+      const body = email.rawBody?.toLowerCase() ?? ''
       if (isRefPrefix || numericQ.length >= 4) {
-        const body = email.rawBody?.toLowerCase() ?? ''
         if (isRefPrefix && body.includes(q)) return true
         if (numericQ.length >= 4 && body.includes(numericQ)) return true
         if (numericQ.length >= 4 && email.subject.toLowerCase().includes(numericQ)) return true
       }
+      // Full body text search when toggle is on
+      if (searchInBody && body.includes(q)) return true
       // Processed booking ref (IS/VN number)
       const ref = results.get(email.graphId)?.data?.bookingRef ?? ''
       if (ref.toLowerCase().includes(q)) return true
@@ -648,7 +657,7 @@ export default function MailInboxPage() {
       if (numericQ.length >= 4 && numericRef && numericRef.includes(numericQ)) return true
       return false
     })
-  }, [emails, searchQuery, results])
+  }, [emails, searchQuery, searchInBody, results])
 
   // Merged = TQ bookings that also have a PNL attached
   const mergedCount = useMemo(() => {
@@ -713,19 +722,43 @@ export default function MailInboxPage() {
         }
         actions={
           <div className="flex gap-2 items-center flex-wrap">
-            {lessCreditMode && (
-              <Badge color="amber" className="text-[10px]">
-                Less Credit Mode · backend processes recent mail only
-              </Badge>
-            )}
+            {/* ── Mailbox toggles ── */}
+            {([
+              { label: 'TQ',  key: 'tqEnabled'  as const, color: 'blue'  },
+              { label: 'PNL', key: 'pnlEnabled' as const, color: 'teal'  },
+            ]).map(({ label, key, color }) => {
+              const on = mailSettings?.[key] ?? true
+              return (
+                <button
+                  key={key}
+                  disabled={savingMailSettings}
+                  onClick={() => patchMailSettings({ [key]: !on })}
+                  title={`${on ? 'Disable' : 'Enable'} ${label} mailbox sync`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+                    on
+                      ? color === 'blue'
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-teal-50 border-teal-300 text-teal-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${on ? (color === 'blue' ? 'bg-blue-500' : 'bg-teal-500') : 'bg-slate-300'}`} />
+                  {label}
+                  <span className="text-[9px] font-bold">{on ? 'ON' : 'OFF'}</span>
+                </button>
+              )
+            })}
+
+            {/* ── Less Credit toggle ── */}
             <Button
               size="sm"
               variant={lessCreditMode ? 'outline' : 'secondary'}
-              loading={savingLessCreditMode}
-              onClick={toggleLessCreditMode}
+              loading={savingMailSettings}
+              onClick={() => patchMailSettings({ lessCreditMode: !lessCreditMode })}
             >
               {lessCreditMode ? 'Less Credit On' : 'Less Credit Off'}
             </Button>
+
             <select value={folder} onChange={e => setFolder(e.target.value as 'all' | 'inbox')}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
               <option value="all">All Folders</option>
@@ -733,7 +766,7 @@ export default function MailInboxPage() {
             </select>
             <select value={limit} onChange={e => setLimit(Number(e.target.value))}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
-              {[20, 50, 100, 200,1000,10000,100000].map(n => <option key={n} value={n}>{n} emails</option>)}
+              {[20, 50, 100, 200, 1000, 10000].map(n => <option key={n} value={n}>{n} emails</option>)}
             </select>
             <button onClick={() => loadEmails(false)} disabled={fetching}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40">
@@ -849,6 +882,67 @@ export default function MailInboxPage() {
           ))}
         </div>
 
+        {/* ── Date Filter ───────────────────────────────────────────────── */}
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+            <span className="text-xs font-semibold text-slate-500">Filter by date:</span>
+            <button
+              onClick={() => { const t = new Date().toISOString().slice(0,10); setDateFrom(t); setDateTo(t) }}
+              className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition-colors"
+            >Today</button>
+            <button
+              onClick={() => {
+                const y = new Date(Date.now() - 86400000).toISOString().slice(0,10)
+                setDateFrom(y); setDateTo(y)
+              }}
+              className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold hover:bg-slate-300 transition-colors"
+            >Yesterday</button>
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo('') }}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold hover:bg-red-200 transition-colors flex items-center gap-0.5"
+              ><X className="w-2.5 h-2.5" />Clear</button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              disabled={!dateFrom}
+              onClick={() => {
+                const d = new Date(dateFrom + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate()-1)
+                const s = d.toISOString().slice(0,10); setDateFrom(s); setDateTo(s)
+              }}
+              className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 disabled:opacity-30 transition-colors"
+            ><ChevronLeft className="w-3.5 h-3.5" /></button>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-slate-400 font-semibold">From</label>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+            </div>
+            <span className="text-slate-300">—</span>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-slate-400 font-semibold">To</label>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+            </div>
+            <button
+              disabled={!dateTo}
+              onClick={() => {
+                const d = new Date(dateTo + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+1)
+                const s = d.toISOString().slice(0,10); setDateFrom(s); setDateTo(s)
+              }}
+              className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 disabled:opacity-30 transition-colors"
+            ><ChevronRight className="w-3.5 h-3.5" /></button>
+            {(dateFrom || dateTo) && (
+              <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+                {dateFrom === dateTo && dateFrom
+                  ? `${new Date(dateFrom + 'T12:00:00Z').toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}`
+                  : `${dateFrom || '…'} → ${dateTo || '…'}`}
+              </span>
+            )}
+          </div>
+        </div>
+
         {/* ── Search ────────────────────────────────────────────────────── */}
         <div className="space-y-2">
           {/* Input row */}
@@ -879,25 +973,36 @@ export default function MailInboxPage() {
             </div>
           </div>
 
-          {/* Search field hint chips */}
+          {/* Body search toggle + hint chips */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider mr-0.5">Search by:</span>
+            {/* Body search toggle */}
+            <button
+              onClick={() => setSearchInBody(v => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all ${
+                searchInBody
+                  ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+                  : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+              }`}
+              title="Toggle body text search"
+            >
+              <FileSearch className="w-3 h-3" />
+              {searchInBody ? 'Body Search ON' : 'Body Text'}
+            </button>
+
+            <span className="text-[10px] text-slate-300">|</span>
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Search by:</span>
             {([
-              { flag: '🇱🇰', label: 'IS Number',  desc: 'IS2400123',  color: 'bg-yellow-50 border-yellow-200 text-yellow-700',  tip: 'Sri Lanka booking ref — e.g. IS2400123' },
-              { flag: '🇻🇳', label: 'VN Number',  desc: 'VN2400123',  color: 'bg-red-50 border-red-200 text-red-700',            tip: 'Vietnam booking ref — e.g. VN2400123' },
-              { flag: '🇸🇬', label: 'SG Number',  desc: 'SG2400123',  color: 'bg-blue-50 border-blue-200 text-blue-700',         tip: 'Singapore booking ref — e.g. SG2400123' },
-              { flag: '🔢',  label: 'CNTL No.',   desc: '469083',     color: 'bg-slate-100 border-slate-200 text-slate-600',      tip: 'Numeric Tour/Control number from PNL — e.g. 469083 or 469083CNTL' },
-              { flag: '📧',  label: 'Subject',    desc: 'keyword',    color: 'bg-indigo-50 border-indigo-200 text-indigo-700',    tip: 'Search mail subject text' },
-              { flag: '👤',  label: 'Sender',     desc: 'name/email', color: 'bg-purple-50 border-purple-200 text-purple-700',   tip: 'Search sender name or email address' },
-            ] as { flag: string; label: string; desc: string; color: string; tip: string }[]).map(chip => (
+              { flag: '🇱🇰', label: 'IS Number',  desc: 'IS2400123',  color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
+              { flag: '🇻🇳', label: 'VN Number',  desc: 'VN2400123',  color: 'bg-red-50 border-red-200 text-red-700' },
+              { flag: '🇸🇬', label: 'SG Number',  desc: 'SG2400123',  color: 'bg-blue-50 border-blue-200 text-blue-700' },
+              { flag: '🔢',  label: 'CNTL No.',   desc: '469083',     color: 'bg-slate-100 border-slate-200 text-slate-600' },
+            ] as { flag: string; label: string; desc: string; color: string }[]).map(chip => (
               <button
                 key={chip.label}
-                onClick={() => setSearchQuery(chip.desc === 'keyword' || chip.desc === 'name/email' ? '' : chip.desc)}
-                title={chip.tip}
+                onClick={() => setSearchQuery(chip.desc)}
                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all hover:opacity-80 cursor-pointer ${chip.color}`}
               >
-                <span>{chip.flag}</span>
-                {chip.label}
+                <span>{chip.flag}</span>{chip.label}
               </button>
             ))}
           </div>

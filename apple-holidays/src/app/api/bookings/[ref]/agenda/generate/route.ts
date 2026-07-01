@@ -234,12 +234,14 @@ FLIGHT DETAILS — MANDATORY FOR AIRPORT DAYS:
   4. serviceType MUST be PVT_TRANSFER (never SIC for airport transfers).
 
 ════════════════════════════════════════════════════════════════
-SERVICE TYPE RULES (use EXACTLY one of these 4 values):
-  - "SIC" in title → SIC_TRANSFER; set timeFrom (30 min before departure) and timeTo (departure)
+SERVICE TYPE RULES (use EXACTLY one of these values):
+  - The word "SIC" appears EXPLICITLY in the ACTIVITY TITLE → SIC_TRANSFER; set timeFrom/timeTo
   - "OWN" / leisure / free day / at own pace → OWN_ARRANGEMENT; meetingTime = null
   - Entry tickets / sightseeing activities without vehicle / tickets only → INTERNAL_TOUR; meetingTime = null
-  - ALL other transfers (airport, inter-city, road, private, cruise boarding, hotel pickup) → PVT_TRANSFER
+  - ALL other transfers (airport, inter-city, road, private, cruise, waterfall, nature tour, hotel pickup) → PVT_TRANSFER
   - Airport road transfer (arrival or departure) → ALWAYS PVT_TRANSFER
+  - "Private Transfer" or "Private basis" mentioned in the activity → ALWAYS PVT_TRANSFER, never SIC_TRANSFER
+  - Waterfalls, mountains, parks, nature activities WITHOUT explicit "SIC" in the title → PVT_TRANSFER
 
 FIRST AND LAST ITEM RULE (CRITICAL):
   - The FIRST agenda item (arrival day) MUST be PVT_TRANSFER (airport → hotel)
@@ -262,13 +264,17 @@ MEETING TIME DEFAULTS:
   - SIC half-day AM: meetingTime=08:00, timeFrom=07:30, timeTo=08:00
   - SIC half-day PM: meetingTime=13:00, timeFrom=12:30, timeTo=13:00
   - SIC cruise embarkation: meetingTime=07:30, timeFrom=07:00, timeTo=07:30
-  - Private full-day: meetingTime=08:00
+  - Private full-day tour: meetingTime=08:00
+  - Private half-day AM tour: meetingTime=08:00
+  - Private half-day PM tour: meetingTime=13:00
+  - INTERNAL_TOUR (ticket only, entrance): set meetingTime to the activity start time if known, else 08:00
   - OWN_ARRANGEMENT: meetingTime=null, timeFrom=null, timeTo=null
 
 SERVICE TYPE DEFAULTS when not clearly mentioned:
-  - If title mentions "SIC" → SIC_TRANSFER
+  - If ACTIVITY TITLE explicitly contains "SIC" → SIC_TRANSFER
   - If title mentions "OWN" or is a free/leisure day → OWN_ARRANGEMENT
-  - If title is about entry tickets, sightseeing only (no vehicle) → INTERNAL_TOUR
+  - If title is about entry tickets, sightseeing only (no vehicle) → INTERNAL_TOUR; meetingTime=08:00
+  - "Private" or "Private Transfer" in title/description → PVT_TRANSFER (never SIC)
   - EVERYTHING ELSE → PVT_TRANSFER (default; never leave ambiguous)
 
 ADDITIONAL RULES:
@@ -276,6 +282,9 @@ ADDITIONAL RULES:
   - Split multi-city days as separate items (each movement = one item)
   - Meals: only set if explicitly included in the package for that day
   - Never leave location empty — always put the city/area name
+  - NEVER include passenger names, passport numbers, guest ages, or personal guest details in ANY field (details, fromPoint, toPoint, location). The movement chart is operational — it must not contain personal guest data.
+  - Package Includes service type mapping: if an item says "on Private Basis" or "Private Transfer" → PVT_TRANSFER; "Shared Transfers" or "SIC" → SIC_TRANSFER; "Half-day tour" or "Full-day" with no qualifier → PVT_TRANSFER by default.
+  - For days where the day-by-day section is in image format (not extracted), RECONSTRUCT the itinerary using Package Includes — map each Package Include line to the correct date based on hotel city and check-in/check-out dates.
 
 ════════════════════════════════════════════════════════════════
 Return ONLY a JSON object: { "items": [ { all 9 fields required: date, location, fromPoint, toPoint, details, mealPlan, meetingTime, timeFrom, timeTo, serviceType } ] }`
@@ -342,7 +351,15 @@ ${tqDocumentText
       // Airport or flight day → always Private Transfer
       serviceType = 'PVT_TRANSFER'
     } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
+      // "SIC" explicitly in location/destination → force SIC
       serviceType = 'SIC_TRANSFER'
+    } else if (serviceType === 'SIC_TRANSFER') {
+      // AI said SIC but no "SIC" in loc/to → validate against full content
+      const SHARED_RE = /\b(sic|shared|sharing)\b/i
+      if (!SHARED_RE.test(loc) && !SHARED_RE.test(to) && !SHARED_RE.test(det) && !SHARED_RE.test(from)) {
+        // No SIC/Shared signal anywhere — revert to Private
+        serviceType = 'PVT_TRANSFER'
+      }
     }
 
     // For SIC: ensure timeFrom/timeTo (join-window) are set
@@ -362,6 +379,11 @@ ${tqDocumentText
       // Non-SIC items: clear timeFrom/timeTo
       timeFrom = null
       timeTo   = null
+    }
+
+    // Default meetingTime for PVT/INTERNAL_TOUR when AI left it null
+    if ((serviceType === 'PVT_TRANSFER' || serviceType === 'INTERNAL_TOUR') && !meetingTime && !isAirportRoad) {
+      meetingTime = '08:00'
     }
 
     // Normalise airport fromPoint / toPoint labels
