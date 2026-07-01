@@ -596,9 +596,20 @@ export default function BookingDetailPage() {
     }
   }
 
+  function getOperationTeamName(): string {
+    const c = booking.operationCountry
+    if (c === 'VIETNAM')            return 'Vietnam Ground Operation Team'
+    if (c === 'SRILANKA')           return 'Sri Lanka Ground Operation Team'
+    if (c === 'SINGAPORE')          return 'Singapore Ground Operation Team'
+    if (c === 'MALAYSIA')           return 'Malaysia Ground Operation Team'
+    if (c === 'SINGAPORE_MALAYSIA') return 'Singapore & Malaysia Ground Operation Team'
+    return 'Ground Operation Team'
+  }
+
   function buildConfirmationMessage(firstName: string): string {
+    const team = getOperationTeamName()
     return `Hello ${firstName},
-Greetings from Sri Lanka Ground Operation Team! 🌟
+Greetings from ${team}! 🌟
 
 Please find the attached *Tour Confirmation* for your upcoming trip.
 
@@ -621,12 +632,13 @@ We kindly request the following information:
 
 Please reply with your confirmation at the earliest.
 Thank you! 🙏
-*Sri Lanka Ground Operation Team*`
+*${team}*`
   }
 
   function buildFullDetailsMessage(firstName: string): string {
+    const team = getOperationTeamName()
     return `Hello ${firstName},
-Greetings from Sri Lanka Ground Operation Team! 🌟
+Greetings from ${team}! 🌟
 
 Please find the *Full Tour Details & Vouchers* for your upcoming trip to Vietnam.
 
@@ -646,7 +658,7 @@ Please keep this document handy throughout your travel.
 📞 Tina: +84 94 516 95 95
 
 Wishing you a wonderful trip! ✈️
-*Sri Lanka Ground Operation Team*`
+*${team}*`
   }
 
   function getAutoSendInfo(daysUntilTrip: number, daysBefore: number): { label: string; urgent: boolean } {
