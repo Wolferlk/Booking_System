@@ -406,7 +406,16 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     const raw = String(parsed.bookingRef ?? '').replace(/\s+/g, '').toUpperCase()
     return /^(VN|IS|SG|MY)\d{3,}$/.test(raw) ? raw : null
   })()
-  const resolvedIsNumber = isNumberOverride ?? parsed.isNumber ?? parsedBookingRefAsIs ?? null
+
+  // Some agents (e.g. 30 Sundays) put the IS number in the "Tour Ref" field directly,
+  // e.g. "Tour Ref VN40120". If the Tour Ref value is itself a valid IS number, use it.
+  const tourRefAsIs: string | null = (() => {
+    if (!tourRefOverride) return null
+    const raw = tourRefOverride.replace(/\s+/g, '').toUpperCase()
+    return /^(VN|IS|SG|MY)\d{3,}$/.test(raw) ? raw : null
+  })()
+
+  const resolvedIsNumber = isNumberOverride ?? parsed.isNumber ?? parsedBookingRefAsIs ?? tourRefAsIs ?? null
 
   return {
     bookingRef:       resolvedIsNumber,
@@ -495,6 +504,12 @@ function extractIsNumberFromBody(text: string): string | null {
     // Broad fallback: "IS Number/Numbe/Numb" label with up to 20 non-letter chars before value
     // Catches HTML-stripped table cells, extra punctuation, unusual whitespace between label and value
     /\bis\s*numb(?:er?)?\b[^a-zA-Z]{0,20}([A-Z]{2}\d{3,})/i,
+    // "Booking ref VN40120" / "Booking reference VN40120" — some agents use Booking Ref label
+    /\bbooking\s+ref(?:erence)?\s*[:\s=]*([A-Z]{2}\s*\d{4,})/i,
+    // Absolute last resort: standalone IS-number-format token in the TC body
+    // VN + 5+ digits: safe because VN airline flight numbers use only 3-4 digits (VN815, VN3145)
+    // IS/SG/MY + 4+ digits: safe as these prefixes don't match common airline codes
+    /\b(VN\d{5,}|IS\d{4,}|SG\d{4,}|MY\d{4,})\b/,
   ]
   for (const re of patterns) {
     const m = text.match(re)
