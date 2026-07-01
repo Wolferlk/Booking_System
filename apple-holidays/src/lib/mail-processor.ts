@@ -164,13 +164,18 @@ function extractTCSection(text: string): string {
   const tcIdx = text.search(/\bTOUR\s+CONFIRMATION\b/i)
   if (tcIdx === -1) return text                     // no marker — return as-is
 
-  const start   = Math.max(0, tcIdx - 800)          // include greeting context
-  const afterTC = text.slice(tcIdx)
+  const start   = Math.max(0, tcIdx - 1000)         // include greeting + hotel context above TC header
 
-  // Reply/forward boundary: "From: Name <email@…> Sent:" or "From: Name <email@…> Date:"
-  // (After HTML-stripping, angle brackets may have spaces around them)
-  const boundary = afterTC.match(/From:\s+\S[^<\n]{0,80}<[^>]+>\s+(?:Sent|Date):/i)
-  const end = tcIdx + (boundary?.index ?? Math.min(afterTC.length, 9000))
+  // Reply/forward boundary patterns (HTML-stripped or plain text email threads):
+  // 1. "From: Name <email@…> Sent/Date:" — standard Outlook thread header
+  // 2. "From: Name < email > Sent:" — with spaces around angle brackets (HTML-stripped)
+  // 3. Newline followed by "From:" at line start (forwarded message in plain text)
+  const afterTC = text.slice(tcIdx)
+  const boundary = afterTC.match(
+    /From:\s+\S[^<\n]{0,120}[<\s][\w.+-]+@[\w.-]+[>\s]\s+(?:Sent|Date)\s*:/i
+  )
+  // Allow up to 12000 chars so the full TC (hotel table, itinerary, inclusions) is captured
+  const end = tcIdx + (boundary?.index ?? Math.min(afterTC.length, 12000))
 
   const section = text.slice(start, end).trim()
   return section.length > 200 ? section : text
@@ -373,23 +378,38 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
   if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
 
   const parsed = JSON.parse(content) as Partial<ExtractedBooking>
+
+  // Use the TC-isolated section for server-side regex too — prevents false matches from
+  // quoted email thread replies above/below the actual TC block.
+  // (extractTCSection returns the full body unchanged when no TC marker is found.)
+  const regexText = relevantBody
+
   const tourRefOverride = emailType === 'TOUR_CONFIRMATION'
-    ? extractTourRefFromText(emailBody)
-    : extractPnlTourNoFromText(emailBody)
+    ? extractTourRefFromText(regexText)
+    : extractPnlTourNoFromText(regexText)
 
   // Authoritative server-side IS number.
-  // Body labels ("IS Number:", "Confirmation Number") take priority; subject pattern is fallback.
-  // This prevents agent codes like VN473119 from being mistaken for IS numbers.
+  // Try the isolated TC section first; fall back to the full body and subject line.
   const isNumberOverride =
+    extractIsNumberFromBody(regexText) ??
     extractIsNumberFromBody(emailBody) ??
     (emailSubject ? extractIsNumberFromSubject(emailSubject) : null)
 
   const regexPhone = emailType === 'TOUR_CONFIRMATION'
-    ? extractGuestPhoneFromText(emailBody)
+    ? extractGuestPhoneFromText(regexText)
     : null
 
+  // bookingRef MUST be the IS number (VN/IS/SG/MY prefix) — NEVER use tour ref or CNTL number.
+  // Priority: server-side regex from TC section/body/subject > GPT isNumber > GPT bookingRef
+  // (only if it validates as a proper IS number). Tour Ref stored in cntlNumber, not booking ID.
+  const parsedBookingRefAsIs: string | null = (() => {
+    const raw = String(parsed.bookingRef ?? '').replace(/\s+/g, '').toUpperCase()
+    return /^(VN|IS|SG|MY)\d{3,}$/.test(raw) ? raw : null
+  })()
+  const resolvedIsNumber = isNumberOverride ?? parsed.isNumber ?? parsedBookingRefAsIs ?? null
+
   return {
-    bookingRef:       tourRefOverride ?? parsed.bookingRef ?? null,
+    bookingRef:       resolvedIsNumber,
     agentBookingId:   parsed.agentBookingId   ?? null,
     agent:            parsed.agent            ?? null,
     fileHandler:      parsed.fileHandler      ?? null,
@@ -408,9 +428,12 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     tips:               (parsed as Record<string, unknown>).tips               as string | null ?? null,
     otherNote:          (parsed as Record<string, unknown>).otherNote          as string | null ?? null,
     clientRequest:      (parsed as Record<string, unknown>).clientRequest      as string | null ?? null,
-    cntlNumber:       (emailType === 'TOUR_CONFIRMATION' ? extractCntlFromBody(emailBody) : null)
+    cntlNumber:       (emailType === 'TOUR_CONFIRMATION'
+                        ? extractCntlFromBody(regexText) ?? extractCntlFromBody(emailBody)
+                        : null)
+                      ?? (tourRefOverride && /^\d+CNTL$/i.test(tourRefOverride) ? tourRefOverride.toUpperCase() : null)
                       ?? (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
-    isNumber:         isNumberOverride ?? parsed.isNumber ?? null,
+    isNumber:         resolvedIsNumber,
     dealName:         parsed.dealName         ?? null,
     tourDestination:  parsed.tourDestination  ?? null,
     chauffeurContact: parsed.chauffeurContact ?? null,
@@ -467,6 +490,11 @@ function extractIsNumberFromBody(text: string): string | null {
     /\bis\s*(?:numb(?:er?)?|no\.?)\s*[\r\n]+\s*([A-Z]{2}\s*\d{3,})/i,
     // "IS Number VN 40120 No. of Guests" — IS number before "No. of Guests"
     /\bis\s*(?:numb(?:er?)?|no\.?)\s+([A-Z]{2}\s*\d{3,})\s*No\.?\s*of/i,
+    // "IS Numbe IS48512" — truncated label (HTML stripping drops trailing "r" from "Number")
+    /\bis\s*numbe?\b[^a-zA-Z]{0,20}([A-Z]{2}\d{3,})/i,
+    // Broad fallback: "IS Number/Numbe/Numb" label with up to 20 non-letter chars before value
+    // Catches HTML-stripped table cells, extra punctuation, unusual whitespace between label and value
+    /\bis\s*numb(?:er?)?\b[^a-zA-Z]{0,20}([A-Z]{2}\d{3,})/i,
   ]
   for (const re of patterns) {
     const m = text.match(re)
@@ -701,16 +729,27 @@ function parseBody(msg: GraphMessage): { text: string; html: string } {
   const content = msg.body?.content ?? ''
   const type = msg.body?.contentType ?? 'text'
   if (type === 'html') {
-    // Strip tags for plain text
+    // Strip HTML preserving document structure so field labels stay adjacent to their values.
+    // Table cells (td/th) close tags → space (keeps "IS Number SG40011" on one line).
+    // Block elements (tr/p/div/li/br) → newline (separates rows and paragraphs).
+    // This mirrors the clean text produced by docx/XLSX parsers used in OneDrive processing.
     const stripped = content
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<[^>]+>/g, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/t[dh]\b[^>]*>/gi, ' ')                           // td/th close → space
+      .replace(/<\/t[rh]\b[^>]*>|<\/(?:p|div|li|h[1-6])\b[^>]*>/gi, '\n')  // block close → newline
+      .replace(/<[^>]+>/g, '')                                       // strip remaining tags
       .replace(/&nbsp;/g, ' ')
       .replace(/&amp;/g, '&')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
-      .replace(/\s{2,}/g, ' ')
+      .replace(/&#\d+;/g, '')                                        // remove numeric entities (emoji)
+      .replace(/&[a-z]{2,8};/gi, ' ')                               // remove other named entities
+      .replace(/[ \t]{2,}/g, ' ')                                    // multiple spaces → one
+      .replace(/\n[ \t]+/g, '\n')                                    // trim leading spaces after newline
+      .replace(/[ \t]+\n/g, '\n')                                    // trim trailing spaces before newline
+      .replace(/\n{3,}/g, '\n\n')                                    // max 2 consecutive newlines
       .trim()
     return { text: stripped, html: content }
   }
@@ -875,11 +914,21 @@ export async function extractEmailSourceTextForUser(
     ? await fetchMessageAttachmentsForUser(user, email.graphId)
     : []
 
-  const supportedText = await Promise.all(attachments.map(buildAttachmentText))
-  const attachmentText = supportedText.filter(Boolean).join('\n\n')
+  const supportedTexts = await Promise.all(attachments.map(buildAttachmentText))
+  const attachmentText = supportedTexts.filter(Boolean).join('\n\n')
+
+  // For TC emails that have a docx/pdf attachment: put the attachment text FIRST so
+  // extractTCSection and all regex functions find the clean document content before
+  // the noisy email thread (quoted replies, signatures, etc.).
+  // This mirrors how OneDrive processing works — it reads the TC.docx directly.
+  const hasTCDoc = email.type === 'TOUR_CONFIRMATION'
+    && attachmentText.trim().length > 200
+    && attachments.some(a => /\.(docx?|pdf)$/i.test(a.name))
 
   return {
-    rawText: [email.rawBody, attachmentText].filter(Boolean).join('\n\n'),
+    rawText: hasTCDoc
+      ? [attachmentText, email.rawBody].filter(Boolean).join('\n\n')
+      : [email.rawBody, attachmentText].filter(Boolean).join('\n\n'),
     attachments,
   }
 }
