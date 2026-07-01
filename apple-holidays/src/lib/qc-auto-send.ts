@@ -1,16 +1,25 @@
 /**
  * QC Auto-Send — triggered automatically when a booking advances to QC1_PASS or QC2_PASS.
  * QC1: sends WhatsApp Msg 1 (basic confirmation) + agent email
- * QC2: sends WhatsApp Msg 2 (full details with agenda) + customer email
+ * QC2: sends WhatsApp Msg 2 (full details with agenda + PDF) + customer email
  */
 
 import { prisma } from '@/lib/prisma'
 import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
-import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
+import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { mkdir, writeFile } from 'fs/promises'
 import path from 'path'
 
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
+
+function getTeamName(operationCountry: string | null | undefined): string {
+  if (operationCountry === 'VIETNAM')            return 'Vietnam Ground Operation Team'
+  if (operationCountry === 'SRILANKA')           return 'Sri Lanka Ground Operation Team'
+  if (operationCountry === 'SINGAPORE')          return 'Singapore Ground Operation Team'
+  if (operationCountry === 'MALAYSIA')           return 'Malaysia Ground Operation Team'
+  if (operationCountry === 'SINGAPORE_MALAYSIA') return 'Singapore & Malaysia Ground Operation Team'
+  return 'Apple Holidays Team'
+}
 
 async function sendWhatsAppMessage(params: {
   to: string
@@ -18,6 +27,7 @@ async function sendWhatsAppMessage(params: {
   message: string
   pdfBuffer?: Buffer
   pdfFilename?: string
+  pdfCaption?: string
 }): Promise<void> {
   const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
@@ -55,7 +65,7 @@ async function sendWhatsAppMessage(params: {
             messaging_product: 'whatsapp',
             to: params.to,
             type: 'document',
-            document: { id: uploadJson.id, filename: params.pdfFilename, caption: 'Apple Holidays — Tour Confirmation' },
+            document: { id: uploadJson.id, filename: params.pdfFilename, caption: params.pdfCaption ?? 'Apple Holidays — Tour Confirmation' },
           }),
         })
       }
@@ -173,14 +183,20 @@ export async function triggerQC2AutoSend(bookingRef: string): Promise<void> {
   const booking = await prisma.booking.findUnique({
     where: { bookingRef },
     include: {
-      passengers:     { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
-      accommodations: { orderBy: { checkIn: 'asc' } },
-      flights:        { orderBy: { date: 'asc' } },
+      passengers:        { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
+      accommodations:    { orderBy: { checkIn: 'asc' } },
+      flights:           { orderBy: { date: 'asc' } },
+      itineraryItems:    { orderBy: { dayNo: 'asc' } },
+      emergencyContacts: true,
       tourAgenda: {
         include: {
-          items: { orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }] },
+          items: {
+            orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
+            include: { assignment: { include: { driver: true } } },
+          },
         },
       },
+      tickets: { orderBy: { createdAt: 'asc' } },
     },
   })
   if (!booking) return
@@ -195,49 +211,44 @@ export async function triggerQC2AutoSend(bookingRef: string): Promise<void> {
   const firstName = (lead?.name ?? 'Guest').split(' ')[0]
   const arrDate   = booking.arrivalDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
   const depDate   = booking.departureDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-
-  // Build agenda summary (first 8 items)
-  const agendaItems = booking.tourAgenda?.items ?? []
-  const agendaLines = agendaItems.slice(0, 8).map(item => {
-    const d = new Date(item.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
-    const mt = item.meetingTime ? ` @ ${item.meetingTime}` : ''
-    return `  📍 ${d}: ${item.location}${mt}`
-  })
-  const agendaSummary = agendaLines.length > 0
-    ? `\n*Your Itinerary Highlights:*\n${agendaLines.join('\n')}${agendaItems.length > 8 ? `\n  … +${agendaItems.length - 8} more days` : ''}`
-    : ''
-
-  // Build hotel summary
-  const hotels    = booking.accommodations
-  const hotelLine = hotels.length > 0
-    ? `\n*Accommodations:*\n${hotels.map(h => `  🏨 ${h.hotel}, ${h.city} (${h.nights} nights)`).join('\n')}`
-    : ''
-
-  // Build flight summary
-  const flightLines = (booking.flights ?? []).map(f => `  ✈ ${f.flightNo}: ${f.fromApt} → ${f.toApt} | Dep: ${f.depTime ?? '—'} | Arr: ${f.arrTime ?? '—'}`)
-  const flightSummary = flightLines.length > 0 ? `\n*Flights:*\n${flightLines.join('\n')}` : ''
+  const teamName  = getTeamName((booking as unknown as { operationCountry?: string | null }).operationCountry)
 
   const message = `Hello ${firstName},
-Apple Holidays is pleased to share your *complete trip details*! 🎉
+Greetings from ${teamName}! 🌟
 
-📋 *Booking Reference:* ${bookingRef}
-📅 *Travel Dates:* ${arrDate} – ${depDate}
-${agendaSummary}${hotelLine}${flightSummary}
+Please find the *Full Tour Details & Vouchers* for your upcoming trip.
 
-✅ All arrangements are *confirmed and ready*.
-Your drivers and guides will be coordinated as per the schedule.
+*Booking Reference:* ${bookingRef}
+*Travel Dates:* ${arrDate} – ${depDate}
 
-For any queries during your trip:
+This document includes:
+✅ Complete day-by-day itinerary & tour agenda
+✅ Driver & vehicle assignments
+✅ All tickets and voucher receipts
+
+Please keep this document handy throughout your travel.
+
+*Emergency Contacts:*
 📞 Helen: +84 94 959 15 36
-📞 Senthoor: +91 95852 22335
+📞 Senthoor Pandian: +91 95852 22335
 📞 Tina: +84 94 516 95 95
 
-We wish you a wonderful trip! 🌏✨
-*Apple Holidays Team*`
+Wishing you a wonderful trip! ✈️
+*${teamName}*`
 
   try {
-    const normPhone = waPhone.replace(/\D/g, '')
-    await sendWhatsAppMessage({ to: normPhone, name: lead?.name ?? 'Guest', message })
+    const normPhone   = waPhone.replace(/\D/g, '')
+    const pdfBuffer   = await generateFullDetailsPdf(booking)
+    const pdfFilename = `AppleHolidays-${bookingRef}-FullDetails-${Date.now()}.pdf`
+    const uploadDir   = path.join(process.cwd(), 'public', 'uploads', 'whatsapp')
+    await mkdir(uploadDir, { recursive: true })
+    await writeFile(path.join(uploadDir, pdfFilename), pdfBuffer)
+
+    await sendWhatsAppMessage({
+      to: normPhone, name: lead?.name ?? 'Guest', message,
+      pdfBuffer, pdfFilename,
+      pdfCaption: 'Apple Holidays — Full Tour Details & Vouchers',
+    })
 
     await prisma.whatsAppMessage.create({
       data: {

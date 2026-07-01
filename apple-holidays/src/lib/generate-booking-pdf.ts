@@ -61,6 +61,29 @@ async function resolveTicketImage(fileUrl: string | null | undefined): Promise<B
   }
 }
 
+// ── Note parser ──────────────────────────────────────────────────────────────
+// Ticket notes may be stored as "{json} · Client: ... · PNL Item #...".
+// Extract the remarks text from the JSON prefix so raw JSON isn't shown.
+function parseTicketNotes(notes: string | null | undefined): string {
+  if (!notes) return ''
+  const sepIdx = notes.indexOf('} · ')
+  if (sepIdx !== -1) {
+    const jsonPart = notes.slice(0, sepIdx + 1)
+    const suffix   = notes.slice(sepIdx + 4)
+    let remarks = ''
+    try {
+      const parsed = JSON.parse(jsonPart)
+      remarks = typeof parsed?.remarks === 'string' ? parsed.remarks : ''
+    } catch { remarks = jsonPart }
+    return [remarks, suffix].filter(Boolean).join(' · ')
+  }
+  try {
+    const parsed = JSON.parse(notes)
+    if (parsed && typeof parsed === 'object' && 'remarks' in parsed) return String(parsed.remarks)
+  } catch {}
+  return notes
+}
+
 // ── Core builder ─────────────────────────────────────────────────────────────
 async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -417,8 +440,20 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
           // First: overview page
           sectionTitle('Tickets & Vouchers Summary')
           tickets.forEach((t: any, i: number) => {
-            if (doc.y > 750) { doc.addPage(); doc.y = MARGIN }
-            infoRow(`${i + 1}. ${t.type ?? 'Ticket'}`, [t.supplier, t.reference, t.status?.replace(/_/g, ' ')].filter(Boolean).join('  ·  '))
+            if (doc.y > 730) { doc.addPage(); doc.y = MARGIN }
+            const name = t.type ?? 'Ticket'
+            const meta = [t.supplier, t.reference, t.status?.replace(/_/g, ' ')].filter(Boolean).join('  ·  ')
+            const startY = doc.y
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED)
+              .text(`${i + 1}.`, MARGIN + 5, startY, { width: 20, lineBreak: false })
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK)
+              .text(name, MARGIN + 26, startY, { width: CONTENT_W - 31 })
+            if (meta) {
+              doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+                .text(meta, MARGIN + 26, doc.y, { width: CONTENT_W - 31 })
+            }
+            doc.moveDown(0.3)
+            divider()
           })
 
           // Then each ticket on its own page
@@ -445,7 +480,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
                 ? `${ticket.currency ?? 'USD'} ${Number(ticket.totalCost).toLocaleString()}`
                 : undefined,
             )
-            if (ticket.notes) infoRow('Notes', ticket.notes)
+            if (ticket.notes) infoRow('Notes', parseTicketNotes(ticket.notes))
 
             // Receipt / voucher image
             if (ticket.fileUrl) {
