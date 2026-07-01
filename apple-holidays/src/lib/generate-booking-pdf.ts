@@ -412,7 +412,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
 
       // ── 9. Tickets & Vouchers (Full PDF only) ─────────────────────────────
       if (includeDriversAndTickets) {
-        const tickets: any[] = (booking.tickets ?? []).filter((t: any) => t.activated !== false)
+        const tickets: any[] = (booking.tickets ?? []).filter((t: any) => t.activated === true || t.fileUrl || t.reference)
         if (tickets.length > 0) {
           // First: overview page
           sectionTitle('Tickets & Vouchers Summary')

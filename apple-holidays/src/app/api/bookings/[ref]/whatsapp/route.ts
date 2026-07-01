@@ -179,7 +179,6 @@ export async function POST(
           },
           ...(isFullPdf ? {
             tickets: {
-              where:   { activated: true },
               orderBy: { createdAt: 'asc' },
             },
           } : {}),
