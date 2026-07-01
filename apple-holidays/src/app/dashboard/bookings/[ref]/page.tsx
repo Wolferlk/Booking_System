@@ -598,7 +598,7 @@ export default function BookingDetailPage() {
 
   function buildConfirmationMessage(firstName: string): string {
     return `Hello ${firstName},
-Greetings from Apple Holidays! 🌟
+Greetings from Sri Lanka Ground Operation Team! 🌟
 
 Please find the attached *Tour Confirmation* for your upcoming trip.
 
@@ -607,8 +607,7 @@ Please find the attached *Tour Confirmation* for your upcoming trip.
 *Passengers:* ${booking.paxAdults ?? 0} Adults${(booking.paxChildren as number) > 0 ? `, ${booking.paxChildren} Children` : ''}
 
 Kindly review the attached PDF and confirm:
-✅ All passenger names & passport details are correct
-✅ Accommodation and itinerary are as expected
+✅ All passenger names & contact number are correct
 ✅ Flight details (if any) are accurate
 
 We kindly request the following information:
@@ -622,12 +621,12 @@ We kindly request the following information:
 
 Please reply with your confirmation at the earliest.
 Thank you! 🙏
-*Apple Holidays Team*`
+*Sri Lanka Ground Operation Team*`
   }
 
   function buildFullDetailsMessage(firstName: string): string {
     return `Hello ${firstName},
-Greetings from Apple Holidays! 🌟
+Greetings from Sri Lanka Ground Operation Team! 🌟
 
 Please find the *Full Tour Details & Vouchers* for your upcoming trip to Vietnam.
 
@@ -647,7 +646,7 @@ Please keep this document handy throughout your travel.
 📞 Tina: +84 94 516 95 95
 
 Wishing you a wonderful trip! ✈️
-*Apple Holidays Team*`
+*Sri Lanka Ground Operation Team*`
   }
 
   function getAutoSendInfo(daysUntilTrip: number, daysBefore: number): { label: string; urgent: boolean } {
