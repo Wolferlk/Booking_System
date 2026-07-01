@@ -10,29 +10,45 @@
  */
 import mysql from 'mysql2/promise'
 
-const DB_CONFIG = {
-  host:           process.env.ACCOUNTS_DB_HOST     ?? '35.197.143.222',
-  port:           Number(process.env.ACCOUNTS_DB_PORT ?? 3306),
-  database:       process.env.ACCOUNTS_DB_DATABASE ?? 'invoice_processor',
-  user:           process.env.ACCOUNTS_DB_USERNAME ?? 'root',
-  password:
+// AWS RDS connection timeout — hard ceiling so the page never hangs forever
+const CONN_TIMEOUT_MS = 15_000
+
+function getDbConfig() {
+  const rawPassword =
     process.env.ACCOUNTS_DB_PASSWORD ??
-    process.env.ACCOUNTS_DACCOUNTS_DB_PASSWORDB_PASSWORD ??
-    process.env.ACCOUNTS_DB_PASSWORDB_PASSWORD ??
-    '&l+>XV7=Q@iF&B9s',
-  connectTimeout: 12_000,
-  // Prevent "Connection lost" silent failures
-  enableKeepAlive:       false,
-  supportBigNumbers:     true,
-  bigNumberStrings:      false,
-  dateStrings:           false,
-  timezone:              'Z',
-} as const
+    '&l+>XV7=Q@iF&B9s'
+
+  return {
+    host:     (process.env.ACCOUNTS_DB_HOST ?? 'aahaas-prod-database-4.crgimm6mohf1.ap-southeast-1.rds.amazonaws.com').trim(),
+    port:     Number((process.env.ACCOUNTS_DB_PORT ?? '3306').trim()),
+    database: (process.env.ACCOUNTS_DB_DATABASE ?? 'invoice_processor').trim(),
+    user:     (process.env.ACCOUNTS_DB_USERNAME ?? 'root').trim(),
+    password: rawPassword.trim(),
+    connectTimeout:    CONN_TIMEOUT_MS,
+    enableKeepAlive:   false,
+    supportBigNumbers: true,
+    bigNumberStrings:  false,
+    dateStrings:       false,
+    timezone:          'Z',
+    // Allow SSL for AWS RDS without enforcing cert validation
+    ssl: { rejectUnauthorized: false },
+  }
+}
 
 // ─── Connection factory ───────────────────────────────────────────────────────
 
 async function getConn(): Promise<mysql.Connection> {
-  const conn = await mysql.createConnection(DB_CONFIG)
+  // Race the connection against a hard timeout — connectTimeout alone is not
+  // always reliable against AWS RDS when SSL negotiation stalls
+  const conn = await Promise.race([
+    mysql.createConnection(getDbConfig()),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Accounts DB connection timed out after ${CONN_TIMEOUT_MS / 1000}s`)),
+        CONN_TIMEOUT_MS,
+      )
+    ),
+  ])
   return conn
 }
 
