@@ -198,8 +198,8 @@ Extract ALL booking details from the Tour Confirmation section below. The text m
 
 Return ONLY valid JSON matching this exact schema:
 {
-  "bookingRef": "Tour Ref IS any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
-  "cntlNumber": "CNTL/Quotation number if present — digits followed by CNTL or CNTL followed by digits (e.g. '463720CNTL', '459773CNTL', 'CNTL459773'). Return null if no CNTL number exists.",
+  "bookingRef": "The IS Number — MUST start with VN, IS, SG, or MY followed by digits only (e.g. VN40120, IS48375, SG22232, MY40586). Look for the 'IS Number:' label in the confirmation body. Strip all spaces: 'VN 40120' → 'VN40120'. NEVER put a CNTL number (e.g. 471416CNTL) or a pure numeric agent ID here. Return null if no IS/VN/SG/MY number is found.",
+  "cntlNumber": "CNTL/Quotation number — digits followed by CNTL or CNTL followed by digits (e.g. '471416CNTL', '463720CNTL', 'CNTL459773'). Look for this in the 'Tour Ref:' field, NOT in the IS Number field. This is a SEPARATE field from bookingRef. Return null if absent.",
   "agentBookingId": "Agent's non-CNTL booking ID / reference number from the email subject or booking form (e.g. 402011138462). Do NOT put CNTL numbers here — use cntlNumber for those.",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip, Tours Experts)",
   "fileHandler": "File handler or account manager name listed in the confirmation (e.g. Sangeetha Priya, Yogi, Shehan Jayakody)",
@@ -273,7 +273,7 @@ LOCATION ACCURACY:
 - tourDestination: exact country/region as stated in the TC — never abbreviate or generalise
 - itineraryItems location: exact city, area, or landmark as stated in the TC
 
-IMPORTANT:   "bookingRef": "set as IS number  any trailing letters like VN , IS , SG , MY (e.g. VN43234 → \"VN43234\"). Return null if no Tour Ref is present,ALWAYS USE  use IS Number, VN Number, MY Number ,SG Number as bookingRef. If no Tour Ref is found, return null for bookingRef.
+IMPORTANT: bookingRef MUST be the IS Number ONLY — always starts with VN, IS, SG, or MY followed by digits (e.g. VN40120, IS48375, SG22232, MY40586). NEVER use CNTL numbers (e.g. 471416CNTL) or pure numeric agent IDs as bookingRef. CNTL numbers go ONLY in the cntlNumber field. If no IS/VN/SG/MY number exists in the email, return null for bookingRef.
 
 DEAL NAME: Usually found in the email subject between the agent booking ID and date codes — e.g. subject "Quotation | 402011387896 | Rakshitha - Vietnam - 060626 | ..." → dealName is "Rakshitha - Vietnam - 060626".
 For pax names, extract from "Guests Name" or similar sections. If only one name is given, mark as isLead:true.
@@ -408,7 +408,8 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     tips:               (parsed as Record<string, unknown>).tips               as string | null ?? null,
     otherNote:          (parsed as Record<string, unknown>).otherNote          as string | null ?? null,
     clientRequest:      (parsed as Record<string, unknown>).clientRequest      as string | null ?? null,
-    cntlNumber:       (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
+    cntlNumber:       (emailType === 'TOUR_CONFIRMATION' ? extractCntlFromBody(emailBody) : null)
+                      ?? (parsed as Record<string, unknown>).cntlNumber as string | null ?? null,
     isNumber:         isNumberOverride ?? parsed.isNumber ?? null,
     dealName:         parsed.dealName         ?? null,
     tourDestination:  parsed.tourDestination  ?? null,
@@ -453,22 +454,51 @@ function cleanIS(raw: string): string | null {
 }
 
 // Extract IS number from explicit labels in the email body.
-// Recognises:
-//   "IS Number: VN20012"          — standard AppleHolidays label
-//   "IS Numbe VN20012"            — truncated typo variant (missing trailing 'r')
-//   "IS No. VN20012"              — abbreviated variant
-//   "Confirmation Number VN20012" — MakeMyTrip format (their "Confirmation No" = our IS number)
-//   "Conf No: SG22232"            — short MakeMyTrip variant
+// Recognises all common formats from 30 Sundays, MakeMyTrip, and other agents.
 function extractIsNumberFromBody(text: string): string | null {
   const patterns = [
+    // "IS Number: VN40120" / "IS Number VN 40120" / "IS No. VN40120"
     /\bis\s*(?:numb(?:er?)?|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    // "Confirmation Number VN40120" / "Conf No: SG22232" — MakeMyTrip format
     /\bconf(?:irmation)?\s*(?:numb(?:er?)?|no\.?)\s*[:\s=]*([A-Z]{2}\s*\d{3,})/i,
+    // "IS : VN40120" — label with colon only (no "Number" word)
+    /\bis\s*:\s*([A-Z]{2}\s*\d{4,})/i,
+    // Newline-separated table cell: "IS Number\nVN40120" or "IS Number\n VN 40120"
+    /\bis\s*(?:numb(?:er?)?|no\.?)\s*[\r\n]+\s*([A-Z]{2}\s*\d{3,})/i,
+    // "IS Number VN 40120 No. of Guests" — IS number before "No. of Guests"
+    /\bis\s*(?:numb(?:er?)?|no\.?)\s+([A-Z]{2}\s*\d{3,})\s*No\.?\s*of/i,
   ]
   for (const re of patterns) {
     const m = text.match(re)
     if (m?.[1]) {
       const v = cleanIS(m[1])
       if (v) return v
+    }
+  }
+  return null
+}
+
+// Extract CNTL number from email body.
+// Handles: "471416CNTL", "CNTL471416", "Tour Ref 471416 CNTL" (space between digits and CNTL).
+function extractCntlFromBody(text: string): string | null {
+  const patterns = [
+    // "471416CNTL" — digits immediately followed by CNTL
+    /\b(\d{4,}CNTL)\b/i,
+    // "CNTL471416" — CNTL followed by digits
+    /\bCNTL(\d{4,})\b/i,
+    // "Tour Ref 471416 CNTL" or "Tour Ref: 471416 CNTL" — space between number and CNTL keyword
+    /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
+    // Quotation number patterns
+    /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,}CNTL)\b/i,
+    /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,})\s+CNTL\b/i,
+  ]
+  for (const re of patterns) {
+    const m = text.match(re)
+    if (m?.[1]) {
+      const v = m[1].replace(/\s+/g, '').toUpperCase()
+      // Normalise: if captured group is just digits, append CNTL
+      const cntl = /^\d+$/.test(v) ? `${v}CNTL` : v
+      if (/^\d+CNTL$/.test(cntl) || /^CNTL\d+$/.test(cntl)) return cntl
     }
   }
   return null
@@ -514,8 +544,12 @@ function cleanReference(value: string | null | undefined): string | null {
 function extractTourRefFromText(text: string): string | null {
   const match = text.match(/tour\s*ref(?:erence)?\s*[:=#-]?\s*([A-Z0-9][A-Z0-9-]*)/i)
   const ref = cleanReference(match?.[1])
-  if (!ref) return null
-  return ref.length >= 4 ? ref : null
+  if (!ref || ref.length < 4) return null
+  // Pure numeric values are likely a CNTL number with the "CNTL" suffix split onto a new
+  // line by HTML table rendering (e.g. "471416\nCNTL" → captures only "471416").
+  // These must NOT become the bookingRef — they go to cntlNumber via extractCntlFromBody.
+  if (/^\d+$/.test(ref)) return null
+  return ref
 }
 
 function extractPnlTourNoFromText(text: string): string | null {

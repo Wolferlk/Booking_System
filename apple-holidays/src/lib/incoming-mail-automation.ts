@@ -489,7 +489,7 @@ async function syncTourConfirmation(
 
   // Prefer explicitly extracted IS Number (from "IS Number:" label in body via regex override,
   // or AI extraction). Fall back to IS number embedded in Tour Ref via || or " / " separator.
-  // Do NOT fall back to tcTourRef even if it matches the pattern — agent codes like VN473119
+  // Do NOT fall back to tcTourRef even if it matches the IS pattern — agent codes like VN473119
   // look like IS numbers but are not.
   const resolvedIsNumber: string | null =
     (extracted.isNumber as string | null) ??
@@ -499,8 +499,14 @@ async function syncTourConfirmation(
   // CNTL number: from AI extraction or embedded in TC Tour Ref
   const resolvedCntlNumber: string | null = extracted.cntlNumber ?? embeddedCntlNumber ?? null
 
-  // Non-CNTL agent reference (agent's own booking ID)
-  const resolvedAgentBookingId: string | null = tcTourRef ?? (extracted.agentBookingId as string | null) ?? null
+  // Non-CNTL, non-IS agent reference (agent's own booking ID like "402007769660")
+  // tcTourRef must not be an IS Number — if GPT put the IS number in bookingRef, splitTourRef
+  // returns it as tourRef, but it should go to isNumber, not agentBookingId.
+  const tcTourRefIsIsNumber = tcTourRef ? IS_NUMBER_RE.test(tcTourRef) : false
+  const resolvedAgentBookingId: string | null =
+    (tcTourRef && !tcTourRefIsIsNumber ? tcTourRef : null) ??
+    (extracted.agentBookingId as string | null) ??
+    null
 
   // Try to find an existing booking to update (e.g. amendment of an existing TC):
   // 1. Match by cntlNumber (most specific for quotation-based TCs)
