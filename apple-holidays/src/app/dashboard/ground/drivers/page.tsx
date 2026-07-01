@@ -107,6 +107,7 @@ export default function DriversPage() {
   const { data: session } = useSession()
   const { countryFilter } = useCountryFilter()
   const isAdmin = session?.user?.role === 'SUPER_ADMIN'
+  const canDelete = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
 
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [loading, setLoading] = useState(true)
@@ -119,6 +120,8 @@ export default function DriversPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showPayModal, setShowPayModal] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   const userCountry = session?.user?.country ?? 'ALL'
   const isAllCountry = !userCountry || userCountry === 'ALL'
@@ -330,6 +333,40 @@ export default function DriversPage() {
     else toast.error(data.error ?? 'Failed')
   }
 
+  async function bulkDelete() {
+    if (selectedIds.size === 0) return
+    if (!confirm(`Delete ${selectedIds.size} driver${selectedIds.size > 1 ? 's' : ''}? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    try {
+      const results = await Promise.all(
+        Array.from(selectedIds).map(id => fetch(`/api/ground/drivers/${id}`, { method: 'DELETE' }).then(r => r.json()))
+      )
+      const failed = results.filter(r => !r.success).length
+      if (failed === 0) toast.success(`${selectedIds.size} driver${selectedIds.size > 1 ? 's' : ''} deleted`)
+      else toast.error(`${failed} deletion${failed > 1 ? 's' : ''} failed`)
+      setSelectedIds(new Set())
+      loadDrivers()
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === filteredDrivers.length && filteredDrivers.length > 0) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(filteredDrivers.map(d => d.id)))
+    }
+  }
+
   async function addPayment(driverId: string) {
     if (!payForm.amount || !payForm.type) return
     setSaving(true)
@@ -438,11 +475,38 @@ export default function DriversPage() {
           </Card>
         ) : (
           <div className="space-y-4">
+            {canDelete && filteredDrivers.length > 0 && (
+              <div className="flex items-center gap-3 px-1">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.size === filteredDrivers.length && filteredDrivers.length > 0}
+                  ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < filteredDrivers.length }}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded border-slate-300 text-brand-500 focus:ring-brand-400 cursor-pointer"
+                />
+                <span className="text-xs text-slate-500">
+                  {selectedIds.size > 0 ? `${selectedIds.size} of ${filteredDrivers.length} selected` : `Select all (${filteredDrivers.length})`}
+                </span>
+              </div>
+            )}
+
             {filteredDrivers.map(driver => {
               const isExpanded = expandedId === driver.id
+              const isSelected = selectedIds.has(driver.id)
               return (
-                <Card key={driver.id} className={`overflow-hidden transition-all ${isExpanded ? 'ring-2 ring-brand-500/20' : ''}`}>
+                <Card key={driver.id} className={`overflow-hidden transition-all ${isExpanded ? 'ring-2 ring-brand-500/20' : ''} ${isSelected ? 'ring-2 ring-brand-400 bg-brand-50/30' : ''}`}>
                   <div className="p-5 flex items-center gap-4">
+                    {/* Checkbox */}
+                    {canDelete && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelect(driver.id)}
+                        onClick={e => e.stopPropagation()}
+                        className="w-4 h-4 rounded border-slate-300 text-brand-500 focus:ring-brand-400 cursor-pointer flex-shrink-0"
+                      />
+                    )}
+
                     {/* Avatar */}
                     <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-brand-500/10 flex items-center justify-center">
                       {driver.photoUrl ? (
@@ -533,7 +597,7 @@ export default function DriversPage() {
                       >
                         <DollarSign className="w-4 h-4" /> Payment
                       </button>
-                      {isAdmin && (
+                      {canDelete && (
                         <button onClick={() => deleteDriver(driver.id)} className="btn-ghost btn btn-sm text-red-500 hover:bg-red-50">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -672,6 +736,30 @@ export default function DriversPage() {
           </div>
         )}
       </div>
+
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl">
+          <span className="text-sm font-medium">
+            {selectedIds.size} driver{selectedIds.size > 1 ? 's' : ''} selected
+          </span>
+          <div className="w-px h-5 bg-white/20" />
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-slate-400 hover:text-white transition-colors"
+          >
+            Clear
+          </button>
+          <button
+            onClick={bulkDelete}
+            disabled={bulkDeleting}
+            className="flex items-center gap-1.5 bg-red-500 hover:bg-red-600 disabled:opacity-60 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-colors"
+          >
+            {bulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            Delete Selected
+          </button>
+        </div>
+      )}
 
       {/* Add/Edit Driver Modal */}
       <Modal
