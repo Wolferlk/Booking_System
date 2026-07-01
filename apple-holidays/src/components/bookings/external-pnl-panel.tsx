@@ -483,13 +483,9 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                       <th>Service / Hotel / Transport</th>
                       <th>Client</th>
                       <th>Agent</th>
-                      <th>Check-in</th>
-                      <th>Check-out</th>
                       <th>Country</th>
                       <th>Currency</th>
                       <th className="text-right">Original Amt</th>
-                      <th className="text-right">Ex. Rate</th>
-                      <th className="text-right">Converted Amt</th>
                       <th>Invoice No</th>
                       <th>Control No</th>
                       <th>Details</th>
@@ -508,18 +504,10 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                         </td>
                         <td>{item.client_name ?? '—'}</td>
                         <td>{item.agent_name ?? '—'}</td>
-                        <td className="font-mono">{item.check_in_date ?? '—'}</td>
-                        <td className="font-mono">{item.check_out_date ?? '—'}</td>
                         <td>{item.country_code ?? '—'}</td>
                         <td>{item.currency ?? '—'}</td>
                         <td className="text-right font-mono font-semibold">
                           {item.amount_original != null ? Number(item.amount_original).toFixed(2) : '—'}
-                        </td>
-                        <td className="text-right font-mono text-slate-500">
-                          {item.exchange_rate != null ? Number(item.exchange_rate).toFixed(4) : '—'}
-                        </td>
-                        <td className="text-right font-mono font-semibold text-blue-700">
-                          {item.amount_converted != null ? Number(item.amount_converted).toFixed(2) : '—'}
                         </td>
                         <td className="font-mono text-slate-500">{item.invoice_number ?? '—'}</td>
                         <td className="font-mono text-purple-600">{item.control_number ?? '—'}</td>
