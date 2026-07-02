@@ -30,7 +30,7 @@ When exact time is not given in the document, apply these defaults:
 | Half-day afternoon (SIC)   | 13:00               |
 | Night show / evening tour  | 18:30               |
 | Cruise embarkation         | 07:30               |
-| Private full-day tour      | 08:00               |
+| Private full-day tour      | 09:00               |
 | Private half-day morning   | 08:30               |
 | City transfer (PVT)        | Use departure time from itinerary or 08:00 |
 | Overnight train / sleeper  | Set to train departure time from itinerary |
@@ -98,7 +98,7 @@ The `details` field must be a complete operational briefing — **never a one-li
 1. **Exact pickup time and spot** — "Meet at hotel lobby at 07:30", "Driver waiting at arrivals hall HAN with name board"
 2. **Vehicle / transport mode** — "Air-conditioned private car", "SIC shared minibus", "Overnight sleeper train seat 12B", "Halong cruise"
 3. **Journey time / distance** — "Approx. 40 min to city centre", "3.5 hour drive to Halong Bay pier"
-4. **Guest instructions** — name board at airport, luggage limit, passport ready, be in lobby 5 min early for SIC, check-in time, what to bring
+4. **Guest instructions** — namairporte board at , luggage limit, passport ready, be in lobby 5 min early for SIC, check-in time, what to bring
 5. **Drop-off context** — hotel name, pier name, area, terminal number
 
 ### Quick templates:

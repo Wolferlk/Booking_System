@@ -149,14 +149,16 @@ FIELD DEFINITIONS — READ CAREFULLY:
 
 ● "fromPoint" = Exact pickup point: hotel name, "CODE Airport", pier name.
 ● "toPoint"   = For TRANSFERS: exact destination (hotel name, "CODE Airport", pier name).
-                For TOURS/ACTIVITIES: the SHORT activity caption — what the activity IS called.
+                For TOURS/ACTIVITIES: copy the COMPLETE verbatim title of the activity/tour
+                exactly as it appears in itineraryItems[].title — do NOT shorten, abbreviate,
+                or paraphrase. If the TC title says "Full-day Halong Classy Ambrose Cruise Day Tour",
+                toPoint must be "Full-day Halong Classy Ambrose Cruise Day Tour" in full.
                 Examples:
-                  "Halong Bay Cruise"          (for a cruise day)
-                  "Ba Na Hills & Golden Bridge" (for Ba Na day trip)
-                  "Hoi An Ancient Town"         (for Hoi An tour)
-                  "Marble Mountain"             (for Marble Mountain visit)
-                  "HAN Airport"                 (for airport transfer)
-                  "Vinpearl Land"               (for theme park visit)
+                  "Full-day Halong Classy Ambrose Cruise Day Tour" (verbatim from TC)
+                  "Vin Wonder & Safari Combo tickets & Grand World Transfer" (verbatim from TC)
+                  "Ba Na Hills & Golden Bridge Full-day Tour"      (verbatim from TC)
+                  "HAN Airport"                                    (for airport transfer)
+                NEVER shorten to "Halong Bay Cruise", "Ba Na Hills", or any abbreviated form.
 ● "details"   = TWO PARTS MERGED INTO ONE PARAGRAPH (see details rules below).
 ● "mealPlan"  = "B", "L", "D", "BL", "BD", "LD", "BLD" — only when explicitly included.
 ● "meetingTime" = "HH:MM" — the ACTUAL departure/pickup time of the transport.
@@ -338,7 +340,9 @@ ${tqDocumentText
     const loc  = String(item.location  ?? '')
     const det  = String(item.details   ?? '')
 
-    const isAirportRoad = AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)
+    const isFromAirport = AIRPORT_ROAD_RE.test(from)
+    const isToAirport   = AIRPORT_ROAD_RE.test(to)
+    const isAirportRoad = isFromAirport || isToAirport
 
     let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'PVT_TRANSFER'
     let meetingTime = item.meetingTime as string | null | undefined
@@ -386,9 +390,9 @@ ${tqDocumentText
       meetingTime = '08:00'
     }
 
-    // Normalise airport fromPoint / toPoint labels
-    const normFrom = normaliseAirportPoint(from, isAirportRoad)
-    const normTo   = normaliseAirportPoint(to, isAirportRoad)
+    // Normalise airport fromPoint / toPoint labels — only the airport side gets normalised
+    const normFrom = normaliseAirportPoint(from, isFromAirport)
+    const normTo   = normaliseAirportPoint(to, isToAirport)
 
     return {
       ...item,
