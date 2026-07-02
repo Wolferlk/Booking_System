@@ -145,6 +145,7 @@ export default function DriversPage() {
   const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null) // 'driver' | 'outside' | 'inside'
   const [payForm, setPayForm] = useState({ amount: '', type: 'ADVANCE', description: '', refNumber: '' })
   const [saving, setSaving] = useState(false)
+  const [lightbox, setLightbox] = useState<{ url: string; label: string } | null>(null)
 
   async function loadDrivers() {
     setLoading(true)
@@ -508,12 +509,19 @@ export default function DriversPage() {
                     )}
 
                     {/* Avatar */}
-                    <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-brand-500/10 flex items-center justify-center">
+                    <div
+                      className={`w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-brand-500/10 flex items-center justify-center ${driver.photoUrl ? 'cursor-pointer hover:ring-2 hover:ring-brand-400' : ''}`}
+                      onClick={() => driver.photoUrl && setLightbox({ url: driver.photoUrl, label: driver.name })}
+                    >
                       {driver.photoUrl ? (
-                        <img src={driver.photoUrl} alt={driver.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <User className="w-6 h-6 text-brand-500" />
-                      )}
+                        <img
+                          src={driver.photoUrl}
+                          alt={driver.name}
+                          className="w-full h-full object-cover"
+                          onError={e => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden') }}
+                        />
+                      ) : null}
+                      <User className={`w-6 h-6 text-brand-500 ${driver.photoUrl ? 'hidden' : ''}`} />
                     </div>
 
                     {/* Info */}
@@ -616,7 +624,63 @@ export default function DriversPage() {
 
                   {/* Expanded detail panel */}
                   {isExpanded && driver.driverPayments !== undefined && (
-                    <div className="border-t border-slate-100 bg-slate-50/50 p-5 grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="border-t border-slate-100 bg-slate-50/50 p-5 space-y-5">
+
+                      {/* Photos row */}
+                      {(driver.photoUrl || driver.vehicle?.photoOutside || driver.vehicle?.photoInside) && (
+                        <div className="flex flex-wrap gap-4">
+                          {driver.photoUrl && (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Driver</span>
+                              <button
+                                onClick={() => setLightbox({ url: driver.photoUrl!, label: `${driver.name} — Profile` })}
+                                className="w-20 h-20 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 hover:ring-2 hover:ring-brand-400 transition-all flex-shrink-0"
+                              >
+                                <img
+                                  src={driver.photoUrl}
+                                  alt={driver.name}
+                                  className="w-full h-full object-cover"
+                                  onError={e => { e.currentTarget.src = ''; e.currentTarget.style.display = 'none'; e.currentTarget.parentElement!.classList.add('flex','items-center','justify-center') }}
+                                />
+                              </button>
+                            </div>
+                          )}
+                          {driver.vehicle?.photoOutside && (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Outside</span>
+                              <button
+                                onClick={() => setLightbox({ url: driver.vehicle!.photoOutside!, label: `${driver.vehicle!.plateNo} — Outside` })}
+                                className="w-28 h-20 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 hover:ring-2 hover:ring-emerald-400 transition-all flex-shrink-0"
+                              >
+                                <img
+                                  src={driver.vehicle.photoOutside}
+                                  alt="Outside"
+                                  className="w-full h-full object-cover"
+                                  onError={e => { e.currentTarget.style.display = 'none' }}
+                                />
+                              </button>
+                            </div>
+                          )}
+                          {driver.vehicle?.photoInside && (
+                            <div className="flex flex-col items-center gap-1.5">
+                              <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Inside</span>
+                              <button
+                                onClick={() => setLightbox({ url: driver.vehicle!.photoInside!, label: `${driver.vehicle!.plateNo} — Inside` })}
+                                className="w-28 h-20 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 hover:ring-2 hover:ring-emerald-400 transition-all flex-shrink-0"
+                              >
+                                <img
+                                  src={driver.vehicle.photoInside}
+                                  alt="Inside"
+                                  className="w-full h-full object-cover"
+                                  onError={e => { e.currentTarget.style.display = 'none' }}
+                                />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div>
                         <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
                           <Building2 className="w-4 h-4 text-brand-500" />
@@ -729,6 +793,7 @@ export default function DriversPage() {
                       </div>
 
                     </div>
+                    </div>
                   )}
                 </Card>
               )
@@ -775,23 +840,38 @@ export default function DriversPage() {
               <Camera className="w-4 h-4 text-brand-500" /> Driver Photo
             </h3>
             <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-full overflow-hidden bg-brand-50 border-2 border-dashed border-brand-200 flex items-center justify-center flex-shrink-0">
+              <div
+                className={`w-20 h-20 rounded-full overflow-hidden bg-brand-50 border-2 border-dashed border-brand-200 flex items-center justify-center flex-shrink-0 ${form.photoUrl ? 'cursor-pointer hover:ring-2 hover:ring-brand-400' : ''}`}
+                onClick={() => form.photoUrl && setLightbox({ url: form.photoUrl, label: 'Driver Profile Photo' })}
+              >
                 {form.photoUrl ? (
-                  <img src={form.photoUrl} alt="Driver" className="w-full h-full object-cover" />
+                  <>
+                    <img
+                      src={form.photoUrl}
+                      alt="Driver"
+                      className="w-full h-full object-cover"
+                      onError={e => { e.currentTarget.style.display = 'none'; (e.currentTarget.nextElementSibling as HTMLElement)?.classList.remove('hidden') }}
+                    />
+                    <User className="w-8 h-8 text-brand-300 hidden" />
+                  </>
                 ) : (
-                  <User className="w-7 h-7 text-brand-300" />
+                  <User className="w-8 h-8 text-brand-300" />
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2">
                 <label className="btn-secondary btn btn-sm cursor-pointer">
                   {uploadingPhoto === 'driver' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                  {form.photoUrl ? 'Change' : 'Upload Photo'}
+                  {form.photoUrl ? 'Change Photo' : 'Upload Photo'}
                   <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
                     onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'driver')} />
                 </label>
                 {form.photoUrl && (
-                  <button type="button" onClick={() => setForm(f => ({ ...f, photoUrl: '' }))}
-                    className="text-xs text-red-400 hover:text-red-600 px-2">Remove</button>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setLightbox({ url: form.photoUrl, label: 'Driver Profile Photo' })}
+                      className="text-xs text-brand-500 hover:text-brand-700 px-2 underline">View Full</button>
+                    <button type="button" onClick={() => setForm(f => ({ ...f, photoUrl: '' }))}
+                      className="text-xs text-red-400 hover:text-red-600 px-2">Remove</button>
+                  </div>
                 )}
               </div>
             </div>
@@ -889,37 +969,71 @@ export default function DriversPage() {
                   <div>
                     <label className="form-label">Outside Photo</label>
                     <div className="flex flex-col gap-2">
-                      <div className="h-20 rounded-lg overflow-hidden bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center">
+                      <div
+                        className={`h-28 rounded-lg overflow-hidden bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center ${vehForm.photoOutside ? 'cursor-pointer hover:ring-2 hover:ring-emerald-400' : ''}`}
+                        onClick={() => vehForm.photoOutside && setLightbox({ url: vehForm.photoOutside, label: 'Vehicle — Outside' })}
+                      >
                         {vehForm.photoOutside ? (
-                          <img src={vehForm.photoOutside} alt="Outside" className="w-full h-full object-cover" />
+                          <>
+                            <img
+                              src={vehForm.photoOutside}
+                              alt="Outside"
+                              className="w-full h-full object-cover"
+                              onError={e => { e.currentTarget.style.display = 'none'; (e.currentTarget.nextElementSibling as HTMLElement)?.classList.remove('hidden') }}
+                            />
+                            <Car className="w-6 h-6 text-slate-300 hidden" />
+                          </>
                         ) : (
                           <Car className="w-6 h-6 text-slate-300" />
                         )}
                       </div>
-                      <label className="btn-secondary btn btn-sm cursor-pointer text-center">
-                        {uploadingPhoto === 'outside' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
-                        Upload
-                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
-                          onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'outside')} />
-                      </label>
+                      <div className="flex gap-2">
+                        <label className="btn-secondary btn btn-sm cursor-pointer flex-1 text-center">
+                          {uploadingPhoto === 'outside' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                          {vehForm.photoOutside ? 'Change' : 'Upload'}
+                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                            onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'outside')} />
+                        </label>
+                        {vehForm.photoOutside && (
+                          <button type="button" onClick={() => setVehForm(f => ({ ...f, photoOutside: '' }))}
+                            className="text-xs text-red-400 hover:text-red-600 px-2">Remove</button>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div>
                     <label className="form-label">Inside Photo</label>
                     <div className="flex flex-col gap-2">
-                      <div className="h-20 rounded-lg overflow-hidden bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center">
+                      <div
+                        className={`h-28 rounded-lg overflow-hidden bg-slate-100 border border-dashed border-slate-300 flex items-center justify-center ${vehForm.photoInside ? 'cursor-pointer hover:ring-2 hover:ring-emerald-400' : ''}`}
+                        onClick={() => vehForm.photoInside && setLightbox({ url: vehForm.photoInside, label: 'Vehicle — Inside' })}
+                      >
                         {vehForm.photoInside ? (
-                          <img src={vehForm.photoInside} alt="Inside" className="w-full h-full object-cover" />
+                          <>
+                            <img
+                              src={vehForm.photoInside}
+                              alt="Inside"
+                              className="w-full h-full object-cover"
+                              onError={e => { e.currentTarget.style.display = 'none'; (e.currentTarget.nextElementSibling as HTMLElement)?.classList.remove('hidden') }}
+                            />
+                            <Car className="w-6 h-6 text-slate-300 hidden" />
+                          </>
                         ) : (
                           <Car className="w-6 h-6 text-slate-300" />
                         )}
                       </div>
-                      <label className="btn-secondary btn btn-sm cursor-pointer text-center">
-                        {uploadingPhoto === 'inside' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
-                        Upload
-                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
-                          onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'inside')} />
-                      </label>
+                      <div className="flex gap-2">
+                        <label className="btn-secondary btn btn-sm cursor-pointer flex-1 text-center">
+                          {uploadingPhoto === 'inside' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Camera className="w-3 h-3" />}
+                          {vehForm.photoInside ? 'Change' : 'Upload'}
+                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                            onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'inside')} />
+                        </label>
+                        {vehForm.photoInside && (
+                          <button type="button" onClick={() => setVehForm(f => ({ ...f, photoInside: '' }))}
+                            className="text-xs text-red-400 hover:text-red-600 px-2">Remove</button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1040,6 +1154,40 @@ export default function DriversPage() {
           </div>
         </div>
       </Modal>
+
+      {/* Photo Lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/80 flex flex-col items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          <div className="relative max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-white font-medium text-sm">{lightbox.label}</span>
+              <button
+                onClick={() => setLightbox(null)}
+                className="text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full p-2 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <img
+              src={lightbox.url}
+              alt={lightbox.label}
+              className="w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
+            />
+            <a
+              href={lightbox.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white underline"
+              onClick={e => e.stopPropagation()}
+            >
+              Open original
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

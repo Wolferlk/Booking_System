@@ -13,6 +13,27 @@ import type { ProcessedEmail } from '@/lib/mail-processor'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 
 export const dynamic = 'force-dynamic'
+
+const MONTH_MAP: Record<string, string> = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+}
+function parseDatesFromSubject(subject: string): { arrivalDate: string; departureDate: string } | null {
+  const re = /(\d{1,2})[\/\-\.]([A-Za-z]{3})[\/\-\.](\d{4})/g
+  const matches: RegExpExecArray[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(subject)) !== null) matches.push(m)
+  if (matches.length < 2) return null
+  const toISO = (match: RegExpExecArray) => {
+    const mon = MONTH_MAP[match[2].toLowerCase()]
+    if (!mon) return null
+    return `${match[3]}-${mon}-${match[1].padStart(2, '0')}`
+  }
+  const a = toISO(matches[0])
+  const d = toISO(matches[1])
+  return a && d ? { arrivalDate: a, departureDate: d } : null
+}
+
 function generateRef(base: string | null): string {
   if (base) {
     // Strip trailing non-numeric suffix (e.g. CNTL from 463658CNTL → 463658)
@@ -116,7 +137,7 @@ export async function POST(req: NextRequest) {
   // ── 1. Extract via OpenAI (email body) ────────────────────────────────────
   let extracted: ExtractedBooking
   try {
-    extracted = await extractBookingFromEmail(rawBody, type)
+    extracted = await extractBookingFromEmail(rawBody, type, subject)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     const isQuota = msg.includes('insufficient_quota') || msg.includes('429') || msg.includes('exceeded your current quota')
@@ -163,13 +184,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // For Tour Confirmation: only accept Tour Ref — reject IS/VN numbers
-  if (type === 'TOUR_CONFIRMATION' && extracted.bookingRef) {
-    if (/^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
-      extracted.bookingRef = null
-    }
-  }
-
+  // rawBookingRef = IS number (VN/IS/SG/MY prefix). bookingRef from mail-processor
+  // already resolves to the IS number — do NOT strip it.
   const rawBookingRef = generateRef(extracted.bookingRef)
 
   // Detect operation country from IS/VN/SG/MY number prefix or subject/body keywords
@@ -234,7 +250,36 @@ export async function POST(req: NextRequest) {
     }
 
     if (!extracted.arrivalDate || !extracted.departureDate) {
-      return buildApiError('Could not extract arrival/departure dates from email')
+      // Try to pull dates from the subject line (e.g. "21/Nov/2026 - 28/Nov/2026")
+      const subjectDates = subject ? parseDatesFromSubject(subject) : null
+      if (subjectDates) {
+        extracted.arrivalDate   = subjectDates.arrivalDate
+        extracted.departureDate = subjectDates.departureDate
+      } else {
+        // Return partial extraction so the UI can open a pre-filled manual booking form
+        if (emailSnapshot && mailboxUser) {
+          await upsertCachedMailMessage({
+            email: emailSnapshot,
+            mailboxUser,
+            mailboxKind: type,
+            bookingRef: rawBookingRef,
+            status: 'ERROR',
+          }).catch(() => {})
+        }
+        return buildApiSuccess(
+          {
+            status:          'NEEDS_MANUAL',
+            bookingRef:      rawBookingRef,
+            bookingId:       '',
+            isNew:           false,
+            pnlLines:        0,
+            agendaItems:     0,
+            detectedCountry: detectedCountry ?? null,
+            extracted,
+          },
+          'Could not extract arrival/departure dates — please fill in manually',
+        )
+      }
     }
 
     const created = await prisma.booking.create({

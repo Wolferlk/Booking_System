@@ -3,19 +3,46 @@ import { mkdir, writeFile } from 'fs/promises'
 
 const PDF_DIR = path.join(process.cwd(), 'public', 'uploads', 'booking-pdfs')
 
+async function launchBrowser() {
+  // 1. Explicit Chrome path via env var (admin override — takes priority everywhere)
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    const { default: puppeteerCore } = await import('puppeteer-core')
+    return puppeteerCore.launch({
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    })
+  }
+
+  // 2. Linux server: use @sparticuz/chromium — self-contained, no system packages needed.
+  //    We do NOT auto-detect /usr/bin/chromium-browser because on Ubuntu 20.04+ it is a
+  //    snap stub that fails at launch even though the path exists.
+  if (process.platform === 'linux') {
+    const { default: chromium } = await import('@sparticuz/chromium')
+    const { default: puppeteerCore } = await import('puppeteer-core')
+    const executablePath = await chromium.executablePath()
+    return puppeteerCore.launch({
+      args: chromium.args,
+      defaultViewport: null,
+      executablePath,
+      headless: true,
+    })
+  }
+
+  // 3. Local dev (macOS/Windows): use puppeteer's bundled Chrome
+  const { default: puppeteer } = await import('puppeteer')
+  return puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  })
+}
+
 export interface PdfMeta {
   bookingRef: string
   sentAt?: Date
 }
 
-/**
- * Renders an HTML string to a PDF using Puppeteer (headless Chrome).
- * Adds a running page header on every page (Apple Holidays, booking ref, sent date, page numbers).
- * Saves to public/uploads/booking-pdfs/{filename} and returns the Buffer.
- */
 export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta): Promise<Buffer> {
-  const { default: puppeteer } = await import('puppeteer')
-
   const sentStr = (meta?.sentAt ?? new Date()).toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
@@ -41,10 +68,7 @@ export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta):
       </div>
     </div>`
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  })
+  const browser = await launchBrowser()
 
   try {
     const page = await browser.newPage()
@@ -60,7 +84,6 @@ export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta):
     })
 
     const pdfBuffer = Buffer.from(raw)
-
     await mkdir(PDF_DIR, { recursive: true })
     await writeFile(path.join(PDF_DIR, filename), pdfBuffer)
 

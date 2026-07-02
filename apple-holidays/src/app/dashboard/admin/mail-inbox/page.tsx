@@ -10,13 +10,13 @@ import {
   ClipboardCheck, Inbox, Plane, Hotel, Phone,
   FileSpreadsheet, Link2, ChevronDown, ChevronUp,
   Eye, Info, Zap, CalendarClock, Merge, HourglassIcon,
-  Search, X, Calendar, ChevronLeft, ChevronRight, FileSearch,
+  Search, X, Calendar, ChevronLeft, ChevronRight, FileSearch, Plus,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Database } from 'lucide-react'
+import { Database, HardDrive } from 'lucide-react'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import DbMailboxView from './db-mailbox-view'
 
@@ -51,6 +51,7 @@ interface ExtractedPnlLine   {
 
 interface ExtractedData {
   agent: string | null; fileHandler: string | null; agentBookingId: string | null
+  isNumber: string | null; cntlNumber: string | null
   arrivalDate: string | null; departureDate: string | null
   paxAdults: number; paxChildren: number
   quotedTotal: number | null; currency: string
@@ -67,7 +68,7 @@ interface ProcessResult {
   processedAt?: string | null
 }
 
-interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
+interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean; source?: 'MAIL' | 'DRIVE' | 'INTERNAL' | null }
 interface MailSettings {
   lessCreditMode: boolean
   tqEnabled: boolean
@@ -113,9 +114,23 @@ function mailboxLabel(user: string) {
 
 function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; waitingTourNo?: string }) {
   if (status?.hasPNL) {
+    if (status.source === 'MAIL') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-700 border border-teal-200">
+          <Mail className="w-2.5 h-2.5" /> Mail PNL Connected · {status.lineCount} lines
+        </span>
+      )
+    }
+    if (status.source === 'DRIVE') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700 border border-blue-200">
+          <HardDrive className="w-2.5 h-2.5" /> Drive PNL Connected · {status.lineCount} lines
+        </span>
+      )
+    }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">
-        <CheckCircle className="w-2.5 h-2.5" /> PNL Added · {status.lineCount} lines
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700 border border-green-200">
+        <Database className="w-2.5 h-2.5" /> Accounts PNL Connected · {status.lineCount} lines
       </span>
     )
   }
@@ -138,6 +153,87 @@ function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; wai
       <Clock className="w-2.5 h-2.5" /> PNL Pending
     </span>
   )
+}
+
+// ── Client-side helpers for partial extraction on error ───────────────────────
+
+const MONTH_ABBR: Record<string, string> = {
+  jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+  jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12',
+}
+
+function parseDatesFromSubjectClient(subject: string): { arrivalDate: string; departureDate: string } | null {
+  const re = /(\d{1,2})[\/\-\.]([A-Za-z]{3})[\/\-\.](\d{4})/g
+  const matches: RegExpExecArray[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(subject)) !== null) matches.push(m)
+  if (matches.length < 2) return null
+  const toISO = (x: RegExpExecArray) => {
+    const mon = MONTH_ABBR[x[2].toLowerCase()]
+    return mon ? `${x[3]}-${mon}-${x[1].padStart(2,'0')}` : null
+  }
+  const a = toISO(matches[0]); const d = toISO(matches[1])
+  return a && d ? { arrivalDate: a, departureDate: d } : null
+}
+
+function parseIsFromSubjectClient(subject: string): string | null {
+  const parts = subject.split(/[|\/,]/)
+  for (const p of parts) {
+    const c = p.trim().replace(/\s+/g,'').toUpperCase()
+    if (/^(VN|IS|SG|MY)\d{4,}$/.test(c)) return c
+  }
+  // also scan for "// VN40151" style
+  const m = subject.match(/\/\/\s*([A-Z]{2}\d{4,})/i)
+  if (m) return m[1].replace(/\s+/g,'').toUpperCase()
+  return null
+}
+
+function parseAgentIdFromSubjectClient(subject: string): string | null {
+  const parts = subject.split(/[|,\/\\]/)
+  for (const p of parts) {
+    const t = p.trim()
+    if (/^\d{8,15}$/.test(t)) return t
+  }
+  return null
+}
+
+function buildNeedsManualFromEmail(email: EmailWithMailbox, errorMsg: string): ProcessResult {
+  const subj = email.subject ?? ''
+  const dates = parseDatesFromSubjectClient(subj)
+  const isNumber = parseIsFromSubjectClient(subj)
+  const agentId  = parseAgentIdFromSubjectClient(subj)
+  const agentFromEmail = email.fromName
+    ? email.fromName
+    : email.from?.split('@')[0] ?? null
+
+  return {
+    status:      'NEEDS_MANUAL',
+    bookingRef:  isNumber ?? '',
+    bookingId:   '',
+    isNew:       false,
+    pnlLines:    0,
+    agendaItems: 0,
+    extracted: {
+      isNumber:       isNumber,
+      cntlNumber:     null,
+      agent:          agentFromEmail,
+      fileHandler:    null,
+      agentBookingId: agentId,
+      arrivalDate:    dates?.arrivalDate   ?? null,
+      departureDate:  dates?.departureDate ?? null,
+      paxAdults:      0,
+      paxChildren:    0,
+      quotedTotal:    null,
+      currency:       'USD',
+      passengers:     [],
+      flights:        [],
+      accommodations: [],
+      emergencyContacts: [],
+      pnlLines:       [],
+    },
+    // store the error message so the banner can show it
+    ...(errorMsg ? { extractionError: errorMsg } : {}),
+  } as unknown as ProcessResult
 }
 
 function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems: number }) {
@@ -405,6 +501,7 @@ export default function MailInboxPage() {
           hasPNL:    !!pnl,
           lineCount: Array.isArray(pnl?.lineItems) ? (pnl.lineItems as unknown[]).length : 0,
           checking:  false,
+          source:    (json.data?.pnlSource as PnlStatus['source']) ?? null,
         }))
       } else {
         setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: false }))
@@ -490,11 +587,19 @@ export default function MailInboxPage() {
           }
         }
       } else {
-        setResults(m => new Map(m).set(email.graphId, { success: false, error: json.error as string }))
+        // API returned an error — build NEEDS_MANUAL so user can still create booking manually
+        setResults(m => new Map(m).set(email.graphId, {
+          success: true,
+          data: buildNeedsManualFromEmail(email, json.error as string),
+        }))
       }
     } catch (err) {
+      // Network/JSON parse error — build NEEDS_MANUAL so user can still create booking manually
       const msg = err instanceof Error ? err.message : 'Processing failed'
-      setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
+      setResults(m => new Map(m).set(email.graphId, {
+        success: true,
+        data: buildNeedsManualFromEmail(email, msg),
+      }))
     } finally {
       setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
     }
@@ -1074,7 +1179,8 @@ export default function MailInboxPage() {
           const showRaw      = rawBodyId === email.graphId
           const isPnl        = email.mailboxKind === 'PNL'
           const bookingRef   = result?.data?.bookingRef
-          const isWaiting    = result?.success && result.data?.status === 'PNL_WAITING'
+          const isWaiting      = result?.success && result.data?.status === 'PNL_WAITING'
+          const isNeedsManual  = result?.success && result.data?.status === 'NEEDS_MANUAL'
           // For TQ cards: numeric part of booking ref used to look up waiting PNL
           const numericRef   = !isPnl && bookingRef ? bookingRef.replace(/[^0-9]/g, '') : ''
           const waitingTourNo = !isPnl && numericRef ? waitingPnlMap.get(numericRef) : undefined
@@ -1084,24 +1190,26 @@ export default function MailInboxPage() {
 
           return (
             <Card key={email.graphId} className={`overflow-hidden transition-all ${
-              isAutoProc   ? 'border-amber-300 ring-1 ring-amber-200'  :
-              isWaiting    ? 'border-orange-300 bg-orange-50/20'        :
-              result?.success ? 'border-green-200 bg-green-50/20'      :
-              result?.error   ? 'border-red-200'                        :
-              !email.isRead   ? 'border-blue-200 bg-blue-50/20'         : ''
+              isAutoProc      ? 'border-amber-300 ring-1 ring-amber-200'  :
+              isWaiting       ? 'border-orange-300 bg-orange-50/20'        :
+              isNeedsManual   ? 'border-amber-300 bg-amber-50/20'          :
+              result?.success ? 'border-green-200 bg-green-50/20'          :
+              result?.error   ? 'border-red-200'                            :
+              !email.isRead   ? 'border-blue-200 bg-blue-50/20'            : ''
             }`}>
 
               {/* Mailbox strip */}
               <div className={`px-4 py-1.5 flex items-center gap-2 border-b ${
-                isWaiting ? 'bg-orange-50 border-orange-100' :
-                isPnl ? 'bg-teal-50 border-teal-100' : 'bg-blue-50 border-blue-100'
+                isWaiting     ? 'bg-orange-50 border-orange-100' :
+                isNeedsManual ? 'bg-amber-50 border-amber-100'   :
+                isPnl         ? 'bg-teal-50 border-teal-100'     : 'bg-blue-50 border-blue-100'
               }`}>
-                <Mail className={`w-3 h-3 ${isWaiting ? 'text-orange-500' : isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
-                <span className={`text-[10px] font-mono font-semibold ${isWaiting ? 'text-orange-700' : isPnl ? 'text-teal-700' : 'text-blue-700'}`}>
+                <Mail className={`w-3 h-3 ${isWaiting ? 'text-orange-500' : isNeedsManual ? 'text-amber-500' : isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
+                <span className={`text-[10px] font-mono font-semibold ${isWaiting ? 'text-orange-700' : isNeedsManual ? 'text-amber-700' : isPnl ? 'text-teal-700' : 'text-blue-700'}`}>
                   {email.mailboxUser}
                 </span>
-                <Badge color={isWaiting ? 'amber' : isPnl ? 'teal' : 'blue'} className="text-[9px]">
-                  {isWaiting ? 'Awaiting TQ' : isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}
+                <Badge color={isWaiting ? 'amber' : isNeedsManual ? 'amber' : isPnl ? 'teal' : 'blue'} className="text-[9px]">
+                  {isWaiting ? 'Awaiting TQ' : isNeedsManual ? 'Manual Entry Needed' : isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}
                 </Badge>
                 {isPnl && pnlTourNo && !isWaiting && (
                   <span className="text-[10px] font-mono text-teal-600 font-semibold">Tour No: {pnlTourNo}</span>
@@ -1116,7 +1224,7 @@ export default function MailInboxPage() {
                     <Loader2 className="w-3 h-3 animate-spin" /> Auto-processing…
                   </span>
                 )}
-                {result?.success && !isAutoProc && !isWaiting && (
+                {result?.success && !isAutoProc && !isWaiting && !isNeedsManual && (
                   <span className="ml-auto flex items-center gap-1 text-[10px] text-green-600 font-semibold">
                     <CheckCircle className="w-3 h-3" /> Processed
                   </span>
@@ -1124,6 +1232,11 @@ export default function MailInboxPage() {
                 {isWaiting && !isAutoProc && (
                   <span className="ml-auto flex items-center gap-1 text-[10px] text-orange-600 font-semibold">
                     <Clock className="w-3 h-3" /> Waiting for TQ
+                  </span>
+                )}
+                {isNeedsManual && !isAutoProc && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-700 font-semibold">
+                    <AlertCircle className="w-3 h-3" /> Manual entry needed
                   </span>
                 )}
               </div>
@@ -1158,14 +1271,31 @@ export default function MailInboxPage() {
                       className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors" title="Preview body">
                       {showRaw ? <ChevronUp className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    {!result?.success && !isAutoProc && (
+                    {(!result?.success || isNeedsManual) && !isAutoProc && (
                       <Button
                         size="sm"
                         variant="outline"
                         icon={<Zap className="w-3.5 h-3.5" />}
                         onClick={() => processOne(email)}
                       >
-                        Process now
+                        {isNeedsManual ? 'Retry' : 'Process now'}
+                      </Button>
+                    )}
+                    {isNeedsManual && result?.data?.extracted && (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon={<Plus className="w-3.5 h-3.5" />}
+                        onClick={() => {
+                          sessionStorage.setItem('mail_extracted_data', JSON.stringify({
+                            extracted:       result.data!.extracted,
+                            detectedCountry: (result.data as unknown as Record<string, unknown>).detectedCountry ?? null,
+                            emailSubject:    email.subject,
+                          }))
+                          router.push('/dashboard/bookings/new')
+                        }}
+                      >
+                        Create Booking
                       </Button>
                     )}
                     <Button
@@ -1175,7 +1305,7 @@ export default function MailInboxPage() {
                     >
                       {showRaw ? 'Hide mail' : 'Read mail'}
                     </Button>
-                    {result?.success && bookingRef && !isWaiting && (
+                    {result?.success && bookingRef && !isWaiting && !isNeedsManual && (
                       <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
                         onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>
                         {bookingRef}
@@ -1220,8 +1350,63 @@ export default function MailInboxPage() {
                   </div>
                 )}
 
+                {/* ── NEEDS_MANUAL banner ─────────────────────────────── */}
+                {isNeedsManual && !isAutoProc && result?.data?.extracted && (
+                  <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-amber-900">
+                          {(result.data as unknown as Record<string,unknown>).extractionError
+                            ? 'Processing error — enter details manually'
+                            : 'Dates could not be extracted — manual entry required'}
+                        </p>
+                        {!!(result.data as unknown as Record<string,unknown>).extractionError && (
+                          <p className="text-[10px] text-amber-700 mt-0.5 font-mono opacity-75">
+                            {String((result.data as unknown as Record<string,unknown>).extractionError)}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {result.data.extracted.isNumber && (
+                            <span className="inline-flex items-center gap-1 bg-amber-100 border border-amber-300 rounded px-2 py-0.5 text-[10px] font-mono font-bold text-amber-800">
+                              IS: {result.data.extracted.isNumber}
+                            </span>
+                          )}
+                          {result.data.extracted.cntlNumber && (
+                            <span className="inline-flex items-center gap-1 bg-slate-100 border border-slate-300 rounded px-2 py-0.5 text-[10px] font-mono text-slate-600">
+                              CNTL: {result.data.extracted.cntlNumber}
+                            </span>
+                          )}
+                          {result.data.extracted.agent && (
+                            <span className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-600">
+                              {result.data.extracted.agent}
+                            </span>
+                          )}
+                          {result.data.extracted.paxAdults > 0 && (
+                            <span className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-600">
+                              <Users className="w-2.5 h-2.5" />
+                              {result.data.extracted.paxAdults}A {result.data.extracted.paxChildren > 0 ? `${result.data.extracted.paxChildren}C` : ''}
+                            </span>
+                          )}
+                          {result.data.extracted.passengers?.length > 0 && (
+                            <span className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-600">
+                              {result.data.extracted.passengers.map(p => p.name).filter(Boolean).join(', ')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-amber-700 mt-2">
+                          {(result.data as unknown as Record<string,unknown>).extractionError
+                            ? 'Whatever could be read from the subject line has been pre-filled.'
+                            : 'All other details were extracted.'}{' '}
+                          Click <strong>Create Booking</strong> above to open the booking form pre-filled with this data.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Result summary row (non-waiting) ────────────────── */}
-                {result?.success && bookingRef && !isAutoProc && !isWaiting && (
+                {result?.success && bookingRef && !isAutoProc && !isWaiting && !isNeedsManual && (
                   <div className={`mt-3 flex items-center gap-3 flex-wrap text-xs pt-3 border-t ${isPnl ? 'border-teal-100' : 'border-blue-100'}`}>
 
                     {/* PNL: show Tour No → Tour Ref linkage */}

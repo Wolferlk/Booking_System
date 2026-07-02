@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe } from 'lucide-react'
+import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe, Mail, X } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
@@ -42,6 +42,8 @@ export default function NewBookingPage() {
   const router = useRouter()
   const [saving,    setSaving]    = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [mailPrefillSubject, setMailPrefillSubject] = useState<string | null>(null)
+  const handleAIParsedRef = useRef<(data: Record<string, unknown>) => void>(null as unknown as (data: Record<string, unknown>) => void)
 
   // Drive picker state
   const [selectedDriveKey,       setSelectedDriveKey]       = useState<DriveKey | ''>('')
@@ -106,6 +108,25 @@ export default function NewBookingPage() {
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([
     { name: '', phone: '', role: '' },
   ])
+
+  // ── Load mail-extracted data from sessionStorage on first render ──────────
+  useEffect(() => {
+    const raw = sessionStorage.getItem('mail_extracted_data')
+    if (!raw) return
+    sessionStorage.removeItem('mail_extracted_data')
+    try {
+      const payload = JSON.parse(raw) as {
+        extracted: Record<string, unknown>
+        detectedCountry: string | null
+        emailSubject: string | null
+      }
+      handleAIParsedRef.current(payload.extracted)
+      if (payload.detectedCountry) setSelectedCountry(payload.detectedCountry)
+      if (payload.emailSubject) setMailPrefillSubject(payload.emailSubject)
+      toast.info('Form pre-filled from email — please enter the arrival and departure dates')
+    } catch { /* ignore corrupt data */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ── Apply extracted data to form ──────────────────────────────────────────
   function handleAIParsed(data: Record<string, unknown>) {
@@ -199,6 +220,9 @@ export default function NewBookingPage() {
       role:  String(e.role  ?? ''),
     })))
   }
+
+  // Keep ref current every render so the mount effect can call it
+  handleAIParsedRef.current = handleAIParsed
 
   // ── File selected from OneDrive picker ────────────────────────────────────
   async function handleDriveFileSelected(file: CloudFile, folderPath?: string, folderWebUrl?: string | null) {
@@ -305,6 +329,23 @@ export default function NewBookingPage() {
     <div>
       <Header title="New Booking" subtitle="Create a booking from quotation or enter manually" />
       <div className="p-8 space-y-6 ">
+
+        {/* ── Mail pre-fill banner ──────────────────────────────────────── */}
+        {mailPrefillSubject && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+            <Mail className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-900">Pre-filled from email</p>
+              <p className="text-xs text-amber-700 mt-0.5 truncate">{mailPrefillSubject}</p>
+              <p className="text-xs text-amber-600 mt-1">
+                All extracted details have been filled in below. Please enter the <strong>Arrival</strong> and <strong>Departure</strong> dates to complete the booking.
+              </p>
+            </div>
+            <button onClick={() => setMailPrefillSubject(null)} className="text-amber-400 hover:text-amber-600 flex-shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* ── AI Document Parser ──────────────────────────────────────────── */}
         <Card>

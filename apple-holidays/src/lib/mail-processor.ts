@@ -204,8 +204,8 @@ Extract ALL booking details from the Tour Confirmation section below. The text m
 Return ONLY valid JSON matching this exact schema:
 {
   "bookingRef": "The IS Number — MUST start with VN, IS, SG, or MY followed by digits only (e.g. VN40120, IS48375, SG22232, MY40586). Look for the 'IS Number:' label in the confirmation body. Strip all spaces: 'VN 40120' → 'VN40120'. NEVER put a CNTL number (e.g. 471416CNTL) or a pure numeric agent ID here. Return null if no IS/VN/SG/MY number is found.",
-  "cntlNumber": "CNTL/Quotation number — digits followed by CNTL or CNTL followed by digits (e.g. '471416CNTL', '463720CNTL', 'CNTL459773'). Look for this in the 'Tour Ref:' field, NOT in the IS Number field. This is a SEPARATE field from bookingRef. Return null if absent.",
-  "agentBookingId": "Agent's non-CNTL booking ID / reference number from the email subject or booking form (e.g. 402011138462). Do NOT put CNTL numbers here — use cntlNumber for those.",
+  "cntlNumber": "CNTL/Quotation number — digits followed by CNTL (e.g. '471416CNTL', '463720CNTL', 'CNTL459773') or CNTL followed by digits (e.g. 'CNTL459773'). IMPORTANT: the 'Tour Ref' field in the TC body contains the CNTL number — e.g. 'Tour Ref: 471833CNTL'. Also look for 'NAV ID' label. This is a COMPLETELY SEPARATE field from bookingRef (IS Number). NEVER put the IS/VN/SG/MY number here. Return null if absent.",
+  "agentBookingId": "Agent's booking reference — a long pure-numeric string from the email subject line or booking form (e.g. 402011138462, NL325424666). Look in the email subject — it often appears as the first segment: 'Confirmed booking - 402011410144 | Guest Name...'. Do NOT put CNTL numbers here. Do NOT put IS numbers here.",
   "agent": "Agent company name (e.g. 30 Sundays, Make My Trip, Tours Experts)",
   "fileHandler": "File handler or account manager name listed in the confirmation (e.g. Sangeetha Priya, Yogi, Shehan Jayakody)",
   "arrivalDate": "YYYY-MM-DD",
@@ -367,11 +367,15 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     ? extractTCSection(emailBody)
     : extractPNLSection(emailBody)
 
+  const userContent = emailSubject
+    ? `Email Subject: ${emailSubject}\n\nExtract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
+    : `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: prompt },
-      { role: 'user', content: `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}` },
+      { role: 'user', content: userContent },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
@@ -420,9 +424,14 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
 
   const resolvedIsNumber = isNumberOverride ?? parsed.isNumber ?? parsedBookingRefAsIs ?? tourRefAsIs ?? null
 
+  // Server-side agent booking ID extraction from subject line.
+  // The subject "Confirmed booking - 402011410144 | Shreya Puri..." contains the agent's ref
+  // as a long pure-numeric string that GPT may miss when only seeing the TC body text.
+  const subjectAgentId = emailSubject ? extractAgentBookingIdFromSubject(emailSubject) : null
+
   return {
     bookingRef:       resolvedIsNumber,
-    agentBookingId:   parsed.agentBookingId   ?? null,
+    agentBookingId:   parsed.agentBookingId ?? subjectAgentId ?? null,
     agent:            parsed.agent            ?? null,
     fileHandler:      parsed.fileHandler      ?? null,
     arrivalDate:      parsed.arrivalDate      ?? null,
@@ -532,8 +541,13 @@ function extractCntlFromBody(text: string): string | null {
     /\b(\d{4,}CNTL)\b/i,
     // "CNTL471416" — CNTL followed by digits
     /\bCNTL(\d{4,})\b/i,
-    // "Tour Ref 471416 CNTL" or "Tour Ref: 471416 CNTL" — space between number and CNTL keyword
+    // "Tour Ref: 471416CNTL" or multiline "Tour Ref\n471416CNTL"
+    /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
+    // "Tour Ref 471416 CNTL" — space between number and CNTL keyword
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
+    // "NAV ID: 471416CNTL" — alternate label used by some agents
+    /\bnav\s*id\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
+    /\bnav\s*id\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
     // Quotation number patterns
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,}CNTL)\b/i,
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,})\s+CNTL\b/i,
@@ -546,6 +560,18 @@ function extractCntlFromBody(text: string): string | null {
       const cntl = /^\d+$/.test(v) ? `${v}CNTL` : v
       if (/^\d+CNTL$/.test(cntl) || /^CNTL\d+$/.test(cntl)) return cntl
     }
+  }
+  return null
+}
+
+// Extract agent booking ID from subject (e.g. "402011410144" from
+// "Confirmed booking - 402011410144 | Shreya Puri - Vietnam...").
+// Looks for a long pure-numeric token (8–15 digits) separated by | - / delimiters.
+function extractAgentBookingIdFromSubject(subject: string): string | null {
+  const parts = subject.split(/[|\/\\,]/)
+  for (const part of parts) {
+    const t = part.trim()
+    if (/^\d{8,15}$/.test(t)) return t
   }
   return null
 }
