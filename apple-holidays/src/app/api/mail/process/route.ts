@@ -184,13 +184,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // For Tour Confirmation: only accept Tour Ref — reject IS/VN numbers
-  if (type === 'TOUR_CONFIRMATION' && extracted.bookingRef) {
-    if (/^(IS|VN)\d+$/i.test(extracted.bookingRef.replace(/[^A-Z0-9]/gi, ''))) {
-      extracted.bookingRef = null
-    }
-  }
-
+  // rawBookingRef = IS number (VN/IS/SG/MY prefix). bookingRef from mail-processor
+  // already resolves to the IS number — do NOT strip it.
   const rawBookingRef = generateRef(extracted.bookingRef)
 
   // Detect operation country from IS/VN/SG/MY number prefix or subject/body keywords
