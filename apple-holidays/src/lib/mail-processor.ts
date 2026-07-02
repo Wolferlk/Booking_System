@@ -241,8 +241,8 @@ Return ONLY valid JSON matching this exact schema:
   "emergencyContacts": [{ "name": "string", "phone": "phone in international format with country code or null", "role": "string or null" }],
   "passengers": [{ "name": "string", "type": "ADULT or CHILD", "isLead": true/false, "age": "number or null", "passport": "passport document number ONLY — e.g. 'N1234567' or 'A9876543'. NEVER put a phone number here. If you see a phone/mobile number next to a passenger, put it in 'contact', not 'passport'. Return null if no passport number is found.", "nationality": "string or null — passenger nationality/country", "contact": "string or null — personal phone, mobile or WhatsApp of this specific passenger (NOT a passport number). Return null if not found.", "mealPreference": "string or null — e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement', 'Special Meal' fields per passenger, or a booking-level note. Return null if not specified." }],
   "flights": [{ "flightNo": "EXACT flight number as printed — e.g. 'VJ815', '6E204', 'SQ456'. Normalise: remove spaces between airline code and number ('VJ 815' → 'VJ815'). Never fabricate a number.", "date": "YYYY-MM-DD — the DEPARTURE date of this flight leg", "fromApt": "3-letter IATA departure airport code — NEVER city name", "depTime": "HH:MM 24-hour — convert 12h to 24h ('06:10 AM' → '06:10', '02:30 PM' → '14:30'). Null only if truly absent.", "toApt": "3-letter IATA arrival airport code", "arrTime": "HH:MM 24-hour arrival time. If arrival is next day, still return the time (e.g. '01:15'). Null only if truly absent.", "airline": "full airline name or null", "notes": "any extra info (terminal, baggage, stops) or null" }],
-  "accommodations": [{ "hotel": "exact full hotel name as written in TC", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
-  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "EXACT complete tour/activity title — copy verbatim from TC, do NOT shorten, paraphrase or substitute generic labels. NEVER use 'Various Attractions', 'City Tour', 'Day Tour' or similar generic replacements. Copy the full official name exactly as written.", "description": "exact description from TC document verbatim — do NOT omit, shorten or summarise. Return null only if no description exists.", "serviceType": "PVT_TRANSFER|SIC_TRANSFER|FLIGHT|INTERNAL_TOUR|ACCOMMODATION|OWN_ARRANGEMENT" }],
+  "accommodations": [{ "hotel": "ONLY the actual hotel/resort/villa name (e.g. 'Novotel Hanoi', 'La Siesta Hotel'). NEVER include airport names, transfer directions, or route text. If the TC shows 'Airport to Hotel Name', the hotel field is just 'Hotel Name'.", "city": "city name", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string or null", "mealType": "BB/HB/FB/null" }],
+  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "COPY THE COMPLETE OFFICIAL TOUR/ACTIVITY/TRANSFER NAME VERBATIM — never shorten, paraphrase, or truncate. Example: 'Vin Wonder & Safari Combo tickets & Grand World Transfer' must be kept in full. NEVER use generic labels like 'Various Attractions', 'City Tour', 'Day Tour'. Copy the full official name exactly as written.", "description": "COPY THE EXACT DESCRIPTION TEXT FROM THE TC VERBATIM — do NOT omit, shorten or summarise any part. For airport transfer items, include the associated flight details (flight number, departure/arrival times) from the TC in this field. Return null only if no description exists.", "serviceType": "PVT_TRANSFER|SIC_TRANSFER|FLIGHT|INTERNAL_TOUR|ACCOMMODATION|OWN_ARRANGEMENT — CRITICAL: if the word 'SIC' appears in the title or description, ALWAYS use SIC_TRANSFER; airport road transfers are always PVT_TRANSFER" }],
   "pnlLines": []
 }
 
@@ -258,16 +258,19 @@ IS NUMBER EXTRACTION (CRITICAL):
 
 ITINERARY EXTRACTION (CRITICAL):
 - Extract EVERY single day and service from the TC: airport transfers, SIC tours, private tours, internal flights, hotel stays, cruises, day trips
-- "title" must be the COMPLETE official tour name from the TC — never shorten or paraphrase (e.g. "Full-day Halong Cozy Bay Cruise Day Tour (SIC transfer + SIC cruise)" not "Halong Cruise")
-- "description" must be the exact description text from the TC — copy it verbatim
+- A single calendar day CAN have MULTIPLE itinerary items — extract ALL of them separately. Example: "1st transfer - Hanoi Hotel to Hanoi Bus Station Transfer / 2nd transfer - Sapa Sleeper Bus by Inter bus Line / 3rd transfer - Moana Cafe + Rainbow Slide + Alpine Coaster | Private Transfer from Sapa" → 3 separate items on the same date.
+- NEVER merge or collapse multiple services on the same day into one entry.
+- For internal/domestic flights, ALWAYS extract THREE separate items: (1) Departure road transfer (e.g. "Da Nang Hotel to Da Nang Airport Transfer"), (2) The flight leg itself (e.g. "Flight DAD→HAN"), (3) Arrival road transfer (e.g. "Hanoi Airport to Hanoi Hotel Transfer"). Do NOT miss the arrival transfer.
+- "title" must be the COMPLETE official tour name from the TC — NEVER shorten, paraphrase, or truncate any words. Example: "Vin Wonder & Safari Combo tickets & Grand World Transfer" must be kept in full — do NOT shorten to "Vin Wonder & Safari".
+- "description" must be the exact description text from the TC — copy it verbatim. For airport transfer items, include the associated flight details (flight number, departure/arrival times) from the TC.
 - "serviceType" classification:
-  - Airport transfer (arrival/departure road transfer) → "PVT_TRANSFER"
+  - If the word "SIC" appears in the title or description → ALWAYS "SIC_TRANSFER" (never PVT for SIC items)
+  - Airport road transfer (arrival/departure) → "PVT_TRANSFER"
   - Internal/domestic flight → "FLIGHT"
-  - SIC/shared tour or transfer → "SIC_TRANSFER"
-  - Private tour, private cruise, private day trip → "INTERNAL_TOUR"
+  - Private tour, private cruise, private day trip → "PVT_TRANSFER"
   - Hotel check-in/stay → "ACCOMMODATION"
   - Leisure / free day / own arrangement → "OWN_ARRANGEMENT"
-  - Anything private with a vehicle (non-airport) → "PVT_TRANSFER"
+  - Ticket-only / entrance-only (no vehicle) → "INTERNAL_TOUR"
 
 DATE EXTRACTION:
 - Support all formats: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, Month DD YYYY, DD Month YYYY, YYYY-MM-DD

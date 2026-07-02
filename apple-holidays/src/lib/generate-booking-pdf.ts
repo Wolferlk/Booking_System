@@ -372,9 +372,17 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
           doc.fillColor(DARK)
             .text(item.location ?? '', MARGIN + 100, ay, { width: 195, lineBreak: false })
 
+          const SERVICE_LABELS: Record<string, string> = {
+            PVT_TRANSFER: 'Private Transfer',
+            SIC_TRANSFER: 'SIC Transfer',
+            INTERNAL_TOUR: 'Ticket Only',
+            FLIGHT: 'Flight',
+            ACCOMMODATION: 'Hotel Stay',
+          }
           if (item.serviceType && item.serviceType !== 'OWN_ARRANGEMENT') {
+            const svcLabel = SERVICE_LABELS[item.serviceType] ?? item.serviceType.replace(/_/g, ' ')
             doc.fillColor(MUTED).font('Helvetica').fontSize(7.5)
-              .text(item.serviceType.replace(/_/g, ' '), MARGIN + 300, ay, { width: 115, lineBreak: false })
+              .text(svcLabel, MARGIN + 300, ay, { width: 115, lineBreak: false })
           }
           if (item.meetingTime) {
             doc.fillColor(MUTED).font('Helvetica').fontSize(7.5)
