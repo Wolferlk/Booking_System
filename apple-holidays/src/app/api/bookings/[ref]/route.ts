@@ -76,6 +76,30 @@ export async function GET(
     )
   }
 
+  // Determine PNL source: MAIL (from P&L mailbox), DRIVE (OneDrive), INTERNAL (manual)
+  let pnlSource: 'MAIL' | 'DRIVE' | 'INTERNAL' | null = null
+  if ((booking as Record<string, unknown>).pnl) {
+    const pnlRaw = (booking as Record<string, unknown>).pnl as { sourceDocUrl?: string | null } | null
+    if (pnlRaw?.sourceDocUrl && /sharepoint|onedrive/i.test(pnlRaw.sourceDocUrl)) {
+      pnlSource = 'DRIVE'
+    } else {
+      const numericPart = params.ref.replace(/[^0-9]/g, '')
+      const pnlMail = await prisma.mailMessage.findFirst({
+        where: {
+          mailboxKind: 'PNL',
+          status: { in: ['PROCESSED', 'WAITING'] },
+          OR: [
+            { bookingRef: params.ref },
+            ...(numericPart.length >= 4 ? [{ bookingRef: { contains: numericPart } }] : []),
+          ],
+        },
+        select: { id: true },
+      })
+      pnlSource = pnlMail ? 'MAIL' : 'INTERNAL'
+    }
+  }
+  responseData.pnlSource = pnlSource
+
   return buildApiSuccess(responseData)
 }
 

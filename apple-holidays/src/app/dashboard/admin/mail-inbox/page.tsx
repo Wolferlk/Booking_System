@@ -16,7 +16,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Database } from 'lucide-react'
+import { Database, HardDrive } from 'lucide-react'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import DbMailboxView from './db-mailbox-view'
 
@@ -68,7 +68,7 @@ interface ProcessResult {
   processedAt?: string | null
 }
 
-interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
+interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean; source?: 'MAIL' | 'DRIVE' | 'INTERNAL' | null }
 interface MailSettings {
   lessCreditMode: boolean
   tqEnabled: boolean
@@ -114,9 +114,23 @@ function mailboxLabel(user: string) {
 
 function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; waitingTourNo?: string }) {
   if (status?.hasPNL) {
+    if (status.source === 'MAIL') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-700 border border-teal-200">
+          <Mail className="w-2.5 h-2.5" /> Mail PNL Connected · {status.lineCount} lines
+        </span>
+      )
+    }
+    if (status.source === 'DRIVE') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700 border border-blue-200">
+          <HardDrive className="w-2.5 h-2.5" /> Drive PNL Connected · {status.lineCount} lines
+        </span>
+      )
+    }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">
-        <CheckCircle className="w-2.5 h-2.5" /> PNL Added · {status.lineCount} lines
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700 border border-green-200">
+        <Database className="w-2.5 h-2.5" /> Accounts PNL Connected · {status.lineCount} lines
       </span>
     )
   }
@@ -139,6 +153,87 @@ function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; wai
       <Clock className="w-2.5 h-2.5" /> PNL Pending
     </span>
   )
+}
+
+// ── Client-side helpers for partial extraction on error ───────────────────────
+
+const MONTH_ABBR: Record<string, string> = {
+  jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+  jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12',
+}
+
+function parseDatesFromSubjectClient(subject: string): { arrivalDate: string; departureDate: string } | null {
+  const re = /(\d{1,2})[\/\-\.]([A-Za-z]{3})[\/\-\.](\d{4})/g
+  const matches: RegExpExecArray[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(subject)) !== null) matches.push(m)
+  if (matches.length < 2) return null
+  const toISO = (x: RegExpExecArray) => {
+    const mon = MONTH_ABBR[x[2].toLowerCase()]
+    return mon ? `${x[3]}-${mon}-${x[1].padStart(2,'0')}` : null
+  }
+  const a = toISO(matches[0]); const d = toISO(matches[1])
+  return a && d ? { arrivalDate: a, departureDate: d } : null
+}
+
+function parseIsFromSubjectClient(subject: string): string | null {
+  const parts = subject.split(/[|\/,]/)
+  for (const p of parts) {
+    const c = p.trim().replace(/\s+/g,'').toUpperCase()
+    if (/^(VN|IS|SG|MY)\d{4,}$/.test(c)) return c
+  }
+  // also scan for "// VN40151" style
+  const m = subject.match(/\/\/\s*([A-Z]{2}\d{4,})/i)
+  if (m) return m[1].replace(/\s+/g,'').toUpperCase()
+  return null
+}
+
+function parseAgentIdFromSubjectClient(subject: string): string | null {
+  const parts = subject.split(/[|,\/\\]/)
+  for (const p of parts) {
+    const t = p.trim()
+    if (/^\d{8,15}$/.test(t)) return t
+  }
+  return null
+}
+
+function buildNeedsManualFromEmail(email: EmailWithMailbox, errorMsg: string): ProcessResult {
+  const subj = email.subject ?? ''
+  const dates = parseDatesFromSubjectClient(subj)
+  const isNumber = parseIsFromSubjectClient(subj)
+  const agentId  = parseAgentIdFromSubjectClient(subj)
+  const agentFromEmail = email.fromName
+    ? email.fromName
+    : email.from?.split('@')[0] ?? null
+
+  return {
+    status:      'NEEDS_MANUAL',
+    bookingRef:  isNumber ?? '',
+    bookingId:   '',
+    isNew:       false,
+    pnlLines:    0,
+    agendaItems: 0,
+    extracted: {
+      isNumber:       isNumber,
+      cntlNumber:     null,
+      agent:          agentFromEmail,
+      fileHandler:    null,
+      agentBookingId: agentId,
+      arrivalDate:    dates?.arrivalDate   ?? null,
+      departureDate:  dates?.departureDate ?? null,
+      paxAdults:      0,
+      paxChildren:    0,
+      quotedTotal:    null,
+      currency:       'USD',
+      passengers:     [],
+      flights:        [],
+      accommodations: [],
+      emergencyContacts: [],
+      pnlLines:       [],
+    },
+    // store the error message so the banner can show it
+    ...(errorMsg ? { extractionError: errorMsg } : {}),
+  } as unknown as ProcessResult
 }
 
 function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems: number }) {
@@ -406,6 +501,7 @@ export default function MailInboxPage() {
           hasPNL:    !!pnl,
           lineCount: Array.isArray(pnl?.lineItems) ? (pnl.lineItems as unknown[]).length : 0,
           checking:  false,
+          source:    (json.data?.pnlSource as PnlStatus['source']) ?? null,
         }))
       } else {
         setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: false }))
@@ -491,11 +587,19 @@ export default function MailInboxPage() {
           }
         }
       } else {
-        setResults(m => new Map(m).set(email.graphId, { success: false, error: json.error as string }))
+        // API returned an error — build NEEDS_MANUAL so user can still create booking manually
+        setResults(m => new Map(m).set(email.graphId, {
+          success: true,
+          data: buildNeedsManualFromEmail(email, json.error as string),
+        }))
       }
     } catch (err) {
+      // Network/JSON parse error — build NEEDS_MANUAL so user can still create booking manually
       const msg = err instanceof Error ? err.message : 'Processing failed'
-      setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
+      setResults(m => new Map(m).set(email.graphId, {
+        success: true,
+        data: buildNeedsManualFromEmail(email, msg),
+      }))
     } finally {
       setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
     }
@@ -1252,7 +1356,16 @@ export default function MailInboxPage() {
                     <div className="flex items-start gap-3">
                       <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-bold text-amber-900">Dates could not be extracted — manual entry required</p>
+                        <p className="text-xs font-bold text-amber-900">
+                          {(result.data as unknown as Record<string,unknown>).extractionError
+                            ? 'Processing error — enter details manually'
+                            : 'Dates could not be extracted — manual entry required'}
+                        </p>
+                        {!!(result.data as unknown as Record<string,unknown>).extractionError && (
+                          <p className="text-[10px] text-amber-700 mt-0.5 font-mono opacity-75">
+                            {String((result.data as unknown as Record<string,unknown>).extractionError)}
+                          </p>
+                        )}
                         <div className="flex flex-wrap gap-2 mt-2">
                           {result.data.extracted.isNumber && (
                             <span className="inline-flex items-center gap-1 bg-amber-100 border border-amber-300 rounded px-2 py-0.5 text-[10px] font-mono font-bold text-amber-800">
@@ -1282,7 +1395,10 @@ export default function MailInboxPage() {
                           )}
                         </div>
                         <p className="text-[10px] text-amber-700 mt-2">
-                          All other details were extracted. Click <strong>Create Booking</strong> above to open the booking form pre-filled with this data.
+                          {(result.data as unknown as Record<string,unknown>).extractionError
+                            ? 'Whatever could be read from the subject line has been pre-filled.'
+                            : 'All other details were extracted.'}{' '}
+                          Click <strong>Create Booking</strong> above to open the booking form pre-filled with this data.
                         </p>
                       </div>
                     </div>
