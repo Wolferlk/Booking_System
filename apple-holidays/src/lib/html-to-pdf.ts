@@ -1,21 +1,65 @@
 import path from 'path'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, access } from 'fs/promises'
 
 const PDF_DIR = path.join(process.cwd(), 'public', 'uploads', 'booking-pdfs')
+
+// Known system Chrome/Chromium paths (used when admin installs chromium manually)
+const SYSTEM_CHROME_PATHS = [
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium',
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/local/bin/chromium',
+  '/snap/bin/chromium',
+]
+
+async function findSystemChrome(): Promise<string | undefined> {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH
+  for (const p of SYSTEM_CHROME_PATHS) {
+    try { await access(p); return p } catch { /* not found */ }
+  }
+  return undefined
+}
+
+async function launchBrowser() {
+  // 1. Explicit system Chrome path (env var or known binary)
+  const systemChrome = await findSystemChrome()
+  if (systemChrome) {
+    const { default: puppeteerCore } = await import('puppeteer-core')
+    return puppeteerCore.launch({
+      executablePath: systemChrome,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+    })
+  }
+
+  // 2. Linux server: use @sparticuz/chromium (self-contained, no system libs needed)
+  if (process.platform === 'linux') {
+    const { default: chromium } = await import('@sparticuz/chromium')
+    const { default: puppeteerCore } = await import('puppeteer-core')
+    const executablePath = await chromium.executablePath()
+    return puppeteerCore.launch({
+      args: chromium.args,
+      defaultViewport: null,
+      executablePath,
+      headless: true,
+    })
+  }
+
+  // 3. Local dev (macOS/Windows): use bundled puppeteer Chrome
+  const { default: puppeteer } = await import('puppeteer')
+  return puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+  })
+}
 
 export interface PdfMeta {
   bookingRef: string
   sentAt?: Date
 }
 
-/**
- * Renders an HTML string to a PDF using Puppeteer (headless Chrome).
- * Adds a running page header on every page (Apple Holidays, booking ref, sent date, page numbers).
- * Saves to public/uploads/booking-pdfs/{filename} and returns the Buffer.
- */
 export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta): Promise<Buffer> {
-  const { default: puppeteer } = await import('puppeteer')
-
   const sentStr = (meta?.sentAt ?? new Date()).toLocaleString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
@@ -41,10 +85,7 @@ export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta):
       </div>
     </div>`
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  })
+  const browser = await launchBrowser()
 
   try {
     const page = await browser.newPage()
@@ -60,7 +101,6 @@ export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta):
     })
 
     const pdfBuffer = Buffer.from(raw)
-
     await mkdir(PDF_DIR, { recursive: true })
     await writeFile(path.join(PDF_DIR, filename), pdfBuffer)
 
