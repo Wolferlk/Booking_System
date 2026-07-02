@@ -169,7 +169,7 @@ Schema:
   "accommodations": [
     {
       "city": "string",
-      "hotel": "string",
+      "hotel": "string — ONLY the actual hotel/resort/villa name (e.g. 'Novotel Hanoi', 'La Siesta Hotel'). NEVER include airport names, transfer directions, or route text here. If you see 'Airport to Hotel Name', the hotel field is just 'Hotel Name'.",
       "checkIn": "ISO date string YYYY-MM-DD",
       "checkOut": "ISO date string YYYY-MM-DD",
       "address": "string or null",
@@ -183,8 +183,9 @@ Schema:
     {
       "dayNo": "number",
       "date": "ISO date string YYYY-MM-DD",
-      "title": "string — the actual tour/activity/transfer name for this day. Some TCs prefix each day with a category label like 'City Tour', 'Attraction', 'Activity', 'Transfer', 'Tour' as a template field — STRIP these prefix labels; they are NOT part of the title. Example: 'City Tour Hanoi Airport to Sa Pa Transfer' → title='Hanoi Airport to Sa Pa Transfer'; 'Attraction Full-day Cat Cat – Fansipan' → title='Full-day Cat Cat – Fansipan'. Copy the remaining text verbatim after stripping the prefix. NEVER use generic labels as the whole title.",
-      "description": "string or null — exact description text from TC, copied verbatim. Do NOT omit or summarise. Return null only if no description exists.",
+      "title": "string — COPY THE COMPLETE OFFICIAL TOUR/ACTIVITY/TRANSFER NAME VERBATIM from the TC. NEVER shorten, paraphrase, or truncate. Some TCs prefix each day with a standalone category label ('City Tour', 'Attraction', 'Activity', 'Transfer', 'Tour') as a template field before the actual title — STRIP ONLY these standalone prefix labels when they appear alone before the real title. Example: 'City Tour Hanoi Airport to Sa Pa Transfer' → title='Hanoi Airport to Sa Pa Transfer'; 'Attraction Full-day Cat Cat – Fansipan' → title='Full-day Cat Cat – Fansipan'. IMPORTANT: Words like 'Transfer', 'Tour', 'Combo' that are INTEGRAL PARTS of the actual tour name must NEVER be removed. Example: 'Vin Wonder & Safari Combo tickets & Grand World Transfer' → title='Vin Wonder & Safari Combo tickets & Grand World Transfer' (keep it entirely). NEVER use generic labels as the whole title.",
+      "description": "string or null — COPY THE EXACT DESCRIPTION TEXT FROM THE TC VERBATIM. Do NOT omit, shorten, paraphrase or summarise any part. If the airport transfer itinerary item has associated flight information in the TC (flight number, times, route), include those flight details in the description. Return null only if truly no description exists.",
+      "serviceType": "string — classify this item: 'SIC_TRANSFER' if the word 'SIC' appears explicitly in the title or description; 'PVT_TRANSFER' for private transfers/tours; 'FLIGHT' for internal/domestic flight legs; 'ACCOMMODATION' for hotel check-in/stay; 'OWN_ARRANGEMENT' for leisure/free days; 'INTERNAL_TOUR' for ticket-only or entrance-only items without vehicle. Airport road transfers (arrival/departure) are always 'PVT_TRANSFER'.",
       "inclusions": ["array of strings"],
       "exclusions": ["array of strings"]
     }
@@ -224,6 +225,21 @@ Important:
   * A "Transit Xh Ym" line means the NEXT line is a connecting segment on a different flight.
   * Convert times to 24-hour HH:MM format (e.g. 05:00 AM → 05:00, 10:40 AM → 10:40, 04:00 PM → 16:00).
   * NEVER create flights from T&C sentences like "If flight details not received within 48 hrs".
+- itineraryItems — MULTIPLE ITEMS PER DAY:
+  * A single calendar day CAN and OFTEN DOES have MULTIPLE itinerary items. Extract EVERY item separately.
+  * Example: Day 3 has "Hanoi Hotel to Hanoi Bus Station Transfer" + "Sapa Sleeper Bus by Inter bus Line" + "Moana Cafe + Rainbow Slide + Alpine Coaster | Private Transfer from Sapa" → extract all THREE as separate itineraryItems with the same date.
+  * NEVER merge or collapse multiple services on the same day into one item.
+  * For each internal flight, extract BOTH the departure road transfer (hotel → airport) AND the arrival road transfer (airport → hotel) as separate itinerary items, in addition to the flight itself. Example: Danang to Hanoi internal flight = 3 items: (1) Danang Hotel to Danang Airport Transfer, (2) Flight DAD → HAN, (3) Hanoi Airport to Hanoi Hotel Transfer.
+  * The description for airport transfer items should include the associated flight details (flight number, dep/arr times, route) from the TC if available.
+- itineraryItems — SIC DETECTION:
+  * If the word "SIC" appears anywhere in the activity title or description, set serviceType = "SIC_TRANSFER".
+  * Example: "Full-day Halong Cozy Bay Cruise Day Tour (SIC transfer + SIC cruise)" → serviceType = "SIC_TRANSFER".
+  * Do NOT classify SIC tours as "PVT_TRANSFER".
+- itineraryItems — TITLE EXTRACTION:
+  * Copy the COMPLETE tour/activity title verbatim. Never truncate or drop any words from the middle or end of the title.
+  * Example: "Vin Wonder & Safari Combo tickets & Grand World Transfer" must be copied in full — do NOT shorten to "Vin Wonder & Safari".
+- accommodations — HOTEL FIELD:
+  * The hotel field must contain ONLY the hotel/resort/villa name. NEVER include airport names, transfer directions, or route descriptions.
 - passengers:
   * If the document has BOTH a "Lead Passenger" summary section AND a detailed passenger table (Name / Type / Age columns), use ONLY the detailed table — do NOT duplicate the lead passenger from the summary.
   * If only a "Guests Name:" or "Lead Passenger Name:" field appears (no table), extract that as the single lead passenger.

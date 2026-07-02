@@ -172,14 +172,14 @@ function buildAgendaHtml(
     const displayVehicleType = a?.vehicleType ?? a?.driver?.vehicle?.type ?? null
     const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
-    // For SIC: show join-window (timeFrom – timeTo). For others: show meetingTime.
+    // Show meetingTime for all service types (single time, not a range).
     let meetCell = '—'
-    if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
-      const tf = item.timeFrom ?? ''
-      const tt = item.timeTo   ?? ''
-      meetCell = tf && tt ? `${tf} – ${tt}` : tf || tt
-    } else if (item.meetingTime) {
+    if (item.meetingTime) {
       meetCell = String(item.meetingTime)
+    } else if (svc === 'SIC_TRANSFER' && item.timeTo) {
+      meetCell = String(item.timeTo)
+    } else if (svc === 'SIC_TRANSFER' && item.timeFrom) {
+      meetCell = String(item.timeFrom)
     }
 
     const driverCell = showDrivers
@@ -583,14 +583,20 @@ export async function POST(
     }
 
     // Fallback: proxy
-    const proxyRes = await fetch(WHATSAPP_PROXY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: normPhone, message: waMessage, fileUrl, filename }),
-    })
-    const proxyJson = await proxyRes.json() as { success?: boolean }
-    if (!proxyJson.success && !proxyRes.ok) {
-      return buildApiError('WhatsApp send failed', 500)
+    try {
+      const proxyRes = await fetch(WHATSAPP_PROXY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: normPhone, message: waMessage, fileUrl, filename }),
+      })
+      let proxyJson: { success?: boolean } = {}
+      try { proxyJson = await proxyRes.json() as { success?: boolean } } catch { /* non-JSON body */ }
+      if (!proxyJson.success && !proxyRes.ok) {
+        return buildApiError(`WhatsApp proxy failed (${proxyRes.status})`, 500)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return buildApiError(`WhatsApp send failed: ${msg}`, 500)
     }
 
     return buildApiSuccess({ sent: true, via: 'proxy' })
@@ -615,16 +621,21 @@ export async function POST(
         </div>
       </div>`
 
-    await sendMailViaGraph({
-      to: to,
-      subject: emailSubject,
-      bodyHtml,
-      attachment: {
-        name:        filename,
-        contentType: 'application/pdf',
-        buffer:      pdfBuffer,
-      },
-    })
+    try {
+      await sendMailViaGraph({
+        to: to,
+        subject: emailSubject,
+        bodyHtml,
+        attachment: {
+          name:        filename,
+          contentType: 'application/pdf',
+          buffer:      pdfBuffer,
+        },
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return buildApiError(`Email send failed: ${msg}`, 500)
+    }
 
     return buildApiSuccess({ sent: true, via: 'email' })
   }

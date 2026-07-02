@@ -107,20 +107,34 @@ function fmtAmt(n: number | null | undefined, cur = 'USD') {
   }).format(Number(n))
 }
 
-function formatItemDetails(details: string | null | undefined) {
-  if (!details) return '—'
+function extractRemarks(obj: Record<string, unknown>): string | null {
+  const remark = obj.remarks ?? obj.remark ?? obj.note ?? obj.details
+  if (typeof remark === 'string' && remark.trim()) return remark.trim()
+  return null
+}
 
-  const raw = details.trim()
+function formatItemDetails(details: string | null | undefined | Record<string, unknown>) {
+  if (details == null) return '—'
+
+  // Prisma may return the Json field value as a parsed object
+  if (typeof details === 'object') {
+    return extractRemarks(details as Record<string, unknown>) ?? '—'
+  }
+
+  const raw = String(details).trim()
   if (!raw) return '—'
 
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
+    let parsed: unknown = JSON.parse(raw)
+    // First parse may return a string (double-encoded JSON) — parse once more
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed) } catch { return parsed }
+    }
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const remark = parsed.remarks ?? parsed.remark ?? parsed.note ?? parsed.details
-      if (typeof remark === 'string' && remark.trim()) return remark.trim()
+      return extractRemarks(parsed as Record<string, unknown>) ?? raw
     }
   } catch {
-    // Not JSON, fall through to the raw string
+    // Not JSON — return as-is
   }
 
   return raw
@@ -462,10 +476,12 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item, i) => (
-                      <tr key={item.id} className="hover:bg-slate-50">
+                    {items.map((item, i) => {
+                      const isTotal = item.type?.toUpperCase() === 'INVOICE'
+                      return (
+                      <tr key={item.id} className={isTotal ? 'bg-amber-50 border-l-2 border-amber-400 font-semibold' : 'hover:bg-slate-50'}>
                         <td className="font-mono text-slate-400">{i + 1}</td>
-                        <td>{item.type ?? '—'}</td>
+                        <td className={isTotal ? 'text-amber-700' : ''}>{item.type ?? '—'}</td>
                         <td>{item.credit_type ?? '—'}</td>
                         <td className="max-w-[200px] truncate font-medium">
                           {item.hotel_name ?? item.transport_name ?? item.service_name ?? '—'}
@@ -478,22 +494,9 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                           {formatItemDetails(item.item_details)}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
-                  {/* Totals row */}
-                  {items.length > 0 && (() => {
-                    const sumOrig = items.reduce((s, i) => s + Number(i.amount_original ?? 0), 0)
-                    return (
-                      <tfoot>
-                        <tr className="bg-slate-100 font-bold text-xs">
-                          <td colSpan={4} className="px-4 py-2 text-right text-slate-600">TOTAL</td>
-                          <td className="text-right font-mono">{sumOrig.toFixed(2)}</td>
-                          <td />
-                          <td />
-                        </tr>
-                      </tfoot>
-                    )
-                  })()}
                 </table>
               </div>
             )}
