@@ -10,6 +10,7 @@ import Button from '@/components/ui/button'
 import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import { detectCountryFromPath, detectCountryFromRef, countryLabel } from '@/lib/country-detection'
+import { normalizeCurrencyCode } from '@/lib/utils'
 
 // ─── Drive options per destination country ────────────────────────────────────
 const COUNTRY_DRIVES = [
@@ -148,7 +149,7 @@ export default function NewBookingPage() {
       paxAdults:      String(data.paxAdults   ?? prev.paxAdults),
       paxChildren:    String(data.paxChildren ?? prev.paxChildren),
       quotedTotal:    String(data.quotedTotal ?? prev.quotedTotal),
-      currency:       (data.currency       as string) || prev.currency,
+      currency:       normalizeCurrencyCode(data.currency as string) || prev.currency,
       terms:          (data.terms          as string) || prev.terms,
       exclusions:     (data.exclusions     as string) || prev.exclusions,
       policyNotes:    (data.policyNotes    as string) || prev.policyNotes,
