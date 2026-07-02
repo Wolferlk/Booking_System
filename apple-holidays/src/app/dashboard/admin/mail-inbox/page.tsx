@@ -11,6 +11,7 @@ import {
   FileSpreadsheet, Link2, ChevronDown, ChevronUp,
   Eye, Info, Zap, CalendarClock, Merge, HourglassIcon,
   Search, X, Calendar, ChevronLeft, ChevronRight, FileSearch, Plus,
+  RotateCcw, PlayCircle, ListChecks, Trash2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -66,6 +67,23 @@ interface ProcessResult {
   status: string; xlsxUsed?: boolean; extracted?: ExtractedData
   bookingCreatedAt?: string | null
   processedAt?: string | null
+}
+
+interface BatchItem {
+  graphId: string
+  subject: string
+  bookingRef?: string
+}
+interface BatchSummary {
+  total: number
+  created: (BatchItem & { isNew: boolean })[]
+  updated: BatchItem[]
+  needsManual: (BatchItem & { reason: string })[]
+  skipped: number
+}
+interface ReprocessTarget {
+  email: EmailWithMailbox
+  bookingRef: string
 }
 
 interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean; source?: 'MAIL' | 'DRIVE' | 'INTERNAL' | null }
@@ -479,6 +497,16 @@ export default function MailInboxPage() {
   const [inboxSynced, setInboxSynced]     = useState(false)
   const [savingMailSettings, setSavingMailSettings] = useState(false)
 
+  // Batch processing
+  const [batchProcessing, setBatchProcessing]   = useState(false)
+  const [batchProgress, setBatchProgress]       = useState(0)
+  const [batchTotal, setBatchTotal]             = useState(0)
+  const [batchSummary, setBatchSummary]         = useState<BatchSummary | null>(null)
+
+  // Reprocess confirmation
+  const [reprocessTarget, setReprocessTarget]   = useState<ReprocessTarget | null>(null)
+  const [reprocessDeleting, setReprocessDeleting] = useState(false)
+
   // Refs for queue management (avoid stale closures)
   const resultsRef         = useRef(results)
   const emailsRef          = useRef(emails)
@@ -816,8 +844,300 @@ export default function MailInboxPage() {
   const tqSub  = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
   const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL')
 
+  // ── Batch processing (declared after displayEmails to avoid TDZ) ─────────
+
+  const processBatch = useCallback(async () => {
+    const toProcess = displayEmails.filter(e => {
+      if (e.mailboxKind === 'PNL') return false
+      const r = results.get(e.graphId)
+      if (!r) return true
+      if (r.data?.status === 'NEEDS_MANUAL') return true
+      return false
+    })
+
+    if (toProcess.length === 0) {
+      toast.info('All TQ emails in this view are already processed')
+      return
+    }
+
+    setBatchProcessing(true)
+    setBatchProgress(0)
+    setBatchTotal(toProcess.length)
+    setBatchSummary(null)
+
+    const summary: BatchSummary = { total: toProcess.length, created: [], updated: [], needsManual: [], skipped: 0 }
+
+    for (let i = 0; i < toProcess.length; i++) {
+      const email = toProcess[i]
+      setBatchProgress(i + 1)
+      setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
+
+      try {
+        const res = await fetch('/api/mail/process', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rawBody: email.rawBody, subject: email.subject,
+            emailType: 'TOUR_CONFIRMATION',
+            graphId: email.graphId, mailboxUser: email.mailboxUser,
+            bodyHtml: email.bodyHtml, date: email.date, folder: email.folder,
+            from: email.from, fromName: email.fromName, to: email.to, cc: email.cc,
+            isRead: email.isRead, hasAttachments: email.hasAttachments,
+            importance: email.importance, conversationId: email.conversationId, uid: email.uid,
+          }),
+        })
+        const json = await res.json()
+
+        if (json.success) {
+          const data = json.data as ProcessResult
+          setResults(m => new Map(m).set(email.graphId, { success: true, data }))
+          if (data.status === 'NEEDS_MANUAL') {
+            summary.needsManual.push({ graphId: email.graphId, subject: email.subject ?? '', bookingRef: data.bookingRef, reason: 'Manual entry required' })
+          } else if (data.isNew) {
+            summary.created.push({ graphId: email.graphId, subject: email.subject ?? '', bookingRef: data.bookingRef, isNew: true })
+            checkBookingPnl(data.bookingRef)
+          } else {
+            summary.updated.push({ graphId: email.graphId, subject: email.subject ?? '', bookingRef: data.bookingRef })
+            checkBookingPnl(data.bookingRef)
+          }
+        } else {
+          const manualData = buildNeedsManualFromEmail(email, (json.error as string) ?? '')
+          setResults(m => new Map(m).set(email.graphId, { success: true, data: manualData }))
+          summary.needsManual.push({ graphId: email.graphId, subject: email.subject ?? '', reason: (json.error as string) ?? 'Processing failed' })
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Processing failed'
+        const manualData = buildNeedsManualFromEmail(email, msg)
+        setResults(m => new Map(m).set(email.graphId, { success: true, data: manualData }))
+        summary.needsManual.push({ graphId: email.graphId, subject: email.subject ?? '', reason: msg })
+      } finally {
+        setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
+      }
+    }
+
+    setBatchProcessing(false)
+    setBatchSummary(summary)
+  }, [displayEmails, results, checkBookingPnl])
+
+  // ── Reprocess ────────────────────────────────────────────────────────────
+
+  const confirmReprocess = useCallback(async () => {
+    if (!reprocessTarget) return
+    const { email, bookingRef } = reprocessTarget
+    setReprocessDeleting(true)
+    try {
+      if (bookingRef) {
+        const del = await fetch(`/api/bookings/${bookingRef}`, { method: 'DELETE' })
+        const dj  = await del.json()
+        if (!dj.success) throw new Error((dj.error as string) ?? 'Failed to delete booking')
+      }
+      setResults(m => { const n = new Map(m); n.delete(email.graphId); return n })
+      setReprocessTarget(null)
+      toast.info(`Reprocessing ${email.subject ?? 'email'}…`)
+      setTimeout(() => processOneRef.current(email), 150)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete booking')
+    } finally {
+      setReprocessDeleting(false)
+    }
+  }, [reprocessTarget])
+
+  // ── Derived: how many unprocessed TQ emails are in the current view ────────
+  const unprocessedCount = displayEmails.filter(e => {
+    if (e.mailboxKind === 'PNL') return false
+    const r = results.get(e.graphId)
+    return !r || r.data?.status === 'NEEDS_MANUAL'
+  }).length
+
   return (
     <div>
+
+      {/* ── Batch Results Modal ──────────────────────────────────────────── */}
+      {batchSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                <ListChecks className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-bold text-slate-900">Batch Processing Complete</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Processed {batchSummary.total} email{batchSummary.total !== 1 ? 's' : ''}</p>
+              </div>
+              <button onClick={() => setBatchSummary(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Summary counts */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl bg-green-50 border border-green-200 p-3 text-center">
+                  <p className="text-2xl font-bold text-green-600">{batchSummary.created.length}</p>
+                  <p className="text-[10px] font-semibold text-green-500 uppercase tracking-wider mt-0.5">New Bookings</p>
+                </div>
+                <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-center">
+                  <p className="text-2xl font-bold text-blue-600">{batchSummary.updated.length}</p>
+                  <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider mt-0.5">Updated</p>
+                </div>
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
+                  <p className="text-2xl font-bold text-amber-600">{batchSummary.needsManual.length}</p>
+                  <p className="text-[10px] font-semibold text-amber-500 uppercase tracking-wider mt-0.5">Needs Manual</p>
+                </div>
+              </div>
+
+              {/* Created bookings list */}
+              {batchSummary.created.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                    Bookings Created ({batchSummary.created.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {batchSummary.created.map(item => (
+                      <div key={item.graphId}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-100 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => { setBatchSummary(null); if (item.bookingRef) router.push(`/dashboard/bookings/${item.bookingRef}`) }}
+                      >
+                        <span className="text-[10px] font-mono font-bold text-green-700 bg-green-200 rounded px-1.5 py-0.5 flex-shrink-0">
+                          {item.bookingRef}
+                        </span>
+                        <span className="text-xs text-slate-600 truncate">{item.subject}</span>
+                        <ExternalLink className="w-3 h-3 text-green-500 flex-shrink-0 ml-auto" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Updated bookings list */}
+              {batchSummary.updated.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
+                    Bookings Updated ({batchSummary.updated.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {batchSummary.updated.map(item => (
+                      <div key={item.graphId}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100 cursor-pointer hover:bg-blue-100 transition-colors"
+                        onClick={() => { setBatchSummary(null); if (item.bookingRef) router.push(`/dashboard/bookings/${item.bookingRef}`) }}
+                      >
+                        <span className="text-[10px] font-mono font-bold text-blue-700 bg-blue-200 rounded px-1.5 py-0.5 flex-shrink-0">
+                          {item.bookingRef}
+                        </span>
+                        <span className="text-xs text-slate-600 truncate">{item.subject}</span>
+                        <ExternalLink className="w-3 h-3 text-blue-500 flex-shrink-0 ml-auto" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Needs manual list */}
+              {batchSummary.needsManual.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                    Needs Manual Entry ({batchSummary.needsManual.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {batchSummary.needsManual.map(item => (
+                      <div key={item.graphId} className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-100">
+                        <p className="text-xs text-slate-700 font-medium truncate">{item.subject}</p>
+                        <p className="text-[10px] text-amber-700 mt-0.5 font-mono truncate">{item.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {batchSummary.created.length === 0 && batchSummary.updated.length === 0 && batchSummary.needsManual.length === 0 && (
+                <p className="text-sm text-slate-500 text-center py-4">No emails were processed.</p>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100">
+              <button
+                onClick={() => setBatchSummary(null)}
+                className="w-full px-4 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-700 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reprocess Confirmation Dialog ────────────────────────────────── */}
+      {reprocessTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-bold text-slate-900">Reprocess this email?</h2>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">{reprocessTarget.email.subject}</p>
+              </div>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3">
+                <p className="text-sm font-semibold text-red-800">
+                  This will permanently delete booking{' '}
+                  <span className="font-mono bg-red-100 rounded px-1.5 py-0.5">{reprocessTarget.bookingRef}</span>
+                </p>
+                <p className="text-xs text-red-600 mt-1.5">
+                  All booking data, passengers, agenda items, and P&amp;L associated with this booking will be removed. This cannot be undone.
+                </p>
+              </div>
+              <p className="text-sm text-slate-600">
+                After deletion the email will be reprocessed from scratch using the latest extraction logic.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-3">
+              <button
+                onClick={() => setReprocessTarget(null)}
+                disabled={reprocessDeleting}
+                className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReprocess}
+                disabled={reprocessDeleting}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white text-sm font-semibold rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {reprocessDeleting
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Deleting…</>
+                  : <><Trash2 className="w-3.5 h-3.5" />Delete &amp; Reprocess</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Batch progress overlay (non-blocking strip) ───────────────────── */}
+      {batchProcessing && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white rounded-2xl shadow-2xl px-6 py-4 flex items-center gap-4 min-w-[320px]">
+          <Loader2 className="w-5 h-5 animate-spin text-indigo-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Batch Processing…</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                <div
+                  className="bg-indigo-400 h-1.5 rounded-full transition-all duration-300"
+                  style={{ width: `${batchTotal > 0 ? (batchProgress / batchTotal) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-400 flex-shrink-0">{batchProgress}/{batchTotal}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Header
         title="Mail Inbox"
         subtitle={
@@ -1047,6 +1367,25 @@ export default function MailInboxPage() {
             )}
           </div>
         </div>
+
+        {/* ── Batch Process Button ──────────────────────────────────────── */}
+        {unprocessedCount > 0 && (
+          <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
+            <PlayCircle className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+            <span className="text-sm text-indigo-800 font-medium flex-1">
+              <span className="font-bold">{unprocessedCount}</span> unprocessed TQ email{unprocessedCount !== 1 ? 's' : ''} in this view
+            </span>
+            <Button
+              size="sm"
+              variant="primary"
+              loading={batchProcessing}
+              icon={<PlayCircle className="w-3.5 h-3.5" />}
+              onClick={processBatch}
+            >
+              Process All Unprocessed
+            </Button>
+          </div>
+        )}
 
         {/* ── Search ────────────────────────────────────────────────────── */}
         <div className="space-y-2">
@@ -1309,6 +1648,17 @@ export default function MailInboxPage() {
                       <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
                         onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>
                         {bookingRef}
+                      </Button>
+                    )}
+                    {result?.success && bookingRef && !isWaiting && !isNeedsManual && !isAutoProc && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={<RotateCcw className="w-3.5 h-3.5 text-orange-500" />}
+                        onClick={() => setReprocessTarget({ email, bookingRef })}
+                        title="Delete booking and reprocess this email"
+                      >
+                        Reprocess
                       </Button>
                     )}
                     {result?.success && result.data?.extracted && (
