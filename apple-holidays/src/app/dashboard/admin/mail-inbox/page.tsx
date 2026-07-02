@@ -543,9 +543,9 @@ export default function MailInboxPage() {
 
   // processOneRef allows the callback to schedule sibling-email retries without
   // a circular useCallback dependency (PNL_WAITING → retry after TQ processed).
-  const processOneRef = useRef<(email: EmailWithMailbox) => void>(null as unknown as (email: EmailWithMailbox) => void)
+  const processOneRef = useRef<(email: EmailWithMailbox, force?: boolean) => void>(null as unknown as (email: EmailWithMailbox, force?: boolean) => void)
 
-  const processOne = useCallback(async (email: EmailWithMailbox) => {
+  const processOne = useCallback(async (email: EmailWithMailbox, force = false) => {
     setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
     const isPnlEmail = email.mailboxKind === 'PNL'
     try {
@@ -557,6 +557,7 @@ export default function MailInboxPage() {
           emailType:   isPnlEmail ? 'PNL' : 'TOUR_CONFIRMATION',
           graphId:     email.graphId,
           mailboxUser: email.mailboxUser,
+          force,
           bodyHtml:    email.bodyHtml,
           date:        email.date,
           folder:      email.folder,
@@ -933,7 +934,7 @@ export default function MailInboxPage() {
       setResults(m => { const n = new Map(m); n.delete(email.graphId); return n })
       setReprocessTarget(null)
       toast.info(`Reprocessing ${email.subject ?? 'email'}…`)
-      setTimeout(() => processOneRef.current(email), 150)
+      setTimeout(() => processOneRef.current(email, true), 150)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to delete booking')
     } finally {
