@@ -1,39 +1,22 @@
 import path from 'path'
-import { mkdir, writeFile, access } from 'fs/promises'
+import { mkdir, writeFile } from 'fs/promises'
 
 const PDF_DIR = path.join(process.cwd(), 'public', 'uploads', 'booking-pdfs')
 
-// Known system Chrome/Chromium paths (used when admin installs chromium manually)
-const SYSTEM_CHROME_PATHS = [
-  '/usr/bin/chromium-browser',
-  '/usr/bin/chromium',
-  '/usr/bin/google-chrome',
-  '/usr/bin/google-chrome-stable',
-  '/usr/local/bin/chromium',
-  '/snap/bin/chromium',
-]
-
-async function findSystemChrome(): Promise<string | undefined> {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH
-  for (const p of SYSTEM_CHROME_PATHS) {
-    try { await access(p); return p } catch { /* not found */ }
-  }
-  return undefined
-}
-
 async function launchBrowser() {
-  // 1. Explicit system Chrome path (env var or known binary)
-  const systemChrome = await findSystemChrome()
-  if (systemChrome) {
+  // 1. Explicit Chrome path via env var (admin override — takes priority everywhere)
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     const { default: puppeteerCore } = await import('puppeteer-core')
     return puppeteerCore.launch({
-      executablePath: systemChrome,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     })
   }
 
-  // 2. Linux server: use @sparticuz/chromium (self-contained, no system libs needed)
+  // 2. Linux server: use @sparticuz/chromium — self-contained, no system packages needed.
+  //    We do NOT auto-detect /usr/bin/chromium-browser because on Ubuntu 20.04+ it is a
+  //    snap stub that fails at launch even though the path exists.
   if (process.platform === 'linux') {
     const { default: chromium } = await import('@sparticuz/chromium')
     const { default: puppeteerCore } = await import('puppeteer-core')
@@ -46,7 +29,7 @@ async function launchBrowser() {
     })
   }
 
-  // 3. Local dev (macOS/Windows): use bundled puppeteer Chrome
+  // 3. Local dev (macOS/Windows): use puppeteer's bundled Chrome
   const { default: puppeteer } = await import('puppeteer')
   return puppeteer.launch({
     headless: true,
