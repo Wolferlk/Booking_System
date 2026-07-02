@@ -111,7 +111,7 @@ Schema:
   "paxAdults": "number",
   "paxChildren": "number",
   "quotedTotal": "number",
-  "currency": "string (default USD)",
+  "currency": "ISO 4217 currency code (e.g. USD, MYR, SGD, LKR, VND, AUD, GBP). NEVER use currency symbols or abbreviations like RM, S$, Rs — always convert to the ISO code (RM → MYR, S$ → SGD, Rs → LKR). Default USD.",
   "amendmentNote": "string or null",
   "terms": "string or null — full Terms and Conditions text",
   "exclusions": "string or null — The Above Package Excludes section",
@@ -417,7 +417,7 @@ Schema:
   "agent": "Agent name or null",
   "pax": "number of passengers (No. Pax)",
   "nights": "number of nights",
-  "currency": "currency code e.g. USD",
+  "currency": "ISO 4217 currency code (e.g. USD, MYR, SGD, LKR). NEVER use symbols like RM, S$, Rs — convert to ISO code (RM → MYR).",
   "exchangeRate": "exchange rate as number",
 
   "hotels": [

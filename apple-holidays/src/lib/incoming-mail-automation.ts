@@ -4,6 +4,7 @@ import { classifyPNLCategories } from '@/lib/openai'
 import { extractBookingFromEmail, type ProcessedEmail, type MailboxKind, type EmailAttachment } from '@/lib/mail-processor'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
+import { normalizeCurrencyCode } from '@/lib/utils'
 import fs from 'fs'
 import path from 'path'
 
@@ -549,7 +550,7 @@ async function syncTourConfirmation(
     paxAdults:        extracted.paxAdults,
     paxChildren:      extracted.paxChildren,
     quotedTotal:      extracted.quotedTotal ?? 0,
-    currency:         extracted.currency ?? 'USD',
+    currency:         normalizeCurrencyCode(extracted.currency),
     terms:            extracted.terms,
     exclusions:       extracted.exclusions,
     valueAddedServices: extracted.valueAddedServices ?? undefined,
@@ -752,7 +753,7 @@ async function syncPnL(
         paxAdults: extracted.paxAdults,
         paxChildren: extracted.paxChildren,
         quotedTotal: extracted.quotedTotal ?? 0,
-        currency: extracted.currency ?? 'USD',
+        currency: normalizeCurrencyCode(extracted.currency),
         terms: extracted.terms,
         exclusions: extracted.exclusions,
         agentEmail: extracted.agentEmail,

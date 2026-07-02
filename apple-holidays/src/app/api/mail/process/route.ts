@@ -50,12 +50,13 @@ export async function POST(req: NextRequest) {
   if (!['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { rawBody, subject, emailType, graphId, mailboxUser } = body as {
+  const { rawBody, subject, emailType, graphId, mailboxUser, force } = body as {
     rawBody: string
     subject: string
     emailType?: string
     graphId?: string
     mailboxUser?: string
+    force?: boolean
     bodyHtml?: string
     date?: string
     folder?: string
@@ -74,7 +75,8 @@ export async function POST(req: NextRequest) {
   // ── Dedup: if backend already processed this email, return cached result ──────
   // This prevents duplicate OpenAI calls when the backend (webhook/IMAP IDLE/cron)
   // already extracted and saved the booking before the user's browser loaded.
-  if (graphId) {
+  // Skip when force=true (user explicitly requested reprocess after deleting booking).
+  if (graphId && !force) {
     const cached = await prisma.systemSetting.findUnique({
       where: { key: `processed_email_${graphId}` },
     })
@@ -100,6 +102,11 @@ export async function POST(req: NextRequest) {
         extracted:       null,
       }, `Booking ${cachedRef} already processed by backend`)
     }
+  }
+
+  // If force-reprocessing, clear the stale dedup record so the upsert at the end writes fresh
+  if (graphId && force) {
+    await prisma.systemSetting.deleteMany({ where: { key: `processed_email_${graphId}` } })
   }
 
   const type = (emailType ?? 'TOUR_CONFIRMATION') as 'TOUR_CONFIRMATION' | 'PNL'
