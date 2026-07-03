@@ -161,8 +161,15 @@ export default function VendorsPage() {
 
   async function deleteVendor(id: string) {
     if (!confirm('Delete this vendor? Their vehicles will also be deleted.')) return
-    await fetch(`/api/ground/vendors/${id}`, { method: 'DELETE' })
-    toast.success('Vendor deleted'); load()
+    try {
+      const res = await fetch(`/api/ground/vendors/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      toast.success('Vendor deleted')
+      load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete vendor')
+    }
   }
 
   function openAddVehicle(vendorId: string) {
@@ -197,8 +204,15 @@ export default function VendorsPage() {
 
   async function deleteVehicle(id: string) {
     if (!confirm('Remove this vehicle?')) return
-    await fetch(`/api/ground/vehicles/${id}`, { method: 'DELETE' })
-    toast.success('Vehicle removed'); load()
+    try {
+      const res = await fetch(`/api/ground/vehicles/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      toast.success('Vehicle removed')
+      load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete vehicle')
+    }
   }
 
   const pendingCount = vendors.filter(v => v.isRegistered && !v.isActive).length

@@ -44,7 +44,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (session.user.role !== 'SUPER_ADMIN') return buildApiError('Forbidden', 403)
+  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+    return buildApiError('Forbidden', 403)
+  }
 
   await prisma.vehicle.delete({ where: { id: params.id } })
   return buildApiSuccess(null, 'Vehicle deleted')
