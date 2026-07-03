@@ -685,6 +685,21 @@ export default function AccountsPNLPage() {
                               <td>{formatDate(b.arrivalDate)}</td>
                               <td>{formatDate(b.departureDate)}</td>
                               <td>{b.paxAdults + b.paxChildren}</td>
+                              <td>{b.quotedTotal ? formatCurrency(b.quotedTotal, b.currency) : '—'}</td>
+                              <td>
+                                {b.operationCountry && (
+                                  <span className="inline-flex items-center gap-1 font-mono text-xs">
+                                    <CountryFlag country={b.operationCountry} className="w-4 h-3" />
+                                    {b.operationCountry === 'VIETNAM' ? 'VN'
+                                    : b.operationCountry === 'SRILANKA' ? 'SL'
+                                    : b.operationCountry === 'SINGAPORE' ? 'SG'
+                                    : b.operationCountry === 'MALAYSIA' ? 'MY'
+                                    : b.operationCountry === 'SINGAPORE_MALAYSIA' ? 'SG/MY'
+                                    : b.operationCountry}
+                                  </span>
+                                )}
+                              </td>
+                              <td><StatusBadge status={b.status as never} /></td>
                               <td>
                                 <div className="flex items-center gap-1">
                                   <button

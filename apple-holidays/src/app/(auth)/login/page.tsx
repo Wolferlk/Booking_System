@@ -9,6 +9,7 @@ import {
   Eye, EyeOff, Loader2, ChevronLeft,
   FileText, Truck, MapPin, BarChart2, Globe, Shield, Lock,
 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 const COUNTRY_PARAM_TO_FILTER: Record<string, string> = {
   vietnam:   'VIETNAM',
@@ -17,11 +18,11 @@ const COUNTRY_PARAM_TO_FILTER: Record<string, string> = {
   malaysia:  'MALAYSIA',
 }
 
-const DESTINATION_META: Record<string, { label: string; flag: string; code: string }> = {
-  vietnam:   { label: 'Vietnam',    flag: '🇻🇳', code: 'MMT_VN' },
-  srilanka:  { label: 'Sri Lanka',  flag: '🇱🇰', code: 'MMT_LK' },
-  malaysia:  { label: 'Malaysia',   flag: '🇲🇾', code: 'MMT_MY' },
-  singapore: { label: 'Singapore',  flag: '🇸🇬', code: 'MMT_SG' },
+const DESTINATION_META: Record<string, { label: string; country: string; code: string }> = {
+  vietnam:   { label: 'Vietnam',    country: 'VIETNAM',   code: 'MMT_VN' },
+  srilanka:  { label: 'Sri Lanka',  country: 'SRILANKA',  code: 'MMT_LK' },
+  malaysia:  { label: 'Malaysia',   country: 'MALAYSIA',  code: 'MMT_MY' },
+  singapore: { label: 'Singapore',  country: 'SINGAPORE', code: 'MMT_SG' },
 }
 
 const ROLE_META: Record<string, {
@@ -181,7 +182,7 @@ function LoginForm() {
 
           {destinationMeta && (
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 mb-4">
-              <span className="text-xl">{destinationMeta.flag}</span>
+              <CountryFlag country={destinationMeta.country} className="w-8 h-6" />
               <div className="text-left">
                 <p className="text-sm font-bold text-white leading-tight">{destinationMeta.label}</p>
                 <p className="text-[11px] text-slate-500 tracking-wider uppercase">{destinationMeta.code}</p>

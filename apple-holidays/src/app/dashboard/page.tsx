@@ -15,41 +15,42 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
 import type { UserRole, BookingStatus } from '@prisma/client'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 const COUNTRY_META: Record<string, {
-  name: string; flag: string; code: string
+  name: string; code: string
   gradient: string; border: string; text: string; badge: string
 }> = {
   VIETNAM: {
-    name: 'Vietnam', flag: '🇻🇳', code: 'MMT_VN',
+    name: 'Vietnam', code: 'MMT_VN',
     gradient: 'from-red-500/10 to-red-600/5',
     border: 'border-red-500/20',
     text: 'text-red-700',
     badge: 'bg-red-100 text-red-700 border-red-200',
   },
   SRILANKA: {
-    name: 'Sri Lanka', flag: '🇱🇰', code: 'MMT_LK',
+    name: 'Sri Lanka', code: 'MMT_LK',
     gradient: 'from-yellow-500/10 to-yellow-600/5',
     border: 'border-yellow-500/20',
     text: 'text-yellow-700',
     badge: 'bg-yellow-100 text-yellow-700 border-yellow-200',
   },
   SINGAPORE: {
-    name: 'Singapore', flag: '🇸🇬', code: 'MMT_SG',
+    name: 'Singapore', code: 'MMT_SG',
     gradient: 'from-blue-500/10 to-blue-600/5',
     border: 'border-blue-500/20',
     text: 'text-blue-700',
     badge: 'bg-blue-100 text-blue-700 border-blue-200',
   },
   MALAYSIA: {
-    name: 'Malaysia', flag: '🇲🇾', code: 'MMT_MY',
+    name: 'Malaysia', code: 'MMT_MY',
     gradient: 'from-emerald-500/10 to-emerald-600/5',
     border: 'border-emerald-500/20',
     text: 'text-emerald-700',
     badge: 'bg-emerald-100 text-emerald-700 border-emerald-200',
   },
   SINGAPORE_MALAYSIA: {
-    name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY',
+    name: 'Singapore & Malaysia', code: 'MMT_SG_MY',
     gradient: 'from-blue-500/10 to-blue-600/5',
     border: 'border-blue-500/20',
     text: 'text-blue-700',
@@ -145,7 +146,7 @@ export default function DashboardPage() {
         title={`Welcome back, ${session?.user?.name?.split(' ')[0]} 👋`}
         subtitle={
           countryMeta
-            ? `${countryMeta.flag} ${ROLE_LABELS[role ?? ''] ?? role} · ${countryMeta.name} Operations`
+            ? <span className="inline-flex items-center gap-1.5"><CountryFlag country={countryFilter} className="w-4 h-3 inline-block" /> {ROLE_LABELS[role ?? ''] ?? role} · {countryMeta.name} Operations</span>
             : "Here's what's happening with your bookings today"
         }
       />
@@ -154,7 +155,7 @@ export default function DashboardPage() {
         {/* Country context banner */}
         {countryMeta && (
           <div className={`flex items-center gap-4 px-6 py-5 rounded-2xl border bg-gradient-to-r ${countryMeta.gradient} ${countryMeta.border}`}>
-            <span className="text-5xl leading-none flex-shrink-0">{countryMeta.flag}</span>
+            <CountryFlag country={countryFilter} className="w-16 h-12 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Operating Region</p>
               <p className="text-2xl font-bold text-slate-900 mt-0.5 leading-tight">{countryMeta.name}</p>
@@ -262,10 +263,10 @@ export default function DashboardPage() {
                 >
                   <h3 className="text-base font-semibold text-slate-900">
                     {countryMeta ? (
-                      <>
-                        <span className="mr-1.5">{countryMeta.flag}</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <CountryFlag country={countryFilter} className="w-5 h-4" />
                         Recent {countryMeta.name} Bookings
-                      </>
+                      </span>
                     ) : 'Recent Bookings'}
                   </h3>
                 </CardHeader>
@@ -285,8 +286,8 @@ export default function DashboardPage() {
                                 <span className="text-sm font-semibold text-slate-900">{b.bookingRef}</span>
                                 <StatusBadge status={b.status} />
                                 {!countryMeta && b.operationCountry && COUNTRY_META[b.operationCountry] && (
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold border ${COUNTRY_META[b.operationCountry].badge}`}>
-                                    {COUNTRY_META[b.operationCountry].flag} {COUNTRY_META[b.operationCountry].code}
+                                  <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold border ${COUNTRY_META[b.operationCountry].badge}`}>
+                                    <CountryFlag country={b.operationCountry} className="w-4 h-3" /> {COUNTRY_META[b.operationCountry].code}
                                   </span>
                                 )}
                               </div>

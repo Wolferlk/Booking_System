@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState,useRef,useEffect, type FormEvent, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe, Mail, X } from 'lucide-react'
@@ -36,6 +36,30 @@ interface Flight { flightNo: string; date: string; fromApt: string; depTime: str
 interface Hotel { city: string; hotel: string; checkIn: string; checkOut: string; nights: string; roomType: string; mealType: string; address: string }
 interface ItineraryItem { dayNo: string; date: string; title: string; description: string }
 interface EmergencyContact { name: string; phone: string; role: string }
+
+const PHONE_ALLOWED_REGEX = /^\+?[0-9\s\-()]*$/
+const PHONE_INPUT_PATTERN = '^[+0-9() -]*$'
+
+function sanitizePhoneValue(value: string) {
+  const cleaned = value.replace(/[^+0-9\s\-()]/g, '')
+  const plusCount = (cleaned.match(/\+/g) || []).length
+  if (plusCount <= 1) return cleaned
+  return cleaned.replace(/\+/g, '').replace(/^/, '+')
+}
+
+function isValidPhoneValue(value: string) {
+  if (!value) return true
+  return PHONE_ALLOWED_REGEX.test(value)
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Card>
+      <CardHeader><h3 className="text-base font-semibold text-slate-900">{title}</h3></CardHeader>
+      <CardBody>{children}</CardBody>
+    </Card>
+  )
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -155,11 +179,12 @@ export default function NewBookingPage() {
       policyNotes:    (data.policyNotes    as string) || prev.policyNotes,
       amendmentNote:  (data.amendmentNote  as string) || prev.amendmentNote,
       agentEmail:     (data.agentEmail     as string) || prev.agentEmail,
-      agentPhone:     (data.agentPhone     as string) || prev.agentPhone,
-      agentWhatsapp:  (data.agentWhatsapp  as string) || prev.agentWhatsapp,
+      agentPhone:     sanitizePhoneValue((data.agentPhone     as string) || prev.agentPhone),
+      agentWhatsapp:  sanitizePhoneValue((data.agentWhatsapp  as string) || prev.agentWhatsapp),
       contactEmail:   (data.contactEmail   as string) || prev.contactEmail,
-      contactPhone:   (data.contactPhone   as string) || prev.contactPhone,
-      contactWhatsapp:(data.contactWhatsapp as string) || prev.contactWhatsapp,
+      contactPhone:   sanitizePhoneValue((data.contactPhone   as string) || prev.contactPhone),
+      contactWhatsapp: sanitizePhoneValue((data.contactWhatsapp as string) || prev.contactWhatsapp),
+      
       // Additional TC sections
       valueAddedServices: (data.valueAddedServices as string) || prev.valueAddedServices,
       packageIncludes:    (data.packageIncludes    as string) || prev.packageIncludes,
@@ -222,6 +247,26 @@ export default function NewBookingPage() {
     })))
   }
 
+  function validatePhoneFields() {
+    const phoneChecks = [
+      { label: 'Agent Phone', value: form.agentPhone },
+      { label: 'Agent WhatsApp', value: form.agentWhatsapp },
+      { label: 'Customer Phone', value: form.contactPhone },
+      { label: 'Customer WhatsApp', value: form.contactWhatsapp },
+    ]
+
+    for (const check of phoneChecks) {
+      if (!isValidPhoneValue(check.value)) {
+        throw new Error(`${check.label} may only include digits, spaces, +, hyphens, and parentheses.`)
+      }
+    }
+
+    emergencyContacts.forEach((contact, index) => {
+      if (!isValidPhoneValue(contact.phone)) {
+        throw new Error(`Emergency contact ${index + 1} phone may only include digits, spaces, +, hyphens, and parentheses.`)
+      }
+    })
+  }
   // Keep ref current every render so the mount effect can call it
   handleAIParsedRef.current = handleAIParsed
 
@@ -264,7 +309,7 @@ export default function NewBookingPage() {
   }
 
   // ── Submit ────────────────────────────────────────────────────────────────
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault()
     setSaving(true)
     try {
@@ -274,6 +319,7 @@ export default function NewBookingPage() {
         return
       }
 
+      validatePhoneFields()
       if (!form.bookingRef.trim()) {
         toast.error('Booking Reference is required. Upload a TC document to extract the IS Number, or enter it manually.')
         setSaving(false)
@@ -316,13 +362,6 @@ export default function NewBookingPage() {
       setSaving(false)
     }
   }
-
-  const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <Card>
-      <CardHeader><h3 className="text-base font-semibold text-slate-900">{title}</h3></CardHeader>
-      <CardBody>{children}</CardBody>
-    </Card>
-  )
 
   const activeDrive = COUNTRY_DRIVES.find(d => d.driveKey === selectedDriveKey)
 
@@ -865,9 +904,18 @@ export default function NewBookingPage() {
                 ].map(f => (
                   <div key={f.key}>
                     <label className="form-label text-xs">{f.label}</label>
-                    <input className="form-input" type={f.type} placeholder={f.placeholder}
+                    <input
+                      className="form-input"
+                      type={f.type}
+                      inputMode={f.type === 'tel' ? 'tel' : undefined}
+                      pattern={f.type === 'tel' ? PHONE_INPUT_PATTERN : undefined}
+                      placeholder={f.placeholder}
                       value={(form as unknown as Record<string, string>)[f.key]}
-                      onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+                      onChange={e => {
+                        const nextValue = f.type === 'tel' ? sanitizePhoneValue(e.target.value) : e.target.value
+                        setForm(p => ({ ...p, [f.key]: nextValue }))
+                      }}
+                    />
                   </div>
                 ))}
               </div>
@@ -880,9 +928,18 @@ export default function NewBookingPage() {
                 ].map(f => (
                   <div key={f.key}>
                     <label className="form-label text-xs">{f.label}</label>
-                    <input className="form-input" type={f.type} placeholder={f.placeholder}
+                    <input
+                      className="form-input"
+                      type={f.type}
+                      inputMode={f.type === 'tel' ? 'tel' : undefined}
+                      pattern={f.type === 'tel' ? PHONE_INPUT_PATTERN : undefined}
+                      placeholder={f.placeholder}
                       value={(form as unknown as Record<string, string>)[f.key]}
-                      onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+                      onChange={e => {
+                        const nextValue = f.type === 'tel' ? sanitizePhoneValue(e.target.value) : e.target.value
+                        setForm(p => ({ ...p, [f.key]: nextValue }))
+                      }}
+                    />
                   </div>
                 ))}
               </div>
@@ -902,7 +959,9 @@ export default function NewBookingPage() {
                   <div>
                     <label className="form-label text-xs">Phone</label>
                     <input className="form-input text-sm" value={ec.phone}
-                      onChange={e => setEmergencyContacts(ecs => ecs.map((c, j) => j === i ? { ...c, phone: e.target.value } : c))} />
+                      inputMode="tel"
+                      pattern={PHONE_INPUT_PATTERN}
+                      onChange={e => setEmergencyContacts(ecs => ecs.map((c, j) => j === i ? { ...c, phone: sanitizePhoneValue(e.target.value) } : c))} />
                   </div>
                   <div className="flex gap-2">
                     <div className="flex-1">

@@ -7,6 +7,7 @@ import {
   Shield, ArrowRight,
   Users, CheckCircle2, UserCog,
 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 const ROLES = [
   {
@@ -126,7 +127,7 @@ export default function VietnamPage() {
         {/* Hero */}
         <div className="text-center mb-14">
           <div className="flex items-center justify-center gap-4 mb-5">
-            <span className="text-6xl filter drop-shadow-lg">🇻🇳</span>
+            <CountryFlag country="VIETNAM" className="w-20 h-14 drop-shadow-lg" />
             <div className="text-left">
               <h1 className="text-5xl font-black text-white tracking-tight leading-tight">
                Vietnam
