@@ -246,7 +246,7 @@ export default function VendorDriversPage() {
                       onChange={set(f.key)}
                       autoComplete="off"
                       spellCheck={false}
-                      className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                      className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
                     />
                   </div>
                 ))}
@@ -262,7 +262,7 @@ export default function VendorDriversPage() {
                         value={form.vehicleType}
                         onChange={set('vehicleType')}
                         autoComplete="off"
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none appearance-none"
+                        className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none appearance-none"
                         style={{ colorScheme: 'dark' }}
                       >
                         {VEHICLE_TYPES.map(t => <option key={t} value={t} style={{ background: '#1e2d45' }}>{t}</option>)}
@@ -276,7 +276,7 @@ export default function VendorDriversPage() {
                         placeholder="CAH 5296"
                         autoComplete="off"
                         spellCheck={false}
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-600 focus:outline-none"
+                        className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-500 focus:outline-none"
                       />
                     </div>
                     <div>
@@ -287,7 +287,7 @@ export default function VendorDriversPage() {
                         placeholder="Toyota"
                         autoComplete="off"
                         spellCheck={false}
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+                        className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none"
                       />
                     </div>
                     <div>
@@ -298,7 +298,7 @@ export default function VendorDriversPage() {
                         placeholder="Hiace"
                         autoComplete="off"
                         spellCheck={false}
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+                        className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none"
                       />
                     </div>
                   </div>
@@ -341,7 +341,7 @@ export default function VendorDriversPage() {
                       onChange={set(f.key)}
                       autoComplete="off"
                       spellCheck={false}
-                      className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+                      className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none"
                     />
                   </div>
                 ))}

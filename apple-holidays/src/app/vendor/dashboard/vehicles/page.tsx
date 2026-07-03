@@ -205,30 +205,31 @@ export default function VendorVehiclesPage() {
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Type</label>
                   <select value={form.type} onChange={set('type')}
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none">
-                    {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none appearance-none"
+                    style={{ colorScheme: 'dark' }}>
+                    {VEHICLE_TYPES.map(t => <option key={t} value={t} style={{ background: '#1e2d45' }}>{t}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Plate No. *</label>
                   <input value={form.plateNo} onChange={set('plateNo')} placeholder="CAH 5296"
                     disabled={modal !== 'new'}
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-600 focus:outline-none disabled:opacity-50" />
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-500 focus:outline-none disabled:opacity-50" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Brand</label>
                   <input value={form.brand} onChange={set('brand')} placeholder="Toyota"
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none" />
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Model</label>
                   <input value={form.model} onChange={set('model')} placeholder="Hiace"
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none" />
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none" />
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Seats</label>
                   <input type="number" min="1" max="60" value={form.capacity} onChange={set('capacity')}
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none" />
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none" />
                 </div>
               </div>
 

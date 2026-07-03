@@ -95,7 +95,7 @@ export default function SingaporePage() {
       <main className="relative z-10 max-w-7xl mx-auto px-8 py-14">
         <div className="text-center mb-14">
           <div className="flex items-center justify-center gap-4 mb-5">
-            <CountryFlag country="SINGAPORE_MALAYSIA" className="w-20 h-14 drop-shadow-lg" />
+            <CountryFlag country="SINGAPORE_MALAYSIA" className="text-[68px] leading-none drop-shadow-lg" />
             <div className="text-left">
               <h1 className="text-5xl font-black text-white tracking-tight leading-tight">Singapore & Malaysia</h1>
               <p className="text-slate-400 text-xl mt-0.5">Booking & Operations System</p>

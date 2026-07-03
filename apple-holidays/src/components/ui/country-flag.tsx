@@ -12,7 +12,7 @@ const FLAG_MAP: Record<string, string> = {
   MALAYSIA: '🇲🇾',
 }
 
-export function CountryFlag({ country, className = 'w-5 h-4' }: CountryFlagProps) {
+export function CountryFlag({ country, className = 'text-xl' }: CountryFlagProps) {
   switch (country) {
     case 'VIETNAM':
       return <span className={className} role="img" aria-label="Vietnam">{FLAG_MAP.VIETNAM}</span>
@@ -24,7 +24,7 @@ export function CountryFlag({ country, className = 'w-5 h-4' }: CountryFlagProps
       return <span className={className} role="img" aria-label="Malaysia">{FLAG_MAP.MALAYSIA}</span>
     case 'SINGAPORE_MALAYSIA':
       return (
-        <span className="inline-flex gap-0.5">
+        <span className="inline-flex gap-1">
           <span className={className} role="img" aria-label="Singapore">{FLAG_MAP.SINGAPORE}</span>
           <span className={className} role="img" aria-label="Malaysia">{FLAG_MAP.MALAYSIA}</span>
         </span>
