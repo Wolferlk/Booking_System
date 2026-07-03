@@ -50,12 +50,12 @@ export default function ReportsPage() {
   const [filterTo, setFilterTo] = useState('')
   const [filterAgent, setFilterAgent] = useState('')
 
-  async function load() {
+  async function load(status = filterStatus, from = filterFrom, to = filterTo, agent = filterAgent) {
     setLoading(true)
     try {
       const params = new URLSearchParams({ limit: '500' })
-      if (filterStatus) params.set('status', filterStatus)
-      if (filterAgent) params.set('search', filterAgent)
+      if (status) params.set('status', status)
+      if (agent) params.set('search', agent)
       if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
 
       const res = await fetch(`/api/accounts/report?${params}`)
@@ -63,8 +63,8 @@ export default function ReportsPage() {
       if (json.success) {
         let data: ReportRow[] = json.data
         // client-side date filter
-        if (filterFrom) data = data.filter(r => r.arrivalDate >= filterFrom)
-        if (filterTo) data = data.filter(r => r.arrivalDate <= filterTo)
+        if (from) data = data.filter(r => r.arrivalDate >= from)
+        if (to) data = data.filter(r => r.arrivalDate <= to)
         setRows(data)
       } else {
         toast.error(json.error ?? 'Failed to load report')
@@ -184,12 +184,16 @@ export default function ReportsPage() {
               </div>
             </div>
             <div className="mt-4 flex gap-2">
-              <button onClick={load} className="btn btn-primary btn-sm" disabled={loading}>
+              <button onClick={() => load(filterStatus, filterFrom, filterTo, filterAgent)} className="btn btn-primary btn-sm" disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
                 Apply Filters
               </button>
               <button onClick={() => {
-                setFilterStatus(''); setFilterFrom(''); setFilterTo(''); setFilterAgent('')
+                setFilterStatus('')
+                setFilterFrom('')
+                setFilterTo('')
+                setFilterAgent('')
+                load('', '', '', '')
               }} className="btn btn-secondary btn-sm">
                 Clear
               </button>
