@@ -33,6 +33,6 @@ export async function POST(req: NextRequest) {
   const buffer = Buffer.from(await file.arrayBuffer())
   await writeFile(path.join(uploadDir, filename), buffer)
 
-  const url = `/uploads/photos/${filename}`
+  const url = `/api/uploads/photos/${filename}`
   return buildApiSuccess({ url, filename }, 'Photo uploaded')
 }
