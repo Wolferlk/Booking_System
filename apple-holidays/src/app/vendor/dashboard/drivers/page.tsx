@@ -240,7 +240,7 @@ export default function VendorDriversPage() {
                 <div key={f.key}>
                   <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">{f.label}</label>
                   <input type={f.type ?? 'text'} value={form[f.key]} onChange={set(f.key)}
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50" />
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
                 </div>
               ))}
 
@@ -251,8 +251,8 @@ export default function VendorDriversPage() {
                     <div>
                       <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Type</label>
                       <select value={form.vehicleType} onChange={set('vehicleType')}
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none">
-                        {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none" style={{ colorScheme: 'dark' }}>
+                        {VEHICLE_TYPES.map(t => <option key={t} value={t} style={{ background: '#1e2d45' }}>{t}</option>)}
                       </select>
                     </div>
                     <div>

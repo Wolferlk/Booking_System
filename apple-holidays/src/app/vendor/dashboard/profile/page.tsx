@@ -104,7 +104,7 @@ export default function VendorProfilePage() {
               type={f.type}
               value={f.val}
               onChange={e => f.set(e.target.value)}
-              className="w-full bg-white/6 border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50"
+              className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
             />
           </div>
         ))}
@@ -126,7 +126,7 @@ export default function VendorProfilePage() {
               <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Current Password</label>
               <input type={showPw ? 'text' : 'password'} value={curPw} onChange={e => setCurPw(e.target.value)}
                 placeholder="Your current password"
-                className="w-full bg-white/6 border border-white/10 rounded-xl py-3 px-4 pr-12 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50" />
+                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 pr-12 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
               <button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 bottom-3 text-slate-500">
                 {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -134,12 +134,12 @@ export default function VendorProfilePage() {
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">New Password</label>
               <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters"
-                className="w-full bg-white/6 border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50" />
+                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Confirm Password</label>
               <input type="password" value={cnfPw} onChange={e => setCnfPw(e.target.value)} placeholder="Repeat new password"
-                className="w-full bg-white/6 border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50" />
+                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
             </div>
           </div>
         )}
