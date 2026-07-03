@@ -177,7 +177,6 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile backdrop */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-30 lg:hidden backdrop-blur-sm"
@@ -191,62 +190,12 @@ export default function Sidebar() {
           'fixed left-0 top-0 h-full bg-slate-900 flex flex-col z-40',
           'border-r border-slate-800',
           'transition-all duration-300 ease-in-out',
-          // Width: mobile always full, desktop depends on collapse state
           'w-[260px]',
           isCollapsed && 'lg:w-16',
-          // Mobile: hide off-screen when closed, show when open
           isMobileOpen ? 'translate-x-0' : '-translate-x-full',
-          // Desktop: always visible
           'lg:translate-x-0',
         )}
-        {/* Country filter — only for admins who can see all countries */}
-        {canFilter && (
-          <div className="mt-3">
-            <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
-              Country Filter
-            </p>
-            <div className="grid grid-cols-4 gap-1">
-              {COUNTRY_PILLS.map(pill => (
-                <button
-                  key={pill.value}
-                  onClick={() => setCountryFilter(pill.value)}
-                  title={pill.value === 'ALL' ? 'All Countries' : pill.value.replace('_', ' & ')}
-                  className={cn(
-                    'flex flex-col items-center gap-0.5 py-1.5 px-0.5 rounded-lg text-center transition-all text-[9px] font-semibold leading-tight',
-                    countryFilter === pill.value
-                      ? 'bg-brand-500/20 border border-brand-500/40 text-brand-300'
-                      : 'bg-slate-800/60 border border-slate-700/40 text-slate-500 hover:text-slate-300 hover:bg-slate-700/60',
-                  )}
-                >
-                  <CountryFlag country={pill.value} className="w-5 h-4" />
-                  <span>{pill.short}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        {/* Locked country — all non-Ultra users */}
-        {!canFilter && role && role !== 'CLIENT' && (() => {
-          const COUNTRY_META: Record<string, { name: string; code: string; color: string }> = {
-            VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    color: 'border-red-500/25 bg-red-500/8' },
-            SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    color: 'border-yellow-500/25 bg-yellow-500/8' },
-            SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', color: 'border-blue-500/25 bg-blue-500/8' },
-            SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG',    color: 'border-blue-500/25 bg-blue-500/8' },
-            MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    color: 'border-emerald-500/25 bg-emerald-500/8' },
-          }
-          const meta = countryFilter && countryFilter !== 'ALL'
-            ? COUNTRY_META[countryFilter]
-            : null
-          return (
-            <div className="mt-3">
-              <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
-                Operating Country
-              </p>
-              {meta ? (
-                <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${meta.color}`}>
-                  <CountryFlag country={countryFilter} className="w-8 h-6 flex-shrink-0" />
       >
-        {/* Mobile close button */}
         <button
           onClick={closeMobile}
           className="lg:hidden absolute top-3 right-3 z-10 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
@@ -255,7 +204,6 @@ export default function Sidebar() {
           <X className="w-4 h-4" />
         </button>
 
-        {/* ── Logo / Header ─────────────────────────────────────── */}
         <div className={cn('border-b border-slate-800 flex-shrink-0 px-4 py-4', isCollapsed && 'lg:px-2')}>
           <Link
             href="/"
@@ -284,7 +232,6 @@ export default function Sidebar() {
             )} />
           </Link>
 
-          {/* Role badge */}
           {role && (
             <div className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/8 border border-brand-500/20',
@@ -295,7 +242,6 @@ export default function Sidebar() {
             </div>
           )}
 
-          {/* Country filter — ULTRA_SUPER_ADMIN can switch */}
           {canFilter && (
             <div className={cn('mt-3', isCollapsed && 'lg:hidden')}>
               <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
@@ -322,7 +268,6 @@ export default function Sidebar() {
             </div>
           )}
 
-          {/* Locked country — non-ultra users */}
           {!canFilter && role && role !== 'CLIENT' && (
             <div className={cn('mt-3', isCollapsed && 'lg:hidden')}>
               <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
@@ -351,7 +296,6 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* ── Navigation ────────────────────────────────────────── */}
         <nav className="flex-1 py-4 overflow-y-auto scrollbar-hide">
           <div className={cn('mb-2 px-3', isCollapsed && 'lg:px-1')}>
             <p className={cn(
@@ -425,7 +369,6 @@ export default function Sidebar() {
           </ul>
         </nav>
 
-        {/* ── Desktop collapse toggle ───────────────────────────── */}
         <button
           onClick={toggleCollapse}
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -446,7 +389,6 @@ export default function Sidebar() {
           }
         </button>
 
-        {/* ── User info ─────────────────────────────────────────── */}
         {session?.user && (
           <div className={cn('border-t border-slate-800 px-4 py-4', isCollapsed && 'lg:px-2 lg:py-3')}>
             <div className={cn(

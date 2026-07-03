@@ -166,13 +166,13 @@ async function runImapMailbox(lessCreditMode: boolean, cutoffMs: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function jobProcessMailboxes() {
-  const mailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })
-  if (mailSetting?.value !== 'true') {
-    console.log('[Scheduler] process-mailboxes disabled — enable in Settings → Automation')
-    return
-  }
-  console.log('[Scheduler] process-mailboxes started')
   try {
+    const mailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })
+    if (mailSetting?.value !== 'true') {
+      console.log('[Scheduler] process-mailboxes disabled — enable in Settings → Automation')
+      return
+    }
+    console.log('[Scheduler] process-mailboxes started')
     const lessCreditMode = await getLessCreditModeEnabled()
     const cutoffMs = RECENT_MAIL_WINDOW_MINUTES * 60 * 1000
     await runGraphMailboxes(lessCreditMode, cutoffMs)
@@ -194,13 +194,17 @@ async function jobRenewWebhook() {
 }
 
 async function jobOneDrivePoll() {
-  const driveSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
-  if (driveSetting?.value !== 'true') {
-    console.log('[Scheduler] OneDrive poll disabled — enable in Settings → AI Token Controls')
-    return
+  try {
+    const driveSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
+    if (driveSetting?.value !== 'true') {
+      console.log('[Scheduler] OneDrive poll disabled — enable in Settings → AI Token Controls')
+      return
+    }
+    const { runOneDrivePoll } = await import('./onedrive-monitor')
+    await runOneDrivePoll()
+  } catch (err) {
+    console.error('[Scheduler] OneDrive poll error:', err instanceof Error ? err.message : err)
   }
-  const { runOneDrivePoll } = await import('./onedrive-monitor')
-  await runOneDrivePoll()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

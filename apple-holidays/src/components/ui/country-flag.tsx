@@ -1,7 +1,3 @@
-import VN from 'country-flag-icons/react/3x2/VN'
-import LK from 'country-flag-icons/react/3x2/LK'
-import SG from 'country-flag-icons/react/3x2/SG'
-import MY from 'country-flag-icons/react/3x2/MY'
 import { Globe } from 'lucide-react'
 
 interface CountryFlagProps {
@@ -9,28 +5,31 @@ interface CountryFlagProps {
   className?: string
 }
 
-/**
- * Renders a country flag as an inline SVG — works on all platforms including
- * Windows, which does not render regional-indicator emoji (🇻🇳, 🇱🇰, etc.).
- */
+const FLAG_MAP: Record<string, string> = {
+  VIETNAM: '🇻🇳',
+  SRILANKA: '🇱🇰',
+  SINGAPORE: '🇸🇬',
+  MALAYSIA: '🇲🇾',
+}
+
 export function CountryFlag({ country, className = 'w-5 h-4' }: CountryFlagProps) {
   switch (country) {
     case 'VIETNAM':
-      return <VN className={className} title="Vietnam" />
+      return <span className={className} role="img" aria-label="Vietnam">{FLAG_MAP.VIETNAM}</span>
     case 'SRILANKA':
-      return <LK className={className} title="Sri Lanka" />
+      return <span className={className} role="img" aria-label="Sri Lanka">{FLAG_MAP.SRILANKA}</span>
     case 'SINGAPORE':
-      return <SG className={className} title="Singapore" />
+      return <span className={className} role="img" aria-label="Singapore">{FLAG_MAP.SINGAPORE}</span>
     case 'MALAYSIA':
-      return <MY className={className} title="Malaysia" />
+      return <span className={className} role="img" aria-label="Malaysia">{FLAG_MAP.MALAYSIA}</span>
     case 'SINGAPORE_MALAYSIA':
       return (
         <span className="inline-flex gap-0.5">
-          <SG className={className} title="Singapore" />
-          <MY className={className} title="Malaysia" />
+          <span className={className} role="img" aria-label="Singapore">{FLAG_MAP.SINGAPORE}</span>
+          <span className={className} role="img" aria-label="Malaysia">{FLAG_MAP.MALAYSIA}</span>
         </span>
       )
     default:
-      return <Globe className="text-white"  />
+      return <Globe className={`text-white ${className}`} />
   }
 }
