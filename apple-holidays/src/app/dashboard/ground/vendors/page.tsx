@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car, ChevronDown, ChevronUp, Link2, CheckCircle2 } from 'lucide-react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -50,6 +50,17 @@ export default function VendorsPage() {
   const [vForm, setVForm] = useState({ type: 'van', plateNo: '', brand: '', model: '', capacity: '4' })
 
   const [saving, setSaving] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  async function copyRegLink(vendorId: string) {
+    const res = await fetch(`/api/ground/vendors/${vendorId}/register-link`)
+    const data = await res.json()
+    if (!data.success) return toast.error(data.error)
+    await navigator.clipboard.writeText(data.data.link).catch(() => prompt('Copy this link:', data.data.link))
+    toast.success(data.data.isRegistered ? 'Link copied (vendor already registered)' : 'Registration link copied!')
+    setCopiedId(vendorId)
+    setTimeout(() => setCopiedId(null), 3000)
+  }
 
   async function load() {
     try {
@@ -182,6 +193,13 @@ export default function VendorsPage() {
                     <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{vendor.vehicles.length} vehicle{vendor.vehicles.length !== 1 ? 's' : ''}</span>
                     {isAdmin && (
                       <>
+                        <button
+                          onClick={e => { e.stopPropagation(); copyRegLink(vendor.id) }}
+                          title="Copy vendor registration link"
+                          className="p-1.5 text-slate-400 hover:text-emerald-600"
+                        >
+                          {copiedId === vendor.id ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Link2 className="w-3.5 h-3.5" />}
+                        </button>
                         <button onClick={e => { e.stopPropagation(); openEditVendor(vendor) }} className="p-1.5 text-slate-400 hover:text-brand-600"><Edit2 className="w-3.5 h-3.5" /></button>
                         <button onClick={e => { e.stopPropagation(); deleteVendor(vendor.id) }} className="p-1.5 text-slate-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
                       </>
