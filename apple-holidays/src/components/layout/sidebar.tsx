@@ -155,13 +155,13 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ],
 }
 
-const COUNTRY_META: Record<string, { name: string; code: string; flag: string; color: string }> = {
-  VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    flag: '🇻🇳',     color: 'border-red-500/25 bg-red-500/8' },
-  SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    flag: '🇱🇰',     color: 'border-yellow-500/25 bg-yellow-500/8' },
-  SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', flag: '🇸🇬🇲🇾', color: 'border-blue-500/25 bg-blue-500/8' },
-  SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG',    flag: '🇸🇬',     color: 'border-blue-500/25 bg-blue-500/8' },
-  MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    flag: '🇲🇾',     color: 'border-emerald-500/25 bg-emerald-500/8' },
-}
+const COUNTRY_META: Record<string, { name: string; code: string; color: string }> = {
+            VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN',    color: 'border-red-500/25 bg-red-500/8' },
+            SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK',    color: 'border-yellow-500/25 bg-yellow-500/8' },
+            SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY', color: 'border-blue-500/25 bg-blue-500/8' },
+            SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG',    color: 'border-blue-500/25 bg-blue-500/8' },
+            MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    color: 'border-emerald-500/25 bg-emerald-500/8' },
+          }
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -260,8 +260,7 @@ export default function Sidebar() {
                         : 'bg-slate-800/60 border border-slate-700/40 text-slate-500 hover:text-slate-300 hover:bg-slate-700/60',
                     )}
                   >
-                    <span className="text-base leading-none">{pill.flag}</span>
-                    <span>{pill.short}</span>
+                  <CountryFlag country={pill.value} className="w-5 h-4" />                    <span>{pill.short}</span>
                   </button>
                 ))}
               </div>
@@ -275,8 +274,7 @@ export default function Sidebar() {
               </p>
               {lockedMeta ? (
                 <div className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${lockedMeta.color}`}>
-                  <span className="text-2xl leading-none flex-shrink-0">{lockedMeta.flag}</span>
-                  <div className="flex-1 min-w-0">
+                  <CountryFlag country={countryFilter} className="w-8 h-6 flex-shrink-0" />                  <div className="flex-1 min-w-0">
                     <p className="text-white text-xs font-bold leading-tight truncate">{lockedMeta.name}</p>
                     <p className="text-slate-500 text-[9px] uppercase tracking-wider mt-0.5">{lockedMeta.code}</p>
                   </div>
