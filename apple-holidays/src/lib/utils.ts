@@ -87,6 +87,25 @@ export function isRecheckRequired(arrivalDate: Date | string): boolean {
 
 // ─── Currency formatting ─────────────────────────────────────────────────
 
+// Maps common currency symbols/abbreviations to ISO 4217 codes
+const CURRENCY_SYMBOL_MAP: Record<string, string> = {
+  RM: 'MYR',
+  S$: 'SGD',
+  '₫': 'VND',
+  Rs: 'LKR',
+  '₹': 'INR',
+  '£': 'GBP',
+  '€': 'EUR',
+  '¥': 'JPY',
+  A$: 'AUD',
+}
+
+export function normalizeCurrencyCode(code: string | null | undefined): string {
+  if (!code) return 'USD'
+  const upper = code.trim().toUpperCase()
+  return CURRENCY_SYMBOL_MAP[code.trim()] ?? CURRENCY_SYMBOL_MAP[upper] ?? upper
+}
+
 export function formatCurrency(
   amount: number | string | null | undefined,
   currency = 'USD',
@@ -94,11 +113,17 @@ export function formatCurrency(
   if (amount === null || amount === undefined) return '—'
   const num = Number(amount)
   if (isNaN(num)) return '—'
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 2,
-  }).format(num)
+  const iso = normalizeCurrencyCode(currency)
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: iso,
+      minimumFractionDigits: 2,
+    }).format(num)
+  } catch {
+    // Fallback for unknown currency codes — display as plain number with code prefix
+    return `${currency} ${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
 }
 
 // ─── Misc ────────────────────────────────────────────────────────────────

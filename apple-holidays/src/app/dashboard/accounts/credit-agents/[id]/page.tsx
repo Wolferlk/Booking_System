@@ -293,7 +293,7 @@ export default function CreditAgentDetailPage() {
 
   function exportBookings() {
     if (!bookings.length) { toast.error('No booking data to export'); return }
-    const headers = ['Booking Ref', 'Lead Pax', 'File Handler', 'Status', 'Arrival', 'Departure', 'Pax', 'Quoted', 'Paid', 'Balance']
+    const headers = ['Booking Ref', 'Lead Pax', 'File Handler', 'Status', 'Arrival', 'Departure', 'Pax', 'Paid', 'Balance']
     const rows = bookings.map(b => [
       b.bookingRef, b.leadPassenger ?? '', b.fileHandler ?? '', b.status,
       b.arrivalDate ? formatDate(b.arrivalDate) : '',
@@ -713,7 +713,6 @@ export default function CreditAgentDetailPage() {
                           <Th>Status</Th>
                           <Th>Arrival</Th>
                           <Th>Pax</Th>
-                          <Th>Quoted</Th>
                           <Th>Paid</Th>
                           <Th>Balance</Th>
                           <Th></Th>
@@ -728,7 +727,6 @@ export default function CreditAgentDetailPage() {
                             <Td><StatusBadge status={b.status as never} /></Td>
                             <Td className="text-slate-500">{b.arrivalDate ? formatDate(b.arrivalDate) : '—'}</Td>
                             <Td className="text-center">{b.paxAdults + b.paxChildren}</Td>
-                            <Td className="font-medium">{formatCurrency(b.quotedTotal, b.currency)}</Td>
                             <Td className="text-green-600">{formatCurrency(b.confirmedPaid, b.currency)}</Td>
                             <Td className={`font-semibold ${b.balance > 0 ? 'text-orange-500' : 'text-green-600'}`}>
                               {b.balance > 0 ? formatCurrency(b.balance, b.currency) : '✓'}

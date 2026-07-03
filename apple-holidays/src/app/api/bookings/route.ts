@@ -19,8 +19,8 @@ export async function GET(req: NextRequest) {
   const refSearch = searchParams.get('refSearch')   // IS number / VN ref / agent ID
   const dateFrom = searchParams.get('dateFrom')     // createdAt range start
   const dateTo   = searchParams.get('dateTo')       // createdAt range end
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const limit = parseInt(searchParams.get('limit') ?? '20')
+  const page  = parseInt(searchParams.get('page')  ?? '1')
+  const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200)
   const dateFilter = searchParams.get('dateFilter') ?? ''
   const rawSortBy = searchParams.get('sortBy') ?? 'arrivalDate'
   const sortDir = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
@@ -145,6 +145,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  try {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
 
@@ -158,6 +159,7 @@ export async function POST(req: NextRequest) {
   const {
     bookingRef,
     agentBookingId,
+    cntlNumber,
     agent,
     fileHandler,
     arrivalDate,
@@ -169,6 +171,15 @@ export async function POST(req: NextRequest) {
     terms,
     exclusions,
     policyNotes,
+    amendmentNote,
+    // Additional TC sections
+    valueAddedServices,
+    packageIncludes,
+    packageExcludes,
+    importantNotes,
+    tips,
+    otherNote,
+    clientRequest,
     // Country explicitly selected by user (overrides ref-based detection)
     operationCountry: bodyCountry,
     // Contact details (extracted by AI or entered manually)
@@ -215,10 +226,17 @@ export async function POST(req: NextRequest) {
 
   const cancellationDeadline = getCancellationDeadline(arrivalDate)
 
-  const booking = await prisma.booking.create({
+  // Auto-populate isNumber from bookingRef if it matches IS/VN/SG/MY pattern
+  const IS_NUMBER_RE = /^(IS|VN|SG|MY)\d+/i
+  const resolvedIsNumber = body.isNumber?.trim() || (IS_NUMBER_RE.test(bookingRef) ? bookingRef : null)
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const booking = await (prisma.booking.create as any)({
     data: {
       bookingRef,
       agentBookingId,
+      isNumber: resolvedIsNumber || null,
+      cntlNumber: cntlNumber || null,
       agent,
       fileHandler,
       arrivalDate: new Date(arrivalDate),
@@ -230,6 +248,14 @@ export async function POST(req: NextRequest) {
       terms,
       exclusions,
       policyNotes,
+      amendmentNote: amendmentNote || null,
+      valueAddedServices: valueAddedServices || null,
+      packageIncludes:    packageIncludes    || null,
+      packageExcludes:    packageExcludes    || null,
+      importantNotes:     importantNotes     || null,
+      tips:               tips               || null,
+      otherNote:          otherNote          || null,
+      clientRequest:      clientRequest      || null,
       agentEmail:     agentEmail     || null,
       agentPhone:     agentPhone     || null,
       agentWhatsapp:  agentWhatsapp  || null,
@@ -281,7 +307,7 @@ export async function POST(req: NextRequest) {
         create: itineraryItems.map((i: Record<string, unknown>) => ({
           dayNo: Number(i.dayNo),
           date: new Date(i.date as string),
-          title: i.title as string,
+          title: String(i.title ?? '').slice(0, 1000),
           description: i.description as string | undefined,
           inclusions: i.inclusions ? JSON.stringify(i.inclusions) : null,
           exclusions: i.exclusions ? JSON.stringify(i.exclusions) : null,
@@ -316,4 +342,9 @@ export async function POST(req: NextRequest) {
   })
 
   return buildApiSuccess(booking, 'Booking created successfully')
+  } catch (err: unknown) {
+    console.error('[POST /api/bookings]', err)
+    const message = err instanceof Error ? err.message : String(err)
+    return buildApiError(`Internal server error: ${message}`, 500)
+  }
 }

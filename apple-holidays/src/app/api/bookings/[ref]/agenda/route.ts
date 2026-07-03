@@ -89,7 +89,8 @@ export async function POST(
 
   const createdItems = await Promise.all(
     items.map((item: Record<string, unknown>, index: number) =>
-      prisma.agendaItem.create({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (prisma.agendaItem as any).create({
         data: {
           agendaId: agenda!.id,
           date: new Date(item.date as string),
@@ -99,6 +100,8 @@ export async function POST(
           details: item.details as string | undefined,
           mealPlan: item.mealPlan as string | undefined,
           meetingTime: item.meetingTime as string | undefined,
+          timeFrom: item.timeFrom as string | undefined,
+          timeTo: item.timeTo as string | undefined,
           serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
           sortOrder: index,
         },

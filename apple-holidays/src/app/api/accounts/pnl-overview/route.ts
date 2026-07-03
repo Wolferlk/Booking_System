@@ -29,11 +29,13 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = req.nextUrl
-  const limit  = Math.min(Number(searchParams.get('limit') ?? 300), 500)
+  const rawLimit = Number(searchParams.get('limit') ?? 300)
+  const limit = Math.min(Math.max(1, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 300), 500)
   const search = searchParams.get('search')?.trim() ?? ''
 
   // ── 1. Fetch external PNL records via query() (not execute()) ────────────
-  let extRows
+  let extRows: Awaited<ReturnType<typeof fetchAllPnlRecords>> = []
+  let externalDbError: string | null = null
   try {
     extRows = search
       ? await fetchPnlRecordsFiltered(search, limit)
@@ -41,7 +43,7 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Accounts DB unreachable'
     console.error('[pnl-overview] external DB error:', err)
-    return buildApiError(`Accounts database error: ${msg}`, 502)
+    externalDbError = `Accounts database error: ${msg}`
   }
 
   // ── 2. Load all ExternalPnlLinks with booking summary from our DB ─────────
@@ -111,5 +113,6 @@ export async function GET(req: NextRequest) {
     linked,
     pnlOnly,
     bookingsOnly,
+    externalDbError,
   })
 }

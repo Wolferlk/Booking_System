@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Loader2, Download, Filter, X, Calendar, Search,
   Users, Truck, MapPin, Clock, ChevronUp, ChevronDown,
-  ClipboardList, RefreshCw, Table2,
+  ClipboardList, RefreshCw, Table2, Globe,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -69,6 +69,14 @@ const SERVICE_TYPE_OPTIONS = [
   { value: 'PVT_TRANSFER',  label: 'Private Transfer' },
   { value: 'SIC_TRANSFER',  label: 'SIC Transfer' },
   { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement' },
+]
+
+const COUNTRY_OPTIONS = [
+  { value: '',           label: 'All Countries' },
+  { value: 'VIETNAM',   label: 'Vietnam (VN)' },
+  { value: 'SRILANKA',  label: 'Sri Lanka (IS)' },
+  { value: 'SINGAPORE', label: 'Singapore (SG)' },
+  { value: 'MALAYSIA',  label: 'Malaysia (MY)' },
 ]
 
 // ─── Quick-range helpers ──────────────────────────────────────────────────────
@@ -164,8 +172,9 @@ export default function MCReportPage() {
   const [dateFrom, setDateFrom]   = useState('')
   const [dateTo, setDateTo]       = useState('')
   const [search, setSearch]       = useState('')
-  const [svcFilter, setSvcFilter] = useState('')
-  const [activeRange, setActiveRange] = useState<string | null>(null)
+  const [svcFilter, setSvcFilter]       = useState('')
+  const [localCountry, setLocalCountry] = useState('')
+  const [activeRange, setActiveRange]   = useState<string | null>(null)
   const [sort, setSort]           = useState<{ field: SortField; dir: SortDir }>({ field: 'date', dir: 'asc' })
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
 
@@ -178,8 +187,9 @@ export default function MCReportPage() {
       if (dateFrom)    params.set('dateFrom', dateFrom)
       if (dateTo)      params.set('dateTo',   dateTo)
       if (search)      params.set('search',   search)
-      if (svcFilter)   params.set('serviceType', svcFilter)
-      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      if (svcFilter)     params.set('serviceType', svcFilter)
+      const effectiveCountry = localCountry || (countryFilter !== 'ALL' ? countryFilter : '')
+      if (effectiveCountry) params.set('country', effectiveCountry)
 
       const res  = await fetch(`/api/mc-report?${params}`)
       const json = await res.json()
@@ -193,7 +203,7 @@ export default function MCReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [dateFrom, dateTo, search, svcFilter, countryFilter])
+  }, [dateFrom, dateTo, search, svcFilter, localCountry, countryFilter])
 
   useEffect(() => {
     // Auto-load with today's date on mount
@@ -218,7 +228,7 @@ export default function MCReportPage() {
   }
 
   function clearFilters() {
-    setDateFrom(''); setDateTo(''); setSearch(''); setSvcFilter(''); setActiveRange(null)
+    setDateFrom(''); setDateTo(''); setSearch(''); setSvcFilter(''); setLocalCountry(''); setActiveRange(null)
   }
 
   // ── Sort ─────────────────────────────────────────────────────────────────────
@@ -342,7 +352,7 @@ export default function MCReportPage() {
             </div>
 
             {/* Input filters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               <div>
                 <label className="form-label flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-slate-400" /> Date From
@@ -388,6 +398,20 @@ export default function MCReportPage() {
                   onChange={e => setSvcFilter(e.target.value)}
                 >
                   {SERVICE_TYPE_OPTIONS.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="form-label flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-slate-400" /> Country
+                </label>
+                <select
+                  className="form-select"
+                  value={localCountry}
+                  onChange={e => setLocalCountry(e.target.value)}
+                >
+                  {COUNTRY_OPTIONS.map(o => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>

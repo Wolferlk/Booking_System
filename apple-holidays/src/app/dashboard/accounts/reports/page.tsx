@@ -240,7 +240,7 @@ export default function ReportsPage() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
-                      {['Booking Ref', 'Agent', 'File Handler', 'Lead Pax', 'Status', 'Arrival', 'Pax', 'Quoted', 'Revenue', 'Cost', 'Profit', 'Margin', 'Paid', 'Balance'].map(h => (
+                      {['Booking Ref', 'Agent', 'File Handler', 'Lead Pax', 'Status', 'Arrival', 'Pax', 'Revenue', 'Cost', 'Profit', 'Margin', 'Paid', 'Balance'].map(h => (
                         <th key={h} className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
@@ -261,7 +261,6 @@ export default function ReportsPage() {
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap text-slate-500">{r.arrivalDate ? formatDate(r.arrivalDate) : '—'}</td>
                         <td className="px-3 py-2 text-center">{(r.paxAdults || 0) + (r.paxChildren || 0)}</td>
-                        <td className="px-3 py-2 font-medium whitespace-nowrap">{formatCurrency(r.quotedTotal, r.currency)}</td>
                         <td className="px-3 py-2 text-blue-600 whitespace-nowrap">{formatCurrency(r.totalRevenue)}</td>
                         <td className="px-3 py-2 text-orange-600 whitespace-nowrap">{formatCurrency(r.totalCost)}</td>
                         <td className={`px-3 py-2 font-semibold whitespace-nowrap ${r.profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
