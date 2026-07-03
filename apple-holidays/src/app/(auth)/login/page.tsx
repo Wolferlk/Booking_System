@@ -186,7 +186,7 @@ function LoginForm() {
 
           {destinationMeta && (
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 mb-4">
-              <CountryFlag country={destinationMeta.country} className="w-8 h-6" />
+              <CountryFlag country={destinationMeta.country} className="text-2xl leading-none" />
               <div className="text-left">
                 <p className="text-sm font-bold text-white leading-tight">{destinationMeta.label}</p>
                 <p className="text-[11px] text-slate-500 tracking-wider uppercase">{destinationMeta.code}</p>

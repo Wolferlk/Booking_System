@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { CalendarDays, Car, User2, Settings, LogOut, Loader2, Truck } from 'lucide-react'
+import { CalendarDays, Car, User2, Settings, LogOut, Loader2 } from 'lucide-react'
 import Image from 'next/image'
 
 interface VendorSession {
@@ -56,13 +56,23 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
       {/* Top bar */}
       <header className="sticky top-0 z-30 bg-[#070b18]/95 backdrop-blur-sm border-b border-white/6 px-4 py-3 flex items-center gap-3">
         <div className="relative w-8 h-8 flex-shrink-0">
-          <Image src="/png/aahaslogo.png" alt="AH" fill className="object-contain" onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+          <Image
+            src="/png/aahaslogo.png"
+            alt="AH"
+            fill
+            className="object-contain"
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+          />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-white font-bold text-sm leading-tight truncate">{vendor.name}</p>
           <p className="text-slate-500 text-xs">Vendor Portal</p>
         </div>
-        <button onClick={logout} className="p-2 text-slate-500 hover:text-red-400 transition-colors">
+        <button
+          onClick={logout}
+          className="p-2 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all"
+          title="Sign out"
+        >
           <LogOut className="w-4 h-4" />
         </button>
       </header>
@@ -73,16 +83,24 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
       </main>
 
       {/* Bottom tab bar */}
-      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg z-30 bg-[#0a0f1e]/95 backdrop-blur-xl border-t border-white/8 grid grid-cols-4">
+      <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-lg z-30 bg-[#0a0f1e]/95 backdrop-blur-xl border-t border-white/8 grid grid-cols-4 safe-area-bottom">
         {NAV.map(item => {
-          const Icon    = item.icon
-          const active  = item.href === '/vendor/dashboard' ? isTripsRoot : pathname.startsWith(item.href)
+          const Icon   = item.icon
+          const active = item.href === '/vendor/dashboard'
+            ? isTripsRoot
+            : pathname.startsWith(item.href)
           return (
-            <Link key={item.href} href={item.href}
-              className={`flex flex-col items-center justify-center gap-1 py-3 px-2 transition-colors ${active ? 'text-brand-400' : 'text-slate-600 hover:text-slate-400'}`}
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex flex-col items-center justify-center gap-1 py-3 px-2 transition-colors ${
+                active ? 'text-brand-400' : 'text-slate-600 hover:text-slate-400'
+              }`}
             >
-              <Icon className={`w-5 h-5 ${active ? 'stroke-[2.5]' : ''}`} />
-              <span className={`text-[10px] font-semibold ${active ? 'text-brand-400' : 'text-slate-600'}`}>{item.label}</span>
+              <Icon className={`w-5 h-5 ${active ? 'stroke-[2.5]' : 'stroke-[1.75]'}`} />
+              <span className={`text-[10px] font-semibold tracking-wide ${active ? 'text-brand-400' : 'text-slate-600'}`}>
+                {item.label}
+              </span>
             </Link>
           )
         })}
