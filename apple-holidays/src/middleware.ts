@@ -77,6 +77,6 @@ export const config = {
     //   vendor   — vendor portal uses its own JWT, not NextAuth
     //   uploads  — static file serving
     //   pnl-by-isnumber — intentionally public IS-number lookup
-    '/api/((?!auth|public|cron|webhooks|vendor|uploads|pnl-by-isnumber).*)',
+    '/api/((?!auth|public|cron|webhooks|vendor|uploads|pnl-by-isnumber|bookings/full).*)',
   ],
 }
