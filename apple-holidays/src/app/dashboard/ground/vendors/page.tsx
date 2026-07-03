@@ -384,14 +384,14 @@ export default function VendorsPage() {
           <div>
             <div className="flex items-center justify-between">
               <label className="form-label">Company Name *</label>
-              <span className="text-xs text-slate-500">{vendorForm.name.length}/100</span>
+              <span className="text-xs text-slate-500">{vendorForm.name.length}/50</span>
             </div>
             <input
               className="form-input"
               placeholder="Vietnam Tours Co."
               value={vendorForm.name}
               onChange={e => setVendorForm(x => ({ ...x, name: e.target.value }))}
-              maxLength={100}
+              maxLength={50}
             />
           </div>
 
