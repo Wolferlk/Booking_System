@@ -309,7 +309,7 @@ The response should return the complete booking snapshot.
             "id": "assignment-id",
             "driverId": "driver-id",
             "driverName": "Sasindi Diluranga",
-            "driverPhone": "+83223212121",
+            "driverPhone": "+8322321",
             "vehicleType": "van",
             "vehiclePlate": "764-3384",
             "notes": null,

@@ -208,7 +208,7 @@ export default function VendorDriversPage() {
       {/* Add / Edit modal */}
       {modal && (
         <div className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm flex flex-col justify-end sm:items-center sm:justify-center p-0 sm:p-4">
-          <div className="bg-[#0d1628] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full sm:max-w-sm max-h-[92dvh] overflow-y-auto">
+          <div className="bg-[#0d1628] border border-white/10 rounded-t-3xl sm:rounded-3xl w-full sm:max-w-md max-h-[90dvh] overflow-y-auto overscroll-contain">
             <div className="sticky top-0 bg-[#0d1628] border-b border-white/8 px-5 py-4 flex items-center justify-between rounded-t-3xl">
               <p className="text-white font-bold">{modal === 'new' ? 'Add Driver' : 'Edit Driver'}</p>
               <button onClick={() => setModal(null)} className="text-slate-500 hover:text-white"><XCircle className="w-5 h-5" /></button>
@@ -231,18 +231,26 @@ export default function VendorDriversPage() {
                 <input ref={driverPhotoRef} type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && uploadPhoto(e.target.files[0], 'photoUrl')} />
               </div>
 
-              {[
-                { label: 'Full Name *', key: 'name' as keyof Form },
-                { label: 'Phone *', key: 'phone' as keyof Form, type: 'tel' },
-                { label: 'Email', key: 'email' as keyof Form, type: 'email' },
-                { label: 'License No.', key: 'licenseNo' as keyof Form },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">{f.label}</label>
-                  <input type={f.type ?? 'text'} value={form[f.key]} onChange={set(f.key)}
-                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
-                </div>
-              ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { label: 'Full Name *', key: 'name' as keyof Form, full: true },
+                  { label: 'Phone *', key: 'phone' as keyof Form, type: 'tel' },
+                  { label: 'Email', key: 'email' as keyof Form, type: 'email' },
+                  { label: 'License No.', key: 'licenseNo' as keyof Form },
+                ].map(f => (
+                  <div key={f.key} className={f.full ? 'sm:col-span-2' : ''}>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">{f.label}</label>
+                    <input
+                      type={f.type ?? 'text'}
+                      value={form[f.key]}
+                      onChange={set(f.key)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                    />
+                  </div>
+                ))}
+              </div>
 
               {modal === 'new' && (
                 <>
@@ -250,25 +258,48 @@ export default function VendorDriversPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Type</label>
-                      <select value={form.vehicleType} onChange={set('vehicleType')}
-                        className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none" style={{ colorScheme: 'dark' }}>
+                      <select
+                        value={form.vehicleType}
+                        onChange={set('vehicleType')}
+                        autoComplete="off"
+                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none appearance-none"
+                        style={{ colorScheme: 'dark' }}
+                      >
                         {VEHICLE_TYPES.map(t => <option key={t} value={t} style={{ background: '#1e2d45' }}>{t}</option>)}
                       </select>
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Plate No.</label>
-                      <input value={form.vehiclePlateNo} onChange={set('vehiclePlateNo')} placeholder="CAH 5296"
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-600 focus:outline-none" />
+                      <input
+                        value={form.vehiclePlateNo}
+                        onChange={set('vehiclePlateNo')}
+                        placeholder="CAH 5296"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-600 focus:outline-none"
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Brand</label>
-                      <input value={form.vehicleBrand} onChange={set('vehicleBrand')} placeholder="Toyota"
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none" />
+                      <input
+                        value={form.vehicleBrand}
+                        onChange={set('vehicleBrand')}
+                        placeholder="Toyota"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">Model</label>
-                      <input value={form.vehicleModel} onChange={set('vehicleModel')} placeholder="Hiace"
-                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none" />
+                      <input
+                        value={form.vehicleModel}
+                        onChange={set('vehicleModel')}
+                        placeholder="Hiace"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+                      />
                     </div>
                   </div>
 
@@ -295,19 +326,26 @@ export default function VendorDriversPage() {
 
               {/* Bank details */}
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wider border-t border-white/8 pt-3 mt-2">Bank Details</p>
-              {[
-                { label: 'Bank Name', key: 'bankName' as keyof Form },
-                { label: 'Account Number', key: 'bankAccountNo' as keyof Form },
-                { label: 'Account Holder', key: 'bankHolder' as keyof Form },
-                { label: 'Branch', key: 'bankBranch' as keyof Form },
-                { label: 'Bank Code / SWIFT', key: 'bankCode' as keyof Form },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">{f.label}</label>
-                  <input value={form[f.key]} onChange={set(f.key)}
-                    className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none" />
-                </div>
-              ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { label: 'Bank Name', key: 'bankName' as keyof Form, full: true },
+                  { label: 'Account Number', key: 'bankAccountNo' as keyof Form },
+                  { label: 'Account Holder', key: 'bankHolder' as keyof Form },
+                  { label: 'Branch', key: 'bankBranch' as keyof Form },
+                  { label: 'Bank Code / SWIFT', key: 'bankCode' as keyof Form, full: true },
+                ].map(f => (
+                  <div key={f.key} className={f.full ? 'sm:col-span-2' : ''}>
+                    <label className="block text-xs font-semibold text-slate-400 mb-1 uppercase tracking-wider">{f.label}</label>
+                    <input
+                      value={form[f.key]}
+                      onChange={set(f.key)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="w-full bg-white/6 border border-white/10 rounded-xl py-2.5 px-3 text-sm text-white placeholder:text-slate-600 focus:outline-none"
+                    />
+                  </div>
+                ))}
+              </div>
 
               <div className="flex gap-3 pt-2 pb-2">
                 <button onClick={save} disabled={saving || !form.name || !form.phone}
