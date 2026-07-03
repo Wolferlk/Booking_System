@@ -10,13 +10,14 @@ import {
   ClipboardCheck, Inbox, Plane, Hotel, Phone,
   FileSpreadsheet, Link2, ChevronDown, ChevronUp,
   Eye, Info, Zap, CalendarClock, Merge, HourglassIcon,
-  Search, X,
+  Search, X, Calendar, ChevronLeft, ChevronRight, FileSearch, Plus,
+  RotateCcw, PlayCircle, ListChecks, Trash2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Database } from 'lucide-react'
+import { Database, HardDrive } from 'lucide-react'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import DbMailboxView from './db-mailbox-view'
 
@@ -51,6 +52,7 @@ interface ExtractedPnlLine   {
 
 interface ExtractedData {
   agent: string | null; fileHandler: string | null; agentBookingId: string | null
+  isNumber: string | null; cntlNumber: string | null
   arrivalDate: string | null; departureDate: string | null
   paxAdults: number; paxChildren: number
   quotedTotal: number | null; currency: string
@@ -67,9 +69,28 @@ interface ProcessResult {
   processedAt?: string | null
 }
 
-interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean }
+interface BatchItem {
+  graphId: string
+  subject: string
+  bookingRef?: string
+}
+interface BatchSummary {
+  total: number
+  created: (BatchItem & { isNew: boolean })[]
+  updated: BatchItem[]
+  needsManual: (BatchItem & { reason: string })[]
+  skipped: number
+}
+interface ReprocessTarget {
+  email: EmailWithMailbox
+  bookingRef: string
+}
+
+interface PnlStatus { hasPNL: boolean; lineCount: number; checking: boolean; source?: 'MAIL' | 'DRIVE' | 'INTERNAL' | null }
 interface MailSettings {
   lessCreditMode: boolean
+  tqEnabled: boolean
+  pnlEnabled: boolean
   recentMailWindowMinutes: number
 }
 
@@ -111,9 +132,23 @@ function mailboxLabel(user: string) {
 
 function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; waitingTourNo?: string }) {
   if (status?.hasPNL) {
+    if (status.source === 'MAIL') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-teal-100 text-teal-700 border border-teal-200">
+          <Mail className="w-2.5 h-2.5" /> Mail PNL Connected · {status.lineCount} lines
+        </span>
+      )
+    }
+    if (status.source === 'DRIVE') {
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-700 border border-blue-200">
+          <HardDrive className="w-2.5 h-2.5" /> Drive PNL Connected · {status.lineCount} lines
+        </span>
+      )
+    }
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700">
-        <CheckCircle className="w-2.5 h-2.5" /> PNL Added · {status.lineCount} lines
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-700 border border-green-200">
+        <Database className="w-2.5 h-2.5" /> Accounts PNL Connected · {status.lineCount} lines
       </span>
     )
   }
@@ -136,6 +171,87 @@ function PnlPill({ status, waitingTourNo }: { status: PnlStatus | undefined; wai
       <Clock className="w-2.5 h-2.5" /> PNL Pending
     </span>
   )
+}
+
+// ── Client-side helpers for partial extraction on error ───────────────────────
+
+const MONTH_ABBR: Record<string, string> = {
+  jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+  jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12',
+}
+
+function parseDatesFromSubjectClient(subject: string): { arrivalDate: string; departureDate: string } | null {
+  const re = /(\d{1,2})[\/\-\.]([A-Za-z]{3})[\/\-\.](\d{4})/g
+  const matches: RegExpExecArray[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(subject)) !== null) matches.push(m)
+  if (matches.length < 2) return null
+  const toISO = (x: RegExpExecArray) => {
+    const mon = MONTH_ABBR[x[2].toLowerCase()]
+    return mon ? `${x[3]}-${mon}-${x[1].padStart(2,'0')}` : null
+  }
+  const a = toISO(matches[0]); const d = toISO(matches[1])
+  return a && d ? { arrivalDate: a, departureDate: d } : null
+}
+
+function parseIsFromSubjectClient(subject: string): string | null {
+  const parts = subject.split(/[|\/,]/)
+  for (const p of parts) {
+    const c = p.trim().replace(/\s+/g,'').toUpperCase()
+    if (/^(VN|IS|SG|MY)\d{4,}$/.test(c)) return c
+  }
+  // also scan for "// VN40151" style
+  const m = subject.match(/\/\/\s*([A-Z]{2}\d{4,})/i)
+  if (m) return m[1].replace(/\s+/g,'').toUpperCase()
+  return null
+}
+
+function parseAgentIdFromSubjectClient(subject: string): string | null {
+  const parts = subject.split(/[|,\/\\]/)
+  for (const p of parts) {
+    const t = p.trim()
+    if (/^\d{8,15}$/.test(t)) return t
+  }
+  return null
+}
+
+function buildNeedsManualFromEmail(email: EmailWithMailbox, errorMsg: string): ProcessResult {
+  const subj = email.subject ?? ''
+  const dates = parseDatesFromSubjectClient(subj)
+  const isNumber = parseIsFromSubjectClient(subj)
+  const agentId  = parseAgentIdFromSubjectClient(subj)
+  const agentFromEmail = email.fromName
+    ? email.fromName
+    : email.from?.split('@')[0] ?? null
+
+  return {
+    status:      'NEEDS_MANUAL',
+    bookingRef:  isNumber ?? '',
+    bookingId:   '',
+    isNew:       false,
+    pnlLines:    0,
+    agendaItems: 0,
+    extracted: {
+      isNumber:       isNumber,
+      cntlNumber:     null,
+      agent:          agentFromEmail,
+      fileHandler:    null,
+      agentBookingId: agentId,
+      arrivalDate:    dates?.arrivalDate   ?? null,
+      departureDate:  dates?.departureDate ?? null,
+      paxAdults:      0,
+      paxChildren:    0,
+      quotedTotal:    null,
+      currency:       'USD',
+      passengers:     [],
+      flights:        [],
+      accommodations: [],
+      emergencyContacts: [],
+      pnlLines:       [],
+    },
+    // store the error message so the banner can show it
+    ...(errorMsg ? { extractionError: errorMsg } : {}),
+  } as unknown as ProcessResult
 }
 
 function TQExtraction({ data, agendaItems }: { data: ExtractedData; agendaItems: number }) {
@@ -372,11 +488,24 @@ export default function MailInboxPage() {
   const [subStatus, setSubStatus]         = useState<SubStatus | null>(null)
   const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
   const [searchQuery, setSearchQuery]     = useState('')
+  const [searchInBody, setSearchInBody]   = useState(true)
+  const [dateFrom, setDateFrom]           = useState('')
+  const [dateTo, setDateTo]               = useState('')
   const [pnlStatusMap, setPnlStatusMap]   = useState<Map<string, PnlStatus>>(new Map())
   const [autoProcessingIds, setAutoProcessingIds] = useState<Set<string>>(new Set())
   const [mailSettings, setMailSettings]   = useState<MailSettings | null>(null)
   const [inboxSynced, setInboxSynced]     = useState(false)
-  const [savingLessCreditMode, setSavingLessCreditMode] = useState(false)
+  const [savingMailSettings, setSavingMailSettings] = useState(false)
+
+  // Batch processing
+  const [batchProcessing, setBatchProcessing]   = useState(false)
+  const [batchProgress, setBatchProgress]       = useState(0)
+  const [batchTotal, setBatchTotal]             = useState(0)
+  const [batchSummary, setBatchSummary]         = useState<BatchSummary | null>(null)
+
+  // Reprocess confirmation
+  const [reprocessTarget, setReprocessTarget]   = useState<ReprocessTarget | null>(null)
+  const [reprocessDeleting, setReprocessDeleting] = useState(false)
 
   // Refs for queue management (avoid stale closures)
   const resultsRef         = useRef(results)
@@ -400,6 +529,7 @@ export default function MailInboxPage() {
           hasPNL:    !!pnl,
           lineCount: Array.isArray(pnl?.lineItems) ? (pnl.lineItems as unknown[]).length : 0,
           checking:  false,
+          source:    (json.data?.pnlSource as PnlStatus['source']) ?? null,
         }))
       } else {
         setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: false }))
@@ -413,9 +543,9 @@ export default function MailInboxPage() {
 
   // processOneRef allows the callback to schedule sibling-email retries without
   // a circular useCallback dependency (PNL_WAITING → retry after TQ processed).
-  const processOneRef = useRef<(email: EmailWithMailbox) => void>(null as unknown as (email: EmailWithMailbox) => void)
+  const processOneRef = useRef<(email: EmailWithMailbox, force?: boolean) => void>(null as unknown as (email: EmailWithMailbox, force?: boolean) => void)
 
-  const processOne = useCallback(async (email: EmailWithMailbox) => {
+  const processOne = useCallback(async (email: EmailWithMailbox, force = false) => {
     setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
     const isPnlEmail = email.mailboxKind === 'PNL'
     try {
@@ -427,6 +557,7 @@ export default function MailInboxPage() {
           emailType:   isPnlEmail ? 'PNL' : 'TOUR_CONFIRMATION',
           graphId:     email.graphId,
           mailboxUser: email.mailboxUser,
+          force,
           bodyHtml:    email.bodyHtml,
           date:        email.date,
           folder:      email.folder,
@@ -485,11 +616,19 @@ export default function MailInboxPage() {
           }
         }
       } else {
-        setResults(m => new Map(m).set(email.graphId, { success: false, error: json.error as string }))
+        // API returned an error — build NEEDS_MANUAL so user can still create booking manually
+        setResults(m => new Map(m).set(email.graphId, {
+          success: true,
+          data: buildNeedsManualFromEmail(email, json.error as string),
+        }))
       }
     } catch (err) {
+      // Network/JSON parse error — build NEEDS_MANUAL so user can still create booking manually
       const msg = err instanceof Error ? err.message : 'Processing failed'
-      setResults(m => new Map(m).set(email.graphId, { success: false, error: msg }))
+      setResults(m => new Map(m).set(email.graphId, {
+        success: true,
+        data: buildNeedsManualFromEmail(email, msg),
+      }))
     } finally {
       setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
     }
@@ -516,32 +655,34 @@ export default function MailInboxPage() {
       .catch(() => {})
   }, [])
 
-  const toggleLessCreditMode = useCallback(async () => {
-    if (!mailSettings) return
-    setSavingLessCreditMode(true)
+  const patchMailSettings = useCallback(async (patch: Partial<MailSettings>) => {
+    setSavingMailSettings(true)
     try {
       const res = await fetch('/api/mail/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lessCreditMode: !mailSettings.lessCreditMode }),
+        body: JSON.stringify(patch),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error as string)
       setMailSettings(json.data as MailSettings)
-      toast.success('Mail mode updated')
+      toast.success('Settings updated')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to update mail mode')
+      toast.error(err instanceof Error ? err.message : 'Failed to update settings')
     } finally {
-      setSavingLessCreditMode(false)
+      setSavingMailSettings(false)
     }
-  }, [mailSettings])
+  }, [])
 
   const loadEmails = useCallback(async (silent = false) => {
     if (!silent) setFetching(true)
     else setPolling(true)
     setInboxSynced(false)
     try {
-      const res  = await fetch(`/api/mail/fetch?limit=${limit}&folder=${folder}&mailbox=${mailboxFilter}`)
+      const params = new URLSearchParams({ limit: String(limit), folder, mailbox: mailboxFilter })
+      if (dateFrom) params.set('dateFrom', dateFrom)
+      if (dateTo)   params.set('dateTo',   dateTo)
+      const res  = await fetch(`/api/mail/fetch?${params}`)
       const json = await res.json()
       if (!json.success) throw new Error(json.error as string)
       const loaded = json.data as EmailWithMailbox[]
@@ -584,7 +725,7 @@ export default function MailInboxPage() {
       setFetching(false)
       setPolling(false)
     }
-  }, [limit, folder, mailboxFilter, checkBookingPnl])
+  }, [limit, folder, mailboxFilter, dateFrom, dateTo, checkBookingPnl])
 
   useEffect(() => {
     loadEmails(false)
@@ -621,18 +762,36 @@ export default function MailInboxPage() {
   const displayEmails = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return emails
+
+    // Strip common suffixes so "469083CNTL" matches "469083"
+    const numericQ = q.replace(/cntl/gi, '').replace(/[^0-9]/g, '')
+    // Detect if query looks like a booking ref prefix (IS/VN/SG/MY + digits)
+    const isRefPrefix = /^(is|vn|sg|my|lk)\d*/i.test(q.trim())
+
     return emails.filter(email => {
+      // Subject
       if (email.subject.toLowerCase().includes(q)) return true
+      // Sender
       if (email.from.toLowerCase().includes(q)) return true
       if (email.fromName.toLowerCase().includes(q)) return true
+      // Search raw body
+      const body = email.rawBody?.toLowerCase() ?? ''
+      if (isRefPrefix || numericQ.length >= 4) {
+        if (isRefPrefix && body.includes(q)) return true
+        if (numericQ.length >= 4 && body.includes(numericQ)) return true
+        if (numericQ.length >= 4 && email.subject.toLowerCase().includes(numericQ)) return true
+      }
+      // Full body text search when toggle is on
+      if (searchInBody && body.includes(q)) return true
+      // Processed booking ref (IS/VN number)
       const ref = results.get(email.graphId)?.data?.bookingRef ?? ''
       if (ref.toLowerCase().includes(q)) return true
-      // also match Tour No format: "#469083" → search "469083"
+      // CNTL / numeric-only Tour No matching
       const numericRef = ref.replace(/[^0-9]/g, '')
-      if (numericRef && numericRef.includes(q.replace(/[^0-9]/g, ''))) return true
+      if (numericQ.length >= 4 && numericRef && numericRef.includes(numericQ)) return true
       return false
     })
-  }, [emails, searchQuery, results])
+  }, [emails, searchQuery, searchInBody, results])
 
   // Merged = TQ bookings that also have a PNL attached
   const mergedCount = useMemo(() => {
@@ -686,8 +845,300 @@ export default function MailInboxPage() {
   const tqSub  = subStatus?.mailboxes?.find(m => m.kind === 'TOUR_CONFIRMATION')
   const pnlSub = subStatus?.mailboxes?.find(m => m.kind === 'PNL')
 
+  // ── Batch processing (declared after displayEmails to avoid TDZ) ─────────
+
+  const processBatch = useCallback(async () => {
+    const toProcess = displayEmails.filter(e => {
+      if (e.mailboxKind === 'PNL') return false
+      const r = results.get(e.graphId)
+      if (!r) return true
+      if (r.data?.status === 'NEEDS_MANUAL') return true
+      return false
+    })
+
+    if (toProcess.length === 0) {
+      toast.info('All TQ emails in this view are already processed')
+      return
+    }
+
+    setBatchProcessing(true)
+    setBatchProgress(0)
+    setBatchTotal(toProcess.length)
+    setBatchSummary(null)
+
+    const summary: BatchSummary = { total: toProcess.length, created: [], updated: [], needsManual: [], skipped: 0 }
+
+    for (let i = 0; i < toProcess.length; i++) {
+      const email = toProcess[i]
+      setBatchProgress(i + 1)
+      setAutoProcessingIds(prev => new Set(Array.from(prev).concat([email.graphId])))
+
+      try {
+        const res = await fetch('/api/mail/process', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            rawBody: email.rawBody, subject: email.subject,
+            emailType: 'TOUR_CONFIRMATION',
+            graphId: email.graphId, mailboxUser: email.mailboxUser,
+            bodyHtml: email.bodyHtml, date: email.date, folder: email.folder,
+            from: email.from, fromName: email.fromName, to: email.to, cc: email.cc,
+            isRead: email.isRead, hasAttachments: email.hasAttachments,
+            importance: email.importance, conversationId: email.conversationId, uid: email.uid,
+          }),
+        })
+        const json = await res.json()
+
+        if (json.success) {
+          const data = json.data as ProcessResult
+          setResults(m => new Map(m).set(email.graphId, { success: true, data }))
+          if (data.status === 'NEEDS_MANUAL') {
+            summary.needsManual.push({ graphId: email.graphId, subject: email.subject ?? '', bookingRef: data.bookingRef, reason: 'Manual entry required' })
+          } else if (data.isNew) {
+            summary.created.push({ graphId: email.graphId, subject: email.subject ?? '', bookingRef: data.bookingRef, isNew: true })
+            checkBookingPnl(data.bookingRef)
+          } else {
+            summary.updated.push({ graphId: email.graphId, subject: email.subject ?? '', bookingRef: data.bookingRef })
+            checkBookingPnl(data.bookingRef)
+          }
+        } else {
+          const manualData = buildNeedsManualFromEmail(email, (json.error as string) ?? '')
+          setResults(m => new Map(m).set(email.graphId, { success: true, data: manualData }))
+          summary.needsManual.push({ graphId: email.graphId, subject: email.subject ?? '', reason: (json.error as string) ?? 'Processing failed' })
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Processing failed'
+        const manualData = buildNeedsManualFromEmail(email, msg)
+        setResults(m => new Map(m).set(email.graphId, { success: true, data: manualData }))
+        summary.needsManual.push({ graphId: email.graphId, subject: email.subject ?? '', reason: msg })
+      } finally {
+        setAutoProcessingIds(prev => { const n = new Set(prev); n.delete(email.graphId); return n })
+      }
+    }
+
+    setBatchProcessing(false)
+    setBatchSummary(summary)
+  }, [displayEmails, results, checkBookingPnl])
+
+  // ── Reprocess ────────────────────────────────────────────────────────────
+
+  const confirmReprocess = useCallback(async () => {
+    if (!reprocessTarget) return
+    const { email, bookingRef } = reprocessTarget
+    setReprocessDeleting(true)
+    try {
+      if (bookingRef) {
+        const del = await fetch(`/api/bookings/${bookingRef}`, { method: 'DELETE' })
+        const dj  = await del.json()
+        if (!dj.success) throw new Error((dj.error as string) ?? 'Failed to delete booking')
+      }
+      setResults(m => { const n = new Map(m); n.delete(email.graphId); return n })
+      setReprocessTarget(null)
+      toast.info(`Reprocessing ${email.subject ?? 'email'}…`)
+      setTimeout(() => processOneRef.current(email, true), 150)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete booking')
+    } finally {
+      setReprocessDeleting(false)
+    }
+  }, [reprocessTarget])
+
+  // ── Derived: how many unprocessed TQ emails are in the current view ────────
+  const unprocessedCount = displayEmails.filter(e => {
+    if (e.mailboxKind === 'PNL') return false
+    const r = results.get(e.graphId)
+    return !r || r.data?.status === 'NEEDS_MANUAL'
+  }).length
+
   return (
     <div>
+
+      {/* ── Batch Results Modal ──────────────────────────────────────────── */}
+      {batchSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+              <div className="w-9 h-9 rounded-full bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                <ListChecks className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-bold text-slate-900">Batch Processing Complete</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Processed {batchSummary.total} email{batchSummary.total !== 1 ? 's' : ''}</p>
+              </div>
+              <button onClick={() => setBatchSummary(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              {/* Summary counts */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="rounded-xl bg-green-50 border border-green-200 p-3 text-center">
+                  <p className="text-2xl font-bold text-green-600">{batchSummary.created.length}</p>
+                  <p className="text-[10px] font-semibold text-green-500 uppercase tracking-wider mt-0.5">New Bookings</p>
+                </div>
+                <div className="rounded-xl bg-blue-50 border border-blue-200 p-3 text-center">
+                  <p className="text-2xl font-bold text-blue-600">{batchSummary.updated.length}</p>
+                  <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wider mt-0.5">Updated</p>
+                </div>
+                <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-center">
+                  <p className="text-2xl font-bold text-amber-600">{batchSummary.needsManual.length}</p>
+                  <p className="text-[10px] font-semibold text-amber-500 uppercase tracking-wider mt-0.5">Needs Manual</p>
+                </div>
+              </div>
+
+              {/* Created bookings list */}
+              {batchSummary.created.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                    Bookings Created ({batchSummary.created.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {batchSummary.created.map(item => (
+                      <div key={item.graphId}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 border border-green-100 cursor-pointer hover:bg-green-100 transition-colors"
+                        onClick={() => { setBatchSummary(null); if (item.bookingRef) router.push(`/dashboard/bookings/${item.bookingRef}`) }}
+                      >
+                        <span className="text-[10px] font-mono font-bold text-green-700 bg-green-200 rounded px-1.5 py-0.5 flex-shrink-0">
+                          {item.bookingRef}
+                        </span>
+                        <span className="text-xs text-slate-600 truncate">{item.subject}</span>
+                        <ExternalLink className="w-3 h-3 text-green-500 flex-shrink-0 ml-auto" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Updated bookings list */}
+              {batchSummary.updated.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
+                    Bookings Updated ({batchSummary.updated.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                    {batchSummary.updated.map(item => (
+                      <div key={item.graphId}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-100 cursor-pointer hover:bg-blue-100 transition-colors"
+                        onClick={() => { setBatchSummary(null); if (item.bookingRef) router.push(`/dashboard/bookings/${item.bookingRef}`) }}
+                      >
+                        <span className="text-[10px] font-mono font-bold text-blue-700 bg-blue-200 rounded px-1.5 py-0.5 flex-shrink-0">
+                          {item.bookingRef}
+                        </span>
+                        <span className="text-xs text-slate-600 truncate">{item.subject}</span>
+                        <ExternalLink className="w-3 h-3 text-blue-500 flex-shrink-0 ml-auto" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Needs manual list */}
+              {batchSummary.needsManual.length > 0 && (
+                <div>
+                  <p className="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
+                    Needs Manual Entry ({batchSummary.needsManual.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                    {batchSummary.needsManual.map(item => (
+                      <div key={item.graphId} className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-100">
+                        <p className="text-xs text-slate-700 font-medium truncate">{item.subject}</p>
+                        <p className="text-[10px] text-amber-700 mt-0.5 font-mono truncate">{item.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {batchSummary.created.length === 0 && batchSummary.updated.length === 0 && batchSummary.needsManual.length === 0 && (
+                <p className="text-sm text-slate-500 text-center py-4">No emails were processed.</p>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100">
+              <button
+                onClick={() => setBatchSummary(null)}
+                className="w-full px-4 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-xl hover:bg-slate-700 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reprocess Confirmation Dialog ────────────────────────────────── */}
+      {reprocessTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center gap-3 px-6 py-5 border-b border-slate-100">
+              <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-bold text-slate-900">Reprocess this email?</h2>
+                <p className="text-xs text-slate-500 mt-0.5 truncate">{reprocessTarget.email.subject}</p>
+              </div>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="rounded-xl bg-red-50 border border-red-200 px-4 py-3">
+                <p className="text-sm font-semibold text-red-800">
+                  This will permanently delete booking{' '}
+                  <span className="font-mono bg-red-100 rounded px-1.5 py-0.5">{reprocessTarget.bookingRef}</span>
+                </p>
+                <p className="text-xs text-red-600 mt-1.5">
+                  All booking data, passengers, agenda items, and P&amp;L associated with this booking will be removed. This cannot be undone.
+                </p>
+              </div>
+              <p className="text-sm text-slate-600">
+                After deletion the email will be reprocessed from scratch using the latest extraction logic.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-3">
+              <button
+                onClick={() => setReprocessTarget(null)}
+                disabled={reprocessDeleting}
+                className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmReprocess}
+                disabled={reprocessDeleting}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white text-sm font-semibold rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {reprocessDeleting
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Deleting…</>
+                  : <><Trash2 className="w-3.5 h-3.5" />Delete &amp; Reprocess</>
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Batch progress overlay (non-blocking strip) ───────────────────── */}
+      {batchProcessing && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white rounded-2xl shadow-2xl px-6 py-4 flex items-center gap-4 min-w-[320px]">
+          <Loader2 className="w-5 h-5 animate-spin text-indigo-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold">Batch Processing…</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className="flex-1 bg-slate-700 rounded-full h-1.5">
+                <div
+                  className="bg-indigo-400 h-1.5 rounded-full transition-all duration-300"
+                  style={{ width: `${batchTotal > 0 ? (batchProgress / batchTotal) * 100 : 0}%` }}
+                />
+              </div>
+              <span className="text-xs text-slate-400 flex-shrink-0">{batchProgress}/{batchTotal}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Header
         title="Mail Inbox"
         subtitle={
@@ -697,19 +1148,43 @@ export default function MailInboxPage() {
         }
         actions={
           <div className="flex gap-2 items-center flex-wrap">
-            {lessCreditMode && (
-              <Badge color="amber" className="text-[10px]">
-                Less Credit Mode · backend processes recent mail only
-              </Badge>
-            )}
+            {/* ── Mailbox toggles ── */}
+            {([
+              { label: 'TQ',  key: 'tqEnabled'  as const, color: 'blue'  },
+              { label: 'PNL', key: 'pnlEnabled' as const, color: 'teal'  },
+            ]).map(({ label, key, color }) => {
+              const on = mailSettings?.[key] ?? true
+              return (
+                <button
+                  key={key}
+                  disabled={savingMailSettings}
+                  onClick={() => patchMailSettings({ [key]: !on })}
+                  title={`${on ? 'Disable' : 'Enable'} ${label} mailbox sync`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${
+                    on
+                      ? color === 'blue'
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : 'bg-teal-50 border-teal-300 text-teal-700'
+                      : 'bg-slate-100 border-slate-200 text-slate-400 line-through'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${on ? (color === 'blue' ? 'bg-blue-500' : 'bg-teal-500') : 'bg-slate-300'}`} />
+                  {label}
+                  <span className="text-[9px] font-bold">{on ? 'ON' : 'OFF'}</span>
+                </button>
+              )
+            })}
+
+            {/* ── Less Credit toggle ── */}
             <Button
               size="sm"
               variant={lessCreditMode ? 'outline' : 'secondary'}
-              loading={savingLessCreditMode}
-              onClick={toggleLessCreditMode}
+              loading={savingMailSettings}
+              onClick={() => patchMailSettings({ lessCreditMode: !lessCreditMode })}
             >
               {lessCreditMode ? 'Less Credit On' : 'Less Credit Off'}
             </Button>
+
             <select value={folder} onChange={e => setFolder(e.target.value as 'all' | 'inbox')}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
               <option value="all">All Folders</option>
@@ -717,7 +1192,7 @@ export default function MailInboxPage() {
             </select>
             <select value={limit} onChange={e => setLimit(Number(e.target.value))}
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-700">
-              {[20, 50, 100, 200,1000,10000,100000].map(n => <option key={n} value={n}>{n} emails</option>)}
+              {[20, 50, 100, 200, 1000, 10000].map(n => <option key={n} value={n}>{n} emails</option>)}
             </select>
             <button onClick={() => loadEmails(false)} disabled={fetching}
               className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-40">
@@ -833,26 +1308,149 @@ export default function MailInboxPage() {
           ))}
         </div>
 
-        {/* ── Search ────────────────────────────────────────────────────── */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search subject, sender, Tour Ref or Tour No…"
-            className="w-full pl-9 pr-9 py-2.5 text-sm border border-slate-200 rounded-xl bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"
-          />
-          {searchQuery && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <span className="text-[10px] font-semibold text-slate-400">
-                {displayEmails.length} / {emails.length}
-              </span>
-              <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
+        {/* ── Date Filter ───────────────────────────────────────────────── */}
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+            <span className="text-xs font-semibold text-slate-500">Filter by date:</span>
+            <button
+              onClick={() => { const t = new Date().toISOString().slice(0,10); setDateFrom(t); setDateTo(t) }}
+              className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 transition-colors"
+            >Today</button>
+            <button
+              onClick={() => {
+                const y = new Date(Date.now() - 86400000).toISOString().slice(0,10)
+                setDateFrom(y); setDateTo(y)
+              }}
+              className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 font-semibold hover:bg-slate-300 transition-colors"
+            >Yesterday</button>
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo('') }}
+                className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-semibold hover:bg-red-200 transition-colors flex items-center gap-0.5"
+              ><X className="w-2.5 h-2.5" />Clear</button>
+            )}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              disabled={!dateFrom}
+              onClick={() => {
+                const d = new Date(dateFrom + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate()-1)
+                const s = d.toISOString().slice(0,10); setDateFrom(s); setDateTo(s)
+              }}
+              className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 disabled:opacity-30 transition-colors"
+            ><ChevronLeft className="w-3.5 h-3.5" /></button>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-slate-400 font-semibold">From</label>
+              <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200" />
             </div>
-          )}
+            <span className="text-slate-300">—</span>
+            <div className="flex items-center gap-1.5">
+              <label className="text-[10px] text-slate-400 font-semibold">To</label>
+              <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+            </div>
+            <button
+              disabled={!dateTo}
+              onClick={() => {
+                const d = new Date(dateTo + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate()+1)
+                const s = d.toISOString().slice(0,10); setDateFrom(s); setDateTo(s)
+              }}
+              className="p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-200 disabled:opacity-30 transition-colors"
+            ><ChevronRight className="w-3.5 h-3.5" /></button>
+            {(dateFrom || dateTo) && (
+              <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-full px-2 py-0.5">
+                {dateFrom === dateTo && dateFrom
+                  ? `${new Date(dateFrom + 'T12:00:00Z').toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' })}`
+                  : `${dateFrom || '…'} → ${dateTo || '…'}`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ── Batch Process Button ──────────────────────────────────────── */}
+        {unprocessedCount > 0 && (
+          <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
+            <PlayCircle className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+            <span className="text-sm text-indigo-800 font-medium flex-1">
+              <span className="font-bold">{unprocessedCount}</span> unprocessed TQ email{unprocessedCount !== 1 ? 's' : ''} in this view
+            </span>
+            <Button
+              size="sm"
+              variant="primary"
+              loading={batchProcessing}
+              icon={<PlayCircle className="w-3.5 h-3.5" />}
+              onClick={processBatch}
+            >
+              Process All Unprocessed
+            </Button>
+          </div>
+        )}
+
+        {/* ── Search ────────────────────────────────────────────────────── */}
+        <div className="space-y-2">
+          {/* Input row */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="e.g.  IS2400123  ·  VN2400123  ·  469083  ·  Tour Confirmation  ·  agent name…"
+              className="w-full pl-9 pr-28 py-2.5 text-sm border border-slate-200 rounded-xl bg-white text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"
+            />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
+              {searchQuery && (
+                <>
+                  <span className="text-[10px] font-bold text-blue-500">
+                    {displayEmails.length}/{emails.length}
+                  </span>
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="text-slate-400 hover:text-slate-600 transition-colors"
+                    title="Clear search"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Body search toggle + hint chips */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Body search toggle */}
+            <button
+              onClick={() => setSearchInBody(v => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all ${
+                searchInBody
+                  ? 'bg-indigo-100 border-indigo-300 text-indigo-700'
+                  : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+              }`}
+              title="Toggle body text search"
+            >
+              <FileSearch className="w-3 h-3" />
+              {searchInBody ? 'Body Search ON' : 'Body Text'}
+            </button>
+
+            <span className="text-[10px] text-slate-300">|</span>
+            <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Search by:</span>
+            {([
+              { flag: '🇱🇰', label: 'IS Number',  desc: 'IS2400123',  color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
+              { flag: '🇻🇳', label: 'VN Number',  desc: 'VN2400123',  color: 'bg-red-50 border-red-200 text-red-700' },
+              { flag: '🇸🇬', label: 'SG Number',  desc: 'SG2400123',  color: 'bg-blue-50 border-blue-200 text-blue-700' },
+              { flag: '🔢',  label: 'CNTL No.',   desc: '469083',     color: 'bg-slate-100 border-slate-200 text-slate-600' },
+            ] as { flag: string; label: string; desc: string; color: string }[]).map(chip => (
+              <button
+                key={chip.label}
+                onClick={() => setSearchQuery(chip.desc)}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all hover:opacity-80 cursor-pointer ${chip.color}`}
+              >
+                <span>{chip.flag}</span>{chip.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* ── Live Stats ────────────────────────────────────────────────── */}
@@ -921,7 +1519,8 @@ export default function MailInboxPage() {
           const showRaw      = rawBodyId === email.graphId
           const isPnl        = email.mailboxKind === 'PNL'
           const bookingRef   = result?.data?.bookingRef
-          const isWaiting    = result?.success && result.data?.status === 'PNL_WAITING'
+          const isWaiting      = result?.success && result.data?.status === 'PNL_WAITING'
+          const isNeedsManual  = result?.success && result.data?.status === 'NEEDS_MANUAL'
           // For TQ cards: numeric part of booking ref used to look up waiting PNL
           const numericRef   = !isPnl && bookingRef ? bookingRef.replace(/[^0-9]/g, '') : ''
           const waitingTourNo = !isPnl && numericRef ? waitingPnlMap.get(numericRef) : undefined
@@ -931,24 +1530,26 @@ export default function MailInboxPage() {
 
           return (
             <Card key={email.graphId} className={`overflow-hidden transition-all ${
-              isAutoProc   ? 'border-amber-300 ring-1 ring-amber-200'  :
-              isWaiting    ? 'border-orange-300 bg-orange-50/20'        :
-              result?.success ? 'border-green-200 bg-green-50/20'      :
-              result?.error   ? 'border-red-200'                        :
-              !email.isRead   ? 'border-blue-200 bg-blue-50/20'         : ''
+              isAutoProc      ? 'border-amber-300 ring-1 ring-amber-200'  :
+              isWaiting       ? 'border-orange-300 bg-orange-50/20'        :
+              isNeedsManual   ? 'border-amber-300 bg-amber-50/20'          :
+              result?.success ? 'border-green-200 bg-green-50/20'          :
+              result?.error   ? 'border-red-200'                            :
+              !email.isRead   ? 'border-blue-200 bg-blue-50/20'            : ''
             }`}>
 
               {/* Mailbox strip */}
               <div className={`px-4 py-1.5 flex items-center gap-2 border-b ${
-                isWaiting ? 'bg-orange-50 border-orange-100' :
-                isPnl ? 'bg-teal-50 border-teal-100' : 'bg-blue-50 border-blue-100'
+                isWaiting     ? 'bg-orange-50 border-orange-100' :
+                isNeedsManual ? 'bg-amber-50 border-amber-100'   :
+                isPnl         ? 'bg-teal-50 border-teal-100'     : 'bg-blue-50 border-blue-100'
               }`}>
-                <Mail className={`w-3 h-3 ${isWaiting ? 'text-orange-500' : isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
-                <span className={`text-[10px] font-mono font-semibold ${isWaiting ? 'text-orange-700' : isPnl ? 'text-teal-700' : 'text-blue-700'}`}>
+                <Mail className={`w-3 h-3 ${isWaiting ? 'text-orange-500' : isNeedsManual ? 'text-amber-500' : isPnl ? 'text-teal-500' : 'text-blue-500'}`} />
+                <span className={`text-[10px] font-mono font-semibold ${isWaiting ? 'text-orange-700' : isNeedsManual ? 'text-amber-700' : isPnl ? 'text-teal-700' : 'text-blue-700'}`}>
                   {email.mailboxUser}
                 </span>
-                <Badge color={isWaiting ? 'amber' : isPnl ? 'teal' : 'blue'} className="text-[9px]">
-                  {isWaiting ? 'Awaiting TQ' : isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}
+                <Badge color={isWaiting ? 'amber' : isNeedsManual ? 'amber' : isPnl ? 'teal' : 'blue'} className="text-[9px]">
+                  {isWaiting ? 'Awaiting TQ' : isNeedsManual ? 'Manual Entry Needed' : isPnl ? 'P&L Mailbox' : 'TQ Mailbox'}
                 </Badge>
                 {isPnl && pnlTourNo && !isWaiting && (
                   <span className="text-[10px] font-mono text-teal-600 font-semibold">Tour No: {pnlTourNo}</span>
@@ -963,7 +1564,7 @@ export default function MailInboxPage() {
                     <Loader2 className="w-3 h-3 animate-spin" /> Auto-processing…
                   </span>
                 )}
-                {result?.success && !isAutoProc && !isWaiting && (
+                {result?.success && !isAutoProc && !isWaiting && !isNeedsManual && (
                   <span className="ml-auto flex items-center gap-1 text-[10px] text-green-600 font-semibold">
                     <CheckCircle className="w-3 h-3" /> Processed
                   </span>
@@ -971,6 +1572,11 @@ export default function MailInboxPage() {
                 {isWaiting && !isAutoProc && (
                   <span className="ml-auto flex items-center gap-1 text-[10px] text-orange-600 font-semibold">
                     <Clock className="w-3 h-3" /> Waiting for TQ
+                  </span>
+                )}
+                {isNeedsManual && !isAutoProc && (
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-amber-700 font-semibold">
+                    <AlertCircle className="w-3 h-3" /> Manual entry needed
                   </span>
                 )}
               </div>
@@ -1005,14 +1611,31 @@ export default function MailInboxPage() {
                       className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors" title="Preview body">
                       {showRaw ? <ChevronUp className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
-                    {!result?.success && !isAutoProc && (
+                    {(!result?.success || isNeedsManual) && !isAutoProc && (
                       <Button
                         size="sm"
                         variant="outline"
                         icon={<Zap className="w-3.5 h-3.5" />}
                         onClick={() => processOne(email)}
                       >
-                        Process now
+                        {isNeedsManual ? 'Retry' : 'Process now'}
+                      </Button>
+                    )}
+                    {isNeedsManual && result?.data?.extracted && (
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon={<Plus className="w-3.5 h-3.5" />}
+                        onClick={() => {
+                          sessionStorage.setItem('mail_extracted_data', JSON.stringify({
+                            extracted:       result.data!.extracted,
+                            detectedCountry: (result.data as unknown as Record<string, unknown>).detectedCountry ?? null,
+                            emailSubject:    email.subject,
+                          }))
+                          router.push('/dashboard/bookings/new')
+                        }}
+                      >
+                        Create Booking
                       </Button>
                     )}
                     <Button
@@ -1022,10 +1645,21 @@ export default function MailInboxPage() {
                     >
                       {showRaw ? 'Hide mail' : 'Read mail'}
                     </Button>
-                    {result?.success && bookingRef && !isWaiting && (
+                    {result?.success && bookingRef && !isWaiting && !isNeedsManual && (
                       <Button size="sm" variant="secondary" icon={<ExternalLink className="w-3.5 h-3.5" />}
                         onClick={() => router.push(`/dashboard/bookings/${bookingRef}`)}>
                         {bookingRef}
+                      </Button>
+                    )}
+                    {result?.success && bookingRef && !isWaiting && !isNeedsManual && !isAutoProc && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={<RotateCcw className="w-3.5 h-3.5 text-orange-500" />}
+                        onClick={() => setReprocessTarget({ email, bookingRef })}
+                        title="Delete booking and reprocess this email"
+                      >
+                        Reprocess
                       </Button>
                     )}
                     {result?.success && result.data?.extracted && (
@@ -1067,8 +1701,63 @@ export default function MailInboxPage() {
                   </div>
                 )}
 
+                {/* ── NEEDS_MANUAL banner ─────────────────────────────── */}
+                {isNeedsManual && !isAutoProc && result?.data?.extracted && (
+                  <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-amber-900">
+                          {(result.data as unknown as Record<string,unknown>).extractionError
+                            ? 'Processing error — enter details manually'
+                            : 'Dates could not be extracted — manual entry required'}
+                        </p>
+                        {!!(result.data as unknown as Record<string,unknown>).extractionError && (
+                          <p className="text-[10px] text-amber-700 mt-0.5 font-mono opacity-75">
+                            {String((result.data as unknown as Record<string,unknown>).extractionError)}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {result.data.extracted.isNumber && (
+                            <span className="inline-flex items-center gap-1 bg-amber-100 border border-amber-300 rounded px-2 py-0.5 text-[10px] font-mono font-bold text-amber-800">
+                              IS: {result.data.extracted.isNumber}
+                            </span>
+                          )}
+                          {result.data.extracted.cntlNumber && (
+                            <span className="inline-flex items-center gap-1 bg-slate-100 border border-slate-300 rounded px-2 py-0.5 text-[10px] font-mono text-slate-600">
+                              CNTL: {result.data.extracted.cntlNumber}
+                            </span>
+                          )}
+                          {result.data.extracted.agent && (
+                            <span className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-600">
+                              {result.data.extracted.agent}
+                            </span>
+                          )}
+                          {result.data.extracted.paxAdults > 0 && (
+                            <span className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-600">
+                              <Users className="w-2.5 h-2.5" />
+                              {result.data.extracted.paxAdults}A {result.data.extracted.paxChildren > 0 ? `${result.data.extracted.paxChildren}C` : ''}
+                            </span>
+                          )}
+                          {result.data.extracted.passengers?.length > 0 && (
+                            <span className="inline-flex items-center gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 text-[10px] text-slate-600">
+                              {result.data.extracted.passengers.map(p => p.name).filter(Boolean).join(', ')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-amber-700 mt-2">
+                          {(result.data as unknown as Record<string,unknown>).extractionError
+                            ? 'Whatever could be read from the subject line has been pre-filled.'
+                            : 'All other details were extracted.'}{' '}
+                          Click <strong>Create Booking</strong> above to open the booking form pre-filled with this data.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Result summary row (non-waiting) ────────────────── */}
-                {result?.success && bookingRef && !isAutoProc && !isWaiting && (
+                {result?.success && bookingRef && !isAutoProc && !isWaiting && !isNeedsManual && (
                   <div className={`mt-3 flex items-center gap-3 flex-wrap text-xs pt-3 border-t ${isPnl ? 'border-teal-100' : 'border-blue-100'}`}>
 
                     {/* PNL: show Tour No → Tour Ref linkage */}
@@ -1254,7 +1943,12 @@ export default function MailInboxPage() {
               <>
                 <Search className="w-12 h-12 text-slate-300 mx-auto mb-3" />
                 <p className="text-slate-500 font-medium">No results for &ldquo;{searchQuery}&rdquo;</p>
-                <p className="text-slate-400 text-sm mt-1">Try a different subject, sender name, or Tour Ref</p>
+                <p className="text-slate-400 text-sm mt-1.5">Try searching by:</p>
+                <div className="flex flex-wrap justify-center gap-1.5 mt-2">
+                  {['IS Number (IS2400123)', 'VN Number (VN2400123)', 'CNTL No. (469083)', 'Subject keyword', 'Sender name'].map(hint => (
+                    <span key={hint} className="px-2 py-0.5 bg-slate-100 rounded-full text-[10px] text-slate-500 font-medium">{hint}</span>
+                  ))}
+                </div>
                 <button onClick={() => setSearchQuery('')} className="mt-3 text-xs text-blue-500 hover:text-blue-700 font-medium">
                   Clear search
                 </button>

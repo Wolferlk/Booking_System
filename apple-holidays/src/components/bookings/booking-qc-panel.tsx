@@ -82,10 +82,19 @@ function computeQCChecks(booking: BookingQCPanelProps['booking']): {
 export default function BookingQCPanel({ booking, onAutoSend, autoSending, daysUntilTrip }: BookingQCPanelProps) {
   const { checks, allPass } = computeQCChecks(booking)
 
-  const qcPassedAt: string | null = booking.qcPassedAt ?? null
-  const emailSentAt: string | null = booking.qcAutoEmailSentAt ?? null
-  const waSentAt: string | null = booking.qcAutoWaSentAt ?? null
+  const qcPassedAt: string | null   = booking.qcPassedAt        ?? null
+  const emailSentAt: string | null  = booking.qcAutoEmailSentAt ?? null
+  const waSentAt: string | null     = booking.qcAutoWaSentAt    ?? null
   const bothSent = !!emailSentAt && !!waSentAt
+
+  // Derive reason WhatsApp wasn't sent
+  const hasCustomerPhone = !!(booking.contactWhatsapp || booking.contactPhone)
+  const waNotSentReason = !waSentAt
+    ? (hasCustomerPhone ? 'Not yet sent — will auto-send on QC1 pass' : 'No customer phone/WhatsApp on file')
+    : null
+  const emailNotSentReason = !emailSentAt
+    ? 'Not yet sent — will auto-send on QC1 pass'
+    : null
 
   const t7 = daysUntilTrip - 7
   const t7Label =
@@ -170,21 +179,39 @@ export default function BookingQCPanel({ booking, onAutoSend, autoSending, daysU
         <div className="border-t border-green-200 pt-4 space-y-3">
           {/* Sent status */}
           <div className="flex flex-wrap gap-3">
-            <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg ${
-              emailSentAt ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-slate-50 text-slate-400 border border-slate-200'
+            <div className={`flex flex-col gap-0.5 text-xs px-2.5 py-1.5 rounded-lg ${
+              emailSentAt ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-slate-50 text-slate-500 border border-slate-200'
             }`}>
-              <Mail className="w-3.5 h-3.5" />
-              {emailSentAt
-                ? `Email sent ${new Date(emailSentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
-                : 'Email not sent'}
+              <div className="flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="font-medium">
+                  {emailSentAt
+                    ? `Email sent ${new Date(emailSentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+                    : 'Email not sent'}
+                </span>
+              </div>
+              {emailNotSentReason && (
+                <p className="text-[10px] text-slate-400 pl-5">{emailNotSentReason}</p>
+              )}
             </div>
-            <div className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg ${
-              waSentAt ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-50 text-slate-400 border border-slate-200'
+            <div className={`flex flex-col gap-0.5 text-xs px-2.5 py-1.5 rounded-lg ${
+              waSentAt ? 'bg-green-50 text-green-700 border border-green-200'
+              : hasCustomerPhone ? 'bg-amber-50 text-amber-700 border border-amber-200'
+              : 'bg-red-50 text-red-600 border border-red-200'
             }`}>
-              <MessageCircle className="w-3.5 h-3.5" />
-              {waSentAt
-                ? `WhatsApp sent ${new Date(waSentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
-                : 'WhatsApp not sent'}
+              <div className="flex items-center gap-1.5">
+                <MessageCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="font-medium">
+                  {waSentAt
+                    ? `WhatsApp sent ${new Date(waSentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+                    : 'WhatsApp not sent'}
+                </span>
+              </div>
+              {waNotSentReason && (
+                <p className={`text-[10px] pl-5 ${hasCustomerPhone ? 'text-amber-600' : 'text-red-500 font-semibold'}`}>
+                  {waNotSentReason}
+                </p>
+              )}
             </div>
           </div>
 

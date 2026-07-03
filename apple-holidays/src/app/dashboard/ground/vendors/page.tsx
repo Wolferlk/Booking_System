@@ -3,10 +3,13 @@
 import { useEffect, useState } from 'react'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
-import { Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car, ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car,
+  ChevronDown, ChevronUp, Link2, CheckCircle2, Power, Globe, UserCheck, Clock,
+} from 'lucide-react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
-import { Card, CardHeader, CardBody } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
 
 interface VehicleInVendor {
@@ -27,10 +30,28 @@ interface Vendor {
   email: string | null
   address: string | null
   isActive: boolean
+  isRegistered: boolean
+  country: string | null
   vehicles: VehicleInVendor[]
 }
 
 const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
+
+const COUNTRY_LABELS: Record<string, string> = {
+  SRILANKA: '🇱🇰 Sri Lanka',
+  VIETNAM: '🇻🇳 Vietnam',
+  SINGAPORE: '🇸🇬 Singapore',
+  MALAYSIA: '🇲🇾 Malaysia',
+  SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 SG / MY',
+}
+
+const COUNTRIES = [
+  { value: 'SRILANKA',          label: '🇱🇰 Sri Lanka' },
+  { value: 'VIETNAM',           label: '🇻🇳 Vietnam' },
+  { value: 'SINGAPORE',         label: '🇸🇬 Singapore' },
+  { value: 'MALAYSIA',          label: '🇲🇾 Malaysia' },
+  { value: 'SINGAPORE_MALAYSIA',label: '🇸🇬🇲🇾 Singapore & Malaysia' },
+]
 
 export default function VendorsPage() {
   const { data: session } = useSession()
@@ -43,13 +64,39 @@ export default function VendorsPage() {
 
   // Vendor form
   const [vendorModal, setVendorModal] = useState<Vendor | 'new' | null>(null)
-  const [vendorForm, setVendorForm] = useState({ name: '', phone: '', email: '', address: '' })
+  const [vendorForm, setVendorForm] = useState({ name: '', phone: '', email: '', address: '', country: '' })
 
   // Vehicle form
   const [vehicleModal, setVehicleModal] = useState<{ vendorId: string; vehicle?: VehicleInVendor } | null>(null)
   const [vForm, setVForm] = useState({ type: 'van', plateNo: '', brand: '', model: '', capacity: '4' })
 
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving]       = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+
+  async function copyRegLink() {
+    const appUrl = window.location.origin
+    const link = `${appUrl}/vendor/register`
+    await navigator.clipboard.writeText(link).catch(() => prompt('Copy this registration link:', link))
+    toast.success('Vendor registration link copied!')
+    setLinkCopied(true)
+    setTimeout(() => setLinkCopied(false), 3000)
+  }
+
+  async function toggleActive(vendor: Vendor) {
+    setTogglingId(vendor.id)
+    try {
+      const res  = await fetch(`/api/ground/vendors/${vendor.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !vendor.isActive }),
+      })
+      const data = await res.json()
+      if (!data.success) { toast.error(data.error); return }
+      toast.success(vendor.isActive ? 'Vendor deactivated' : 'Vendor activated')
+      setVendors(prev => prev.map(v => v.id === vendor.id ? { ...v, isActive: !vendor.isActive } : v))
+    } finally { setTogglingId(null) }
+  }
 
   async function load() {
     try {
@@ -64,12 +111,12 @@ export default function VendorsPage() {
   useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function openAddVendor() {
-    setVendorForm({ name: '', phone: '', email: '', address: '' })
+    setVendorForm({ name: '', phone: '', email: '', address: '', country: '' })
     setVendorModal('new')
   }
 
   function openEditVendor(v: Vendor) {
-    setVendorForm({ name: v.name, phone: v.phone ?? '', email: v.email ?? '', address: v.address ?? '' })
+    setVendorForm({ name: v.name, phone: v.phone ?? '', email: v.email ?? '', address: v.address ?? '', country: v.country ?? '' })
     setVendorModal(v)
   }
 
@@ -130,6 +177,8 @@ export default function VendorsPage() {
     toast.success('Vehicle removed'); load()
   }
 
+  const pendingCount = vendors.filter(v => v.isRegistered && !v.isActive).length
+
   return (
     <div>
       <Header
@@ -137,12 +186,33 @@ export default function VendorsPage() {
         subtitle="Companies supplying vehicles for tours"
         actions={
           isAdmin ? (
-            <button onClick={openAddVendor} className="btn-primary btn">
-              <Plus className="w-4 h-4" /> Add Vendor
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={copyRegLink}
+                title="Copy vendor registration link"
+                className="btn-secondary btn flex items-center gap-1.5"
+              >
+                {linkCopied ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <Link2 className="w-4 h-4" />}
+                {linkCopied ? 'Copied!' : 'Copy Reg. Link'}
+              </button>
+              <button onClick={openAddVendor} className="btn-primary btn">
+                <Plus className="w-4 h-4" /> Add Vendor
+              </button>
+            </div>
           ) : undefined
         }
       />
+
+      {/* Pending approval banner */}
+      {pendingCount > 0 && (
+        <div className="mx-8 mt-4 flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <Clock className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          <p className="text-sm text-amber-800">
+            <span className="font-bold">{pendingCount} vendor{pendingCount > 1 ? 's' : ''}</span> self-registered and pending activation.
+            Click the <Power className="inline w-3.5 h-3.5" /> icon to activate.
+          </p>
+        </div>
+      )}
 
       <div className="p-8 space-y-4 max-w-5xl">
         {loading ? (
@@ -155,33 +225,67 @@ export default function VendorsPage() {
         ) : (
           vendors.map(vendor => {
             const expanded = expandedId === vendor.id
+            const isPending = vendor.isRegistered && !vendor.isActive
+
             return (
-              <Card key={vendor.id} className="overflow-hidden">
+              <Card key={vendor.id} className={`overflow-hidden ${isPending ? 'border-amber-200' : ''}`}>
                 {/* Vendor header */}
                 <div
                   className="flex items-center gap-4 p-5 cursor-pointer hover:bg-slate-50 transition-colors"
                   onClick={() => setExpandedId(expanded ? null : vendor.id)}
                 >
-                  <div className="w-11 h-11 rounded-xl bg-purple-100 flex items-center justify-center flex-shrink-0">
-                    <Truck className="w-5 h-5 text-purple-600" />
+                  <div className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 ${isPending ? 'bg-amber-100' : 'bg-purple-100'}`}>
+                    <Truck className={`w-5 h-5 ${isPending ? 'text-amber-600' : 'text-purple-600'}`} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-slate-900">{vendor.name}</p>
-                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${vendor.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                        {vendor.isActive ? 'Active' : 'Inactive'}
+
+                      {/* Registration status */}
+                      {vendor.isRegistered ? (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700 flex items-center gap-1">
+                          <UserCheck className="w-2.5 h-2.5" /> Registered
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold bg-slate-100 text-slate-400">
+                          Not Registered
+                        </span>
+                      )}
+
+                      {/* Active status */}
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${vendor.isActive ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {vendor.isActive ? 'Active' : isPending ? 'Pending Approval' : 'Inactive'}
                       </span>
                     </div>
+
                     <div className="flex flex-wrap gap-4 mt-0.5">
+                      {vendor.country && (
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <Globe className="w-3 h-3" />{COUNTRY_LABELS[vendor.country] ?? vendor.country}
+                        </span>
+                      )}
                       {vendor.phone && <span className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" />{vendor.phone}</span>}
                       {vendor.email && <span className="text-xs text-slate-500 flex items-center gap-1"><Mail className="w-3 h-3" />{vendor.email}</span>}
                       {vendor.address && <span className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" />{vendor.address}</span>}
                     </div>
                   </div>
+
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="text-xs text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">{vendor.vehicles.length} vehicle{vendor.vehicles.length !== 1 ? 's' : ''}</span>
                     {isAdmin && (
                       <>
+                        {/* Activate / Deactivate */}
+                        <button
+                          onClick={e => { e.stopPropagation(); toggleActive(vendor) }}
+                          disabled={togglingId === vendor.id}
+                          title={vendor.isActive ? 'Deactivate vendor' : 'Activate vendor'}
+                          className={`p-1.5 rounded-lg transition-colors ${vendor.isActive ? 'text-emerald-600 hover:bg-red-50 hover:text-red-500' : 'text-amber-500 hover:bg-emerald-50 hover:text-emerald-600'}`}
+                        >
+                          {togglingId === vendor.id
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Power className="w-3.5 h-3.5" />
+                          }
+                        </button>
                         <button onClick={e => { e.stopPropagation(); openEditVendor(vendor) }} className="p-1.5 text-slate-400 hover:text-brand-600"><Edit2 className="w-3.5 h-3.5" /></button>
                         <button onClick={e => { e.stopPropagation(); deleteVendor(vendor.id) }} className="p-1.5 text-slate-400 hover:text-red-500"><Trash2 className="w-3.5 h-3.5" /></button>
                       </>
@@ -255,6 +359,19 @@ export default function VendorsPage() {
               />
             </div>
           ))}
+
+          <div>
+            <label className="form-label">Country</label>
+            <select
+              className="form-select"
+              value={vendorForm.country}
+              onChange={e => setVendorForm(x => ({ ...x, country: e.target.value }))}
+            >
+              <option value="">— Not specified —</option>
+              {COUNTRIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </div>
+
           <div className="flex gap-3">
             <button onClick={saveVendor} disabled={saving || !vendorForm.name} className="btn-primary btn flex-1">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}

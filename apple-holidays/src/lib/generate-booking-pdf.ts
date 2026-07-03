@@ -61,6 +61,29 @@ async function resolveTicketImage(fileUrl: string | null | undefined): Promise<B
   }
 }
 
+// ── Note parser ──────────────────────────────────────────────────────────────
+// Ticket notes may be stored as "{json} · Client: ... · PNL Item #...".
+// Extract the remarks text from the JSON prefix so raw JSON isn't shown.
+function parseTicketNotes(notes: string | null | undefined): string {
+  if (!notes) return ''
+  const sepIdx = notes.indexOf('} · ')
+  if (sepIdx !== -1) {
+    const jsonPart = notes.slice(0, sepIdx + 1)
+    const suffix   = notes.slice(sepIdx + 4)
+    let remarks = ''
+    try {
+      const parsed = JSON.parse(jsonPart)
+      remarks = typeof parsed?.remarks === 'string' ? parsed.remarks : ''
+    } catch { remarks = jsonPart }
+    return [remarks, suffix].filter(Boolean).join(' · ')
+  }
+  try {
+    const parsed = JSON.parse(notes)
+    if (parsed && typeof parsed === 'object' && 'remarks' in parsed) return String(parsed.remarks)
+  } catch {}
+  return notes
+}
+
 // ── Core builder ─────────────────────────────────────────────────────────────
 async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -98,7 +121,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
         doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(17)
           .text('Apple Holidays', nameX, 17, { lineBreak: false })
         doc.fillColor('#CBD5E1').font('Helvetica').fontSize(8)
-          .text('MMT Vietnam  ·  Tour Operations', nameX, 40, { lineBreak: false })
+          .text('Vietnam  ·  Tour Operations', nameX, 40, { lineBreak: false })
 
         doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(14)
           .text(booking.bookingRef, MARGIN, 17, { width: CONTENT_W, align: 'right', lineBreak: false })
@@ -157,8 +180,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
       doc.fillColor(MUTED).font('Helvetica').fontSize(9)
         .text(
           `${fmt(booking.arrivalDate)} – ${fmt(booking.departureDate)}  ·  `
-          + `${booking.paxAdults ?? 0} Adults${booking.paxChildren ? ', ' + booking.paxChildren + ' Children' : ''}  ·  `
-          + `${booking.currency ?? 'USD'} ${booking.quotedTotal ? Number(booking.quotedTotal).toLocaleString() : '—'}`,
+          + `${booking.paxAdults ?? 0} Adults${booking.paxChildren ? ', ' + booking.paxChildren + ' Children' : ''}`,
           MARGIN, doc.y,
         )
       doc.moveDown(0.4)
@@ -172,11 +194,6 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
       infoRow('Arrival', fmt(booking.arrivalDate))
       infoRow('Departure', fmt(booking.departureDate))
       infoRow('Passengers', `${booking.paxAdults ?? 0} Adults, ${booking.paxChildren ?? 0} Children`)
-      infoRow('Total Amount',
-        booking.quotedTotal
-          ? `${booking.currency ?? 'USD'} ${Number(booking.quotedTotal).toLocaleString()}`
-          : undefined,
-      )
       if (booking.agentBookingId) infoRow('Agent Booking ID', booking.agentBookingId)
 
       // ── 2. Agent / Tour Operator ──────────────────────────────────────────
@@ -209,11 +226,9 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
         const thY = doc.y
         doc.rect(MARGIN, thY, CONTENT_W, 17).fill('#1E293B')
         doc.font('Helvetica-Bold').fontSize(8).fillColor('#94A3B8')
-        doc.text('#',           MARGIN + 5,   thY + 4, { width: 18, lineBreak: false })
-        doc.text('FULL NAME',   MARGIN + 26,  thY + 4, { width: 175, lineBreak: false })
-        doc.text('TYPE',        MARGIN + 205, thY + 4, { width: 55, lineBreak: false })
-        doc.text('PASSPORT',    MARGIN + 265, thY + 4, { width: 90, lineBreak: false })
-        doc.text('NATIONALITY', MARGIN + 360, thY + 4, { width: 90, lineBreak: false })
+        doc.text('#',         MARGIN + 5,   thY + 4, { width: 18, lineBreak: false })
+        doc.text('FULL NAME', MARGIN + 26,  thY + 4, { width: 280, lineBreak: false })
+        doc.text('TYPE',      MARGIN + 310, thY + 4, { width: 100, lineBreak: false })
         doc.y = thY + 20
 
         passengers.forEach((p: any, i: number) => {
@@ -222,11 +237,9 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
           if (i % 2 === 0) doc.rect(MARGIN, py, CONTENT_W, 16).fill('#F8FAFC')
           doc.font(p.isLead ? 'Helvetica-Bold' : 'Helvetica').fontSize(9).fillColor(DARK)
           doc.text(`${i + 1}`, MARGIN + 5, py + 3, { width: 18, lineBreak: false })
-          doc.text(`${p.name}${p.isLead ? ' ★' : ''}`, MARGIN + 26, py + 3, { width: 175, lineBreak: false })
+          doc.text(`${p.name}${p.isLead ? ' ★' : ''}`, MARGIN + 26, py + 3, { width: 280, lineBreak: false })
           doc.font('Helvetica').fillColor(MUTED).fontSize(8.5)
-          doc.text(p.type ?? '', MARGIN + 205, py + 3, { width: 55, lineBreak: false })
-          doc.text(p.passport ?? '—', MARGIN + 265, py + 3, { width: 90, lineBreak: false })
-          doc.text(p.nationality ?? '—', MARGIN + 360, py + 3, { width: 90, lineBreak: false })
+          doc.text(p.type ?? '', MARGIN + 310, py + 3, { width: 100, lineBreak: false })
           doc.y = py + 17
         })
         doc.moveDown(0.5)
@@ -359,9 +372,17 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
           doc.fillColor(DARK)
             .text(item.location ?? '', MARGIN + 100, ay, { width: 195, lineBreak: false })
 
+          const SERVICE_LABELS: Record<string, string> = {
+            PVT_TRANSFER: 'Private Transfer',
+            SIC_TRANSFER: 'SIC Transfer',
+            INTERNAL_TOUR: 'Ticket Only',
+            FLIGHT: 'Flight',
+            ACCOMMODATION: 'Hotel Stay',
+          }
           if (item.serviceType && item.serviceType !== 'OWN_ARRANGEMENT') {
+            const svcLabel = SERVICE_LABELS[item.serviceType] ?? item.serviceType.replace(/_/g, ' ')
             doc.fillColor(MUTED).font('Helvetica').fontSize(7.5)
-              .text(item.serviceType.replace(/_/g, ' '), MARGIN + 300, ay, { width: 115, lineBreak: false })
+              .text(svcLabel, MARGIN + 300, ay, { width: 115, lineBreak: false })
           }
           if (item.meetingTime) {
             doc.fillColor(MUTED).font('Helvetica').fontSize(7.5)
@@ -422,13 +443,25 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
 
       // ── 9. Tickets & Vouchers (Full PDF only) ─────────────────────────────
       if (includeDriversAndTickets) {
-        const tickets: any[] = (booking.tickets ?? []).filter((t: any) => t.activated !== false)
+        const tickets: any[] = (booking.tickets ?? []).filter((t: any) => t.activated === true || t.fileUrl || t.reference)
         if (tickets.length > 0) {
           // First: overview page
           sectionTitle('Tickets & Vouchers Summary')
           tickets.forEach((t: any, i: number) => {
-            if (doc.y > 750) { doc.addPage(); doc.y = MARGIN }
-            infoRow(`${i + 1}. ${t.type ?? 'Ticket'}`, [t.supplier, t.reference, t.status?.replace(/_/g, ' ')].filter(Boolean).join('  ·  '))
+            if (doc.y > 730) { doc.addPage(); doc.y = MARGIN }
+            const name = t.type ?? 'Ticket'
+            const meta = [t.supplier, t.reference, t.status?.replace(/_/g, ' ')].filter(Boolean).join('  ·  ')
+            const startY = doc.y
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED)
+              .text(`${i + 1}.`, MARGIN + 5, startY, { width: 20, lineBreak: false })
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK)
+              .text(name, MARGIN + 26, startY, { width: CONTENT_W - 31 })
+            if (meta) {
+              doc.font('Helvetica').fontSize(8).fillColor(MUTED)
+                .text(meta, MARGIN + 26, doc.y, { width: CONTENT_W - 31 })
+            }
+            doc.moveDown(0.3)
+            divider()
           })
 
           // Then each ticket on its own page
@@ -455,7 +488,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
                 ? `${ticket.currency ?? 'USD'} ${Number(ticket.totalCost).toLocaleString()}`
                 : undefined,
             )
-            if (ticket.notes) infoRow('Notes', ticket.notes)
+            if (ticket.notes) infoRow('Notes', parseTicketNotes(ticket.notes))
 
             // Receipt / voucher image
             if (ticket.fileUrl) {
@@ -511,7 +544,7 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
           .strokeColor(LINE).lineWidth(0.5).stroke()
         doc.font('Helvetica').fontSize(7).fillColor(MUTED)
           .text(
-            `Apple Holidays  ·  MMT Vietnam  ·  Ref: ${booking.bookingRef}`
+            `Apple Holidays  ·  Vietnam  ·  Ref: ${booking.bookingRef}`
             + `  ·  Page ${i + 1} of ${range.count}`
             + `  ·  ${new Date().toLocaleString('en-GB')}`,
             MARGIN, 824, { width: CONTENT_W, align: 'center' },

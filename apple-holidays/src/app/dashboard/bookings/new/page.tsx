@@ -1,16 +1,16 @@
 'use client'
 
-import { useState, useEffect, type FormEvent, type ReactNode } from 'react'
+import { useState,useRef,useEffect, type FormEvent, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe } from 'lucide-react'
+import { Plus, Trash2, Loader2, Save, Upload, HardDrive, Globe, Mail, X } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
-import { generateBookingRef } from '@/lib/utils'
 import { detectCountryFromPath, detectCountryFromRef, countryLabel } from '@/lib/country-detection'
+import { normalizeCurrencyCode } from '@/lib/utils'
 
 // ─── Drive options per destination country ────────────────────────────────────
 const COUNTRY_DRIVES = [
@@ -21,6 +21,13 @@ const COUNTRY_DRIVES = [
 ] as const
 
 type DriveKey = typeof COUNTRY_DRIVES[number]['driveKey']
+
+// ─── IS Number normalization ──────────────────────────────────────────────────
+function normalizeISNumber(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const cleaned = raw.replace(/\s+/g, '').toUpperCase()
+  return /^(VN|IS|SG|MY)\d+$/.test(cleaned) ? cleaned : null
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,12 +67,15 @@ export default function NewBookingPage() {
   const router = useRouter()
   const [saving,    setSaving]    = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [mailPrefillSubject, setMailPrefillSubject] = useState<string | null>(null)
+  const handleAIParsedRef = useRef<(data: Record<string, unknown>) => void>(null as unknown as (data: Record<string, unknown>) => void)
 
   // Drive picker state
-  const [selectedDriveKey,  setSelectedDriveKey]  = useState<DriveKey | ''>('')
-  const [drivePickerOpen,   setDrivePickerOpen]   = useState(false)
-  const [sourceMode,        setSourceMode]         = useState<'pc' | 'drive' | null>(null)
-  const [selectedCountry,   setSelectedCountry]   = useState<string>('')
+  const [selectedDriveKey,       setSelectedDriveKey]       = useState<DriveKey | ''>('')
+  const [drivePickerOpen,        setDrivePickerOpen]        = useState(false)
+  const [sourceMode,             setSourceMode]              = useState<'pc' | 'drive' | null>(null)
+  const [selectedCountry,        setSelectedCountry]        = useState<string>('')
+  const [driveSourceFolderUrl,   setDriveSourceFolderUrl]   = useState<string | null>(null)
 
   // Sync country from drive key whenever drive mode selection changes
   useEffect(() => {
@@ -75,10 +85,11 @@ export default function NewBookingPage() {
     }
   }, [selectedDriveKey])
 
-  // Form state
+  // Form state — bookingRef starts empty, filled from IS Number on AI extraction
   const [form, setForm] = useState({
-    bookingRef: generateBookingRef(),
+    bookingRef: '',
     agentBookingId: '',
+    cntlNumber: '',
     agent: 'Make My Trip',
     fileHandler: '',
     arrivalDate: '',
@@ -97,6 +108,14 @@ export default function NewBookingPage() {
     contactEmail: '',
     contactPhone: '',
     contactWhatsapp: '',
+    // Additional TC sections
+    valueAddedServices: '',
+    packageIncludes: '',
+    packageExcludes: '',
+    importantNotes: '',
+    tips: '',
+    otherNote: '',
+    clientRequest: '',
   })
 
   const [passengers,        setPassengers]        = useState<Passenger[]>([
@@ -115,13 +134,38 @@ export default function NewBookingPage() {
     { name: '', phone: '', role: '' },
   ])
 
+  // ── Load mail-extracted data from sessionStorage on first render ──────────
+  useEffect(() => {
+    const raw = sessionStorage.getItem('mail_extracted_data')
+    if (!raw) return
+    sessionStorage.removeItem('mail_extracted_data')
+    try {
+      const payload = JSON.parse(raw) as {
+        extracted: Record<string, unknown>
+        detectedCountry: string | null
+        emailSubject: string | null
+      }
+      handleAIParsedRef.current(payload.extracted)
+      if (payload.detectedCountry) setSelectedCountry(payload.detectedCountry)
+      if (payload.emailSubject) setMailPrefillSubject(payload.emailSubject)
+      toast.info('Form pre-filled from email — please enter the arrival and departure dates')
+    } catch { /* ignore corrupt data */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // ── Apply extracted data to form ──────────────────────────────────────────
   function handleAIParsed(data: Record<string, unknown>) {
     if (!data) return
+
+    // IS Number is the booking reference — normalize and use directly
+    const extractedISNumber = normalizeISNumber(data.isNumber as string | null)
+
     setForm(prev => ({
       ...prev,
-      bookingRef:     prev.bookingRef,
-      agentBookingId: (data.agentBookingId as string) || (data.bookingRef as string) || prev.agentBookingId,
+      // bookingRef = IS Number (the extracted IS Number is the canonical booking reference)
+      bookingRef:     extractedISNumber || prev.bookingRef,
+      agentBookingId: (data.agentBookingId as string) || prev.agentBookingId,
+      cntlNumber:     (data.cntlNumber     as string) || prev.cntlNumber,
       agent:          (data.agent          as string) || prev.agent,
       fileHandler:    (data.fileHandler    as string) || prev.fileHandler,
       arrivalDate:    (data.arrivalDate    as string)?.slice(0, 10) || prev.arrivalDate,
@@ -129,7 +173,7 @@ export default function NewBookingPage() {
       paxAdults:      String(data.paxAdults   ?? prev.paxAdults),
       paxChildren:    String(data.paxChildren ?? prev.paxChildren),
       quotedTotal:    String(data.quotedTotal ?? prev.quotedTotal),
-      currency:       (data.currency       as string) || prev.currency,
+      currency:       normalizeCurrencyCode(data.currency as string) || prev.currency,
       terms:          (data.terms          as string) || prev.terms,
       exclusions:     (data.exclusions     as string) || prev.exclusions,
       policyNotes:    (data.policyNotes    as string) || prev.policyNotes,
@@ -140,33 +184,67 @@ export default function NewBookingPage() {
       contactEmail:   (data.contactEmail   as string) || prev.contactEmail,
       contactPhone:   sanitizePhoneValue((data.contactPhone   as string) || prev.contactPhone),
       contactWhatsapp: sanitizePhoneValue((data.contactWhatsapp as string) || prev.contactWhatsapp),
+      
+      // Additional TC sections
+      valueAddedServices: (data.valueAddedServices as string) || prev.valueAddedServices,
+      packageIncludes:    (data.packageIncludes    as string) || prev.packageIncludes,
+      packageExcludes:    (data.packageExcludes    as string) || prev.packageExcludes,
+      importantNotes:     (data.importantNotes     as string) || prev.importantNotes,
+      tips:               (data.tips               as string) || prev.tips,
+      otherNote:          (data.otherNote          as string) || prev.otherNote,
+      clientRequest:      (data.clientRequest      as string) || prev.clientRequest,
     }))
 
     const pax = data.passengers as Passenger[] | undefined
-    if (pax?.length) setPassengers(pax.map(p => ({ ...p, age: String(p.age ?? ''), isLead: Boolean(p.isLead) })))
+    if (pax?.length) setPassengers(pax.map(p => ({
+      name:        String(p.name        ?? ''),
+      type:        String(p.type        ?? 'ADULT'),
+      age:         String(p.age         ?? ''),
+      isLead:      Boolean(p.isLead),
+      passport:    String(p.passport    ?? ''),
+      nationality: String(p.nationality ?? ''),
+    })))
 
     const fl = data.flights as Flight[] | undefined
     if (fl?.length) {
       setFlights(fl.map(f => ({
         flightNo: String(f.flightNo ?? ''),
-        date: String(f.date ?? '').slice(0, 10),
-        fromApt: String(f.fromApt ?? ''),
-        depTime: String(f.depTime ?? ''),
-        toApt: String(f.toApt ?? ''),
-        arrTime: String(f.arrTime ?? ''),
-        airline: String(f.airline ?? ''),
-        notes: String(f.notes ?? ''),
+        date:     String(f.date     ?? '').slice(0, 10),
+        fromApt:  String(f.fromApt  ?? ''),
+        depTime:  String(f.depTime  ?? ''),
+        toApt:    String(f.toApt    ?? ''),
+        arrTime:  String(f.arrTime  ?? ''),
+        airline:  String(f.airline  ?? ''),
+        notes:    String(f.notes    ?? ''),
       })))
     }
 
-    const ac = data.accommodations as Hotel[] | undefined
-    if (ac?.length) setHotels(ac.map(h => ({ ...h, nights: String((h as unknown as Record<string, unknown>).nights ?? '') })))
+    const ac = data.accommodations as Record<string, unknown>[] | undefined
+    if (ac?.length) setHotels(ac.map(h => ({
+      city:     String(h.city     ?? ''),
+      hotel:    String(h.hotel    ?? ''),
+      checkIn:  String(h.checkIn  ?? ''),
+      checkOut: String(h.checkOut ?? ''),
+      nights:   String(h.nights   ?? ''),
+      roomType: String(h.roomType ?? ''),
+      mealType: String(h.mealType ?? ''),
+      address:  String(h.address  ?? ''),
+    })))
 
     const it = data.itineraryItems as ItineraryItem[] | undefined
-    if (it?.length) setItinerary(it.map(i => ({ ...i, dayNo: String(i.dayNo), date: (i.date as string)?.slice(0, 10) || '' })))
+    if (it?.length) setItinerary(it.map(i => ({
+      dayNo:       String(i.dayNo       ?? ''),
+      date:        String(i.date        ?? '').slice(0, 10),
+      title:       String(i.title       ?? ''),
+      description: String(i.description ?? ''),
+    })))
 
-    const ec = data.emergencyContacts as EmergencyContact[] | undefined
-    if (ec?.length) setEmergencyContacts(ec)
+    const ec = data.emergencyContacts as Record<string, unknown>[] | undefined
+    if (ec?.length) setEmergencyContacts(ec.map(e => ({
+      name:  String(e.name  ?? ''),
+      phone: String(e.phone ?? ''),
+      role:  String(e.role  ?? ''),
+    })))
   }
 
   function validatePhoneFields() {
@@ -189,11 +267,14 @@ export default function NewBookingPage() {
       }
     })
   }
+  // Keep ref current every render so the mount effect can call it
+  handleAIParsedRef.current = handleAIParsed
 
   // ── File selected from OneDrive picker ────────────────────────────────────
-  async function handleDriveFileSelected(file: CloudFile, folderPath?: string) {
+  async function handleDriveFileSelected(file: CloudFile, folderPath?: string, folderWebUrl?: string | null) {
     setDrivePickerOpen(false)
     if (!selectedDriveKey) return
+    if (folderWebUrl) setDriveSourceFolderUrl(folderWebUrl)
     setAiLoading(true)
     try {
       const res  = await fetch(`/api/drives/${selectedDriveKey}/extract`, {
@@ -201,14 +282,15 @@ export default function NewBookingPage() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ itemId: file.id, itemName: file.name }),
       })
-      const json = await res.json()
+      const raw = await res.text()
+      if (!raw.trim()) throw new Error('Server returned an empty response — extraction may have timed out. Please try again.')
+      let json: { success: boolean; data?: { extracted: Record<string, unknown> }; error?: string }
+      try { json = JSON.parse(raw) } catch { throw new Error('Server returned an invalid response. Please try again.') }
       if (!json.success) throw new Error(json.error)
-      handleAIParsed(json.data.extracted)
+      const extracted = json.data?.extracted ?? {}
+      handleAIParsed(extracted)
 
-      // The MY and SG buttons open the SAME OneDrive — Singapore vs Malaysia is
-      // determined by the sub-folder ("…/Singapore Drive" vs "…/Malaysia Drive").
-      // Detect from the folder path first, then the file URL, then the booking ref.
-      const extractedRef = (json.data.extracted?.bookingRef as string) || ''
+      const extractedRef = (extracted.bookingRef as string) || ''
       const detected =
         detectCountryFromPath(folderPath) ||
         detectCountryFromPath(file.webUrl) ||
@@ -238,6 +320,11 @@ export default function NewBookingPage() {
       }
 
       validatePhoneFields()
+      if (!form.bookingRef.trim()) {
+        toast.error('Booking Reference is required. Upload a TC document to extract the IS Number, or enter it manually.')
+        setSaving(false)
+        return
+      }
 
       const res = await fetch('/api/bookings', {
         method:  'POST',
@@ -257,6 +344,16 @@ export default function NewBookingPage() {
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
+
+      // Auto-assign OneDrive folder if file was picked from a drive subfolder
+      if (driveSourceFolderUrl && json.data?.bookingRef) {
+        fetch(`/api/bookings/${json.data.bookingRef}/folder`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderUrl: driveSourceFolderUrl }),
+        }).catch(() => { /* best-effort */ })
+      }
+
       toast.success('Booking created successfully!')
       router.push(`/dashboard/bookings/${json.data.bookingRef}`)
     } catch (err: unknown) {
@@ -273,12 +370,29 @@ export default function NewBookingPage() {
       <Header title="New Booking" subtitle="Create a booking from quotation or enter manually" />
       <div className="p-8 space-y-6 ">
 
+        {/* ── Mail pre-fill banner ──────────────────────────────────────── */}
+        {mailPrefillSubject && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+            <Mail className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-900">Pre-filled from email</p>
+              <p className="text-xs text-amber-700 mt-0.5 truncate">{mailPrefillSubject}</p>
+              <p className="text-xs text-amber-600 mt-1">
+                All extracted details have been filled in below. Please enter the <strong>Arrival</strong> and <strong>Departure</strong> dates to complete the booking.
+              </p>
+            </div>
+            <button onClick={() => setMailPrefillSubject(null)} className="text-amber-400 hover:text-amber-600 flex-shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* ── AI Document Parser ──────────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <h3 className="text-base font-semibold text-slate-900">AI Document Parser</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Upload or select a tour confirmation — AI will auto-fill the form below.
+              Upload or select a tour confirmation — AI will auto-fill the form below. The IS Number from the document becomes the Booking Reference.
             </p>
           </CardHeader>
           <CardBody className="space-y-4">
@@ -450,13 +564,24 @@ export default function NewBookingPage() {
                 </div>
               </div>
               <div>
-                <label className="form-label">Booking Ref *</label>
-                <input className="form-input font-mono" required value={form.bookingRef}
-                  onChange={e => setForm(p => ({ ...p, bookingRef: e.target.value }))} />
+                <label className="form-label">Booking Ref (IS Number) *</label>
+                <input
+                  className="form-input font-mono"
+                  required
+                  placeholder="e.g. VN19005, IS48377, SG22232"
+                  value={form.bookingRef}
+                  onChange={e => setForm(p => ({ ...p, bookingRef: e.target.value.trim().toUpperCase() }))}
+                />
+                <p className="text-xs text-slate-400 mt-0.5">Filled automatically from the IS Number in the TC document</p>
               </div>
               <div>
-                <label className="form-label">MMT / Agent Booking ID</label>
-                <input className="form-input" value={form.agentBookingId}
+                <label className="form-label">CNTL No.</label>
+                <input className="form-input font-mono" placeholder="e.g. 463720CNTL, CNTL459773" value={form.cntlNumber}
+                  onChange={e => setForm(p => ({ ...p, cntlNumber: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Agent Ref. No.</label>
+                <input className="form-input" placeholder="Agent booking reference" value={form.agentBookingId}
                   onChange={e => setForm(p => ({ ...p, agentBookingId: e.target.value }))} />
               </div>
               <div>
@@ -704,11 +829,32 @@ export default function NewBookingPage() {
             </div>
           </Section>
 
-          {/* Terms */}
-          <Section title="Terms & Policy">
+          {/* Package Sections */}
+          <Section title="Package Details">
             <div className="grid gap-4">
               <div>
-                <label className="form-label">Terms & Conditions</label>
+                <label className="form-label">Value Added Services</label>
+                <textarea className="form-textarea" rows={2} value={form.valueAddedServices}
+                  onChange={e => setForm(p => ({ ...p, valueAddedServices: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Above Package Includes</label>
+                <textarea className="form-textarea" rows={3} value={form.packageIncludes}
+                  onChange={e => setForm(p => ({ ...p, packageIncludes: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">The Above Package Excludes</label>
+                <textarea className="form-textarea" rows={3} value={form.packageExcludes}
+                  onChange={e => setForm(p => ({ ...p, packageExcludes: e.target.value }))} />
+              </div>
+            </div>
+          </Section>
+
+          {/* Terms & Notes */}
+          <Section title="Terms, Notes & Client Requests">
+            <div className="grid gap-4">
+              <div>
+                <label className="form-label">Terms &amp; Conditions</label>
                 <textarea className="form-textarea" rows={3} value={form.terms}
                   onChange={e => setForm(p => ({ ...p, terms: e.target.value }))} />
               </div>
@@ -721,6 +867,26 @@ export default function NewBookingPage() {
                 <label className="form-label">Policy Notes</label>
                 <textarea className="form-textarea" rows={2} value={form.policyNotes}
                   onChange={e => setForm(p => ({ ...p, policyNotes: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Important Notes</label>
+                <textarea className="form-textarea" rows={2} value={form.importantNotes}
+                  onChange={e => setForm(p => ({ ...p, importantNotes: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Tips</label>
+                <textarea className="form-textarea" rows={2} value={form.tips}
+                  onChange={e => setForm(p => ({ ...p, tips: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Other Note</label>
+                <textarea className="form-textarea" rows={2} value={form.otherNote}
+                  onChange={e => setForm(p => ({ ...p, otherNote: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Client Request</label>
+                <textarea className="form-textarea" rows={2} value={form.clientRequest}
+                  onChange={e => setForm(p => ({ ...p, clientRequest: e.target.value }))} />
               </div>
             </div>
           </Section>

@@ -76,6 +76,30 @@ export async function GET(
     )
   }
 
+  // Determine PNL source: MAIL (from P&L mailbox), DRIVE (OneDrive), INTERNAL (manual)
+  let pnlSource: 'MAIL' | 'DRIVE' | 'INTERNAL' | null = null
+  if ((booking as Record<string, unknown>).pnl) {
+    const pnlRaw = (booking as Record<string, unknown>).pnl as { sourceDocUrl?: string | null } | null
+    if (pnlRaw?.sourceDocUrl && /sharepoint|onedrive/i.test(pnlRaw.sourceDocUrl)) {
+      pnlSource = 'DRIVE'
+    } else {
+      const numericPart = params.ref.replace(/[^0-9]/g, '')
+      const pnlMail = await prisma.mailMessage.findFirst({
+        where: {
+          mailboxKind: 'PNL',
+          status: { in: ['PROCESSED', 'WAITING'] },
+          OR: [
+            { bookingRef: params.ref },
+            ...(numericPart.length >= 4 ? [{ bookingRef: { contains: numericPart } }] : []),
+          ],
+        },
+        select: { id: true },
+      })
+      pnlSource = pnlMail ? 'MAIL' : 'INTERNAL'
+    }
+  }
+  responseData.pnlSource = pnlSource
+
   return buildApiSuccess(responseData)
 }
 
@@ -104,10 +128,13 @@ export async function PUT(
 
   const body = await req.json()
   const {
-    agentBookingId, agent, fileHandler,
+    agentBookingId, cntlNumber, agent, fileHandler,
     arrivalDate, departureDate, paxAdults, paxChildren,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
+    // Additional TC sections
+    valueAddedServices, packageIncludes, packageExcludes,
+    importantNotes, tips, otherNote, clientRequest,
     // TC identifier fields (editable by BT/GT/SA)
     isNumber,
     // Contact info fields (editable at any booking status)
@@ -115,10 +142,18 @@ export async function PUT(
     contactEmail, contactPhone, contactWhatsapp, contactAddress,
     // Country (always editable)
     operationCountry,
-    // Super Admin can also update passengers, flights, accommodations
+    // Super Admin can also replace passengers, flights, accommodations
     passengers, flights, accommodations,
+    // GT/BT/TE can update passenger details
+    passengerUpdates,
+    // GT/BT/TE can add/remove passengers
+    passengerAdds, passengerDeletes,
     // GT/BT/TE can update accommodation room types and vehicle changes
     accommodationUpdates,
+    // GT/BT/TE can delete accommodations
+    accommodationDeletes,
+    // GT/BT/TE can add new accommodations to a booking
+    accommodationAdds,
     // TE/BT/SUPER_ADMIN can update individual flights (cancellations, reschedules)
     flightUpdates, flightAdds, flightDeletes,
   } = body
@@ -127,16 +162,18 @@ export async function PUT(
   const isFlightOnlyUpdate = (flightUpdates || flightAdds || flightDeletes) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
-    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations && !accommodationUpdates
+    !policyNotes && !amendmentNote && !passengers && !passengerUpdates && !passengerAdds && !passengerDeletes &&
+    !flights && !accommodations && !accommodationUpdates && !accommodationDeletes && !accommodationAdds
 
   // Contact info, country, and TC identifier updates are allowed at any booking status
   const isContactOnlyUpdate = (agentEmail !== undefined || agentPhone !== undefined || agentWhatsapp !== undefined || agentAddress !== undefined ||
     contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
-    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined) &&
+    operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined || cntlNumber !== undefined) &&
     !agent && !fileHandler && !arrivalDate && !departureDate &&
     !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
-    !policyNotes && !amendmentNote && !passengers && !flights && !accommodations &&
-    !accommodationUpdates && !flightUpdates && !flightAdds && !flightDeletes
+    !policyNotes && !amendmentNote && !passengers && !passengerUpdates && !passengerAdds && !passengerDeletes &&
+    !flights && !accommodations &&
+    !accommodationUpdates && !accommodationDeletes && !accommodationAdds && !flightUpdates && !flightAdds && !flightDeletes
 
   if (!isFlightOnlyUpdate && !isContactOnlyUpdate && !isSuperAdmin && !['DRAFT', 'CHANGE_REQUESTED', 'GT_REVIEW', 'GT_VERIFIED', 'BT_CONFIRMED', 'OPERATIONS_READY'].includes(booking.status)) {
     return buildApiError('Booking cannot be edited in current state')
@@ -146,6 +183,7 @@ export async function PUT(
     where: { bookingRef: params.ref },
     data: {
       ...(agentBookingId !== undefined && { agentBookingId }),
+      ...(cntlNumber    !== undefined && { cntlNumber }),
       ...(isNumber      !== undefined && { isNumber }),
       ...(agent !== undefined && { agent }),
       ...(fileHandler !== undefined && { fileHandler }),
@@ -159,6 +197,13 @@ export async function PUT(
       ...(exclusions !== undefined && { exclusions }),
       ...(policyNotes !== undefined && { policyNotes }),
       ...(amendmentNote !== undefined && { amendmentNote }),
+      ...(valueAddedServices !== undefined && { valueAddedServices }),
+      ...(packageIncludes    !== undefined && { packageIncludes }),
+      ...(packageExcludes    !== undefined && { packageExcludes }),
+      ...(importantNotes     !== undefined && { importantNotes }),
+      ...(tips               !== undefined && { tips }),
+      ...(otherNote          !== undefined && { otherNote }),
+      ...(clientRequest      !== undefined && { clientRequest }),
       ...(agentEmail !== undefined && { agentEmail }),
       ...(agentPhone !== undefined && { agentPhone }),
       ...(agentWhatsapp !== undefined && { agentWhatsapp }),
@@ -180,6 +225,48 @@ export async function PUT(
         data: passengers.map((p: Record<string, unknown>) => ({ ...p, bookingId: booking.id })),
       })
     }
+  }
+
+  if (passengerDeletes && Array.isArray(passengerDeletes) && passengerDeletes.length > 0) {
+    await prisma.passenger.deleteMany({
+      where: {
+        bookingId: booking.id,
+        id: { in: passengerDeletes as string[] },
+      },
+    })
+  }
+
+  if (passengerUpdates && Array.isArray(passengerUpdates)) {
+    for (const upd of passengerUpdates as Record<string, unknown>[]) {
+      if (!upd.id) continue
+      await prisma.passenger.update({
+        where: { id: upd.id as string },
+        data: {
+          ...(upd.name !== undefined && { name: upd.name as string }),
+          ...(upd.type !== undefined && { type: upd.type as 'ADULT' | 'CHILD' }),
+          ...(upd.age !== undefined && { age: upd.age === null || upd.age === '' ? null : Number(upd.age) }),
+          ...(upd.passport !== undefined && { passport: upd.passport as string | null }),
+          ...(upd.nationality !== undefined && { nationality: upd.nationality as string | null }),
+          ...(upd.contact !== undefined && { contact: upd.contact as string | null }),
+          ...(upd.isLead !== undefined && { isLead: Boolean(upd.isLead) }),
+        },
+      })
+    }
+  }
+
+  if (passengerAdds && Array.isArray(passengerAdds) && passengerAdds.length > 0) {
+    await prisma.passenger.createMany({
+      data: (passengerAdds as Record<string, unknown>[]).map(p => ({
+        bookingId: booking.id,
+        name: (p.name as string) || '',
+        type: (p.type as 'ADULT' | 'CHILD') || 'ADULT',
+        age: p.age === null || p.age === '' || p.age === undefined ? null : Number(p.age),
+        passport: (p.passport as string) || null,
+        nationality: (p.nationality as string) || null,
+        contact: (p.contact as string) || null,
+        isLead: Boolean(p.isLead),
+      })),
+    })
   }
 
   if (isSuperAdmin && flights) {
@@ -223,6 +310,33 @@ export async function PUT(
         },
       })
     }
+  }
+
+  // GT/BT/TE can delete accommodations by id
+  if (accommodationDeletes && Array.isArray(accommodationDeletes) && accommodationDeletes.length > 0) {
+    await prisma.accommodation.deleteMany({
+      where: {
+        bookingId: booking.id,
+        id: { in: accommodationDeletes as string[] },
+      },
+    })
+  }
+
+  // GT/BT/TE can add new accommodations
+  if (accommodationAdds && Array.isArray(accommodationAdds) && accommodationAdds.length > 0) {
+    await prisma.accommodation.createMany({
+      data: (accommodationAdds as Record<string, unknown>[]).map(a => ({
+        bookingId: booking.id,
+        city:     (a.city as string) || '',
+        hotel:    (a.hotel as string) || '',
+        checkIn:  a.checkIn  ? new Date(a.checkIn  as string) : new Date(),
+        checkOut: a.checkOut ? new Date(a.checkOut as string) : new Date(),
+        nights:   typeof a.nights === 'number' ? a.nights : Number(a.nights ?? 1),
+        roomType: (a.roomType as string) || null,
+        address:  (a.address  as string) || null,
+        contact:  (a.contact  as string) || null,
+      })),
+    })
   }
 
   // TE/BT/SUPER_ADMIN: update individual flights (reschedule, cancellation, missing flights)

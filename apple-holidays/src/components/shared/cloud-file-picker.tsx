@@ -23,6 +23,7 @@ export interface CloudFile {
 interface BreadcrumbEntry {
   id: string
   name: string
+  webUrl?: string | null
 }
 
 interface CloudFilePickerProps {
@@ -38,7 +39,8 @@ interface CloudFilePickerProps {
   open: boolean
   onClose: () => void
   /** folderPath is the breadcrumb trail of the folder the file was picked from (e.g. "Reservation / Singapore Drive") */
-  onSelect: (file: CloudFile, folderPath?: string) => void
+  /** folderWebUrl is the OneDrive web URL of the folder the file was picked from — useful for auto-assigning the drive folder to a booking */
+  onSelect: (file: CloudFile, folderPath?: string, folderWebUrl?: string | null) => void
   filterExtensions?: string[]
   title?: string
   selectLabel?: string
@@ -142,7 +144,7 @@ export default function CloudFilePicker({
 
   function enterFolder(folder: CloudFile) {
     setSelected(null)
-    setBreadcrumbs(prev => [...prev, { id: folder.id, name: folder.name }])
+    setBreadcrumbs(prev => [...prev, { id: folder.id, name: folder.name, webUrl: folder.webUrl }])
     load(folder.id)
   }
 
@@ -192,7 +194,14 @@ export default function CloudFilePicker({
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="btn btn-secondary">Cancel</button>
             <button
-              onClick={() => selected && onSelect(selected, breadcrumbs.map(b => b.name).join(' / '))}
+              onClick={() => {
+                if (!selected) return
+                const folderPath = breadcrumbs.map(b => b.name).join(' / ')
+                const folderWebUrl = breadcrumbs.length > 0
+                  ? (breadcrumbs[breadcrumbs.length - 1].webUrl ?? null)
+                  : null
+                onSelect(selected, folderPath || undefined, folderWebUrl)
+              }}
               disabled={!selected}
               className="btn btn-primary"
             >

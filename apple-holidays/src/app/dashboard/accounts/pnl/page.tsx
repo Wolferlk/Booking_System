@@ -12,9 +12,8 @@ import {
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
-import { StatusBadge, Badge } from '@/components/ui/badge'
-import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
-import { CountryFlag } from '@/components/ui/country-flag'
+import { StatusBadge } from '@/components/ui/badge'
+import { formatDate, formatDateTime } from '@/lib/utils'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -83,6 +82,7 @@ interface OverviewData {
   linked: LinkedRow[]
   pnlOnly: PnlRecord[]
   bookingsOnly: BookingSnap[]
+  externalDbError?: string | null
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -94,14 +94,6 @@ function fmt(n: number | null | undefined, currency = 'USD') {
   }).format(Number(n))
 }
 
-function pnlStatusColor(status: string | null): 'green' | 'yellow' | 'red' | 'gray' {
-  if (!status) return 'gray'
-  const s = status.toLowerCase()
-  if (s.includes('paid') || s.includes('complete') || s.includes('done')) return 'green'
-  if (s.includes('pend') || s.includes('process') || s.includes('partial')) return 'yellow'
-  if (s.includes('cancel') || s.includes('reject')) return 'red'
-  return 'gray'
-}
 
 function MatchBadge({ by }: { by: string }) {
   const labels: Record<string, string> = {
@@ -286,6 +278,7 @@ export default function AccountsPNLPage() {
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       setData(json.data)
+      if (json.data?.externalDbError) setDbError(json.data.externalDbError)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load PNL overview'
       setDbError(msg)
@@ -475,15 +468,14 @@ export default function AccountsPNLPage() {
                       <thead>
                         <tr>
                           <th>PNL ID</th>
-                          <th>Identifiers</th>
-                          <th>Vendor / Agent</th>
+                          <th>IS Number</th>
+                          <th>Tour Ref</th>
+                          <th>Vendor</th>
                           <th>Dates</th>
                           <th>Amounts</th>
-                          <th>PNL Status</th>
                           <th>Booking Ref</th>
                           <th>Lead Passenger</th>
                           <th>Arrival</th>
-                          <th>Booking Status</th>
                           <th>Matched By</th>
                           <th>Last Fetched</th>
                           <th></th>
@@ -496,16 +488,17 @@ export default function AccountsPNLPage() {
                             <tr key={row.link.id}>
                               <td className="font-mono font-bold text-slate-700">#{row.pnlRecord.id}</td>
                               <td>
-                                <div className="space-y-0.5">
-                                  {row.pnlRecord.is_number      && <div className="font-mono text-blue-700">{row.pnlRecord.is_number}</div>}
-                                  {row.pnlRecord.tour_ref       && <div className="text-slate-600">{row.pnlRecord.tour_ref}</div>}
-                                  {row.pnlRecord.invoice_number && <div className="text-slate-400">{row.pnlRecord.invoice_number}</div>}
-                                  {row.pnlRecord.control_number && <div className="text-purple-600 font-mono">{row.pnlRecord.control_number}</div>}
-                                </div>
+                                {row.pnlRecord.is_number
+                                  ? <span className="font-mono font-bold text-blue-700">{row.pnlRecord.is_number}</span>
+                                  : <span className="text-slate-300">—</span>}
+                              </td>
+                              <td>
+                                {row.pnlRecord.tour_ref
+                                  ? <span className="text-slate-600">{row.pnlRecord.tour_ref}</span>
+                                  : <span className="text-slate-300">—</span>}
                               </td>
                               <td>
                                 <div>{row.pnlRecord.vendor_name ?? '—'}</div>
-                                {row.pnlRecord.agent_name && <div className="text-slate-400">{row.pnlRecord.agent_name}</div>}
                               </td>
                               <td>
                                 {row.pnlRecord.pnl_date && <div>{row.pnlRecord.pnl_date}</div>}
@@ -514,11 +507,6 @@ export default function AccountsPNLPage() {
                                 )}
                               </td>
                               <td><PnlAmountCell record={row.pnlRecord} /></td>
-                              <td>
-                                {row.pnlRecord.status ? (
-                                  <Badge color={pnlStatusColor(row.pnlRecord.status)}>{row.pnlRecord.status}</Badge>
-                                ) : '—'}
-                              </td>
                               <td>
                                 <button
                                   onClick={() => router.push(`/dashboard/bookings/${row.booking.bookingRef}`)}
@@ -533,7 +521,6 @@ export default function AccountsPNLPage() {
                               </td>
                               <td>{lead}</td>
                               <td>{formatDate(row.booking.arrivalDate)}</td>
-                              <td><StatusBadge status={row.booking.status as never} /></td>
                               <td><MatchBadge by={row.link.matchedBy} /></td>
                               <td className="text-slate-400">{formatDateTime(row.link.lastFetchedAt)}</td>
                               <td>
@@ -588,16 +575,14 @@ export default function AccountsPNLPage() {
                       <thead>
                         <tr>
                           <th>PNL ID</th>
-                          <th>IS Number / Tour Ref</th>
-                          <th>Invoice / Control No</th>
-                          <th>Vendor / Agent</th>
+                          <th>IS Number</th>
+                          <th>Tour Ref</th>
+                          <th>Vendor</th>
                           <th>PNL Date</th>
                           <th>Period</th>
                           <th>Pax</th>
                           <th>Amounts</th>
-                          <th>Status</th>
                           <th>Category</th>
-                          <th>Country</th>
                           <th>Created</th>
                           <th>Assign Booking</th>
                         </tr>
@@ -607,18 +592,17 @@ export default function AccountsPNLPage() {
                           <tr key={rec.id} className="hover:bg-amber-50/30">
                             <td className="font-mono font-bold text-slate-700">#{rec.id}</td>
                             <td>
-                              {rec.is_number && <div className="font-mono text-blue-700">{rec.is_number}</div>}
-                              {rec.tour_ref  && <div className="text-slate-600">{rec.tour_ref}</div>}
-                              {!rec.is_number && !rec.tour_ref && <span className="text-slate-300">—</span>}
+                              {rec.is_number
+                                ? <span className="font-mono font-bold text-blue-700">{rec.is_number}</span>
+                                : <span className="text-slate-300">—</span>}
                             </td>
                             <td>
-                              {rec.invoice_number && <div className="font-mono">{rec.invoice_number}</div>}
-                              {rec.control_number && <div className="text-purple-600 font-mono">{rec.control_number}</div>}
-                              {!rec.invoice_number && !rec.control_number && <span className="text-slate-300">—</span>}
+                              {rec.tour_ref
+                                ? <span className="text-slate-600">{rec.tour_ref}</span>
+                                : <span className="text-slate-300">—</span>}
                             </td>
                             <td>
                               <div className="font-medium">{rec.vendor_name ?? '—'}</div>
-                              {rec.agent_name && <div className="text-slate-400">{rec.agent_name}</div>}
                             </td>
                             <td>{rec.pnl_date ?? '—'}</td>
                             <td>
@@ -628,13 +612,7 @@ export default function AccountsPNLPage() {
                             </td>
                             <td className="text-center">{rec.total_pax ?? '—'}</td>
                             <td><PnlAmountCell record={rec} /></td>
-                            <td>
-                              {rec.status
-                                ? <Badge color={pnlStatusColor(rec.status)}>{rec.status}</Badge>
-                                : '—'}
-                            </td>
                             <td>{rec.category ?? '—'}</td>
-                            <td>{rec.country_code ?? '—'}</td>
                             <td className="text-slate-400">
                               {rec.created_at ? formatDateTime(rec.created_at) : '—'}
                             </td>
@@ -680,14 +658,10 @@ export default function AccountsPNLPage() {
                           <th>IS Number</th>
                           <th>Agent Booking ID</th>
                           <th>Lead Passenger</th>
-                          <th>Agent</th>
                           <th>Deal</th>
                           <th>Arrival</th>
                           <th>Departure</th>
                           <th>Pax</th>
-                          <th>Quoted</th>
-                          <th>Country</th>
-                          <th>Status</th>
                           <th></th>
                         </tr>
                       </thead>
@@ -707,7 +681,6 @@ export default function AccountsPNLPage() {
                               <td className="font-mono text-blue-700">{b.isNumber ?? '—'}</td>
                               <td className="font-mono text-purple-700">{b.agentBookingId ?? '—'}</td>
                               <td>{lead}</td>
-                              <td>{b.agent ?? '—'}</td>
                               <td className="max-w-[160px] truncate">{b.dealName ?? '—'}</td>
                               <td>{formatDate(b.arrivalDate)}</td>
                               <td>{formatDate(b.departureDate)}</td>

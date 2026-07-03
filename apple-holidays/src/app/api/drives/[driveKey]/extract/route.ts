@@ -13,10 +13,13 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolveDriveByKey, DRIVE_CONFIGS } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractBookingFromText } from '@/lib/openai'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
-export const dynamic = 'force-dynamic'
+export const dynamic    = 'force-dynamic'
+export const maxDuration = 60
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ driveKey: string }> },
@@ -75,54 +78,8 @@ export async function POST(
     return buildApiError('Could not extract text from this file type. Only .docx, .pdf, and .txt are supported.', 422)
   }
 
-  // AI extraction — reuse the same OpenAI call as the upload route
-  const { default: OpenAI } = await import('openai')
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-
-  const prompt = `
-You are a travel booking data extractor. Extract structured booking data from the following tour confirmation document.
-
-Return ONLY valid JSON (no markdown fences) with these fields:
-{
-  "bookingRef": "string or null",
-  "agentBookingId": "string or null",
-  "agent": "string — travel agent/company name",
-  "fileHandler": "string or null — internal handler name",
-  "arrivalDate": "YYYY-MM-DD or null",
-  "departureDate": "YYYY-MM-DD or null",
-  "paxAdults": number,
-  "paxChildren": number,
-  "quotedTotal": number,
-  "currency": "USD|INR|SGD|VND|LKR|MYR",
-  "terms": "string or null",
-  "exclusions": "string or null",
-  "policyNotes": "string or null",
-  "amendmentNote": "string or null",
-  "agentEmail": "string or null",
-  "agentPhone": "string or null",
-  "agentWhatsapp": "string or null",
-  "contactEmail": "string or null",
-  "contactPhone": "string or null",
-  "contactWhatsapp": "string or null",
-  "passengers": [{ "name": "string", "type": "ADULT|CHILD", "age": number|null, "isLead": boolean, "passport": "string or null", "nationality": "string or null" }],
-  "flights": [{ "flightNo": "string", "date": "YYYY-MM-DD", "fromApt": "string", "depTime": "HH:MM", "toApt": "string", "arrTime": "HH:MM", "airline": "string", "notes": "string or null" }],
-  "accommodations": [{ "city": "string", "hotel": "string", "checkIn": "YYYY-MM-DD", "checkOut": "YYYY-MM-DD", "nights": number, "roomType": "string", "mealType": "string", "address": "string" }],
-  "itineraryItems": [{ "dayNo": number, "date": "YYYY-MM-DD", "title": "string", "description": "string" }],
-  "emergencyContacts": [{ "name": "string", "phone": "string", "role": "string" }]
-}
-
-Document:
-${text.slice(0, 12000)}
-`
-
   try {
-    const resp = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-    })
-    const raw = resp.choices[0]?.message?.content ?? '{}'
-    const extracted = JSON.parse(raw.replace(/^```json?\s*/i, '').replace(/```\s*$/, ''))
+    const extracted = await extractBookingFromText(text, itemName)
     return buildApiSuccess({ extracted, sourceFile: itemName })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

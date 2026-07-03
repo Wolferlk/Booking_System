@@ -166,7 +166,10 @@ export async function listCachedMailboxEmails(params: {
   mailbox: MailboxFilter
   folder: FolderFilter
   limit: number
+  offset?: number
   operationCountry?: OperationCountry | null
+  dateFrom?: string | null
+  dateTo?: string | null
 }): Promise<CachedMailboxEmail[]> {
   const model = mm()
   if (!model) return []
@@ -174,6 +177,15 @@ export async function listCachedMailboxEmails(params: {
   const countryScopeList = countryScope(params.operationCountry)
   const countryFilter = countryScopeList
     ? { OR: [{ operationCountry: { in: countryScopeList } }, { operationCountry: null }] }
+    : {}
+
+  const dateFilter = (params.dateFrom || params.dateTo)
+    ? {
+        receivedAt: {
+          ...(params.dateFrom ? { gte: new Date(params.dateFrom + 'T00:00:00.000Z') } : {}),
+          ...(params.dateTo   ? { lte: new Date(params.dateTo   + 'T23:59:59.999Z') } : {}),
+        },
+      }
     : {}
 
   const rows = await model.findMany({
@@ -188,10 +200,12 @@ export async function listCachedMailboxEmails(params: {
             ],
           }
         : {}),
+      ...dateFilter,
       ...countryFilter,
     },
     orderBy: { receivedAt: 'desc' },
     take: params.limit,
+    skip: params.offset ?? 0,
   })
 
   return rows.map((row: MailMessage) => ({

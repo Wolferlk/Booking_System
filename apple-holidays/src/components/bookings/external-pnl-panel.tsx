@@ -107,6 +107,39 @@ function fmtAmt(n: number | null | undefined, cur = 'USD') {
   }).format(Number(n))
 }
 
+function extractRemarks(obj: Record<string, unknown>): string | null {
+  const remark = obj.remarks ?? obj.remark ?? obj.note ?? obj.details
+  if (typeof remark === 'string' && remark.trim()) return remark.trim()
+  return null
+}
+
+function formatItemDetails(details: string | null | undefined | Record<string, unknown>) {
+  if (details == null) return '—'
+
+  // Prisma may return the Json field value as a parsed object
+  if (typeof details === 'object') {
+    return extractRemarks(details as Record<string, unknown>) ?? '—'
+  }
+
+  const raw = String(details).trim()
+  if (!raw) return '—'
+
+  try {
+    let parsed: unknown = JSON.parse(raw)
+    // First parse may return a string (double-encoded JSON) — parse once more
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed) } catch { return parsed }
+    }
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return extractRemarks(parsed as Record<string, unknown>) ?? raw
+    }
+  } catch {
+    // Not JSON — return as-is
+  }
+
+  return raw
+}
+
 function statusColor(s: string | null): 'green' | 'yellow' | 'red' | 'gray' {
   if (!s) return 'gray'
   const l = s.toLowerCase()
@@ -134,8 +167,6 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   const [fetching, setFetching]   = useState(false)
   const [unlinking, setUnlinking] = useState(false)
   const [showItems, setShowItems] = useState(true)
-  const [creatingTicket, setCreatingTicket] = useState<number | null>(null)
-  const [createdTickets, setCreatedTickets] = useState<Set<number>>(new Set())
 
   // Manual search
   const [searchOpen, setSearchOpen] = useState(false)
@@ -255,48 +286,6 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Link failed')
     } finally { setLinking(null) }
-  }
-
-  // ── Create ticket from PNL item ───────────────────────────────────────────
-  async function createTicketFromItem(item: PnlItem) {
-    setCreatingTicket(item.id)
-    try {
-      const serviceName = item.hotel_name ?? item.transport_name ?? item.service_name ?? item.type ?? 'PNL Item'
-      const category = item.type?.toLowerCase().includes('hotel') ? 'HOTEL'
-        : item.type?.toLowerCase().includes('transport') ? 'TRANSPORT'
-        : item.hotel_name ? 'HOTEL'
-        : item.transport_name ? 'TRANSPORT'
-        : 'OTHER'
-
-      const res = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bookingRef,
-          type: serviceName,
-          category,
-          qty: 1,
-          supplier: item.agent_name ?? undefined,
-          totalCost: item.amount_converted ?? item.amount_original ?? undefined,
-          currency: item.currency ?? 'USD',
-          notes: [
-            item.item_details,
-            item.check_in_date ? `Check-in: ${item.check_in_date}` : null,
-            item.check_out_date ? `Check-out: ${item.check_out_date}` : null,
-            item.client_name ? `Client: ${item.client_name}` : null,
-            `PNL Item #${item.id}`,
-          ].filter(Boolean).join(' · '),
-        }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      setCreatedTickets(prev => { const next = new Set(prev); next.add(item.id); return next })
-      toast.success(`Ticket created: ${serviceName}`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create ticket')
-    } finally {
-      setCreatingTicket(null)
-    }
   }
 
   // ─── Loading ──────────────────────────────────────────────────────────────
@@ -481,94 +470,33 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                       <th>Type</th>
                       <th>Credit Type</th>
                       <th>Service / Hotel / Transport</th>
-                      <th>Client</th>
-                      <th>Agent</th>
-                      <th>Check-in</th>
-                      <th>Check-out</th>
-                      <th>Country</th>
                       <th>Currency</th>
                       <th className="text-right">Original Amt</th>
-                      <th className="text-right">Ex. Rate</th>
-                      <th className="text-right">Converted Amt</th>
-                      <th>Invoice No</th>
-                      <th>Control No</th>
                       <th>Details</th>
-                      <th>Status</th>
-                      {canEdit && <th>Ticket</th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((item, i) => (
-                      <tr key={item.id} className="hover:bg-slate-50">
+                    {items.map((item, i) => {
+                      const isTotal = item.type?.toUpperCase() === 'INVOICE'
+                      return (
+                      <tr key={item.id} className={isTotal ? 'bg-amber-50 border-l-2 border-amber-400 font-semibold' : 'hover:bg-slate-50'}>
                         <td className="font-mono text-slate-400">{i + 1}</td>
-                        <td>{item.type ?? '—'}</td>
+                        <td className={isTotal ? 'text-amber-700' : ''}>{item.type ?? '—'}</td>
                         <td>{item.credit_type ?? '—'}</td>
                         <td className="max-w-[200px] truncate font-medium">
                           {item.hotel_name ?? item.transport_name ?? item.service_name ?? '—'}
                         </td>
-                        <td>{item.client_name ?? '—'}</td>
-                        <td>{item.agent_name ?? '—'}</td>
-                        <td className="font-mono">{item.check_in_date ?? '—'}</td>
-                        <td className="font-mono">{item.check_out_date ?? '—'}</td>
-                        <td>{item.country_code ?? '—'}</td>
                         <td>{item.currency ?? '—'}</td>
                         <td className="text-right font-mono font-semibold">
                           {item.amount_original != null ? Number(item.amount_original).toFixed(2) : '—'}
                         </td>
-                        <td className="text-right font-mono text-slate-500">
-                          {item.exchange_rate != null ? Number(item.exchange_rate).toFixed(4) : '—'}
+                        <td className="max-w-[220px] truncate text-slate-500" title={formatItemDetails(item.item_details)}>
+                          {formatItemDetails(item.item_details)}
                         </td>
-                        <td className="text-right font-mono font-semibold text-blue-700">
-                          {item.amount_converted != null ? Number(item.amount_converted).toFixed(2) : '—'}
-                        </td>
-                        <td className="font-mono text-slate-500">{item.invoice_number ?? '—'}</td>
-                        <td className="font-mono text-purple-600">{item.control_number ?? '—'}</td>
-                        <td className="max-w-[160px] truncate text-slate-500">{item.item_details ?? '—'}</td>
-                        <td>
-                          {item.status
-                            ? <Badge color={statusColor(item.status)}>{item.status}</Badge>
-                            : '—'}
-                        </td>
-                        {canEdit && (
-                          <td>
-                            {createdTickets.has(item.id) ? (
-                              <span className="inline-flex items-center gap-1 text-[10px] text-emerald-600 font-semibold">
-                                <CheckCircle2 className="w-3 h-3" /> Created
-                              </span>
-                            ) : (
-                              <button
-                                onClick={() => createTicketFromItem(item)}
-                                disabled={creatingTicket === item.id}
-                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-brand-600 hover:text-brand-800 disabled:opacity-50 whitespace-nowrap"
-                                title="Create a ticket from this PNL item"
-                              >
-                                {creatingTicket === item.id
-                                  ? <Loader2 className="w-3 h-3 animate-spin" />
-                                  : <PlusCircle className="w-3 h-3" />}
-                                Ticket
-                              </button>
-                            )}
-                          </td>
-                        )}
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
-                  {/* Totals row */}
-                  {items.length > 0 && (() => {
-                    const sumOrig = items.reduce((s, i) => s + Number(i.amount_original ?? 0), 0)
-                    const sumConv = items.reduce((s, i) => s + Number(i.amount_converted ?? 0), 0)
-                    return (
-                      <tfoot>
-                        <tr className="bg-slate-100 font-bold text-xs">
-                          <td colSpan={10} className="px-4 py-2 text-right text-slate-600">TOTAL</td>
-                          <td className="text-right font-mono">{sumOrig.toFixed(2)}</td>
-                          <td />
-                          <td className="text-right font-mono text-blue-700">{sumConv.toFixed(2)}</td>
-                          <td colSpan={canEdit ? 5 : 4} />
-                        </tr>
-                      </tfoot>
-                    )
-                  })()}
                 </table>
               </div>
             )}
