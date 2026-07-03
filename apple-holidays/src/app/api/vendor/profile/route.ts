@@ -15,6 +15,7 @@ export async function GET() {
     select: {
       id: true, name: true, email: true, phone: true,
       whatsappPhone: true, address: true, country: true, isRegistered: true,
+      bankName: true, bankAccountNo: true, bankHolder: true, bankBranch: true, bankCode: true,
     },
   })
   return buildApiSuccess(vendor)
@@ -24,7 +25,11 @@ export async function PUT(req: NextRequest) {
   const session = await getVendorSession()
   if (!session) return buildApiError('Unauthorized', 401)
 
-  const { name, email, phone, whatsappPhone, address, currentPassword, newPassword } = await req.json()
+  const {
+    name, email, phone, whatsappPhone, address,
+    bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
+    currentPassword, newPassword,
+  } = await req.json()
   if (!name?.trim()) return buildApiError('Name is required')
 
   const updates: Record<string, unknown> = {
@@ -33,6 +38,11 @@ export async function PUT(req: NextRequest) {
     phone: phone?.trim() || null,
     whatsappPhone: whatsappPhone?.trim() || null,
     address: address?.trim() || null,
+    bankName: bankName?.trim() || null,
+    bankAccountNo: bankAccountNo?.trim() || null,
+    bankHolder: bankHolder?.trim() || null,
+    bankBranch: bankBranch?.trim() || null,
+    bankCode: bankCode?.trim() || null,
   }
 
   if (newPassword) {

@@ -5,9 +5,9 @@ import { getVendorSession } from '@/lib/vendor-auth'
 
 export const dynamic = 'force-dynamic'
 
-async function ownsDriver(session: { id: string }, driverId: string) {
+async function ownsDriver(vendorId: string, driverId: string) {
   const driver = await prisma.driver.findFirst({
-    where: { id: driverId, vehicle: { vendorId: session.id } },
+    where: { id: driverId, vendorId },
   })
   return !!driver
 }
@@ -15,10 +15,25 @@ async function ownsDriver(session: { id: string }, driverId: string) {
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getVendorSession()
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!(await ownsDriver(session, params.id))) return buildApiError('Not found', 404)
+  if (!(await ownsDriver(session.id, params.id))) return buildApiError('Not found', 404)
 
-  const { name, phone, email, licenseNo, photoUrl, isActive,
-    bankName, bankAccountNo, bankHolder, bankBranch, bankCode } = await req.json()
+  const { name, phone, email, licenseNo, photoUrl, isActive, vehicleId } = await req.json()
+
+  // Handle vehicle assignment change
+  if (vehicleId !== undefined) {
+    // Unlink this driver from any other vehicle that currently has it
+    await prisma.driver.updateMany({
+      where: { vehicleId: { not: null }, id: params.id },
+      data: { vehicleId: null },
+    })
+    // Also unlink any other driver currently linked to the target vehicle
+    if (vehicleId) {
+      await prisma.driver.updateMany({
+        where: { vehicleId, id: { not: params.id } },
+        data: { vehicleId: null },
+      })
+    }
+  }
 
   const driver = await prisma.driver.update({
     where: { id: params.id },
@@ -29,11 +44,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       licenseNo: licenseNo?.trim() || null,
       photoUrl: photoUrl || null,
       isActive: isActive ?? undefined,
-      bankName: bankName?.trim() || null,
-      bankAccountNo: bankAccountNo?.trim() || null,
-      bankHolder: bankHolder?.trim() || null,
-      bankBranch: bankBranch?.trim() || null,
-      bankCode: bankCode?.trim() || null,
+      ...(vehicleId !== undefined ? { vehicleId: vehicleId || null } : {}),
     },
     include: { vehicle: true },
   })
@@ -44,7 +55,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getVendorSession()
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!(await ownsDriver(session, params.id))) return buildApiError('Not found', 404)
+  if (!(await ownsDriver(session.id, params.id))) return buildApiError('Not found', 404)
 
   await prisma.driver.delete({ where: { id: params.id } })
   return buildApiSuccess(null, 'Driver removed')

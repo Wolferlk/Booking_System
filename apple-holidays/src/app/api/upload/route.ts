@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { extractBookingFromText, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl } from '@/lib/openai'
+import { extractBookingFromText, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, extractConfirmationTickets } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -26,6 +26,41 @@ export async function POST(req: NextRequest) {
 
   const buffer = Buffer.from(await file.arrayBuffer())
   const fileName = file.name.toLowerCase()
+
+  // ── Image files in PNL mode → extract confirmation tickets using AI vision ──
+  const isImageFile = /\.(jpe?g|png|webp|gif)$/i.test(fileName)
+  if (type === 'pnl' && isImageFile) {
+    if (!process.env.OPENAI_API_KEY) {
+      return buildApiError('OpenAI API key not configured — cannot extract from image')
+    }
+    const ext = fileName.split('.').pop() ?? 'jpg'
+    const mimeType = `image/${ext === 'jpg' ? 'jpeg' : ext}`
+    const base64 = buffer.toString('base64')
+    const tickets = await extractConfirmationTickets(base64, mimeType)
+    if (tickets.length === 0) {
+      return buildApiSuccess({
+        fileName: file.name, fileSize: file.size, extractedText: '',
+        parsedData: { lineItems: [] },
+      }, 'No ticket items found in image')
+    }
+    const lineItems = tickets.map(t => ({
+      activity:   t.name,
+      category:   'TICKETS',
+      mmtRate:    0,
+      sicRate:    0,
+      pvtRatePP:  0,
+      adEntrance: t.adultRate,
+      chEntrance: t.childRate,
+      otherRate:  0,
+      _adultCount: t.adultCount,
+      _childCount: t.childCount,
+      _total:     t.total,
+    }))
+    return buildApiSuccess({
+      fileName: file.name, fileSize: file.size, extractedText: '',
+      parsedData: { lineItems, paxAdults: tickets[0]?.adultCount ?? 0, paxChildren: tickets[0]?.childCount ?? 0 },
+    })
+  }
 
   let extractedText = ''
 

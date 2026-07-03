@@ -146,7 +146,7 @@ export default function DashboardPage() {
         title={`Welcome back, ${session?.user?.name?.split(' ')[0]} 👋`}
         subtitle={
           countryMeta
-            ? <span className="inline-flex items-center gap-1.5"><CountryFlag country={countryFilter} className="w-4 h-3 inline-block" /> {ROLE_LABELS[role ?? ''] ?? role} · {countryMeta.name} Operations</span>
+            ? <span className="inline-flex items-center gap-1.5"><CountryFlag country={countryFilter} className="text-base leading-none" /> {ROLE_LABELS[role ?? ''] ?? role} · {countryMeta.name} Operations</span>
             : "Here's what's happening with your bookings today"
         }
       />
@@ -155,7 +155,7 @@ export default function DashboardPage() {
         {/* Country context banner */}
         {countryMeta && (
           <div className={`flex items-center gap-4 px-6 py-5 rounded-2xl border bg-gradient-to-r ${countryMeta.gradient} ${countryMeta.border}`}>
-            <CountryFlag country={countryFilter} className="w-16 h-12 flex-shrink-0" />
+            <CountryFlag country={countryFilter} className="text-[52px] leading-none flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">Operating Region</p>
               <p className="text-2xl font-bold text-slate-900 mt-0.5 leading-tight">{countryMeta.name}</p>
@@ -264,7 +264,7 @@ export default function DashboardPage() {
                   <h3 className="text-base font-semibold text-slate-900">
                     {countryMeta ? (
                       <span className="inline-flex items-center gap-1.5">
-                        <CountryFlag country={countryFilter} className="w-5 h-4" />
+                        <CountryFlag country={countryFilter} className="text-lg leading-none" />
                         Recent {countryMeta.name} Bookings
                       </span>
                     ) : 'Recent Bookings'}
@@ -287,7 +287,7 @@ export default function DashboardPage() {
                                 <StatusBadge status={b.status} />
                                 {!countryMeta && b.operationCountry && COUNTRY_META[b.operationCountry] && (
                                   <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold border ${COUNTRY_META[b.operationCountry].badge}`}>
-                                    <CountryFlag country={b.operationCountry} className="w-4 h-3" /> {COUNTRY_META[b.operationCountry].code}
+                                    <CountryFlag country={b.operationCountry} className="text-sm leading-none" /> {COUNTRY_META[b.operationCountry].code}
                                   </span>
                                 )}
                               </div>

@@ -127,7 +127,7 @@ export default function VietnamPage() {
         {/* Hero */}
         <div className="text-center mb-14">
           <div className="flex items-center justify-center gap-4 mb-5">
-            <CountryFlag country="VIETNAM" className="w-20 h-14 drop-shadow-lg" />
+            <CountryFlag country="VIETNAM" className="text-[68px] leading-none drop-shadow-lg" />
             <div className="text-left">
               <h1 className="text-5xl font-black text-white tracking-tight leading-tight">
                Vietnam

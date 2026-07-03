@@ -71,8 +71,6 @@ export async function GET(
   { params }: { params: { ref: string } },
 ) {
   const ref = params.ref.trim()
-  const session = await getServerSession(authOptions)
-  if (!session) return buildApiError('Unauthorized', 401)
 
   // Accept numeric-only refs: "464660" finds "464660" directly
   let booking = await prisma.booking.findUnique({
@@ -97,12 +95,6 @@ export async function GET(
   }
 
   if (!booking) return buildApiError(`Booking "${ref}" not found`, 404)
-
-  const role = session.user.role
-  const userCountry = session.user.country as OperationCountry | undefined
-  if (!canSeeAllCountries(role as any, userCountry ?? 'ALL') && userCountry && !isInCountryScope(booking.operationCountry, userCountry)) {
-    return buildApiError('Forbidden', 403)
-  }
 
   return buildApiSuccess(shapeBooking(booking))
 }

@@ -2,19 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { CalendarDays, MapPin, Users, Car, ChevronRight, Loader2, Clock, CheckCircle2 } from 'lucide-react'
-import Image from 'next/image'
+import { CalendarDays, MapPin, Loader2, Clock, CheckCircle2, ChevronRight, Car, User2 } from 'lucide-react'
 
 interface Trip {
   id: string
-  vendorName: string | null
   driverId: string | null
   driverName: string | null
-  driverPhone: string | null
   vehiclePlate: string | null
   vehicleType: string | null
   notes: string | null
-  assignedAt: string
   driver: { id: string; name: string; phone: string; photoUrl: string | null } | null
   agendaItem: {
     date: string
@@ -33,12 +29,15 @@ interface Trip {
   }
 }
 
+interface DriverOption { id: string; name: string; phone: string }
+interface VehicleOption { id: string; plateNo: string; type: string; brand: string | null; model: string | null }
+
 const COUNTRY_FLAG: Record<string, string> = {
   SRILANKA: '🇱🇰', VIETNAM: '🇻🇳', SINGAPORE: '🇸🇬', MALAYSIA: '🇲🇾', SINGAPORE_MALAYSIA: '🇸🇬',
 }
 
 export default function VendorTripsPage() {
-  const [trips, setTrips]   = useState<Trip[]>([])
+  const [trips, setTrips]     = useState<Trip[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -60,7 +59,6 @@ export default function VendorTripsPage() {
 
   return (
     <div className="p-4 space-y-5">
-      {/* Header */}
       <div className="pt-2">
         <h1 className="text-white font-black text-2xl">Assigned Trips</h1>
         <p className="text-slate-500 text-sm mt-0.5">{trips.length} total · {upcoming.length} upcoming</p>
@@ -99,31 +97,35 @@ export default function VendorTripsPage() {
 }
 
 function TripCard({ trip, onUpdate }: { trip: Trip; onUpdate: React.Dispatch<React.SetStateAction<Trip[]>> }) {
-  const [open, setOpen]         = useState(false)
-  const [drivers, setDrivers]   = useState<{ id: string; name: string; phone: string; vehicle?: { plateNo: string } | null }[]>([])
-  const [selDriver, setSelDriver] = useState(trip.driverId ?? '')
-  const [plate, setPlate]       = useState(trip.vehiclePlate ?? '')
-  const [saving, setSaving]     = useState(false)
+  const [open, setOpen]             = useState(false)
+  const [drivers, setDrivers]       = useState<DriverOption[]>([])
+  const [vehicles, setVehicles]     = useState<VehicleOption[]>([])
+  const [selDriver, setSelDriver]   = useState(trip.driverId ?? '')
+  const [selVehicle, setSelVehicle] = useState('')
+  const [saving, setSaving]         = useState(false)
 
-  const date = new Date(trip.agendaItem.date)
+  const date  = new Date(trip.agendaItem.date)
   const isPast = date < new Date(new Date().toDateString())
   const b = trip.agendaItem.agenda.booking
 
-  async function loadDrivers() {
-    const res = await fetch('/api/vendor/drivers')
-    const d   = await res.json()
-    if (d.success) {
-      setDrivers(d.data)
-      // Auto-fill plate from selected driver's vehicle
-      if (trip.driverId) {
-        const drv = d.data.find((x: typeof d.data[0]) => x.id === trip.driverId)
-        if (drv?.vehicle?.plateNo && !plate) setPlate(drv.vehicle.plateNo)
+  async function loadOptions() {
+    const [dr, vh] = await Promise.all([
+      fetch('/api/vendor/drivers').then(r => r.json()),
+      fetch('/api/vendor/vehicles').then(r => r.json()),
+    ])
+    if (dr.success) setDrivers(dr.data)
+    if (vh.success) {
+      setVehicles(vh.data)
+      // Pre-select vehicle if trip already has a plate
+      if (trip.vehiclePlate) {
+        const match = (vh.data as VehicleOption[]).find(v => v.plateNo === trip.vehiclePlate)
+        if (match) setSelVehicle(match.id)
       }
     }
   }
 
   function toggleOpen() {
-    if (!open) loadDrivers()
+    if (!open) loadOptions()
     setOpen(o => !o)
   }
 
@@ -133,7 +135,10 @@ function TripCard({ trip, onUpdate }: { trip: Trip; onUpdate: React.Dispatch<Rea
       const res  = await fetch(`/api/vendor/trips/${trip.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ driverId: selDriver || null, vehiclePlate: plate }),
+        body: JSON.stringify({
+          driverId:  selDriver  || null,
+          vehicleId: selVehicle || null,
+        }),
       })
       const data = await res.json()
       if (!data.success) { toast.error(data.error); return }
@@ -142,6 +147,9 @@ function TripCard({ trip, onUpdate }: { trip: Trip; onUpdate: React.Dispatch<Rea
       setOpen(false)
     } finally { setSaving(false) }
   }
+
+  const selectedDriverName  = drivers.find(d => d.id === selDriver)?.name
+  const selectedVehiclePlate = vehicles.find(v => v.id === selVehicle)?.plateNo ?? trip.vehiclePlate
 
   return (
     <div className={`rounded-2xl border overflow-hidden ${isPast ? 'border-white/6 bg-white/2' : 'border-white/10 bg-white/4'}`}>
@@ -153,15 +161,14 @@ function TripCard({ trip, onUpdate }: { trip: Trip; onUpdate: React.Dispatch<Rea
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-sm truncate">{b.dealName ?? b.bookingRef}</p>
             <p className="text-slate-500 text-xs">{b.bookingRef} · {b.paxAdults + b.paxChildren} pax</p>
-            <p className="text-brand-400 text-xs mt-1 font-medium">{trip.agendaItem.location}</p>
+            <p className="text-brand-400 text-xs mt-1 font-medium truncate">{trip.agendaItem.location}</p>
           </div>
           <div className="text-right flex-shrink-0">
-            <p className="text-white text-xs font-bold">{date.toLocaleDateString('en-GB', { day:'numeric', month:'short' })}</p>
+            <p className="text-white text-xs font-bold">{date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</p>
             <p className="text-slate-500 text-[10px]">{date.toLocaleDateString('en-GB', { weekday: 'short' })}</p>
           </div>
         </div>
 
-        {/* Route */}
         {(trip.agendaItem.fromPoint || trip.agendaItem.toPoint) && (
           <div className="flex items-center gap-1.5 mt-2.5 text-xs text-slate-400">
             <MapPin className="w-3 h-3 flex-shrink-0" />
@@ -169,61 +176,101 @@ function TripCard({ trip, onUpdate }: { trip: Trip; onUpdate: React.Dispatch<Rea
           </div>
         )}
 
-        {/* Driver assigned */}
-        <div className="flex items-center gap-2 mt-2.5">
+        {/* Assignment status badges */}
+        <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+          {/* Driver badge */}
           {trip.driver ? (
             <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2 py-1">
-              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+              <User2 className="w-3 h-3 text-emerald-400" />
               <span className="text-xs text-emerald-300 font-semibold">{trip.driver.name}</span>
-              {trip.vehiclePlate && <span className="text-xs text-emerald-500 font-mono">· {trip.vehiclePlate}</span>}
             </div>
           ) : (
             <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-1">
               <Clock className="w-3 h-3 text-amber-400" />
-              <span className="text-xs text-amber-300 font-semibold">Driver not assigned</span>
+              <span className="text-xs text-amber-300 font-semibold">No driver</span>
+            </div>
+          )}
+          {/* Vehicle badge */}
+          {trip.vehiclePlate ? (
+            <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2 py-1">
+              <Car className="w-3 h-3 text-blue-400" />
+              <span className="text-xs text-blue-300 font-mono">{trip.vehiclePlate}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-lg px-2 py-1">
+              <Car className="w-3 h-3 text-slate-500" />
+              <span className="text-xs text-slate-500">No vehicle</span>
             </div>
           )}
           <ChevronRight className={`w-4 h-4 ml-auto transition-transform ${open ? 'rotate-90' : ''} text-slate-600`} />
         </div>
       </button>
 
-      {/* Assign panel */}
+      {/* Assignment panel */}
       {open && (
         <div className="border-t border-white/8 bg-black/20 p-4 space-y-3">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Assign Driver & Vehicle</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Assign Driver &amp; Vehicle</p>
 
+          {/* Driver selector */}
           <div>
-            <label className="text-xs text-slate-500 mb-1 block">Driver</label>
+            <label className="text-xs text-slate-500 mb-1.5 flex items-center gap-1">
+              <User2 className="w-3 h-3" /> Driver
+            </label>
             <select
               value={selDriver}
-              onChange={e => {
-                setSelDriver(e.target.value)
-                const drv = drivers.find(d => d.id === e.target.value)
-                if (drv?.vehicle?.plateNo) setPlate(drv.vehicle.plateNo)
-              }}
+              onChange={e => setSelDriver(e.target.value)}
               className="w-full bg-white/8 border border-white/12 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500/50"
+              style={{ colorScheme: 'dark' }}
             >
-              <option value="">— Select driver —</option>
+              <option value="" style={{ background: '#0d1628' }}>— No driver —</option>
               {drivers.map(d => (
-                <option key={d.id} value={d.id}>{d.name}{d.vehicle ? ` (${d.vehicle.plateNo})` : ''}</option>
+                <option key={d.id} value={d.id} style={{ background: '#0d1628' }}>{d.name} · {d.phone}</option>
               ))}
             </select>
           </div>
 
+          {/* Vehicle selector */}
           <div>
-            <label className="text-xs text-slate-500 mb-1 block">Vehicle Plate</label>
-            <input
-              value={plate}
-              onChange={e => setPlate(e.target.value)}
-              placeholder="e.g. CAH 5296"
-              className="w-full bg-white/8 border border-white/12 rounded-xl py-2.5 px-3 text-sm text-white font-mono placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand-500/50"
-            />
+            <label className="text-xs text-slate-500 mb-1.5 flex items-center gap-1">
+              <Car className="w-3 h-3" /> Vehicle
+            </label>
+            <select
+              value={selVehicle}
+              onChange={e => setSelVehicle(e.target.value)}
+              className="w-full bg-white/8 border border-white/12 rounded-xl py-2.5 px-3 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500/50"
+              style={{ colorScheme: 'dark' }}
+            >
+              <option value="" style={{ background: '#0d1628' }}>— No vehicle —</option>
+              {vehicles.map(v => (
+                <option key={v.id} value={v.id} style={{ background: '#0d1628' }}>
+                  {v.plateNo}{v.brand ? ` · ${v.brand}${v.model ? ' ' + v.model : ''}` : ` · ${v.type}`}
+                </option>
+              ))}
+            </select>
           </div>
+
+          {/* Preview */}
+          {(selectedDriverName || selectedVehiclePlate) && (
+            <div className="bg-white/4 rounded-xl px-3 py-2.5 flex items-center gap-3">
+              {selectedDriverName && (
+                <div className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-xs text-emerald-300 font-semibold">{selectedDriverName}</span>
+                </div>
+              )}
+              {selectedVehiclePlate && (
+                <div className="flex items-center gap-1.5">
+                  <Car className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-xs text-blue-300 font-mono">{selectedVehiclePlate}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           <button
             onClick={save}
             disabled={saving}
-            className="w-full bg-brand-500 hover:bg-brand-600 text-white rounded-xl py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors"
+            className="w-full bg-brand-500 hover:bg-brand-600 text-white rounded-xl py-3 text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
             Confirm Assignment

@@ -21,11 +21,15 @@ export async function GET(req: NextRequest) {
   const countryOverride = searchParams.get('country') as OperationCountry | null
   const effectiveCountry = (!userCountry || userCountry === 'ALL') ? countryOverride : userCountry
   const countryWhere = effectiveCountry ? { country: { in: countryScope(effectiveCountry)! } } : {}
+  const vendorId = searchParams.get('vendorId')
 
   let drivers
   try {
     drivers = await prisma.driver.findMany({
-      where: countryWhere,
+      where: {
+        ...countryWhere,
+        ...(vendorId ? { vendorId } : {}),
+      },
       include: { vehicle: { include: { vendor: true } } },
       orderBy: { name: 'asc' },
     })
