@@ -19,6 +19,10 @@ export default withAuth(
     const { pathname } = req.nextUrl
 
     if (!token) {
+      // API routes must return 401 JSON, not a login redirect
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
       return NextResponse.redirect(new URL('/login', req.url))
     }
 
@@ -51,11 +55,28 @@ export default withAuth(
   },
   {
     callbacks: {
-      authorized: ({ token }) => !!token,
+      // For API routes we always proceed to the middleware function so it can
+      // return a proper 401 JSON response instead of a login page redirect.
+      authorized: ({ token, req }) => {
+        if (req.nextUrl.pathname.startsWith('/api/')) return true
+        return !!token
+      },
     },
   },
 )
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/portal/:path*'],
+  matcher: [
+    '/dashboard/:path*',
+    '/portal/:path*',
+    // Protect all API routes except intentionally public ones:
+    //   auth     — NextAuth sign-in/session endpoints
+    //   public   — vendor/driver registration forms (no login required)
+    //   cron     — Vercel cron jobs (protected by CRON_SECRET, not session)
+    //   webhooks — inbound webhooks from external services
+    //   vendor   — vendor portal uses its own JWT, not NextAuth
+    //   uploads  — static file serving
+    //   pnl-by-isnumber — intentionally public IS-number lookup
+    '/api/((?!auth|public|cron|webhooks|vendor|uploads|pnl-by-isnumber).*)',
+  ],
 }
