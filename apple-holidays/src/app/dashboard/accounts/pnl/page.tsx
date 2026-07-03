@@ -14,6 +14,7 @@ import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatDate, formatDateTime } from '@/lib/utils'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

@@ -6,7 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Plus, Search, FileText, Loader2, ArrowRight, Users, Calendar,
   ArrowUp, ArrowDown, ArrowUpDown, Clock, MapPin,
-  Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight,
+  Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -232,8 +232,17 @@ function BookingsPageInner() {
                 placeholder="Search by ref, agent, passenger name…"
                 value={search}
                 onChange={e => { setSearch(e.target.value); setPage(1) }}
-                className="form-input pl-9"
+                className="form-input pl-9 pr-9"
               />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => { setSearch(''); setPage(1) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
             <select
               value={status}
@@ -256,8 +265,17 @@ function BookingsPageInner() {
                 placeholder="Filter by IS number, VN number, Tour ref, Agent ID…"
                 value={refSearch}
                 onChange={e => { setRefSearch(e.target.value); setPage(1) }}
-                className="form-input pl-9"
+                className="form-input pl-9 pr-9"
               />
+              {refSearch && (
+                <button
+                  type="button"
+                  onClick={() => { setRefSearch(''); setPage(1) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Created date range */}

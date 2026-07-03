@@ -8,7 +8,7 @@ import {
   X, User, Mail, Phone, Shield, CheckCircle, XCircle,
   Calendar, Activity, BookOpen, RefreshCw, Lock, EyeOff,
   AlertTriangle, ChevronUp, ChevronDown, ToggleLeft, ToggleRight,
-  UserCheck, UserX, Users, Key, Globe,
+  UserCheck, UserX, Users, Key, Globe, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -89,6 +89,8 @@ const EMPTY_FORM = {
   isActive: true, password: '', confirmPassword: '',
 }
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+
 const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; label: string }[] = [
   { value: 'VIETNAM',            label: 'Vietnam' },
   { value: 'SRILANKA',           label: 'Sri Lanka' },
@@ -157,6 +159,10 @@ export default function UsersPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [sort, setSort]           = useState<{ field: SortField; dir: SortDir }>({ field: 'createdAt', dir: 'desc' })
 
+  // Pagination
+  const [page, setPage]           = useState(1)
+  const [pageSize, setPageSize]   = useState(25)
+
   // Modals
   const [mode, setMode]           = useState<ModalMode>('none')
   const [selected, setSelected]   = useState<UserRecord | null>(null)
@@ -224,6 +230,18 @@ export default function UsersPage() {
     })
     return list
   }, [users, search, roleFilter, statusFilter, sort])
+
+  // ── Pagination ─────────────────────────────────────────────────────────────────
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+
+  useEffect(() => { setPage(1) }, [search, roleFilter, statusFilter, pageSize, countryFilter])
+  useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
+
+  const paginated = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, page, pageSize])
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
 
@@ -581,10 +599,10 @@ export default function UsersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filtered.map((u, idx) => (
+                    {paginated.map((u, idx) => (
                       <tr key={u.id} className={cn('transition-colors group hover:bg-slate-50/80', !u.isActive && 'opacity-60')}>
                         {/* # */}
-                        <td className="px-4 py-3 text-slate-400 text-xs">{idx + 1}</td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{(page - 1) * pageSize + idx + 1}</td>
 
                         {/* User */}
                         <td className="px-4 py-3">
@@ -719,6 +737,61 @@ export default function UsersPage() {
               </div>
             )}
           </CardBody>
+          {!loading && filtered.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-slate-200">
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span>
+                  Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}
+                </span>
+                <select
+                  className="form-select w-auto text-xs py-1"
+                  value={pageSize}
+                  onChange={e => setPageSize(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map(n => (
+                    <option key={n} value={n}>{n} / page</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page === 1}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="First page"
+                >
+                  <ChevronsLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPage(totalPages)}
+                  disabled={page === totalPages}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Last page"
+                >
+                  <ChevronsRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 

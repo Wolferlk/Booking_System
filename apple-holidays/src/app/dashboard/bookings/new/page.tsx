@@ -319,6 +319,20 @@ export default function NewBookingPage() {
         return
       }
 
+      // Validate adult and child counts
+      const adults = Number(form.paxAdults)
+      const children = Number(form.paxChildren)
+      if (adults > 100) {
+        toast.error('Adults count cannot exceed 100')
+        setSaving(false)
+        return
+      }
+      if (children > 100) {
+        toast.error('Children count cannot exceed 100')
+        setSaving(false)
+        return
+      }
+
       validatePhoneFields()
       if (!form.bookingRef.trim()) {
         toast.error('Booking Reference is required. Upload a TC document to extract the IS Number, or enter it manually.')
@@ -605,14 +619,20 @@ export default function NewBookingPage() {
                   onChange={e => setForm(p => ({ ...p, departureDate: e.target.value }))} />
               </div>
               <div>
-                <label className="form-label">Adults *</label>
-                <input type="number" min="1" className="form-input" required value={form.paxAdults}
-                  onChange={e => setForm(p => ({ ...p, paxAdults: e.target.value }))} />
+                <label className="form-label">Adults * (Max 100)</label>
+                <input type="number" min="1" max="100" className="form-input" required value={form.paxAdults}
+                  onChange={e => {
+                    const val = Math.min(Math.max(Number(e.target.value) || 0, 1), 100)
+                    setForm(p => ({ ...p, paxAdults: String(val) }))
+                  }} />
               </div>
               <div>
-                <label className="form-label">Children</label>
-                <input type="number" min="0" className="form-input" value={form.paxChildren}
-                  onChange={e => setForm(p => ({ ...p, paxChildren: e.target.value }))} />
+                <label className="form-label">Children (Max 100)</label>
+                <input type="number" min="0" max="100" className="form-input" value={form.paxChildren}
+                  onChange={e => {
+                    const val = Math.min(Math.max(Number(e.target.value) || 0, 0), 100)
+                    setForm(p => ({ ...p, paxChildren: String(val) }))
+                  }} />
               </div>
               <div>
                 <label className="form-label">Quoted Total *</label>
