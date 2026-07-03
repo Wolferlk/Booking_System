@@ -4,8 +4,7 @@ import { Suspense, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   User, Phone, Mail, CreditCard, Car, Truck,
-  CheckCircle2, Loader2, ChevronDown, ChevronRight,
-  Camera, X, Upload,
+  CheckCircle2, Loader2, ChevronDown, ChevronRight, Camera, X, Upload,
 } from 'lucide-react'
 
 const VEHICLE_TYPES: { value: string; label: string }[] = [
@@ -88,7 +87,6 @@ function DriverRegisterForm() {
   const meta = COUNTRY_META[country]
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
-  const [showVehicle, setShowVehicle] = useState(false)
   const [showBank, setShowBank] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -127,6 +125,8 @@ function DriverRegisterForm() {
     setError('')
     if (!form.name.trim()) { setError('Full name is required'); return }
     if (!form.phone.trim()) { setError('Phone number is required'); return }
+    if (!form.licenseNo.trim()) { setError('Driver\'s license number / NIC is required'); return }
+    if (!form.vehiclePlateNo.trim()) { setError('Vehicle plate number is required'); return }
 
     setSubmitting(true)
     try {
@@ -293,7 +293,7 @@ function DriverRegisterForm() {
 
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1.5">
-                  Driver's License Number / Driver NIC
+                  Driver's License Number / Driver NIC <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
                   <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -308,140 +308,132 @@ function DriverRegisterForm() {
             </div>
           </div>
 
-          {/* ── Vehicle (collapsible) ── */}
+          {/* ── Vehicle Details (required) ── */}
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowVehicle(v => !v)}
-              className="w-full flex items-center gap-3 p-5 text-left"
-            >
+            <div className="flex items-center gap-3 p-5 border-b border-slate-50">
               <div className="w-7 h-7 bg-emerald-100 rounded-lg flex items-center justify-center">
                 <Car className="w-4 h-4 text-emerald-600" />
               </div>
-              <div className="flex-1">
-                <span className="text-sm font-semibold text-slate-800">Vehicle Details</span>
-                <span className="ml-2 text-xs text-slate-400">Optional</span>
+              <h2 className="text-sm font-semibold text-slate-800">Vehicle Details</h2>
+              <span className="ml-auto text-xs font-medium text-red-500">Required</span>
+            </div>
+
+            <div className="px-5 pb-5 pt-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                  Vehicle Type <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={form.vehicleType}
+                  onChange={set('vehicleType')}
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white"
+                >
+                  {VEHICLE_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
               </div>
-              {showVehicle
-                ? <ChevronDown className="w-4 h-4 text-slate-400" />
-                : <ChevronRight className="w-4 h-4 text-slate-400" />
-              }
-            </button>
 
-            {showVehicle && (
-              <div className="px-5 pb-5 space-y-3 border-t border-slate-50 pt-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Vehicle Type</label>
-                  <select
-                    value={form.vehicleType}
-                    onChange={set('vehicleType')}
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 bg-white"
-                  >
-                    {VEHICLE_TYPES.map(t => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                  Plate Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  value={form.vehiclePlateNo}
+                  onChange={set('vehiclePlateNo')}
+                  placeholder="e.g. CAB-1234"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300 uppercase"
+                />
+              </div>
 
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Plate Number</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Brand</label>
                   <input
-                    value={form.vehiclePlateNo}
-                    onChange={set('vehiclePlateNo')}
-                    placeholder="e.g. 51A-12345"
-                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300 uppercase"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Brand</label>
-                    <input
-                      value={form.vehicleBrand}
-                      onChange={set('vehicleBrand')}
-                      placeholder="Toyota"
-                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1.5">Model</label>
-                    <input
-                      value={form.vehicleModel}
-                      onChange={set('vehicleModel')}
-                      placeholder="Innova"
-                      className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Seating Capacity</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="60"
-                    value={form.vehicleCapacity}
-                    onChange={set('vehicleCapacity')}
-                    placeholder="7"
+                    value={form.vehicleBrand}
+                    onChange={set('vehicleBrand')}
+                    placeholder="Toyota"
                     className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300"
                   />
                 </div>
-
-                {/* Vehicle Photos */}
-                <input ref={vehicleOutsideRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange('vehiclePhotoOutside')} />
-                <input ref={vehicleInsideRef}  type="file" accept="image/*" className="hidden" onChange={handlePhotoChange('vehiclePhotoInside')} />
-
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-2">Vehicle Photos</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {/* Outside */}
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] text-slate-500 text-center">Outside</p>
-                      {form.vehiclePhotoOutside ? (
-                        <div className="relative">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={form.vehiclePhotoOutside} alt="Outside" className="w-full h-28 rounded-xl object-cover border border-slate-200" />
-                          <button type="button" onClick={() => setForm(f => ({ ...f, vehiclePhotoOutside: '' }))}
-                            className="absolute top-1.5 right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow">
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button type="button" onClick={() => vehicleOutsideRef.current?.click()}
-                          disabled={!!uploading.vehiclePhotoOutside}
-                          className="w-full h-28 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1.5 text-slate-400 hover:border-emerald-400 hover:text-emerald-500 transition-colors">
-                          {uploading.vehiclePhotoOutside ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                          <span className="text-[11px]">{uploading.vehiclePhotoOutside ? 'Uploading…' : 'Add photo'}</span>
-                        </button>
-                      )}
-                    </div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">Model</label>
+                  <input
+                    value={form.vehicleModel}
+                    onChange={set('vehicleModel')}
+                    placeholder="Innova"
+                    className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300"
+                  />
+                </div>
+              </div>
 
-                    {/* Inside */}
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] text-slate-500 text-center">Inside</p>
-                      {form.vehiclePhotoInside ? (
-                        <div className="relative">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={form.vehiclePhotoInside} alt="Inside" className="w-full h-28 rounded-xl object-cover border border-slate-200" />
-                          <button type="button" onClick={() => setForm(f => ({ ...f, vehiclePhotoInside: '' }))}
-                            className="absolute top-1.5 right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow">
-                            <X className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button type="button" onClick={() => vehicleInsideRef.current?.click()}
-                          disabled={!!uploading.vehiclePhotoInside}
-                          className="w-full h-28 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1.5 text-slate-400 hover:border-emerald-400 hover:text-emerald-500 transition-colors">
-                          {uploading.vehiclePhotoInside ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-                          <span className="text-[11px]">{uploading.vehiclePhotoInside ? 'Uploading…' : 'Add photo'}</span>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">Seating Capacity</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={form.vehicleCapacity}
+                  onChange={set('vehicleCapacity')}
+                  placeholder="7"
+                  className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-400 focus:border-transparent placeholder:text-slate-300"
+                />
+              </div>
+
+              {/* Vehicle Photos */}
+              <input ref={vehicleOutsideRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange('vehiclePhotoOutside')} />
+              <input ref={vehicleInsideRef}  type="file" accept="image/*" className="hidden" onChange={handlePhotoChange('vehiclePhotoInside')} />
+
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-2">Vehicle Photos</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Outside */}
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-slate-500 text-center">Outside</p>
+                    {form.vehiclePhotoOutside ? (
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={form.vehiclePhotoOutside} alt="Outside" className="w-full h-28 rounded-xl object-cover border border-slate-200" />
+                        <button type="button" onClick={() => setForm(f => ({ ...f, vehiclePhotoOutside: '' }))}
+                          className="absolute top-1.5 right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow">
+                          <X className="w-3 h-3" />
                         </button>
-                      )}
-                    </div>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => vehicleOutsideRef.current?.click()}
+                        disabled={!!uploading.vehiclePhotoOutside}
+                        className="w-full h-28 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1.5 text-slate-400 hover:border-emerald-400 hover:text-emerald-500 transition-colors">
+                        {uploading.vehiclePhotoOutside ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+                        <span className="text-[11px]">{uploading.vehiclePhotoOutside ? 'Uploading…' : 'Add photo'}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Inside */}
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-slate-500 text-center">Inside</p>
+                    {form.vehiclePhotoInside ? (
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={form.vehiclePhotoInside} alt="Inside" className="w-full h-28 rounded-xl object-cover border border-slate-200" />
+                        <button type="button" onClick={() => setForm(f => ({ ...f, vehiclePhotoInside: '' }))}
+                          className="absolute top-1.5 right-1.5 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center shadow">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => vehicleInsideRef.current?.click()}
+                        disabled={!!uploading.vehiclePhotoInside}
+                        className="w-full h-28 border-2 border-dashed border-slate-200 rounded-xl flex flex-col items-center justify-center gap-1.5 text-slate-400 hover:border-emerald-400 hover:text-emerald-500 transition-colors">
+                        {uploading.vehiclePhotoInside ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+                        <span className="text-[11px]">{uploading.vehiclePhotoInside ? 'Uploading…' : 'Add photo'}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
-
               </div>
-            )}
+
+            </div>
           </div>
 
           {/* ── Bank Details (collapsible) ── */}
