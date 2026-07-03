@@ -709,17 +709,23 @@ model Vehicle {
 }
 
 model VehicleVendor {
-  id          String            @id @default(cuid())
-  name        String
-  phone       String?
-  email       String?
-  address     String?
-  isActive    Boolean           @default(true)
-  country     OperationCountry?
-  vehicles    Vehicle[]
-  assignments Assignment[]
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  id              String            @id @default(cuid())
+  name            String
+  phone           String?
+  email           String?
+  address         String?
+  isActive        Boolean           @default(true)
+  country         OperationCountry?
+
+  // Vendor portal auth
+  password        String?           // bcrypt hashed — null until registration is complete
+  whatsappPhone   String?
+  isRegistered    Boolean           @default(false)
+
+  vehicles        Vehicle[]
+  assignments     Assignment[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 
   @@map("vehicle_vendors")
 }

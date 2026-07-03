@@ -7,15 +7,16 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { formatCurrency } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 const COLORS = ['#eab308', '#22c55e', '#3b82f6', '#a855f7', '#f97316', '#ef4444']
 
-const COUNTRY_META: Record<string, { name: string; flag: string; code: string }> = {
-  VIETNAM:            { name: 'Vietnam',              flag: '🇻🇳', code: 'MMT_VN' },
-  SRILANKA:           { name: 'Sri Lanka',            flag: '🇱🇰', code: 'MMT_LK' },
-  SINGAPORE:          { name: 'Singapore',            flag: '🇸🇬', code: 'MMT_SG' },
-  MALAYSIA:           { name: 'Malaysia',             flag: '🇲🇾', code: 'MMT_MY' },
-  SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', flag: '🇸🇬🇲🇾', code: 'MMT_SG_MY' },
+const COUNTRY_META: Record<string, { name: string; code: string }> = {
+  VIETNAM:            { name: 'Vietnam',              code: 'MMT_VN' },
+  SRILANKA:           { name: 'Sri Lanka',            code: 'MMT_LK' },
+  SINGAPORE:          { name: 'Singapore',            code: 'MMT_SG' },
+  MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY' },
+  SINGAPORE_MALAYSIA: { name: 'Singapore & Malaysia', code: 'MMT_SG_MY' },
 }
 
 export default function ProfitDashboardPage() {
@@ -54,7 +55,7 @@ export default function ProfitDashboardPage() {
   return (
     <div>
       <Header
-        title={countryMeta ? `${countryMeta.flag} ${countryMeta.name} Profit Dashboard` : 'Profit Dashboard'}
+        title={countryMeta ? <span className="inline-flex items-center gap-2"><CountryFlag country={countryFilter} className="w-6 h-4" />{countryMeta.name} Profit Dashboard</span> : 'Profit Dashboard'}
         subtitle={
           countryMeta
             ? `${canFilter ? 'Filtered to' : 'Operating in'} ${countryMeta.name} · ${countryMeta.code}`
@@ -67,7 +68,7 @@ export default function ProfitDashboardPage() {
           <div className="flex items-center justify-between gap-3 px-5 py-4 rounded-xl bg-slate-50 border border-slate-200">
             <div>
               <p className="text-[10px] uppercase tracking-widest text-slate-400 font-semibold">Country Scope</p>
-              <p className="text-sm font-semibold text-slate-800 mt-0.5">{countryMeta.flag} {countryMeta.name}</p>
+              <p className="text-sm font-semibold text-slate-800 mt-0.5 flex items-center gap-1.5"><CountryFlag country={countryFilter} className="w-5 h-4" />{countryMeta.name}</p>
             </div>
             <p className="text-xs text-slate-400 font-mono">{countryMeta.code}</p>
           </div>

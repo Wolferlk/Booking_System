@@ -16,14 +16,15 @@ import { ROLE_LABELS } from '@/lib/rbac'
 import { useCountryFilter, type CountryFilter } from '@/hooks/use-country-filter'
 import { useSidebar } from '@/hooks/use-sidebar'
 import type { UserRole } from '@prisma/client'
+import { CountryFlag } from '@/components/ui/country-flag'
 
-const COUNTRY_PILLS: { value: CountryFilter; flag: string; short: string }[] = [
-  { value: 'ALL',                flag: '🌍', short: 'All' },
-  { value: 'VIETNAM',            flag: '🇻🇳', short: 'VN' },
-  { value: 'SRILANKA',           flag: '🇱🇰', short: 'LK' },
-  { value: 'SINGAPORE',          flag: '🇸🇬', short: 'SG' },
-  { value: 'MALAYSIA',           flag: '🇲🇾', short: 'MY' },
-  { value: 'SINGAPORE_MALAYSIA', flag: '🇸🇬🇲🇾', short: 'SG & MY' },
+const COUNTRY_PILLS: { value: CountryFilter; short: string }[] = [
+  { value: 'ALL',                short: 'All' },
+  { value: 'VIETNAM',            short: 'VN' },
+  { value: 'SRILANKA',           short: 'LK' },
+  { value: 'SINGAPORE',          short: 'SG' },
+  { value: 'MALAYSIA',           short: 'MY' },
+  { value: 'SINGAPORE_MALAYSIA', short: 'SG & MY' },
 ]
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -176,7 +177,6 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile backdrop */}
       {isMobileOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-30 lg:hidden backdrop-blur-sm"
@@ -190,16 +190,12 @@ export default function Sidebar() {
           'fixed left-0 top-0 h-full bg-slate-900 flex flex-col z-40',
           'border-r border-slate-800',
           'transition-all duration-300 ease-in-out',
-          // Width: mobile always full, desktop depends on collapse state
           'w-[260px]',
           isCollapsed && 'lg:w-16',
-          // Mobile: hide off-screen when closed, show when open
           isMobileOpen ? 'translate-x-0' : '-translate-x-full',
-          // Desktop: always visible
           'lg:translate-x-0',
         )}
       >
-        {/* Mobile close button */}
         <button
           onClick={closeMobile}
           className="lg:hidden absolute top-3 right-3 z-10 p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors"
@@ -208,7 +204,6 @@ export default function Sidebar() {
           <X className="w-4 h-4" />
         </button>
 
-        {/* ── Logo / Header ─────────────────────────────────────── */}
         <div className={cn('border-b border-slate-800 flex-shrink-0 px-4 py-4', isCollapsed && 'lg:px-2')}>
           <Link
             href="/"
@@ -237,7 +232,6 @@ export default function Sidebar() {
             )} />
           </Link>
 
-          {/* Role badge */}
           {role && (
             <div className={cn(
               'flex items-center gap-2 px-3 py-2 rounded-lg bg-brand-500/8 border border-brand-500/20',
@@ -248,7 +242,6 @@ export default function Sidebar() {
             </div>
           )}
 
-          {/* Country filter — ULTRA_SUPER_ADMIN can switch */}
           {canFilter && (
             <div className={cn('mt-3', isCollapsed && 'lg:hidden')}>
               <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
@@ -275,7 +268,6 @@ export default function Sidebar() {
             </div>
           )}
 
-          {/* Locked country — non-ultra users */}
           {!canFilter && role && role !== 'CLIENT' && (
             <div className={cn('mt-3', isCollapsed && 'lg:hidden')}>
               <p className="text-slate-600 text-[9px] uppercase tracking-widest font-semibold px-1 mb-1.5">
@@ -304,7 +296,6 @@ export default function Sidebar() {
           )}
         </div>
 
-        {/* ── Navigation ────────────────────────────────────────── */}
         <nav className="flex-1 py-4 overflow-y-auto scrollbar-hide">
           <div className={cn('mb-2 px-3', isCollapsed && 'lg:px-1')}>
             <p className={cn(
@@ -378,7 +369,6 @@ export default function Sidebar() {
           </ul>
         </nav>
 
-        {/* ── Desktop collapse toggle ───────────────────────────── */}
         <button
           onClick={toggleCollapse}
           title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -399,7 +389,6 @@ export default function Sidebar() {
           }
         </button>
 
-        {/* ── User info ─────────────────────────────────────────── */}
         {session?.user && (
           <div className={cn('border-t border-slate-800 px-4 py-4', isCollapsed && 'lg:px-2 lg:py-3')}>
             <div className={cn(

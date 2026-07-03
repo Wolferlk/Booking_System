@@ -3,21 +3,23 @@
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { MapPin, ArrowRight, Plane, Globe2 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 
 const DESTINATIONS = [
   {
     id: 'vietnam',
     name: 'Vietnam',
     code: 'MMT_VN',
-    flag: '🇻🇳',
+    country: 'VIETNAM',
     description: 'Ho Chi Minh · Hanoi · Da Nang · Hoi An',
     active: true,
     href: '/vietnam',
     tag: 'Live',
-    gradient: 'from-red-600/20 via-red-500/10 to-yellow-500/15',
-    border: 'border-red-500/40 hover:border-red-400/60',
-    glow: 'hover:shadow-red-500/10',
+    gradient: 'from-red-600/25 via-red-500/12 to-yellow-600/15',
+    border: 'border-red-500/35 hover:border-red-400/70',
+    glow: 'hover:shadow-red-500/20',
     accent: 'text-red-400',
+    accentBg: 'bg-red-500/12 border-red-500/25 hover:bg-red-500/18',
     dot: 'bg-emerald-400',
     tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
@@ -25,15 +27,16 @@ const DESTINATIONS = [
     id: 'srilanka',
     name: 'Sri Lanka',
     code: 'MMT_LK',
-    flag: '🇱🇰',
+    country: 'SRILANKA',
     description: 'Colombo · Kandy · Sigiriya · Galle',
     active: true,
     href: '/srilanka',
     tag: 'Live',
-    gradient: 'from-yellow-700/10 via-yellow-600/8 to-red-800/10',
-    border: 'border-yellow-700/20',
-    glow: 'hover:shadow-yellow-500/10',
+    gradient: 'from-yellow-700/15 via-yellow-600/10 to-orange-700/12',
+    border: 'border-yellow-600/30 hover:border-yellow-500/60',
+    glow: 'hover:shadow-yellow-500/20',
     accent: 'text-yellow-400',
+    accentBg: 'bg-yellow-500/12 border-yellow-500/25 hover:bg-yellow-500/18',
     dot: 'bg-emerald-400',
     tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
@@ -41,15 +44,16 @@ const DESTINATIONS = [
     id: 'singapore',
     name: 'Singapore & Malaysia',
     code: 'MMT_SG_MY',
-    flag: '🇸🇬🇲🇾',
+    country: 'SINGAPORE_MALAYSIA',
     description: 'Marina Bay · Sentosa · KL · Langkawi · Penang',
     active: true,
     href: '/singapore',
     tag: 'Live',
-    gradient: 'from-red-600/10 via-blue-600/8 to-white/5',
-    border: 'border-red-600/20',
-    glow: 'hover:shadow-red-500/10',
-    accent: 'text-red-400',
+    gradient: 'from-red-600/15 via-blue-600/10 to-slate-500/8',
+    border: 'border-blue-500/30 hover:border-blue-400/60',
+    glow: 'hover:shadow-blue-500/20',
+    accent: 'text-blue-400',
+    accentBg: 'bg-blue-500/12 border-blue-500/25 hover:bg-blue-500/18',
     dot: 'bg-emerald-400',
     tagBg: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
   },
@@ -57,15 +61,16 @@ const DESTINATIONS = [
     id: 'ultra',
     name: 'All Countries',
     code: 'ULTRA_ADMIN',
-    flag: '🌐',
+    country: null,
     description: 'Global view · All operations · Critical access',
     active: true,
     href: '/ultra',
     tag: 'Restricted',
-    gradient: 'from-amber-600/15 via-amber-500/8 to-orange-500/10',
-    border: 'border-amber-500/40 hover:border-amber-400/60',
-    glow: 'hover:shadow-amber-500/10',
+    gradient: 'from-amber-600/20 via-amber-500/10 to-orange-600/12',
+    border: 'border-amber-500/40 hover:border-amber-400/70',
+    glow: 'hover:shadow-amber-500/20',
     accent: 'text-amber-400',
+    accentBg: 'bg-amber-500/12 border-amber-500/25 hover:bg-amber-500/18',
     dot: 'bg-amber-400',
     tagBg: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
   },
@@ -157,33 +162,41 @@ export default function HomePage() {
               onClick={() => dest.active && dest.href && router.push(dest.href)}
               disabled={!dest.active}
               className={`
-                group relative rounded-2xl border p-7 text-left transition-all duration-300 outline-none
-                bg-gradient-to-br ${dest.gradient} bg-slate-900/70 backdrop-blur-sm
+                group relative rounded-3xl border text-center transition-all duration-300 outline-none overflow-hidden
+                bg-gradient-to-br ${dest.gradient} bg-[#0d1628]/80 backdrop-blur-sm
                 ${dest.border}
                 ${dest.active
-                  ? `cursor-pointer hover:scale-[1.03] hover:shadow-2xl ${dest.glow} focus:ring-2 focus:ring-brand-500/50`
+                  ? `cursor-pointer hover:scale-[1.025] hover:shadow-2xl ${dest.glow} focus:ring-2 focus:ring-brand-500/50`
                   : 'cursor-not-allowed opacity-50'
                 }
               `}
             >
-              {/* Flag & tag row */}
-              <div className="flex items-start justify-between mb-5">
-                <span className="text-5xl filter drop-shadow-sm">{dest.flag}</span>
-                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wider uppercase ${dest.tagBg} flex items-center gap-1`}>
-                  {dest.active && <span className={`inline-block w-1.5 h-1.5 rounded-full ${dest.dot} animate-pulse`} />}
+              {/* Top tag */}
+              <div className="flex justify-end px-5 pt-5">
+                <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wider uppercase ${dest.tagBg} flex items-center gap-1.5`}>
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${dest.dot} animate-pulse`} />
                   {dest.tag}
                 </span>
               </div>
 
-              {/* Name */}
-              <h2 className="text-2xl font-black text-white mb-0.5 tracking-tight">{dest.name}</h2>
-              <p className={`text-xs font-bold uppercase tracking-widest ${dest.accent} mb-2`}>{dest.code}</p>
-              <p className="text-xs text-slate-500 leading-relaxed mb-6">{dest.description}</p>
+              {/* Flag — large, centered */}
+              <div className="flex justify-center items-center px-6 py-6">
+                <div className={`w-28 h-28 rounded-2xl flex items-center justify-center border ${dest.accentBg} transition-colors`}>
+                  <CountryFlag country={dest.country} className="text-[56px] leading-none" />
+                </div>
+              </div>
 
-              {/* CTA */}
-              <div className={`flex items-center gap-2 text-sm font-bold ${dest.accent} group-hover:gap-3 transition-all`}>
+              {/* Name & code */}
+              <div className="px-6 pb-2">
+                <h2 className="text-xl font-black text-white mb-1 tracking-tight leading-tight">{dest.name}</h2>
+                <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${dest.accent} mb-3`}>{dest.code}</p>
+                <p className="text-[11px] text-slate-500 leading-relaxed">{dest.description}</p>
+              </div>
+
+              {/* CTA row */}
+              <div className={`mx-5 mb-5 mt-4 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm font-bold ${dest.accent} ${dest.accentBg} transition-all group-hover:gap-3`}>
                 Enter System
-                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-0.5" />
+                <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
               </div>
             </button>
           ))}
