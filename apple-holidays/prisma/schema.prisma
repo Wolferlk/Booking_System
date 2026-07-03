@@ -665,6 +665,10 @@ model Driver {
   vehicle         Vehicle?  @relation(fields: [vehicleId], references: [id])
   vehicleId       String?   @unique
 
+  // Vendor ownership (allows standalone drivers without vehicles)
+  vendorId        String?
+  vendorOwner     VehicleVendor? @relation("VendorDrivers", fields: [vendorId], references: [id])
+
   // Operation country (team scoping)
   country         OperationCountry?
 
@@ -722,8 +726,16 @@ model VehicleVendor {
   whatsappPhone   String?
   isRegistered    Boolean           @default(false)
 
+  // Vendor bank details
+  bankName        String?
+  bankAccountNo   String?
+  bankHolder      String?
+  bankBranch      String?
+  bankCode        String?
+
   vehicles        Vehicle[]
   assignments     Assignment[]
+  drivers         Driver[]          @relation("VendorDrivers")
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 

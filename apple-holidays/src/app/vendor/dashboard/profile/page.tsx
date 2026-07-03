@@ -3,26 +3,42 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { Loader2, Save, LogOut, ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react'
+import { Loader2, Save, LogOut, ChevronDown, ChevronUp, Eye, EyeOff, Building2 } from 'lucide-react'
 
 interface Profile {
   id: string; name: string; email: string | null; phone: string | null
   whatsappPhone: string | null; address: string | null; country: string | null
+  bankName: string | null; bankAccountNo: string | null; bankHolder: string | null
+  bankBranch: string | null; bankCode: string | null
+}
+
+const COUNTRY_LABEL: Record<string, string> = {
+  SRILANKA: '🇱🇰 Sri Lanka', VIETNAM: '🇻🇳 Vietnam',
+  SINGAPORE: '🇸🇬 Singapore', MALAYSIA: '🇲🇾 Malaysia', SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 SG / MY',
 }
 
 export default function VendorProfilePage() {
   const router = useRouter()
-  const [profile, setProfile] = useState<Profile | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving]   = useState(false)
+  const [profile, setProfile]   = useState<Profile | null>(null)
+  const [loading, setLoading]   = useState(true)
+  const [saving, setSaving]     = useState(false)
   const [showPwSection, setShowPwSection] = useState(false)
 
+  // Company fields
   const [name, setName]         = useState('')
   const [email, setEmail]       = useState('')
   const [phone, setPhone]       = useState('')
   const [whatsapp, setWhatsapp] = useState('')
   const [address, setAddress]   = useState('')
 
+  // Bank fields
+  const [bankName, setBankName]         = useState('')
+  const [bankAccountNo, setBankAccountNo] = useState('')
+  const [bankHolder, setBankHolder]     = useState('')
+  const [bankBranch, setBankBranch]     = useState('')
+  const [bankCode, setBankCode]         = useState('')
+
+  // Password fields
   const [curPw, setCurPw]   = useState('')
   const [newPw, setNewPw]   = useState('')
   const [cnfPw, setCnfPw]   = useState('')
@@ -37,6 +53,8 @@ export default function VendorProfilePage() {
         setProfile(p)
         setName(p.name); setEmail(p.email ?? ''); setPhone(p.phone ?? '')
         setWhatsapp(p.whatsappPhone ?? ''); setAddress(p.address ?? '')
+        setBankName(p.bankName ?? ''); setBankAccountNo(p.bankAccountNo ?? '')
+        setBankHolder(p.bankHolder ?? ''); setBankBranch(p.bankBranch ?? ''); setBankCode(p.bankCode ?? '')
       })
       .finally(() => setLoading(false))
   }, [])
@@ -49,8 +67,11 @@ export default function VendorProfilePage() {
       const res  = await fetch('/api/vendor/profile', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, phone, whatsappPhone: whatsapp, address,
-          currentPassword: curPw || undefined, newPassword: newPw || undefined }),
+        body: JSON.stringify({
+          name, email, phone, whatsappPhone: whatsapp, address,
+          bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
+          currentPassword: curPw || undefined, newPassword: newPw || undefined,
+        }),
       })
       const data = await res.json()
       if (!data.success) { toast.error(data.error); return }
@@ -68,11 +89,6 @@ export default function VendorProfilePage() {
   if (loading) return <div className="flex justify-center py-32"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>
   if (!profile) return null
 
-  const COUNTRY_LABEL: Record<string, string> = {
-    SRILANKA: '🇱🇰 Sri Lanka', VIETNAM: '🇻🇳 Vietnam',
-    SINGAPORE: '🇸🇬 Singapore', MALAYSIA: '🇲🇾 Malaysia', SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 SG / MY',
-  }
-
   return (
     <div className="p-4 space-y-4 pb-8">
       <div className="pt-2">
@@ -87,10 +103,9 @@ export default function VendorProfilePage() {
         </div>
       )}
 
-      {/* Company details */}
+      {/* Company info */}
       <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-4">
         <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Company Info</p>
-
         {[
           { label: 'Company Name *', val: name, set: setName, type: 'text' },
           { label: 'Email', val: email, set: setEmail, type: 'email' },
@@ -104,6 +119,33 @@ export default function VendorProfilePage() {
               type={f.type}
               value={f.val}
               onChange={e => f.set(e.target.value)}
+              className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Bank details */}
+      <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-slate-400" />
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Bank Details</p>
+        </div>
+        {[
+          { label: 'Bank Name', val: bankName, set: setBankName },
+          { label: 'Account Number', val: bankAccountNo, set: setBankAccountNo },
+          { label: 'Account Holder Name', val: bankHolder, set: setBankHolder },
+          { label: 'Branch', val: bankBranch, set: setBankBranch },
+          { label: 'Bank Code / SWIFT', val: bankCode, set: setBankCode },
+        ].map(f => (
+          <div key={f.label}>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
+            <input
+              type="text"
+              value={f.val}
+              onChange={e => f.set(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
               className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
             />
           </div>

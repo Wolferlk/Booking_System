@@ -12,7 +12,24 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const vehicle = await prisma.vehicle.findFirst({ where: { id: params.id, vendorId: session.id } })
   if (!vehicle) return buildApiError('Not found', 404)
 
-  const { type, brand, model, capacity, photoOutside, photoInside, isActive } = await req.json()
+  const { type, brand, model, capacity, photoOutside, photoInside, isActive, driverId } = await req.json()
+
+  // Handle driver assignment: driverId=string assigns, driverId=null unassigns
+  if (driverId !== undefined) {
+    // Unlink any driver currently assigned to this vehicle
+    await prisma.driver.updateMany({
+      where: { vehicleId: params.id },
+      data: { vehicleId: null },
+    })
+    // Assign new driver
+    if (driverId) {
+      // Unlink that driver from any other vehicle first
+      await prisma.driver.updateMany({
+        where: { id: driverId, vendorId: session.id },
+        data: { vehicleId: params.id },
+      })
+    }
+  }
 
   const updated = await prisma.vehicle.update({
     where: { id: params.id },
@@ -25,7 +42,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       photoInside: photoInside || null,
       isActive: isActive ?? undefined,
     },
-    include: { driver: { select: { id: true, name: true } } },
+    include: { driver: { select: { id: true, name: true, phone: true, photoUrl: true } } },
   })
 
   return buildApiSuccess(updated, 'Vehicle updated')
