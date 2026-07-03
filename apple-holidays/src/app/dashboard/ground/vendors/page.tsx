@@ -136,8 +136,10 @@ export default function VendorsPage() {
   }
 
   async function deleteVendor(id: string) {
-    if (!confirm('Delete this vendor? Their vehicles will also be deleted.')) return
-    await fetch(`/api/ground/vendors/${id}`, { method: 'DELETE' })
+    if (!confirm('Delete this vendor? Their vehicles and driver links will also be removed.')) return
+    const res = await fetch(`/api/ground/vendors/${id}`, { method: 'DELETE' })
+    const data = await res.json()
+    if (!data.success) { toast.error(data.error ?? 'Delete failed'); return }
     toast.success('Vendor deleted'); load()
   }
 
