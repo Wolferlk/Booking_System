@@ -197,7 +197,14 @@ export default function VendorLoginPage() {
           </div>
         )}
 
-        <p className="text-center text-slate-700 text-xs mt-6">
+        <p className="text-center text-slate-600 text-xs mt-5">
+          New vendor?{' '}
+          <button onClick={() => router.push('/vendor/register')} className="text-brand-400 hover:text-brand-300 font-semibold">
+            Register here
+          </button>
+        </p>
+
+        <p className="text-center text-slate-700 text-xs mt-3">
           © {new Date().getFullYear()} AppleHolidays · Vendor Portal
         </p>
       </div>

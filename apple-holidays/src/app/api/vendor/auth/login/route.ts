@@ -11,12 +11,14 @@ export async function POST(req: NextRequest) {
   if (!vendorId || !password) return buildApiError('Vendor and password required')
 
   const vendor = await prisma.vehicleVendor.findUnique({
-    where: { id: vendorId, isRegistered: true, isActive: true },
+    where: { id: vendorId, isRegistered: true },
   })
   if (!vendor || !vendor.password) return buildApiError('Invalid credentials', 401)
 
   const valid = await bcrypt.compare(password, vendor.password)
   if (!valid) return buildApiError('Invalid credentials', 401)
+
+  if (!vendor.isActive) return buildApiError('Your account is pending admin approval. Please try again later.', 403)
 
   setVendorCookie(vendor.id)
 
