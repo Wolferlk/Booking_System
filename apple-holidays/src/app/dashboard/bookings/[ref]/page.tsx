@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -9,7 +9,7 @@ import {
   AlertCircle, Clock, Loader2, Save,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
-  FlaskConical,
+  FlaskConical, ScanLine, Upload, HardDrive,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -80,6 +80,12 @@ export default function BookingDetailPage() {
   const [flightEditList, setFlightEditList] = useState<FlightEntry[]>([])
   const [flightChangeReason, setFlightChangeReason] = useState('')
   const [savingFlights, setSavingFlights] = useState(false)
+
+  // Flight extraction from image/PDF
+  const [flightScanModal, setFlightScanModal] = useState(false)
+  const [flightScanLoading, setFlightScanLoading] = useState(false)
+  const [flightDrivePickerOpen, setFlightDrivePickerOpen] = useState(false)
+  const flightScanFileRef = useRef<HTMLInputElement>(null)
 
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
