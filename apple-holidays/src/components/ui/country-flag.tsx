@@ -1,7 +1,4 @@
-import VN from 'country-flag-icons/react/3x2/VN'
-import LK from 'country-flag-icons/react/3x2/LK'
-import SG from 'country-flag-icons/react/3x2/SG'
-import MY from 'country-flag-icons/react/3x2/MY'
+import { VN, LK, SG, MY } from 'country-flag-icons/react/3x2'
 import { Globe } from 'lucide-react'
 
 interface CountryFlagProps {

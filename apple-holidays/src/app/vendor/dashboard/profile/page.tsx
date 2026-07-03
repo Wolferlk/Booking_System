@@ -90,121 +90,122 @@ export default function VendorProfilePage() {
   if (!profile) return null
 
   return (
-    <div className="p-4 space-y-4 pb-8">
-      <div className="pt-2">
-        <h1 className="text-white font-black text-2xl">Profile</h1>
-        <p className="text-slate-500 text-sm">Manage your company account</p>
-      </div>
-
-      {/* Country badge */}
-      {profile.country && (
-        <div className="inline-flex items-center gap-2 bg-white/4 border border-white/8 rounded-xl px-3 py-2">
-          <span className="text-sm">{COUNTRY_LABEL[profile.country] ?? profile.country}</span>
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-4 pb-10 space-y-4">
+      <div className="pt-1 sm:pt-2 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-white font-black text-2xl sm:text-3xl">Profile</h1>
+          <p className="text-slate-500 text-sm mt-1">Manage your company account and banking details.</p>
         </div>
-      )}
-
-      {/* Company info */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-4">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Company Info</p>
-        {[
-          { label: 'Company Name *', val: name, set: setName, type: 'text' },
-          { label: 'Email', val: email, set: setEmail, type: 'email' },
-          { label: 'Phone', val: phone, set: setPhone, type: 'tel' },
-          { label: 'WhatsApp', val: whatsapp, set: setWhatsapp, type: 'tel' },
-          { label: 'Address', val: address, set: setAddress, type: 'text' },
-        ].map(f => (
-          <div key={f.label}>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
-            <input
-              type={f.type}
-              value={f.val}
-              onChange={e => f.set(e.target.value)}
-              className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-            />
-          </div>
-        ))}
-      </div>
-
-      {/* Bank details */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Building2 className="w-4 h-4 text-slate-400" />
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Bank Details</p>
-        </div>
-        {[
-          { label: 'Bank Name', val: bankName, set: setBankName },
-          { label: 'Account Number', val: bankAccountNo, set: setBankAccountNo },
-          { label: 'Account Holder Name', val: bankHolder, set: setBankHolder },
-          { label: 'Branch', val: bankBranch, set: setBankBranch },
-          { label: 'Bank Code / SWIFT', val: bankCode, set: setBankCode },
-        ].map(f => (
-          <div key={f.label}>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
-            <input
-              type="text"
-              value={f.val}
-              onChange={e => f.set(e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
-            />
-          </div>
-        ))}
-      </div>
-
-      {/* Change password */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
-        <button
-          onClick={() => setShowPwSection(s => !s)}
-          className="w-full flex items-center justify-between p-5 text-left"
-        >
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Change Password</p>
-          {showPwSection ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
-        </button>
-
-        {showPwSection && (
-          <div className="px-5 pb-5 space-y-3 border-t border-white/6">
-            <div className="relative pt-3">
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Current Password</label>
-              <input type={showPw ? 'text' : 'password'} value={curPw} onChange={e => setCurPw(e.target.value)}
-                placeholder="Your current password"
-                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 pr-12 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
-              <button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 bottom-3 text-slate-500">
-                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">New Password</label>
-              <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters"
-                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Confirm Password</label>
-              <input type="password" value={cnfPw} onChange={e => setCnfPw(e.target.value)} placeholder="Repeat new password"
-                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
-            </div>
+        {profile.country && (
+          <div className="inline-flex items-center gap-2 bg-white/4 border border-white/8 rounded-2xl px-3 py-2">
+            <span className="text-sm">{COUNTRY_LABEL[profile.country] ?? profile.country}</span>
           </div>
         )}
       </div>
 
-      {/* Save */}
-      <button
-        onClick={save}
-        disabled={saving || !name.trim()}
-        className="w-full bg-gradient-to-r from-brand-500 to-purple-600 text-white rounded-2xl py-4 text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20 disabled:opacity-50 active:scale-[0.98] transition-transform"
-      >
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-        Save Changes
-      </button>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-4">
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Company Info</p>
+          {[
+            { label: 'Company Name *', val: name, set: setName, type: 'text' },
+            { label: 'Email', val: email, set: setEmail, type: 'email' },
+            { label: 'Phone', val: phone, set: setPhone, type: 'tel' },
+            { label: 'WhatsApp', val: whatsapp, set: setWhatsapp, type: 'tel' },
+            { label: 'Address', val: address, set: setAddress, type: 'text' },
+          ].map(f => (
+            <div key={f.label}>
+              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
+              <input
+                type={f.type}
+                value={f.val}
+                onChange={e => f.set(e.target.value)}
+                className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+              />
+            </div>
+          ))}
+        </div>
 
-      {/* Sign out */}
-      <button
-        onClick={logout}
-        className="w-full py-4 text-sm font-semibold text-slate-500 hover:text-red-400 flex items-center justify-center gap-2 transition-colors"
-      >
-        <LogOut className="w-4 h-4" />
-        Sign Out
-      </button>
+        <div className="space-y-4">
+          <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-slate-400" />
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Bank Details</p>
+            </div>
+            {[
+              { label: 'Bank Name', val: bankName, set: setBankName },
+              { label: 'Account Number', val: bankAccountNo, set: setBankAccountNo },
+              { label: 'Account Holder Name', val: bankHolder, set: setBankHolder },
+              { label: 'Branch', val: bankBranch, set: setBankBranch },
+              { label: 'Bank Code / SWIFT', val: bankCode, set: setBankCode },
+            ].map(f => (
+              <div key={f.label}>
+                <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">{f.label}</label>
+                <input
+                  type="text"
+                  value={f.val}
+                  onChange={e => f.set(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+            <button
+              onClick={() => setShowPwSection(s => !s)}
+              className="w-full flex items-center justify-between p-5 text-left"
+            >
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Change Password</p>
+              {showPwSection ? <ChevronUp className="w-4 h-4 text-slate-500" /> : <ChevronDown className="w-4 h-4 text-slate-500" />}
+            </button>
+
+            {showPwSection && (
+              <div className="px-5 pb-5 space-y-3 border-t border-white/6">
+                <div className="relative pt-3">
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Current Password</label>
+                  <input type={showPw ? 'text' : 'password'} value={curPw} onChange={e => setCurPw(e.target.value)}
+                    placeholder="Your current password"
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 pr-12 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
+                  <button type="button" onClick={() => setShowPw(s => !s)} className="absolute right-3 bottom-3 text-slate-500">
+                    {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">New Password</label>
+                  <input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters"
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Confirm Password</label>
+                  <input type="password" value={cnfPw} onChange={e => setCnfPw(e.target.value)} placeholder="Repeat new password"
+                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500/40" />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          onClick={save}
+          disabled={saving || !name.trim()}
+          className="w-full bg-gradient-to-r from-brand-500 to-purple-600 text-white rounded-2xl py-4 text-sm font-bold flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20 disabled:opacity-50 active:scale-[0.98] transition-transform"
+        >
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          Save Changes
+        </button>
+
+        <button
+          onClick={logout}
+          className="w-full py-4 text-sm font-semibold text-slate-500 hover:text-red-400 flex items-center justify-center gap-2 transition-colors rounded-2xl border border-white/8 bg-white/3"
+        >
+          <LogOut className="w-4 h-4" />
+          Sign Out
+        </button>
+      </div>
     </div>
   )
 }

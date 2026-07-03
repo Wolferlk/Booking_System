@@ -58,10 +58,20 @@ export default function VendorTripsPage() {
   )
 
   return (
-    <div className="p-4 space-y-5">
-      <div className="pt-2">
-        <h1 className="text-white font-black text-2xl">Assigned Trips</h1>
-        <p className="text-slate-500 text-sm mt-0.5">{trips.length} total · {upcoming.length} upcoming</p>
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 space-y-6">
+      <div className="pt-1 sm:pt-2 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 className="text-white font-black text-2xl sm:text-3xl">Assigned Trips</h1>
+          <p className="text-slate-500 text-sm mt-1 max-w-2xl">
+            Live assignments for your fleet, with quick access to the driver and vehicle details you need for the day.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:min-w-[360px]">
+          <StatCard label="Total" value={trips.length} accent="text-white" />
+          <StatCard label="Upcoming" value={upcoming.length} accent="text-brand-300" />
+          <StatCard label="Past" value={past.length} accent="text-slate-300" />
+        </div>
       </div>
 
       {trips.length === 0 ? (
@@ -92,6 +102,15 @@ export default function VendorTripsPage() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+function StatCard({ label, value, accent }: { label: string; value: number; accent: string }) {
+  return (
+    <div className="rounded-2xl border border-white/8 bg-white/4 px-4 py-3">
+      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className={`mt-1 text-xl font-black ${accent}`}>{value}</p>
     </div>
   )
 }

@@ -117,14 +117,16 @@ export default function VendorDriversPage() {
   if (loading) return <div className="flex justify-center py-32"><Loader2 className="w-6 h-6 text-brand-400 animate-spin" /></div>
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center justify-between pt-2">
+    <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between pt-1 sm:pt-2">
         <div>
-          <h1 className="text-white font-black text-2xl">Drivers</h1>
-          <p className="text-slate-500 text-sm">{drivers.length} driver{drivers.length !== 1 ? 's' : ''} in your fleet</p>
+          <h1 className="text-white font-black text-2xl sm:text-3xl">Drivers</h1>
+          <p className="text-slate-500 text-sm mt-1">{drivers.length} driver{drivers.length !== 1 ? 's' : ''} in your fleet</p>
         </div>
-        <button onClick={openNew} className="w-10 h-10 rounded-2xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30 active:scale-95 transition-transform">
+        <button onClick={openNew} className="w-full sm:w-auto sm:px-4 h-11 rounded-2xl bg-brand-500 flex items-center justify-center gap-2 shadow-lg shadow-brand-500/30 active:scale-95 transition-transform">
           <Plus className="w-5 h-5 text-white" />
+          <span className="sm:hidden text-white text-sm font-bold">Add Driver</span>
+          <span className="hidden sm:inline text-white text-sm font-bold">Add Driver</span>
         </button>
       </div>
 
