@@ -76,7 +76,9 @@ export default function ReportsPage() {
     }
   }
 
-  useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { 
+    load() 
+  }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function downloadCSV() {
     if (rows.length === 0) { toast.error('No data to export'); return }
@@ -160,7 +162,11 @@ export default function ReportsPage() {
                   type="date"
                   className="form-input"
                   value={filterFrom}
-                  onChange={e => setFilterFrom(e.target.value)}
+                  max={filterTo || undefined}
+                  onChange={e => {
+                    const newFrom = e.target.value
+                    setFilterFrom(newFrom)
+                  }}
                 />
               </div>
               <div>
@@ -169,7 +175,11 @@ export default function ReportsPage() {
                   type="date"
                   className="form-input"
                   value={filterTo}
-                  onChange={e => setFilterTo(e.target.value)}
+                  min={filterFrom || undefined}
+                  onChange={e => {
+                    const newTo = e.target.value
+                    setFilterTo(newTo)
+                  }}
                 />
               </div>
               <div>
@@ -184,7 +194,13 @@ export default function ReportsPage() {
               </div>
             </div>
             <div className="mt-4 flex gap-2">
-              <button onClick={() => load(filterStatus, filterFrom, filterTo, filterAgent)} className="btn btn-primary btn-sm" disabled={loading}>
+              <button 
+                onClick={() => {
+                  load(filterStatus, filterFrom, filterTo, filterAgent)
+                }} 
+                className="btn btn-primary btn-sm" 
+                disabled={loading}
+              >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
                 Apply Filters
               </button>
