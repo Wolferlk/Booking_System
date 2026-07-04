@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import {
   Activity, Search, Filter, User, Calendar,
   FileText, CreditCard, Ticket, Car, Loader2,
-  ChevronLeft, ChevronRight, Shield, RefreshCw,
+  ChevronLeft, ChevronRight, Shield, RefreshCw, X,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -118,7 +118,13 @@ export default function AuditLogPage() {
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search user, action, entity…" className="form-input pl-9" />
+                  placeholder="Search user, action, entity…" className="form-input pl-9 pr-9" />
+                {search && (
+                  <button type="button" onClick={() => setSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
               <select value={filterAction} onChange={e => { setFilterAction(e.target.value); setPage(1) }}
                 className="form-select min-w-[200px]">
