@@ -99,6 +99,48 @@ const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; label: string }[] = [
   { value: 'SINGAPORE_MALAYSIA', label: 'SG & MY' },
 ]
 
+// ─── Form validation ──────────────────────────────────────────────────────────
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_RE = /^[+0-9()\-\s]{7,20}$/
+const PHONE_ALLOWED_RE = /[^0-9+\-\s()]/g
+
+const NAME_MAX = 100
+const EMAIL_MAX = 50
+const PHONE_MAX = 20
+const PASSWORD_MAX = 72
+
+function validateUserForm(f: typeof EMPTY_FORM, mode: ModalMode, resetPwd: boolean) {
+  const errs: Record<string, string> = {}
+
+  if (!f.name.trim()) errs.name = 'Full name is required'
+  else if (f.name.trim().length < 2) errs.name = 'Name must be at least 2 characters'
+
+  if (!f.email.trim()) errs.email = 'Email is required'
+  else if (!EMAIL_RE.test(f.email.trim())) errs.email = 'Enter a valid email address'
+
+  if (f.phone.trim() && !PHONE_RE.test(f.phone.trim())) errs.phone = 'Enter a valid phone number'
+
+  if (mode === 'add' || (mode === 'edit' && resetPwd)) {
+    if (!f.password) errs.password = 'Password is required'
+    else if (f.password.length < 6) errs.password = 'Password must be at least 6 characters'
+
+    if (!f.confirmPassword) errs.confirmPassword = 'Please confirm the password'
+    else if (f.password !== f.confirmPassword) errs.confirmPassword = 'Passwords do not match'
+  }
+
+  return errs
+}
+
+function FieldError({ show, message }: { show: boolean; message?: string }) {
+  if (!show || !message) return null
+  return (
+    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+      <XCircle className="w-3 h-3" /> {message}
+    </p>
+  )
+}
+
 // ─── Password strength ────────────────────────────────────────────────────────
 
 function pwdStrength(pwd: string) {
@@ -173,6 +215,8 @@ export default function UsersPage() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [resetPwd, setResetPwd]   = useState(false)
   const [saving, setSaving]       = useState(false)
+  const [touched, setTouched]     = useState<Record<string, boolean>>({})
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false)
 
   // Delete
   const [criticalPwd, setCriticalPwd] = useState('')
@@ -272,6 +316,7 @@ export default function UsersPage() {
     if (u.countries) { try { parsedCountries = JSON.parse(u.countries) } catch { /* ignore */ } }
     setForm({ name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, country: u.country ?? 'VIETNAM', countries: parsedCountries, isActive: u.isActive, password: '', confirmPassword: '' })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
+    setTouched({}); setAttemptedSubmit(false)
     setMode('edit')
   }
 
@@ -282,6 +327,7 @@ export default function UsersPage() {
     const defaultCountry: OperationCountry = (sessionCountry && sessionCountry !== 'ALL') ? sessionCountry : 'VIETNAM'
     setForm({ ...EMPTY_FORM, country: defaultCountry })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
+    setTouched({}); setAttemptedSubmit(false)
     setMode('add')
   }
 
@@ -321,12 +367,11 @@ export default function UsersPage() {
   // ── Save (Add/Edit) ────────────────────────────────────────────────────────────
 
   async function saveUser() {
-    if (!form.name.trim()) { toast.error('Full name is required'); return }
-    if (!form.email.trim()) { toast.error('Email is required'); return }
-    if (mode === 'add' || (mode === 'edit' && resetPwd)) {
-      if (!form.password) { toast.error('Password is required'); return }
-      if (form.password.length < 6) { toast.error('Password must be at least 6 characters'); return }
-      if (form.password !== form.confirmPassword) { toast.error('Passwords do not match'); return }
+    setAttemptedSubmit(true)
+    const errs = validateUserForm(form, mode, resetPwd)
+    if (Object.keys(errs).length > 0) {
+      toast.error('Please fix the highlighted fields')
+      return
     }
 
     setSaving(true)
@@ -391,6 +436,9 @@ export default function UsersPage() {
 
   const strength = pwdStrength(form.password)
   const isSelf   = (u: UserRecord) => u.id === session?.user?.id
+  const errors   = useMemo(() => validateUserForm(form, mode, resetPwd), [form, mode, resetPwd])
+  const showErr  = (field: string) => attemptedSubmit || touched[field]
+  const markTouched = (field: string) => setTouched(t => ({ ...t, [field]: true }))
 
   function SortTh({ field, label }: { field: SortField; label: string }) {
     const active = sort.field === field
@@ -893,11 +941,16 @@ export default function UsersPage() {
               </label>
               <input
                 type="text"
-                className="form-input"
+                className={cn('form-input', showErr('name') && errors.name && 'border-red-400 focus:ring-red-300')}
                 placeholder="e.g. John Doe"
                 value={form.name}
-                onChange={e => setForm(x => ({ ...x, name: e.target.value }))}
+                maxLength={NAME_MAX}
+                onChange={e => { markTouched('name'); setForm(x => ({ ...x, name: e.target.value })) }}
               />
+              <div className="flex items-center justify-between">
+                <FieldError show={showErr('name')} message={errors.name} />
+                <span className="text-[10px] text-slate-400 ml-auto">{form.name.length}/{NAME_MAX}</span>
+              </div>
             </div>
             <div>
               <label className="form-label flex items-center gap-1.5">
@@ -905,11 +958,16 @@ export default function UsersPage() {
               </label>
               <input
                 type="email"
-                className="form-input"
+                className={cn('form-input', showErr('email') && errors.email && 'border-red-400 focus:ring-red-300')}
                 placeholder="e.g. name@aahaas.com"
                 value={form.email}
-                onChange={e => setForm(x => ({ ...x, email: e.target.value }))}
+                maxLength={EMAIL_MAX}
+                onChange={e => { markTouched('email'); setForm(x => ({ ...x, email: e.target.value })) }}
               />
+              <div className="flex items-center justify-between">
+                <FieldError show={showErr('email')} message={errors.email} />
+                <span className="text-[10px] text-slate-400 ml-auto">{form.email.length}/{EMAIL_MAX}</span>
+              </div>
             </div>
           </div>
 
@@ -920,11 +978,20 @@ export default function UsersPage() {
             </label>
             <input
               type="tel"
-              className="form-input"
+              className={cn('form-input', showErr('phone') && errors.phone && 'border-red-400 focus:ring-red-300')}
               placeholder="e.g. +94 77 123 4567"
               value={form.phone}
-              onChange={e => setForm(x => ({ ...x, phone: e.target.value }))}
+              maxLength={PHONE_MAX}
+              onChange={e => {
+                markTouched('phone')
+                const cleaned = e.target.value.replace(PHONE_ALLOWED_RE, '')
+                setForm(x => ({ ...x, phone: cleaned }))
+              }}
             />
+            <div className="flex items-center justify-between">
+              <FieldError show={showErr('phone')} message={errors.phone} />
+              <span className="text-[10px] text-slate-400 ml-auto">{form.phone.length}/{PHONE_MAX}</span>
+            </div>
           </div>
 
           {/* Country (Ultra Super Admin only — SUPER_ADMIN is locked to their country) */}
@@ -1086,16 +1153,18 @@ export default function UsersPage() {
                   <div className="relative">
                     <input
                       type={showPwd ? 'text' : 'password'}
-                      className="form-input pr-10"
+                      className={cn('form-input pr-10', showErr('password') && errors.password && 'border-red-400 focus:ring-red-300')}
                       placeholder="Minimum 6 characters"
                       value={form.password}
-                      onChange={e => setForm(x => ({ ...x, password: e.target.value }))}
+                      maxLength={PASSWORD_MAX}
+                      onChange={e => { markTouched('password'); setForm(x => ({ ...x, password: e.target.value })) }}
                     />
                     <button type="button" onClick={() => setShowPwd(v => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                       {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
+                  <FieldError show={showErr('password')} message={errors.password} />
                   {/* Strength bar */}
                   {strength && (
                     <div className="mt-2">
@@ -1116,22 +1185,19 @@ export default function UsersPage() {
                     <input
                       type={showConfirm ? 'text' : 'password'}
                       className={cn('form-input pr-10',
-                        form.confirmPassword && form.confirmPassword !== form.password && 'border-red-400 focus:ring-red-300',
+                        showErr('confirmPassword') && errors.confirmPassword && 'border-red-400 focus:ring-red-300',
                       )}
                       placeholder="Re-enter password"
                       value={form.confirmPassword}
-                      onChange={e => setForm(x => ({ ...x, confirmPassword: e.target.value }))}
+                      maxLength={PASSWORD_MAX}
+                      onChange={e => { markTouched('confirmPassword'); setForm(x => ({ ...x, confirmPassword: e.target.value })) }}
                     />
                     <button type="button" onClick={() => setShowConfirm(v => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                       {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                  {form.confirmPassword && form.password !== form.confirmPassword && (
-                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <XCircle className="w-3 h-3" /> Passwords do not match
-                    </p>
-                  )}
+                  <FieldError show={showErr('confirmPassword')} message={errors.confirmPassword} />
                   {form.confirmPassword && form.password === form.confirmPassword && form.password.length >= 6 && (
                     <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
                       <CheckCircle className="w-3 h-3" /> Passwords match
