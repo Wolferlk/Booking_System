@@ -538,7 +538,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [editCampaign, setEditCampaign] = useState<TECampaign | null>(null)
 
   // ── Quick Call ────────────────────────────────────────────────────────────
-  const [quickForm, setQuickForm] = useState({ to: defaultPhone, name: leadName, bookingRef: bookingRef, reason: '', attachBooking: true })
+  const [quickForm, setQuickForm] = useState({ to: defaultPhone, name: leadName, reason: '' })
   const [quickLoading, setQuickLoading] = useState(false)
   const [quickResult, setQuickResult]   = useState<{ ok: boolean; message?: string; note?: string; channel_id?: string } | null>(null)
 
@@ -725,27 +725,32 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
   // ── Quick Call ────────────────────────────────────────────────────────────
   async function placeQuickCall() {
-    if (!quickForm.to) { toast.error('Phone number is required'); return }
+    const phone = quickForm.to.replace(/\D/g, '')
+    if (!phone) { toast.error('Phone number is required'); return }
+
+    // bookingRef is ALWAYS sent — it is the VN/IS number of the current booking page.
+    // This gives the AI agent the full trip itinerary, hotels, flights, passengers.
+    const body: Record<string, unknown> = {
+      to:          phone,
+      name:        quickForm.name.trim() || undefined,
+      bookingRef:  bookingRef,           // VN19662 / IS48375 — always the current booking
+      booking_ref: bookingRef,           // alias also accepted by the API
+    }
+    if (quickForm.reason.trim()) body.reason = quickForm.reason.trim()
+
     setQuickLoading(true)
     setQuickResult(null)
     try {
-      const body: Record<string, unknown> = {
-        to: quickForm.to.replace(/\D/g, ''),
-        name: quickForm.name || undefined,
-      }
-      if (quickForm.attachBooking && quickForm.bookingRef) body.bookingRef = quickForm.bookingRef
-      if (quickForm.reason.trim()) body.reason = quickForm.reason.trim()
-
       const res = await teProxy('quick-call', 'POST', body)
       if (res.approval_pending) {
-        setQuickResult({ ok: false, message: res.message ?? 'WhatsApp approval pending — customer must allow calls', note: res.note })
+        setQuickResult({ ok: false, message: res.message ?? 'WhatsApp approval pending — customer must tap Allow first', note: res.note })
         toast.info('Approval sent — customer must tap Allow first')
       } else if (res.ok === false) {
         setQuickResult({ ok: false, message: res.message })
         toast.info(res.message ?? 'Call could not connect')
       } else {
         setQuickResult({ ok: true, message: res.message, note: res.note, channel_id: res.channel_id })
-        toast.success('Quick call placed — agent is dialling')
+        toast.success(`Quick call placed to ${phone} — agent has ${bookingRef} itinerary`)
       }
     } catch { toast.error('Quick call failed') } finally { setQuickLoading(false) }
   }
@@ -1245,55 +1250,98 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         // ══════════════════════════════════════════════════════════════════
         ) : tab === 'quickcall' ? (
           <div className="space-y-5">
-            <div className="flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-100 rounded-xl">
-              <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="text-xs font-semibold text-blue-800 mb-0.5">Immediate one-off call</p>
-                <p className="text-xs text-blue-700 leading-relaxed">Place a call right now. Attach this booking so the agent has the full trip itinerary, hotels, flights, and passenger details — and can answer any customer question mid-call.</p>
+
+            {/* ── Parameters being sent — always visible ── */}
+            <div className="rounded-xl border border-violet-200 bg-violet-50 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 border-b border-violet-100 bg-violet-100/60">
+                <BookOpen className="w-3.5 h-3.5 text-violet-600" />
+                <p className="text-xs font-bold text-violet-800">Parameters sent to TE API — <code className="font-mono text-violet-700">POST /quick-call</code></p>
+              </div>
+              <div className="px-4 py-3 space-y-1.5 text-[11px] font-mono">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 w-28">bookingRef</span>
+                  <span className="font-bold text-violet-700 bg-white border border-violet-200 px-2 py-0.5 rounded-lg">{bookingRef}</span>
+                  <span className="text-[10px] text-violet-500 font-sans">← always the current booking (VN/IS number)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 w-28">to</span>
+                  <span className="text-slate-700">{quickForm.to.replace(/\D/g, '') || <span className="text-red-400">required</span>}</span>
+                  <span className="text-[10px] text-slate-400 font-sans">← phone to dial</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 w-28">name</span>
+                  <span className="text-slate-700">{quickForm.name || '—'}</span>
+                  <span className="text-[10px] text-slate-400 font-sans">← agent greets them by this</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 w-28">reason</span>
+                  <span className="text-slate-700 truncate max-w-xs">{quickForm.reason.trim() || '— (general check-in)'}</span>
+                </div>
+              </div>
+              <div className="px-4 py-2 border-t border-violet-100 bg-violet-100/40">
+                <p className="text-[10px] text-violet-600 leading-relaxed">
+                  The AI agent reads <strong>{bookingRef}</strong> from the portal DB and gets: customer name, arrival/departure dates, day-by-day itinerary, hotels, flights, and passenger list — before dialling.
+                </p>
               </div>
             </div>
 
+            {/* ── Form fields ── */}
             <div className="space-y-4">
               <div>
-                <label className="form-label">Phone to Call *</label>
-                <input className="form-input font-mono" placeholder="94771234567" value={quickForm.to} onChange={e => setQuickForm(f => ({ ...f, to: e.target.value }))} />
-              </div>
-              <div>
-                <label className="form-label">Customer Name <span className="text-slate-400 font-normal">(for greeting)</span></label>
-                <input className="form-input" value={quickForm.name} onChange={e => setQuickForm(f => ({ ...f, name: e.target.value }))} />
+                <label className="form-label">Phone to Dial *</label>
+                <input
+                  className="form-input font-mono"
+                  placeholder="94771234567  (country code, no +)"
+                  value={quickForm.to}
+                  onChange={e => setQuickForm(f => ({ ...f, to: e.target.value }))}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">International format without + (94 = Sri Lanka · 91 = India)</p>
               </div>
 
               <div>
-                <label className="flex items-center gap-2.5 cursor-pointer mb-2">
-                  <input type="checkbox" className="w-3.5 h-3.5 rounded accent-violet-600" checked={quickForm.attachBooking} onChange={e => setQuickForm(f => ({ ...f, attachBooking: e.target.checked }))} />
-                  <span className="text-xs font-semibold text-slate-700">Attach booking — agent gets the full {bookingRef} itinerary</span>
+                <label className="form-label">Customer Name <span className="text-slate-400 font-normal">(agent greets them by this)</span></label>
+                <input
+                  className="form-input"
+                  value={quickForm.name}
+                  onChange={e => setQuickForm(f => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="form-label">
+                  Reason for Call
+                  <span className="text-slate-400 font-normal ml-1">(optional — agent opens around this)</span>
                 </label>
-                {quickForm.attachBooking && (
-                  <div className="ml-6 flex items-center gap-2 px-3 py-2 bg-violet-50 border border-violet-100 rounded-lg">
-                    <BookOpen className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs font-semibold text-violet-700">{bookingRef}</p>
-                      <p className="text-[10px] text-violet-500">Agent will reference real itinerary, hotels, flights, passengers</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div>
-                <label className="form-label">Reason for Call <span className="text-slate-400 font-normal">(optional — the agent opens around this)</span></label>
-                <textarea className="form-input min-h-[70px] resize-none" placeholder="e.g. Confirm their airport pickup moved to 6:00 AM and that they're comfortable with it." value={quickForm.reason} onChange={e => setQuickForm(f => ({ ...f, reason: e.target.value }))} />
-                <p className="text-[10px] text-slate-400 mt-1">Leave blank for a general check-in call using the booking context</p>
+                <textarea
+                  className="form-input min-h-[70px] resize-none"
+                  placeholder="e.g. Confirm their airport pickup moved to 6:00 AM and check they're happy with it."
+                  value={quickForm.reason}
+                  onChange={e => setQuickForm(f => ({ ...f, reason: e.target.value }))}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Leave blank for a general trip check-in. The agent always has the full {bookingRef} itinerary regardless.
+                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
-              <button onClick={placeQuickCall} disabled={quickLoading}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
-                {quickLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Dialling…</> : <><PhoneCall className="w-4 h-4" /> Place Quick Call</>}
+              <button
+                onClick={placeQuickCall}
+                disabled={quickLoading || !quickForm.to.replace(/\D/g, '')}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 transition-colors shadow-sm"
+              >
+                {quickLoading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Dialling…</>
+                  : <><PhoneCall className="w-4 h-4" /> Place Quick Call</>}
               </button>
-              <button onClick={sendApproval} disabled={approvalLoading}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60 transition-colors">
-                {approvalLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><MessageSquare className="w-4 h-4 text-green-600" /> WhatsApp Approval</>}
+              <button
+                onClick={sendApproval}
+                disabled={approvalLoading}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60 transition-colors"
+              >
+                {approvalLoading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</>
+                  : <><MessageSquare className="w-4 h-4 text-green-600" /> WhatsApp Approval</>}
               </button>
             </div>
 
@@ -1303,16 +1351,22 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
                   : <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />}
                 <div>
-                  {quickResult.message && <p className={`text-xs font-semibold ${quickResult.ok ? 'text-emerald-800' : 'text-amber-800'}`}>{quickResult.message}</p>}
-                  {quickResult.note && <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{quickResult.note}</p>}
-                  {quickResult.channel_id && <p className="text-[10px] text-slate-400 mt-1 font-mono">channel: {quickResult.channel_id}</p>}
+                  {quickResult.message && (
+                    <p className={`text-xs font-semibold ${quickResult.ok ? 'text-emerald-800' : 'text-amber-800'}`}>{quickResult.message}</p>
+                  )}
+                  {quickResult.note && (
+                    <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{quickResult.note}</p>
+                  )}
+                  {quickResult.channel_id && (
+                    <p className="text-[10px] text-slate-400 mt-1 font-mono">channel_id: {quickResult.channel_id}</p>
+                  )}
                 </div>
               </div>
             )}
 
             <div className="pt-2 border-t border-slate-100">
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                <strong>Note:</strong> Quick calls are ephemeral — no feedback or transcript is saved. For persisted calls with AI-captured feedback, use the Call Schedule (Tab 1 registered booking) or Custom Jobs.
+                <strong>Note:</strong> Quick calls are ephemeral — no feedback or transcript is saved. For AI-captured feedback and persistent call history, use the Call Schedule or Custom Jobs tabs.
               </p>
             </div>
           </div>
