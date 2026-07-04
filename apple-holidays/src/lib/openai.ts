@@ -789,8 +789,9 @@ export async function extractConfirmationTickets(
             },
             {
               type: 'text',
-              text: `This image shows an "Other Rates" or entrance ticket table from a tour confirmation.
-Extract all ticket/entrance fee line items. Return a JSON array:
+              text: `This image is from a tour confirmation document. Extract ALL entrance ticket / entrance fee line items from it — whether they appear in a structured "Other Rates" table OR as bullet-point/list mentions anywhere in the document.
+
+Return a JSON array:
 [
   {
     "name": "full item name e.g. Pinnawala Elephant Orphanage - Entrance Ticket",
@@ -801,14 +802,18 @@ Extract all ticket/entrance fee line items. Return a JSON array:
     "total": 47.20
   }
 ]
+
 Rules:
-- Parse "adult: 4" as adultCount=4, "child: 2" as childCount=2.
-- If pax column says just a number without type, treat as adults.
-- Rate is the per-person cost.
-- Total = (adultRate × adultCount) + (childRate × childCount).
-- Skip rows that are just totals/subtotals with no item name.
-- Return [] if no ticket items found.
-- Return ONLY the JSON array.`,
+- For structured "Other Rates" tables: parse Pax | Rate | Total columns exactly.
+  Parse "adult: 4" as adultCount=4, "child: 2" as childCount=2.
+  Rate = per-person cost. Total = (adultRate × adultCount) + (childRate × childCount).
+- For plain bullet-list or text mentions of tickets/entrance fees (e.g. "Pinnawala Elephant Orphanage - Entrance Ticket", "Entrance fees to: Madu River Safari, Turtle Hatchery"):
+  Extract each ticket name. Set adultRate=0, childRate=0, adultCount=0, childCount=0, total=0 (rates unknown — user will fill in later).
+- Skip rows that are just subtotals/grand-totals with no item name.
+- Do NOT skip an item just because it has no rate — include it with zero rates.
+- Avoid duplicate items: if the same ticket appears in both a bullet list AND an "Other Rates" table, include it ONCE using the table data (which has the rate).
+- Return [] only if there are absolutely no ticket/entrance fee mentions in the image.
+- Return ONLY the JSON array, no extra text.`,
             },
           ],
         },

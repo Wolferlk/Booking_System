@@ -420,6 +420,13 @@ export default function PNLPage() {
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
+
+      // Image files return lineItems directly (not saved to DB — handed to the form)
+      if (Array.isArray(json.data?.lineItems)) {
+        handleAIParsed(json.data)
+        return
+      }
+
       const { linesImported } = json.data as { linesImported: number }
       toast.success(`P&L imported from "${file.name}": ${linesImported} line items`)
       setShowImportModal(false)
@@ -1152,7 +1159,7 @@ export default function PNLPage() {
         open={cloudPickerOpen}
         onClose={() => setCloudPickerOpen(false)}
         onSelect={handleCloudFileSelected}
-        filterExtensions={['.xlsx', '.xls', '.pdf', '.docx', '.doc', '.csv']}
+        filterExtensions={['.xlsx', '.xls', '.pdf', '.docx', '.doc', '.csv', '.jpg', '.jpeg', '.png', '.webp']}
         title={`Import P&L from Drive — ${ref}`}
         selectLabel="Import as P&L"
       />

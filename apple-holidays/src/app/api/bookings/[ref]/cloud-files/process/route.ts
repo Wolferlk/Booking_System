@@ -13,7 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolveBookingDriveFolder } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
-import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, extractFlightsFromImage, type IsPnlData } from '@/lib/openai'
+import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, extractFlightsFromImage, extractConfirmationTickets, type IsPnlData } from '@/lib/openai'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { writeFile, mkdir } from 'fs/promises'
@@ -92,6 +92,27 @@ export async function POST(
 
   // ── PNL mode ─────────────────────────────────────────────────────────────────
   if (mode === 'pnl') {
+    // ── Image file in PNL mode → extract confirmation tickets using AI vision ──
+    const isImageInPnl = /\.(jpe?g|jpg|png|webp|gif)$/i.test(itemName)
+    if (isImageInPnl) {
+      if (!process.env.OPENAI_API_KEY) return buildApiError('OpenAI API key not configured', 500)
+      const ext = itemName.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const mimeType = `image/${ext === 'jpg' ? 'jpeg' : ext}`
+      const tickets = await extractConfirmationTickets(buffer.toString('base64'), mimeType)
+      if (tickets.length === 0) return buildApiSuccess({ lineItems: [], source: itemName }, 'No ticket items found in image')
+      const lineItems = tickets.map(t => ({
+        activity: t.name, category: 'TICKETS',
+        mmtRate: 0, sicRate: 0, pvtRatePP: 0,
+        adEntrance: t.adultRate, chEntrance: t.childRate, otherRate: 0,
+      }))
+      return buildApiSuccess({
+        lineItems,
+        paxAdults: tickets[0]?.adultCount ?? 0,
+        paxChildren: tickets[0]?.childCount ?? 0,
+        source: itemName,
+      })
+    }
+
     // Parse the file into structured PNL data
     type PNLParsed = {
       bookingRef?: string
