@@ -692,6 +692,157 @@ The fileBase64 is not provided for PDF. Return empty JSON: {}`,
   }
 }
 
+export async function extractFlightsFromImage(
+  fileBase64: string,
+  mimeType: string,
+): Promise<Array<{
+  flightNo: string
+  date: string
+  fromApt: string
+  depTime: string
+  toApt: string
+  arrTime: string
+  airline: string
+  notes: string
+}>> {
+  const isImage = mimeType.startsWith('image/')
+  const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
+    ? [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${fileBase64}`, detail: 'high' },
+            },
+            {
+              type: 'text',
+              text: `This image contains a flight schedule or flight details table from a tour confirmation.
+Extract all UNIQUE flight segments (deduplicate if same flight appears for multiple passengers).
+Return a JSON array of flight objects:
+[
+  {
+    "flightNo": "flight number e.g. 6E344, AI101 — use empty string if unknown",
+    "date": "YYYY-MM-DD format",
+    "fromApt": "3-letter IATA code or city/airport name",
+    "depTime": "HH:MM 24h format",
+    "toApt": "3-letter IATA code or city/airport name",
+    "arrTime": "HH:MM 24h format",
+    "airline": "airline name if visible, else empty string",
+    "notes": "any extra info (transit time, baggage, etc.) — empty string if none"
+  }
+]
+Rules:
+- If the same route/time appears for multiple passengers, include it only ONCE.
+- Convert airport names to IATA codes where obvious (Kolkata→CCU, Chennai→MAA, Colombo→CMB, etc.).
+- Return empty array [] if no flight data found.
+- Return ONLY the JSON array, no extra text.`,
+            },
+          ],
+        },
+      ]
+    : [
+        {
+          role: 'user',
+          content: `This is a PDF with flight details. Text content:\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 3000)}\n\nExtract unique flight segments as JSON array with fields: flightNo, date (YYYY-MM-DD), fromApt, depTime, toApt, arrTime, airline, notes. Return [] if none found. Return ONLY valid JSON array.`,
+        },
+      ]
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages,
+      temperature: 0,
+      max_tokens: 800,
+    })
+    await logAiUsage({ callType: 'extract_flights_image', model: 'gpt-4o', usage: response.usage, source: 'manual' })
+    const content = response.choices[0]?.message?.content ?? '[]'
+    const trimmed = content.trim()
+    const jsonStr = trimmed.startsWith('[') ? trimmed : (trimmed.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
+    const parsed = JSON.parse(jsonStr)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export async function extractConfirmationTickets(
+  fileBase64: string,
+  mimeType: string,
+): Promise<Array<{
+  name: string
+  adultRate: number
+  childRate: number
+  adultCount: number
+  childCount: number
+  total: number
+}>> {
+  const isImage = mimeType.startsWith('image/')
+  const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
+    ? [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${fileBase64}`, detail: 'high' },
+            },
+            {
+              type: 'text',
+              text: `This image is from a tour confirmation document. Extract ALL entrance ticket / entrance fee line items from it — whether they appear in a structured "Other Rates" table OR as bullet-point/list mentions anywhere in the document.
+
+Return a JSON array:
+[
+  {
+    "name": "full item name e.g. Pinnawala Elephant Orphanage - Entrance Ticket",
+    "adultRate": 11.8,
+    "childRate": 0,
+    "adultCount": 4,
+    "childCount": 0,
+    "total": 47.20
+  }
+]
+
+Rules:
+- For structured "Other Rates" tables: parse Pax | Rate | Total columns exactly.
+  Parse "adult: 4" as adultCount=4, "child: 2" as childCount=2.
+  Rate = per-person cost. Total = (adultRate × adultCount) + (childRate × childCount).
+- For plain bullet-list or text mentions of tickets/entrance fees (e.g. "Pinnawala Elephant Orphanage - Entrance Ticket", "Entrance fees to: Madu River Safari, Turtle Hatchery"):
+  Extract each ticket name. Set adultRate=0, childRate=0, adultCount=0, childCount=0, total=0 (rates unknown — user will fill in later).
+- Skip rows that are just subtotals/grand-totals with no item name.
+- Do NOT skip an item just because it has no rate — include it with zero rates.
+- Avoid duplicate items: if the same ticket appears in both a bullet list AND an "Other Rates" table, include it ONCE using the table data (which has the rate).
+- Return [] only if there are absolutely no ticket/entrance fee mentions in the image.
+- Return ONLY the JSON array, no extra text.`,
+            },
+          ],
+        },
+      ]
+    : [
+        {
+          role: 'user',
+          content: `Extract entrance ticket/other rates items from this text as JSON array with fields: name, adultRate, childRate, adultCount, childCount, total. Return [] if none. Text:\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 2000)}`,
+        },
+      ]
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages,
+      temperature: 0,
+      max_tokens: 600,
+    })
+    await logAiUsage({ callType: 'extract_confirmation_tickets', model: 'gpt-4o', usage: response.usage, source: 'manual' })
+    const content = response.choices[0]?.message?.content ?? '[]'
+    const trimmed = content.trim()
+    const jsonStr = trimmed.startsWith('[') ? trimmed : (trimmed.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
+    const parsed = JSON.parse(jsonStr)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export async function getBookingAISuggestion(
   question: string,
   bookingContext: string,

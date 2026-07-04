@@ -7,6 +7,58 @@ import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
+
+// PATCH — append a single adjustment line item (used for tally reconciliation)
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { ref: string } },
+) {
+  const session = await getServerSession(authOptions)
+  if (!session) return buildApiError('Unauthorized', 401)
+  const role = session.user.role as UserRole
+  if (!hasPermission(role, 'pnl:create')) return buildApiError('Forbidden', 403)
+
+  const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
+  if (!booking) return buildApiError('Booking not found', 404)
+
+  const body = await req.json() as {
+    activity: string
+    category?: string
+    otherRate?: number
+    mmtRate?: number
+    sicRate?: number
+    pvtRatePP?: number
+    adEntrance?: number
+    chEntrance?: number
+  }
+  if (!body.activity?.trim()) return buildApiError('activity is required')
+
+  let pnl = await prisma.pNL.findUnique({ where: { bookingId: booking.id } })
+  if (!pnl) {
+    pnl = await (prisma.pNL as any).create({
+      data: { bookingId: booking.id, paxAdults: booking.paxAdults, paxChildren: booking.paxChildren },
+    }) as NonNullable<typeof pnl>
+  }
+
+  const maxOrder = await prisma.pNLLineItem.aggregate({ where: { pnlId: pnl.id }, _max: { sortOrder: true } })
+  const nextOrder = (maxOrder._max.sortOrder ?? -1) + 1
+
+  const line = await prisma.pNLLineItem.create({
+    data: {
+      pnlId:      pnl.id,
+      activity:   body.activity.trim(),
+      category:   (body.category ?? 'OTHER') as PNLCategory,
+      otherRate:  Number(body.otherRate  ?? 0),
+      mmtRate:    Number(body.mmtRate    ?? 0),
+      sicRate:    Number(body.sicRate    ?? 0),
+      pvtRatePP:  Number(body.pvtRatePP  ?? 0),
+      adEntrance: Number(body.adEntrance ?? 0),
+      chEntrance: Number(body.chEntrance ?? 0),
+      sortOrder:  nextOrder,
+    },
+  })
+  return buildApiSuccess({ lineItemId: line.id }, 'Adjustment line added')
+}
 // Categories that should generate an auto-ticket for the ground team
 const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
   HOTEL:          'Hotel Voucher',

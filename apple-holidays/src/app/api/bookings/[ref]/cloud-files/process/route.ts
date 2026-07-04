@@ -13,7 +13,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolveBookingDriveFolder } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
-import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, type IsPnlData } from '@/lib/openai'
+import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, extractFlightsFromImage, extractConfirmationTickets, type IsPnlData } from '@/lib/openai'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { writeFile, mkdir } from 'fs/promises'
@@ -30,7 +30,7 @@ export async function POST(
   if (!session) return buildApiError('Unauthorized', 401)
   const { ref } = await params
 
-  const body = await req.json() as { itemId: string; itemName: string; mode: 'ticket' | 'pnl' }
+  const body = await req.json() as { itemId: string; itemName: string; mode: 'ticket' | 'pnl' | 'flight' }
   const { itemId, itemName, mode } = body
   if (!itemId || !itemName || !mode) return buildApiError('itemId, itemName and mode are required')
 
@@ -75,8 +75,44 @@ export async function POST(
     return buildApiSuccess({ fileUrl, fileName: itemName, fileType, extracted })
   }
 
+  // ── FLIGHT mode ─────────────────────────────────────────────────────────────
+  if (mode === 'flight') {
+    const ext      = itemName.split('.').pop()?.toLowerCase() ?? 'bin'
+    const isImage  = /^(jpe?g|jpg|png|webp|gif)$/.test(ext)
+    const mimeType = isImage ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : 'application/pdf'
+    const base64   = buffer.toString('base64')
+
+    if (!process.env.OPENAI_API_KEY) {
+      return buildApiError('OpenAI API key not configured', 500)
+    }
+
+    const flights = await extractFlightsFromImage(base64, mimeType)
+    return buildApiSuccess({ flights, source: itemName })
+  }
+
   // ── PNL mode ─────────────────────────────────────────────────────────────────
   if (mode === 'pnl') {
+    // ── Image file in PNL mode → extract confirmation tickets using AI vision ──
+    const isImageInPnl = /\.(jpe?g|jpg|png|webp|gif)$/i.test(itemName)
+    if (isImageInPnl) {
+      if (!process.env.OPENAI_API_KEY) return buildApiError('OpenAI API key not configured', 500)
+      const ext = itemName.split('.').pop()?.toLowerCase() ?? 'jpg'
+      const mimeType = `image/${ext === 'jpg' ? 'jpeg' : ext}`
+      const tickets = await extractConfirmationTickets(buffer.toString('base64'), mimeType)
+      if (tickets.length === 0) return buildApiSuccess({ lineItems: [], source: itemName }, 'No ticket items found in image')
+      const lineItems = tickets.map(t => ({
+        activity: t.name, category: 'TICKETS',
+        mmtRate: 0, sicRate: 0, pvtRatePP: 0,
+        adEntrance: t.adultRate, chEntrance: t.childRate, otherRate: 0,
+      }))
+      return buildApiSuccess({
+        lineItems,
+        paxAdults: tickets[0]?.adultCount ?? 0,
+        paxChildren: tickets[0]?.childCount ?? 0,
+        source: itemName,
+      })
+    }
+
     // Parse the file into structured PNL data
     type PNLParsed = {
       bookingRef?: string

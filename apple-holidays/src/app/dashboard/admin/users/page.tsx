@@ -8,7 +8,7 @@ import {
   X, User, Mail, Phone, Shield, CheckCircle, XCircle,
   Calendar, Activity, BookOpen, RefreshCw, Lock, EyeOff,
   AlertTriangle, ChevronUp, ChevronDown, ToggleLeft, ToggleRight,
-  UserCheck, UserX, Users, Key, Globe,
+  UserCheck, UserX, Users, Key, Globe, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -89,6 +89,8 @@ const EMPTY_FORM = {
   isActive: true, password: '', confirmPassword: '',
 }
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+
 const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; label: string }[] = [
   { value: 'VIETNAM',            label: 'Vietnam' },
   { value: 'SRILANKA',           label: 'Sri Lanka' },
@@ -96,6 +98,48 @@ const MULTI_COUNTRY_OPTIONS: { value: OperationCountry; label: string }[] = [
   { value: 'MALAYSIA',           label: 'Malaysia' },
   { value: 'SINGAPORE_MALAYSIA', label: 'SG & MY' },
 ]
+
+// ─── Form validation ──────────────────────────────────────────────────────────
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PHONE_RE = /^[+0-9()\-\s]{7,20}$/
+const PHONE_ALLOWED_RE = /[^0-9+\-\s()]/g
+
+const NAME_MAX = 100
+const EMAIL_MAX = 50
+const PHONE_MAX = 20
+const PASSWORD_MAX = 72
+
+function validateUserForm(f: typeof EMPTY_FORM, mode: ModalMode, resetPwd: boolean) {
+  const errs: Record<string, string> = {}
+
+  if (!f.name.trim()) errs.name = 'Full name is required'
+  else if (f.name.trim().length < 2) errs.name = 'Name must be at least 2 characters'
+
+  if (!f.email.trim()) errs.email = 'Email is required'
+  else if (!EMAIL_RE.test(f.email.trim())) errs.email = 'Enter a valid email address'
+
+  if (f.phone.trim() && !PHONE_RE.test(f.phone.trim())) errs.phone = 'Enter a valid phone number'
+
+  if (mode === 'add' || (mode === 'edit' && resetPwd)) {
+    if (!f.password) errs.password = 'Password is required'
+    else if (f.password.length < 6) errs.password = 'Password must be at least 6 characters'
+
+    if (!f.confirmPassword) errs.confirmPassword = 'Please confirm the password'
+    else if (f.password !== f.confirmPassword) errs.confirmPassword = 'Passwords do not match'
+  }
+
+  return errs
+}
+
+function FieldError({ show, message }: { show: boolean; message?: string }) {
+  if (!show || !message) return null
+  return (
+    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
+      <XCircle className="w-3 h-3" /> {message}
+    </p>
+  )
+}
 
 // ─── Password strength ────────────────────────────────────────────────────────
 
@@ -157,6 +201,10 @@ export default function UsersPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [sort, setSort]           = useState<{ field: SortField; dir: SortDir }>({ field: 'createdAt', dir: 'desc' })
 
+  // Pagination
+  const [page, setPage]           = useState(1)
+  const [pageSize, setPageSize]   = useState(25)
+
   // Modals
   const [mode, setMode]           = useState<ModalMode>('none')
   const [selected, setSelected]   = useState<UserRecord | null>(null)
@@ -167,6 +215,8 @@ export default function UsersPage() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [resetPwd, setResetPwd]   = useState(false)
   const [saving, setSaving]       = useState(false)
+  const [touched, setTouched]     = useState<Record<string, boolean>>({})
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false)
 
   // Delete
   const [criticalPwd, setCriticalPwd] = useState('')
@@ -225,6 +275,18 @@ export default function UsersPage() {
     return list
   }, [users, search, roleFilter, statusFilter, sort])
 
+  // ── Pagination ─────────────────────────────────────────────────────────────────
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
+
+  useEffect(() => { setPage(1) }, [search, roleFilter, statusFilter, pageSize, countryFilter])
+  useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
+
+  const paginated = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, page, pageSize])
+
   // ── Stats ─────────────────────────────────────────────────────────────────────
 
   const stats = useMemo(() => {
@@ -254,6 +316,7 @@ export default function UsersPage() {
     if (u.countries) { try { parsedCountries = JSON.parse(u.countries) } catch { /* ignore */ } }
     setForm({ name: u.name, email: u.email, phone: u.phone ?? '', role: u.role, country: u.country ?? 'VIETNAM', countries: parsedCountries, isActive: u.isActive, password: '', confirmPassword: '' })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
+    setTouched({}); setAttemptedSubmit(false)
     setMode('edit')
   }
 
@@ -264,6 +327,7 @@ export default function UsersPage() {
     const defaultCountry: OperationCountry = (sessionCountry && sessionCountry !== 'ALL') ? sessionCountry : 'VIETNAM'
     setForm({ ...EMPTY_FORM, country: defaultCountry })
     setResetPwd(false); setShowPwd(false); setShowConfirm(false)
+    setTouched({}); setAttemptedSubmit(false)
     setMode('add')
   }
 
@@ -303,12 +367,11 @@ export default function UsersPage() {
   // ── Save (Add/Edit) ────────────────────────────────────────────────────────────
 
   async function saveUser() {
-    if (!form.name.trim()) { toast.error('Full name is required'); return }
-    if (!form.email.trim()) { toast.error('Email is required'); return }
-    if (mode === 'add' || (mode === 'edit' && resetPwd)) {
-      if (!form.password) { toast.error('Password is required'); return }
-      if (form.password.length < 6) { toast.error('Password must be at least 6 characters'); return }
-      if (form.password !== form.confirmPassword) { toast.error('Passwords do not match'); return }
+    setAttemptedSubmit(true)
+    const errs = validateUserForm(form, mode, resetPwd)
+    if (Object.keys(errs).length > 0) {
+      toast.error('Please fix the highlighted fields')
+      return
     }
 
     setSaving(true)
@@ -373,6 +436,9 @@ export default function UsersPage() {
 
   const strength = pwdStrength(form.password)
   const isSelf   = (u: UserRecord) => u.id === session?.user?.id
+  const errors   = useMemo(() => validateUserForm(form, mode, resetPwd), [form, mode, resetPwd])
+  const showErr  = (field: string) => attemptedSubmit || touched[field]
+  const markTouched = (field: string) => setTouched(t => ({ ...t, [field]: true }))
 
   function SortTh({ field, label }: { field: SortField; label: string }) {
     const active = sort.field === field
@@ -581,10 +647,10 @@ export default function UsersPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filtered.map((u, idx) => (
+                    {paginated.map((u, idx) => (
                       <tr key={u.id} className={cn('transition-colors group hover:bg-slate-50/80', !u.isActive && 'opacity-60')}>
                         {/* # */}
-                        <td className="px-4 py-3 text-slate-400 text-xs">{idx + 1}</td>
+                        <td className="px-4 py-3 text-slate-400 text-xs">{(page - 1) * pageSize + idx + 1}</td>
 
                         {/* User */}
                         <td className="px-4 py-3">
@@ -719,6 +785,61 @@ export default function UsersPage() {
               </div>
             )}
           </CardBody>
+          {!loading && filtered.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-slate-200">
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span>
+                  Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filtered.length)} of {filtered.length}
+                </span>
+                <select
+                  className="form-select w-auto text-xs py-1"
+                  value={pageSize}
+                  onChange={e => setPageSize(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map(n => (
+                    <option key={n} value={n}>{n} / page</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page === 1}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="First page"
+                >
+                  <ChevronsLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPage(totalPages)}
+                  disabled={page === totalPages}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Last page"
+                >
+                  <ChevronsRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
 
@@ -820,11 +941,16 @@ export default function UsersPage() {
               </label>
               <input
                 type="text"
-                className="form-input"
+                className={cn('form-input', showErr('name') && errors.name && 'border-red-400 focus:ring-red-300')}
                 placeholder="e.g. John Doe"
                 value={form.name}
-                onChange={e => setForm(x => ({ ...x, name: e.target.value }))}
+                maxLength={NAME_MAX}
+                onChange={e => { markTouched('name'); setForm(x => ({ ...x, name: e.target.value })) }}
               />
+              <div className="flex items-center justify-between">
+                <FieldError show={showErr('name')} message={errors.name} />
+                <span className="text-[10px] text-slate-400 ml-auto">{form.name.length}/{NAME_MAX}</span>
+              </div>
             </div>
             <div>
               <label className="form-label flex items-center gap-1.5">
@@ -832,11 +958,16 @@ export default function UsersPage() {
               </label>
               <input
                 type="email"
-                className="form-input"
+                className={cn('form-input', showErr('email') && errors.email && 'border-red-400 focus:ring-red-300')}
                 placeholder="e.g. name@aahaas.com"
                 value={form.email}
-                onChange={e => setForm(x => ({ ...x, email: e.target.value }))}
+                maxLength={EMAIL_MAX}
+                onChange={e => { markTouched('email'); setForm(x => ({ ...x, email: e.target.value })) }}
               />
+              <div className="flex items-center justify-between">
+                <FieldError show={showErr('email')} message={errors.email} />
+                <span className="text-[10px] text-slate-400 ml-auto">{form.email.length}/{EMAIL_MAX}</span>
+              </div>
             </div>
           </div>
 
@@ -847,11 +978,20 @@ export default function UsersPage() {
             </label>
             <input
               type="tel"
-              className="form-input"
+              className={cn('form-input', showErr('phone') && errors.phone && 'border-red-400 focus:ring-red-300')}
               placeholder="e.g. +94 77 123 4567"
               value={form.phone}
-              onChange={e => setForm(x => ({ ...x, phone: e.target.value }))}
+              maxLength={PHONE_MAX}
+              onChange={e => {
+                markTouched('phone')
+                const cleaned = e.target.value.replace(PHONE_ALLOWED_RE, '')
+                setForm(x => ({ ...x, phone: cleaned }))
+              }}
             />
+            <div className="flex items-center justify-between">
+              <FieldError show={showErr('phone')} message={errors.phone} />
+              <span className="text-[10px] text-slate-400 ml-auto">{form.phone.length}/{PHONE_MAX}</span>
+            </div>
           </div>
 
           {/* Country (Ultra Super Admin only — SUPER_ADMIN is locked to their country) */}
@@ -1013,16 +1153,18 @@ export default function UsersPage() {
                   <div className="relative">
                     <input
                       type={showPwd ? 'text' : 'password'}
-                      className="form-input pr-10"
+                      className={cn('form-input pr-10', showErr('password') && errors.password && 'border-red-400 focus:ring-red-300')}
                       placeholder="Minimum 6 characters"
                       value={form.password}
-                      onChange={e => setForm(x => ({ ...x, password: e.target.value }))}
+                      maxLength={PASSWORD_MAX}
+                      onChange={e => { markTouched('password'); setForm(x => ({ ...x, password: e.target.value })) }}
                     />
                     <button type="button" onClick={() => setShowPwd(v => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                       {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
+                  <FieldError show={showErr('password')} message={errors.password} />
                   {/* Strength bar */}
                   {strength && (
                     <div className="mt-2">
@@ -1043,22 +1185,19 @@ export default function UsersPage() {
                     <input
                       type={showConfirm ? 'text' : 'password'}
                       className={cn('form-input pr-10',
-                        form.confirmPassword && form.confirmPassword !== form.password && 'border-red-400 focus:ring-red-300',
+                        showErr('confirmPassword') && errors.confirmPassword && 'border-red-400 focus:ring-red-300',
                       )}
                       placeholder="Re-enter password"
                       value={form.confirmPassword}
-                      onChange={e => setForm(x => ({ ...x, confirmPassword: e.target.value }))}
+                      maxLength={PASSWORD_MAX}
+                      onChange={e => { markTouched('confirmPassword'); setForm(x => ({ ...x, confirmPassword: e.target.value })) }}
                     />
                     <button type="button" onClick={() => setShowConfirm(v => !v)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                       {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
-                  {form.confirmPassword && form.password !== form.confirmPassword && (
-                    <p className="text-xs text-red-500 mt-1 flex items-center gap-1">
-                      <XCircle className="w-3 h-3" /> Passwords do not match
-                    </p>
-                  )}
+                  <FieldError show={showErr('confirmPassword')} message={errors.confirmPassword} />
                   {form.confirmPassword && form.password === form.confirmPassword && form.password.length >= 6 && (
                     <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
                       <CheckCircle className="w-3 h-3" /> Passwords match
