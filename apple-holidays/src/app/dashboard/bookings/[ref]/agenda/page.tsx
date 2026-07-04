@@ -969,13 +969,19 @@ export default function AgendaPage() {
 
                       {canAssign && (
                         <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
-                          {item.assignment?.driverName ? (
+                          {(item.assignment?.driverName || item.assignment?.vendorId) ? (
                             item.assignment.vendorId ? (
                               <div className="flex items-center gap-2 text-xs bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
                                 <Building2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
                                 <span className="font-semibold text-violet-700">{item.assignment.vendorName}</span>
-                                <span className="text-slate-400">·</span>
-                                <span className="font-medium text-slate-700">{item.assignment.driverName}</span>
+                                {item.assignment.driverName ? (
+                                  <>
+                                    <span className="text-slate-400">·</span>
+                                    <span className="font-medium text-slate-700">{item.assignment.driverName}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-violet-400 italic">Awaiting driver</span>
+                                )}
                                 {item.assignment.driverPhone && (
                                   <span className="text-slate-500 flex items-center gap-1">
                                     <Phone className="w-3 h-3" />{item.assignment.driverPhone}
@@ -1018,7 +1024,7 @@ export default function AgendaPage() {
                           )}
                           <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
                             onClick={() => openAssignPanel(i)}>
-                            {item.assignment?.driverName ? 'Re-assign' : 'Assign Driver'}
+                            {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
                           </Button>
                         </div>
                       )}
@@ -1075,13 +1081,19 @@ export default function AgendaPage() {
                         )}
 
                         {/* Allocated driver — clickable to view full info */}
-                        {item.assignment?.driverName && (
+                        {(item.assignment?.driverName || item.assignment?.vendorId) && (
                           item.assignment.vendorId ? (
                             <div className="mt-2 flex items-center gap-2 text-xs bg-violet-50 border border-violet-100 rounded-lg px-3 py-2 w-fit">
                               <Building2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
                               <span className="font-semibold text-violet-700">{item.assignment.vendorName}</span>
-                              <span className="text-slate-400">·</span>
-                              <span className="font-medium text-slate-700">{item.assignment.driverName}</span>
+                              {item.assignment.driverName ? (
+                                <>
+                                  <span className="text-slate-400">·</span>
+                                  <span className="font-medium text-slate-700">{item.assignment.driverName}</span>
+                                </>
+                              ) : (
+                                <span className="text-violet-400 italic">Awaiting driver</span>
+                              )}
                               {item.assignment.driverPhone && (
                                 <span className="text-slate-500 flex items-center gap-1">
                                   <Phone className="w-3 h-3" />{item.assignment.driverPhone}
@@ -1124,7 +1136,7 @@ export default function AgendaPage() {
                       {canAssign && (
                         <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
                           onClick={() => openAssignPanel(i)}>
-                          {item.assignment?.driverName ? 'Re-assign' : 'Assign Driver'}
+                          {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
                         </Button>
                       )}
                     </div>

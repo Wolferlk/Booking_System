@@ -17,6 +17,8 @@ interface Trip {
     location: string
     fromPoint: string | null
     toPoint: string | null
+    serviceType: string | null
+    meetingTime: string | null
     agenda: {
       booking: {
         bookingRef: string
@@ -194,6 +196,22 @@ function TripCard({ trip, onUpdate }: { trip: Trip; onUpdate: React.Dispatch<Rea
             <span className="truncate">{trip.agendaItem.fromPoint ?? '—'} → {trip.agendaItem.toPoint ?? '—'}</span>
           </div>
         )}
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {trip.agendaItem.serviceType === 'PVT_TRANSFER' && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/25 text-blue-300">Private Transfer</span>
+          )}
+          {trip.agendaItem.serviceType === 'SIC_TRANSFER' && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-emerald-300">SIC Transfer</span>
+          )}
+          {trip.agendaItem.serviceType === 'OWN_ARRANGEMENT' && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-500/15 border border-slate-500/25 text-slate-400">Own Arrangement</span>
+          )}
+          {trip.agendaItem.meetingTime && (
+            <span className="text-[10px] text-slate-500 flex items-center gap-1">
+              <Clock className="w-2.5 h-2.5" /> Meet: {trip.agendaItem.meetingTime}
+            </span>
+          )}
+        </div>
 
         {/* Assignment status badges */}
         <div className="flex items-center gap-2 mt-2.5 flex-wrap">

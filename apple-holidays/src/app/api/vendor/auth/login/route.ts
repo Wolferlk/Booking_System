@@ -18,7 +18,8 @@ export async function POST(req: NextRequest) {
       country: true, isActive: true, isRegistered: true, password: true,
     } as const
 
-    let vendor: Awaited<ReturnType<typeof prisma.vehicleVendor.findFirst>> = null
+    type VendorRow = { id: string; name: string; email: string | null; phone: string | null; whatsappPhone: string | null; country: import('@prisma/client').OperationCountry | null; isActive: boolean; isRegistered: boolean; password: string | null } | null
+    let vendor: VendorRow = null
 
     if (vendorId) {
       // Login via selected company name (step 2 of company-search flow)
@@ -55,6 +56,8 @@ export async function POST(req: NextRequest) {
 
     const valid = await bcrypt.compare(password, vendor.password)
     if (!valid) return buildApiError('Invalid credentials', 401)
+
+    if (!vendor.isActive) return buildApiError('Your account is pending admin approval. Please contact the team.', 403)
 
     setVendorCookie(vendor.id)
 

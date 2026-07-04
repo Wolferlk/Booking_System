@@ -80,7 +80,7 @@ export default function VendorVehiclesPage() {
       const isNew = modal === 'new'
       const url   = isNew ? '/api/vendor/vehicles' : `/api/vendor/vehicles/${(modal as Vehicle).id}`
       const body  = isNew
-        ? { type: form.type, plateNo: form.plateNo, brand: form.brand, model: form.model, capacity: Number(form.capacity), photoOutside: form.photoOutside, photoInside: form.photoInside }
+        ? { type: form.type, plateNo: form.plateNo, brand: form.brand, model: form.model, capacity: Number(form.capacity), photoOutside: form.photoOutside, photoInside: form.photoInside, driverId: form.driverId || null }
         : { type: form.type, brand: form.brand, model: form.model, capacity: Number(form.capacity), photoOutside: form.photoOutside, photoInside: form.photoInside, driverId: form.driverId || null }
       const res = await fetch(url, {
         method: isNew ? 'POST' : 'PUT',
@@ -267,29 +267,27 @@ export default function VendorVehiclesPage() {
                 </div>
               </div>
 
-              {/* Driver assignment (edit mode only) */}
-              {modal !== 'new' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Assign Driver</label>
-                  <select
-                    value={form.driverId}
-                    onChange={set('driverId')}
-                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-3 text-sm text-white focus:outline-none appearance-none"
-                    style={{ colorScheme: 'dark' }}
-                  >
-                    <option value="" style={{ background: '#1e2d45' }}>— No driver —</option>
-                    {/* Current driver always shown */}
-                    {(modal as Vehicle).driver && !freeDrivers.find(d => d.id === (modal as Vehicle).driver?.id) && (
-                      <option value={(modal as Vehicle).driver!.id} style={{ background: '#1e2d45' }}>
-                        {(modal as Vehicle).driver!.name}
-                      </option>
-                    )}
-                    {freeDrivers.map(d => (
-                      <option key={d.id} value={d.id} style={{ background: '#1e2d45' }}>{d.name} · {d.phone}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              {/* Driver assignment */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Assign Driver</label>
+                <select
+                  value={form.driverId}
+                  onChange={set('driverId')}
+                  className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-3 text-sm text-white focus:outline-none appearance-none"
+                  style={{ colorScheme: 'dark' }}
+                >
+                  <option value="" style={{ background: '#1e2d45' }}>— No driver —</option>
+                  {/* Current driver always shown when editing */}
+                  {modal !== 'new' && (modal as Vehicle).driver && !freeDrivers.find(d => d.id === (modal as Vehicle).driver?.id) && (
+                    <option value={(modal as Vehicle).driver!.id} style={{ background: '#1e2d45' }}>
+                      {(modal as Vehicle).driver!.name}
+                    </option>
+                  )}
+                  {freeDrivers.map(d => (
+                    <option key={d.id} value={d.id} style={{ background: '#1e2d45' }}>{d.name} · {d.phone}</option>
+                  ))}
+                </select>
+              </div>
 
               <div className="flex gap-3 pt-1 pb-2">
                 <button onClick={save} disabled={saving || !form.plateNo.trim()}

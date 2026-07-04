@@ -79,7 +79,7 @@ export default function VendorDriversPage() {
       const isNew = modal === 'new'
       const url   = isNew ? '/api/vendor/drivers' : `/api/vendor/drivers/${(modal as Driver).id}`
       const body  = isNew
-        ? { ...form }
+        ? { ...form, vehicleId: editVehicleId || null }
         : { ...form, vehicleId: editVehicleId || null }
       const res = await fetch(url, {
         method: isNew ? 'POST' : 'PUT',
@@ -302,29 +302,27 @@ export default function VendorDriversPage() {
                 </div>
               </div>
 
-              {/* Vehicle assignment (edit mode only) */}
-              {modal !== 'new' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Assign Vehicle</label>
-                  <select
-                    value={editVehicleId}
-                    onChange={e => setEditVehicleId(e.target.value)}
-                    className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white focus:outline-none appearance-none"
-                    style={{ colorScheme: 'dark' }}
-                  >
-                    <option value="" style={{ background: '#1e2d45' }}>— No vehicle —</option>
-                    {/* Current vehicle always shown */}
-                    {(modal as Driver).vehicle && !freeVehicles.find(v => v.id === (modal as Driver).vehicle?.id) && (
-                      <option value={(modal as Driver).vehicle!.id} style={{ background: '#1e2d45' }}>
-                        {(modal as Driver).vehicle!.plateNo} · {(modal as Driver).vehicle!.type}
-                      </option>
-                    )}
-                    {freeVehicles.map(v => (
-                      <option key={v.id} value={v.id} style={{ background: '#1e2d45' }}>{v.plateNo} · {v.type}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              {/* Vehicle assignment */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Assign Vehicle</label>
+                <select
+                  value={editVehicleId}
+                  onChange={e => setEditVehicleId(e.target.value)}
+                  className="w-full bg-[#1e2d45] border border-white/15 rounded-xl py-3 px-4 text-sm text-white focus:outline-none appearance-none"
+                  style={{ colorScheme: 'dark' }}
+                >
+                  <option value="" style={{ background: '#1e2d45' }}>— No vehicle —</option>
+                  {/* Current vehicle always shown when editing */}
+                  {modal !== 'new' && (modal as Driver).vehicle && !freeVehicles.find(v => v.id === (modal as Driver).vehicle?.id) && (
+                    <option value={(modal as Driver).vehicle!.id} style={{ background: '#1e2d45' }}>
+                      {(modal as Driver).vehicle!.plateNo} · {(modal as Driver).vehicle!.type}
+                    </option>
+                  )}
+                  {freeVehicles.map(v => (
+                    <option key={v.id} value={v.id} style={{ background: '#1e2d45' }}>{v.plateNo} · {v.type}</option>
+                  ))}
+                </select>
+              </div>
 
               {/* Action buttons */}
               <div className="flex gap-3 pt-1 pb-2">
