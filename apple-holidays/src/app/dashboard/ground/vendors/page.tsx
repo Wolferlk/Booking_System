@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import {
   Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car,
   ChevronDown, ChevronUp, Link2, CheckCircle2, Power, Globe, UserCheck, Clock,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from 'lucide-react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
@@ -36,6 +37,8 @@ interface Vendor {
 }
 
 const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
 const COUNTRY_LABELS: Record<string, string> = {
   SRILANKA: 'Sri Lanka',
@@ -90,6 +93,10 @@ export default function VendorsPage() {
   const [linkCopied, setLinkCopied] = useState(false)
   const [togglingId, setTogglingId] = useState<string | null>(null)
 
+  // Pagination
+  const [page, setPage]         = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
   async function copyRegLink() {
     const appUrl = window.location.origin
     const link = `${appUrl}/vendor/register`
@@ -125,6 +132,8 @@ export default function VendorsPage() {
   }
 
   useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { setPage(1) }, [countryFilter, pageSize])
 
   function openAddVendor() {
     setVendorForm({ name: '', phone: '', email: '', address: '', country: '' })
@@ -217,6 +226,11 @@ export default function VendorsPage() {
 
   const pendingCount = vendors.filter(v => v.isRegistered && !v.isActive).length
 
+  const totalPages = Math.max(1, Math.ceil(vendors.length / pageSize))
+  const paginatedVendors = vendors.slice((page - 1) * pageSize, page * pageSize)
+
+  useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
+
   return (
     <div>
       <Header
@@ -252,7 +266,7 @@ export default function VendorsPage() {
         </div>
       )}
 
-      <div className="p-8 space-y-4 max-w-5xl">
+      <div className="p-8 space-y-4 ">
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 text-brand-500 animate-spin" /></div>
         ) : vendors.length === 0 ? (
@@ -261,7 +275,7 @@ export default function VendorsPage() {
             <p className="text-slate-400">No vendors yet</p>
           </Card>
         ) : (
-          vendors.map(vendor => {
+          paginatedVendors.map(vendor => {
             const expanded = expandedId === vendor.id
             const isPending = vendor.isRegistered && !vendor.isActive
 
@@ -375,6 +389,62 @@ export default function VendorsPage() {
               </Card>
             )
           })
+        )}
+
+        {!loading && vendors.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-2">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>
+                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, vendors.length)} of {vendors.length}
+              </span>
+              <select
+                className="form-select w-auto text-xs py-1"
+                value={pageSize}
+                onChange={e => setPageSize(Number(e.target.value))}
+              >
+                {PAGE_SIZE_OPTIONS.map(n => (
+                  <option key={n} value={n}>{n} / page</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="First page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={page === totalPages}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="Last page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
