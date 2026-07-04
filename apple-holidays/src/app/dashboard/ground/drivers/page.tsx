@@ -105,6 +105,97 @@ const PAY_TYPE_COLORS: Record<string, string> = {
   DEDUCTION: 'bg-red-50 text-red-700 border-red-100',
 }
 
+function validateVehicleForm(form: { plateNo: string; type: string; brand: string; model: string; capacity: string }) {
+  const errors: Record<string, string> = {}
+  
+  if (!form.plateNo.trim()) {
+    errors.plateNo = 'Plate number is required'
+  } else if (form.plateNo.length > 20) {
+    errors.plateNo = 'Plate number cannot exceed 20 characters'
+  } else if (!/^[A-Za-z0-9\-\s]+$/.test(form.plateNo)) {
+    errors.plateNo = 'Plate number can only contain letters, numbers, hyphens, and spaces'
+  }
+  
+  if (!form.type) {
+    errors.type = 'Vehicle type is required'
+  }
+  
+  if (form.brand && form.brand.length > 50) {
+    errors.brand = 'Brand cannot exceed 50 characters'
+  }
+  
+  if (form.model && form.model.length > 50) {
+    errors.model = 'Model cannot exceed 50 characters'
+  }
+  
+  const capacity = Number(form.capacity)
+  if (!form.capacity || capacity < 1) {
+    errors.capacity = 'Capacity must be at least 1'
+  } else if (capacity > 60) {
+    errors.capacity = 'Capacity cannot exceed 60 seats'
+  }
+
+  return errors
+}
+
+const DRIVER_PHONE_ALLOWED_RE = /[^0-9+\-\s()]/g
+const DRIVER_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function validateDriverForm(form: {
+  name: string; phone: string; email: string; licenseNo: string
+  bankAccountNo: string; bankHolder: string; bankBranch: string; bankCode: string
+}) {
+  const errors: Record<string, string> = {}
+
+  if (!form.name.trim()) {
+    errors.name = 'Full name is required'
+  } else if (form.name.trim().length < 2) {
+    errors.name = 'Name must be at least 2 characters'
+  } else if (form.name.length > 100) {
+    errors.name = 'Name cannot exceed 100 characters'
+  }
+
+  if (!form.phone.trim()) {
+    errors.phone = 'Phone number is required'
+  } else if (form.phone.replace(/\D/g, '').length < 7) {
+    errors.phone = 'Enter a valid phone number'
+  } else if (form.phone.length > 20) {
+    errors.phone = 'Phone number cannot exceed 20 characters'
+  }
+
+  if (form.email.trim() && !DRIVER_EMAIL_RE.test(form.email.trim())) {
+    errors.email = 'Enter a valid email address'
+  } else if (form.email.length > 150) {
+    errors.email = 'Email cannot exceed 150 characters'
+  }
+
+  if (form.licenseNo.length > 30) {
+    errors.licenseNo = 'License number cannot exceed 30 characters'
+  }
+
+  if (form.bankAccountNo.length > 34) {
+    errors.bankAccountNo = 'Account number cannot exceed 34 characters'
+  } else if (form.bankAccountNo && !/^[A-Za-z0-9\-\s]+$/.test(form.bankAccountNo)) {
+    errors.bankAccountNo = 'Account number can only contain letters, numbers, hyphens, and spaces'
+  }
+
+  if (form.bankHolder.length > 100) {
+    errors.bankHolder = 'Account holder name cannot exceed 100 characters'
+  }
+
+  if (form.bankBranch.length > 100) {
+    errors.bankBranch = 'Branch cannot exceed 100 characters'
+  }
+
+  if (form.bankCode.length > 20) {
+    errors.bankCode = 'SWIFT / code cannot exceed 20 characters'
+  } else if (form.bankCode && !/^[A-Za-z0-9]+$/.test(form.bankCode)) {
+    errors.bankCode = 'SWIFT / code can only contain letters and numbers'
+  }
+
+  return errors
+}
+
 export default function DriversPage() {
   const { data: session } = useSession()
   const { countryFilter } = useCountryFilter()
@@ -143,6 +234,8 @@ export default function DriversPage() {
     plateNo: '', type: 'van', brand: '', model: '', capacity: '4',
     photoOutside: '', photoInside: '',
   })
+  const [vehErrors, setVehErrors] = useState<Record<string, string>>({})
+  const [driverErrors, setDriverErrors] = useState<Record<string, string>>({})
   const [showNewVehicle, setShowNewVehicle] = useState(false)
   const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null) // 'driver' | 'outside' | 'inside'
   const [payForm, setPayForm] = useState({ amount: '', type: 'ADVANCE', description: '', refNumber: '' })
@@ -250,6 +343,8 @@ export default function DriversPage() {
       setVehForm({ plateNo: '', type: 'van', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '' })
       setShowNewVehicle(false)
     }
+    setVehErrors({})
+    setDriverErrors({})
     setEditDriver(driver)
   }
 
@@ -270,11 +365,31 @@ export default function DriversPage() {
       bankCode: '',
     })
     setVehForm({ plateNo: '', type: 'van', brand: '', model: '', capacity: '4', photoOutside: '', photoInside: '' })
+    setVehErrors({})
+    setDriverErrors({})
     setShowNewVehicle(false)
     setShowAdd(true)
   }
 
   async function saveDriver() {
+    const dErrors = validateDriverForm(form)
+    if (Object.values(dErrors).some(err => err.trim())) {
+      setDriverErrors(dErrors)
+      toast.error('Please fix the highlighted fields')
+      return
+    }
+
+    // Validate vehicle if adding one
+    if (showNewVehicle) {
+      const errors = validateVehicleForm(vehForm)
+      const hasErrors = Object.values(errors).some(err => err.trim())
+      if (hasErrors) {
+        setVehErrors(errors)
+        toast.error('Please fix vehicle form errors')
+        return
+      }
+    }
+
     setSaving(true)
     try {
       let vehicleId = form.vehicleId
@@ -885,24 +1000,68 @@ export default function DriversPage() {
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="col-span-2 sm:col-span-1">
-                <label className="form-label">Full Name *</label>
-                <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="form-input" placeholder="Nguyen Van Minh" />
+                <label className="form-label">Full Name * <span className="text-slate-400 text-xs ml-1">{form.name.length}/100</span></label>
+                <input
+                  value={form.name}
+                  maxLength={100}
+                  className={`form-input ${driverErrors.name ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder="Nguyen Van Minh"
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, name: val }))
+                    const newErrors = validateDriverForm({ ...form, name: val })
+                    setDriverErrors(prev => ({ ...prev, name: newErrors.name || '' }))
+                  }}
+                />
+                {driverErrors.name && <p className="text-xs text-red-500 mt-1">{driverErrors.name}</p>}
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <label className="form-label">Phone *</label>
-                <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
-                  className="form-input" placeholder="+84-905-123456" />
+                <label className="form-label">Phone * <span className="text-slate-400 text-xs ml-1">{form.phone.length}/20</span></label>
+                <input
+                  value={form.phone}
+                  maxLength={20}
+                  className={`form-input ${driverErrors.phone ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder="+84-905-123456"
+                  onChange={e => {
+                    const val = e.target.value.replace(DRIVER_PHONE_ALLOWED_RE, '')
+                    setForm(f => ({ ...f, phone: val }))
+                    const newErrors = validateDriverForm({ ...form, phone: val })
+                    setDriverErrors(prev => ({ ...prev, phone: newErrors.phone || '' }))
+                  }}
+                />
+                {driverErrors.phone && <p className="text-xs text-red-500 mt-1">{driverErrors.phone}</p>}
               </div>
               <div>
-                <label className="form-label">Email</label>
-                <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="form-input" placeholder="driver@email.com" />
+                <label className="form-label">Email <span className="text-slate-400 text-xs ml-1">{form.email.length}/150</span></label>
+                <input
+                  value={form.email}
+                  maxLength={150}
+                  className={`form-input ${driverErrors.email ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder="driver@email.com"
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, email: val }))
+                    const newErrors = validateDriverForm({ ...form, email: val })
+                    setDriverErrors(prev => ({ ...prev, email: newErrors.email || '' }))
+                  }}
+                />
+                {driverErrors.email && <p className="text-xs text-red-500 mt-1">{driverErrors.email}</p>}
               </div>
               <div>
-                <label className="form-label">License Number</label>
-                <input value={form.licenseNo} onChange={e => setForm(f => ({ ...f, licenseNo: e.target.value }))}
-                  className="form-input" placeholder="VN-2024-001" />
+                <label className="form-label">License Number <span className="text-slate-400 text-xs ml-1">{form.licenseNo.length}/30</span></label>
+                <input
+                  value={form.licenseNo}
+                  maxLength={30}
+                  className={`form-input ${driverErrors.licenseNo ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder="VN-2024-001"
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, licenseNo: val }))
+                    const newErrors = validateDriverForm({ ...form, licenseNo: val })
+                    setDriverErrors(prev => ({ ...prev, licenseNo: newErrors.licenseNo || '' }))
+                  }}
+                />
+                {driverErrors.licenseNo && <p className="text-xs text-red-500 mt-1">{driverErrors.licenseNo}</p>}
               </div>
               {isAllCountry && (
                 <div className="col-span-2">
@@ -938,30 +1097,96 @@ export default function DriversPage() {
               <div className="space-y-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="form-label">Plate Number *</label>
-                    <input className="form-input font-mono" placeholder="51A-12345"
-                      value={vehForm.plateNo} onChange={e => setVehForm(f => ({ ...f, plateNo: e.target.value }))} />
+                    <label className="form-label">Plate Number * <span className="text-slate-400 text-xs ml-1">{vehForm.plateNo.length}/20</span></label>
+                    <input 
+                      maxLength={20}
+                      className={`form-input font-mono ${vehErrors.plateNo ? 'border-red-500 focus:ring-red-300' : ''}`}
+                      placeholder="51A-12345"
+                      value={vehForm.plateNo} 
+                      onChange={e => {
+                        const val = e.target.value
+                        setVehForm(f => ({ ...f, plateNo: val }))
+                        if (val.trim() || vehForm.plateNo.trim()) {
+                          const newErrors = validateVehicleForm({ ...vehForm, plateNo: val })
+                          setVehErrors(prev => ({ ...prev, plateNo: newErrors.plateNo || '' }))
+                        }
+                      }}
+                    />
+                    {vehErrors.plateNo && <p className="text-xs text-red-500 mt-1">{vehErrors.plateNo}</p>}
                   </div>
                   <div>
                     <label className="form-label">Vehicle Type *</label>
-                    <select className="form-select" value={vehForm.type} onChange={e => setVehForm(f => ({ ...f, type: e.target.value }))}>
+                    <select 
+                      className={`form-select ${vehErrors.type ? 'border-red-500 focus:ring-red-300' : ''}`}
+                      value={vehForm.type} 
+                      onChange={e => {
+                        const val = e.target.value
+                        setVehForm(f => ({ ...f, type: val }))
+                        if (vehErrors.type) {
+                          const newErrors = validateVehicleForm({ ...vehForm, type: val })
+                          setVehErrors(prev => ({ ...prev, type: newErrors.type || '' }))
+                        }
+                      }}
+                    >
                       {VEHICLE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
+                    {vehErrors.type && <p className="text-xs text-red-500 mt-1">{vehErrors.type}</p>}
                   </div>
                   <div>
-                    <label className="form-label">Brand</label>
-                    <input className="form-input" placeholder="Toyota"
-                      value={vehForm.brand} onChange={e => setVehForm(f => ({ ...f, brand: e.target.value }))} />
+                    <label className="form-label">Brand <span className="text-slate-400 text-xs ml-1">{vehForm.brand.length}/50</span></label>
+                    <input 
+                      className={`form-input ${vehErrors.brand ? 'border-red-500 focus:ring-red-300' : ''}`}
+                      placeholder="Toyota"
+                      maxLength={50}
+                      value={vehForm.brand} 
+                      onChange={e => {
+                        const val = e.target.value
+                        setVehForm(f => ({ ...f, brand: val }))
+                        if (val || vehErrors.brand) {
+                          const newErrors = validateVehicleForm({ ...vehForm, brand: val })
+                          setVehErrors(prev => ({ ...prev, brand: newErrors.brand || '' }))
+                        }
+                      }}
+                    />
+                    {vehErrors.brand && <p className="text-xs text-red-500 mt-1">{vehErrors.brand}</p>}
                   </div>
                   <div>
-                    <label className="form-label">Model</label>
-                    <input className="form-input" placeholder="Hiace"
-                      value={vehForm.model} onChange={e => setVehForm(f => ({ ...f, model: e.target.value }))} />
+                    <label className="form-label">Model <span className="text-slate-400 text-xs ml-1">{vehForm.model.length}/50</span></label>
+                    <input 
+                      className={`form-input ${vehErrors.model ? 'border-red-500 focus:ring-red-300' : ''}`}
+                      placeholder="Hiace"
+                      maxLength={50}
+                      value={vehForm.model} 
+                      onChange={e => {
+                        const val = e.target.value
+                        setVehForm(f => ({ ...f, model: val }))
+                        if (val || vehErrors.model) {
+                          const newErrors = validateVehicleForm({ ...vehForm, model: val })
+                          setVehErrors(prev => ({ ...prev, model: newErrors.model || '' }))
+                        }
+                      }}
+                    />
+                    {vehErrors.model && <p className="text-xs text-red-500 mt-1">{vehErrors.model}</p>}
                   </div>
                   <div>
-                    <label className="form-label">Capacity (seats)</label>
-                    <input type="number" className="form-input" min="1" max="60"
-                      value={vehForm.capacity} onChange={e => setVehForm(f => ({ ...f, capacity: e.target.value }))} />
+                    <label className="form-label">Capacity (seats) *</label>
+                    <input 
+                      type="number" 
+                      className={`form-input ${vehErrors.capacity ? 'border-red-500 focus:ring-red-300' : ''}`}
+                      min="1" 
+                      max="60"
+                      value={vehForm.capacity} 
+                      onChange={e => {
+                        const val = e.target.value
+                        const num = Math.min(Math.max(Number(val) || 0, 1), 60)
+                        setVehForm(f => ({ ...f, capacity: String(num) }))
+                        if (val || vehErrors.capacity) {
+                          const newErrors = validateVehicleForm({ ...vehForm, capacity: String(num) })
+                          setVehErrors(prev => ({ ...prev, capacity: newErrors.capacity || '' }))
+                        }
+                      }}
+                    />
+                    {vehErrors.capacity && <p className="text-xs text-red-500 mt-1">{vehErrors.capacity}</p>}
                   </div>
                 </div>
 
@@ -1071,24 +1296,68 @@ export default function DriversPage() {
                 )}
               </div>
               <div className="col-span-2 sm:col-span-1">
-                <label className="form-label">Account Number</label>
-                <input value={form.bankAccountNo} onChange={e => setForm(f => ({ ...f, bankAccountNo: e.target.value }))}
-                  className="form-input font-mono" placeholder="0123456789" />
+                <label className="form-label">Account Number <span className="text-slate-400 text-xs ml-1">{form.bankAccountNo.length}/34</span></label>
+                <input
+                  value={form.bankAccountNo}
+                  maxLength={34}
+                  className={`form-input font-mono ${driverErrors.bankAccountNo ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder="0123456789"
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, bankAccountNo: val }))
+                    const newErrors = validateDriverForm({ ...form, bankAccountNo: val })
+                    setDriverErrors(prev => ({ ...prev, bankAccountNo: newErrors.bankAccountNo || '' }))
+                  }}
+                />
+                {driverErrors.bankAccountNo && <p className="text-xs text-red-500 mt-1">{driverErrors.bankAccountNo}</p>}
               </div>
               <div>
-                <label className="form-label">Account Holder Name</label>
-                <input value={form.bankHolder} onChange={e => setForm(f => ({ ...f, bankHolder: e.target.value }))}
-                  className="form-input" placeholder={HOLDER_PLACEHOLDERS[formCountry] ?? 'Account holder name'} />
+                <label className="form-label">Account Holder Name <span className="text-slate-400 text-xs ml-1">{form.bankHolder.length}/100</span></label>
+                <input
+                  value={form.bankHolder}
+                  maxLength={100}
+                  className={`form-input ${driverErrors.bankHolder ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder={HOLDER_PLACEHOLDERS[formCountry] ?? 'Account holder name'}
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, bankHolder: val }))
+                    const newErrors = validateDriverForm({ ...form, bankHolder: val })
+                    setDriverErrors(prev => ({ ...prev, bankHolder: newErrors.bankHolder || '' }))
+                  }}
+                />
+                {driverErrors.bankHolder && <p className="text-xs text-red-500 mt-1">{driverErrors.bankHolder}</p>}
               </div>
               <div>
-                <label className="form-label">Branch / City</label>
-                <input value={form.bankBranch} onChange={e => setForm(f => ({ ...f, bankBranch: e.target.value }))}
-                  className="form-input" placeholder={BRANCH_PLACEHOLDERS[formCountry] ?? 'Branch or city'} />
+                <label className="form-label">Branch / City <span className="text-slate-400 text-xs ml-1">{form.bankBranch.length}/100</span></label>
+                <input
+                  value={form.bankBranch}
+                  maxLength={100}
+                  className={`form-input ${driverErrors.bankBranch ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder={BRANCH_PLACEHOLDERS[formCountry] ?? 'Branch or city'}
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, bankBranch: val }))
+                    const newErrors = validateDriverForm({ ...form, bankBranch: val })
+                    setDriverErrors(prev => ({ ...prev, bankBranch: newErrors.bankBranch || '' }))
+                  }}
+                />
+                {driverErrors.bankBranch && <p className="text-xs text-red-500 mt-1">{driverErrors.bankBranch}</p>}
               </div>
               <div className="col-span-2">
-                <label className="form-label">SWIFT / Code (optional)</label>
-                <input value={form.bankCode} onChange={e => setForm(f => ({ ...f, bankCode: e.target.value }))}
-                  className="form-input font-mono" placeholder={SWIFT_PLACEHOLDERS[formCountry] ?? 'SWIFT code'} />
+                <label className="form-label">SWIFT / Code (optional) <span className="text-slate-400 text-xs ml-1">{form.bankCode.length}/20</span></label>
+                <input
+                  value={form.bankCode}
+                  maxLength={20}
+                  className={`form-input font-mono ${driverErrors.bankCode ? 'border-red-500 focus:ring-red-300' : ''}`}
+                  placeholder={SWIFT_PLACEHOLDERS[formCountry] ?? 'SWIFT code'}
+                  onChange={e => {
+                    const val = e.target.value
+                    setForm(f => ({ ...f, bankCode: val }))
+                    const newErrors = validateDriverForm({ ...form, bankCode: val })
+                    setDriverErrors(prev => ({ ...prev, bankCode: newErrors.bankCode || '' }))
+                  }}
+                />
+                {driverErrors.bankCode && <p className="text-xs text-red-500 mt-1">{driverErrors.bankCode}</p>}
               </div>
             </div>
           </div>
@@ -1102,7 +1371,9 @@ export default function DriversPage() {
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button onClick={saveDriver} disabled={saving || !form.name || !form.phone}
+            <button 
+              onClick={saveDriver} 
+              disabled={saving || !form.name || !form.phone || Object.values(driverErrors).some(err => err.trim()) || (showNewVehicle && Object.values(vehErrors).some(err => err.trim()))}
               className="btn-primary btn flex-1">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               {editDriver ? 'Save Changes' : 'Add Driver'}

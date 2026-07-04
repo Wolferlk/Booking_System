@@ -1,3 +1,4 @@
+import { VN, LK, SG, MY } from 'country-flag-icons/react/3x2'
 import { Globe } from 'lucide-react'
 
 interface CountryFlagProps {
@@ -5,31 +6,28 @@ interface CountryFlagProps {
   className?: string
 }
 
-const FLAG_MAP: Record<string, string> = {
-  VIETNAM: '🇻🇳',
-  SRILANKA: '🇱🇰',
-  SINGAPORE: '🇸🇬',
-  MALAYSIA: '🇲🇾',
-}
-
-export function CountryFlag({ country, className = 'text-xl' }: CountryFlagProps) {
+/**
+ * Renders a country flag as an inline SVG — works on all platforms including
+ * Windows, which does not render regional-indicator emoji (🇻🇳, 🇱🇰, etc.).
+ */
+export function CountryFlag({ country, className = 'w-5 h-4' }: CountryFlagProps) {
   switch (country) {
     case 'VIETNAM':
-      return <span className={className} role="img" aria-label="Vietnam">{FLAG_MAP.VIETNAM}</span>
+      return <VN className={className} title="Vietnam" />
     case 'SRILANKA':
-      return <span className={className} role="img" aria-label="Sri Lanka">{FLAG_MAP.SRILANKA}</span>
+      return <LK className={className} title="Sri Lanka" />
     case 'SINGAPORE':
-      return <span className={className} role="img" aria-label="Singapore">{FLAG_MAP.SINGAPORE}</span>
+      return <SG className={className} title="Singapore" />
     case 'MALAYSIA':
-      return <span className={className} role="img" aria-label="Malaysia">{FLAG_MAP.MALAYSIA}</span>
+      return <MY className={className} title="Malaysia" />
     case 'SINGAPORE_MALAYSIA':
       return (
-        <span className="inline-flex gap-1">
-          <span className={className} role="img" aria-label="Singapore">{FLAG_MAP.SINGAPORE}</span>
-          <span className={className} role="img" aria-label="Malaysia">{FLAG_MAP.MALAYSIA}</span>
+        <span className="inline-flex gap-0.5">
+          <SG className={className} title="Singapore" />
+          <MY className={className} title="Malaysia" />
         </span>
       )
     default:
-      return <Globe className={`text-white ${className}`} />
+      return <Globe className="text-white"  />
   }
 }

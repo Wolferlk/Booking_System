@@ -311,7 +311,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Quick actions by role */}
-            <Card>
+            {/* <Card>
               <CardHeader>
                 <h3 className="text-base font-semibold text-slate-900">Quick Actions</h3>
               </CardHeader>
@@ -344,7 +344,7 @@ export default function DashboardPage() {
                   )}
                 </div>
               </CardBody>
-            </Card>
+            </Card> */}
           </>
         )}
       </div>

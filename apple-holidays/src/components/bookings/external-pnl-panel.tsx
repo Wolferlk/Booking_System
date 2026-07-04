@@ -128,7 +128,7 @@ function formatItemDetails(details: string | null | undefined | Record<string, u
     let parsed: unknown = JSON.parse(raw)
     // First parse may return a string (double-encoded JSON) — parse once more
     if (typeof parsed === 'string') {
-      try { parsed = JSON.parse(parsed) } catch { return parsed }
+      try { parsed = JSON.parse(parsed) } catch { return parsed as string }
     }
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return extractRemarks(parsed as Record<string, unknown>) ?? raw
@@ -181,6 +181,35 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   // Auto ticket creation state
   const [creatingAllTickets,  setCreatingAllTickets]  = useState(false)
   const [allTicketsResult,    setAllTicketsResult]    = useState<{ created: number; skipped: number } | null>(null)
+
+  // Tally adjustment state
+  const [adjustName,        setAdjustName]       = useState('PNL Reconciliation Adjustment')
+  const [adjustAmount,      setAdjustAmount]     = useState('')
+  const [addingAdjust,      setAddingAdjust]     = useState(false)
+  const [addedAdjustments,  setAddedAdjustments] = useState<{ name: string; amount: number }[]>([])
+
+  // ── Tally adjustment ──────────────────────────────────────────────────────
+  async function addAdjustmentToPnl(amount: number) {
+    if (!adjustName.trim() || !amount) return
+    setAddingAdjust(true)
+    try {
+      const res = await fetch(`/api/bookings/${bookingRef}/pnl`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activity: adjustName.trim(), category: 'OTHER', otherRate: Math.abs(amount) }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setAddedAdjustments(prev => [...prev, { name: adjustName.trim(), amount: Math.abs(amount) }])
+      toast.success('Adjustment line added to internal P&L')
+      setAdjustAmount('')
+      setAdjustName('PNL Reconciliation Adjustment')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add adjustment')
+    } finally {
+      setAddingAdjust(false)
+    }
+  }
 
   // ── Bulk create tickets from PNL ────────────────────────────────────────
   const createAllTicketsFromPnl = useCallback(async (silent = false) => {
@@ -448,63 +477,199 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
           )}
 
           {/* ── PNL Items ── */}
-          <div>
-            <button
-              onClick={() => setShowItems(v => !v)}
-              className="flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 mb-3"
-            >
-              <Package className="w-3.5 h-3.5 text-slate-400" />
-              PNL Line Items
-              <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                {items.length}
-              </span>
-              {showItems ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
-            </button>
+          {(() => {
+            const invoiceRows = items.filter(it => it.type?.toUpperCase() === 'INVOICE')
+            const lineRows    = items.filter(it => it.type?.toUpperCase() !== 'INVOICE')
+            const lineSum     = lineRows.reduce((s, it) => s + Number(it.amount_original ?? 0), 0)
+            const invoiceTotal = invoiceRows.length > 0
+              ? invoiceRows.reduce((s, it) => s + Number(it.amount_original ?? 0), 0)
+              : rec.actual_amount != null ? Number(rec.actual_amount) : null
+            const gap = invoiceTotal != null ? invoiceTotal - lineSum : null
 
-            {showItems && items.length > 0 && (
-              <div className="overflow-x-auto rounded-xl border border-slate-200">
-                <table className="data-table text-xs">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Type</th>
-                      <th>Credit Type</th>
-                      <th>Service / Hotel / Transport</th>
-                      <th>Currency</th>
-                      <th className="text-right">Original Amt</th>
-                      <th>Details</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item, i) => {
-                      const isTotal = item.type?.toUpperCase() === 'INVOICE'
-                      return (
-                      <tr key={item.id} className={isTotal ? 'bg-amber-50 border-l-2 border-amber-400 font-semibold' : 'hover:bg-slate-50'}>
-                        <td className="font-mono text-slate-400">{i + 1}</td>
-                        <td className={isTotal ? 'text-amber-700' : ''}>{item.type ?? '—'}</td>
-                        <td>{item.credit_type ?? '—'}</td>
-                        <td className="max-w-[200px] truncate font-medium">
-                          {item.hotel_name ?? item.transport_name ?? item.service_name ?? '—'}
-                        </td>
-                        <td>{item.currency ?? '—'}</td>
-                        <td className="text-right font-mono font-semibold">
-                          {item.amount_original != null ? Number(item.amount_original).toFixed(2) : '—'}
-                        </td>
-                        <td className="max-w-[220px] truncate text-slate-500" title={formatItemDetails(item.item_details)}>
-                          {formatItemDetails(item.item_details)}
-                        </td>
-                      </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+            // Track adjustments added this session so the remaining gap updates live
+            const sessionAdjTotal = addedAdjustments.reduce((s, a) => s + a.amount, 0)
+            const remainingGap    = gap != null ? gap - sessionAdjTotal : null
+            const adjustVal       = Number(adjustAmount) || (remainingGap != null ? Math.abs(remainingGap) : 0)
+
+            return (
+              <div className="space-y-0">
+                <button
+                  onClick={() => setShowItems(v => !v)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 mb-3"
+                >
+                  <Package className="w-3.5 h-3.5 text-slate-400" />
+                  PNL Line Items
+                  <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {lineRows.length}
+                  </span>
+                  {showItems ? <ChevronUp className="w-3.5 h-3.5 ml-1" /> : <ChevronDown className="w-3.5 h-3.5 ml-1" />}
+                </button>
+
+                {showItems && (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="data-table text-xs">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Type</th>
+                          <th>Credit Type</th>
+                          <th>Service / Hotel / Transport</th>
+                          <th>Currency</th>
+                          <th className="text-right">Original Amt</th>
+                          <th>Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lineRows.length === 0 && (
+                          <tr><td colSpan={7} className="text-center text-slate-400 py-4">No line items found</td></tr>
+                        )}
+                        {lineRows.map((item, i) => (
+                          <tr key={item.id} className="hover:bg-slate-50">
+                            <td className="font-mono text-slate-400">{i + 1}</td>
+                            <td>{item.type ?? '—'}</td>
+                            <td>{item.credit_type ?? '—'}</td>
+                            <td className="max-w-[200px] truncate font-medium">
+                              {item.hotel_name ?? item.transport_name ?? item.service_name ?? '—'}
+                            </td>
+                            <td>{item.currency ?? '—'}</td>
+                            <td className="text-right font-mono font-semibold">
+                              {item.amount_original != null ? Number(item.amount_original).toFixed(2) : '—'}
+                            </td>
+                            <td className="max-w-[220px] truncate text-slate-500" title={formatItemDetails(item.item_details as string | null)}>
+                              {formatItemDetails(item.item_details as string | null)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {/* Sub-total row */}
+                      {lineRows.length > 0 && (
+                        <tfoot>
+                          <tr className="bg-slate-50 border-t-2 border-slate-200">
+                            <td colSpan={5} className="px-3 py-2 text-xs font-bold text-slate-600 text-right">Sub-total</td>
+                            <td className="px-3 py-2 text-right font-mono font-bold text-slate-800">{lineSum.toFixed(2)}</td>
+                            <td />
+                          </tr>
+                          {/* INVOICE / Total rows pinned at bottom */}
+                          {invoiceRows.map(inv => (
+                            <tr key={inv.id} className="bg-blue-50 border-t border-blue-200">
+                              <td colSpan={5} className="px-3 py-2 text-xs font-bold text-blue-700 text-right uppercase tracking-wide">
+                                {inv.service_name ?? inv.hotel_name ?? inv.transport_name ?? 'Total'}
+                                <span className="ml-2 text-[10px] font-semibold bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full">INVOICE</span>
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-blue-800 text-sm">
+                                {inv.amount_original != null ? Number(inv.amount_original).toFixed(2) : '—'}
+                              </td>
+                              <td className="px-3 py-2 text-xs text-blue-500 truncate max-w-[220px]">
+                                {formatItemDetails(inv.item_details as string | null)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                )}
+
+                {/* ── Tally Reconciliation ── */}
+                {invoiceTotal != null && gap != null && Math.abs(remainingGap ?? gap) >= 0.005 && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-amber-700">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        <span className="text-xs font-bold">Tally Difference</span>
+                      </div>
+                      {Math.abs(remainingGap ?? gap) < 0.005 && (
+                        <span className="text-[11px] font-semibold text-emerald-600 flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Balanced
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3 text-xs">
+                      <div>
+                        <p className="text-amber-500 font-semibold">Invoice Total</p>
+                        <p className="font-bold text-blue-800">{fmtAmt(invoiceTotal, cur)}</p>
+                        <p className="text-[10px] text-amber-400 mt-0.5">Fixed — cannot change</p>
+                      </div>
+                      <div>
+                        <p className="text-amber-500 font-semibold">Sum of Items</p>
+                        <p className="font-bold text-slate-800">{fmtAmt(lineSum, cur)}</p>
+                      </div>
+                      <div>
+                        <p className="text-amber-500 font-semibold">Gap</p>
+                        <p className={`font-bold text-sm ${(remainingGap ?? gap) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                          {(remainingGap ?? gap) >= 0 ? '+' : ''}{fmtAmt(remainingGap ?? gap, cur)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Already-added adjustments this session */}
+                    {addedAdjustments.length > 0 && (
+                      <div className="space-y-1 pt-1 border-t border-amber-200">
+                        <p className="text-[11px] font-semibold text-amber-600">Added this session:</p>
+                        {addedAdjustments.map((a, i) => (
+                          <div key={i} className="flex items-center justify-between text-[11px] bg-white border border-amber-100 rounded px-2 py-1">
+                            <span className="text-slate-700">{a.name}</span>
+                            <span className="font-mono font-semibold text-emerald-700">{fmtAmt(a.amount, cur)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {canEdit && Math.abs(remainingGap ?? gap) >= 0.005 && (
+                      <div className="space-y-2 pt-1 border-t border-amber-200">
+                        <p className="text-[11px] text-amber-700 font-medium">
+                          Add adjustment line(s) to internal P&amp;L — remaining gap:
+                          <span className={`ml-1 font-bold ${(remainingGap ?? gap) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                            {fmtAmt(remainingGap ?? gap, cur)}
+                          </span>
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                            value={adjustName}
+                            onChange={e => setAdjustName(e.target.value)}
+                            placeholder="Adjustment label"
+                            className="form-input flex-1 text-xs py-1.5"
+                          />
+                          <input
+                            value={adjustAmount}
+                            onChange={e => setAdjustAmount(e.target.value)}
+                            placeholder={remainingGap != null ? Math.abs(remainingGap).toFixed(2) : '0.00'}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            className="form-input w-28 text-xs py-1.5 font-mono"
+                          />
+                          <button
+                            onClick={() => addAdjustmentToPnl(adjustVal)}
+                            disabled={addingAdjust || !adjustName.trim() || adjustVal <= 0}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors flex-shrink-0"
+                          >
+                            {addingAdjust
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <PlusCircle className="w-3.5 h-3.5" />}
+                            Add to P&amp;L
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {canEdit && Math.abs(remainingGap ?? gap) < 0.005 && (
+                      <p className="text-xs text-emerald-700 font-semibold flex items-center gap-1 pt-1 border-t border-amber-200">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> All adjustments added — internal P&amp;L is now balanced.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {invoiceTotal != null && gap != null && Math.abs(gap) < 0.005 && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Items tally with invoice total — no adjustment needed.
+                  </div>
+                )}
               </div>
-            )}
-
-            {showItems && items.length === 0 && (
-              <p className="text-xs text-slate-400 py-3 pl-1">No line items found for this PNL record.</p>
-            )}
-          </div>
+            )
+          })()}
 
           {/* ── Summary pills ── */}
           <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-100">

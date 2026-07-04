@@ -138,7 +138,11 @@ function LoginForm() {
         redirect: false,
       })
       if (result?.error) {
-        toast.error('Invalid email or password')
+        if (result.error === 'ACCOUNT_INACTIVE') {
+          toast.error('Your account is inactive. Please contact an administrator.')
+        } else {
+          toast.error('Invalid email or password')
+        }
       } else {
         const countryFilter = COUNTRY_PARAM_TO_FILTER[countryParam]
         if (countryFilter) {

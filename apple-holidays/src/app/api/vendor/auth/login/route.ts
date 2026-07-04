@@ -56,10 +56,6 @@ export async function POST(req: NextRequest) {
     const valid = await bcrypt.compare(password, vendor.password)
     if (!valid) return buildApiError('Invalid credentials', 401)
 
-    if (!vendor.isActive) {
-      return buildApiError('Your account is pending admin approval. Please contact support.', 403)
-    }
-
     setVendorCookie(vendor.id)
 
     return buildApiSuccess({

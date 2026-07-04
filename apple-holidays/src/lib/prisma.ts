@@ -9,10 +9,10 @@ const globalForPrisma = globalThis as unknown as {
 }
 
 function buildMysqlUrlFromParts() {
-  const host = process.env.DB_HOST
-  const port = process.env.DB_PORT ?? '3306'
-  const database = process.env.DB_DATABASE
-  const username = process.env.DB_USERNAME
+  const host = process.env.DB_HOST?.trim()
+  const port = process.env.DB_PORT?.trim() ?? '3306'
+  const database = process.env.DB_DATABASE?.trim()
+  const username = process.env.DB_USERNAME?.trim()
   const password = process.env.DB_PASSWORD
 
   if (!host || !database || !username || password == null) return null
@@ -22,13 +22,21 @@ function buildMysqlUrlFromParts() {
 }
 
 function resolveDatabaseUrl() {
-  const url = process.env.DATABASE_URL?.trim()
+  const directUrl =
+    process.env.DIRECT_DATABASE_URL?.trim() ||
+    process.env.MYSQL_DATABASE_URL?.trim() ||
+    process.env.MYSQL_URL?.trim()
 
-  if (url && !url.startsWith('prisma://') && !url.startsWith('prisma+postgres://')) {
-    return url
+  const mysqlUrl = buildMysqlUrlFromParts()
+  const envUrl = process.env.DATABASE_URL?.trim()
+
+  if (mysqlUrl) return mysqlUrl
+  if (directUrl) return directUrl
+  if (envUrl && !envUrl.startsWith('prisma://') && !envUrl.startsWith('prisma+postgres://')) {
+    return envUrl
   }
 
-  return buildMysqlUrlFromParts() ?? url ?? undefined
+  return envUrl ?? undefined
 }
 
 // Always cache on globalThis — prevents multiple PrismaClient instances across

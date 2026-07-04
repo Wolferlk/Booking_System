@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import {
   Activity, Search, Filter, User, Calendar,
   FileText, CreditCard, Ticket, Car, Loader2,
-  ChevronLeft, ChevronRight, Shield, RefreshCw,
+  ChevronLeft, ChevronRight, Shield, RefreshCw, X,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -52,6 +52,7 @@ export default function AuditLogPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [filterAction, setFilterAction] = useState('')
   const limit = 50
@@ -62,6 +63,7 @@ export default function AuditLogPage() {
       const params = new URLSearchParams({ limit: String(limit), page: String(page) })
       if (filterAction) params.set('action', filterAction)
       if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      if (search) params.set('search', search)
       const res = await fetch(`/api/admin/activity?${params}`)
       const data = await res.json()
       if (data.success) { setLogs(data.data.logs); setTotal(data.data.total) }
@@ -69,17 +71,25 @@ export default function AuditLogPage() {
   }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [page, filterAction, countryFilter])
+  useEffect(() => { load() }, [page, filterAction, countryFilter, search])
 
-  const filtered = search
-    ? logs.filter(l =>
-        l.user.name.toLowerCase().includes(search.toLowerCase()) ||
-        l.action.toLowerCase().includes(search.toLowerCase()) ||
-        (l.entityId ?? '').toLowerCase().includes(search.toLowerCase())
-      )
-    : logs
+  // Debounce search input, and reset to page 1 whenever the effective search term changes
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setSearch(searchInput.trim())
+      setPage(1)
+    }, 350)
+    return () => clearTimeout(handle)
+  }, [searchInput])
 
-  const totalPages = Math.ceil(total / limit)
+  function clearFilters() {
+    setSearchInput('')
+    setSearch('')
+    setFilterAction('')
+    setPage(1)
+  }
+
+  const totalPages = Math.max(Math.ceil(total / limit), 1)
 
   function parseDetails(raw: string | null) {
     if (!raw) return null
@@ -95,7 +105,7 @@ export default function AuditLogPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             { label: 'Total Events', value: total, icon: Activity, color: 'text-blue-500' },
-            { label: 'Showing', value: filtered.length, icon: Filter, color: 'text-emerald-500' },
+            { label: 'Showing', value: logs.length, icon: Filter, color: 'text-emerald-500' },
             { label: 'Pages', value: totalPages, icon: Calendar, color: 'text-purple-500' },
             { label: 'Per Page', value: limit, icon: Shield, color: 'text-amber-500' },
           ].map(s => (
@@ -117,8 +127,14 @@ export default function AuditLogPage() {
             <div className="flex flex-wrap gap-3">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input value={search} onChange={e => setSearch(e.target.value)}
-                  placeholder="Search user, action, entity…" className="form-input pl-9" />
+                <input value={searchInput} onChange={e => setSearchInput(e.target.value)}
+                  placeholder="Search user, action, entity…" className="form-input pl-9 pr-9" />
+                {searchInput && (
+                  <button type="button" onClick={() => setSearchInput('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
               <select value={filterAction} onChange={e => { setFilterAction(e.target.value); setPage(1) }}
                 className="form-select min-w-[200px]">
@@ -127,6 +143,11 @@ export default function AuditLogPage() {
                   <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
                 ))}
               </select>
+              {(searchInput || filterAction) && (
+                <button onClick={clearFilters} className="btn-secondary btn">
+                  <X className="w-4 h-4" /> Clear Filters
+                </button>
+              )}
               <button onClick={load} className="btn-secondary btn">
                 <RefreshCw className="w-4 h-4" /> Refresh
               </button>
@@ -139,7 +160,7 @@ export default function AuditLogPage() {
           <CardBody className="p-0">
             {loading ? (
               <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 text-brand-500 animate-spin" /></div>
-            ) : filtered.length === 0 ? (
+            ) : logs.length === 0 ? (
               <div className="text-center py-16">
                 <Activity className="w-10 h-10 text-slate-300 mx-auto mb-3" />
                 <p className="text-slate-400">No activity logs found</p>
@@ -157,7 +178,7 @@ export default function AuditLogPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map(log => {
+                    {logs.map(log => {
                       const details = parseDetails(log.details)
                       const EIcon = log.entityType ? ENTITY_ICONS[log.entityType] : null
                       return (

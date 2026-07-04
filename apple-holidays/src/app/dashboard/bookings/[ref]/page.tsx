@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -9,7 +9,7 @@ import {
   AlertCircle, Clock, Loader2, Save,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
-  FlaskConical,
+  FlaskConical, ScanLine, Upload, HardDrive,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -28,6 +28,8 @@ import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
+import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
+import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -80,6 +82,12 @@ export default function BookingDetailPage() {
   const [flightEditList, setFlightEditList] = useState<FlightEntry[]>([])
   const [flightChangeReason, setFlightChangeReason] = useState('')
   const [savingFlights, setSavingFlights] = useState(false)
+
+  // Flight extraction from image/PDF
+  const [flightScanModal, setFlightScanModal] = useState(false)
+  const [flightScanLoading, setFlightScanLoading] = useState(false)
+  const [flightDrivePickerOpen, setFlightDrivePickerOpen] = useState(false)
+  const flightScanFileRef = useRef<HTMLInputElement>(null)
 
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
@@ -377,6 +385,108 @@ export default function BookingDetailPage() {
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSavingFlights(false) }
+  }
+
+  async function handleFlightScanFile(file: File) {
+    setFlightScanModal(false)
+    setFlightScanLoading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`/api/bookings/${ref}/flights/extract`, { method: 'POST', body: formData })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Extraction failed')
+      const extracted: Array<{ flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string; notes: string }> = json.data.flights ?? []
+      if (extracted.length === 0) { toast.info('No flight segments found in the file'); return }
+      const newEntries = extracted.map(f => ({
+        _key: `scan-${Date.now()}-${Math.random()}`,
+        _isNew: true,
+        _deleted: false,
+        id: '',
+        flightNo: f.flightNo,
+        date: f.date,
+        fromApt: f.fromApt,
+        depTime: f.depTime,
+        toApt: f.toApt,
+        arrTime: f.arrTime,
+        airline: f.airline,
+        notes: f.notes,
+      }))
+      const existing = (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
+        _key: String(f.id ?? i),
+        _isNew: false,
+        _deleted: false,
+        id: String(f.id ?? ''),
+        flightNo: String(f.flightNo ?? ''),
+        date: f.date ? String(f.date).slice(0, 10) : '',
+        fromApt: String(f.fromApt ?? ''),
+        depTime: String(f.depTime ?? ''),
+        toApt: String(f.toApt ?? ''),
+        arrTime: String(f.arrTime ?? ''),
+        airline: String(f.airline ?? ''),
+        notes: String(f.notes ?? ''),
+      }))
+      setFlightEditList([...existing, ...newEntries])
+      setFlightChangeReason('')
+      setEditFlightModal(true)
+      toast.success(`${extracted.length} flight segment${extracted.length > 1 ? 's' : ''} extracted — review and save`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Flight extraction failed')
+    } finally {
+      setFlightScanLoading(false)
+    }
+  }
+
+  async function handleFlightDriveFileSelected(file: CloudFile) {
+    setFlightDrivePickerOpen(false)
+    setFlightScanLoading(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/flights/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: file.id, itemName: file.name }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Extraction failed')
+      const extracted: Array<{ flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string; notes: string }> = json.data.flights ?? []
+      if (extracted.length === 0) { toast.info('No flight segments found in the file'); return }
+      const newEntries = extracted.map(f => ({
+        _key: `scan-${Date.now()}-${Math.random()}`,
+        _isNew: true,
+        _deleted: false,
+        id: '',
+        flightNo: f.flightNo,
+        date: f.date,
+        fromApt: f.fromApt,
+        depTime: f.depTime,
+        toApt: f.toApt,
+        arrTime: f.arrTime,
+        airline: f.airline,
+        notes: f.notes,
+      }))
+      const existing = (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
+        _key: String(f.id ?? i),
+        _isNew: false,
+        _deleted: false,
+        id: String(f.id ?? ''),
+        flightNo: String(f.flightNo ?? ''),
+        date: f.date ? String(f.date).slice(0, 10) : '',
+        fromApt: String(f.fromApt ?? ''),
+        depTime: String(f.depTime ?? ''),
+        toApt: String(f.toApt ?? ''),
+        arrTime: String(f.arrTime ?? ''),
+        airline: String(f.airline ?? ''),
+        notes: String(f.notes ?? ''),
+      }))
+      setFlightEditList([...existing, ...newEntries])
+      setFlightChangeReason('')
+      setEditFlightModal(true)
+      toast.success(`${extracted.length} flight segment${extracted.length > 1 ? 's' : ''} extracted — review and save`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Flight extraction failed')
+    } finally {
+      setFlightScanLoading(false)
+    }
   }
 
   function openEditBooking() {
@@ -1335,6 +1445,14 @@ Wishing you a wonderful trip! ✈️
           />
         )}
 
+        {/* AI Voice Calls — Traveller Experience panel */}
+        {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <TravellerExperiencePanel
+            bookingRef={ref}
+            booking={booking}
+          />
+        )}
+
 
 
         {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
@@ -1514,9 +1632,20 @@ Wishing you a wonderful trip! ✈️
           <Card>
             <CardHeader
               action={canEditFlights ? (
-                <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
-                  <Edit2 className="w-3 h-3" /> Edit
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setFlightScanModal(true)}
+                    disabled={flightScanLoading}
+                    className="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {flightScanLoading
+                      ? <><span className="w-3 h-3 border border-purple-400 border-t-transparent rounded-full animate-spin inline-block" /> Scanning…</>
+                      : <><ScanLine className="w-3 h-3" /> Scan</>}
+                  </button>
+                  <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
+                    <Edit2 className="w-3 h-3" /> Edit
+                  </button>
+                </div>
               ) : undefined}
             >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -2608,6 +2737,68 @@ Wishing you a wonderful trip! ✈️
           </button>
         </div>
       </Modal>
+
+      {/* ── Flight Scan Modal ─────────────────────────────────────────── */}
+      <Modal
+        open={flightScanModal}
+        onClose={() => setFlightScanModal(false)}
+        title="Extract Flights from File"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">
+            Upload an image or PDF containing flight details, or pick a file from the booking's OneDrive folder. The AI will extract the flight segments automatically.
+          </p>
+
+          {/* Device upload */}
+          <button
+            onClick={() => flightScanFileRef.current?.click()}
+            className="w-full flex items-center gap-3 px-4 py-3 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-600 hover:border-brand-400 hover:text-brand-600 transition-colors"
+          >
+            <Upload className="w-5 h-5 flex-shrink-0" />
+            <div className="text-left">
+              <p className="font-medium">Upload from device</p>
+              <p className="text-xs text-slate-400 mt-0.5">JPG, PNG, WebP, PDF</p>
+            </div>
+          </button>
+
+          {/* OneDrive pick */}
+          <button
+            onClick={() => { setFlightScanModal(false); setFlightDrivePickerOpen(true) }}
+            className="w-full flex items-center gap-3 px-4 py-3 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-600 hover:border-brand-400 hover:text-brand-600 transition-colors"
+          >
+            <HardDrive className="w-5 h-5 flex-shrink-0" />
+            <div className="text-left">
+              <p className="font-medium">Pick from OneDrive</p>
+              <p className="text-xs text-slate-400 mt-0.5">Browse the booking's linked folder</p>
+            </div>
+          </button>
+        </div>
+      </Modal>
+
+      {/* Hidden file input for flight scan */}
+      <input
+        ref={flightScanFileRef}
+        type="file"
+        accept=".jpg,.jpeg,.png,.webp,.pdf"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0]
+          if (file) handleFlightScanFile(file)
+          e.target.value = ''
+        }}
+      />
+
+      {/* CloudFilePicker for flight scan from OneDrive */}
+      <CloudFilePicker
+        open={flightDrivePickerOpen}
+        onClose={() => setFlightDrivePickerOpen(false)}
+        bookingRef={ref}
+        filterExtensions={['.jpg', '.jpeg', '.png', '.webp', '.pdf']}
+        title="Pick Flight File from OneDrive"
+        selectLabel="Extract Flights"
+        onSelect={(file) => handleFlightDriveFileSelected(file)}
+      />
 
       {/* ── WhatsApp modal ────────────────────────────────────────────── */}
       <Modal

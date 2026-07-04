@@ -142,6 +142,8 @@ export default function AgendaPage() {
   const [loadingDrivers, setLoadingDrivers] = useState(false)
   const [selectedVendorId, setSelectedVendorId] = useState('')
   const [vendorDriverForm, setVendorDriverForm] = useState({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
+  const [vendorDrivers, setVendorDrivers]         = useState<Driver[]>([])
+  const [loadingVendorDrivers, setLoadingVendorDrivers] = useState(false)
   const [expandedSection, setExpandedSection] = useState<string | null>('passengers')
   // Per-item expandable details (read mode)
   const [expandedDetails, setExpandedDetails] = useState<Set<number>>(new Set())
@@ -249,6 +251,17 @@ export default function AgendaPage() {
       const json = await res.json()
       if (json.success) setVendors(json.data)
     } catch { /* non-critical */ }
+  }
+
+  async function loadVendorDrivers(vendorId: string) {
+    if (!vendorId) { setVendorDrivers([]); return }
+    setLoadingVendorDrivers(true)
+    try {
+      const res  = await fetch(`/api/ground/drivers?vendorId=${vendorId}`)
+      const json = await res.json()
+      if (json.success) setVendorDrivers(json.data)
+    } catch { /* non-critical */ }
+    finally { setLoadingVendorDrivers(false) }
   }
 
   async function loadDriversForDate(date: string) {
@@ -376,7 +389,9 @@ export default function AgendaPage() {
     setAssigningIdx(idx)
     setDriverSearch('')
     setAssignMode(existing?.vendorId ? 'vendor' : 'driver')
-    setSelectedVendorId(existing?.vendorId ?? '')
+    const vid = existing?.vendorId ?? ''
+    setSelectedVendorId(vid)
+    setVendorDrivers([])
     setVendorDriverForm({
       driverName:  existing?.driverName  ?? '',
       driverPhone: existing?.driverPhone ?? '',
@@ -387,6 +402,7 @@ export default function AgendaPage() {
     setRateCurrencyInput(existing?.rateCurrency ?? 'USD')
     loadDriversForDate(items[idx]?.date ?? '')
     loadVendors()
+    if (vid) loadVendorDrivers(vid)
     // Load PNL rates from booking data already fetched
     if (booking) {
       const pnl = (booking as any).pnl
@@ -1250,59 +1266,115 @@ export default function AgendaPage() {
                       ) : (
                         /* ── VENDOR MODE ── */
                         <div className="space-y-3">
+                          {/* Vendor selector */}
                           <div>
                             <label className="form-label text-xs">Vendor</label>
                             <select
                               className="form-select text-sm"
                               value={selectedVendorId}
-                              onChange={e => setSelectedVendorId(e.target.value)}
+                              onChange={e => {
+                                setSelectedVendorId(e.target.value)
+                                setVendorDriverForm({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
+                                loadVendorDrivers(e.target.value)
+                              }}
                             >
                               <option value="">— Select vendor —</option>
                               {vendors.map(v => (
-                                <option key={v.id} value={v.id}>{v.name}</option>
+                                <option key={v.id} value={v.id}>{v.name}{!v.phone ? '' : ` · ${v.phone}`}</option>
                               ))}
                             </select>
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
+
+                          {/* Vendor's registered drivers */}
+                          {selectedVendorId && (
                             <div>
-                              <label className="form-label text-xs">Driver Name *</label>
-                              <input
-                                className="form-input text-sm py-1.5"
-                                placeholder="Driver full name"
-                                value={vendorDriverForm.driverName}
-                                onChange={e => setVendorDriverForm(f => ({ ...f, driverName: e.target.value }))}
-                              />
+                              <label className="form-label text-xs">Select Driver (from vendor fleet)</label>
+                              {loadingVendorDrivers ? (
+                                <div className="flex items-center gap-2 py-2">
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" />
+                                  <span className="text-xs text-slate-400">Loading drivers…</span>
+                                </div>
+                              ) : vendorDrivers.length > 0 ? (
+                                <div className="space-y-1.5 max-h-48 overflow-y-auto mb-1">
+                                  {vendorDrivers.map(d => {
+                                    const isSelected = vendorDriverForm.driverName === d.name && vendorDriverForm.driverPhone === d.phone
+                                    return (
+                                      <button
+                                        key={d.id}
+                                        type="button"
+                                        onClick={() => setVendorDriverForm({
+                                          driverName:   d.name,
+                                          driverPhone:  d.phone,
+                                          vehicleType:  d.vehicle?.type   ?? '',
+                                          vehiclePlate: d.vehicle?.plateNo ?? '',
+                                        })}
+                                        className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left text-sm transition-all ${
+                                          isSelected
+                                            ? 'bg-brand-50 border-2 border-brand-300'
+                                            : 'bg-slate-50 hover:bg-slate-100 border border-transparent'
+                                        }`}
+                                      >
+                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-brand-100' : 'bg-blue-100'}`}>
+                                          <span className={`font-bold text-xs ${isSelected ? 'text-brand-700' : 'text-blue-700'}`}>{d.name.slice(0,1)}</span>
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="font-semibold text-slate-800 text-sm">{d.name}</p>
+                                          <p className="text-xs text-slate-500">{d.phone}{d.vehicle ? ` · ${d.vehicle.type} ${d.vehicle.plateNo}` : ''}</p>
+                                        </div>
+                                        {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-slate-400 py-1 italic">No registered drivers for this vendor — enter manually below</p>
+                              )}
                             </div>
-                            <div>
-                              <label className="form-label text-xs">Driver Phone</label>
-                              <input
-                                className="form-input text-sm py-1.5"
-                                placeholder="+84 ..."
-                                value={vendorDriverForm.driverPhone}
-                                onChange={e => setVendorDriverForm(f => ({ ...f, driverPhone: e.target.value }))}
-                              />
+                          )}
+
+                          {/* Manual override / additional details */}
+                          <div>
+                            <label className="form-label text-xs">{selectedVendorId && vendorDrivers.length > 0 ? 'Override / Manual Entry' : 'Driver Details'}</label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="form-label text-xs">Driver Name</label>
+                                <input
+                                  className="form-input text-sm py-1.5"
+                                  placeholder="Driver full name"
+                                  value={vendorDriverForm.driverName}
+                                  onChange={e => setVendorDriverForm(f => ({ ...f, driverName: e.target.value }))}
+                                />
+                              </div>
+                              <div>
+                                <label className="form-label text-xs">Driver Phone</label>
+                                <input
+                                  className="form-input text-sm py-1.5"
+                                  placeholder="+84 ..."
+                                  value={vendorDriverForm.driverPhone}
+                                  onChange={e => setVendorDriverForm(f => ({ ...f, driverPhone: e.target.value }))}
+                                />
+                              </div>
+                              <div>
+                                <label className="form-label text-xs">Vehicle Type</label>
+                                <input
+                                  className="form-input text-sm py-1.5"
+                                  placeholder="Van, Bus, Car…"
+                                  value={vendorDriverForm.vehicleType}
+                                  onChange={e => setVendorDriverForm(f => ({ ...f, vehicleType: e.target.value }))}
+                                />
+                              </div>
+                              <div>
+                                <label className="form-label text-xs">Plate No</label>
+                                <input
+                                  className="form-input text-sm py-1.5 font-mono"
+                                  placeholder="51A-12345"
+                                  value={vendorDriverForm.vehiclePlate}
+                                  onChange={e => setVendorDriverForm(f => ({ ...f, vehiclePlate: e.target.value }))}
+                                />
+                              </div>
                             </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div>
-                              <label className="form-label text-xs">Vehicle Type</label>
-                              <input
-                                className="form-input text-sm py-1.5"
-                                placeholder="Van, Bus, Car…"
-                                value={vendorDriverForm.vehicleType}
-                                onChange={e => setVendorDriverForm(f => ({ ...f, vehicleType: e.target.value }))}
-                              />
-                            </div>
-                            <div>
-                              <label className="form-label text-xs">Plate No</label>
-                              <input
-                                className="form-input text-sm py-1.5 font-mono"
-                                placeholder="51A-12345"
-                                value={vendorDriverForm.vehiclePlate}
-                                onChange={e => setVendorDriverForm(f => ({ ...f, vehiclePlate: e.target.value }))}
-                              />
-                            </div>
-                          </div>
+
                           <Button size="sm" variant="secondary" onClick={() => applyVendorAssignment(i)}>
                             Apply
                           </Button>

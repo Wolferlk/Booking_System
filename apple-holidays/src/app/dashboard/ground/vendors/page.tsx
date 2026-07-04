@@ -38,20 +38,35 @@ interface Vendor {
 const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
 
 const COUNTRY_LABELS: Record<string, string> = {
-  SRILANKA: '🇱🇰 Sri Lanka',
-  VIETNAM: '🇻🇳 Vietnam',
-  SINGAPORE: '🇸🇬 Singapore',
-  MALAYSIA: '🇲🇾 Malaysia',
-  SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 SG / MY',
+  SRILANKA: 'Sri Lanka',
+  VIETNAM: 'Vietnam',
+  SINGAPORE: 'Singapore',
+  MALAYSIA: 'Malaysia',
+  SINGAPORE_MALAYSIA: 'Singapore & Malaysia',
 }
 
 const COUNTRIES = [
-  { value: 'SRILANKA',          label: '🇱🇰 Sri Lanka' },
-  { value: 'VIETNAM',           label: '🇻🇳 Vietnam' },
-  { value: 'SINGAPORE',         label: '🇸🇬 Singapore' },
-  { value: 'MALAYSIA',          label: '🇲🇾 Malaysia' },
-  { value: 'SINGAPORE_MALAYSIA',label: '🇸🇬🇲🇾 Singapore & Malaysia' },
+  { value: 'SRILANKA',          label: 'Sri Lanka' },
+  { value: 'VIETNAM',           label: 'Vietnam' },
+  { value: 'SINGAPORE',         label: 'Singapore' },
+  { value: 'MALAYSIA',          label: 'Malaysia' },
+  { value: 'SINGAPORE_MALAYSIA',label: 'Singapore & Malaysia' },
 ]
+
+// Phone validation
+function sanitizePhoneValue(value: string) {
+  const cleaned = value.replace(/[^+0-9\s\-()]/g, '')
+  const plusCount = (cleaned.match(/\+/g) || []).length
+  if (plusCount <= 1) return cleaned
+  return cleaned.replace(/\+/g, '').replace(/^/, '+')
+}
+
+// Email validation
+function validateEmail(email: string): boolean {
+  if (!email) return true // Allow empty
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  return emailRegex.test(email)
+}
 
 export default function VendorsPage() {
   const { data: session } = useSession()
@@ -65,6 +80,7 @@ export default function VendorsPage() {
   // Vendor form
   const [vendorModal, setVendorModal] = useState<Vendor | 'new' | null>(null)
   const [vendorForm, setVendorForm] = useState({ name: '', phone: '', email: '', address: '', country: '' })
+  const [emailError, setEmailError] = useState('')
 
   // Vehicle form
   const [vehicleModal, setVehicleModal] = useState<{ vendorId: string; vehicle?: VehicleInVendor } | null>(null)
@@ -112,17 +128,24 @@ export default function VendorsPage() {
 
   function openAddVendor() {
     setVendorForm({ name: '', phone: '', email: '', address: '', country: '' })
+    setEmailError('')
     setVendorModal('new')
   }
 
   function openEditVendor(v: Vendor) {
     setVendorForm({ name: v.name, phone: v.phone ?? '', email: v.email ?? '', address: v.address ?? '', country: v.country ?? '' })
+    setEmailError('')
     setVendorModal(v)
   }
 
   async function saveVendor() {
     setSaving(true)
     try {
+      // Validate email
+      if (vendorForm.email && !validateEmail(vendorForm.email)) {
+        throw new Error('Please enter a valid email address')
+      }
+      
       const url = vendorModal === 'new' ? '/api/ground/vendors' : `/api/ground/vendors/${(vendorModal as Vendor).id}`
       const method = vendorModal === 'new' ? 'POST' : 'PUT'
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(vendorForm) })
@@ -130,6 +153,7 @@ export default function VendorsPage() {
       if (!data.success) throw new Error(data.error)
       toast.success(vendorModal === 'new' ? 'Vendor added' : 'Vendor updated')
       setVendorModal(null)
+      setEmailError('')
       load()
     } catch (err: unknown) { toast.error(err instanceof Error ? err.message : 'Failed') }
     finally { setSaving(false) }
@@ -137,8 +161,15 @@ export default function VendorsPage() {
 
   async function deleteVendor(id: string) {
     if (!confirm('Delete this vendor? Their vehicles will also be deleted.')) return
-    await fetch(`/api/ground/vendors/${id}`, { method: 'DELETE' })
-    toast.success('Vendor deleted'); load()
+    try {
+      const res = await fetch(`/api/ground/vendors/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      toast.success('Vendor deleted')
+      load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete vendor')
+    }
   }
 
   function openAddVehicle(vendorId: string) {
@@ -173,8 +204,15 @@ export default function VendorsPage() {
 
   async function deleteVehicle(id: string) {
     if (!confirm('Remove this vehicle?')) return
-    await fetch(`/api/ground/vehicles/${id}`, { method: 'DELETE' })
-    toast.success('Vehicle removed'); load()
+    try {
+      const res = await fetch(`/api/ground/vehicles/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error)
+      toast.success('Vehicle removed')
+      load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete vehicle')
+    }
   }
 
   const pendingCount = vendors.filter(v => v.isRegistered && !v.isActive).length
@@ -343,22 +381,67 @@ export default function VendorsPage() {
       {/* Vendor Modal */}
       <Modal open={!!vendorModal} onClose={() => setVendorModal(null)} title={vendorModal === 'new' ? 'Add Vendor' : 'Edit Vendor'}>
         <div className="space-y-4">
-          {[
-            { label: 'Company Name *', key: 'name', placeholder: 'Vietnam Tours Co.' },
-            { label: 'Phone', key: 'phone', placeholder: '+84 ...' },
-            { label: 'Email', key: 'email', placeholder: 'contact@...' },
-            { label: 'Address', key: 'address', placeholder: 'City, Province' },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="form-label">{f.label}</label>
-              <input
-                className="form-input"
-                placeholder={f.placeholder}
-                value={(vendorForm as Record<string, string>)[f.key]}
-                onChange={e => setVendorForm(x => ({ ...x, [f.key]: e.target.value }))}
-              />
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="form-label">Company Name *</label>
+              <span className="text-xs text-slate-500">{vendorForm.name.length}/50</span>
             </div>
-          ))}
+            <input
+              className="form-input"
+              placeholder="Vietnam Tours Co."
+              value={vendorForm.name}
+              onChange={e => setVendorForm(x => ({ ...x, name: e.target.value }))}
+              maxLength={50}
+            />
+          </div>
+
+          <div>
+            <label className="form-label">Phone</label>
+            <input
+              className="form-input"
+              placeholder="+84 ..."
+              value={vendorForm.phone}
+              onChange={e => setVendorForm(x => ({ ...x, phone: sanitizePhoneValue(e.target.value) }))}
+              inputMode="tel"
+              pattern="^\+?[0-9\s\-()]*$"
+            />
+            <p className="text-xs text-slate-400 mt-0.5">Digits, +, -, (), and spaces only</p>
+          </div>
+
+          <div>
+            <label className="form-label">Email</label>
+            <input
+              className={`form-input ${emailError ? 'border-red-500 focus:border-red-500' : ''}`}
+              type="email"
+              placeholder="contact@..."
+              value={vendorForm.email}
+              onChange={e => {
+                const email = e.target.value
+                setVendorForm(x => ({ ...x, email }))
+                // Real-time validation
+                if (email && !validateEmail(email)) {
+                  setEmailError('Please enter a valid email address (e.g., name@domain.com)')
+                } else {
+                  setEmailError('')
+                }
+              }}
+            />
+            {emailError && <p className="text-xs text-red-500 mt-0.5">{emailError}</p>}
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <label className="form-label">Address</label>
+              <span className="text-xs text-slate-500">{vendorForm.address.length}/200</span>
+            </div>
+            <input
+              className="form-input"
+              placeholder="City, Province"
+              value={vendorForm.address}
+              onChange={e => setVendorForm(x => ({ ...x, address: e.target.value }))}
+              maxLength={200}
+            />
+          </div>
 
           <div>
             <label className="form-label">Country</label>
@@ -373,7 +456,7 @@ export default function VendorsPage() {
           </div>
 
           <div className="flex gap-3">
-            <button onClick={saveVendor} disabled={saving || !vendorForm.name} className="btn-primary btn flex-1">
+            <button onClick={saveVendor} disabled={saving || !vendorForm.name || !!emailError} className="btn-primary btn flex-1">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Save
             </button>
@@ -393,20 +476,26 @@ export default function VendorsPage() {
               </select>
             </div>
             <div>
-              <label className="form-label">Plate Number *</label>
-              <input className="form-input font-mono" placeholder="51A-12345" value={vForm.plateNo} onChange={e => setVForm(x => ({ ...x, plateNo: e.target.value }))} />
+              <div className="flex items-center justify-between">
+                <label className="form-label">Plate Number *</label>
+                <span className="text-xs text-slate-500">{vForm.plateNo.length}/20</span>
+              </div>
+              <input className="form-input font-mono" placeholder="51A-12345" value={vForm.plateNo} onChange={e => setVForm(x => ({ ...x, plateNo: e.target.value.toUpperCase() }))} maxLength={20} />
             </div>
             <div>
               <label className="form-label">Brand</label>
-              <input className="form-input" placeholder="Toyota" value={vForm.brand} onChange={e => setVForm(x => ({ ...x, brand: e.target.value }))} />
+              <input className="form-input" placeholder="Toyota" value={vForm.brand} onChange={e => setVForm(x => ({ ...x, brand: e.target.value }))} maxLength={50} />
             </div>
             <div>
               <label className="form-label">Model</label>
-              <input className="form-input" placeholder="Hiace" value={vForm.model} onChange={e => setVForm(x => ({ ...x, model: e.target.value }))} />
+              <input className="form-input" placeholder="Hiace" value={vForm.model} onChange={e => setVForm(x => ({ ...x, model: e.target.value }))} maxLength={50} />
             </div>
             <div>
               <label className="form-label">Capacity (seats)</label>
-              <input type="number" className="form-input" min="1" max="60" value={vForm.capacity} onChange={e => setVForm(x => ({ ...x, capacity: e.target.value }))} />
+              <input type="number" className="form-input" min="1" max="60" value={vForm.capacity} onChange={e => {
+                const val = Math.min(Math.max(Number(e.target.value) || 1, 1), 60)
+                setVForm(x => ({ ...x, capacity: String(val) }))
+              }} />
             </div>
           </div>
           <div className="flex gap-3">

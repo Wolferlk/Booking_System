@@ -54,10 +54,14 @@ export const authOptions: NextAuthOptions = {
           where: { email: credentials.email },
         })
 
-        if (!user || !user.isActive) return null
+        if (!user) return null
 
         const isValid = await bcrypt.compare(credentials.password, user.password)
         if (!isValid) return null
+
+        // Credentials are correct but the account has been deactivated.
+        // Throw a distinct error so the UI can show an accurate message.
+        if (!user.isActive) throw new Error('ACCOUNT_INACTIVE')
 
         let parsedCountries: OperationCountry[] | null = null
         if (user.countries) {
