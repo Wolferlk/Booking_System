@@ -128,7 +128,7 @@ function formatItemDetails(details: string | null | undefined | Record<string, u
     let parsed: unknown = JSON.parse(raw)
     // First parse may return a string (double-encoded JSON) — parse once more
     if (typeof parsed === 'string') {
-      try { parsed = JSON.parse(parsed) } catch { return parsed }
+      try { parsed = JSON.parse(parsed) } catch { return parsed as string }
     }
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return extractRemarks(parsed as Record<string, unknown>) ?? raw
@@ -181,6 +181,33 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   // Auto ticket creation state
   const [creatingAllTickets,  setCreatingAllTickets]  = useState(false)
   const [allTicketsResult,    setAllTicketsResult]    = useState<{ created: number; skipped: number } | null>(null)
+
+  // Tally adjustment state
+  const [adjustName,       setAdjustName]       = useState('PNL Reconciliation Adjustment')
+  const [adjustAmount,     setAdjustAmount]     = useState('')
+  const [addingAdjust,     setAddingAdjust]     = useState(false)
+
+  // ── Tally adjustment ──────────────────────────────────────────────────────
+  async function addAdjustmentToPnl(amount: number) {
+    if (!adjustName.trim() || !amount) return
+    setAddingAdjust(true)
+    try {
+      const res = await fetch(`/api/bookings/${bookingRef}/pnl`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activity: adjustName.trim(), category: 'OTHER', otherRate: Math.abs(amount) }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Adjustment line added to internal P&L')
+      setAdjustAmount('')
+      setAdjustName('PNL Reconciliation Adjustment')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to add adjustment')
+    } finally {
+      setAddingAdjust(false)
+    }
+  }
 
   // ── Bulk create tickets from PNL ────────────────────────────────────────
   const createAllTicketsFromPnl = useCallback(async (silent = false) => {
@@ -490,8 +517,8 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                         <td className="text-right font-mono font-semibold">
                           {item.amount_original != null ? Number(item.amount_original).toFixed(2) : '—'}
                         </td>
-                        <td className="max-w-[220px] truncate text-slate-500" title={formatItemDetails(item.item_details)}>
-                          {formatItemDetails(item.item_details)}
+                        <td className="max-w-[220px] truncate text-slate-500" title={formatItemDetails(item.item_details as string | null)}>
+                          {formatItemDetails(item.item_details as string | null)}
                         </td>
                       </tr>
                       )
@@ -505,6 +532,73 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
               <p className="text-xs text-slate-400 py-3 pl-1">No line items found for this PNL record.</p>
             )}
           </div>
+
+          {/* ── Tally Reconciliation ── */}
+          {(() => {
+            if (rec.actual_amount == null) return null
+            const itemSum = items
+              .filter(it => it.type?.toUpperCase() !== 'INVOICE')
+              .reduce((s, it) => s + Number(it.amount_original ?? 0), 0)
+            const diff = Number(rec.actual_amount) - itemSum
+            if (Math.abs(diff) < 0.005) return null
+            const adjustVal = Number(adjustAmount) || Math.abs(diff)
+            return (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <div className="flex items-center gap-2 text-amber-700">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span className="text-xs font-bold">Tally Difference</span>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <p className="text-amber-500 font-semibold">Actual Amount</p>
+                    <p className="font-bold text-slate-800">{fmtAmt(rec.actual_amount, cur)}</p>
+                  </div>
+                  <div>
+                    <p className="text-amber-500 font-semibold">Sum of Items</p>
+                    <p className="font-bold text-slate-800">{fmtAmt(itemSum, cur)}</p>
+                  </div>
+                  <div>
+                    <p className="text-amber-500 font-semibold">Gap</p>
+                    <p className={`font-bold ${diff >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                      {diff >= 0 ? '+' : ''}{fmtAmt(diff, cur)}
+                    </p>
+                  </div>
+                </div>
+                {canEdit && (
+                  <div className="space-y-2 pt-1 border-t border-amber-200">
+                    <p className="text-[11px] text-amber-700">Add an adjustment line to internal P&L to reconcile:</p>
+                    <div className="flex gap-2">
+                      <input
+                        value={adjustName}
+                        onChange={e => setAdjustName(e.target.value)}
+                        placeholder="Adjustment label"
+                        className="form-input flex-1 text-xs py-1.5"
+                      />
+                      <input
+                        value={adjustAmount}
+                        onChange={e => setAdjustAmount(e.target.value)}
+                        placeholder={Math.abs(diff).toFixed(2)}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        className="form-input w-28 text-xs py-1.5 font-mono"
+                      />
+                      <button
+                        onClick={() => addAdjustmentToPnl(adjustVal)}
+                        disabled={addingAdjust || !adjustName.trim()}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50 transition-colors flex-shrink-0"
+                      >
+                        {addingAdjust
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <PlusCircle className="w-3.5 h-3.5" />}
+                        Add to P&amp;L
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* ── Summary pills ── */}
           <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-100">

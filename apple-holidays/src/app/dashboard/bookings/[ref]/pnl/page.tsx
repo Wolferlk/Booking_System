@@ -1011,14 +1011,14 @@ export default function PNLPage() {
                 <p className="font-semibold text-slate-900">Import from PC</p>
               </div>
               <p className="text-xs text-slate-500 mt-2 mb-3">
-                Upload an Excel, CSV, PDF, or Word file from your computer.
+                Upload an Excel, CSV, PDF, Word file, or a tour confirmation image from your computer.
               </p>
               <FileUpload
-                accept={['.xlsx', '.xls', '.csv', '.pdf', '.docx', '.doc']}
+                accept={['.xlsx', '.xls', '.csv', '.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.webp']}
                 uploadType="pnl"
                 onParsed={handleAIParsed}
                 label="Upload P&L from PC"
-                description=".xlsx · .xls · .csv · .pdf · .docx — AI extracts line items"
+                description=".xlsx · .xls · .csv · .pdf · .docx · images — AI extracts line items"
               />
             </div>
           </div>
