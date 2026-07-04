@@ -38,19 +38,19 @@ interface Vendor {
 const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
 
 const COUNTRY_LABELS: Record<string, string> = {
-  SRILANKA: '🇱🇰 Sri Lanka',
-  VIETNAM: '🇻🇳 Vietnam',
-  SINGAPORE: '🇸🇬 Singapore',
-  MALAYSIA: '🇲🇾 Malaysia',
-  SINGAPORE_MALAYSIA: '🇸🇬🇲🇾 SG / MY',
+  SRILANKA: 'Sri Lanka',
+  VIETNAM: 'Vietnam',
+  SINGAPORE: 'Singapore',
+  MALAYSIA: 'Malaysia',
+  SINGAPORE_MALAYSIA: 'Singapore & Malaysia',
 }
 
 const COUNTRIES = [
-  { value: 'SRILANKA',          label: '🇱🇰 Sri Lanka' },
-  { value: 'VIETNAM',           label: '🇻🇳 Vietnam' },
-  { value: 'SINGAPORE',         label: '🇸🇬 Singapore' },
-  { value: 'MALAYSIA',          label: '🇲🇾 Malaysia' },
-  { value: 'SINGAPORE_MALAYSIA',label: '🇸🇬🇲🇾 Singapore & Malaysia' },
+  { value: 'SRILANKA',          label: 'Sri Lanka' },
+  { value: 'VIETNAM',           label: 'Vietnam' },
+  { value: 'SINGAPORE',         label: 'Singapore' },
+  { value: 'MALAYSIA',          label: 'Malaysia' },
+  { value: 'SINGAPORE_MALAYSIA',label: 'Singapore & Malaysia' },
 ]
 
 // Phone validation
@@ -384,14 +384,14 @@ export default function VendorsPage() {
           <div>
             <div className="flex items-center justify-between">
               <label className="form-label">Company Name *</label>
-              <span className="text-xs text-slate-500">{vendorForm.name.length}/100</span>
+              <span className="text-xs text-slate-500">{vendorForm.name.length}/50</span>
             </div>
             <input
               className="form-input"
               placeholder="Vietnam Tours Co."
               value={vendorForm.name}
               onChange={e => setVendorForm(x => ({ ...x, name: e.target.value }))}
-              maxLength={100}
+              maxLength={50}
             />
           </div>
 

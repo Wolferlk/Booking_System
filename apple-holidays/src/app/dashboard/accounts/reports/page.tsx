@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Loader2, Download, FileText, Filter } from 'lucide-react'
+import { useEffect, useState, useMemo } from 'react'
+import { Loader2, Download, FileText, Filter, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -41,6 +41,8 @@ const STATUSES = [
   { value: 'CANCELLED', label: 'Cancelled' },
 ]
 
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
+
 export default function ReportsPage() {
   const { countryFilter } = useCountryFilter()
   const [rows, setRows] = useState<ReportRow[]>([])
@@ -49,13 +51,15 @@ export default function ReportsPage() {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [filterAgent, setFilterAgent] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(25)
 
-  async function load() {
+  async function load(status = filterStatus, from = filterFrom, to = filterTo, agent = filterAgent) {
     setLoading(true)
     try {
       const params = new URLSearchParams({ limit: '500' })
-      if (filterStatus) params.set('status', filterStatus)
-      if (filterAgent) params.set('search', filterAgent)
+      if (status) params.set('status', status)
+      if (agent) params.set('search', agent)
       if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
 
       const res = await fetch(`/api/accounts/report?${params}`)
@@ -63,8 +67,8 @@ export default function ReportsPage() {
       if (json.success) {
         let data: ReportRow[] = json.data
         // client-side date filter
-        if (filterFrom) data = data.filter(r => r.arrivalDate >= filterFrom)
-        if (filterTo) data = data.filter(r => r.arrivalDate <= filterTo)
+        if (from) data = data.filter(r => r.arrivalDate >= from)
+        if (to) data = data.filter(r => r.arrivalDate <= to)
         setRows(data)
       } else {
         toast.error(json.error ?? 'Failed to load report')
@@ -76,7 +80,26 @@ export default function ReportsPage() {
     }
   }
 
-  useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { 
+    load() 
+  }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset page when filters change
+  useEffect(() => { 
+    setPage(1) 
+  }, [filterStatus, filterFrom, filterTo, filterAgent, countryFilter, pageSize])
+
+  // Pagination logic
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize))
+  
+  useEffect(() => { 
+    if (page > totalPages) setPage(totalPages) 
+  }, [page, totalPages])
+
+  const paginated = useMemo(() => {
+    const start = (page - 1) * pageSize
+    return rows.slice(start, start + pageSize)
+  }, [rows, page, pageSize])
 
   function downloadCSV() {
     if (rows.length === 0) { toast.error('No data to export'); return }
@@ -160,7 +183,11 @@ export default function ReportsPage() {
                   type="date"
                   className="form-input"
                   value={filterFrom}
-                  onChange={e => setFilterFrom(e.target.value)}
+                  max={filterTo || undefined}
+                  onChange={e => {
+                    const newFrom = e.target.value
+                    setFilterFrom(newFrom)
+                  }}
                 />
               </div>
               <div>
@@ -169,7 +196,11 @@ export default function ReportsPage() {
                   type="date"
                   className="form-input"
                   value={filterTo}
-                  onChange={e => setFilterTo(e.target.value)}
+                  min={filterFrom || undefined}
+                  onChange={e => {
+                    const newTo = e.target.value
+                    setFilterTo(newTo)
+                  }}
                 />
               </div>
               <div>
@@ -184,12 +215,22 @@ export default function ReportsPage() {
               </div>
             </div>
             <div className="mt-4 flex gap-2">
-              <button onClick={load} className="btn btn-primary btn-sm" disabled={loading}>
+              <button 
+                onClick={() => {
+                  load(filterStatus, filterFrom, filterTo, filterAgent)
+                }} 
+                className="btn btn-primary btn-sm" 
+                disabled={loading}
+              >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
                 Apply Filters
               </button>
               <button onClick={() => {
-                setFilterStatus(''); setFilterFrom(''); setFilterTo(''); setFilterAgent('')
+                setFilterStatus('')
+                setFilterFrom('')
+                setFilterTo('')
+                setFilterAgent('')
+                load('', '', '', '')
               }} className="btn btn-secondary btn-sm">
                 Clear
               </button>
@@ -246,7 +287,7 @@ export default function ReportsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {rows.map(r => (
+                    {paginated.map(r => (
                       <tr key={r.bookingRef} className="hover:bg-slate-50 transition-colors">
                         <td className="px-3 py-2 font-mono font-semibold text-brand-700">
                           <a href={`/dashboard/bookings/${r.bookingRef}`} target="_blank" rel="noreferrer" className="hover:underline">
@@ -280,6 +321,61 @@ export default function ReportsPage() {
               </div>
             )}
           </CardBody>
+          {!loading && rows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-slate-200">
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span>
+                  Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, rows.length)} of {rows.length}
+                </span>
+                <select
+                  className="form-select w-auto text-xs py-1"
+                  value={pageSize}
+                  onChange={e => setPageSize(Number(e.target.value))}
+                >
+                  {PAGE_SIZE_OPTIONS.map(n => (
+                    <option key={n} value={n}>{n} / page</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(1)}
+                  disabled={page === 1}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="First page"
+                >
+                  <ChevronsLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Next page"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setPage(totalPages)}
+                  disabled={page === totalPages}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title="Last page"
+                >
+                  <ChevronsRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </Card>
       </div>
     </div>
