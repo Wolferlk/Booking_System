@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import {
   Plus, Loader2, Car, Truck, User, Phone, Mail, Search, X,
-  CreditCard, Wallet, ChevronDown, ChevronRight,
+  CreditCard, Wallet, ChevronDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight,
   CheckCircle2, Edit2, Trash2, DollarSign,
   Building2, ArrowUpCircle, ArrowDownCircle, Camera,
   MessageCircle, Send, Clock, Link2,
@@ -97,6 +97,8 @@ const SWIFT_PLACEHOLDERS: Record<string, string> = {
 }
 
 const VEHICLE_TYPES = ['car', 'van', 'minibus', 'bus', 'motorbike']
+
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100]
 
 const PAY_TYPE_COLORS: Record<string, string> = {
   ADVANCE: 'bg-blue-50 text-blue-700 border-blue-100',
@@ -216,6 +218,10 @@ export default function DriversPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
 
+  // Pagination
+  const [page, setPage]         = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+
   const userCountry = session?.user?.country ?? 'ALL'
   const isAllCountry = !userCountry || userCountry === 'ALL'
   const defaultDriverCountry = isAllCountry
@@ -254,6 +260,8 @@ export default function DriversPage() {
   }
 
   useEffect(() => { loadDrivers() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { setPage(1) }, [countryFilter, pageSize, searchQuery])
 
   async function loadDriverDetail(id: string) {
     if (expandedId === id) { setExpandedId(null); return }
@@ -534,6 +542,11 @@ export default function DriversPage() {
     ].some(value => value?.toLowerCase().includes(q))
   })
 
+  const totalPages = Math.max(1, Math.ceil(filteredDrivers.length / pageSize))
+  const paginatedDrivers = filteredDrivers.slice((page - 1) * pageSize, page * pageSize)
+
+  useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
+
   return (
     <div>
       <Header
@@ -608,7 +621,7 @@ export default function DriversPage() {
               </div>
             )}
 
-            {filteredDrivers.map(driver => {
+            {paginatedDrivers.map(driver => {
               const isExpanded = expandedId === driver.id
               const isSelected = selectedIds.has(driver.id)
               return (
@@ -914,6 +927,62 @@ export default function DriversPage() {
                 </Card>
               )
             })}
+          </div>
+        )}
+
+        {!loading && filteredDrivers.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-2">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>
+                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredDrivers.length)} of {filteredDrivers.length}
+              </span>
+              <select
+                className="form-select w-auto text-xs py-1"
+                value={pageSize}
+                onChange={e => setPageSize(Number(e.target.value))}
+              >
+                {PAGE_SIZE_OPTIONS.map(n => (
+                  <option key={n} value={n}>{n} / page</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="First page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-2 text-xs font-medium text-slate-600 whitespace-nowrap">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={page === totalPages}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                title="Last page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         )}
       </div>

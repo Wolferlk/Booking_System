@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import {
   Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car,
   ChevronDown, ChevronUp, Link2, CheckCircle2, Power, Globe, UserCheck, Clock,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Search, X,
 } from 'lucide-react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
@@ -97,6 +97,9 @@ export default function VendorsPage() {
   const [page, setPage]         = useState(1)
   const [pageSize, setPageSize] = useState(10)
 
+  // Search
+  const [searchQuery, setSearchQuery] = useState('')
+
   async function copyRegLink() {
     const appUrl = window.location.origin
     const link = `${appUrl}/vendor/register`
@@ -133,7 +136,7 @@ export default function VendorsPage() {
 
   useEffect(() => { load() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { setPage(1) }, [countryFilter, pageSize])
+  useEffect(() => { setPage(1) }, [countryFilter, pageSize, searchQuery])
 
   function openAddVendor() {
     setVendorForm({ name: '', phone: '', email: '', address: '', country: '' })
@@ -226,8 +229,27 @@ export default function VendorsPage() {
 
   const pendingCount = vendors.filter(v => v.isRegistered && !v.isActive).length
 
-  const totalPages = Math.max(1, Math.ceil(vendors.length / pageSize))
-  const paginatedVendors = vendors.slice((page - 1) * pageSize, page * pageSize)
+  const filteredVendors = vendors.filter(vendor => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return true
+
+    const vehicleText = vendor.vehicles
+      .map(v => [v.plateNo, v.brand, v.model, v.type, v.driver?.name].filter(Boolean).join(' '))
+      .join(' ')
+      .toLowerCase()
+
+    return [
+      vendor.name,
+      vendor.phone,
+      vendor.email,
+      vendor.address,
+      vendor.country ? (COUNTRY_LABELS[vendor.country] ?? vendor.country) : null,
+      vehicleText,
+    ].some(value => value?.toLowerCase().includes(q))
+  })
+
+  const totalPages = Math.max(1, Math.ceil(filteredVendors.length / pageSize))
+  const paginatedVendors = filteredVendors.slice((page - 1) * pageSize, page * pageSize)
 
   useEffect(() => { if (page > totalPages) setPage(totalPages) }, [page, totalPages])
 
@@ -267,12 +289,37 @@ export default function VendorsPage() {
       )}
 
       <div className="p-8 space-y-4 ">
+        <div className="relative max-w-xl">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search vendors, phones, emails, addresses, or vehicles…"
+            className="form-input pl-9 pr-10"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              aria-label="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 text-brand-500 animate-spin" /></div>
         ) : vendors.length === 0 ? (
           <Card className="p-12 text-center">
             <Truck className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-400">No vendors yet</p>
+          </Card>
+        ) : filteredVendors.length === 0 ? (
+          <Card className="p-12 text-center">
+            <Truck className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-slate-400">No vendors match &quot;{searchQuery}&quot;</p>
           </Card>
         ) : (
           paginatedVendors.map(vendor => {
@@ -391,11 +438,11 @@ export default function VendorsPage() {
           })
         )}
 
-        {!loading && vendors.length > 0 && (
+        {!loading && filteredVendors.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 px-1 pt-2">
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span>
-                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, vendors.length)} of {vendors.length}
+                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredVendors.length)} of {filteredVendors.length}
               </span>
               <select
                 className="form-select w-auto text-xs py-1"
