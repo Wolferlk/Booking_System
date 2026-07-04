@@ -199,8 +199,8 @@ function validateDriverForm(form: {
 export default function DriversPage() {
   const { data: session } = useSession()
   const { countryFilter } = useCountryFilter()
-  const isAdmin = session?.user?.role === 'SUPER_ADMIN'
-  const canDelete = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
+  const isAdmin = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
+  const canDelete = isAdmin
 
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [loading, setLoading] = useState(true)
