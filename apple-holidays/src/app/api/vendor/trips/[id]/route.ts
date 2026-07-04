@@ -60,11 +60,18 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       agendaItem: {
         include: {
           agenda: {
-            include: { booking: { select: { bookingRef: true, dealName: true } } },
+            include: {
+              booking: {
+                select: {
+                  bookingRef: true, dealName: true,
+                  paxAdults: true, paxChildren: true, operationCountry: true,
+                },
+              },
+            },
           },
         },
       },
-      driver: { select: { id: true, name: true, phone: true } },
+      driver: { select: { id: true, name: true, phone: true, photoUrl: true } },
     },
   })
 
