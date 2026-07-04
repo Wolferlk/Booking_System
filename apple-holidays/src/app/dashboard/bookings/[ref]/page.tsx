@@ -29,6 +29,7 @@ import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
+import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -1441,6 +1442,14 @@ Wishing you a wonderful trip! ✈️
             onAutoSend={handleQCAutoSend}
             autoSending={qcAutoSending}
             daysUntilTrip={daysUntil}
+          />
+        )}
+
+        {/* AI Voice Calls — Traveller Experience panel */}
+        {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <TravellerExperiencePanel
+            bookingRef={ref}
+            booking={booking}
           />
         )}
 
