@@ -540,7 +540,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // ── Quick Call ────────────────────────────────────────────────────────────
   const [quickForm, setQuickForm] = useState({ to: defaultPhone, name: leadName, reason: '' })
   const [quickLoading, setQuickLoading] = useState(false)
-  const [quickResult, setQuickResult]   = useState<{ ok: boolean; message?: string; note?: string; channel_id?: string } | null>(null)
+  const [quickResult, setQuickResult]   = useState<{ ok: boolean; message?: string; note?: string; channel_id?: string; booking_ref?: string; references_itinerary?: boolean } | null>(null)
 
   // ── Approval ──────────────────────────────────────────────────────────────
   const [approvalLoading, setApprovalLoading] = useState(false)
@@ -647,8 +647,8 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   }
 
   // ── Approval ──────────────────────────────────────────────────────────────
-  async function sendApproval() {
-    const phone = (service?.call_phone || intakeForm.phone).replace(/\D/g, '')
+  async function sendApproval(overridePhone?: string) {
+    const phone = (overridePhone ?? service?.call_phone ?? intakeForm.phone).replace(/\D/g, '')
     if (!phone) { toast.error('Enter a phone number first'); return }
     setApprovalLoading(true)
     try {
@@ -661,6 +661,15 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
   // ── Schedule actions ──────────────────────────────────────────────────────
   async function callNow(id: number) {
+    const sortedSched = [...(service?.schedule ?? [])].sort((a, b) => a.day_no - b.day_no)
+    const item        = sortedSched.find(s => s.id === id)
+    const firstPending = sortedSched.find(s => s.status === 'pending')
+    if (item && firstPending && firstPending.id !== item.id) {
+      const ok = confirm(
+        `⚠️ Out-of-order call\n\nDay ${firstPending.day_no} (${firstPending.call_date}) is still pending.\nCall Day ${item.day_no} out of sequence anyway?`
+      )
+      if (!ok) return
+    }
     setScheduleBusy(id)
     try {
       const res = await teProxy(`schedule/${id}/call`, 'POST', { force: true })
@@ -749,8 +758,8 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         setQuickResult({ ok: false, message: res.message })
         toast.info(res.message ?? 'Call could not connect')
       } else {
-        setQuickResult({ ok: true, message: res.message, note: res.note, channel_id: res.channel_id })
-        toast.success(`Quick call placed to ${phone} — agent has ${bookingRef} itinerary`)
+        setQuickResult({ ok: true, message: res.message, note: res.note, channel_id: res.channel_id, booking_ref: res.booking_ref, references_itinerary: res.references_itinerary })
+        toast.success(res.references_itinerary ? `Quick call placed — agent has ${bookingRef} itinerary` : 'Quick call placed')
       }
     } catch { toast.error('Quick call failed') } finally { setQuickLoading(false) }
   }
@@ -833,7 +842,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const schedule       = service?.schedule ?? []
+  const schedule = [...(service?.schedule ?? [])].sort((a, b) => a.day_no - b.day_no)
   const registered     = service !== null
   const allFeedback    = feedbackList.length > 0 ? feedbackList : (service?.feedback ?? [])
   const pendingCalls   = schedule.filter(s => s.status === 'pending').length
@@ -982,7 +991,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
                     {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> Register for AI Calls</>}
                   </button>
-                  <button onClick={sendApproval} disabled={approvalLoading}
+                  <button onClick={() => sendApproval()} disabled={approvalLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors">
                     {approvalLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><MessageSquare className="w-4 h-4" /> WhatsApp Approval</>}
                   </button>
@@ -1054,7 +1063,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   ) : (
                     <button onClick={() => updateStatus('active')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 text-violet-600 text-xs font-semibold hover:bg-violet-100 transition-colors border border-violet-100"><RefreshCw className="w-3.5 h-3.5" /> Reactivate</button>
                   )}
-                  <button onClick={sendApproval} disabled={approvalLoading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors">
+                  <button onClick={() => sendApproval()} disabled={approvalLoading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors">
                     {approvalLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> Sending…</> : <><MessageSquare className="w-3.5 h-3.5" /> WhatsApp Approval</>}
                   </button>
                 </div>
@@ -1335,7 +1344,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   : <><PhoneCall className="w-4 h-4" /> Place Quick Call</>}
               </button>
               <button
-                onClick={sendApproval}
+                onClick={() => sendApproval(quickForm.to)}
                 disabled={approvalLoading}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 text-sm font-semibold hover:bg-slate-50 disabled:opacity-60 transition-colors"
               >
@@ -1353,6 +1362,9 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                 <div>
                   {quickResult.message && (
                     <p className={`text-xs font-semibold ${quickResult.ok ? 'text-emerald-800' : 'text-amber-800'}`}>{quickResult.message}</p>
+                  )}
+                  {quickResult.references_itinerary && (
+                    <p className="text-[11px] text-emerald-700 mt-1 font-semibold">✓ Agent has the full {quickResult.booking_ref ?? bookingRef} itinerary</p>
                   )}
                   {quickResult.note && (
                     <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{quickResult.note}</p>
