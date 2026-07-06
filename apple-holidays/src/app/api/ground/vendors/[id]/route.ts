@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { handlePrismaApiError } from '@/lib/prisma-error'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,35 +37,36 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   if (!session) return buildApiError('Unauthorized', 401)
   if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN', 'GT_USER'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
-  // 1. Unlink drivers' vehicle assignments for vehicles owned by this vendor
-  const vehicleIds = await prisma.vehicle.findMany({
-    where: { vendorId: params.id },
-    select: { id: true },
-  })
-  if (vehicleIds.length > 0) {
-    await prisma.driver.updateMany({
-      where: { vehicleId: { in: vehicleIds.map(v => v.id) } },
-      data: { vehicleId: null },
+  try {
+    await prisma.$transaction(async tx => {
+      const vehicleIds = await tx.vehicle.findMany({
+        where: { vendorId: params.id },
+        select: { id: true },
+      })
+
+      if (vehicleIds.length > 0) {
+        await tx.driver.updateMany({
+          where: { vehicleId: { in: vehicleIds.map(v => v.id) } },
+          data: { vehicleId: null },
+        })
+      }
+
+      await tx.driver.updateMany({
+        where: { vendorId: params.id },
+        data: { vendorId: null },
+      })
+
+      await tx.assignment.updateMany({
+        where: { vendorId: params.id },
+        data: { vendorId: null },
+      })
+
+      await tx.vehicle.deleteMany({ where: { vendorId: params.id } })
+      await tx.vehicleVendor.delete({ where: { id: params.id } })
     })
+
+    return buildApiSuccess(null, 'Vendor deleted')
+  } catch (error) {
+    return handlePrismaApiError(error, 'Failed to delete vendor', 'Vendor could not be deleted')
   }
-
-  // 2. Unlink vendorId from drivers directly owned by this vendor
-  await prisma.driver.updateMany({
-    where: { vendorId: params.id },
-    data: { vendorId: null },
-  })
-
-  // 3. Delete the vehicles belonging to this vendor
-  await prisma.vehicle.deleteMany({ where: { vendorId: params.id } })
-
-  // 4. Clear vendorId from assignments (don't delete — preserve trip history)
-  await prisma.assignment.updateMany({
-    where: { vendorId: params.id },
-    data: { vendorId: null },
-  })
-
-  // 5. Delete the vendor
-  await prisma.vehicleVendor.delete({ where: { id: params.id } })
-
-  return buildApiSuccess(null, 'Vendor deleted')
 }

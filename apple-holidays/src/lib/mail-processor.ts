@@ -1,8 +1,7 @@
 import openai from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -761,8 +760,7 @@ async function buildAttachmentText(attachment: EmailAttachment): Promise<string>
 
   if (fileName.endsWith('.pdf')) {
     try {
-      const result = await pdfParse(attachment.buffer)
-      return result.text ?? ''
+      return await extractTextFromPdf(attachment.buffer)
     } catch { return '' }
   }
 
