@@ -9,7 +9,7 @@ import {
   Search, X, CheckCircle2, Phone, AlertTriangle, Users, Plane,
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, CreditCard, Info, Building2,
-  FileDown, MessageCircle, Send, ChevronRight, GripVertical,
+  FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -166,6 +166,7 @@ export default function AgendaPage() {
   const [sendSubject,     setSendSubject]    = useState('')
   const [sending,         setSending]        = useState(false)
   const [showPdfMenu,     setShowPdfMenu]    = useState(false)
+  const [downloadingWord, setDownloadingWord] = useState(false)
   // Rate input for driver assignment
   const [rateInput,         setRateInput]        = useState('')
   const [rateCurrencyInput, setRateCurrencyInput] = useState('USD')
@@ -212,6 +213,23 @@ export default function AgendaPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
     } finally { setSending(false) }
+  }
+
+  async function downloadWord() {
+    setDownloadingWord(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/agenda/word`)
+      if (!res.ok) throw new Error('Failed to generate Word file')
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `${ref}.docx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Download failed')
+    } finally { setDownloadingWord(false) }
   }
 
   const loadAgenda = useCallback(async () => {
@@ -563,6 +581,16 @@ export default function AgendaPage() {
                 </div>
               )}
             </div>
+
+            {/* Word Download */}
+            <button
+              onClick={downloadWord}
+              disabled={downloadingWord}
+              className="btn btn-secondary btn-sm flex items-center gap-1.5 disabled:opacity-60"
+            >
+              {downloadingWord ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              Download Word
+            </button>
 
             {/* WhatsApp — all users */}
             <button
