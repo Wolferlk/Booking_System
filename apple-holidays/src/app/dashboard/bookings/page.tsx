@@ -1,12 +1,13 @@
 'use client'
 
-import { Suspense, useEffect, useState, useCallback } from 'react'
+import { Suspense, useEffect, useState, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   Plus, Search, FileText, Loader2, ArrowRight, Users, Calendar,
   ArrowUp, ArrowDown, ArrowUpDown, Clock, MapPin,
   Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
+  Download, ChevronDown, Table2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -59,8 +60,102 @@ interface Booking {
   createdBy: { name: string; role: string }
   _count: { changeRequests: number }
   pnl: { id: string } | null
-  tourAgenda: { id: string } | null
+  tourAgenda: {
+    id: string
+    items?: { location: string; fromPoint: string | null; toPoint: string | null; details: string | null }[]
+  } | null
   operationCountry: string | null
+  // Deep-search context fields (only present when contentSearch is active)
+  flights?: { flightNo: string; airline: string | null; fromApt: string; toApt: string }[]
+  accommodations?: { hotel: string; city: string }[]
+  itineraryItems?: { title: string; description: string | null }[]
+}
+
+interface MatchSnippet {
+  type: 'passenger' | 'flight' | 'hotel' | 'itinerary' | 'agenda'
+  label: string
+  text: string
+}
+
+function getMatchSnippets(b: Booking, query: string): MatchSnippet[] {
+  if (!query) return []
+  const q = query.toLowerCase()
+  const snippets: MatchSnippet[] = []
+
+  b.passengers?.forEach(p => {
+    if (p.name.toLowerCase().includes(q))
+      snippets.push({ type: 'passenger', label: 'Passenger', text: p.name })
+  })
+
+  b.flights?.forEach(f => {
+    const raw = [f.flightNo, f.airline, f.fromApt, f.toApt].filter(Boolean).join(' ')
+    if (raw.toLowerCase().includes(q))
+      snippets.push({ type: 'flight', label: 'Flight', text: `${f.flightNo} · ${f.fromApt} → ${f.toApt}${f.airline ? ` (${f.airline})` : ''}` })
+  })
+
+  b.accommodations?.forEach(a => {
+    if ((a.hotel + ' ' + a.city).toLowerCase().includes(q))
+      snippets.push({ type: 'hotel', label: 'Hotel', text: `${a.hotel}, ${a.city}` })
+  })
+
+  b.itineraryItems?.forEach(it => {
+    const haystack = (it.title + ' ' + (it.description ?? '')).toLowerCase()
+    if (haystack.includes(q)) {
+      const src = it.title.toLowerCase().includes(q) ? it.title : (it.description ?? '')
+      snippets.push({ type: 'itinerary', label: 'Itinerary', text: snippet(src, q) })
+    }
+  })
+
+  b.tourAgenda?.items?.forEach(item => {
+    const parts = [item.location, item.fromPoint, item.toPoint].filter(Boolean) as string[]
+    const base = parts.join(' → ')
+    const haystack = (base + ' ' + (item.details ?? '')).toLowerCase()
+    if (haystack.includes(q)) {
+      const src = base.toLowerCase().includes(q) ? base : (item.details ?? '')
+      snippets.push({ type: 'agenda', label: 'Agenda', text: snippet(src, q) })
+    }
+  })
+
+  return snippets.slice(0, 6)
+}
+
+function snippet(text: string, query: string, pad = 28): string {
+  const idx = text.toLowerCase().indexOf(query.toLowerCase())
+  if (idx === -1) return text.slice(0, 80)
+  const start = Math.max(0, idx - pad)
+  const end   = Math.min(text.length, idx + query.length + pad)
+  return (start > 0 ? '…' : '') + text.slice(start, end) + (end < text.length ? '…' : '')
+}
+
+function Highlight({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>
+  const idx = text.toLowerCase().indexOf(query.toLowerCase())
+  if (idx === -1) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 text-yellow-900 font-semibold rounded-sm px-0.5 not-italic">
+        {text.slice(idx, idx + query.length)}
+      </mark>
+      {text.slice(idx + query.length)}
+    </>
+  )
+}
+
+const SNIPPET_STYLE: Record<MatchSnippet['type'], string> = {
+  passenger: 'bg-violet-50 text-violet-700 border-violet-200',
+  flight:    'bg-sky-50    text-sky-700    border-sky-200',
+  hotel:     'bg-amber-50  text-amber-700  border-amber-200',
+  itinerary: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  agenda:    'bg-blue-50   text-blue-700   border-blue-200',
+}
+
+const SNIPPET_ICON: Record<MatchSnippet['type'], string> = {
+  passenger: '👤',
+  flight:    '✈️',
+  hotel:     '🏨',
+  itinerary: '📋',
+  agenda:    '📍',
 }
 
 const COUNTRY_BADGE: Record<string, { label: string; color: string }> = {
@@ -85,12 +180,16 @@ function BookingsPageInner() {
   const searchParams = useSearchParams()
   const { countryFilter } = useCountryFilter()
 
-  const [bookings, setBookings]       = useState<Booking[]>([])
-  const [total, setTotal]             = useState(0)
-  const [loading, setLoading]         = useState(true)
-  const [search, setSearch]           = useState(searchParams.get('search') ?? '')
-  const [refSearch, setRefSearch]     = useState('')
-  const [status, setStatus]           = useState(searchParams.get('status') ?? '')
+  const [bookings, setBookings]         = useState<Booking[]>([])
+  const [total, setTotal]               = useState(0)
+  const [loading, setLoading]           = useState(true)
+  const [search, setSearch]             = useState(searchParams.get('search') ?? '')
+  const [refSearch, setRefSearch]       = useState('')
+  const [contentSearch, setContentSearch] = useState('')
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false)
+  const [downloadingExcel, setDownloadingExcel] = useState(false)
+  const downloadMenuRef = useRef<HTMLDivElement>(null)
+  const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
   const [dateFrom, setDateFrom]       = useState('')
   const [dateTo, setDateTo]           = useState('')
@@ -109,13 +208,14 @@ function BookingsPageInner() {
     setLoading(true)
     setSelected(new Set())   // clear selection on every fetch
     const params = new URLSearchParams()
-    if (search)                                         params.set('search',     search)
-    if (refSearch)                                      params.set('refSearch',  refSearch)
-    if (status)                                         params.set('status',     status)
-    if (dateFilter)                                     params.set('dateFilter', dateFilter)
-    if (dateFrom)                                       params.set('dateFrom',   dateFrom)
-    if (dateTo)                                         params.set('dateTo',     dateTo)
-    if (countryFilter && countryFilter !== 'ALL')       params.set('country',    countryFilter)
+    if (search)                                         params.set('search',        search)
+    if (refSearch)                                      params.set('refSearch',     refSearch)
+    if (contentSearch)                                  params.set('contentSearch', contentSearch)
+    if (status)                                         params.set('status',        status)
+    if (dateFilter)                                     params.set('dateFilter',    dateFilter)
+    if (dateFrom)                                       params.set('dateFrom',      dateFrom)
+    if (dateTo)                                         params.set('dateTo',        dateTo)
+    if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
     params.set('sortBy',  sortBy)
     params.set('sortDir', sortDir)
     params.set('page',    String(page))
@@ -130,7 +230,18 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, status, dateFilter, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
+  }, [search, refSearch, contentSearch, status, dateFilter, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
+
+  // Close download menu on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (downloadMenuRef.current && !downloadMenuRef.current.contains(e.target as Node)) {
+        setShowDownloadMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
@@ -202,6 +313,57 @@ function BookingsPageInner() {
   const role      = session?.user?.role
   const canCreate = !!role && role !== 'CLIENT'
   const canDelete = role === 'SUPER_ADMIN' || role === 'ULTRA_SUPER_ADMIN'
+
+  function buildPrintUrl(mode: 'full' | 'numbers') {
+    const params = new URLSearchParams()
+    params.set('mode', mode)
+    if (search)                                   params.set('search',        search)
+    if (refSearch)                                params.set('refSearch',     refSearch)
+    if (contentSearch)                            params.set('contentSearch', contentSearch)
+    if (status)                                   params.set('status',        status)
+    if (dateFilter)                               params.set('dateFilter',    dateFilter)
+    if (dateFrom)                                 params.set('dateFrom',      dateFrom)
+    if (dateTo)                                   params.set('dateTo',        dateTo)
+    if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
+    params.set('sortBy',  sortBy)
+    params.set('sortDir', sortDir)
+    return `/print/bookings-list?${params}`
+  }
+
+  async function downloadExcel() {
+    setDownloadingExcel(true)
+    setShowDownloadMenu(false)
+    try {
+      const params = new URLSearchParams()
+      if (search)                                   params.set('search',        search)
+      if (refSearch)                                params.set('refSearch',     refSearch)
+      if (contentSearch)                            params.set('contentSearch', contentSearch)
+      if (status)                                   params.set('status',        status)
+      if (dateFilter)                               params.set('dateFilter',    dateFilter)
+      if (dateFrom)                                 params.set('dateFrom',      dateFrom)
+      if (dateTo)                                   params.set('dateTo',        dateTo)
+      if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
+      params.set('sortBy',  sortBy)
+      params.set('sortDir', sortDir)
+
+      const res = await fetch(`/api/bookings/export?${params}`)
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      const cd   = res.headers.get('Content-Disposition') ?? ''
+      const match = cd.match(/filename="([^"]+)"/)
+      a.download = match ? match[1] : 'bookings-export.xlsx'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // silently ignore — user will see nothing downloaded
+    } finally {
+      setDownloadingExcel(false)
+    }
+  }
+
   const selectedCount = selected.size
   const selectedBookings = bookings.filter(b => selected.has(b.bookingRef))
 
@@ -211,11 +373,70 @@ function BookingsPageInner() {
         title="All Bookings"
         subtitle={`${total} total booking${total !== 1 ? 's' : ''}`}
         actions={
-          canCreate ? (
-            <Button onClick={() => router.push('/dashboard/bookings/new')} icon={<Plus className="w-4 h-4" />}>
-              New Booking
-            </Button>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {/* Download PDF */}
+            <div className="relative" ref={downloadMenuRef}>
+              <button
+                onClick={() => setShowDownloadMenu(v => !v)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Download PDF
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              {showDownloadMenu && (
+                <div className="absolute right-0 top-10 z-30 w-64 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider px-4 pt-3 pb-1">
+                    {total} booking{total !== 1 ? 's' : ''} · current filters
+                  </p>
+                  <div className="border-t border-slate-100">
+                    <button
+                      onClick={() => { setShowDownloadMenu(false); window.open(buildPrintUrl('full'), '_blank') }}
+                      className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-slate-50 text-sm text-slate-700 transition-colors text-left"
+                    >
+                      <FileText className="w-4 h-4 text-slate-400" />
+                      <div>
+                        <p className="font-semibold">Full Details</p>
+                        <p className="text-xs text-slate-400">Names, dates, amounts, status</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { setShowDownloadMenu(false); window.open(buildPrintUrl('numbers'), '_blank') }}
+                      className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-slate-50 text-sm text-slate-700 transition-colors text-left border-t border-slate-100"
+                    >
+                      <Hash className="w-4 h-4 text-slate-400" />
+                      <div>
+                        <p className="font-semibold">Numbers Only</p>
+                        <p className="text-xs text-slate-400">Booking refs, IS/VN/CNTL numbers</p>
+                      </div>
+                    </button>
+                  </div>
+                  <div className="border-t border-slate-200 bg-emerald-50/60">
+                    <button
+                      onClick={downloadExcel}
+                      disabled={downloadingExcel}
+                      className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-emerald-50 text-sm text-emerald-800 transition-colors text-left disabled:opacity-60"
+                    >
+                      {downloadingExcel
+                        ? <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+                        : <Table2 className="w-4 h-4 text-emerald-600" />
+                      }
+                      <div>
+                        <p className="font-semibold">{downloadingExcel ? 'Generating…' : 'Excel (.xlsx)'}</p>
+                        <p className="text-xs text-emerald-600">4 sheets: summary, flights, hotels, passengers</p>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {canCreate && (
+              <Button onClick={() => router.push('/dashboard/bookings/new')} icon={<Plus className="w-4 h-4" />}>
+                New Booking
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -277,6 +498,29 @@ function BookingsPageInner() {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* Row 3 — Content / deep search (hotels, flights, agenda, itinerary) + Created date range */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+              <input
+                type="text"
+                placeholder="Deep search — hotels, flights, agenda items, itinerary text…"
+                value={contentSearch}
+                onChange={e => { setContentSearch(e.target.value); setPage(1) }}
+                className="form-input pl-9 pr-9 border-violet-200 focus:border-violet-400 focus:ring-violet-200 placeholder:text-violet-300"
+              />
+              {contentSearch && (
+                <button
+                  type="button"
+                  onClick={() => { setContentSearch(''); setPage(1) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
             {/* Created date range */}
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -305,7 +549,7 @@ function BookingsPageInner() {
             </div>
           </div>
 
-          {/* Row 3 — Date period pills + Sort controls */}
+          {/* Row 4 — Date period pills + Sort controls */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <div className="flex items-center gap-1.5 flex-wrap">
               <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-0.5" />
@@ -413,13 +657,14 @@ function BookingsPageInner() {
                       </button>
                     </th>
                     <th>Pax</th>
-                    <th>Status</th>
+                    {!contentSearch && <th>Status</th>}
                     <th>
                       <button className="flex items-center whitespace-nowrap hover:text-brand-700 transition-colors" onClick={() => toggleSort('createdAt')}>
                         Created <SortIcon field="createdAt" sortBy={sortBy} sortDir={sortDir} />
                       </button>
                     </th>
-                    <th>Agenda</th>
+                    {!contentSearch && <th>Agenda</th>}
+                    {contentSearch && <th className="text-violet-600">Matched in</th>}
                     <th />
                   </tr>
                 </thead>
@@ -427,6 +672,7 @@ function BookingsPageInner() {
                   {bookings.map(b => {
                     const lead       = b.passengers.find(p => p.isLead) ?? b.passengers[0]
                     const isSelected = selected.has(b.bookingRef)
+                    const snippets   = getMatchSnippets(b, contentSearch)
                     return (
                       <tr
                         key={b.id}
@@ -510,8 +756,10 @@ function BookingsPageInner() {
                           </div>
                         </td>
 
-                        {/* Status */}
-                        <td><StatusBadge className="rounded-none" status={b.status} /></td>
+                        {/* Status — hidden during deep search */}
+                        {!contentSearch && (
+                          <td><StatusBadge className="rounded-none" status={b.status} /></td>
+                        )}
 
                         {/* Created */}
                         <td>
@@ -521,24 +769,50 @@ function BookingsPageInner() {
                           </div>
                         </td>
 
-                        {/* Agenda */}
-                        <td onClick={e => e.stopPropagation()}>
-                          {b.tourAgenda ? (
-                            <Link
-                              href={`/dashboard/bookings/${b.bookingRef}/agenda`}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors"
-                            >
-                              <MapPin className="w-3 h-3" /> Agenda
-                            </Link>
-                          ) : (
-                            <Link
-                              href={`/dashboard/bookings/${b.bookingRef}/agenda`}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 hover:bg-slate-100 transition-colors"
-                            >
-                              <MapPin className="w-3 h-3" /> View
-                            </Link>
-                          )}
-                        </td>
+                        {/* Agenda — hidden during deep search */}
+                        {!contentSearch && (
+                          <td onClick={e => e.stopPropagation()}>
+                            {b.tourAgenda ? (
+                              <Link
+                                href={`/dashboard/bookings/${b.bookingRef}/agenda`}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200 hover:bg-blue-100 transition-colors"
+                              >
+                                <MapPin className="w-3 h-3" /> Agenda
+                              </Link>
+                            ) : (
+                              <Link
+                                href={`/dashboard/bookings/${b.bookingRef}/agenda`}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200 hover:bg-slate-100 transition-colors"
+                              >
+                                <MapPin className="w-3 h-3" /> View
+                              </Link>
+                            )}
+                          </td>
+                        )}
+
+                        {/* Matched in — shown only during deep search */}
+                        {contentSearch && (
+                          <td onClick={e => e.stopPropagation()} className="max-w-[280px]">
+                            {snippets.length === 0 ? (
+                              <span className="text-xs text-slate-300 italic">—</span>
+                            ) : (
+                              <div className="flex flex-col gap-1">
+                                {snippets.map((s, si) => (
+                                  <span
+                                    key={si}
+                                    className={`inline-flex items-start gap-1 px-2 py-1 rounded border text-[11px] leading-snug ${SNIPPET_STYLE[s.type]}`}
+                                  >
+                                    <span className="flex-shrink-0 text-[10px] mt-0.5">{SNIPPET_ICON[s.type]}</span>
+                                    <span className="font-semibold flex-shrink-0">{s.label}:</span>
+                                    <span className="break-words min-w-0">
+                                      <Highlight text={s.text} query={contentSearch} />
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        )}
 
                         <td>
                           <ArrowRight className="w-4 h-4 text-slate-300" />

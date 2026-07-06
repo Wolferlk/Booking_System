@@ -16,7 +16,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const search = searchParams.get('search')
-  const refSearch = searchParams.get('refSearch')   // IS number / VN ref / agent ID
+  const refSearch = searchParams.get('refSearch')           // IS number / VN ref / agent ID
+  const contentSearch = searchParams.get('contentSearch')   // deep search in agenda/booking details
   const dateFrom = searchParams.get('dateFrom')     // createdAt range start
   const dateTo   = searchParams.get('dateTo')       // createdAt range end
   const page  = parseInt(searchParams.get('page')  ?? '1')
@@ -68,6 +69,39 @@ export async function GET(req: NextRequest) {
         { isNumber:       { contains: search } },
         { agentBookingId: { contains: search } },
         { passengers: { some: { name: { contains: search } } } },
+      ],
+    })
+  }
+
+  // Deep content search — searches inside flights, hotels, itinerary, agenda items
+  if (contentSearch) {
+    andClauses.push({
+      OR: [
+        { bookingRef:     { contains: contentSearch } },
+        { agent:          { contains: contentSearch } },
+        { isNumber:       { contains: contentSearch } },
+        { agentBookingId: { contains: contentSearch } },
+        { passengers:     { some: { name: { contains: contentSearch } } } },
+        { flights:        { some: { OR: [
+          { flightNo: { contains: contentSearch } },
+          { airline:  { contains: contentSearch } },
+          { fromApt:  { contains: contentSearch } },
+          { toApt:    { contains: contentSearch } },
+        ] } } },
+        { accommodations: { some: { OR: [
+          { hotel: { contains: contentSearch } },
+          { city:  { contains: contentSearch } },
+        ] } } },
+        { itineraryItems: { some: { OR: [
+          { title:       { contains: contentSearch } },
+          { description: { contains: contentSearch } },
+        ] } } },
+        { tourAgenda: { is: { items: { some: { OR: [
+          { location:  { contains: contentSearch } },
+          { fromPoint: { contains: contentSearch } },
+          { toPoint:   { contains: contentSearch } },
+          { details:   { contains: contentSearch } },
+        ] } } } } },
       ],
     })
   }
@@ -124,6 +158,31 @@ export async function GET(req: NextRequest) {
 
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 
+  const baseInclude = {
+    createdBy: { select: { id: true, name: true, role: true } },
+    _count: { select: { changeRequests: true } },
+    pnl: { select: { id: true } },
+  }
+
+  // When deep-searching, pull back extra context fields so the UI can show snippets
+  const include = contentSearch ? {
+    ...baseInclude,
+    passengers:      { select: { name: true, isLead: true } },
+    flights:         { select: { flightNo: true, airline: true, fromApt: true, toApt: true } },
+    accommodations:  { select: { hotel: true, city: true } },
+    itineraryItems:  { select: { title: true, description: true } },
+    tourAgenda: {
+      select: {
+        id: true,
+        items: { select: { location: true, fromPoint: true, toPoint: true, details: true } },
+      },
+    },
+  } : {
+    ...baseInclude,
+    passengers:  { where: { isLead: true }, take: 1 },
+    tourAgenda:  { select: { id: true } },
+  }
+
   const [total, bookings] = await Promise.all([
     prisma.booking.count({ where }),
     prisma.booking.findMany({
@@ -131,13 +190,7 @@ export async function GET(req: NextRequest) {
       orderBy: { [sortBy]: sortDir },
       skip: (page - 1) * limit,
       take: limit,
-      include: {
-        passengers: { where: { isLead: true }, take: 1 },
-        createdBy: { select: { id: true, name: true, role: true } },
-        _count: { select: { changeRequests: true } },
-        pnl: { select: { id: true } },
-        tourAgenda: { select: { id: true } },
-      },
+      include,
     }),
   ])
 
