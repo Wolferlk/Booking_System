@@ -7,7 +7,7 @@ import {
   Plus, Search, FileText, Loader2, ArrowRight, Users, Calendar,
   ArrowUp, ArrowDown, ArrowUpDown, Clock, MapPin,
   Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
-  Download, ChevronDown,
+  Download, ChevronDown, Table2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -187,6 +187,7 @@ function BookingsPageInner() {
   const [refSearch, setRefSearch]       = useState('')
   const [contentSearch, setContentSearch] = useState('')
   const [showDownloadMenu, setShowDownloadMenu] = useState(false)
+  const [downloadingExcel, setDownloadingExcel] = useState(false)
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
@@ -328,6 +329,41 @@ function BookingsPageInner() {
     params.set('sortDir', sortDir)
     return `/print/bookings-list?${params}`
   }
+
+  async function downloadExcel() {
+    setDownloadingExcel(true)
+    setShowDownloadMenu(false)
+    try {
+      const params = new URLSearchParams()
+      if (search)                                   params.set('search',        search)
+      if (refSearch)                                params.set('refSearch',     refSearch)
+      if (contentSearch)                            params.set('contentSearch', contentSearch)
+      if (status)                                   params.set('status',        status)
+      if (dateFilter)                               params.set('dateFilter',    dateFilter)
+      if (dateFrom)                                 params.set('dateFrom',      dateFrom)
+      if (dateTo)                                   params.set('dateTo',        dateTo)
+      if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
+      params.set('sortBy',  sortBy)
+      params.set('sortDir', sortDir)
+
+      const res = await fetch(`/api/bookings/export?${params}`)
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      const cd   = res.headers.get('Content-Disposition') ?? ''
+      const match = cd.match(/filename="([^"]+)"/)
+      a.download = match ? match[1] : 'bookings-export.xlsx'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // silently ignore — user will see nothing downloaded
+    } finally {
+      setDownloadingExcel(false)
+    }
+  }
+
   const selectedCount = selected.size
   const selectedBookings = bookings.filter(b => selected.has(b.bookingRef))
 
@@ -372,6 +408,22 @@ function BookingsPageInner() {
                       <div>
                         <p className="font-semibold">Numbers Only</p>
                         <p className="text-xs text-slate-400">Booking refs, IS/VN/CNTL numbers</p>
+                      </div>
+                    </button>
+                  </div>
+                  <div className="border-t border-slate-200 bg-emerald-50/60">
+                    <button
+                      onClick={downloadExcel}
+                      disabled={downloadingExcel}
+                      className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-emerald-50 text-sm text-emerald-800 transition-colors text-left disabled:opacity-60"
+                    >
+                      {downloadingExcel
+                        ? <Loader2 className="w-4 h-4 text-emerald-600 animate-spin" />
+                        : <Table2 className="w-4 h-4 text-emerald-600" />
+                      }
+                      <div>
+                        <p className="font-semibold">{downloadingExcel ? 'Generating…' : 'Excel (.xlsx)'}</p>
+                        <p className="text-xs text-emerald-600">4 sheets: summary, flights, hotels, passengers</p>
                       </div>
                     </button>
                   </div>
