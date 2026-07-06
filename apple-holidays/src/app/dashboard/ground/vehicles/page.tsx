@@ -146,7 +146,7 @@ export default function VehiclesPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-950">
-      <Header />
+      <Header title="Vehicles" />
       <main className="flex-1 p-4 sm:p-6 max-w-7xl mx-auto w-full space-y-5">
 
         {/* Page header */}
@@ -266,7 +266,7 @@ export default function VehiclesPage() {
 
       {/* Add / Edit Modal */}
       {modal && (
-        <Modal onClose={() => setModal(null)} title={modal === 'new' ? 'Add Vehicle' : 'Edit Vehicle'}>
+        <Modal open={!!modal} onClose={() => setModal(null)} title={modal === 'new' ? 'Add Vehicle' : 'Edit Vehicle'}>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div>
