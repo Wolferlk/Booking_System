@@ -9,7 +9,7 @@ import {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
-  HardDrive, FolderOpen, X,
+  HardDrive, FolderOpen, X, Bot,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -31,7 +31,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
-  ShieldAlert, Table2, Radio, HardDrive, FolderOpen,
+  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
@@ -67,6 +67,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',       href: '/dashboard/bookings',                 icon: 'FileText' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
+    { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',             icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',              icon: 'CreditCard' },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',         icon: 'Mail' },
@@ -98,6 +99,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Ground Review',      href: '/dashboard/ground/review',    icon: 'ClipboardCheck' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',         icon: 'Table2' },
+    { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',    icon: 'Bot' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',      icon: 'BarChart2' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',   icon: 'Download' },
@@ -124,6 +126,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',            href: '/dashboard/ground/drivers',     icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',     icon: 'Truck' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',        icon: 'Phone' },
+    { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',     icon: 'Bot' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',       icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',        icon: 'CreditCard' },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',   icon: 'Mail' },
@@ -140,6 +143,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Assignments',        href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'Ground Review',      href: '/dashboard/ground/review',     icon: 'ClipboardCheck' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',        icon: 'Ticket' },
+    { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',    icon: 'Bot' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',      icon: 'BarChart2' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',   icon: 'Download' },

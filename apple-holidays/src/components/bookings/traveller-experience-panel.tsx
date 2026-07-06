@@ -522,7 +522,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [editItemForm, setEditItemForm] = useState({ call_date: '', day_brief: '', scheduled_at: '', status: '' })
   const [editItemLoading, setEditItemLoading] = useState(false)
   const [addDayOpen, setAddDayOpen]     = useState(false)
-  const [addDayForm, setAddDayForm]     = useState({ call_date: '', brief: '', scheduled_at: '' })
+  const [addDayForm, setAddDayForm]     = useState({ call_date: '', brief: '', scheduled_at: '', day_no: '' })
   const [addDayLoading, setAddDayLoading] = useState(false)
 
   // ── Jobs ──────────────────────────────────────────────────────────────────
@@ -719,14 +719,22 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     if (!addDayForm.call_date) { toast.error('Select a date'); return }
     setAddDayLoading(true)
     try {
-      const body: Record<string, unknown> = { call_date: addDayForm.call_date }
+      // Compute day_no from existing schedule if not supplied
+      const nextDayNo = addDayForm.day_no
+        ? Number(addDayForm.day_no)
+        : (schedule.length > 0 ? Math.max(...schedule.map(s => s.day_no)) + 1 : 1)
+      const body: Record<string, unknown> = {
+        call_date: addDayForm.call_date,
+        day_no: nextDayNo,
+      }
       if (addDayForm.brief) body.brief = addDayForm.brief
       if (addDayForm.scheduled_at) body.scheduled_at = new Date(addDayForm.scheduled_at).toISOString()
       const res = await teProxy(`services/${bookingRef}/schedule`, 'POST', body)
-      if (res.ok === false && !res.schedule) throw new Error(res.message ?? 'Failed')
+      if (res.error) throw new Error(res.error)
+      if (res.ok === false) throw new Error(res.message ?? 'Failed to add day call')
       toast.success('Day-call added')
       setAddDayOpen(false)
-      setAddDayForm({ call_date: '', brief: '', scheduled_at: '' })
+      setAddDayForm({ call_date: '', brief: '', scheduled_at: '', day_no: '' })
       await loadService()
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to add') }
     finally { setAddDayLoading(false) }
@@ -1123,17 +1131,21 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   </button>
                 ) : (
                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                    <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5 text-violet-500" /> Add Day Call</p>
+                    <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Plus className="w-3.5 h-3.5 text-violet-500" /> Add Extra Day Call</p>
                     <div className="grid grid-cols-2 gap-3">
                       <div><label className="form-label">Date *</label><input type="date" className="form-input" value={addDayForm.call_date} onChange={e => setAddDayForm(f => ({ ...f, call_date: e.target.value }))} /></div>
-                      <div><label className="form-label">Exact Time (optional)</label><input type="datetime-local" className="form-input" value={addDayForm.scheduled_at} onChange={e => setAddDayForm(f => ({ ...f, scheduled_at: e.target.value }))} /></div>
-                      <div className="col-span-2"><label className="form-label">Brief</label><input className="form-input" placeholder="e.g. Extra check-in after arrival" value={addDayForm.brief} onChange={e => setAddDayForm(f => ({ ...f, brief: e.target.value }))} /></div>
+                      <div>
+                        <label className="form-label">Day No. <span className="font-normal text-slate-400">(auto if blank)</span></label>
+                        <input type="number" min="1" className="form-input" placeholder={String(schedule.length > 0 ? Math.max(...schedule.map(s => s.day_no)) + 1 : 1)} value={addDayForm.day_no} onChange={e => setAddDayForm(f => ({ ...f, day_no: e.target.value }))} />
+                      </div>
+                      <div><label className="form-label">Exact Call Time (optional)</label><input type="datetime-local" className="form-input" value={addDayForm.scheduled_at} onChange={e => setAddDayForm(f => ({ ...f, scheduled_at: e.target.value }))} /></div>
+                      <div><label className="form-label">Brief (bot context)</label><input className="form-input" placeholder="e.g. Extra check-in after arrival" value={addDayForm.brief} onChange={e => setAddDayForm(f => ({ ...f, brief: e.target.value }))} /></div>
                     </div>
                     <div className="flex gap-2">
                       <button onClick={addDayCall} disabled={addDayLoading} className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors">
                         {addDayLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding…</> : <><Plus className="w-3.5 h-3.5" /> Add</>}
                       </button>
-                      <button onClick={() => { setAddDayOpen(false); setAddDayForm({ call_date: '', brief: '', scheduled_at: '' }) }} className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
+                      <button onClick={() => { setAddDayOpen(false); setAddDayForm({ call_date: '', brief: '', scheduled_at: '', day_no: '' }) }} className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
                     </div>
                   </div>
                 )}
