@@ -22,8 +22,14 @@ export async function POST(req: NextRequest) {
   const session = await getVendorSession()
   if (!session) return buildApiError('Unauthorized', 401)
 
-  const { type, plateNo, brand, model, capacity, photoOutside, photoInside } = await req.json()
+  const { type, plateNo, brand, model, capacity, photoOutside, photoInside, driverId } = await req.json()
   if (!plateNo?.trim()) return buildApiError('Plate number is required')
+
+  // Validate driver belongs to this vendor
+  if (driverId) {
+    const driver = await prisma.driver.findFirst({ where: { id: driverId, vendorId: session.id } })
+    if (!driver) return buildApiError('Driver not found in your fleet')
+  }
 
   try {
     const vehicle = await prisma.vehicle.create({
@@ -39,6 +45,13 @@ export async function POST(req: NextRequest) {
       },
       include: { driver: true },
     })
+
+    // Assign driver to the newly created vehicle
+    if (driverId) {
+      // Unlink this driver from any previous vehicle first
+      await prisma.driver.updateMany({ where: { id: driverId }, data: { vehicleId: vehicle.id } })
+    }
+
     return buildApiSuccess(vehicle, 'Vehicle added')
   } catch {
     return buildApiError('A vehicle with that plate number already exists')
