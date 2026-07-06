@@ -8,6 +8,7 @@ import {
   ArrowUp, ArrowDown, ArrowUpDown, Clock, MapPin,
   Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
   Download, ChevronDown, Table2,
+  Cloud, FolderOpen, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -26,6 +27,17 @@ const STATUSES = Object.keys(STATUS_LABELS) as BookingStatus[]
 type SortField = 'arrivalDate' | 'departureDate' | 'createdAt' | 'updatedAt'
 type SortDir   = 'asc' | 'desc'
 type DateFilter = '' | 'today' | 'this_week' | 'this_month'
+type ScanState  = 'idle' | 'scanning' | 'not_found' | 'done' | 'error'
+
+const SCAN_STEPS = [
+  { label: 'Searching OneDrive',        desc: 'Looking for booking folder across all configured drives' },
+  { label: 'Found booking folder',       desc: 'Located folder — reading TC and PNL documents' },
+  { label: 'Extracting booking data',    desc: 'AI is reading documents and building the booking record' },
+  { label: 'Building travel agenda',     desc: 'Generating itinerary and agenda from booking details' },
+  { label: 'Complete',                   desc: 'Booking successfully imported from OneDrive' },
+]
+
+const BOOKING_REF_RE = /^(VN|IS|SG|MY|AH)\d{4,}$/i
 
 const DATE_FILTER_OPTIONS: { value: DateFilter; label: string }[] = [
   { value: '',           label: 'All' },
@@ -204,6 +216,17 @@ function BookingsPageInner() {
   const [deleting, setDeleting]       = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
+  // ── OneDrive auto-scan state ──────────────────────────────────────────────
+  const [scanState, setScanState]           = useState<ScanState>('idle')
+  const [scanStep, setScanStep]             = useState(0)
+  const [scanError, setScanError]           = useState<string | null>(null)
+  const [scanBookingRef, setScanBookingRef] = useState<string | null>(null)
+  const scanSearchRef  = useRef<string>('')
+  const autoScanTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const normalizedSearch   = search.trim()
+  const isBookingRefSearch = BOOKING_REF_RE.test(normalizedSearch)
+
   const fetchBookings = useCallback(async () => {
     setLoading(true)
     setSelected(new Set())   // clear selection on every fetch
@@ -244,6 +267,77 @@ function BookingsPageInner() {
   }, [])
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
+
+  // Reset scan when the search query changes
+  useEffect(() => {
+    setScanState('idle')
+    setScanStep(0)
+    setScanError(null)
+    setScanBookingRef(null)
+  }, [search])
+
+  // Auto-trigger OneDrive scan (debounced 1.2 s) when no results + ref-like query
+  useEffect(() => {
+    if (autoScanTimer.current) clearTimeout(autoScanTimer.current)
+
+    if (!loading && bookings.length === 0 && isBookingRefSearch && scanState === 'idle') {
+      autoScanTimer.current = setTimeout(() => {
+        const ref = normalizedSearch.replace(/\s+/g, '').toUpperCase()
+        scanSearchRef.current = ref
+        void runOneDriveScan(ref)
+      }, 1200)
+    }
+
+    return () => { if (autoScanTimer.current) clearTimeout(autoScanTimer.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, bookings.length, isBookingRefSearch, scanState, normalizedSearch])
+
+  async function runOneDriveScan(bookingRef: string) {
+    setScanState('scanning')
+    setScanStep(0)
+    setScanError(null)
+    setScanBookingRef(bookingRef)
+
+    // Fake step progression while the API call runs
+    const t1 = setTimeout(() => setScanStep(s => Math.max(s, 1)),  3500)
+    const t2 = setTimeout(() => setScanStep(s => Math.max(s, 2)),  9000)
+    const t3 = setTimeout(() => setScanStep(s => Math.max(s, 3)), 15000)
+
+    try {
+      const res  = await fetch('/api/onedrive/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ bookingRef }),
+      })
+      const json = await res.json()
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3)
+
+      // Ignore result if user has already changed the search
+      if (scanSearchRef.current !== bookingRef) return
+
+      if (!json.success) {
+        setScanState('error')
+        setScanError(json.error ?? 'Scan failed — please try again')
+        return
+      }
+
+      const tot = (json.data?.total ?? {}) as Record<string, number>
+      if ((tot.bookingsCreated ?? 0) > 0 || (tot.bookingsUpdated ?? 0) > 0) {
+        setScanStep(4)
+        setScanState('done')
+        setTimeout(() => fetchBookings(), 900)
+      } else {
+        setScanStep(s => Math.max(s, 1))
+        setScanState('not_found')
+      }
+    } catch {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3)
+      if (scanSearchRef.current === bookingRef) {
+        setScanState('error')
+        setScanError('Network error — please try again')
+      }
+    }
+  }
 
   function toggleSort(field: SortField) {
     setPage(1)
@@ -614,15 +708,177 @@ function BookingsPageInner() {
               <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
             </div>
           ) : bookings.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-slate-400">
-              <FileText className="w-10 h-10 mb-3 opacity-30" />
-              <p className="text-sm font-medium">No bookings found</p>
-              {canCreate && (
-                <Link href="/dashboard/bookings/new" className="mt-3 text-sm text-brand-600 hover:underline">
-                  Create your first booking
-                </Link>
-              )}
-            </div>
+            isBookingRefSearch || scanState !== 'idle' ? (
+              /* ── OneDrive auto-scan progress panel ─────────────────────── */
+              <div className="py-10 px-8">
+                <div className="max-w-lg mx-auto">
+
+                  {/* Header */}
+                  <div className="flex items-start gap-4 mb-8">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0 border transition-all duration-500 ${
+                      scanState === 'done'      ? 'bg-emerald-50 border-emerald-200' :
+                      scanState === 'error'     ? 'bg-red-50 border-red-200' :
+                      scanState === 'not_found' ? 'bg-amber-50 border-amber-200' :
+                                                  'bg-brand-50 border-brand-100'
+                    }`}>
+                      {scanState === 'done'      ? <CheckCircle2 className="w-6 h-6 text-emerald-500" /> :
+                       scanState === 'error'     ? <AlertCircle  className="w-6 h-6 text-red-500" /> :
+                       scanState === 'not_found' ? <FolderOpen   className="w-6 h-6 text-amber-500" /> :
+                       scanState === 'scanning'  ? <Cloud        className="w-6 h-6 text-brand-500 animate-pulse" /> :
+                                                   <Cloud        className="w-6 h-6 text-brand-400" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-semibold text-slate-800">
+                        {scanState === 'done'      ? 'Booking imported successfully!' :
+                         scanState === 'not_found' ? 'Booking not found in OneDrive' :
+                         scanState === 'error'     ? 'Scan encountered an error' :
+                         scanState === 'scanning'  ? `Scanning OneDrive for ${scanBookingRef ?? normalizedSearch.toUpperCase()}…` :
+                                                     `Preparing to scan for ${normalizedSearch.toUpperCase()}`}
+                      </p>
+                      <p className="text-sm text-slate-400 mt-0.5">
+                        {scanState === 'done'      ? `${scanBookingRef} was found and created in the system` :
+                         scanState === 'not_found' ? `No folder matching ${scanBookingRef} was found across all drives` :
+                         scanState === 'error'     ? (scanError ?? 'Something went wrong during the scan') :
+                         scanState === 'scanning'  ? 'This usually takes 10–30 seconds depending on file sizes' :
+                                                     'Auto-scan will begin shortly…'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Step list */}
+                  <div className="space-y-3 mb-8">
+                    {SCAN_STEPS.map((step, i) => {
+                      const isCompleted = scanState === 'done' || i < scanStep
+                      const isActive    = i === scanStep && (scanState === 'scanning')
+                      const isError     = i === scanStep && scanState === 'error'
+                      const isPending   = !isCompleted && !isActive && !isError
+                      return (
+                        <div
+                          key={i}
+                          className={`flex items-start gap-3 transition-all duration-300 ${
+                            isPending && scanState === 'scanning' ? 'opacity-40' : 'opacity-100'
+                          }`}
+                        >
+                          <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 border transition-all duration-300 ${
+                            isCompleted ? 'bg-emerald-50 border-emerald-200' :
+                            isActive    ? 'bg-brand-50 border-brand-200' :
+                            isError     ? 'bg-red-50 border-red-200' :
+                                          'bg-slate-50 border-slate-200'
+                          }`}>
+                            {isCompleted ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            ) : isActive ? (
+                              <Loader2 className="w-3.5 h-3.5 text-brand-500 animate-spin" />
+                            ) : isError ? (
+                              <AlertCircle className="w-3.5 h-3.5 text-red-500" />
+                            ) : (
+                              <div className="w-2 h-2 rounded-full bg-slate-300" />
+                            )}
+                          </div>
+
+                          <div className="flex-1 pt-0.5 min-w-0">
+                            <p className={`text-sm font-medium transition-colors ${
+                              isCompleted ? 'text-emerald-700' :
+                              isActive    ? 'text-brand-700' :
+                              isError     ? 'text-red-600' :
+                                            'text-slate-400'
+                            }`}>{step.label}</p>
+                            {(isActive || isCompleted) && (
+                              <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{step.desc}</p>
+                            )}
+                          </div>
+
+                          {isActive && (
+                            <div className="flex-shrink-0 pt-1">
+                              {i === 0 && <Cloud        className="w-4 h-4 text-brand-300" />}
+                              {i === 1 && <FolderOpen   className="w-4 h-4 text-brand-300" />}
+                              {i === 2 && <Sparkles     className="w-4 h-4 text-brand-300" />}
+                              {i === 3 && <MapPin       className="w-4 h-4 text-brand-300" />}
+                              {i === 4 && <CheckCircle2 className="w-4 h-4 text-emerald-300" />}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Done action bar */}
+                  {scanState === 'done' && (
+                    <div className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-emerald-800">Booking ready</p>
+                        <p className="text-xs text-emerald-600 mt-0.5">Loading booking list…</p>
+                      </div>
+                      <Link
+                        href={`/dashboard/bookings/${scanBookingRef}`}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-colors whitespace-nowrap"
+                      >
+                        View Booking <ArrowRight className="w-3.5 h-3.5" />
+                      </Link>
+                    </div>
+                  )}
+
+                  {/* Not found action bar */}
+                  {scanState === 'not_found' && (
+                    <div className="space-y-3">
+                      <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl">
+                        <p className="text-sm font-semibold text-amber-800 mb-1">Not found in OneDrive</p>
+                        <p className="text-xs text-amber-700 leading-relaxed">
+                          No folder for <span className="font-mono font-semibold">{scanBookingRef}</span> was found across any configured drive.
+                          Make sure the folder is named correctly (e.g.{' '}
+                          <span className="font-mono">{scanBookingRef} - Client Name</span>).
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setScanState('idle')}
+                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" /> Retry Scan
+                        </button>
+                        {canCreate && (
+                          <button
+                            onClick={() => router.push('/dashboard/bookings/new')}
+                            className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white bg-brand-600 hover:bg-brand-500 rounded-xl transition-colors"
+                          >
+                            <Plus className="w-3.5 h-3.5" /> Create Manually
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error action bar */}
+                  {scanState === 'error' && (
+                    <div className="space-y-3">
+                      <div className="p-4 bg-red-50 border border-red-100 rounded-2xl">
+                        <p className="text-sm font-semibold text-red-800 mb-1">Scan failed</p>
+                        <p className="text-xs text-red-700">{scanError ?? 'An unexpected error occurred.'}</p>
+                      </div>
+                      <button
+                        onClick={() => setScanState('idle')}
+                        className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" /> Try Again
+                      </button>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            ) : (
+              /* ── Regular empty state ───────────────────────────────────── */
+              <div className="flex flex-col items-center justify-center h-48 text-slate-400">
+                <FileText className="w-10 h-10 mb-3 opacity-30" />
+                <p className="text-sm font-medium">No bookings found</p>
+                {canCreate && (
+                  <Link href="/dashboard/bookings/new" className="mt-3 text-sm text-brand-600 hover:underline">
+                    Create your first booking
+                  </Link>
+                )}
+              </div>
+            )
           ) : (
             <>
             <div className="overflow-x-auto">
