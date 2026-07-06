@@ -30,6 +30,7 @@ import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
+import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -114,6 +115,9 @@ export default function BookingDetailPage() {
   const [mealPrefsDirty, setMealPrefsDirty] = useState(false)
   const [savingMealPrefs, setSavingMealPrefs] = useState(false)
   const [expandedMeal, setExpandedMeal] = useState<Set<string>>(new Set())
+
+  // AI Calls & Feedback modal
+  const [aiCallsModal, setAiCallsModal] = useState(false)
 
   // Customer feedback modal (triggered on Complete Trip)
   const [feedbackModal, setFeedbackModal] = useState(false)
@@ -1200,7 +1204,15 @@ Wishing you a wonderful trip! ✈️
                   <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
                 </button>
               )}
-              {['TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              {['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+                <button
+                  onClick={async () => { await loadTestMode(); setAiCallsModal(true) }}
+                  className="btn btn-sm bg-violet-600 text-white border border-violet-700 hover:bg-violet-700 flex items-center gap-1.5"
+                >
+                  <Phone className="w-3.5 h-3.5" /> AI Calls &amp; Feedback
+                </button>
+              )}
+              {['TE_USER', 'GT_TE_USER','SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openEmailModal}
                   className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
@@ -2969,6 +2981,25 @@ Wishing you a wonderful trip! ✈️
       {/* ── WhatsApp mini chat widget ─────────────────────────────────── */}
       {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
         <WhatsAppMiniChat bookingRef={ref} booking={booking} />
+      )}
+
+      {/* ── AI Calls & Feedback modal ──────────────────────────────────── */}
+      {aiCallsModal && (
+        <AICallsFeedbackModal
+          open={aiCallsModal}
+          onClose={() => setAiCallsModal(false)}
+          bookingRef={ref}
+          bookingInfo={{
+            agentEmail:     booking.agentEmail   as string | null,
+            contactEmail:   booking.contactEmail as string | null,
+            agent:          booking.agent        as string | null,
+            arrivalDate:    booking.arrivalDate  ? String(booking.arrivalDate) : null,
+            departureDate:  booking.departureDate ? String(booking.departureDate) : null,
+          }}
+          testMode={testMode}
+          testEmail1={testSettings.testEmail1}
+          testEmail2={testSettings.testEmail2}
+        />
       )}
 
       {/* ── Send Email modal ───────────────────────────────────────────── */}

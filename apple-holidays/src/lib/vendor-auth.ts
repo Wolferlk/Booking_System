@@ -50,11 +50,14 @@ export async function getVendorSession() {
   const vendorId = parseVendorToken(token)
   if (!vendorId) return null
   const vendor = await prisma.vehicleVendor.findUnique({
-    where: { id: vendorId, isRegistered: true, isActive: true },
+    where: { id: vendorId },
     select: {
       id: true, name: true, email: true, phone: true,
       whatsappPhone: true, address: true, country: true,
+      isRegistered: true, isActive: true,
     },
   })
-  return vendor
+  if (!vendor || !vendor.isRegistered || !vendor.isActive) return null
+  const { isRegistered: _, isActive: __, ...rest } = vendor
+  return rest
 }

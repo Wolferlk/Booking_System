@@ -207,6 +207,16 @@ async function jobOneDrivePoll() {
   }
 }
 
+async function jobFeedbackSummary() {
+  try {
+    const { runAutoFeedbackSummaries } = await import('./send-feedback-summary')
+    const result = await runAutoFeedbackSummaries()
+    console.log(`[Scheduler] feedback-summary — sent: ${result.sent}, skipped: ${result.skipped}, errors: ${result.errors}`)
+  } catch (err) {
+    console.error('[Scheduler] feedback-summary error:', err instanceof Error ? err.message : err)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Master switch ─────────────────────────────────────────────────────────────
 const CRON_ENABLED = true
@@ -227,6 +237,7 @@ export function startCronJobs() {
 
   const THREE_MIN  = 3  * 60  * 1000
   const FIVE_MIN   = 5  * 60  * 1000
+  const SIX_HRS    = 6  * 3600 * 1000
   const TWELVE_HRS = 12 * 3600 * 1000
 
   // IMAP IDLE watcher — real-time push for accounts.payable@aahaas.com
@@ -239,8 +250,9 @@ export function startCronJobs() {
   setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
 
   setInterval(() => { jobProcessMailboxes() }, FIVE_MIN)
-  setInterval(() => { jobOneDrivePoll() },     THREE_MIN)  // OneDrive every 3 min
+  setInterval(() => { jobOneDrivePoll() },     THREE_MIN)   // OneDrive every 3 min
   setInterval(() => { jobRenewWebhook() },     TWELVE_HRS)
+  setInterval(() => { jobFeedbackSummary() },  SIX_HRS)     // Feedback summaries every 6 h
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h')
 }
