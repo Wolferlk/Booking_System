@@ -508,19 +508,22 @@ export async function sendFeedbackSummaryEmail(
   let ccEmails: string[]
 
   if (useTestData) {
-    toEmail  = testEmail1
-    ccEmails = [testEmail2]
+    const t1 = testEmail1.trim()
+    if (!t1) throw new Error('Test mode is on but test_email_1 is not configured in Settings → Email Settings')
+    toEmail  = t1
+    ccEmails = testEmail2.trim() ? [testEmail2.trim()] : []
   } else {
-    const agentEmail = opts?.agentEmailOverride ?? (booking.agentEmail as string | null) ?? ''
+    const agentEmail = (opts?.agentEmailOverride ?? (booking.agentEmail as string | null) ?? '').trim()
     if (!agentEmail) throw new Error('No agent email on file for this booking')
     toEmail = agentEmail
 
     const settingsCc = feedbackCcRaw
       .split(',').map(e => e.trim()).filter(e => e.includes('@'))
-    const extraCc    = opts?.extraCc ?? []
-    const autoCc     = booking.contactEmail && booking.contactEmail !== toEmail ? [booking.contactEmail as string] : []
+    const extraCc    = (opts?.extraCc ?? []).map(e => e.trim()).filter(e => e.includes('@'))
+    const autoCc     = booking.contactEmail && (booking.contactEmail as string).trim() !== toEmail
+      ? [(booking.contactEmail as string).trim()] : []
     const combined   = [...settingsCc, ...extraCc, ...autoCc, 'confirm.booking@aahaas.com']
-    ccEmails = combined.filter((a, i) => combined.indexOf(a) === i && a !== toEmail)
+    ccEmails = combined.filter((a, i) => a && combined.indexOf(a) === i && a !== toEmail)
   }
 
   await sendMailViaGraph({

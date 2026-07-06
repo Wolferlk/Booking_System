@@ -18,6 +18,11 @@ interface SendMailOptions {
 }
 
 export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
+  const to = opts.to?.trim()
+  if (!to) throw new Error('sendMailViaGraph: recipient "to" is empty')
+
+  const cleanCc = (opts.cc ?? []).map(a => a?.trim()).filter((a): a is string => !!a && a.includes('@') && a !== to)
+
   const token = await getGraphToken()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,11 +34,11 @@ export async function sendMailViaGraph(opts: SendMailOptions): Promise<void> {
     },
     toRecipients: [
       {
-        emailAddress: { address: opts.to },
+        emailAddress: { address: to },
       },
     ],
-    ...(opts.cc && opts.cc.length > 0
-      ? { ccRecipients: opts.cc.map(addr => ({ emailAddress: { address: addr } })) }
+    ...(cleanCc.length > 0
+      ? { ccRecipients: cleanCc.map(addr => ({ emailAddress: { address: addr } })) }
       : {}),
   }
 
