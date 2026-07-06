@@ -21,6 +21,7 @@ interface Settings {
   less_credit_mode?: string
   auto_mail_enabled?: string
   auto_onedrive_enabled?: string
+  ai_feedback_cc?: string
   // AI Token Controls
   ai_auto_agenda_generate?: string
   ai_pnl_auto_extract?: string
@@ -411,6 +412,48 @@ export default function ConfigPage() {
               <p>Turning off automation does not affect manual scans or the admin OneDrive monitor page — only the automatic scheduled processing is paused.</p>
             </div>
 
+          </CardBody>
+        </Card>
+
+        {/* ── AI Call Bot — Feedback Summary CC ── */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Bot className="w-4 h-4 text-violet-500" /> AI Call Bot — Feedback Summary Email
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              When you click <strong>"Review &amp; Send Summary"</strong> on a booking, the feedback summary email is sent to the agent automatically. Configure who else should always receive a CC copy.
+            </p>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+                <Mail className="w-3.5 h-3.5 text-violet-500" />
+                Global CC Addresses <span className="font-normal text-slate-400">(comma-separated)</span>
+              </label>
+              <input
+                type="text"
+                defaultValue={settings.ai_feedback_cc ?? ''}
+                onBlur={e => {
+                  const v = e.target.value.trim()
+                  if (v !== (settings.ai_feedback_cc ?? '')) saveSetting('ai_feedback_cc', v)
+                }}
+                placeholder="manager@aahaas.com, ops@aahaas.com"
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-400 font-mono"
+              />
+              <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                These addresses are always CC&apos;d in addition to any per-booking CC recipients. The agent&apos;s email and customer contact email are always added automatically from the booking.
+                In test mode, this list is ignored and emails go to the test addresses only.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-violet-100 bg-violet-50 p-3">
+              <p className="text-xs text-violet-700 leading-relaxed font-medium flex items-start gap-2">
+                <Bot className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                The feedback summary email includes: day-by-day call history, sentiment analysis, hotel / meals / driver / vehicle ratings, issue highlights, AI summaries, and full call transcripts — all in a branded HTML email.
+              </p>
+            </div>
           </CardBody>
         </Card>
 
