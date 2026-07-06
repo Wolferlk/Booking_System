@@ -170,6 +170,7 @@ export default function AgendaPage() {
   const [rateInput,         setRateInput]        = useState('')
   const [rateCurrencyInput, setRateCurrencyInput] = useState('USD')
   const [pnlRates,          setPnlRates]         = useState<PnlRateSuggestion[]>([])
+  const [vendorSearch,      setVendorSearch]      = useState('')
 
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
@@ -513,6 +514,11 @@ export default function AgendaPage() {
       d.phone.includes(driverSearch) ||
       d.vehicle?.plateNo?.toLowerCase().includes(driverSearch.toLowerCase())
     )
+  )
+
+  const filteredVendors = vendors.filter(v =>
+    v.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
+    (v.phone && v.phone.includes(vendorSearch))
   )
 
   function toggleSection(key: string) {
@@ -1142,294 +1148,6 @@ export default function AgendaPage() {
                     </div>
                   )}
 
-                  {/* Driver / Vendor assignment panel */}
-                  {isAssigning && (
-                    <div className="mt-4 pt-4 border-t border-slate-100">
-                      {/* Header */}
-                      <div className="flex items-center justify-between mb-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-700">Assign Driver</p>
-                          {item.date && (
-                            <p className="text-xs text-slate-400 mt-0.5">
-                              {item.date && `Availability check for `}<strong>{formatDate(item.date)}</strong>
-                            </p>
-                          )}
-                        </div>
-                        <button onClick={() => setAssigningIdx(null)} className="text-slate-400 hover:text-slate-600">
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      {/* Mode tabs */}
-                      <div className="flex gap-1 p-1 bg-slate-100 rounded-lg mb-4">
-                        <button
-                          onClick={() => setAssignMode('driver')}
-                          className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-1.5 rounded-md font-medium transition-colors ${
-                            assignMode === 'driver' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          <Car className="w-3.5 h-3.5" /> Driver
-                        </button>
-                        <button
-                          onClick={() => setAssignMode('vendor')}
-                          className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-1.5 rounded-md font-medium transition-colors ${
-                            assignMode === 'vendor' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                        >
-                          <Building2 className="w-3.5 h-3.5" /> Vendor
-                        </button>
-                      </div>
-
-                      {/* ── Rate input ── */}
-                      <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
-                        <p className="text-[11px] font-semibold text-emerald-700 mb-2">💰 Driver Rate (MMT Cost)</p>
-                        {pnlRates.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mb-2">
-                            {pnlRates.map((r, ri) => (
-                              <button key={ri} onClick={() => setRateInput(String(r.mmtRate))}
-                                className="text-[10px] px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-700 font-medium transition-colors">
-                                {r.activity.length > 22 ? r.activity.slice(0, 22) + '…' : r.activity} · {r.mmtRate}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                          <select value={rateCurrencyInput} onChange={e => setRateCurrencyInput(e.target.value)}
-                            className="form-select text-xs py-1 w-20">
-                            {['USD','VND','SGD','MYR','LKR','AUD','GBP'].map(c => <option key={c}>{c}</option>)}
-                          </select>
-                          <input type="number" value={rateInput} onChange={e => setRateInput(e.target.value)}
-                            placeholder="0.00" className="form-input text-sm flex-1 py-1" step="0.01" min="0" />
-                        </div>
-                      </div>
-
-                      {assignMode === 'driver' ? (
-                        <>
-                          <div className="relative mb-3">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                            <input value={driverSearch} onChange={e => setDriverSearch(e.target.value)}
-                              placeholder="Search by name, phone, or plate…"
-                              className="form-input pl-9 text-sm py-2" />
-                          </div>
-
-                          {loadingDrivers ? (
-                            <div className="flex justify-center py-6">
-                              <Loader2 className="w-5 h-5 text-brand-400 animate-spin" />
-                            </div>
-                          ) : (
-                            <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                              {filteredDrivers.length === 0 ? (
-                                <p className="text-sm text-slate-400 text-center py-4">No active drivers found</p>
-                              ) : (
-                                filteredDrivers.map(d => {
-                                  const isSelected = items[i]?.assignment?.driverId === d.id
-                                  const isBusy     = d.isBusyOnDate ?? false
-                                  return (
-                                    <div key={d.id} className="space-y-1">
-                                      <button
-                                        onClick={() => setItems(is => is.map((x, j) => j === i ? {
-                                          ...x,
-                                          assignment: {
-                                            driverId: d.id, vendorId: null, vendorName: null,
-                                            driverName: d.name, driverPhone: d.phone,
-                                            vehicleType: d.vehicle?.type ?? '', vehiclePlate: d.vehicle?.plateNo ?? '',
-                                            driverRate: rateInput ? Number(rateInput) : null,
-                                            rateCurrency: rateCurrencyInput || 'USD',
-                                          },
-                                        } : x))}
-                                        className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
-                                          isSelected ? 'bg-brand-50 border-2 border-brand-300' :
-                                          isBusy ? 'bg-red-50 border border-red-200 hover:bg-red-100' :
-                                          'bg-slate-50 hover:bg-slate-100 border border-transparent'
-                                        }`}
-                                      >
-                                        <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isBusy ? 'bg-red-100' : 'bg-blue-100'}`}>
-                                          <span className={`font-bold text-sm ${isBusy ? 'text-red-700' : 'text-blue-700'}`}>{d.name.slice(0, 1)}</span>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <div className="flex items-center gap-2">
-                                            <p className="font-semibold text-sm text-slate-800">{d.name}</p>
-                                            {isBusy && (
-                                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">
-                                                <AlertTriangle className="w-3 h-3" /> BUSY {d.busyBookings?.join(', ')}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <p className="text-xs text-slate-500">
-                                            {d.phone}{d.vehicle && ` · ${d.vehicle.brand ?? ''} ${d.vehicle.model ?? ''} ${d.vehicle.plateNo}`.trim()}
-                                          </p>
-                                        </div>
-                                        {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
-                                      </button>
-                                      {isSelected && items.length > 1 && (
-                                        <button onClick={() => setDriverForAllTours(d)}
-                                          className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition-colors">
-                                          <UsersRound className="w-3.5 h-3.5" />
-                                          Set {d.name} for All {items.length} Tour Items
-                                        </button>
-                                      )}
-                                    </div>
-                                  )
-                                })
-                              )}
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        /* ── VENDOR MODE ── */
-                        <div className="space-y-3">
-                          {/* Vendor selector */}
-                          <div>
-                            <label className="form-label text-xs">Vendor</label>
-                            <select
-                              className="form-select text-sm"
-                              value={selectedVendorId}
-                              onChange={e => {
-                                setSelectedVendorId(e.target.value)
-                                setVendorDriverForm({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
-                                loadVendorDrivers(e.target.value)
-                              }}
-                            >
-                              <option value="">— Select vendor —</option>
-                              {vendors.map(v => (
-                                <option key={v.id} value={v.id}>{v.name}{!v.phone ? '' : ` · ${v.phone}`}</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {/* Vendor's registered drivers */}
-                          {selectedVendorId && (
-                            <div>
-                              <label className="form-label text-xs">Select Driver (from vendor fleet)</label>
-                              {loadingVendorDrivers ? (
-                                <div className="flex items-center gap-2 py-2">
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" />
-                                  <span className="text-xs text-slate-400">Loading drivers…</span>
-                                </div>
-                              ) : vendorDrivers.length > 0 ? (
-                                <div className="space-y-1.5 max-h-48 overflow-y-auto mb-1">
-                                  {vendorDrivers.map(d => {
-                                    const isSelected = vendorDriverForm.driverName === d.name && vendorDriverForm.driverPhone === d.phone
-                                    return (
-                                      <button
-                                        key={d.id}
-                                        type="button"
-                                        onClick={() => setVendorDriverForm({
-                                          driverName:   d.name,
-                                          driverPhone:  d.phone,
-                                          vehicleType:  d.vehicle?.type   ?? '',
-                                          vehiclePlate: d.vehicle?.plateNo ?? '',
-                                        })}
-                                        className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left text-sm transition-all ${
-                                          isSelected
-                                            ? 'bg-brand-50 border-2 border-brand-300'
-                                            : 'bg-slate-50 hover:bg-slate-100 border border-transparent'
-                                        }`}
-                                      >
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-brand-100' : 'bg-blue-100'}`}>
-                                          <span className={`font-bold text-xs ${isSelected ? 'text-brand-700' : 'text-blue-700'}`}>{d.name.slice(0,1)}</span>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                          <p className="font-semibold text-slate-800 text-sm">{d.name}</p>
-                                          <p className="text-xs text-slate-500">{d.phone}{d.vehicle ? ` · ${d.vehicle.type} ${d.vehicle.plateNo}` : ''}</p>
-                                        </div>
-                                        {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-slate-400 py-1 italic">No registered drivers for this vendor — enter manually below</p>
-                              )}
-                            </div>
-                          )}
-
-                          {/* Manual override / additional details */}
-                          <div>
-                            <label className="form-label text-xs">{selectedVendorId && vendorDrivers.length > 0 ? 'Override / Manual Entry' : 'Driver Details'}</label>
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="form-label text-xs">Driver Name</label>
-                                <input
-                                  className="form-input text-sm py-1.5"
-                                  placeholder="Driver full name"
-                                  value={vendorDriverForm.driverName}
-                                  onChange={e => setVendorDriverForm(f => ({ ...f, driverName: e.target.value }))}
-                                />
-                              </div>
-                              <div>
-                                <label className="form-label text-xs">Driver Phone</label>
-                                <input
-                                  className="form-input text-sm py-1.5"
-                                  placeholder="+84 ..."
-                                  value={vendorDriverForm.driverPhone}
-                                  onChange={e => setVendorDriverForm(f => ({ ...f, driverPhone: e.target.value }))}
-                                />
-                              </div>
-                              <div>
-                                <label className="form-label text-xs">Vehicle Type</label>
-                                <input
-                                  className="form-input text-sm py-1.5"
-                                  placeholder="Van, Bus, Car…"
-                                  value={vendorDriverForm.vehicleType}
-                                  onChange={e => setVendorDriverForm(f => ({ ...f, vehicleType: e.target.value }))}
-                                />
-                              </div>
-                              <div>
-                                <label className="form-label text-xs">Plate No</label>
-                                <input
-                                  className="form-input text-sm py-1.5 font-mono"
-                                  placeholder="51A-12345"
-                                  value={vendorDriverForm.vehiclePlate}
-                                  onChange={e => setVendorDriverForm(f => ({ ...f, vehiclePlate: e.target.value }))}
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          <Button size="sm" variant="secondary" onClick={() => applyVendorAssignment(i)}>
-                            Apply
-                          </Button>
-                        </div>
-                      )}
-
-                      {(item.assignment?.driverName || item.assignment?.vendorId || (assignMode === 'vendor' && selectedVendorId)) && (
-                        <div className="mt-3 flex gap-2">
-                          <Button size="sm" onClick={() => {
-                            if (!item.id) return
-                            if (assignMode === 'vendor' && selectedVendorId) {
-                              const vendor = vendors.find(v => v.id === selectedVendorId)
-                              const vendorAssignment: AgendaItem['assignment'] = {
-                                driverId:    null,
-                                vendorId:    selectedVendorId,
-                                vendorName:  vendor?.name ?? '',
-                                driverName:  vendorDriverForm.driverName  || undefined,
-                                driverPhone: vendorDriverForm.driverPhone || undefined,
-                                vehicleType: vendorDriverForm.vehicleType || undefined,
-                                vehiclePlate: vendorDriverForm.vehiclePlate || undefined,
-                                driverRate:   rateInput ? Number(rateInput) : null,
-                                rateCurrency: rateCurrencyInput || 'USD',
-                              }
-                              saveAssignment(item.id, i, vendorAssignment)
-                            } else {
-                              saveAssignment(item.id, i)
-                            }
-                          }}>
-                            Save Assignment
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => {
-                            setItems(is => is.map((x, j) => j === i ? { ...x, assignment: null } : x))
-                            setSelectedVendorId('')
-                            setVendorDriverForm({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
-                            setRateInput('')
-                            setRateCurrencyInput('USD')
-                          }}>
-                            Clear
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               </div>
             </Card>
@@ -1446,6 +1164,326 @@ export default function AgendaPage() {
           </Button>
         )}
       </div>
+
+      {/* ── ASSIGN DRIVER / VENDOR MODAL ── */}
+      {assigningIdx !== null && (
+        <Modal
+          open
+          onClose={() => setAssigningIdx(null)}
+          title="Assign Driver"
+          size="lg"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <div>
+                {(items[assigningIdx]?.assignment?.driverName || items[assigningIdx]?.assignment?.vendorId) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const idx = assigningIdx
+                      const it  = items[idx]
+                      if (!it?.id) {
+                        setItems(is => is.map((x, j) => j === idx ? { ...x, assignment: null } : x))
+                        setAssigningIdx(null)
+                        return
+                      }
+                      saveAssignment(it.id, idx, null)
+                    }}
+                  >
+                    Remove Assignment
+                  </Button>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" onClick={() => setAssigningIdx(null)}>Cancel</Button>
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const idx = assigningIdx
+                    const it  = items[idx]
+                    if (!it?.id) { toast.error('Save the agenda first before assigning'); return }
+                    if (assignMode === 'vendor' && selectedVendorId) {
+                      const vendor = vendors.find(v => v.id === selectedVendorId)
+                      const vendorAssignment: AgendaItem['assignment'] = {
+                        driverId:     null,
+                        vendorId:     selectedVendorId,
+                        vendorName:   vendor?.name ?? '',
+                        driverName:   vendorDriverForm.driverName  || undefined,
+                        driverPhone:  vendorDriverForm.driverPhone || undefined,
+                        vehicleType:  vendorDriverForm.vehicleType || undefined,
+                        vehiclePlate: vendorDriverForm.vehiclePlate || undefined,
+                        driverRate:   rateInput ? Number(rateInput) : null,
+                        rateCurrency: rateCurrencyInput || 'USD',
+                      }
+                      saveAssignment(it.id, idx, vendorAssignment)
+                    } else {
+                      saveAssignment(it.id, idx)
+                    }
+                  }}
+                >
+                  Save Assignment
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            {/* Availability check subtitle */}
+            {items[assigningIdx]?.date && (
+              <p className="text-xs text-slate-400 -mt-2">
+                Availability check for <strong className="text-slate-600">{formatDate(items[assigningIdx].date)}</strong>
+              </p>
+            )}
+
+            {/* Mode tabs */}
+            <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
+              <button
+                onClick={() => setAssignMode('driver')}
+                className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-1.5 rounded-md font-medium transition-colors ${
+                  assignMode === 'driver' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Car className="w-3.5 h-3.5" /> Driver
+              </button>
+              <button
+                onClick={() => setAssignMode('vendor')}
+                className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-1.5 rounded-md font-medium transition-colors ${
+                  assignMode === 'vendor' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <Building2 className="w-3.5 h-3.5" /> Vendor
+              </button>
+            </div>
+
+            {/* Rate input */}
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+              <p className="text-[11px] font-semibold text-emerald-700 mb-2">💰 Driver Rate (MMT Cost)</p>
+              {pnlRates.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {pnlRates.map((r, ri) => (
+                    <button key={ri} onClick={() => setRateInput(String(r.mmtRate))}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-white border border-emerald-200 hover:bg-emerald-100 text-emerald-700 font-medium transition-colors">
+                      {r.activity.length > 22 ? r.activity.slice(0, 22) + '…' : r.activity} · {r.mmtRate}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <select value={rateCurrencyInput} onChange={e => setRateCurrencyInput(e.target.value)}
+                  className="form-select text-xs py-1 w-20">
+                  {['USD','VND','SGD','MYR','LKR','AUD','GBP'].map(c => <option key={c}>{c}</option>)}
+                </select>
+                <input type="number" value={rateInput} onChange={e => setRateInput(e.target.value)}
+                  placeholder="0.00" className="form-input text-sm flex-1 py-1" step="0.01" min="0" />
+              </div>
+            </div>
+
+            {assignMode === 'driver' ? (
+              <>
+                {/* Driver search */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input value={driverSearch} onChange={e => setDriverSearch(e.target.value)}
+                    placeholder="Search by name, phone, or plate…"
+                    className="form-input pl-9 text-sm py-2" />
+                </div>
+
+                {loadingDrivers ? (
+                  <div className="flex justify-center py-6">
+                    <Loader2 className="w-5 h-5 text-brand-400 animate-spin" />
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                    {filteredDrivers.length === 0 ? (
+                      <p className="text-sm text-slate-400 text-center py-4">No active drivers found</p>
+                    ) : (
+                      filteredDrivers.map(d => {
+                        const idx        = assigningIdx
+                        const isSelected = items[idx]?.assignment?.driverId === d.id
+                        const isBusy     = d.isBusyOnDate ?? false
+                        return (
+                          <div key={d.id} className="space-y-1">
+                            <button
+                              onClick={() => setItems(is => is.map((x, j) => j === idx ? {
+                                ...x,
+                                assignment: {
+                                  driverId: d.id, vendorId: null, vendorName: null,
+                                  driverName: d.name, driverPhone: d.phone,
+                                  vehicleType: d.vehicle?.type ?? '', vehiclePlate: d.vehicle?.plateNo ?? '',
+                                  driverRate: rateInput ? Number(rateInput) : null,
+                                  rateCurrency: rateCurrencyInput || 'USD',
+                                },
+                              } : x))}
+                              className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                                isSelected ? 'bg-brand-50 border-2 border-brand-300' :
+                                isBusy     ? 'bg-red-50 border border-red-200 hover:bg-red-100' :
+                                             'bg-slate-50 hover:bg-slate-100 border border-transparent'
+                              }`}
+                            >
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isBusy ? 'bg-red-100' : 'bg-blue-100'}`}>
+                                <span className={`font-bold text-sm ${isBusy ? 'text-red-700' : 'text-blue-700'}`}>{d.name.slice(0, 1)}</span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="font-semibold text-sm text-slate-800">{d.name}</p>
+                                  {isBusy && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-100 text-red-700">
+                                      <AlertTriangle className="w-3 h-3" /> BUSY {d.busyBookings?.join(', ')}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-slate-500">
+                                  {d.phone}{d.vehicle && ` · ${d.vehicle.brand ?? ''} ${d.vehicle.model ?? ''} ${d.vehicle.plateNo}`.trim()}
+                                </p>
+                              </div>
+                              {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
+                            </button>
+                            {isSelected && items.length > 1 && (
+                              <button onClick={() => setDriverForAllTours(d)}
+                                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition-colors">
+                                <UsersRound className="w-3.5 h-3.5" />
+                                Set {d.name} for All {items.length} Tour Items
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* ── VENDOR MODE ── */
+              <div className="space-y-3">
+                {/* Vendor list with search */}
+                <div>
+                  <div className="relative mb-2">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      value={vendorSearch}
+                      onChange={e => setVendorSearch(e.target.value)}
+                      placeholder="Search vendors…"
+                      className="form-input pl-9 text-sm py-2"
+                    />
+                  </div>
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                    {filteredVendors.length === 0 ? (
+                      <p className="text-sm text-slate-400 text-center py-4">No vendors found</p>
+                    ) : (
+                      filteredVendors.map(v => {
+                        const isVendorSelected = selectedVendorId === v.id
+                        return (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedVendorId(v.id)
+                              setVendorDriverForm({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
+                              loadVendorDrivers(v.id)
+                            }}
+                            className={`w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all ${
+                              isVendorSelected
+                                ? 'bg-brand-50 border-2 border-brand-300'
+                                : 'bg-slate-50 hover:bg-slate-100 border border-transparent'
+                            }`}
+                          >
+                            <div className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 ${isVendorSelected ? 'bg-brand-100' : 'bg-violet-100'}`}>
+                              <span className={`font-bold text-sm ${isVendorSelected ? 'text-brand-700' : 'text-violet-700'}`}>{v.name.slice(0, 1)}</span>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-sm text-slate-800">{v.name}</p>
+                              <p className="text-xs text-slate-500">{v.phone ?? '—'}{v.country ? ` · ${v.country}` : ''}</p>
+                            </div>
+                            {isVendorSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
+                          </button>
+                        )
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Vendor's registered drivers */}
+                {selectedVendorId && (
+                  <div>
+                    <label className="form-label text-xs">Select Driver (from vendor fleet)</label>
+                    {loadingVendorDrivers ? (
+                      <div className="flex items-center gap-2 py-2">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-brand-400" />
+                        <span className="text-xs text-slate-400">Loading drivers…</span>
+                      </div>
+                    ) : vendorDrivers.length > 0 ? (
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                        {vendorDrivers.map(d => {
+                          const isSelected = vendorDriverForm.driverName === d.name && vendorDriverForm.driverPhone === d.phone
+                          return (
+                            <button
+                              key={d.id}
+                              type="button"
+                              onClick={() => setVendorDriverForm({
+                                driverName:   d.name,
+                                driverPhone:  d.phone,
+                                vehicleType:  d.vehicle?.type    ?? '',
+                                vehiclePlate: d.vehicle?.plateNo ?? '',
+                              })}
+                              className={`w-full flex items-center gap-3 p-2.5 rounded-xl text-left text-sm transition-all ${
+                                isSelected
+                                  ? 'bg-brand-50 border-2 border-brand-300'
+                                  : 'bg-slate-50 hover:bg-slate-100 border border-transparent'
+                              }`}
+                            >
+                              <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-brand-100' : 'bg-blue-100'}`}>
+                                <span className={`font-bold text-xs ${isSelected ? 'text-brand-700' : 'text-blue-700'}`}>{d.name.slice(0,1)}</span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-slate-800 text-sm">{d.name}</p>
+                                <p className="text-xs text-slate-500">{d.phone}{d.vehicle ? ` · ${d.vehicle.type} ${d.vehicle.plateNo}` : ''}</p>
+                              </div>
+                              {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-400 py-1 italic">No registered drivers for this vendor — enter details manually below</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Manual driver details */}
+                <div>
+                  <label className="form-label text-xs">{selectedVendorId && vendorDrivers.length > 0 ? 'Override / Manual Entry' : 'Driver Details'}</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="form-label text-xs">Driver Name</label>
+                      <input className="form-input text-sm py-1.5" placeholder="Driver full name"
+                        value={vendorDriverForm.driverName}
+                        onChange={e => setVendorDriverForm(f => ({ ...f, driverName: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="form-label text-xs">Driver Phone</label>
+                      <input className="form-input text-sm py-1.5" placeholder="+94 …"
+                        value={vendorDriverForm.driverPhone}
+                        onChange={e => setVendorDriverForm(f => ({ ...f, driverPhone: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="form-label text-xs">Vehicle Type</label>
+                      <input className="form-input text-sm py-1.5" placeholder="Van, Bus, Car…"
+                        value={vendorDriverForm.vehicleType}
+                        onChange={e => setVendorDriverForm(f => ({ ...f, vehicleType: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="form-label text-xs">Plate No</label>
+                      <input className="form-input text-sm py-1.5 font-mono" placeholder="CA-1234"
+                        value={vendorDriverForm.vehiclePlate}
+                        onChange={e => setVendorDriverForm(f => ({ ...f, vehiclePlate: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {/* ── SEND AGENDA MODAL ── */}
       <Modal
