@@ -13,9 +13,8 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolveDriveByKey, DRIVE_CONFIGS } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { extractBookingFromText } from '@/lib/openai'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 60
@@ -65,8 +64,7 @@ export async function POST(
     if (lower.endsWith('.docx') || lower.endsWith('.doc')) {
       text = await extractTextFromDocx(buffer)
     } else if (lower.endsWith('.pdf')) {
-      const result = await pdfParse(buffer)
-      text = result.text ?? ''
+      text = await extractTextFromPdf(buffer)
     } else if (lower.endsWith('.txt') || lower.endsWith('.csv')) {
       text = buffer.toString('utf-8')
     }

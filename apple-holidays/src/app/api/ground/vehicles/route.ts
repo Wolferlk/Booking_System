@@ -33,11 +33,21 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json()
-  const { type, plateNo, brand, model, capacity, description, photoOutside, photoInside, vendorId } = body
+  const { type, plateNo, brand, model, capacity, description, photoOutside, photoInside, vendorId, driverId } = body
   if (!type || !plateNo) return buildApiError('type and plateNo are required')
 
   let vehicle
   try {
+    if (driverId) {
+      const driver = await prisma.driver.findFirst({
+        where: {
+          id: driverId,
+          ...(vendorId ? { vendorId } : {}),
+        },
+      })
+      if (!driver) return buildApiError('Driver not found')
+    }
+
     vehicle = await prisma.vehicle.create({
       data: {
         type,
@@ -52,6 +62,20 @@ export async function POST(req: NextRequest) {
       },
       include: { driver: true, vendor: true },
     })
+
+    if (driverId) {
+      await prisma.driver.updateMany({
+        where: { id: driverId },
+        data: { vehicleId: vehicle.id },
+      })
+      vehicle = await prisma.vehicle.findUnique({
+        where: { id: vehicle.id },
+        include: {
+          driver: { select: { id: true, name: true, phone: true, photoUrl: true } },
+          vendor: true,
+        },
+      })
+    }
   } catch (error) {
     return handlePrismaApiError(error, 'Failed to add vehicle', 'Vehicle plate number already exists')
   }

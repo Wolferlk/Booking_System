@@ -22,11 +22,10 @@ import {
   type DriveItem,
 } from '@/lib/graph-client'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractBookingFromEmail } from '@/lib/mail-processor'
 import { classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string; numpages: number }>
 import { detectCountryFromRef, detectCountryFromPath } from '@/lib/country-detection'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
@@ -605,18 +604,23 @@ async function processTCFile(
 ): Promise<{ isNew: boolean }> {
   console.log(`[OneDrive] Processing TC: ${item.name} → ${bookingRef}`)
 
-  if (/\.pdf$/i.test(item.name)) {
-    // PDF TC files can't be parsed without a PDF text extractor — just ensure folder URL is stored
-    const existing = await prisma.booking.findUnique({ where: { bookingRef } })
-    if (existing && folderUrl) {
-      await prisma.booking.update({ where: { bookingRef }, data: { onedriveFolderUrl: folderUrl } })
-    }
-    console.log(`[OneDrive] ${bookingRef}: TC is PDF — skipped text extraction`)
-    return { isNew: false }
-  }
-
   const buffer = await downloadDriveItem(driveId, item.id)
-  const text   = await extractTextFromDocx(buffer)
+  let text: string
+
+  if (/\.pdf$/i.test(item.name)) {
+    console.log(`[OneDrive] ${bookingRef}: TC is PDF — extracting text`)
+    text = await extractTextFromPdf(buffer)
+    if (!text || text.trim().length < 20) {
+      console.warn(`[OneDrive] ${bookingRef}: PDF TC has no extractable text (scanned image?) — storing folder URL only`)
+      const existing = await prisma.booking.findUnique({ where: { bookingRef } })
+      if (existing && folderUrl) {
+        await prisma.booking.update({ where: { bookingRef }, data: { onedriveFolderUrl: folderUrl } })
+      }
+      return { isNew: false }
+    }
+  } else {
+    text = await extractTextFromDocx(buffer)
+  }
 
   const extracted = await extractBookingFromEmail(text, 'TOUR_CONFIRMATION')
 
@@ -766,8 +770,7 @@ async function processPNLFile(
 
   if (/\.pdf$/i.test(item.name)) {
     console.log(`[OneDrive] ${bookingRef}: PNL is PDF — extracting text then AI`)
-    const pdfData = await pdfParse(buffer)
-    const text    = pdfData.text
+    const text = await extractTextFromPdf(buffer)
     if (!text || text.trim().length < 20) {
       console.warn(`[OneDrive] ${bookingRef}: PDF PNL has no extractable text (scanned image?)`)
       return 0

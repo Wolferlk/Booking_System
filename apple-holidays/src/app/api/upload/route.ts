@@ -4,9 +4,8 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { extractBookingFromText, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, extractConfirmationTickets } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { extractTextFromXlsx, parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
 export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
@@ -72,8 +71,7 @@ export async function POST(req: NextRequest) {
     extractedText = buffer.toString('utf-8')
   } else if (fileName.endsWith('.pdf')) {
     try {
-      const result = await pdfParse(buffer)
-      extractedText = result.text ?? ''
+      extractedText = await extractTextFromPdf(buffer)
     } catch {
       extractedText = ''
     }

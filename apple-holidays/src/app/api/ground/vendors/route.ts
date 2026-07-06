@@ -25,8 +25,37 @@ export async function GET(req: NextRequest) {
     where: effectiveCountry ? { country: { in: countryScope(effectiveCountry)! } } : {},
     include: {
       vehicles: {
-        include: { driver: { select: { id: true, name: true, phone: true } } },
+        include: {
+          driver: {
+            select: {
+              id: true,
+              name: true,
+              phone: true,
+              photoUrl: true,
+              licenseNo: true,
+              isActive: true,
+            },
+          },
+        },
         orderBy: { plateNo: 'asc' },
+      },
+      drivers: {
+        include: {
+          vehicle: {
+            select: {
+              id: true,
+              plateNo: true,
+              type: true,
+              brand: true,
+              model: true,
+              capacity: true,
+              photoOutside: true,
+              photoInside: true,
+              isActive: true,
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
       },
     },
     orderBy: { name: 'asc' },

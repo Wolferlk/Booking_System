@@ -16,10 +16,9 @@ import { downloadDriveItem } from '@/lib/graph-client'
 import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extractISPnlFromText, detectISPnl, extractFlightsFromImage, extractConfirmationTickets, type IsPnlData } from '@/lib/openai'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
+import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
 
 export const dynamic = 'force-dynamic'
 export async function POST(
@@ -129,7 +128,7 @@ export async function POST(
     let savedIsPnlData: IsPnlData | null = null
 
     if (/\.pdf$/i.test(itemName)) {
-      const text = (await pdfParse(buffer)).text ?? ''
+      const text = await extractTextFromPdf(buffer)
       if (text.trim().length < 20) return buildApiError('PDF has no extractable text (scanned?)', 422)
       if (detectISPnl(text)) {
         const { isPnlData, lineItems } = await extractISPnlFromText(text, ref)

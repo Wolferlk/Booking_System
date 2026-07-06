@@ -14,10 +14,37 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 
   const body = await req.json()
-  const { type, plateNo, brand, model, capacity, description, photoOutside, photoInside, isActive, vendorId } = body
+  const { type, plateNo, brand, model, capacity, description, photoOutside, photoInside, isActive, vendorId, driverId } = body
 
   let vehicle
   try {
+    if (driverId !== undefined) {
+      const driver = driverId
+        ? await prisma.driver.findFirst({
+            where: {
+              id: driverId,
+              ...(vendorId ? { vendorId } : {}),
+            },
+          })
+        : null
+
+      if (driverId && !driver) {
+        return buildApiError('Driver not found')
+      }
+
+      await prisma.driver.updateMany({
+        where: { vehicleId: params.id },
+        data: { vehicleId: null },
+      })
+
+      if (driverId) {
+        await prisma.driver.updateMany({
+          where: { id: driverId },
+          data: { vehicleId: params.id },
+        })
+      }
+    }
+
     vehicle = await prisma.vehicle.update({
       where: { id: params.id },
       data: {
@@ -32,7 +59,10 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
         ...(isActive !== undefined && { isActive }),
         ...(vendorId !== undefined && { vendorId: vendorId || null }),
       },
-      include: { driver: true, vendor: true },
+      include: {
+        driver: { select: { id: true, name: true, phone: true, photoUrl: true } },
+        vendor: true,
+      },
     })
   } catch (error) {
     return handlePrismaApiError(error, 'Failed to update vehicle', 'Vehicle plate number already exists')
