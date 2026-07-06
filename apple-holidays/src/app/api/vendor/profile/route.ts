@@ -7,57 +7,67 @@ import { getVendorSession } from '@/lib/vendor-auth'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const session = await getVendorSession()
-  if (!session) return buildApiError('Unauthorized', 401)
+  try {
+    const session = await getVendorSession()
+    if (!session) return buildApiError('Unauthorized', 401)
 
-  const vendor = await prisma.vehicleVendor.findUnique({
-    where: { id: session.id },
-    select: {
-      id: true, name: true, email: true, phone: true,
-      whatsappPhone: true, address: true, country: true, isRegistered: true,
-      bankName: true, bankAccountNo: true, bankHolder: true, bankBranch: true, bankCode: true,
-    },
-  })
-  return buildApiSuccess(vendor)
+    const vendor = await prisma.vehicleVendor.findUnique({
+      where: { id: session.id },
+      select: {
+        id: true, name: true, email: true, phone: true,
+        whatsappPhone: true, address: true, country: true, isRegistered: true,
+        bankName: true, bankAccountNo: true, bankHolder: true, bankBranch: true, bankCode: true,
+      },
+    })
+    return buildApiSuccess(vendor)
+  } catch (err) {
+    console.error('[vendor/profile GET]', err)
+    return buildApiError(err instanceof Error ? err.message : 'Server error', 500)
+  }
 }
 
 export async function PUT(req: NextRequest) {
-  const session = await getVendorSession()
-  if (!session) return buildApiError('Unauthorized', 401)
+  try {
+    const session = await getVendorSession()
+    if (!session) return buildApiError('Unauthorized', 401)
 
-  const {
-    name, email, phone, whatsappPhone, address,
-    bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
-    currentPassword, newPassword,
-  } = await req.json()
-  if (!name?.trim()) return buildApiError('Name is required')
+    const {
+      name, email, phone, whatsappPhone, address,
+      bankName, bankAccountNo, bankHolder, bankBranch, bankCode,
+      currentPassword, newPassword,
+    } = await req.json()
+    if (!name?.trim()) return buildApiError('Name is required')
 
-  const updates: Record<string, unknown> = {
-    name: name.trim(),
-    email: email?.trim() || null,
-    phone: phone?.trim() || null,
-    whatsappPhone: whatsappPhone?.trim() || null,
-    address: address?.trim() || null,
-    bankName: bankName?.trim() || null,
-    bankAccountNo: bankAccountNo?.trim() || null,
-    bankHolder: bankHolder?.trim() || null,
-    bankBranch: bankBranch?.trim() || null,
-    bankCode: bankCode?.trim() || null,
+    const updates: Record<string, unknown> = {
+      name: name.trim(),
+      email: email?.trim() || null,
+      phone: phone?.trim() || null,
+      whatsappPhone: whatsappPhone?.trim() || null,
+      address: address?.trim() || null,
+      bankName: bankName?.trim() || null,
+      bankAccountNo: bankAccountNo?.trim() || null,
+      bankHolder: bankHolder?.trim() || null,
+      bankBranch: bankBranch?.trim() || null,
+      bankCode: bankCode?.trim() || null,
+    }
+
+    if (newPassword) {
+      if (newPassword.length < 6) return buildApiError('New password must be at least 6 characters')
+      const vendor = await prisma.vehicleVendor.findUnique({ where: { id: session.id } })
+      if (!vendor?.password) return buildApiError('Cannot verify current password')
+      const valid = await bcrypt.compare(currentPassword ?? '', vendor.password)
+      if (!valid) return buildApiError('Current password is incorrect')
+      updates.password = await bcrypt.hash(newPassword, 10)
+    }
+
+    const updated = await prisma.vehicleVendor.update({
+      where: { id: session.id },
+      data: updates,
+    })
+
+    return buildApiSuccess(updated, 'Profile updated')
+  } catch (err) {
+    console.error('[vendor/profile PUT]', err)
+    return buildApiError(err instanceof Error ? err.message : 'Server error', 500)
   }
-
-  if (newPassword) {
-    if (newPassword.length < 6) return buildApiError('New password must be at least 6 characters')
-    const vendor = await prisma.vehicleVendor.findUnique({ where: { id: session.id } })
-    if (!vendor?.password) return buildApiError('Cannot verify current password')
-    const valid = await bcrypt.compare(currentPassword ?? '', vendor.password)
-    if (!valid) return buildApiError('Current password is incorrect')
-    updates.password = await bcrypt.hash(newPassword, 10)
-  }
-
-  const updated = await prisma.vehicleVendor.update({
-    where: { id: session.id },
-    data: updates,
-  })
-
-  return buildApiSuccess(updated, 'Profile updated')
 }

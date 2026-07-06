@@ -336,7 +336,6 @@ export default function AICallsFeedbackModal({ open, onClose, bookingRef, bookin
                 className="w-full border-0"
                 style={{ height: '380px' }}
                 title="Email Preview"
-                sandbox="allow-same-origin"
               />
             </div>
           )}
@@ -564,10 +563,16 @@ export default function AICallsFeedbackModal({ open, onClose, bookingRef, bookin
                 )}
 
                 <div>
-                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">To (Agent)</label>
-                  <input className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
-                    value={emailTo} onChange={e => setEmailTo(e.target.value)} disabled={testMode} placeholder="agent@example.com" />
-                  {!testMode && !emailTo && <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> No agent email</p>}
+                  <label className="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                    To (Agent) {testMode && <span className="text-amber-600 normal-case font-normal">— overridden by test mode</span>}
+                  </label>
+                  <input
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
+                    value={emailTo}
+                    onChange={e => setEmailTo(e.target.value)}
+                    placeholder="Type agent email address…"
+                  />
+                  {!emailTo.trim() && <p className="text-[10px] text-red-500 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> No recipient email</p>}
                 </div>
 
                 <div>
@@ -575,19 +580,25 @@ export default function AICallsFeedbackModal({ open, onClose, bookingRef, bookin
                   <div className="flex flex-wrap gap-1 mb-1.5">
                     {ccList.map(e => (
                       <span key={e} className="inline-flex items-center gap-1 bg-violet-100 text-violet-700 text-[10px] px-2 py-0.5 rounded-full font-medium">
-                        {e}{!testMode && <button onClick={() => setCcList(c => c.filter(x=>x!==e))} className="hover:text-red-500"><X className="w-2.5 h-2.5" /></button>}
+                        {e}
+                        <button onClick={() => setCcList(c => c.filter(x => x !== e))} className="hover:text-red-500 ml-0.5"><X className="w-2.5 h-2.5" /></button>
                       </span>
                     ))}
-                    {!ccList.length && <span className="text-[10px] text-slate-400 italic">No CC</span>}
+                    {!ccList.length && <span className="text-[10px] text-slate-400 italic">No CC added</span>}
                   </div>
-                  {!testMode && (
-                    <div className="flex gap-2">
-                      <input className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
-                        placeholder="Add CC email…" value={ccInput} onChange={e => setCcInput(e.target.value)} onKeyDown={e => { if (e.key==='Enter') { e.preventDefault(); addCc() } }} />
-                      <button onClick={addCc} className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold"><Plus className="w-3.5 h-3.5" /></button>
-                    </div>
-                  )}
-                  <p className="text-[10px] text-slate-400 mt-1">Global CC addresses (Settings → AI Feedback CC) are added server-side</p>
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-violet-400"
+                      placeholder="Add CC email and press Enter…"
+                      value={ccInput}
+                      onChange={e => setCcInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCc() } }}
+                    />
+                    <button onClick={addCc} className="px-3 py-1.5 rounded-lg bg-violet-100 hover:bg-violet-200 text-violet-700 text-xs font-semibold flex items-center gap-1">
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">Global CC (Settings → AI Feedback CC) is added server-side automatically</p>
                 </div>
 
                 <div className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-600 space-y-1">
@@ -596,7 +607,7 @@ export default function AICallsFeedbackModal({ open, onClose, bookingRef, bookin
                   <p className="text-[10px] text-slate-400">{feedback.length} feedback record{feedback.length!==1?'s':''} · {schedule.length} scheduled call{schedule.length!==1?'s':''}</p>
                 </div>
 
-                <button onClick={sendSummary} disabled={sending || (!testMode && !emailTo)}
+                <button onClick={sendSummary} disabled={sending || !emailTo.trim()}
                   className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 transition-colors shadow-sm">
                   {sending ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><Send className="w-4 h-4" /> Send Feedback Summary to Agent</>}
                 </button>
