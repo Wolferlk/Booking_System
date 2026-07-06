@@ -8,7 +8,7 @@ import {
   Plus, Trash2, Save, Loader2, Wand2, Car, MapPin, Upload,
   Search, X, CheckCircle2, Phone, AlertTriangle, Users, Plane,
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
-  Sparkles, Eye, Mail, CreditCard, Info, Building2,
+  Sparkles, Eye, Mail, CreditCard, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
@@ -167,6 +167,10 @@ export default function AgendaPage() {
   const [sending,         setSending]        = useState(false)
   const [showPdfMenu,     setShowPdfMenu]    = useState(false)
   const [downloadingWord, setDownloadingWord] = useState(false)
+  const [editPassengersModal, setEditPassengersModal] = useState(false)
+  const [editingPaxAdults, setEditingPaxAdults] = useState('')
+  const [editingPaxChildren, setEditingPaxChildren] = useState('')
+  const [savingPassengers, setSavingPassengers] = useState(false)
   // Rate input for driver assignment
   const [rateInput,         setRateInput]        = useState('')
   const [rateCurrencyInput, setRateCurrencyInput] = useState('USD')
@@ -367,6 +371,49 @@ export default function AgendaPage() {
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally { setSaving(false) }
+  }
+
+  function openPassengerCountEditor() {
+    if (!booking) return
+    setEditingPaxAdults(String(booking.paxAdults ?? 0))
+    setEditingPaxChildren(String(booking.paxChildren ?? 0))
+    setEditPassengersModal(true)
+  }
+
+  async function savePassengerCounts() {
+    if (!booking) return
+    const adults = Number(editingPaxAdults)
+    const children = Number(editingPaxChildren)
+
+    if (!Number.isInteger(adults) || adults < 0) {
+      toast.error('Adults must be a whole number')
+      return
+    }
+    if (!Number.isInteger(children) || children < 0) {
+      toast.error('Children must be a whole number')
+      return
+    }
+
+    setSavingPassengers(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paxAdults: adults,
+          paxChildren: children,
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Passenger counts updated')
+      setEditPassengersModal(false)
+      await loadAgenda()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSavingPassengers(false)
+    }
   }
 
   async function saveAssignment(itemId: string, idx: number, overrideAssignment?: AgendaItem['assignment']) {
@@ -669,17 +716,31 @@ export default function AgendaPage() {
             {/* Passengers */}
             {booking.passengers.length > 0 && (
               <Card className="overflow-hidden">
-                <button onClick={() => toggleSection('passengers')}
-                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors">
-                  <div className="flex items-center gap-2">
+                <div className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => toggleSection('passengers')}
+                    className="flex items-center gap-2 text-left"
+                  >
                     <Users className="w-4 h-4 text-brand-500" />
                     <span className="text-sm font-semibold text-slate-800">Passengers</span>
-                    <span className="text-xs text-slate-400 font-normal">
+                    <span className="inline-flex items-center gap-1 text-xs text-slate-400 font-normal">
                       {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}
                     </span>
-                  </div>
+                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={openPassengerCountEditor}
+                      className="inline-flex items-center gap-1 text-xs text-slate-400 font-normal hover:text-brand-600 transition-colors ml-3"
+                      aria-label="Edit passenger counts"
+                    >
+                      <Pencil className="w-3 h-3" />
+                      Edit
+                    </button>
+                  )}
                   {expandedSection === 'passengers' ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                </button>
+                </div>
                 {expandedSection === 'passengers' && (
                   <div className="border-t border-slate-100 overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1709,6 +1770,49 @@ export default function AgendaPage() {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={editPassengersModal}
+        onClose={() => setEditPassengersModal(false)}
+        title="Edit Passenger Counts"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditPassengersModal(false)}>Cancel</Button>
+            <Button loading={savingPassengers} onClick={savePassengerCounts}>Save Changes</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">
+            Update the passenger summary shown on the agenda and in exported documents.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="space-y-1.5">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Adults</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={editingPaxAdults}
+                onChange={e => setEditingPaxAdults(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Children</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={editingPaxChildren}
+                onChange={e => setEditingPaxChildren(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              />
+            </label>
+          </div>
+        </div>
       </Modal>
     </div>
   )
