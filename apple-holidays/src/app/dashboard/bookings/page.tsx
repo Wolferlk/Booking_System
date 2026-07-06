@@ -195,6 +195,8 @@ function BookingsPageInner() {
   const [bookings, setBookings]         = useState<Booking[]>([])
   const [total, setTotal]               = useState(0)
   const [loading, setLoading]           = useState(true)
+  // Unified search input — routes to either 'search' or 'refSearch' based on input type
+  const [displaySearch, setDisplaySearch] = useState(searchParams.get('search') ?? '')
   const [search, setSearch]             = useState(searchParams.get('search') ?? '')
   const [refSearch, setRefSearch]       = useState('')
   const [contentSearch, setContentSearch] = useState('')
@@ -224,7 +226,7 @@ function BookingsPageInner() {
   const scanSearchRef  = useRef<string>('')
   const autoScanTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const normalizedSearch   = search.trim()
+  const normalizedSearch   = displaySearch.trim()
   const isBookingRefSearch = BOOKING_REF_RE.test(normalizedSearch)
 
   const fetchBookings = useCallback(async () => {
@@ -268,13 +270,13 @@ function BookingsPageInner() {
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
-  // Reset scan when the search query changes
+  // Reset scan when the unified search input changes
   useEffect(() => {
     setScanState('idle')
     setScanStep(0)
     setScanError(null)
     setScanBookingRef(null)
-  }, [search])
+  }, [displaySearch])
 
   // Auto-trigger OneDrive scan (debounced 1.2 s) when no results + ref-like query
   useEffect(() => {
@@ -322,7 +324,18 @@ function BookingsPageInner() {
       }
 
       const tot = (json.data?.total ?? {}) as Record<string, number>
-      if ((tot.bookingsCreated ?? 0) > 0 || (tot.bookingsUpdated ?? 0) > 0) {
+      const scanCreated = (tot.bookingsCreated ?? 0) > 0 || (tot.bookingsUpdated ?? 0) > 0
+
+      // Also check if the booking exists in DB regardless of scan result
+      // (background cron may have created it, or it already existed)
+      let existsInDb = false
+      try {
+        const chk  = await fetch(`/api/bookings?refSearch=${encodeURIComponent(bookingRef)}&limit=1`)
+        const chkJ = await chk.json()
+        existsInDb = chkJ.success && (chkJ.data?.total ?? 0) > 0
+      } catch { /* ignore check failure */ }
+
+      if (scanCreated || existsInDb) {
         setScanStep(4)
         setScanState('done')
         setTimeout(() => fetchBookings(), 900)
@@ -336,6 +349,21 @@ function BookingsPageInner() {
         setScanState('error')
         setScanError('Network error — please try again')
       }
+    }
+  }
+
+  // Unified search handler — routes ref-like input to refSearch, text to search
+  function handleUnifiedSearch(value: string) {
+    setDisplaySearch(value)
+    setPage(1)
+    const trimmed = value.trim()
+    // Ref-like: VN12345, IS48231, SG001, 4-digit IS number etc.
+    if (BOOKING_REF_RE.test(trimmed) || /^[A-Za-z]{1,3}\d{3,}$/.test(trimmed) || /^\d{4,}$/.test(trimmed)) {
+      setRefSearch(trimmed.toUpperCase())
+      setSearch('')
+    } else {
+      setSearch(value)
+      setRefSearch('')
     }
   }
 
@@ -538,21 +566,21 @@ function BookingsPageInner() {
         {/* ── Filters ──────────────────────────────────────────────────── */}
         <Card className="p-4 space-y-3">
 
-          {/* Row 1 — Passenger / agent name search + Status */}
+          {/* Row 1 — Unified search + Status */}
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search by ref, agent, passenger name…"
-                value={search}
-                onChange={e => { setSearch(e.target.value); setPage(1) }}
+                placeholder="Search by ref, VN/IS/SG/MY number, Tour ref, agent, passenger name…"
+                value={displaySearch}
+                onChange={e => handleUnifiedSearch(e.target.value)}
                 className="form-input pl-9 pr-9"
               />
-              {search && (
+              {displaySearch && (
                 <button
                   type="button"
-                  onClick={() => { setSearch(''); setPage(1) }}
+                  onClick={() => { setDisplaySearch(''); setSearch(''); setRefSearch(''); setPage(1) }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -569,29 +597,6 @@ function BookingsPageInner() {
                 <option key={s} value={s}>{STATUS_LABELS[s]}</option>
               ))}
             </select>
-          </div>
-
-          {/* Row 2 — IS / VN / Tour ref / Agent ID search + Created date range */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Hash className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Filter by IS number, VN number, Tour ref, Agent ID…"
-                value={refSearch}
-                onChange={e => { setRefSearch(e.target.value); setPage(1) }}
-                className="form-input pl-9 pr-9"
-              />
-              {refSearch && (
-                <button
-                  type="button"
-                  onClick={() => { setRefSearch(''); setPage(1) }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
           </div>
 
           {/* Row 3 — Content / deep search (hotels, flights, agenda, itinerary) + Created date range */}
