@@ -696,6 +696,25 @@ model OneDriveDeltaToken {
   @@map("onedrive_delta_tokens")
 }
 
+model OneDriveBookingJob {
+  id           String    @id @default(cuid())
+  targetDate   DateTime  @db.Date
+  triggeredBy  String    @default("auto")
+  status       String    @default("running")
+  results      String?   @db.LongText
+  totalCreated Int       @default(0)
+  totalUpdated Int       @default(0)
+  totalErrors  Int       @default(0)
+  errorMessage String?   @db.Text
+  durationMs   Int?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([targetDate])
+  @@index([createdAt])
+  @@map("onedrive_booking_jobs")
+}
+
 model AiUsageLog {
   id               String   @id @default(cuid())
   callType         String

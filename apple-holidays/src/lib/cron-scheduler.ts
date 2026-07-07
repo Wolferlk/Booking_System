@@ -217,6 +217,15 @@ async function jobFeedbackSummary() {
   }
 }
 
+async function jobAutoBookingCreate() {
+  try {
+    const { maybeRunAutoBookingCreate } = await import('./auto-booking-create')
+    await maybeRunAutoBookingCreate()
+  } catch (err) {
+    console.error('[Scheduler] auto-booking-create error:', err instanceof Error ? err.message : err)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Master switch ─────────────────────────────────────────────────────────────
 const CRON_ENABLED = true
@@ -249,10 +258,11 @@ export function startCronJobs() {
   setTimeout(() => { jobProcessMailboxes() }, 30_000)   // 30 s after boot
   setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
 
-  setInterval(() => { jobProcessMailboxes() }, FIVE_MIN)
-  setInterval(() => { jobOneDrivePoll() },     THREE_MIN)   // OneDrive every 3 min
-  setInterval(() => { jobRenewWebhook() },     TWELVE_HRS)
-  setInterval(() => { jobFeedbackSummary() },  SIX_HRS)     // Feedback summaries every 6 h
+  setInterval(() => { jobProcessMailboxes() },    FIVE_MIN)
+  setInterval(() => { jobOneDrivePoll() },         THREE_MIN)
+  setInterval(() => { jobRenewWebhook() },         TWELVE_HRS)
+  setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
+  setInterval(() => { jobAutoBookingCreate() },    60_000)   // check every minute; fires once daily at scheduled time
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking every minute')
 }

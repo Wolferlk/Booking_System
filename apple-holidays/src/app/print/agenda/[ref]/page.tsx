@@ -84,6 +84,7 @@ interface BookingInfo {
   fileHandler?: string | null
   paxAdults: number
   paxChildren: number
+  paxInfants: number
   arrivalDate: string
   departureDate: string
   tourDestination?: string | null
