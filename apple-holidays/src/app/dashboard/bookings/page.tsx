@@ -226,6 +226,17 @@ function BookingsPageInner() {
   const scanSearchRef  = useRef<string>('')
   const autoScanTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // ── Auto-booking-create today banner ────────────────────────────────────
+  interface AutoJobSummary { id: string; targetDate: string; totalCreated: number; totalUpdated: number; totalErrors: number; completedAt: string }
+  const [todayJob, setTodayJob]           = useState<AutoJobSummary | null>(null)
+  const [bannerDismissed, setBannerDismissed] = useState(false)
+  useEffect(() => {
+    fetch('/api/admin/onedrive-booking-auto/today')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.job) setTodayJob(d.job) })
+      .catch(() => {})
+  }, [])
+
   const normalizedSearch   = displaySearch.trim()
   const isBookingRefSearch = BOOKING_REF_RE.test(normalizedSearch)
 
@@ -561,6 +572,32 @@ function BookingsPageInner() {
           </div>
         }
       />
+
+      {/* ── Auto-booking-create daily summary banner ─────────────────── */}
+      {todayJob && !bannerDismissed && (
+        <div className="mx-8 mt-4 flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+          <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-green-800">
+              Today&apos;s auto-import complete —{' '}
+              <span className="text-green-700">
+                {todayJob.totalCreated} booking{todayJob.totalCreated !== 1 ? 's' : ''} created
+              </span>
+              {todayJob.totalUpdated > 0 && `, ${todayJob.totalUpdated} updated`}
+              {todayJob.totalErrors > 0 && (
+                <span className="text-amber-700">, {todayJob.totalErrors} errors</span>
+              )}
+            </p>
+            <p className="text-xs text-green-600 mt-0.5">
+              Target date: {new Date(todayJob.targetDate).toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}
+              {' · '}<Link href="/dashboard/admin/onedrive/bookings" className="underline underline-offset-2">View details</Link>
+            </p>
+          </div>
+          <button onClick={() => setBannerDismissed(true)} className="text-green-500 hover:text-green-700 transition-colors shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <div className="p-8 space-y-5">
         {/* ── Filters ──────────────────────────────────────────────────── */}

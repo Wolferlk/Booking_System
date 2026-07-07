@@ -276,14 +276,6 @@ export function buildFeedbackSummaryEmail(opts: {
 }) {
   const { ref, booking, service, feedback, schedule, aiNarrative, isAutoSend } = opts
   const agentName   = booking.agent ?? 'Agent'
-  const totalCalls  = schedule.length
-  const answered    = schedule.filter(s => s.status === 'answered' || s.status === 'done').length
-  const pending     = schedule.filter(s => s.status === 'pending').length
-  const missed      = schedule.filter(s => s.status === 'missed' || s.status === 'failed').length
-
-  const sentimentCounts: Record<string, number> = {}
-  feedback.forEach(f => { if (f.sentiment) sentimentCounts[f.sentiment] = (sentimentCounts[f.sentiment] ?? 0) + 1 })
-  const overallSentiment = Object.entries(sentimentCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
 
   // ── Day rows ──────────────────────────────────────────────────────────────
   const feedbackRows = feedback.map(fb => {
@@ -376,7 +368,7 @@ export function buildFeedbackSummaryEmail(opts: {
 <div style="max-width:720px;margin:28px auto 48px;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,0.10)">
 
   <!-- Hero banner -->
-  <div style="background:linear-gradient(135deg,#6d28d9 0%,#4338ca 60%,#2563eb 100%);padding:32px 36px;position:relative">
+  <div style="background-color:#4338ca;background:linear-gradient(135deg,#6d28d9 0%,#4338ca 60%,#2563eb 100%);padding:32px 36px;position:relative">
     <div style="position:absolute;top:0;right:0;width:200px;height:100%;background:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 200 100%22><circle cx=%22160%22 cy=%2250%22 r=%22120%22 fill=%22rgba(255,255,255,0.05)%22/></svg>') no-repeat center;opacity:0.4"></div>
     <p style="margin:0 0 6px;font-size:11px;font-weight:700;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.12em">🤖 Apple Holidays · AI Call Intelligence</p>
     <h1 style="margin:0 0 8px;font-size:26px;font-weight:900;color:#ffffff;letter-spacing:-0.5px">Customer Experience Report</h1>
@@ -394,23 +386,6 @@ export function buildFeedbackSummaryEmail(opts: {
 
     <!-- AI Narrative section -->
     ${aiNarrativeHtml}
-
-    <!-- Stats strip -->
-    <div style="display:table;width:100%;border-collapse:separate;border-spacing:8px;margin-bottom:28px">
-      <div style="display:table-row">
-        ${[
-          { label: 'Calls Scheduled', value: totalCalls,        color: '#6366f1', bg: '#eef2ff', border: '#c7d2fe' },
-          { label: 'Answered',        value: answered,          color: '#059669', bg: '#ecfdf5', border: '#a7f3d0' },
-          { label: 'Pending',         value: pending,           color: '#d97706', bg: '#fffbeb', border: '#fde68a' },
-          { label: 'Missed',          value: missed,            color: '#dc2626', bg: '#fef2f2', border: '#fecaca' },
-          { label: 'Feedback',        value: feedback.length,   color: '#7c3aed', bg: '#faf5ff', border: '#ddd6fe' },
-          ...(overallSentiment ? [{ label: 'Top Mood', value: sentimentLabel(overallSentiment), color: '#0891b2', bg: '#f0f9ff', border: '#bae6fd' }] : []),
-        ].map(s => `<div style="display:table-cell;background:${s.bg};border:1px solid ${s.border};border-radius:12px;padding:14px 10px;text-align:center;vertical-align:middle">
-          <p style="margin:0 0 3px;font-size:${typeof s.value === 'number' ? '22px' : '13px'};font-weight:900;color:${s.color}">${s.value}</p>
-          <p style="margin:0;font-size:9px;color:${s.color};text-transform:uppercase;letter-spacing:0.06em;font-weight:700;opacity:0.7">${s.label}</p>
-        </div>`).join('')}
-      </div>
-    </div>
 
     <!-- Day-by-day table -->
     <h3 style="margin:0 0 14px;font-size:15px;font-weight:800;color:#1e293b;padding-bottom:10px;border-bottom:2px solid #e2e8f0;display:flex;align-items:center;gap:8px">

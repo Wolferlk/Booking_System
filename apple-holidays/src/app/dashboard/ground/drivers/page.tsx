@@ -213,6 +213,8 @@ export default function DriversPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showPayModal, setShowPayModal] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [filterVehicleType, setFilterVehicleType] = useState('')
+  const [filterMinCapacity, setFilterMinCapacity] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
 
@@ -506,33 +508,29 @@ export default function DriversPage() {
 
   const filteredDrivers = drivers.filter(driver => {
     const q = searchQuery.trim().toLowerCase()
-    if (!q) return true
+    if (q) {
+      const matches = [
+        driver.name,
+        driver.phone,
+        driver.licenseNo,
+        driver.vehicle?.brand,
+        driver.vehicle?.model,
+        driver.vehicle?.type,
+      ].some(value => value?.toLowerCase().includes(q))
+      if (!matches) return false
+    }
 
-    const vehicleText = [
-      driver.vehicle?.plateNo,
-      driver.vehicle?.brand,
-      driver.vehicle?.model,
-      driver.vehicle?.type,
-    ].filter(Boolean).join(' ').toLowerCase()
+    if (filterVehicleType && driver.vehicle?.type !== filterVehicleType) return false
 
-    const bankText = [
-      driver.bankName,
-      driver.bankAccountNo,
-      driver.bankHolder,
-      driver.bankBranch,
-      driver.bankCode,
-    ].filter(Boolean).join(' ').toLowerCase()
+    if (filterMinCapacity) {
+      const min = Number(filterMinCapacity)
+      if (!driver.vehicle || driver.vehicle.capacity < min) return false
+    }
 
-    return [
-      driver.name,
-      driver.phone,
-      driver.email,
-      driver.licenseNo,
-      driver.country,
-      vehicleText,
-      bankText,
-    ].some(value => value?.toLowerCase().includes(q))
+    return true
   })
+
+  const hasActiveFilters = filterVehicleType || filterMinCapacity
 
   return (
     <div>
@@ -562,22 +560,71 @@ export default function DriversPage() {
       />
 
       <div className="p-8 space-y-5">
-        <div className="relative max-w-xl">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-          <input
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search drivers, phones, licenses, vehicles, or banks…"
-            className="form-input pl-9 pr-10"
-          />
-          {searchQuery && (
+        <div className="flex flex-wrap gap-3 items-end">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[220px] max-w-xl">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search name, phone, license, brand, type, model…"
+              className="form-input pl-9 pr-10"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                aria-label="Clear search"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Vehicle Type filter */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Vehicle Type</label>
+            <select
+              value={filterVehicleType}
+              onChange={e => setFilterVehicleType(e.target.value)}
+              className={`form-select text-sm py-2 pr-8 ${filterVehicleType ? 'border-brand-400 ring-1 ring-brand-300' : ''}`}
+            >
+              <option value="">All Types</option>
+              {VEHICLE_TYPES.map(t => (
+                <option key={t} value={t} className="capitalize">{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Capacity filter */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Min Seats</label>
+            <select
+              value={filterMinCapacity}
+              onChange={e => setFilterMinCapacity(e.target.value)}
+              className={`form-select text-sm py-2 pr-8 ${filterMinCapacity ? 'border-brand-400 ring-1 ring-brand-300' : ''}`}
+            >
+              <option value="">Any Capacity</option>
+              <option value="2">2+ seats</option>
+              <option value="4">4+ seats</option>
+              <option value="6">6+ seats</option>
+              <option value="8">8+ seats</option>
+              <option value="10">10+ seats</option>
+              <option value="15">15+ seats</option>
+              <option value="20">20+ seats</option>
+              <option value="30">30+ seats</option>
+            </select>
+          </div>
+
+          {/* Clear filters */}
+          {hasActiveFilters && (
             <button
               type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-              aria-label="Clear search"
+              onClick={() => { setFilterVehicleType(''); setFilterMinCapacity('') }}
+              className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-red-500 px-3 py-2 rounded-lg border border-slate-200 hover:border-red-200 hover:bg-red-50 transition-colors"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" /> Clear Filters
             </button>
           )}
         </div>
@@ -588,7 +635,7 @@ export default function DriversPage() {
           <Card className="p-12 text-center">
             <Car className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-400">
-              {searchQuery ? `No drivers match "${searchQuery}"` : 'No drivers yet'}
+              {searchQuery || hasActiveFilters ? 'No drivers match the current search or filters' : 'No drivers yet'}
             </p>
           </Card>
         ) : (

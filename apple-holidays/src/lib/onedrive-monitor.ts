@@ -1084,10 +1084,119 @@ export async function getBookingFolderUrl(bookingRef: string): Promise<string | 
 
 // ── Date-range targeted scan ──────────────────────────────────────────────────
 
-const MONTH_NAMES = [
+export const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ]
+
+/**
+ * Returns true if a folder name represents a specific day within a given month.
+ * Handles mixed formats: "17 July", "17 Jul", "17 jul", "17 JUL", "17jul", "07 Jul", "17"
+ */
+function matchesDayFolder(name: string, targetDay: number, monthIdx: number): boolean {
+  const m = name.trim().match(/^(\d{1,2})[\s\-]?([A-Za-z]*)/)
+  if (!m) return false
+  if (parseInt(m[1], 10) !== targetDay) return false
+  if (!m[2]) return true
+  const namePart  = m[2].toLowerCase()
+  const fullMonth = MONTH_NAMES[monthIdx].toLowerCase()
+  const shortMonth = fullMonth.slice(0, 3)
+  return fullMonth.startsWith(namePart) || namePart.startsWith(shortMonth) || shortMonth.startsWith(namePart)
+}
+
+/**
+ * Scan a single drive for booking folders in the date sub-folder for a specific
+ * target arrival date (e.g. "17 July"). Handles all folder naming variants:
+ *   MY/SG : root / YYYY / "04 April" / "25 apr" / BookingFolder
+ *   VN/SL : root / YYYY / "April"    / "25 Apr"  / BookingFolder
+ */
+export async function scanDriveByTargetDate(
+  cfg:        DriveConfig,
+  targetDate: Date,
+): Promise<ScanResult> {
+  const result: ScanResult = {
+    driveKey: cfg.key, label: cfg.label,
+    scanned: 0, bookingsCreated: 0, bookingsUpdated: 0, pnlsUpdated: 0, errors: 0, events: [],
+  }
+
+  const year     = targetDate.getFullYear()
+  const monthIdx = targetDate.getMonth()
+  const day      = targetDate.getDate()
+  const monthName = MONTH_NAMES[monthIdx]
+
+  let driveId: string
+  try {
+    driveId = await resolveDriveId(cfg)
+  } catch (err) {
+    console.error(`[OneDrive][TARGET-DATE] ${cfg.key}: drive resolve error:`, err)
+    result.errors += 1
+    return result
+  }
+
+  const rootPath = cfg.type === 'personal' ? (cfg.rootFolder ?? '') : (cfg.rootFolder_sp ?? '')
+  const yearPath = rootPath ? `${rootPath}/${year}` : `${year}`
+
+  // List the year folder so we can find the right month folder regardless of naming format
+  let yearChildren: DriveItem[]
+  try {
+    yearChildren = await listFolderChildren(driveId, yearPath)
+  } catch {
+    console.warn(`[OneDrive][TARGET-DATE] ${cfg.key}: year folder not found: ${yearPath}`)
+    return result
+  }
+
+  // Match month folders: "April", "04 April", "04april", "Apr", etc.
+  const shortMonth   = monthName.toLowerCase().slice(0, 3)
+  const monthFolders = yearChildren.filter(f => {
+    if (!f.folder) return false
+    const n = f.name.toLowerCase().replace(/[^a-z]/g, '')
+    return n.includes(shortMonth)
+  })
+
+  if (monthFolders.length === 0) {
+    console.warn(`[OneDrive][TARGET-DATE] ${cfg.key}: no month folder found for ${monthName} in ${yearPath}`)
+    return result
+  }
+
+  for (const monthFolder of monthFolders) {
+    const monthFolderPath = `${yearPath}/${monthFolder.name}`
+
+    let monthChildren: DriveItem[]
+    try {
+      monthChildren = await listFolderChildren(driveId, monthFolderPath)
+    } catch {
+      continue
+    }
+
+    for (const child of monthChildren) {
+      if (!child.folder) continue
+
+      if (isBookingFolder(child)) {
+        // SL-style: booking folder sits directly inside month folder — skip for targeted day scan
+        continue
+      }
+
+      // Day sub-folder: check if it matches our target day
+      if (matchesDayFolder(child.name, day, monthIdx)) {
+        console.log(`[OneDrive][TARGET-DATE] ${cfg.key}: found day folder "${child.name}" in ${monthFolder.name}`)
+        let dayChildren: DriveItem[]
+        try {
+          dayChildren = await listFolderChildren(driveId, `${monthFolderPath}/${child.name}`)
+        } catch {
+          continue
+        }
+        for (const dc of dayChildren) {
+          result.scanned += 1
+          if (dc.folder && isBookingFolder(dc)) {
+            await processBookingFolderDirect(driveId, dc, cfg, result, 0)
+          }
+        }
+      }
+    }
+  }
+
+  return result
+}
 
 /** Derive (year, monthIndex) pairs covered by a date range. */
 function monthsInRange(from: Date, to: Date): { year: number; month: number }[] {
