@@ -113,7 +113,7 @@ function buildFullAgendaHtml(
   booking: {
     agent?: string | null; fileHandler?: string | null
     arrivalDate?: string | null; departureDate?: string | null
-    paxAdults?: number | null; paxChildren?: number | null
+    paxAdults?: number | null; paxChildren?: number | null; paxInfants?: number | null
     bookingRef?: string; isNumber?: string | null; cntlNumber?: string | null; agentBookingId?: string | null
     operationCountry?: string | null; tourDestination?: string | null
     contactPhone?: string | null; contactWhatsapp?: string | null; contactEmail?: string | null
@@ -147,7 +147,7 @@ function buildFullAgendaHtml(
   }
 
   const lead = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
-  const totalPax = (booking.paxAdults ?? 0) + (booking.paxChildren ?? 0)
+  const totalPax = (booking.paxAdults ?? 0) + (booking.paxChildren ?? 0) + (booking.paxInfants ?? 0)
   const destination = booking.tourDestination?.trim() || (booking.operationCountry ? (COUNTRY_LABEL[booking.operationCountry] ?? booking.operationCountry) : '—')
 
   // Group items by date
@@ -246,7 +246,7 @@ function buildFullAgendaHtml(
   const passengersHtml = passengers.length > 0 ? `<div style="margin-bottom:2px">
     <div style="display:flex;align-items:center;gap:6px;font-size:9px;font-weight:700;color:#0f172a;text-transform:uppercase;letter-spacing:0.6px;padding:5px 10px;background:#f1f5f9;border-bottom:1px solid #e2e8f0;border-top:2px solid #d97706;border-radius:5px 5px 0 0;margin-top:14px">
       <span>👥 Passengers</span>
-      <span style="font-size:9.5px;font-weight:800;background:#d97706;padding:1px 9px;color:#fff;border-radius:10px;text-transform:none;letter-spacing:0">${booking.paxAdults} adult${(booking.paxAdults ?? 0) !== 1 ? 's' : ''}${(booking.paxChildren ?? 0) > 0 ? ` · ${booking.paxChildren} child${(booking.paxChildren ?? 0) !== 1 ? 'ren' : ''}` : ''}</span>
+      <span style="font-size:9.5px;font-weight:800;background:#d97706;padding:1px 9px;color:#fff;border-radius:10px;text-transform:none;letter-spacing:0">${booking.paxAdults} adult${(booking.paxAdults ?? 0) !== 1 ? 's' : ''}${(booking.paxChildren ?? 0) > 0 ? ` · ${booking.paxChildren} child${(booking.paxChildren ?? 0) !== 1 ? 'ren' : ''}` : ''}${(booking.paxInfants ?? 0) > 0 ? ` · ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''}</span>
     </div>
     <table>
       <thead><tr>${['Name','Type','Contact','Meal Preference'].map(h => `<th style="padding:4px 7px;text-align:left;font-size:7.5px;font-weight:700;color:#f8fafc;text-transform:uppercase;letter-spacing:0.4px;background:#334155">${h}</th>`).join('')}</tr></thead>
@@ -361,7 +361,7 @@ function buildFullAgendaHtml(
       ${booking.cntlNumber ? `<p style="font-size:8px;color:#7c3aed;font-family:monospace;font-weight:700;margin-top:1px">CNTL: ${esc(booking.cntlNumber)}</p>` : ''}
       ${booking.agentBookingId ? `<p style="font-size:8px;color:#64748b;font-family:monospace;margin-top:1px">Ref: ${esc(booking.agentBookingId)}</p>` : ''}
       <p style="font-size:8px;color:#64748b;margin-top:3px">${fmtDate(booking.arrivalDate)} — ${fmtDate(booking.departureDate)}</p>
-      <p style="font-size:8px;color:#64748b;margin-top:1px">${totalPax} pax (${booking.paxAdults ?? 0} adult${(booking.paxAdults ?? 0) !== 1 ? 's' : ''}${(booking.paxChildren ?? 0) > 0 ? `, ${booking.paxChildren} child${(booking.paxChildren ?? 0) !== 1 ? 'ren' : ''}` : ''})</p>
+      <p style="font-size:8px;color:#64748b;margin-top:1px">${totalPax} pax (${booking.paxAdults ?? 0} adult${(booking.paxAdults ?? 0) !== 1 ? 's' : ''}${(booking.paxChildren ?? 0) > 0 ? `, ${booking.paxChildren} child${(booking.paxChildren ?? 0) !== 1 ? 'ren' : ''}` : ''}${(booking.paxInfants ?? 0) > 0 ? `, ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''})</p>
       ${!showDrivers ? '<p style="font-size:7.5px;color:#94a3b8;font-style:italic;margin-top:2px">Driver info hidden</p>' : ''}
     </div>
   </div>

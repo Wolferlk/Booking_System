@@ -162,7 +162,7 @@ export async function GET(
 
   const items   = booking.tourAgenda?.items ?? []
   const lead    = booking.passengers.find(p => p.isLead) ?? booking.passengers[0]
-  const totalPax = booking.paxAdults + booking.paxChildren
+  const totalPax = booking.paxAdults + booking.paxChildren + (booking.paxInfants ?? 0)
 
   const children: (Paragraph | Table)[] = []
 
@@ -183,7 +183,7 @@ export async function GET(
       children: [
         new TextRun({ text: params.ref, bold: true, size: 36, color: CLR.amber, font: 'Courier New' }),
         new TextRun({ text: `   ${formatDate(booking.arrivalDate)} — ${formatDate(booking.departureDate)}`, size: 18, color: CLR.muted, font: 'Arial' }),
-        new TextRun({ text: `   ${totalPax} pax (${booking.paxAdults} adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? `, ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''})`, size: 18, color: CLR.muted, font: 'Arial' }),
+        new TextRun({ text: `   ${totalPax} pax (${booking.paxAdults} adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? `, ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}${(booking.paxInfants ?? 0) > 0 ? `, ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''})`, size: 18, color: CLR.muted, font: 'Arial' }),
       ],
       spacing: { before: 80, after: 40 },
     }),
@@ -232,7 +232,7 @@ export async function GET(
 
   // ── PASSENGERS ────────────────────────────────────────────────────────────
   if (booking.passengers.length > 0) {
-    children.push(sectionHeading('👥', `Passengers — ${booking.paxAdults} adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}`))
+    children.push(sectionHeading('👥', `Passengers — ${booking.paxAdults} adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}${(booking.paxInfants ?? 0) > 0 ? ` · ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''}`))
     children.push(new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       layout: TableLayoutType.FIXED,

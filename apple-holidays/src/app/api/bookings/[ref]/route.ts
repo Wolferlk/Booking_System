@@ -129,7 +129,7 @@ export async function PUT(
   const body = await req.json()
   const {
     agentBookingId, cntlNumber, agent, fileHandler,
-    arrivalDate, departureDate, paxAdults, paxChildren,
+    arrivalDate, departureDate, paxAdults, paxChildren, paxInfants,
     quotedTotal, currency, terms, exclusions, policyNotes,
     amendmentNote,
     // Additional TC sections
@@ -161,7 +161,7 @@ export async function PUT(
   // Flight updates are allowed at any booking status for emergency situations (cancelled/missing flights)
   const isFlightOnlyUpdate = (flightUpdates || flightAdds || flightDeletes) &&
     !agentBookingId && !agent && !fileHandler && !arrivalDate && !departureDate &&
-    !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
+    !paxAdults && !paxChildren && !paxInfants && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !passengerUpdates && !passengerAdds && !passengerDeletes &&
     !flights && !accommodations && !accommodationUpdates && !accommodationDeletes && !accommodationAdds
 
@@ -170,7 +170,7 @@ export async function PUT(
     contactEmail !== undefined || contactPhone !== undefined || contactWhatsapp !== undefined || contactAddress !== undefined ||
     operationCountry !== undefined || isNumber !== undefined || agentBookingId !== undefined || cntlNumber !== undefined) &&
     !agent && !fileHandler && !arrivalDate && !departureDate &&
-    !paxAdults && !paxChildren && !quotedTotal && !currency && !terms && !exclusions &&
+    !paxAdults && !paxChildren && !paxInfants && !quotedTotal && !currency && !terms && !exclusions &&
     !policyNotes && !amendmentNote && !passengers && !passengerUpdates && !passengerAdds && !passengerDeletes &&
     !flights && !accommodations &&
     !accommodationUpdates && !accommodationDeletes && !accommodationAdds && !flightUpdates && !flightAdds && !flightDeletes
@@ -191,6 +191,7 @@ export async function PUT(
       ...(departureDate !== undefined && { departureDate: new Date(departureDate) }),
       ...(paxAdults !== undefined && { paxAdults: Number(paxAdults) }),
       ...(paxChildren !== undefined && { paxChildren: Number(paxChildren) }),
+      ...(paxInfants !== undefined && { paxInfants: Number(paxInfants) }),
       ...(quotedTotal !== undefined && { quotedTotal: Number(quotedTotal) }),
       ...(currency !== undefined && { currency }),
       ...(terms !== undefined && { terms }),

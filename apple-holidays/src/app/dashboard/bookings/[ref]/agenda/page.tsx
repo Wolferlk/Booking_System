@@ -114,6 +114,7 @@ interface BookingDetails {
   agent: string
   paxAdults: number
   paxChildren: number
+  paxInfants: number
   arrivalDate: string
   departureDate: string
   passengers: { id: string; name: string; type: string; age?: number | null; passport?: string | null; nationality?: string | null; contact?: string | null; isLead?: boolean; mealPreference?: string | null }[]
@@ -170,6 +171,7 @@ export default function AgendaPage() {
   const [editPassengersModal, setEditPassengersModal] = useState(false)
   const [editingPaxAdults, setEditingPaxAdults] = useState('')
   const [editingPaxChildren, setEditingPaxChildren] = useState('')
+  const [editingPaxInfants, setEditingPaxInfants] = useState('')
   const [savingPassengers, setSavingPassengers] = useState(false)
   // Rate input for driver assignment
   const [rateInput,         setRateInput]        = useState('')
@@ -377,6 +379,7 @@ export default function AgendaPage() {
     if (!booking) return
     setEditingPaxAdults(String(booking.paxAdults ?? 0))
     setEditingPaxChildren(String(booking.paxChildren ?? 0))
+    setEditingPaxInfants(String(booking.paxInfants ?? 0))
     setEditPassengersModal(true)
   }
 
@@ -393,6 +396,11 @@ export default function AgendaPage() {
       toast.error('Children must be a whole number')
       return
     }
+    const infants = Number(editingPaxInfants)
+    if (!Number.isInteger(infants) || infants < 0) {
+      toast.error('Infants must be a whole number')
+      return
+    }
 
     setSavingPassengers(true)
     try {
@@ -402,6 +410,7 @@ export default function AgendaPage() {
         body: JSON.stringify({
           paxAdults: adults,
           paxChildren: children,
+          paxInfants: infants,
         }),
       })
       const json = await res.json()
@@ -725,7 +734,7 @@ export default function AgendaPage() {
                     <Users className="w-4 h-4 text-brand-500" />
                     <span className="text-sm font-semibold text-slate-800">Passengers</span>
                     <span className="inline-flex items-center gap-1 text-xs text-slate-400 font-normal">
-                      {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}
+                      {booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}{booking.paxChildren > 0 ? ` · ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}{booking.paxInfants > 0 ? ` · ${booking.paxInfants} infant${booking.paxInfants !== 1 ? 's' : ''}` : ''}
                     </span>
                   </button>
                   {canEdit && (
@@ -1808,6 +1817,17 @@ export default function AgendaPage() {
                 step="1"
                 value={editingPaxChildren}
                 onChange={e => setEditingPaxChildren(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">Infants</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={editingPaxInfants}
+                onChange={e => setEditingPaxInfants(e.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
               />
             </label>
