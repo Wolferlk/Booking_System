@@ -60,7 +60,7 @@ export default function BookingDetailPage() {
   const [bookingForm, setBookingForm] = useState({
     agent: '', fileHandler: '', agentBookingId: '',
     arrivalDate: '', departureDate: '',
-    paxAdults: '2', paxChildren: '0',
+    paxAdults: '2', paxChildren: '0', paxInfants: '0',
     quotedTotal: '', currency: 'USD',
     terms: '', exclusions: '', policyNotes: '', amendmentNote: '',
     valueAddedServices: '', packageIncludes: '', packageExcludes: '',
@@ -502,6 +502,7 @@ export default function BookingDetailPage() {
       departureDate: booking.departureDate ? String(booking.departureDate).slice(0, 10) : '',
       paxAdults: String(booking.paxAdults ?? 2),
       paxChildren: String(booking.paxChildren ?? 0),
+      paxInfants: String(booking.paxInfants ?? 0),
       quotedTotal: String(booking.quotedTotal ?? ''),
       currency: String(booking.currency ?? 'USD'),
       terms: String(booking.terms ?? ''),
@@ -529,6 +530,7 @@ export default function BookingDetailPage() {
           ...bookingForm,
           paxAdults: Number(bookingForm.paxAdults),
           paxChildren: Number(bookingForm.paxChildren),
+          paxInfants: Number(bookingForm.paxInfants),
           quotedTotal: Number(bookingForm.quotedTotal),
         }),
       })
@@ -731,7 +733,7 @@ Please find the attached *Tour Confirmation* for your upcoming trip.
 
 *Booking Reference:* ${ref}
 *Travel Dates:* ${booking.arrivalDate ? new Date(booking.arrivalDate as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'} – ${booking.departureDate ? new Date(booking.departureDate as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
-*Passengers:* ${booking.paxAdults ?? 0} Adults${(booking.paxChildren as number) > 0 ? `, ${booking.paxChildren} Children` : ''}
+*Passengers:* ${booking.paxAdults ?? 0} Adults${(booking.paxChildren as number) > 0 ? `, ${booking.paxChildren} Children` : ''}${(booking.paxInfants as number) > 0 ? `, ${booking.paxInfants} Infants` : ''}
 
 Kindly review the attached PDF and confirm:
 ✅ All passenger names & contact number are correct
@@ -1025,7 +1027,7 @@ Wishing you a wonderful trip! ✈️
                 </span>
                 <span className="flex items-center gap-1">
                   <Users className="w-4 h-4" />
-                  {booking.paxAdults as number} adults, {booking.paxChildren as number} children
+                  {booking.paxAdults as number} adults, {booking.paxChildren as number} children{(booking.paxInfants as number) > 0 ? `, ${booking.paxInfants as number} infants` : ''}
                 </span>
                 <span className="flex items-center gap-1">
                   <CreditCard className="w-4 h-4" />
@@ -2215,6 +2217,11 @@ Wishing you a wonderful trip! ✈️
               <label className="form-label">Children</label>
               <input type="number" min="0" className="form-input" value={bookingForm.paxChildren}
                 onChange={e => setBookingForm(f => ({ ...f, paxChildren: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Infants</label>
+              <input type="number" min="0" className="form-input" value={bookingForm.paxInfants}
+                onChange={e => setBookingForm(f => ({ ...f, paxInfants: e.target.value }))} />
             </div>
             <div className="col-span-2">
               <label className="form-label">Quoted Total</label>

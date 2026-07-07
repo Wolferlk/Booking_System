@@ -224,6 +224,7 @@ model Booking {
   departureDate         DateTime
   paxAdults             Int           @default(0)
   paxChildren           Int           @default(0)
+  paxInfants            Int           @default(0)
 
   quotedTotal           Decimal?       @db.Decimal(10, 2)
   currency              String        @default("USD")

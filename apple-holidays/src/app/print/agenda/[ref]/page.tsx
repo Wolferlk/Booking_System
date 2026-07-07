@@ -295,7 +295,7 @@ export default function PrintAgendaPage() {
   }
 
   const lead      = booking.passengers.find(p => p.isLead) ?? booking.passengers[0]
-  const totalPax  = booking.paxAdults + booking.paxChildren
+  const totalPax  = booking.paxAdults + booking.paxChildren + (booking.paxInfants ?? 0)
 
   // Check if any notes/terms sections have content
   const hasNotes = !!(
@@ -348,7 +348,8 @@ export default function PrintAgendaPage() {
           </p>
           <p style={{ fontSize: 8, color: '#64748b', marginTop: 1 }}>
             {totalPax} pax ({booking.paxAdults} adult{booking.paxAdults !== 1 ? 's' : ''}
-            {booking.paxChildren > 0 ? `, ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''})
+            {booking.paxChildren > 0 ? `, ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}
+            {(booking.paxInfants ?? 0) > 0 ? `, ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''})
           </p>
           {!showDrivers && (
             <p style={{ fontSize: 7.5, color: '#94a3b8', fontStyle: 'italic', marginTop: 2 }}>Driver info hidden</p>
