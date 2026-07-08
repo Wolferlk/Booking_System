@@ -160,7 +160,10 @@ export async function maybeRunAutoBookingCreate(): Promise<void> {
     target.setHours(0, 0, 0, 0)
 
     console.log(`[AutoCreate] Daily trigger — target date: ${target.toISOString().slice(0, 10)}`)
-    await runBookingCreateForDate(target, 'auto')
+    // Fire in background so the 60-second cron tick returns immediately
+    void runBookingCreateForDate(target, 'auto').catch(err => {
+      console.error('[AutoCreate] background job error:', err)
+    })
   } catch (err) {
     console.error('[AutoCreate] maybeRunAutoBookingCreate error:', err)
   }
