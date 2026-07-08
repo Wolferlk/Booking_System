@@ -275,7 +275,8 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
           {tab === 'overview' && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <IB label="IS / CNTL"    value={booking.isNumber ?? booking.cntlNumber ?? '—'} />
+                <IB label="IS Number"    value={booking.isNumber ?? '—'} />
+                <IB label="CNTL Number"  value={booking.cntlNumber ?? '—'} />
                 <IB label="Booking Ref"  value={booking.bookingRef} />
                 <IB label="File Handler" value={booking.fileHandler ?? '—'} />
                 <IB label="Agent"        value={booking.agent ?? '—'} />
@@ -969,13 +970,15 @@ export default function SriLankaDriverAllocationPage() {
                         status === 'emergency' && 'bg-red-500/3',
                         status === 'assigned'  && 'bg-emerald-500/2')}>
 
-                        {/* IS # */}
+                        {/* IS # / CNTL */}
                         <td className="px-4 py-3.5">
                           <button onClick={() => setDetailBooking(b)} className="flex items-center gap-1.5 group/ref">
-                            <span className="font-black text-yellow-400 hover:text-yellow-300 transition-colors font-mono text-xs">{isRef}</span>
+                            <span className="font-black text-yellow-400 hover:text-yellow-300 transition-colors font-mono text-xs">{b.isNumber ?? b.bookingRef}</span>
                             <ChevronRight className="w-3 h-3 text-yellow-600 opacity-0 group-hover/ref:opacity-100 group-hover/ref:text-yellow-400 transition-all" />
                           </button>
-                          <p className="text-slate-600 text-[10px] mt-0.5">{b.bookingRef !== isRef ? b.bookingRef : ''}</p>
+                          {b.cntlNumber && (
+                            <p className="text-slate-400 text-[10px] mt-0.5 font-mono">{b.cntlNumber}</p>
+                          )}
                         </td>
 
                         {/* Client */}

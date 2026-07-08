@@ -215,6 +215,38 @@ export async function POST(req: NextRequest) {
       },
     })
 
+    // ── Sync driver/vendor to all agenda item assignments ─────────────────────
+    // Resolve display values from the returned allocation
+    const driverRec = allocation.driver
+    const vendorRec = allocation.vendor
+
+    const assignmentData = {
+      driverId:     driverId   ?? null,
+      vendorId:     vendorId   ?? null,
+      driverName:   driverRec?.name   ?? vendorRec?.name   ?? null,
+      driverPhone:  driverRec?.phone  ?? vendorRec?.phone  ?? null,
+      vehicleType:  vehicleType ?? driverRec?.vehicle?.type ?? null,
+      vehiclePlate: driverRec?.vehicle?.plateNo ?? null,
+      vendorName:   vendorRec?.name ?? null,
+    }
+
+    const agenda = await prisma.tourAgenda.findUnique({
+      where: { bookingId },
+      select: { items: { select: { id: true } } },
+    })
+
+    if (agenda?.items.length) {
+      await Promise.all(
+        agenda.items.map(item =>
+          prisma.assignment.upsert({
+            where:  { agendaItemId: item.id },
+            create: { agendaItemId: item.id, ...assignmentData },
+            update: assignmentData,
+          })
+        )
+      )
+    }
+
     return buildApiSuccess(allocation)
   } catch (err) {
     console.error('[SL driver-allocation POST]', err)
