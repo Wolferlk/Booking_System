@@ -55,13 +55,16 @@ export interface BookingCreateJobResult {
 }
 
 export async function runBookingCreateForDate(
-  targetDate:  Date,
-  triggeredBy: string = 'auto',
-  driveKeys?:  string[],
+  targetDate:     Date,
+  triggeredBy:    string = 'auto',
+  driveKeys?:     string[],
+  preCreatedJobId?: string,
 ): Promise<BookingCreateJobResult> {
-  const job = await prisma.oneDriveBookingJob.create({
-    data: { targetDate, triggeredBy, status: 'running' },
-  })
+  const job = preCreatedJobId
+    ? { id: preCreatedJobId }
+    : await prisma.oneDriveBookingJob.create({
+        data: { targetDate, triggeredBy, status: 'running' },
+      })
 
   const start   = Date.now()
   const configs = driveKeys

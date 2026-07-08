@@ -155,11 +155,32 @@ export default function OneDriveBookingsPage() {
         body: JSON.stringify(body),
       })
       const data = await res.json()
-      if (res.ok) {
-        toast.success(`Done — Created: ${data.totalCreated}, Updated: ${data.totalUpdated}, Errors: ${data.totalErrors}`)
-        await loadJobs()
-      } else {
+      if (!res.ok) {
         toast.error(data.error ?? 'Run failed')
+        setRunning(false)
+        return
+      }
+
+      // Poll job status until done (avoids 60s GCP gateway timeout)
+      const jobId: string = data.jobId
+      let done = false
+      while (!done) {
+        await new Promise(r => setTimeout(r, 3000))
+        try {
+          const poll = await fetch(`/api/admin/onedrive-booking-auto/jobs/${jobId}`)
+          if (poll.ok) {
+            const job = await poll.json()
+            if (job.status !== 'running') {
+              done = true
+              if (job.totalErrors > 0) {
+                toast.warning(`Done — Created: ${job.totalCreated}, Updated: ${job.totalUpdated}, Errors: ${job.totalErrors}`)
+              } else {
+                toast.success(`Done — Created: ${job.totalCreated}, Updated: ${job.totalUpdated}`)
+              }
+              await loadJobs()
+            }
+          }
+        } catch { /* keep polling */ }
       }
     } catch { toast.error('Network error') }
     setRunning(false)
