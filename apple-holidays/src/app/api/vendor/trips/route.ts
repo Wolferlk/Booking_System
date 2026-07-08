@@ -18,6 +18,7 @@ export async function GET() {
               booking: {
                 select: {
                   bookingRef: true,
+                  isNumber: true,
                   dealName: true,
                   paxAdults: true,
                   paxChildren: true,
