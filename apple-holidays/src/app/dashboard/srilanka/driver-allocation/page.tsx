@@ -9,6 +9,7 @@ import {
   FileText, RefreshCw, Loader2, Edit2, UserCheck,
   Navigation2, Building2, Route, Shield, Info, ChevronRight,
   ArrowRight, ArrowUpDown, ArrowUp, ArrowDown, Filter, SlidersHorizontal,
+  Eye, EyeOff,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
@@ -563,6 +564,9 @@ export default function SriLankaDriverAllocationPage() {
   const [loading, setLoading]     = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
+  // Active-only switch — hides bookings where departureDate has already passed (default ON)
+  const [activeOnly, setActiveOnly] = useState(true)
+
   // Search & Status & Vehicle (applied client-side)
   const [search, setSearch]           = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -613,6 +617,12 @@ export default function SriLankaDriverAllocationPage() {
 
   const displayBookings = useMemo(() => {
     let list = [...bookings]
+
+    // Active-only: hide bookings whose departure date has already passed
+    if (activeOnly) {
+      const today = todayISO()
+      list = list.filter(b => toISO(b.departureDate) >= today)
+    }
 
     // Search
     if (search.trim()) {
@@ -671,23 +681,25 @@ export default function SriLankaDriverAllocationPage() {
     })
 
     return list
-  }, [bookings, search, statusFilter, vehicleFilter, dateFrom, dateTo, dateField, sortBy, sortDir])
+  }, [bookings, activeOnly, search, statusFilter, vehicleFilter, dateFrom, dateTo, dateField, sortBy, sortDir])
 
   // ── Active filter count ───────────────────────────────────────────────────
 
   const activeFilters = useMemo(() => {
     let n = 0
-    if (search.trim())       n++
+    if (search.trim())          n++
     if (statusFilter !== 'all') n++
-    if (vehicleFilter)       n++
-    if (dateFrom || dateTo)  n++
+    if (vehicleFilter)          n++
+    if (dateFrom || dateTo)     n++
+    if (!activeOnly)            n++   // counts only when showing ALL (non-default)
     return n
-  }, [search, statusFilter, vehicleFilter, dateFrom, dateTo])
+  }, [search, statusFilter, vehicleFilter, dateFrom, dateTo, activeOnly])
 
   function clearAllFilters() {
     setSearch(''); setStatusFilter('all'); setVehicleFilter('')
     setDateFrom(''); setDateTo(''); setDateField('arrivalDate')
     setSortBy('arrivalDate'); setSortDir('asc')
+    setActiveOnly(true)
   }
 
   // ── Quick date presets ────────────────────────────────────────────────────
@@ -767,10 +779,38 @@ export default function SriLankaDriverAllocationPage() {
                   ? <><span className="text-white font-semibold">{displayBookings.length}</span> of {bookings.length} bookings</>
                   : <><span className="text-white font-semibold">{bookings.length}</span> total Sri Lanka bookings</>
                 }
+                {activeOnly && <> · <span className="text-teal-400 font-medium">active departures only</span></>}
                 {sortBy !== 'arrivalDate' && <> · sorted by <span className="text-yellow-400">{SORT_OPTIONS.find(s => s.value === sortBy)?.label}</span></>}
               </p>
             </div>
           </div>
+          {/* Active-only toggle */}
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-slate-800/60 border border-slate-700/40">
+            <div className="flex items-center gap-2">
+              {activeOnly
+                ? <Eye    className="w-3.5 h-3.5 text-teal-400" />
+                : <EyeOff className="w-3.5 h-3.5 text-slate-500" />
+              }
+              <span className={cn('text-xs font-semibold whitespace-nowrap', activeOnly ? 'text-teal-300' : 'text-slate-500')}>
+                {activeOnly ? 'Active Only' : 'All Bookings'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveOnly(v => !v)}
+              className={cn(
+                'relative w-10 h-5 rounded-full transition-colors flex-shrink-0',
+                activeOnly ? 'bg-teal-500' : 'bg-slate-700',
+              )}
+              title={activeOnly ? 'Showing active bookings only — click to show all' : 'Showing all bookings — click to hide past departures'}
+            >
+              <span className={cn(
+                'absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform',
+                activeOnly ? 'translate-x-5' : 'translate-x-0.5',
+              )} />
+            </button>
+          </div>
+
           <button onClick={() => fetchBookings(true)} disabled={refreshing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800/60 border border-slate-700/40 text-slate-400 hover:text-white hover:bg-slate-800 transition-all text-sm font-medium"
           ><RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />Refresh</button>
