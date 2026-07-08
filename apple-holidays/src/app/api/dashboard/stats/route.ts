@@ -37,6 +37,11 @@ export async function GET(req: NextRequest) {
 
   const now = new Date()
   const next7Days = addDays(now, 7)
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayEnd   = new Date(todayStart.getTime() + 86_400_000)
+
+  const flightDateWhere: Record<string, unknown> = { date: { gte: todayStart, lt: todayEnd } }
+  if (Object.keys(countryWhere).length > 0) flightDateWhere.booking = countryWhere
 
   const [
     totalBookings,
@@ -45,6 +50,11 @@ export async function GET(req: NextRequest) {
     awaitingPayment,
     upcomingTrips,
     byStatusRaw,
+    todayArrivals,
+    todayDepartures,
+    todayFlightsCount,
+    todayArrivalsBookings,
+    todayFlightsList,
   ] = await Promise.all([
     prisma.booking.count({ where: countryWhere }),
     prisma.booking.count({
@@ -63,6 +73,40 @@ export async function GET(req: NextRequest) {
       by: ['status'],
       where: countryWhere,
       _count: { _all: true },
+    }),
+    prisma.booking.count({
+      where: { ...countryWhere, arrivalDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
+    }),
+    prisma.booking.count({
+      where: { ...countryWhere, departureDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
+    }),
+    prisma.flight.count({ where: flightDateWhere }),
+    prisma.booking.findMany({
+      where: { ...countryWhere, arrivalDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
+      select: {
+        bookingRef: true,
+        paxAdults: true,
+        paxChildren: true,
+        operationCountry: true,
+        passengers: { select: { name: true }, take: 1 },
+      },
+      orderBy: { arrivalDate: 'asc' },
+      take: 10,
+    }),
+    prisma.flight.findMany({
+      where: flightDateWhere,
+      select: {
+        id: true,
+        flightNo: true,
+        airline: true,
+        depTime: true,
+        arrTime: true,
+        fromApt: true,
+        toApt: true,
+        booking: { select: { bookingRef: true, operationCountry: true, paxAdults: true, paxChildren: true } },
+      },
+      orderBy: { depTime: 'asc' },
+      take: 10,
     }),
   ])
 
@@ -107,6 +151,12 @@ export async function GET(req: NextRequest) {
     totalCost,
     totalProfit: totalRevenue - totalCost,
     byStatus,
+    todayArrivals,
+    todayDepartures,
+    todayFlightsCount,
+    todayOperations: todayArrivals + todayDepartures,
+    todayArrivalsBookings,
+    todayFlightsList,
   })
   } catch (err) {
     console.error('[Stats API] error:', err)
