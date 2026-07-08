@@ -163,6 +163,7 @@ model Booking {
   statusEvents           StatusEvent[]
   tickets                Ticket[]
   tourAgenda             TourAgenda?
+  slDriverAllocation     SriLankaDriverAllocation?
 
   @@index([status])
   @@index([arrivalDate])
@@ -513,6 +514,7 @@ model Driver {
   vendorId       String?
   assignments    Assignment[]
   driverPayments DriverPayment[]
+  slAllocations  SriLankaDriverAllocation[]
   vehicle        Vehicle?          @relation(fields: [vehicleId], references: [id])
   vendorOwner    VehicleVendor?    @relation("VendorDrivers", fields: [vendorId], references: [id])
 
@@ -562,6 +564,7 @@ model VehicleVendor {
   assignments   Assignment[]
   drivers       Driver[]          @relation("VendorDrivers")
   vehicles      Vehicle[]
+  slAllocations SriLankaDriverAllocation[]
 
   @@map("vehicle_vendors")
 }
@@ -625,6 +628,27 @@ model CreditAgentPayment {
   @@index([agentId])
   @@index([processedById], map: "credit_agent_payments_processedById_fkey")
   @@map("credit_agent_payments")
+}
+
+model SriLankaDriverAllocation {
+  id           String         @id @default(cuid())
+  bookingId    String         @unique
+  vehicleType  String?
+  driverId     String?
+  vendorId     String?
+  notes        String?        @db.Text
+  isEmergency  Boolean        @default(false)
+  changeReason String?        @db.Text
+  changedAt    DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  booking      Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  driver       Driver?        @relation(fields: [driverId], references: [id])
+  vendor       VehicleVendor? @relation(fields: [vendorId], references: [id])
+
+  @@index([driverId])
+  @@index([vendorId])
+  @@map("sl_driver_allocations")
 }
 
 model SystemSetting {
