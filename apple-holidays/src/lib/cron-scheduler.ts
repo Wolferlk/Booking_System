@@ -264,5 +264,5 @@ export function startCronJobs() {
   setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
   setInterval(() => { jobAutoBookingCreate() },    60_000)   // check every minute; fires once daily at scheduled time
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking every minute')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create checked every minute (also available via /api/cron/auto-booking-create for GCP Cloud Scheduler)')
 }

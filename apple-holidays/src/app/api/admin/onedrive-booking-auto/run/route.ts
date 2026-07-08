@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { runBookingCreateForDate, getAutoCreateSettings } from '@/lib/auto-booking-create'
+import { prisma } from '@/lib/prisma'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -29,6 +30,15 @@ export async function POST(req: NextRequest) {
   const triggeredBy = session.user.email ?? session.user.name ?? 'admin'
   const driveKeys: string[] | undefined = Array.isArray(body.driveKeys) ? body.driveKeys : undefined
 
-  const result = await runBookingCreateForDate(targetDate, `manual:${triggeredBy}`, driveKeys)
-  return NextResponse.json(result)
+  // Create the job record immediately so we can return the jobId now
+  const job = await prisma.oneDriveBookingJob.create({
+    data: { targetDate, triggeredBy: `manual:${triggeredBy}`, status: 'running' },
+  })
+
+  // Fire in background — do NOT await so GCP doesn't hit the 60s gateway timeout
+  void runBookingCreateForDate(targetDate, `manual:${triggeredBy}`, driveKeys, job.id).catch(err => {
+    console.error('[AutoCreate] background run error:', err)
+  })
+
+  return NextResponse.json({ jobId: job.id, status: 'started' })
 }
