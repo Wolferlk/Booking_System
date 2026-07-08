@@ -10,6 +10,7 @@ import {
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, CreditCard, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
+  ClipboardList,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -121,6 +122,7 @@ interface BookingDetails {
   flights: { id: string; flightNo: string; date: string; fromApt: string; depTime?: string | null; toApt: string; arrTime?: string | null; airline?: string | null }[]
   accommodations: { id: string; hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string | null; mealType?: string | null }[]
   emergencyContacts: { id: string; name: string; phone?: string | null; role?: string | null }[]
+  itineraryItems: { id: string; dayNo: number; date: string; title: string; description?: string | null }[]
 }
 
 export default function AgendaPage() {
@@ -536,6 +538,34 @@ export default function AgendaPage() {
     } finally { setDescribingIdx(null) }
   }
 
+  function fillFromItinerary() {
+    if (!booking?.itineraryItems?.length) {
+      toast.error('No itinerary data available for this booking')
+      return
+    }
+    const itinByDate = new Map<string, string>()
+    for (const it of booking.itineraryItems) {
+      const d = it.date?.slice(0, 10)
+      if (d && it.description?.trim()) {
+        itinByDate.set(d, it.description.trim())
+      }
+    }
+    if (itinByDate.size === 0) {
+      toast.error('No descriptions found in the itinerary')
+      return
+    }
+    let replaced = 0
+    setItems(prev => prev.map(item => {
+      const d = item.date?.slice(0, 10)
+      if (!d) return item
+      const desc = itinByDate.get(d)
+      if (!desc) return item
+      replaced++
+      return { ...item, details: desc }
+    }))
+    toast.success(`Filled descriptions from itinerary (${replaced} item${replaced !== 1 ? 's' : ''} updated)`)
+  }
+
   async function openDriverView(driverId: string | null | undefined, fallback: AgendaItem['assignment']) {
     if (!driverId) {
       // No stored driverId — show what we have from assignment
@@ -680,6 +710,14 @@ export default function AgendaPage() {
 
             {canEdit && (
               <>
+                <button
+                  onClick={fillFromItinerary}
+                  className="btn btn-secondary btn-sm flex items-center gap-1.5"
+                  title="Fill movement descriptions from itinerary raw data"
+                >
+                  <ClipboardList className="w-4 h-4" />
+                  Get Raw Data
+                </button>
                 <div className="relative">
                   <Button variant="secondary" size="sm" loading={generating}
                     icon={<Wand2 className="w-4 h-4" />}
