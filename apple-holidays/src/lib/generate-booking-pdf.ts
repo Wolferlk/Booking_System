@@ -1,6 +1,7 @@
 import { mkdir, copyFile, readdir, readFile } from 'fs/promises'
 import path from 'path'
 import { readLocalUploadAsBuffer } from './local-upload'
+import { localUploadRelativePath } from './upload-path'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -53,8 +54,8 @@ async function loadLogo(): Promise<Buffer | null> {
 }
 
 async function resolveTicketImage(fileUrl: string | null | undefined): Promise<Buffer | null> {
-  if (!fileUrl) return null
-  const rel = fileUrl.startsWith('/') ? fileUrl.slice(1) : fileUrl
+  const rel = localUploadRelativePath(fileUrl)
+  if (!rel) return null
   try {
     return await readFile(path.join(process.cwd(), 'public', rel))
   } catch {

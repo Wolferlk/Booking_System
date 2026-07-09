@@ -42,7 +42,7 @@ export async function POST(
   await mkdir(uploadDir, { recursive: true })
   await writeFile(path.join(uploadDir, safeName), buffer)
 
-  const fileUrl = `/uploads/tickets/${safeName}`
+  const fileUrl = `/api/uploads/tickets/${safeName}`
   const fileType = file.type.startsWith('image/') ? 'image' : 'pdf'
 
   const updated = await prisma.ticket.update({
