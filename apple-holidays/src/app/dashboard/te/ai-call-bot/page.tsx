@@ -9,6 +9,8 @@ import {
   Volume2, Settings, User, Star, MessageCircle, Bot, Info,
   ChevronRight, Hash, BookOpen, Megaphone, Search, Send,
   Zap, BarChart2, Filter, Download, Eye, Sparkles,
+  Plane, Home, ThumbsUp, CalendarClock, Heart, ClipboardCheck,
+  Users, Award, MapPin,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -42,6 +44,54 @@ interface TEService {
   retry_gap_min: number
   schedule?: TEScheduleItem[]
   feedback?: TEFeedback[]
+  // Reconfirmation + post-tour plan settings (API-Update-Reconfirmation&Post)
+  reconfirm_enabled?: boolean | null
+  reconfirm_days_before?: number | null
+  reconfirm_call_time?: string | null
+  post_tour_enabled?: boolean | null
+  post_tour_days_after?: number | null
+  post_tour_call_time?: string | null
+  reconfirmations?: TEReconfirmation[]
+  post_tour?: TEPostTour[]
+}
+type TriState = 'yes' | 'no' | 'unsure' | boolean | null | undefined
+interface TEReconfirmation {
+  id: number
+  service_id: number
+  schedule_id?: number | null
+  booking_ref: string
+  conversation_id?: string | null
+  dates_ok?: TriState
+  flight_ok?: TriState
+  pax_ok?: TriState
+  contact_ok?: TriState
+  requested_change?: string | null
+  special_requests?: string | null
+  notes?: string | null
+  outcome?: string | null
+  sentiment?: string | null
+  summary?: string | null
+  transcript?: TranscriptTurn[] | string | null
+  at?: string | null
+}
+interface TEPostTour {
+  id: number
+  service_id: number
+  schedule_id?: number | null
+  booking_ref: string
+  conversation_id?: string | null
+  rating?: number | null
+  stars?: number | null
+  reached_home_safely?: boolean | null
+  would_recommend?: boolean | null
+  best_moment?: string | null
+  improvements?: string | null
+  comment?: string | null
+  outcome?: string | null
+  sentiment?: string | null
+  summary?: string | null
+  transcript?: TranscriptTurn[] | string | null
+  at?: string | null
 }
 interface TEScheduleItem {
   id: number
@@ -108,6 +158,67 @@ const STATUS_STYLES: Record<string, string> = {
 }
 const SENTIMENT_EMOJI: Record<string, string> = { positive: '😊', happy: '😊', neutral: '😐', negative: '😞' }
 
+// Reconfirm / post-tour outcome → colour + friendly label
+const OUTCOME_META: Record<string, { label: string; cls: string }> = {
+  confirmed:        { label: 'Confirmed',        cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  changes_requested:{ label: 'Changes requested',cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  all_good:         { label: 'All good',          cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  minor_note:       { label: 'Minor note',        cls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  issue_raised:     { label: 'Issue raised',      cls: 'bg-red-100 text-red-600 border-red-200' },
+  not_reached:      { label: 'Not reached',       cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+  callback:         { label: 'Callback',          cls: 'bg-violet-100 text-violet-700 border-violet-200' },
+  other:            { label: 'Other',             cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+}
+function outcomeBadge(o?: string | null) {
+  const m = o ? OUTCOME_META[o] : undefined
+  const cls = m?.cls ?? 'bg-slate-100 text-slate-500 border-slate-200'
+  return `inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${cls}`
+}
+
+// Derive 1–5 stars from a 0–10 rating (prefer server-provided value).
+function toStars(rating?: number | null, provided?: number | null): number {
+  if (provided != null) return Math.max(0, Math.min(5, provided))
+  if (rating == null) return 0
+  return Math.max(0, Math.min(5, Math.round(rating / 2)))
+}
+
+// Normalise the tri-state / boolean confirmation flags into yes|no|unsure.
+function triState(v: TriState): 'yes' | 'no' | 'unsure' {
+  if (v === true || v === 'yes') return 'yes'
+  if (v === false || v === 'no') return 'no'
+  return 'unsure'
+}
+const TRI_META = {
+  yes:    { icon: CheckCircle2, cls: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200', label: 'Confirmed' },
+  no:     { icon: XCircle,      cls: 'text-red-500',     bg: 'bg-red-50 border-red-200',         label: 'Not OK' },
+  unsure: { icon: AlertCircle,  cls: 'text-slate-400',   bg: 'bg-slate-50 border-slate-200',     label: 'Unsure' },
+} as const
+
+// Star display — filled/half/empty from a 0–5 value.
+function StarRating({ value, size = 'w-4 h-4' }: { value: number; size?: string }) {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map(i => (
+        <Star key={i} className={`${size} ${i <= value ? 'text-amber-400 fill-amber-400' : 'text-slate-300'}`} />
+      ))}
+    </span>
+  )
+}
+
+// A single confirm flag chip (dates / flights / travellers / contact).
+function FlagChip({ label, value, icon: Icon }: { label: string; value: TriState; icon: React.ElementType }) {
+  const t = triState(value)
+  const m = TRI_META[t]
+  const StatusIcon = m.icon
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border ${m.bg}`}>
+      <Icon className="w-3 h-3 text-slate-400" />
+      <span className="text-[10px] font-semibold text-slate-600">{label}</span>
+      <StatusIcon className={`w-3 h-3 ml-auto ${m.cls}`} />
+    </div>
+  )
+}
+
 function sbadge(s: string) {
   return `inline-flex items-center gap-0.5 border font-bold rounded-full text-[9px] px-1.5 py-0.5 ${STATUS_STYLES[s] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`
 }
@@ -132,6 +243,115 @@ function normaliseTranscript(raw: TranscriptTurn[] | string | null | undefined) 
     if (/^(customer|user|human)\s*:/i.test(line)) return { speaker: 'customer' as const, text: line.replace(/^[^:]+:\s*/i,'') }
     return { speaker: 'system' as const, text: line }
   })
+}
+
+// ─── Reconfirmation result card ────────────────────────────────────────────────
+function ReconfirmCard({ row, showRef = false }: { row: TEReconfirmation; showRef?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const hasChange = !!(row.requested_change && row.requested_change.trim())
+  return (
+    <div className="rounded-2xl border border-sky-200 bg-white overflow-hidden shadow-sm">
+      <div className="px-4 py-3 bg-gradient-to-r from-sky-50 to-blue-50 border-b border-sky-100 flex items-center gap-2 flex-wrap">
+        <span className="w-7 h-7 rounded-lg bg-sky-500 flex items-center justify-center flex-shrink-0"><ClipboardCheck className="w-3.5 h-3.5 text-white" /></span>
+        <span className="text-[11px] font-bold text-sky-700 uppercase tracking-wide">Reconfirmation</span>
+        {showRef && <span className="font-mono text-xs font-bold text-slate-700">{row.booking_ref}</span>}
+        {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
+        {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
+        {row.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDT(row.at)}</span>}
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <FlagChip label="Dates"      value={row.dates_ok}   icon={Calendar} />
+          <FlagChip label="Flights"    value={row.flight_ok}  icon={Plane} />
+          <FlagChip label="Travellers" value={row.pax_ok}     icon={Users} />
+          <FlagChip label="Contact"    value={row.contact_ok} icon={Phone} />
+        </div>
+        {hasChange && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] font-bold text-amber-600 uppercase mb-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Requested change — action needed</p>
+            <p className="text-xs text-slate-800 leading-relaxed font-medium">{row.requested_change}</p>
+          </div>
+        )}
+        {row.special_requests && (
+          <div className="bg-violet-50 border border-violet-100 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] font-bold text-violet-500 uppercase mb-1 flex items-center gap-1"><Heart className="w-3 h-3" /> Special requests</p>
+            <p className="text-xs text-slate-700 leading-relaxed">{row.special_requests}</p>
+          </div>
+        )}
+        {row.summary && <p className="text-xs text-slate-600 italic leading-relaxed">{row.summary}</p>}
+        {row.notes && <p className="text-[11px] text-slate-400">Notes: {row.notes}</p>}
+        {row.transcript && (
+          <div>
+            <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-sky-600 hover:text-sky-800">
+              <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptBubbles transcript={row.transcript} /></div>}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Post-tour result card ─────────────────────────────────────────────────────
+function PostTourCard({ row, showRef = false }: { row: TEPostTour; showRef?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const stars = toStars(row.rating, row.stars)
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-white overflow-hidden shadow-sm">
+      <div className="px-4 py-3 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100 flex items-center gap-2 flex-wrap">
+        <span className="w-7 h-7 rounded-lg bg-amber-500 flex items-center justify-center flex-shrink-0"><Award className="w-3.5 h-3.5 text-white" /></span>
+        <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wide">Post-tour</span>
+        {showRef && <span className="font-mono text-xs font-bold text-slate-700">{row.booking_ref}</span>}
+        {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
+        {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
+        {row.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDT(row.at)}</span>}
+      </div>
+      <div className="p-4 space-y-3">
+        {/* Rating hero */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <StarRating value={stars} size="w-5 h-5" />
+          {row.rating != null && (
+            <span className="text-lg font-black text-amber-500">{row.rating}<span className="text-xs font-bold text-slate-400">/10</span></span>
+          )}
+          <div className="flex items-center gap-2 ml-auto">
+            {row.reached_home_safely != null && (
+              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border ${row.reached_home_safely ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-red-50 text-red-500 border-red-200'}`}>
+                <Home className="w-3 h-3" /> {row.reached_home_safely ? 'Home safe' : 'Not home'}
+              </span>
+            )}
+            {row.would_recommend != null && (
+              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border ${row.would_recommend ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                <ThumbsUp className="w-3 h-3" /> {row.would_recommend ? 'Recommends' : 'Would not'}
+              </span>
+            )}
+          </div>
+        </div>
+        {row.best_moment && (
+          <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase mb-1 flex items-center gap-1"><Star className="w-3 h-3" /> Best moment</p>
+            <p className="text-xs text-slate-700 leading-relaxed">{row.best_moment}</p>
+          </div>
+        )}
+        {row.improvements && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] font-bold text-blue-500 uppercase mb-1 flex items-center gap-1"><Info className="w-3 h-3" /> Could improve</p>
+            <p className="text-xs text-slate-700 leading-relaxed">{row.improvements}</p>
+          </div>
+        )}
+        {row.comment && <p className="text-xs text-slate-700 leading-relaxed">&ldquo;{row.comment}&rdquo;</p>}
+        {row.summary && <p className="text-xs text-slate-500 italic leading-relaxed">{row.summary}</p>}
+        {row.transcript && (
+          <div>
+            <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-800">
+              <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptBubbles transcript={row.transcript} /></div>}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ─── Transcript bubble ─────────────────────────────────────────────────────────
@@ -159,7 +379,7 @@ function TranscriptBubbles({ transcript }: { transcript: TEFeedback['transcript'
   )
 }
 
-type Tab = 'setup' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp'
+type Tab = 'setup' | 'experience' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp'
 
 // ─── WhatsApp automation types ────────────────────────────────────────────────
 interface WaAutomationState {
@@ -196,6 +416,24 @@ export default function AICallBotPage() {
   // ── Intake form ───────────────────────────────────────────────────────────
   const [intakeForm, setIntakeForm] = useState({ phone: '', mode: 'agenda' as 'agenda'|'interval', call_time: '18:00', interval_count: '10', interval_unit: 'minute' as 'minute'|'hour'|'day', retry_gap_min: '15' })
   const [intakeLoading, setIntakeLoading] = useState(false)
+
+  // ── Reconfirmation + Post-tour opt-in (at intake) ─────────────────────────
+  const [reconfirmPlan, setReconfirmPlan] = useState({ enabled: true, days_before: '5', call_time: '' })
+  const [postTourPlan, setPostTourPlan]   = useState({ enabled: true, days_after: '3', call_time: '' })
+
+  // ── Experience tab (reconfirmations + post-tour reads) ─────────────────────
+  const [reconfirmations, setReconfirmations] = useState<TEReconfirmation[]>([])
+  const [postTours, setPostTours]     = useState<TEPostTour[]>([])
+  const [expLoading, setExpLoading]   = useState(false)
+  const [expLens, setExpLens]         = useState<'all' | 'reconfirm' | 'post_tour'>('all')
+  const [portalRef, setPortalRef]     = useState('')
+  const [portalLoading, setPortalLoading] = useState(false)
+  const [portalData, setPortalData]   = useState<{
+    booking_ref: string; registered: boolean; customer_name?: string | null; trip_label?: string | null
+    arrival_date?: string | null; departure_date?: string | null
+    reconfirmation?: TEReconfirmation | null; post_tour?: TEPostTour | null
+  } | null>(null)
+  const [planBusy, setPlanBusy]       = useState<number | null>(null)
 
   // ── Add day ───────────────────────────────────────────────────────────────
   const [addDayOpen, setAddDayOpen] = useState(false)
@@ -294,6 +532,55 @@ export default function AICallBotPage() {
     } catch { /* ignore */ } finally { setFbLoading(false) }
   }, [services])
 
+  // Load reconfirmation + post-tour captures across all registered services.
+  const loadExperience = useCallback(async () => {
+    setExpLoading(true)
+    try {
+      const svcList = services.filter(s => s.id)
+      const [rc, pt] = await Promise.all([
+        Promise.allSettled(svcList.map(s => teProxy('reconfirmations', 'GET', undefined, { serviceId: String(s.id) }))),
+        Promise.allSettled(svcList.map(s => teProxy('post-tour', 'GET', undefined, { serviceId: String(s.id) }))),
+      ])
+      const rcRows: TEReconfirmation[] = []
+      rc.forEach(r => { if (r.status === 'fulfilled') rcRows.push(...(r.value.reconfirmations ?? r.value.data ?? [])) })
+      const ptRows: TEPostTour[] = []
+      pt.forEach(r => { if (r.status === 'fulfilled') ptRows.push(...(r.value.post_tour ?? r.value.data ?? [])) })
+      const ts = (x: { at?: string | null }) => new Date(x.at ?? 0).getTime()
+      rcRows.sort((a, b) => ts(b) - ts(a))
+      ptRows.sort((a, b) => ts(b) - ts(a))
+      setReconfirmations(rcRows)
+      setPostTours(ptRows)
+    } catch { /* ignore */ } finally { setExpLoading(false) }
+  }, [services])
+
+  // Portal pull — the read-only booking experience snapshot.
+  const pullPortalExperience = useCallback(async (ref: string) => {
+    const clean = ref.trim().toUpperCase()
+    if (!clean) { toast.error('Enter a booking reference'); return }
+    setPortalLoading(true); setPortalData(null)
+    try {
+      const res = await teProxy(`bookings/${clean}/experience`)
+      if (res.error || res.booking_ref == null) {
+        toast.info(res.message ?? `No experience on record for ${clean}`)
+        setPortalData({ booking_ref: clean, registered: false })
+      } else {
+        setPortalData(res)
+      }
+    } catch { toast.error('Lookup failed') } finally { setPortalLoading(false) }
+  }, [])
+
+  // Enable/disable or retime a reconfirm / post-tour plan on an existing service.
+  async function updatePlan(svc: TEService, patch: Record<string, unknown>) {
+    setPlanBusy(svc.id)
+    try {
+      const res = await teProxy(`services/${svc.booking_ref}`, 'PATCH', patch)
+      if (res.error) throw new Error(res.error)
+      toast.success('Plan updated')
+      await loadServiceDetail(svc.booking_ref)
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+    finally { setPlanBusy(null) }
+  }
+
   const loadWaAutomation = useCallback(async () => {
     setWaLoading(true)
     try {
@@ -330,6 +617,7 @@ export default function AICallBotPage() {
   useEffect(() => { loadServices(); loadCampaigns() }, [loadServices, loadCampaigns])
   useEffect(() => { if (tab === 'jobs') { loadJobs(); loadCampaigns() } }, [tab, loadJobs, loadCampaigns])
   useEffect(() => { if (tab === 'history' && services.length) loadAllFeedback() }, [tab, services, loadAllFeedback])
+  useEffect(() => { if (tab === 'experience' && services.length) loadExperience() }, [tab, services, loadExperience])
   useEffect(() => { if (tab === 'whatsapp') loadWaAutomation() }, [tab, loadWaAutomation])
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMsgs])
 
@@ -341,15 +629,33 @@ export default function AICallBotPage() {
     if (!intakeForm.phone.trim()) { toast.error('Phone number is required'); return }
     setIntakeLoading(true)
     try {
+      const schedule: Record<string, unknown> = {
+        mode: intakeForm.mode,
+        call_time: intakeForm.call_time,
+        retry_gap_min: Number(intakeForm.retry_gap_min) || 15,
+        ...(intakeForm.mode === 'interval' && { interval_count: Number(intakeForm.interval_count) || 10, interval_unit: intakeForm.interval_unit, start_at: 'now' }),
+      }
+      // Reconfirmation opt-in — a few days before arrival
+      schedule.reconfirm = reconfirmPlan.enabled
+        ? {
+            enabled: true,
+            days_before: Number(reconfirmPlan.days_before) || 5,
+            ...(reconfirmPlan.call_time && { call_time: reconfirmPlan.call_time }),
+          }
+        : { enabled: false }
+      // Post-tour feedback opt-in — a few days after departure
+      schedule.post_tour = postTourPlan.enabled
+        ? {
+            enabled: true,
+            days_after: Number(postTourPlan.days_after) || 3,
+            ...(postTourPlan.call_time && { call_time: postTourPlan.call_time }),
+          }
+        : { enabled: false }
+
       const body: Record<string, unknown> = {
         bookingRef: bookingRef.trim().toUpperCase(),
         phone: intakeForm.phone.replace(/\D/g, ''),
-        schedule: {
-          mode: intakeForm.mode,
-          call_time: intakeForm.call_time,
-          retry_gap_min: Number(intakeForm.retry_gap_min) || 15,
-          ...(intakeForm.mode === 'interval' && { interval_count: Number(intakeForm.interval_count) || 10, interval_unit: intakeForm.interval_unit, start_at: 'now' }),
-        },
+        schedule,
       }
       const res = await teProxy('intake', 'POST', body)
       if (res.ok === false && !res.service) throw new Error(res.message ?? 'Registration failed')
@@ -623,6 +929,19 @@ export default function AICallBotPage() {
 
   const filteredJobs = jobFilter === 'all' ? jobs : jobs.filter(j => j.status === jobFilter)
 
+  // ── Experience derived metrics ─────────────────────────────────────────────
+  const ratedTours   = postTours.filter(p => p.rating != null)
+  const avgRating    = ratedTours.length ? ratedTours.reduce((s, p) => s + (p.rating ?? 0), 0) / ratedTours.length : 0
+  const recommendYes = postTours.filter(p => p.would_recommend === true).length
+  const recommendTot = postTours.filter(p => p.would_recommend != null).length
+  const recommendPct = recommendTot ? Math.round((recommendYes / recommendTot) * 100) : 0
+  const homeSafe     = postTours.filter(p => p.reached_home_safely === true).length
+  const changeReqs   = reconfirmations.filter(r => r.requested_change && r.requested_change.trim())
+  const expFeed: { kind: 'reconfirm' | 'post_tour'; at: number; rc?: TEReconfirmation; pt?: TEPostTour }[] = [
+    ...(expLens !== 'post_tour' ? reconfirmations.map(rc => ({ kind: 'reconfirm' as const, at: new Date(rc.at ?? 0).getTime(), rc })) : []),
+    ...(expLens !== 'reconfirm' ? postTours.map(pt => ({ kind: 'post_tour' as const, at: new Date(pt.at ?? 0).getTime(), pt })) : []),
+  ].sort((a, b) => b.at - a.at)
+
   // ─────────────────────────────────────────────────────────────────────────
   // Service list in Setup tab — expandable rows
   // ─────────────────────────────────────────────────────────────────────────
@@ -706,10 +1025,18 @@ export default function AICallBotPage() {
                   <tbody>
                     {schedule.map(item => {
                       const isToday = item.call_date === new Date().toISOString().slice(0,10)
+                      const isReconfirm = item.phase === 'reconfirm'
+                      const isPostTour  = item.phase === 'post_tour'
                       return (
-                        <tr key={item.id} className={`border-b border-slate-100 last:border-0 ${isToday ? 'bg-violet-50/60' : 'hover:bg-white'} transition-colors`}>
+                        <tr key={item.id} className={`border-b border-slate-100 last:border-0 ${isReconfirm ? 'bg-sky-50/50' : isPostTour ? 'bg-amber-50/40' : isToday ? 'bg-violet-50/60' : 'hover:bg-white'} transition-colors`}>
                           <td className="px-3 py-2.5">
-                            <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg text-xs font-bold ${isToday ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{item.day_no}</span>
+                            {isReconfirm ? (
+                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-sky-500 text-white" title="Reconfirmation call"><ClipboardCheck className="w-3.5 h-3.5" /></span>
+                            ) : isPostTour ? (
+                              <span className="inline-flex items-center justify-center w-6 h-6 rounded-lg bg-amber-500 text-white" title="Post-tour feedback call"><Award className="w-3.5 h-3.5" /></span>
+                            ) : (
+                              <span className={`inline-flex items-center justify-center w-6 h-6 rounded-lg text-xs font-bold ${isToday ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600'}`}>{item.day_no}</span>
+                            )}
                           </td>
                           <td className="px-3 py-2.5">
                             <div className="font-mono text-slate-700">{fmtDate(item.call_date)}</div>
@@ -741,6 +1068,49 @@ export default function AICallBotPage() {
                     })}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* Reconfirmation + Post-tour plan controls */}
+            <div className="p-3 border-t border-slate-200 grid md:grid-cols-2 gap-2">
+              {/* Reconfirm plan */}
+              <div className={`rounded-xl border p-3 ${svc.reconfirm_enabled ? 'border-sky-200 bg-sky-50/60' : 'border-slate-200 bg-white'}`}>
+                <div className="flex items-center gap-2">
+                  <ClipboardCheck className={`w-4 h-4 ${svc.reconfirm_enabled ? 'text-sky-500' : 'text-slate-300'}`} />
+                  <span className="text-xs font-bold text-slate-700">Reconfirmation</span>
+                  {svc.reconfirm_enabled && svc.reconfirm_days_before != null && (
+                    <span className="text-[10px] text-sky-600 font-semibold">−{svc.reconfirm_days_before}d{svc.reconfirm_call_time ? ` · ${svc.reconfirm_call_time}` : ''}</span>
+                  )}
+                  <span className="ml-auto flex items-center">
+                    {planBusy === svc.id
+                      ? <Loader2 className="w-4 h-4 animate-spin text-sky-500" />
+                      : <ToggleSwitch on={!!svc.reconfirm_enabled} onChange={v => updatePlan(svc, { reconfirm: { enabled: v, days_before: svc.reconfirm_days_before ?? 5 } })} />}
+                  </span>
+                </div>
+              </div>
+              {/* Post-tour plan */}
+              <div className={`rounded-xl border p-3 ${svc.post_tour_enabled ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'}`}>
+                <div className="flex items-center gap-2">
+                  <Award className={`w-4 h-4 ${svc.post_tour_enabled ? 'text-amber-500' : 'text-slate-300'}`} />
+                  <span className="text-xs font-bold text-slate-700">Post-tour Feedback</span>
+                  {svc.post_tour_enabled && svc.post_tour_days_after != null && (
+                    <span className="text-[10px] text-amber-600 font-semibold">+{svc.post_tour_days_after}d{svc.post_tour_call_time ? ` · ${svc.post_tour_call_time}` : ''}</span>
+                  )}
+                  <span className="ml-auto flex items-center">
+                    {planBusy === svc.id
+                      ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                      : <ToggleSwitch on={!!svc.post_tour_enabled} onChange={v => updatePlan(svc, { post_tour: { enabled: v, days_after: svc.post_tour_days_after ?? 3 } })} />}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Captured reconfirmation + post-tour results */}
+            {((svc.reconfirmations?.length ?? 0) > 0 || (svc.post_tour?.length ?? 0) > 0) && (
+              <div className="p-3 border-t border-slate-200 space-y-2 bg-slate-50/60">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1"><Sparkles className="w-3 h-3 text-violet-400" /> Captured on calls</p>
+                {(svc.reconfirmations ?? []).map(r => <ReconfirmCard key={`rc-${r.id}`} row={r} />)}
+                {(svc.post_tour ?? []).map(p => <PostTourCard key={`pt-${p.id}`} row={p} />)}
               </div>
             )}
 
@@ -816,6 +1186,7 @@ export default function AICallBotPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex overflow-x-auto">
           {([
             { key: 'setup',    label: 'Setup & Service',  icon: <Settings className="w-3.5 h-3.5" /> },
+            { key: 'experience', label: 'Experience',     icon: <Award className="w-3.5 h-3.5" /> },
             { key: 'jobs',     label: 'Custom Jobs',      icon: <Megaphone className="w-3.5 h-3.5" /> },
             { key: 'quickcall',label: 'Quick Call',        icon: <Zap className="w-3.5 h-3.5" /> },
             { key: 'history',  label: 'Call History',     icon: <BarChart2 className="w-3.5 h-3.5" /> },
@@ -888,6 +1259,61 @@ export default function AICallBotPage() {
                   </div>
                 )}
 
+                {/* ── Reconfirmation + Post-tour opt-in ── */}
+                <div className="grid md:grid-cols-2 gap-3 pt-1">
+                  {/* Reconfirmation plan */}
+                  <div className={`rounded-2xl border-2 p-4 transition-all ${reconfirmPlan.enabled ? 'border-sky-300 bg-gradient-to-br from-sky-50 to-blue-50/60' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${reconfirmPlan.enabled ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                        <ClipboardCheck className="w-4.5 h-4.5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800">Pre-trip Reconfirmation</p>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">Warmly reconfirms dates, flights &amp; travellers — and captures any change the guest asks for.</p>
+                      </div>
+                      <ToggleSwitch on={reconfirmPlan.enabled} onChange={v => setReconfirmPlan(p => ({ ...p, enabled: v }))} />
+                    </div>
+                    {reconfirmPlan.enabled && (
+                      <div className="grid grid-cols-2 gap-2 mt-3">
+                        <div>
+                          <label className="form-label !text-[10px]">Days before arrival</label>
+                          <input type="number" min="1" max="30" className="form-input h-8 text-xs" value={reconfirmPlan.days_before} onChange={e => setReconfirmPlan(p => ({ ...p, days_before: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label>
+                          <input type="time" className="form-input h-8 text-xs" value={reconfirmPlan.call_time} onChange={e => setReconfirmPlan(p => ({ ...p, call_time: e.target.value }))} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Post-tour plan */}
+                  <div className={`rounded-2xl border-2 p-4 transition-all ${postTourPlan.enabled ? 'border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/60' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${postTourPlan.enabled ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                        <Award className="w-4.5 h-4.5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800">Post-tour Feedback</p>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">Thanks the guest, checks they got home safely &amp; captures an honest 0–10 rating.</p>
+                      </div>
+                      <ToggleSwitch on={postTourPlan.enabled} onChange={v => setPostTourPlan(p => ({ ...p, enabled: v }))} />
+                    </div>
+                    {postTourPlan.enabled && (
+                      <div className="grid grid-cols-2 gap-2 mt-3">
+                        <div>
+                          <label className="form-label !text-[10px]">Days after departure</label>
+                          <input type="number" min="1" max="30" className="form-input h-8 text-xs" value={postTourPlan.days_after} onChange={e => setPostTourPlan(p => ({ ...p, days_after: e.target.value }))} />
+                        </div>
+                        <div>
+                          <label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label>
+                          <input type="time" className="form-input h-8 text-xs" value={postTourPlan.call_time} onChange={e => setPostTourPlan(p => ({ ...p, call_time: e.target.value }))} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="flex flex-wrap gap-2 pt-1 border-t border-slate-100">
                   <button onClick={registerBooking} disabled={intakeLoading || !bookingRef.trim() || !intakeForm.phone.trim()}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 transition-colors shadow-sm">
@@ -926,6 +1352,132 @@ export default function AICallBotPage() {
         )}
 
         {/* ════════════════════════════════════════════════════════════════
+            TAB — EXPERIENCE (Reconfirmation + Post-tour)
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'experience' && (
+          <div className="space-y-5">
+            {/* KPI strip */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-gradient-to-br from-amber-500 to-orange-500 rounded-2xl p-4 text-white shadow-sm">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-amber-100">Avg. Trip Rating</p>
+                <div className="flex items-end gap-2 mt-1">
+                  <span className="text-3xl font-black leading-none">{avgRating ? avgRating.toFixed(1) : '—'}</span>
+                  <span className="text-xs font-bold text-amber-100 mb-0.5">/10</span>
+                </div>
+                <div className="mt-1.5"><StarRating value={toStars(avgRating)} size="w-3.5 h-3.5" /></div>
+                <p className="text-[10px] text-amber-100 mt-1">{ratedTours.length} rated tour{ratedTours.length !== 1 ? 's' : ''}</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1"><ThumbsUp className="w-3 h-3" /> Would Recommend</p>
+                <p className="text-3xl font-black text-emerald-500 mt-1 leading-none">{recommendTot ? `${recommendPct}%` : '—'}</p>
+                <p className="text-[10px] text-slate-400 mt-1.5">{recommendYes}/{recommendTot} guests</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-4">
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1"><Home className="w-3 h-3" /> Reached Home Safely</p>
+                <p className="text-3xl font-black text-sky-500 mt-1 leading-none">{homeSafe}</p>
+                <p className="text-[10px] text-slate-400 mt-1.5">of {postTours.length} post-tour call{postTours.length !== 1 ? 's' : ''}</p>
+              </div>
+              <div className={`rounded-2xl border p-4 ${changeReqs.length ? 'bg-amber-50 border-amber-200' : 'bg-white border-slate-200'}`}>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Change Requests</p>
+                <p className={`text-3xl font-black mt-1 leading-none ${changeReqs.length ? 'text-amber-600' : 'text-slate-300'}`}>{changeReqs.length}</p>
+                <p className="text-[10px] text-slate-400 mt-1.5">from {reconfirmations.length} reconfirmation{reconfirmations.length !== 1 ? 's' : ''}</p>
+              </div>
+            </div>
+
+            {/* Portal pull lookup */}
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center"><Search className="w-4 h-4 text-violet-600" /></div>
+                <div><h3 className="text-sm font-bold text-slate-900">Booking Experience Lookup</h3><p className="text-xs text-slate-500">Portal pull — latest reconfirmation &amp; post-tour rating for a booking</p></div>
+              </div>
+              <div className="p-5 space-y-4">
+                <div className="flex gap-2">
+                  <input className="form-input font-mono uppercase flex-1" placeholder="VN19662 · IS48375"
+                    value={portalRef}
+                    onChange={e => setPortalRef(e.target.value.toUpperCase())}
+                    onKeyDown={e => { if (e.key === 'Enter') pullPortalExperience(portalRef) }} />
+                  <button onClick={() => pullPortalExperience(portalRef)} disabled={portalLoading || !portalRef.trim()}
+                    className="flex items-center gap-1.5 px-5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 transition-colors">
+                    {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Pull
+                  </button>
+                </div>
+
+                {portalData && (
+                  portalData.registered === false ? (
+                    <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
+                      <Info className="w-4 h-4 text-slate-400" /> No experience registered for <span className="font-mono font-bold text-slate-700">{portalData.booking_ref}</span> yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Trip meta banner */}
+                      <div className="rounded-2xl bg-gradient-to-r from-violet-50 to-indigo-50 border border-violet-100 p-4">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-black text-violet-700">{portalData.booking_ref}</span>
+                          {portalData.customer_name && <span className="text-sm font-bold text-slate-800">{portalData.customer_name}</span>}
+                          {portalData.trip_label && <span className="text-xs text-slate-500 flex items-center gap-1"><MapPin className="w-3 h-3" /> {portalData.trip_label}</span>}
+                        </div>
+                        {(portalData.arrival_date || portalData.departure_date) && (
+                          <p className="text-[11px] text-slate-500 mt-1 flex items-center gap-1.5">
+                            <CalendarClock className="w-3 h-3" />
+                            {portalData.arrival_date ? fmtDate(portalData.arrival_date) : '?'} → {portalData.departure_date ? fmtDate(portalData.departure_date) : '?'}
+                          </p>
+                        )}
+                      </div>
+                      {portalData.reconfirmation ? <ReconfirmCard row={portalData.reconfirmation} /> : (
+                        <p className="text-xs text-slate-400 italic px-1">No reconfirmation captured yet.</p>
+                      )}
+                      {portalData.post_tour ? <PostTourCard row={portalData.post_tour} /> : (
+                        <p className="text-xs text-slate-400 italic px-1">No post-tour feedback captured yet.</p>
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
+            </div>
+
+            {/* Lens + refresh */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex border border-slate-200 rounded-lg overflow-hidden">
+                {([
+                  { key: 'all',       label: 'All' },
+                  { key: 'reconfirm', label: 'Reconfirmations' },
+                  { key: 'post_tour', label: 'Post-tour' },
+                ] as const).map(l => (
+                  <button key={l.key} onClick={() => setExpLens(l.key)}
+                    className={`px-3 py-1.5 text-xs font-semibold transition-colors ${expLens === l.key ? 'bg-violet-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={loadExperience} disabled={expLoading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50 ml-auto">
+                {expLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
+              </button>
+            </div>
+
+            {/* Feed */}
+            {expLoading && !expFeed.length ? (
+              <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-violet-400 animate-spin" /></div>
+            ) : !expFeed.length ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+                <Award className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">No reconfirmation or post-tour calls yet</p>
+                <p className="text-slate-400 text-xs mt-1">Enable the plans at intake — results land here after each call.</p>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 gap-3">
+                {expFeed.map(item =>
+                  item.kind === 'reconfirm' && item.rc
+                    ? <ReconfirmCard key={`rc-${item.rc.id}`} row={item.rc} showRef />
+                    : item.pt
+                    ? <PostTourCard key={`pt-${item.pt.id}`} row={item.pt} showRef />
+                    : null
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════════
             TAB 2 — CUSTOM JOBS & CAMPAIGNS
         ═══════════════════════════════════════════════════════════════ */}
         {tab === 'jobs' && (
@@ -935,7 +1487,7 @@ export default function AICallBotPage() {
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center"><Megaphone className="w-4 h-4 text-violet-600" /></div>
-                  <div><h3 className="text-sm font-bold text-slate-900">Campaigns</h3><p className="text-xs text-slate-500">Reusable call scripts — guide the AI agent's approach</p></div>
+                  <div><h3 className="text-sm font-bold text-slate-900">Campaigns</h3><p className="text-xs text-slate-500">Reusable call scripts — guide the AI agent&apos;s approach</p></div>
                 </div>
                 {!campaignOpen && (
                   <button onClick={() => { setEditCampaign(null); setCampaignForm({ name: '', approach: '', collect: '', first_message: '', is_active: true }); setCampaignOpen(true) }}
