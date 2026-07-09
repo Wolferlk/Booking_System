@@ -17,6 +17,7 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Modal from '@/components/ui/modal'
 import { formatCurrency, formatDate } from '@/lib/utils'
+import { normalizeUploadUrl } from '@/lib/upload-path'
 import type { UserRole } from '@prisma/client'
 import Link from 'next/link'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
@@ -219,6 +220,7 @@ export default function TicketsPage() {
   const [purchaseRef,   setPurchaseRef]   = useState('')
   const [uploadingId,   setUploadingId]   = useState<string | null>(null)
   const [viewFile,      setViewFile]      = useState<Ticket | null>(null)
+  const [previewError, setPreviewError] = useState(false)
   const fileInputRef    = useRef<HTMLInputElement>(null)
   const extractFileRef  = useRef<HTMLInputElement>(null)
 
@@ -319,6 +321,7 @@ export default function TicketsPage() {
   }
 
   useEffect(() => { load() }, [ref])
+  useEffect(() => { setPreviewError(false) }, [viewFile])
 
   // ── Activate ────────────────────────────────────────────────────────────────
 
@@ -1552,16 +1555,20 @@ export default function TicketsPage() {
         <Modal open onClose={() => setViewFile(null)} title={`Receipt — ${viewFile.type}`} size="lg">
           <div className="flex flex-col items-center gap-4">
             {viewFile.fileName && <p className="text-sm text-slate-500 font-mono">{viewFile.fileName}</p>}
-            {viewFile.fileType === 'image' ? (
+            {((viewFile.fileType === 'image') || /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(viewFile.fileName ?? viewFile.fileUrl ?? '')) && !previewError ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={viewFile.fileUrl!} alt="Receipt"
-                className="max-w-full max-h-[60vh] rounded-lg border border-slate-200 object-contain" />
+              <img
+                src={normalizeUploadUrl(viewFile.fileUrl) ?? viewFile.fileUrl!}
+                alt="Receipt"
+                className="max-w-full max-h-[60vh] rounded-lg border border-slate-200 object-contain"
+                onError={() => setPreviewError(true)}
+              />
             ) : (
               <div className="flex flex-col items-center gap-4 py-8">
                 <FileText className="w-16 h-16 text-slate-300" />
-                <p className="text-slate-500">PDF document</p>
-                <a href={viewFile.fileUrl!} target="_blank" rel="noopener noreferrer" className="btn-primary btn">
-                  <ExternalLink className="w-4 h-4" /> Open PDF
+                <p className="text-slate-500">{previewError ? 'Preview unavailable' : 'PDF document'}</p>
+                <a href={normalizeUploadUrl(viewFile.fileUrl) ?? viewFile.fileUrl!} target="_blank" rel="noopener noreferrer" className="btn-primary btn">
+                  <ExternalLink className="w-4 h-4" /> Open File
                 </a>
               </div>
             )}

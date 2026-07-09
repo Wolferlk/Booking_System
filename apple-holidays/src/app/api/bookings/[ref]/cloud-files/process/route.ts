@@ -59,7 +59,7 @@ export async function POST(
     await mkdir(uploadDir, { recursive: true })
     await writeFile(path.join(uploadDir, safeName), buffer)
 
-    const fileUrl  = `/uploads/tickets/${safeName}`
+    const fileUrl  = `/api/uploads/tickets/${safeName}`
     const isImage  = /\.(jpe?g|png|webp|gif)$/i.test(itemName)
     const fileType = isImage ? 'image' : 'pdf'
 
