@@ -9,6 +9,7 @@ import {
   AlertCircle, Loader2, MessageSquare, Volume2, Settings,
   User, Star, MessageCircle, Bot, Info,
   ChevronRight, Hash, BookOpen, Megaphone,
+  Plane, Home, ThumbsUp, ClipboardCheck, Users, Award, Heart,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -40,6 +41,57 @@ interface TEService {
   retry_gap_min: number
   schedule?: TEScheduleItem[]
   feedback?: TEFeedback[]
+  // Reconfirmation + post-tour plan settings (API-Update-Reconfirmation&Post)
+  reconfirm_enabled?: boolean | null
+  reconfirm_days_before?: number | null
+  reconfirm_call_time?: string | null
+  post_tour_enabled?: boolean | null
+  post_tour_days_after?: number | null
+  post_tour_call_time?: string | null
+  reconfirmations?: TEReconfirmation[]
+  post_tour?: TEPostTour[]
+}
+
+type TriState = 'yes' | 'no' | 'unsure' | boolean | null | undefined
+
+interface TEReconfirmation {
+  id: number
+  service_id: number
+  schedule_id?: number | null
+  booking_ref: string
+  conversation_id?: string | null
+  dates_ok?: TriState
+  flight_ok?: TriState
+  pax_ok?: TriState
+  contact_ok?: TriState
+  requested_change?: string | null
+  special_requests?: string | null
+  notes?: string | null
+  outcome?: string | null
+  sentiment?: string | null
+  summary?: string | null
+  transcript?: TranscriptTurn[] | string | null
+  at?: string | null
+}
+
+interface TEPostTour {
+  id: number
+  service_id: number
+  schedule_id?: number | null
+  booking_ref: string
+  conversation_id?: string | null
+  rating?: number | null
+  stars?: number | null
+  reached_home_safely?: boolean | null
+  would_recommend?: boolean | null
+  best_moment?: string | null
+  improvements?: string | null
+  comment?: string | null
+  outcome?: string | null
+  sentiment?: string | null
+  summary?: string | null
+  transcript?: TranscriptTurn[] | string | null
+  at?: string | null
 }
 
 interface TEScheduleItem {
@@ -49,7 +101,7 @@ interface TEScheduleItem {
   call_date: string
   scheduled_at?: string | null
   day_no: number
-  phase?: 'arrival' | 'mid' | 'departure' | null
+  phase?: 'arrival' | 'mid' | 'departure' | 'reconfirm' | 'post_tour' | null
   day_brief?: string | null
   status: 'pending' | 'answered' | 'missed' | 'skipped' | 'done' | 'failed'
   attempts: number
@@ -313,6 +365,176 @@ function FeedbackDataView({ fb }: { fb: TEFeedback }) {
   )
 }
 
+// ─── Reconfirmation + Post-tour helpers ────────────────────────────────────────
+
+const SENTIMENT_EMOJI: Record<string, string> = { positive: '😊', happy: '😊', neutral: '😐', negative: '😞' }
+
+const OUTCOME_META: Record<string, { label: string; cls: string }> = {
+  confirmed:        { label: 'Confirmed',         cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  changes_requested:{ label: 'Changes requested', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  all_good:         { label: 'All good',          cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+  minor_note:       { label: 'Minor note',        cls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  issue_raised:     { label: 'Issue raised',      cls: 'bg-red-100 text-red-600 border-red-200' },
+  not_reached:      { label: 'Not reached',       cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+  callback:         { label: 'Callback',          cls: 'bg-violet-100 text-violet-700 border-violet-200' },
+  other:            { label: 'Other',             cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+}
+function outcomeBadge(o?: string | null) {
+  const cls = (o && OUTCOME_META[o]?.cls) || 'bg-slate-100 text-slate-500 border-slate-200'
+  return `inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${cls}`
+}
+
+function toStars(rating?: number | null, provided?: number | null): number {
+  if (provided != null) return Math.max(0, Math.min(5, provided))
+  if (rating == null) return 0
+  return Math.max(0, Math.min(5, Math.round(rating / 2)))
+}
+
+function triState(v: TriState): 'yes' | 'no' | 'unsure' {
+  if (v === true || v === 'yes') return 'yes'
+  if (v === false || v === 'no') return 'no'
+  return 'unsure'
+}
+const TRI_META = {
+  yes:    { icon: CheckCircle2, cls: 'text-emerald-600', bg: 'bg-emerald-50 border-emerald-200' },
+  no:     { icon: XCircle,      cls: 'text-red-500',     bg: 'bg-red-50 border-red-200' },
+  unsure: { icon: AlertCircle,  cls: 'text-slate-400',   bg: 'bg-slate-50 border-slate-200' },
+} as const
+
+function StarRating({ value, size = 'w-4 h-4' }: { value: number; size?: string }) {
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map(i => (
+        <Star key={i} className={`${size} ${i <= value ? 'text-amber-400 fill-amber-400' : 'text-slate-300'}`} />
+      ))}
+    </span>
+  )
+}
+
+function FlagChip({ label, value, icon: Icon }: { label: string; value: TriState; icon: React.ElementType }) {
+  const m = TRI_META[triState(value)]
+  const StatusIcon = m.icon
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border ${m.bg}`}>
+      <Icon className="w-3 h-3 text-slate-400" />
+      <span className="text-[10px] font-semibold text-slate-600">{label}</span>
+      <StatusIcon className={`w-3 h-3 ml-auto ${m.cls}`} />
+    </div>
+  )
+}
+
+function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
+      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${on ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+    </button>
+  )
+}
+
+// ─── Reconfirmation result card ────────────────────────────────────────────────
+function ReconfirmCard({ row }: { row: TEReconfirmation }) {
+  const [open, setOpen] = useState(false)
+  const hasChange = !!(row.requested_change && row.requested_change.trim())
+  return (
+    <div className="rounded-xl border border-sky-200 bg-white overflow-hidden">
+      <div className="px-3 py-2.5 bg-gradient-to-r from-sky-50 to-blue-50 border-b border-sky-100 flex items-center gap-2 flex-wrap">
+        <span className="w-6 h-6 rounded-lg bg-sky-500 flex items-center justify-center flex-shrink-0"><ClipboardCheck className="w-3 h-3 text-white" /></span>
+        <span className="text-[10px] font-bold text-sky-700 uppercase tracking-wide">Reconfirmation</span>
+        {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
+        {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
+        {row.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDateTime(row.at)}</span>}
+      </div>
+      <div className="p-3 space-y-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+          <FlagChip label="Dates"      value={row.dates_ok}   icon={Calendar} />
+          <FlagChip label="Flights"    value={row.flight_ok}  icon={Plane} />
+          <FlagChip label="Travellers" value={row.pax_ok}     icon={Users} />
+          <FlagChip label="Contact"    value={row.contact_ok} icon={Phone} />
+        </div>
+        {hasChange && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-amber-600 uppercase mb-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Requested change — action needed</p>
+            <p className="text-xs text-slate-800 leading-relaxed font-medium">{row.requested_change}</p>
+          </div>
+        )}
+        {row.special_requests && (
+          <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-violet-500 uppercase mb-1 flex items-center gap-1"><Heart className="w-3 h-3" /> Special requests</p>
+            <p className="text-xs text-slate-700 leading-relaxed">{row.special_requests}</p>
+          </div>
+        )}
+        {row.summary && <p className="text-xs text-slate-600 italic leading-relaxed">{row.summary}</p>}
+        {row.transcript && (
+          <div>
+            <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-sky-600 hover:text-sky-800">
+              <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} /></div>}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Post-tour result card ─────────────────────────────────────────────────────
+function PostTourCard({ row }: { row: TEPostTour }) {
+  const [open, setOpen] = useState(false)
+  const stars = toStars(row.rating, row.stars)
+  return (
+    <div className="rounded-xl border border-amber-200 bg-white overflow-hidden">
+      <div className="px-3 py-2.5 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100 flex items-center gap-2 flex-wrap">
+        <span className="w-6 h-6 rounded-lg bg-amber-500 flex items-center justify-center flex-shrink-0"><Award className="w-3 h-3 text-white" /></span>
+        <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Post-tour</span>
+        {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
+        {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
+        {row.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDateTime(row.at)}</span>}
+      </div>
+      <div className="p-3 space-y-2.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <StarRating value={stars} />
+          {row.rating != null && <span className="text-base font-black text-amber-500">{row.rating}<span className="text-[10px] font-bold text-slate-400">/10</span></span>}
+          <div className="flex items-center gap-1.5 ml-auto">
+            {row.reached_home_safely != null && (
+              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${row.reached_home_safely ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-red-50 text-red-500 border-red-200'}`}>
+                <Home className="w-3 h-3" /> {row.reached_home_safely ? 'Home safe' : 'Not home'}
+              </span>
+            )}
+            {row.would_recommend != null && (
+              <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${row.would_recommend ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+                <ThumbsUp className="w-3 h-3" /> {row.would_recommend ? 'Recommends' : 'Would not'}
+              </span>
+            )}
+          </div>
+        </div>
+        {row.best_moment && (
+          <div className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase mb-1 flex items-center gap-1"><Star className="w-3 h-3" /> Best moment</p>
+            <p className="text-xs text-slate-700 leading-relaxed">{row.best_moment}</p>
+          </div>
+        )}
+        {row.improvements && (
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+            <p className="text-[10px] font-bold text-blue-500 uppercase mb-1 flex items-center gap-1"><Info className="w-3 h-3" /> Could improve</p>
+            <p className="text-xs text-slate-700 leading-relaxed">{row.improvements}</p>
+          </div>
+        )}
+        {row.comment && <p className="text-xs text-slate-700 leading-relaxed">&ldquo;{row.comment}&rdquo;</p>}
+        {row.summary && <p className="text-xs text-slate-500 italic leading-relaxed">{row.summary}</p>}
+        {row.transcript && (
+          <div>
+            <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-800">
+              <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} /></div>}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Call History Card ────────────────────────────────────────────────────────
 
 function CallHistoryCard({ fb, scheduleItems }: { fb: TEFeedback; scheduleItems: TEScheduleItem[] }) {
@@ -412,16 +634,26 @@ function ScheduleRow({ item, busy, onCallNow, onSkip, onDelete, onEdit }: {
   const isPast = new Date(item.call_date + 'T23:59:59') < new Date()
   const isToday = item.call_date === new Date().toISOString().slice(0, 10)
   const canCall = item.status === 'pending' || item.status === 'missed'
+  const isReconfirm = item.phase === 'reconfirm'
+  const isPostTour  = item.phase === 'post_tour'
 
   return (
-    <div className={`flex items-center gap-2 py-3 border-b border-slate-50 last:border-0 group ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold ${isToday ? 'bg-violet-600 text-white' : (item.status === 'answered' || item.status === 'done') ? 'bg-emerald-100 text-emerald-600' : isPast ? 'bg-slate-100 text-slate-400' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
-        {item.day_no}
-      </div>
+    <div className={`flex items-center gap-2 py-3 border-b border-slate-50 last:border-0 group ${busy ? 'opacity-40 pointer-events-none' : ''} ${isReconfirm ? 'bg-sky-50/40' : isPostTour ? 'bg-amber-50/30' : ''}`}>
+      {isReconfirm ? (
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-sky-500 text-white" title="Reconfirmation call"><ClipboardCheck className="w-3.5 h-3.5" /></div>
+      ) : isPostTour ? (
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-amber-500 text-white" title="Post-tour feedback call"><Award className="w-3.5 h-3.5" /></div>
+      ) : (
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-bold ${isToday ? 'bg-violet-600 text-white' : (item.status === 'answered' || item.status === 'done') ? 'bg-emerald-100 text-emerald-600' : isPast ? 'bg-slate-100 text-slate-400' : 'bg-slate-50 text-slate-500 border border-slate-200'}`}>
+          {item.day_no}
+        </div>
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`text-xs font-mono font-semibold ${isToday ? 'text-violet-700' : 'text-slate-700'}`}>{fmtDate(item.call_date)}</span>
-          {item.phase && <span className="text-xs">{phaseIcons[item.phase] ?? ''}</span>}
+          {isReconfirm && <span className="text-[9px] font-bold bg-sky-100 text-sky-700 border border-sky-200 px-1.5 py-0.5 rounded-full">RECONFIRM</span>}
+          {isPostTour && <span className="text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded-full">POST-TOUR</span>}
+          {item.phase && !isReconfirm && !isPostTour && <span className="text-xs">{phaseIcons[item.phase] ?? ''}</span>}
           {isToday && <span className="text-[9px] font-bold bg-violet-600 text-white px-1.5 py-0.5 rounded-full">TODAY</span>}
           <span className={statusBadge(item.status, true)}>{statusIcon}<span className="ml-0.5">{item.status.toUpperCase()}</span></span>
           {item.scheduled_at && <span className="text-[10px] text-blue-500 flex items-center gap-0.5"><Clock className="w-2.5 h-2.5" />{fmtTime(item.scheduled_at)}</span>}
@@ -511,6 +743,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [intakeForm, setIntakeForm] = useState({ phone: defaultPhone, mode: 'agenda' as 'agenda' | 'interval', call_time: '18:00', interval_count: '10', interval_unit: 'minute' as 'minute' | 'hour' | 'day', retry_gap_min: '15' })
   const [intakeLoading, setIntakeLoading] = useState(false)
 
+  // ── Reconfirmation + Post-tour opt-in ─────────────────────────────────────
+  const [reconfirmPlan, setReconfirmPlan] = useState({ enabled: true, days_before: '5', call_time: '' })
+  const [postTourPlan, setPostTourPlan]   = useState({ enabled: true, days_after: '3', call_time: '' })
+  const [planBusy, setPlanBusy]           = useState<'reconfirm' | 'post_tour' | null>(null)
+
   // ── Edit service form ─────────────────────────────────────────────────────
   const [editOpen, setEditOpen]       = useState(false)
   const [editForm, setEditForm]       = useState({ phone: defaultPhone, call_time: '18:00', mode: 'agenda' as 'agenda' | 'interval', interval_count: '10', interval_unit: 'minute' as 'minute' | 'hour' | 'day', retry_gap_min: '15' })
@@ -597,22 +834,37 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     if (!intakeForm.phone) { toast.error('Phone number is required'); return }
     setIntakeLoading(true)
     try {
-      const body: Record<string, unknown> = {
-        bookingRef,
-        phone: intakeForm.phone.replace(/\D/g, ''),
-        schedule: {
-          mode: intakeForm.mode,
-          call_time: intakeForm.call_time,
-          retry_gap_min: Number(intakeForm.retry_gap_min) || 15,
-          ...(intakeForm.mode === 'interval' && { interval_count: Number(intakeForm.interval_count) || 10, interval_unit: intakeForm.interval_unit, start_at: 'now' }),
-        },
+      const scheduleBody: Record<string, unknown> = {
+        mode: intakeForm.mode,
+        call_time: intakeForm.call_time,
+        retry_gap_min: Number(intakeForm.retry_gap_min) || 15,
+        ...(intakeForm.mode === 'interval' && { interval_count: Number(intakeForm.interval_count) || 10, interval_unit: intakeForm.interval_unit, start_at: 'now' }),
       }
+      scheduleBody.reconfirm = reconfirmPlan.enabled
+        ? { enabled: true, days_before: Number(reconfirmPlan.days_before) || 5, ...(reconfirmPlan.call_time && { call_time: reconfirmPlan.call_time }) }
+        : { enabled: false }
+      scheduleBody.post_tour = postTourPlan.enabled
+        ? { enabled: true, days_after: Number(postTourPlan.days_after) || 3, ...(postTourPlan.call_time && { call_time: postTourPlan.call_time }) }
+        : { enabled: false }
+      const body: Record<string, unknown> = { bookingRef, phone: intakeForm.phone.replace(/\D/g, ''), schedule: scheduleBody }
       const res = await teProxy('intake', 'POST', body)
       if (res.ok === false && !res.service) throw new Error(res.message ?? 'Registration failed')
       toast.success(`Registered — ${res.schedule_inserted ?? 0} day${res.schedule_inserted !== 1 ? 's' : ''} scheduled`)
       await loadService()
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to register') }
     finally { setIntakeLoading(false) }
+  }
+
+  // ── Enable/disable a reconfirm / post-tour plan on the registered service ──
+  async function updatePlan(kind: 'reconfirm' | 'post_tour', patch: Record<string, unknown>) {
+    setPlanBusy(kind)
+    try {
+      const res = await teProxy(`services/${bookingRef}`, 'PATCH', { [kind]: patch })
+      if (res.error) throw new Error(res.error)
+      toast.success('Plan updated')
+      await loadService(true)
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+    finally { setPlanBusy(null) }
   }
 
   // ── Edit service ──────────────────────────────────────────────────────────
@@ -947,7 +1199,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs font-semibold text-amber-800 mb-0.5">Not registered for AI calls</p>
-                    <p className="text-xs text-amber-700 leading-relaxed">Register this booking to start automated check-in calls. The AI bot uses the booking's itinerary, hotels, and passenger details to create personalised conversations.</p>
+                    <p className="text-xs text-amber-700 leading-relaxed">Register this booking to start automated check-in calls. The AI bot uses the booking&apos;s itinerary, hotels, and passenger details to create personalised conversations.</p>
                   </div>
                 </div>
 
@@ -992,6 +1244,42 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* ── Reconfirmation + Post-tour opt-in ── */}
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className={`rounded-xl border-2 p-3 transition-all ${reconfirmPlan.enabled ? 'border-sky-300 bg-gradient-to-br from-sky-50 to-blue-50/60' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="flex items-start gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${reconfirmPlan.enabled ? 'bg-sky-500 text-white' : 'bg-slate-200 text-slate-400'}`}><ClipboardCheck className="w-4 h-4" /></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800">Pre-trip Reconfirmation</p>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">Reconfirms dates, flights &amp; travellers — captures any change requested.</p>
+                      </div>
+                      <ToggleSwitch on={reconfirmPlan.enabled} onChange={v => setReconfirmPlan(p => ({ ...p, enabled: v }))} />
+                    </div>
+                    {reconfirmPlan.enabled && (
+                      <div className="grid grid-cols-2 gap-2 mt-2.5">
+                        <div><label className="form-label !text-[10px]">Days before arrival</label><input type="number" min="1" max="30" className="form-input h-8 text-xs" value={reconfirmPlan.days_before} onChange={e => setReconfirmPlan(p => ({ ...p, days_before: e.target.value }))} /></div>
+                        <div><label className="form-label !text-[10px]">Time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={reconfirmPlan.call_time} onChange={e => setReconfirmPlan(p => ({ ...p, call_time: e.target.value }))} /></div>
+                      </div>
+                    )}
+                  </div>
+                  <div className={`rounded-xl border-2 p-3 transition-all ${postTourPlan.enabled ? 'border-amber-300 bg-gradient-to-br from-amber-50 to-orange-50/60' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="flex items-start gap-2.5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${postTourPlan.enabled ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-400'}`}><Award className="w-4 h-4" /></div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-slate-800">Post-tour Feedback</p>
+                        <p className="text-[10px] text-slate-500 leading-relaxed mt-0.5">Checks they got home safely &amp; captures a 0–10 trip rating.</p>
+                      </div>
+                      <ToggleSwitch on={postTourPlan.enabled} onChange={v => setPostTourPlan(p => ({ ...p, enabled: v }))} />
+                    </div>
+                    {postTourPlan.enabled && (
+                      <div className="grid grid-cols-2 gap-2 mt-2.5">
+                        <div><label className="form-label !text-[10px]">Days after departure</label><input type="number" min="1" max="30" className="form-input h-8 text-xs" value={postTourPlan.days_after} onChange={e => setPostTourPlan(p => ({ ...p, days_after: e.target.value }))} /></div>
+                        <div><label className="form-label !text-[10px]">Time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={postTourPlan.call_time} onChange={e => setPostTourPlan(p => ({ ...p, call_time: e.target.value }))} /></div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
@@ -1075,6 +1363,47 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     {approvalLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> Sending…</> : <><MessageSquare className="w-3.5 h-3.5" /> WhatsApp Approval</>}
                   </button>
                 </div>
+
+                {/* ── Reconfirmation + Post-tour plan controls ── */}
+                <div className="grid sm:grid-cols-2 gap-2.5 pt-1">
+                  <div className={`rounded-xl border p-3 ${service!.reconfirm_enabled ? 'border-sky-200 bg-sky-50/60' : 'border-slate-200 bg-white'}`}>
+                    <div className="flex items-center gap-2">
+                      <ClipboardCheck className={`w-4 h-4 ${service!.reconfirm_enabled ? 'text-sky-500' : 'text-slate-300'}`} />
+                      <span className="text-xs font-bold text-slate-700">Reconfirmation</span>
+                      {service!.reconfirm_enabled && service!.reconfirm_days_before != null && (
+                        <span className="text-[10px] text-sky-600 font-semibold">−{service!.reconfirm_days_before}d{service!.reconfirm_call_time ? ` · ${service!.reconfirm_call_time}` : ''}</span>
+                      )}
+                      <span className="ml-auto flex items-center">
+                        {planBusy === 'reconfirm'
+                          ? <Loader2 className="w-4 h-4 animate-spin text-sky-500" />
+                          : <ToggleSwitch on={!!service!.reconfirm_enabled} onChange={v => updatePlan('reconfirm', { enabled: v, days_before: service!.reconfirm_days_before ?? 5 })} />}
+                      </span>
+                    </div>
+                  </div>
+                  <div className={`rounded-xl border p-3 ${service!.post_tour_enabled ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'}`}>
+                    <div className="flex items-center gap-2">
+                      <Award className={`w-4 h-4 ${service!.post_tour_enabled ? 'text-amber-500' : 'text-slate-300'}`} />
+                      <span className="text-xs font-bold text-slate-700">Post-tour Feedback</span>
+                      {service!.post_tour_enabled && service!.post_tour_days_after != null && (
+                        <span className="text-[10px] text-amber-600 font-semibold">+{service!.post_tour_days_after}d{service!.post_tour_call_time ? ` · ${service!.post_tour_call_time}` : ''}</span>
+                      )}
+                      <span className="ml-auto flex items-center">
+                        {planBusy === 'post_tour'
+                          ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                          : <ToggleSwitch on={!!service!.post_tour_enabled} onChange={v => updatePlan('post_tour', { enabled: v, days_after: service!.post_tour_days_after ?? 3 })} />}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Captured reconfirmation + post-tour results ── */}
+                {((service!.reconfirmations?.length ?? 0) > 0 || (service!.post_tour?.length ?? 0) > 0) && (
+                  <div className="space-y-2.5 pt-1">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1"><Star className="w-3 h-3 text-amber-400" /> Captured on calls</p>
+                    {(service!.reconfirmations ?? []).map(r => <ReconfirmCard key={`rc-${r.id}`} row={r} />)}
+                    {(service!.post_tour ?? []).map(p => <PostTourCard key={`pt-${p.id}`} row={p} />)}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -1185,7 +1514,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
               {campaignsLoading ? (
                 <div className="flex items-center gap-2 py-4 text-xs text-slate-400"><Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400" /> Loading campaigns…</div>
               ) : campaigns.length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-2">No campaigns yet — create one to guide the agent's approach on calls</p>
+                <p className="text-xs text-slate-400 italic py-2">No campaigns yet — create one to guide the agent&apos;s approach on calls</p>
               ) : (
                 <div className="space-y-1.5">
                   {campaigns.map(c => (
