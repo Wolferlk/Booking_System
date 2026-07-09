@@ -871,14 +871,103 @@ model tbl_te_feedback {
   meals_ok    String?   @db.VarChar(12)
   driver_ok   String?   @db.VarChar(12)
   vehicle_ok  String?   @db.VarChar(12)
-  issues      String?   @db.Text
-  summary     String?   @db.Text
-  transcript  Json?
-  raw         Json?
-  created_at  DateTime  @default(now()) @db.Timestamp(0)
+  issues          String?   @db.Text
+  summary         String?   @db.Text
+  transcript      Json?
+  raw             Json?
+  conversation_id String?   @db.VarChar(128)
+  created_at      DateTime  @default(now()) @db.Timestamp(0)
 
   @@index([schedule_id], map: "idx_schedule")
   @@index([service_id, created_at], map: "idx_service")
+  @@index([conversation_id], map: "idx_conversation")
+}
+
+// One row per pre-trip reconfirmation call (uk_schedule keeps it to one row per
+// schedule row — live capture + post-call transcript pass merge into the same record).
+model tbl_te_reconfirmation {
+  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  service_id       BigInt    @db.UnsignedBigInt
+  schedule_id      BigInt?   @db.UnsignedBigInt
+  booking_ref      String    @db.VarChar(64)
+  conversation_id  String?   @db.VarChar(128)
+  dates_ok         String?   @db.VarChar(12)
+  flight_ok        String?   @db.VarChar(12)
+  pax_ok           String?   @db.VarChar(12)
+  contact_ok       String?   @db.VarChar(12)
+  requested_change String?   @db.Text
+  special_requests String?   @db.Text
+  notes            String?   @db.Text
+  outcome          String?   @db.VarChar(24)
+  sentiment        String?   @db.VarChar(16)
+  summary          String?   @db.Text
+  transcript       Json?
+  raw              Json?
+  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  updated_at       DateTime  @default(now()) @db.Timestamp(0)
+
+  @@unique([schedule_id], map: "uk_schedule")
+  @@index([service_id, created_at], map: "idx_service")
+  @@index([booking_ref], map: "idx_booking")
+  @@index([conversation_id], map: "idx_conversation")
+}
+
+// One row per post-tour feedback call (uk_schedule). `rating` is 0–10; the 1–5
+// star value is derived on read and never stored.
+model tbl_te_post_tour {
+  id                  BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  service_id          BigInt    @db.UnsignedBigInt
+  schedule_id         BigInt?   @db.UnsignedBigInt
+  booking_ref         String    @db.VarChar(64)
+  conversation_id     String?   @db.VarChar(128)
+  rating              Int?
+  reached_home_safely Boolean?
+  would_recommend     Boolean?
+  best_moment         String?   @db.Text
+  improvements        String?   @db.Text
+  comment             String?   @db.Text
+  outcome             String?   @db.VarChar(24)
+  sentiment           String?   @db.VarChar(16)
+  summary             String?   @db.Text
+  transcript          Json?
+  raw                 Json?
+  created_at          DateTime  @default(now()) @db.Timestamp(0)
+  updated_at          DateTime  @default(now()) @db.Timestamp(0)
+
+  @@unique([schedule_id], map: "uk_schedule")
+  @@index([service_id, created_at], map: "idx_service")
+  @@index([booking_ref], map: "idx_booking")
+  @@index([conversation_id], map: "idx_conversation")
+}
+
+// Realtime "important alert" raised when a customer complains or urgently asks for
+// something on ANY call. One row per call + category (uk_schedule_cat) — live and
+// post-call passes merge, never duplicate.
+model tbl_te_important_alerts {
+  id              BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  service_id      BigInt?   @db.UnsignedBigInt
+  schedule_id     BigInt?   @db.UnsignedBigInt
+  booking_ref     String?   @db.VarChar(64)
+  customer_name   String?   @db.VarChar(255)
+  conversation_id String?   @db.VarChar(128)
+  call_kind       String?   @db.VarChar(16)
+  category        String?   @db.VarChar(32)
+  severity        String    @default("medium") @db.VarChar(8)
+  title           String?   @db.VarChar(255)
+  details         String?   @db.Text
+  customer_quote  String?   @db.Text
+  sentiment       String?   @db.VarChar(16)
+  status          String    @default("open") @db.VarChar(12)
+  resolution_note String?   @db.Text
+  resolved_at     DateTime? @db.DateTime(0)
+  created_at      DateTime  @default(now()) @db.Timestamp(0)
+  updated_at      DateTime  @default(now()) @db.Timestamp(0)
+
+  @@unique([schedule_id, category], map: "uk_schedule_cat")
+  @@index([status, severity, created_at], map: "idx_status")
+  @@index([service_id], map: "idx_service")
+  @@index([booking_ref], map: "idx_booking")
+  @@index([conversation_id], map: "idx_conversation")
 }
 
 model tbl_te_knowledge {
@@ -927,8 +1016,12 @@ model tbl_te_service {
   interval_unit     String?   @db.VarChar(10)
   interval_start_at DateTime? @db.DateTime(0)
   retry_gap_min     Int?
-  reconfirm_enabled Boolean   @default(false)
-  post_tour_enabled Boolean   @default(false)
+  reconfirm_enabled     Boolean   @default(false)
+  reconfirm_days_before Int?
+  reconfirm_call_time   String?   @db.VarChar(5)
+  post_tour_enabled     Boolean   @default(false)
+  post_tour_days_after  Int?
+  post_tour_call_time   String?   @db.VarChar(5)
 
   @@index([status, updated_at], map: "idx_status")
 }
