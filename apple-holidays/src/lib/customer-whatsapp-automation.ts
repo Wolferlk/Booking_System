@@ -11,6 +11,7 @@ import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import {
   sendWhatsAppText,
+  sendWhatsAppMedia,
   normalisePhone,
   formatCustomerDailyBriefingMessage,
   formatFeedbackRequestMessage,
@@ -110,6 +111,7 @@ export async function sendDailyBriefingForBooking(
       passengers: { where: { isLead: true }, take: 1 },
       flights: { orderBy: { depTime: 'asc' } },
       accommodations: { orderBy: { checkIn: 'asc' } },
+      tickets: true,
       tourAgenda: {
         include: {
           items: {
@@ -142,17 +144,74 @@ export async function sendDailyBriefingForBooking(
     new Date(a.checkOut).toISOString().slice(0, 10) > targetDateStr)
   const isDeparting = onDay(b.departureDate)
 
+  const isArrival = onDay(b.arrivalDate)
+
   const hasContent = agendaItems.length > 0 || flights.length > 0 ||
     checkIns.length > 0 || checkOuts.length > 0 || isDeparting
   if (!hasContent && !opts.allowEmpty) {
     return { ok: false, reason: 'Nothing scheduled for this day' }
   }
 
+  // Group this day's tickets by the agenda item they belong to. Booking-level
+  // tickets (no agenda link) fall through and are ignored for per-movement display.
+  const dayItemIds = new Set(agendaItems.map(i => i.id))
+  const dayTickets = (b.tickets ?? []).filter(t =>
+    t.activated && t.agendaItemId && dayItemIds.has(t.agendaItemId))
+
+  const ticketLabel = (t: (typeof dayTickets)[number]) =>
+    t.category?.trim() || t.type || 'Ticket'
+
+  const movements = agendaItems.map(item => ({
+    location:     item.location,
+    fromPoint:    item.fromPoint,
+    toPoint:      item.toPoint,
+    meetingTime:  item.meetingTime,
+    timeFrom:     item.timeFrom,
+    timeTo:       item.timeTo,
+    details:      item.details,
+    mealPlan:     item.mealPlan,
+    serviceType:  item.serviceType,
+    driverName:   item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
+    driverPhone:  item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null,
+    vehicleType:  item.assignment?.vehicleType ?? null,
+    vehiclePlate: item.assignment?.vehiclePlate ?? null,
+    tickets: dayTickets
+      .filter(t => t.agendaItemId === item.id)
+      .map(t => ({
+        label:     ticketLabel(t),
+        reference: t.reference ?? null,
+        supplier:  t.supplier ?? null,
+        confirmed: t.status === 'PURCHASED' || t.status === 'PAID',
+        hasImage:  Boolean(t.fileUrl),
+      })),
+  }))
+
+  // Ticket/voucher files to send as media right after the text. fileUrl is a
+  // relative /api/uploads/... path served publicly, so Meta can fetch it by link.
+  const appUrl = (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')
+  const attachments = appUrl
+    ? dayTickets
+        .filter(t => t.fileUrl)
+        .map(t => ({
+          url:     t.fileUrl!.startsWith('http') ? t.fileUrl! : `${appUrl}${t.fileUrl}`,
+          kind:    (t.fileType === 'image' ? 'image' : 'document') as 'image' | 'document',
+          caption: `🎫 ${ticketLabel(t)}${t.reference ? ` · Ref ${t.reference}` : ''} — ${b.bookingRef}`,
+          filename: t.fileName ?? `${ticketLabel(t)}.${t.fileType === 'image' ? 'jpg' : 'pdf'}`,
+        }))
+        .filter(a => /^https:\/\//i.test(a.url))
+    : []
+
   const msg = formatCustomerDailyBriefingMessage({
     bookingRef:  b.bookingRef,
     leadName:    b.passengers[0]?.name ?? null,
+    leadPhone:   b.contactWhatsapp || b.contactPhone || null,
     date:        new Date(`${targetDateStr}T00:00:00.000Z`),
+    isArrival,
     isDeparting,
+    paxAdults:   b.paxAdults,
+    paxChildren: b.paxChildren,
+    paxInfants:  b.paxInfants,
+    managerContact: b.chauffeurContact?.trim() || null,
     stayingAtHotel: stayingAt ? `${stayingAt.hotel} (${stayingAt.city})` : null,
     checkIns:  checkIns.map(a => ({ hotel: a.hotel, city: a.city })),
     checkOuts: checkOuts.map(a => ({ hotel: a.hotel, city: a.city })),
@@ -160,18 +219,8 @@ export async function sendDailyBriefingForBooking(
       flightNo: f.flightNo, fromApt: f.fromApt, toApt: f.toApt,
       depTime: f.depTime, arrTime: f.arrTime, airline: f.airline,
     })),
-    agendaItems: agendaItems.map(item => ({
-      location:     item.location,
-      fromPoint:    item.fromPoint,
-      toPoint:      item.toPoint,
-      meetingTime:  item.meetingTime,
-      mealPlan:     item.mealPlan,
-      serviceType:  item.serviceType,
-      driverName:   item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
-      driverPhone:  item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null,
-      vehicleType:  item.assignment?.vehicleType ?? null,
-      vehiclePlate: item.assignment?.vehiclePlate ?? null,
-    })),
+    movements,
+    attachmentCount: attachments.length,
   })
 
   const ok = await sendWhatsAppText(phone, msg, b.passengers[0]?.name ?? undefined)
@@ -187,6 +236,20 @@ export async function sendDailyBriefingForBooking(
       senderName: `${TAG_DAILY_BRIEFING} ${b.passengers[0]?.name ?? 'Guest'}`,
     },
   })
+
+  // Best-effort: send each ticket/voucher file as a photo/document. A media
+  // failure never fails the briefing — the text (with ticket refs) is already out.
+  for (const att of attachments) {
+    try {
+      await sendWhatsAppMedia(phone, att.url, att.kind, {
+        caption:  att.caption,
+        filename: att.filename,
+      })
+    } catch (err) {
+      console.error(`[CustomerBriefing] media send failed for ${b.bookingRef}:`, err)
+    }
+  }
+
   return { ok: true, message: msg }
 }
 
