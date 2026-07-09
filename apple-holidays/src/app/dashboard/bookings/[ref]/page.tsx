@@ -30,6 +30,7 @@ import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
+import BookingCallTranscripts from '@/components/bookings/booking-call-transcripts'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 
@@ -1466,6 +1467,11 @@ Wishing you a wonderful trip! ✈️
             bookingRef={ref}
             booking={booking}
           />
+        )}
+
+        {/* AI Call Transcripts — DB-backed reconfirmation / on-tour / post-tour */}
+        {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <BookingCallTranscripts bookingRef={ref} />
         )}
 
         {/* Customer WhatsApp — manual daily briefings + feedback form */}
