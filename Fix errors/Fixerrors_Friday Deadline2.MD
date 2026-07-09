@@ -31,30 +31,45 @@ Here is sample form (Fix errors/image.png)
 That Feedback need strore in db 
 
 
-
+Auto - Send WhatsApp masg to fill feedback form - done
+ 
 ===================================================================================================
 
-p&l NOT merging AMENMENTS:
-Acounts PNL Now COrrectly Ammenments 
+Accounts P&L NOT merging AMENMENTS:
+Acounts PNL Now Correctly Merging but 
 
+But Their is  Ammenments :
+Now Account PNl COnnect with Booking ref : IS number As exmple 
+Booking Confirms : VN40035 connect with Acounts pnl is : VN40035
 
+I need Some Update Some time PNLs IS NUmber can be 
+Like this VN40035_R2/R2 , IS48591_R2/R2 , VN40120_R2/R3 , VN40452_R2/R2 , IS48548_R2/R2
+therefor 
+Like this Showing : Amenment PNLS there for need to SHow Tag name Like amenment 
 
+in here has accounts PNLS all (/dashboard/accounts/pnl)
 
+Need to connect Booking ref or IS : VN40035 
+Now noramly merging accounts PNLS IS : VN40035
 
+need update is 
+pericultar Booking Have to Show All (VN40035 , VN40035_R2/R2 ,VN40035_R2/R3 , VN40035_R3/R3 ) PNL when Select One Can apply this to Booking 
+Defult need to get Latest One Latest One is VN40035_R3/R3
+Account pnl latest Amenment Pnl is need to show : VN40035_R3/R3 
+but can show In side show Avaiable Othe PNLS IN Accounts Db therefore 
+ tikets also need to create for That Latest PNL 
 
+====================================================================================================
 
-
-
+Fix errors/API-Update-Reconfirmation&Post.md
 
 
 
 Ai Calls feedback - for perticular booking ,  daily need to send Final Feed Back......
-daily calls report need to send to argent and Boss CC
+Daily calls report need to send to argent and Boss CC
 if there Are Any Issue In daily call Alert to Travel E Team To Get call to Customer
  
-Auto - Send WhatsApp masg to fill feedback form
- 
- 
+
 ====================================================================================================
 
 

@@ -12,6 +12,7 @@ import { Card, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import { formatDateTime } from '@/lib/utils'
+import { parseAmendment } from '@/lib/pnl-amendment'
 import type { UserRole } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -84,6 +85,20 @@ interface ExtPnlLink {
   cachedItems: PnlItem[]
   lastFetchedAt: string
   createdAt: string
+}
+
+interface PnlVersion {
+  id: number
+  is_number: string | null
+  pnl_date: string | null
+  actual_amount: number | null
+  profit_loss: number | null
+  currency: string | null
+  status: string | null
+  isAmendment: boolean
+  amendmentLabel: string | null
+  isLatest: boolean
+  isLinked: boolean
 }
 
 interface Props {
@@ -178,6 +193,12 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
 
   const canEdit = ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
+  // Amendment versions
+  const [versions, setVersions]         = useState<PnlVersion[]>([])
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [loadingVersions, setLoadingVersions] = useState(false)
+  const [switching, setSwitching]       = useState<number | null>(null)
+
   // Auto ticket creation state
   const [creatingAllTickets,  setCreatingAllTickets]  = useState(false)
   const [allTicketsResult,    setAllTicketsResult]    = useState<{ created: number; skipped: number } | null>(null)
@@ -248,6 +269,49 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   }, [bookingRef])
 
   useEffect(() => { loadLink() }, [loadLink])
+
+  // ── Load available versions (base + amendments) ─────────────────────────────
+  const loadVersions = useCallback(async () => {
+    setLoadingVersions(true)
+    try {
+      const res  = await fetch(`/api/bookings/${bookingRef}/ext-pnl/versions`)
+      const json = await res.json()
+      setVersions(json.success ? (json.data.versions ?? []) : [])
+    } catch {
+      setVersions([])
+    } finally {
+      setLoadingVersions(false)
+    }
+  }, [bookingRef])
+
+  function toggleVersions() {
+    const next = !versionsOpen
+    setVersionsOpen(next)
+    if (next && versions.length === 0) loadVersions()
+  }
+
+  // ── Switch the linked version ───────────────────────────────────────────────
+  async function switchVersion(externalPnlId: number) {
+    setSwitching(externalPnlId)
+    try {
+      const res  = await fetch(`/api/bookings/${bookingRef}/ext-pnl/link`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ externalPnlId }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      setLink(json.data)
+      toast.success('Switched linked PNL version')
+      // Re-sync tickets to the newly-selected version, then refresh version flags
+      await createAllTicketsFromPnl(true)
+      await loadVersions()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to switch version')
+    } finally {
+      setSwitching(null)
+    }
+  }
 
   // ── Refetch ───────────────────────────────────────────────────────────────
   async function refetch() {
@@ -336,6 +400,7 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   // ─── Linked state ─────────────────────────────────────────────────────────
   if (link && rec) {
     const pl = Number(rec.profit_loss ?? 0)
+    const amd = parseAmendment(rec.is_number)
     return (
       <Card>
         {/* Header */}
@@ -362,6 +427,15 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
                 </button>
               )}
               <button
+                onClick={toggleVersions}
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors"
+                title="Show all Accounts PNL versions (amendments) for this booking"
+              >
+                <Package className="w-3 h-3" />
+                Versions
+                {versionsOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+              <button
                 onClick={refetch}
                 disabled={fetching}
                 className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors"
@@ -386,6 +460,11 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
             <Database className="w-4 h-4 text-emerald-500" />
             <h3 className="text-sm font-bold text-slate-900">Accounts PNL Record #{rec.id}</h3>
             <Badge color="green">Linked</Badge>
+            {amd.isAmendment && (
+              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
+                Amendment{amd.label ? ` · ${amd.label}` : ''}
+              </span>
+            )}
             <span className="text-[11px] text-slate-400">
               via <strong className="text-slate-600">{MATCH_LABEL[(link as ExtPnlLink).matchedBy] ?? (link as ExtPnlLink).matchedBy}</strong>
               {' · '}<code className="bg-slate-100 px-1 rounded">{(link as ExtPnlLink).matchedValue}</code>
@@ -394,6 +473,70 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
         </CardHeader>
 
         <div className="p-5 space-y-5">
+
+          {/* ── Amendment versions ── */}
+          {versionsOpen && (
+            <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-bold text-purple-700 flex items-center gap-1.5">
+                  <Package className="w-3.5 h-3.5" />
+                  Available PNL Versions
+                  {versions.length > 0 && (
+                    <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                      {versions.length}
+                    </span>
+                  )}
+                </h4>
+                {loadingVersions && <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />}
+              </div>
+              {!loadingVersions && versions.length === 0 && (
+                <p className="text-xs text-slate-500 py-2">No other versions found in the Accounts DB.</p>
+              )}
+              <div className="space-y-1.5">
+                {versions.map(v => (
+                  <div
+                    key={v.id}
+                    className={`flex items-center gap-2.5 flex-wrap px-3 py-2 rounded-lg border text-xs ${
+                      v.isLinked ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'
+                    }`}
+                  >
+                    <span className="font-mono font-bold text-slate-400">#{v.id}</span>
+                    <span className="font-mono font-bold text-blue-700">{v.is_number ?? '—'}</span>
+                    {v.isAmendment && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
+                        Amendment{v.amendmentLabel ? ` · ${v.amendmentLabel}` : ''}
+                      </span>
+                    )}
+                    {v.isLatest && (
+                      <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
+                        Latest
+                      </span>
+                    )}
+                    {v.pnl_date && <span className="text-slate-400">{v.pnl_date}</span>}
+                    {v.actual_amount != null && (
+                      <span className="font-semibold text-slate-700">{fmtAmt(v.actual_amount, v.currency ?? 'USD')}</span>
+                    )}
+                    <div className="ml-auto">
+                      {v.isLinked ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded bg-emerald-100 text-emerald-700">
+                          <CheckCircle2 className="w-3 h-3" /> Linked
+                        </span>
+                      ) : canEdit ? (
+                        <button
+                          onClick={() => switchVersion(v.id)}
+                          disabled={switching === v.id}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 disabled:opacity-50 transition-colors"
+                        >
+                          {switching === v.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Link2 className="w-3 h-3" />}
+                          Use this
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── Financial summary row ── */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

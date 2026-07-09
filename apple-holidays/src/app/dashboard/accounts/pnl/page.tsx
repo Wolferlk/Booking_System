@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -13,8 +13,9 @@ import {
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
-import { formatDate, formatDateTime } from '@/lib/utils'
+import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
+import { parseAmendment } from '@/lib/pnl-amendment'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,16 +73,39 @@ interface LinkMeta {
   createdAt: string
 }
 
+interface PnlVersion {
+  id: number
+  is_number: string | null
+  tour_ref: string | null
+  invoice_number: string | null
+  pnl_date: string | null
+  actual_amount: number | null
+  profit_loss: number | null
+  currency: string | null
+  status: string | null
+  isAmendment: boolean
+  amendmentLabel: string | null
+  isLinked: boolean
+}
+
 interface LinkedRow {
   pnlRecord: PnlRecord
   link: LinkMeta
   booking: BookingSnap
+  versions?: PnlVersion[]
+  isAmendment?: boolean
+  linkedIsStale?: boolean
+}
+
+interface PnlOnlyRow extends PnlRecord {
+  versions?: PnlVersion[]
+  isAmendment?: boolean
 }
 
 interface OverviewData {
   summary: { totalExtPnl: number; linked: number; pnlOnly: number; bookingsOnly: number }
   linked: LinkedRow[]
-  pnlOnly: PnlRecord[]
+  pnlOnly: PnlOnlyRow[]
   bookingsOnly: BookingSnap[]
   externalDbError?: string | null
 }
@@ -104,6 +128,56 @@ function MatchBadge({ by }: { by: string }) {
     <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
       {labels[by] ?? by}
     </span>
+  )
+}
+
+function AmendmentTag({ label }: { label?: string | null }) {
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 border border-purple-200">
+      Amendment{label ? ` · ${label}` : ''}
+    </span>
+  )
+}
+
+/** Expandable sub-row listing every available PNL version for a booking. */
+function VersionsSubRow({ versions, colSpan }: { versions: PnlVersion[]; colSpan: number }) {
+  return (
+    <tr className="bg-slate-50/70">
+      <td colSpan={colSpan} className="px-4 py-3">
+        <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2">
+          Available PNL versions in Accounts DB ({versions.length})
+        </div>
+        <div className="space-y-1">
+          {versions.map((v, i) => (
+            <div
+              key={v.id}
+              className={`flex items-center gap-3 flex-wrap px-3 py-2 rounded-lg border text-xs ${
+                v.isLinked ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'
+              }`}
+            >
+              <span className="font-mono font-bold text-slate-500">#{v.id}</span>
+              <span className="font-mono font-bold text-blue-700">{v.is_number ?? '—'}</span>
+              {v.isAmendment && <AmendmentTag label={v.amendmentLabel} />}
+              {i === 0 && (
+                <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
+                  Latest
+                </span>
+              )}
+              {v.isLinked && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 className="w-3 h-3" /> Linked
+                </span>
+              )}
+              {v.pnl_date && <span className="text-slate-400">{v.pnl_date}</span>}
+              {v.actual_amount != null && (
+                <span className="font-semibold text-slate-700">{fmt(v.actual_amount, v.currency ?? 'USD')}</span>
+              )}
+              {v.status && <span className="text-slate-400">{v.status}</span>}
+            </div>
+          ))}
+        </div>
+      </td>
+    </tr>
   )
 }
 
@@ -266,6 +340,15 @@ export default function AccountsPNLPage() {
   const [search, setSearch]     = useState('')
   const [assignTarget, setAssignTarget] = useState<PnlRecord | null>(null)
   const [unlinking, setUnlinking]       = useState<string | null>(null)
+  const [expanded, setExpanded]         = useState<Set<string>>(new Set())
+
+  function toggleExpand(key: string) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }
 
   const searchDebounce = useRef<ReturnType<typeof setTimeout>>()
 
@@ -485,13 +568,36 @@ export default function AccountsPNLPage() {
                       <tbody>
                         {linked.map(row => {
                           const lead = row.booking.passengers[0]?.name ?? '—'
+                          const versions = row.versions ?? []
+                          const hasVersions = versions.length > 1
+                          const isOpen = expanded.has(row.link.id)
+                          const amd = parseAmendment(row.pnlRecord.is_number)
                           return (
-                            <tr key={row.link.id}>
+                            <Fragment key={row.link.id}>
+                            <tr>
                               <td className="font-mono font-bold text-slate-700">#{row.pnlRecord.id}</td>
                               <td>
-                                {row.pnlRecord.is_number
-                                  ? <span className="font-mono font-bold text-blue-700">{row.pnlRecord.is_number}</span>
-                                  : <span className="text-slate-300">—</span>}
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {row.pnlRecord.is_number
+                                    ? <span className="font-mono font-bold text-blue-700">{row.pnlRecord.is_number}</span>
+                                    : <span className="text-slate-300">—</span>}
+                                  {(row.isAmendment || amd.isAmendment) && <AmendmentTag label={amd.label} />}
+                                  {hasVersions && (
+                                    <button
+                                      onClick={() => toggleExpand(row.link.id)}
+                                      className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded"
+                                      title="Show all PNL versions"
+                                    >
+                                      {versions.length} versions
+                                      <ChevronRight className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                                    </button>
+                                  )}
+                                  {row.linkedIsStale && (
+                                    <span className="text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200" title="Booking still linked to an older version; opening its P&L page moves it to the latest">
+                                      newer available
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td>
                                 {row.pnlRecord.tour_ref
@@ -546,6 +652,10 @@ export default function AccountsPNLPage() {
                                 </div>
                               </td>
                             </tr>
+                            {isOpen && hasVersions && (
+                              <VersionsSubRow versions={versions} colSpan={12} />
+                            )}
+                            </Fragment>
                           )
                         })}
                       </tbody>
@@ -589,13 +699,32 @@ export default function AccountsPNLPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pnlOnly.map(rec => (
-                          <tr key={rec.id} className="hover:bg-amber-50/30">
+                        {pnlOnly.map(rec => {
+                          const versions = rec.versions ?? []
+                          const hasVersions = versions.length > 1
+                          const isOpen = expanded.has(`pnl-${rec.id}`)
+                          const amd = parseAmendment(rec.is_number)
+                          return (
+                          <Fragment key={rec.id}>
+                          <tr className="hover:bg-amber-50/30">
                             <td className="font-mono font-bold text-slate-700">#{rec.id}</td>
                             <td>
-                              {rec.is_number
-                                ? <span className="font-mono font-bold text-blue-700">{rec.is_number}</span>
-                                : <span className="text-slate-300">—</span>}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {rec.is_number
+                                  ? <span className="font-mono font-bold text-blue-700">{rec.is_number}</span>
+                                  : <span className="text-slate-300">—</span>}
+                                {(rec.isAmendment || amd.isAmendment) && <AmendmentTag label={amd.label} />}
+                                {hasVersions && (
+                                  <button
+                                    onClick={() => toggleExpand(`pnl-${rec.id}`)}
+                                    className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-1.5 py-0.5 rounded"
+                                    title="Show all PNL versions"
+                                  >
+                                    {versions.length} versions
+                                    <ChevronRight className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                                  </button>
+                                )}
+                              </div>
                             </td>
                             <td>
                               {rec.tour_ref
@@ -627,7 +756,12 @@ export default function AccountsPNLPage() {
                               </button>
                             </td>
                           </tr>
-                        ))}
+                          {isOpen && hasVersions && (
+                            <VersionsSubRow versions={versions} colSpan={11} />
+                          )}
+                          </Fragment>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
