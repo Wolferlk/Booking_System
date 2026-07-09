@@ -153,6 +153,7 @@ model Booking {
   changeRequests         ChangeRequest[]
   contactLogs            ContactLog[]
   customerFeedback       CustomerFeedback?
+  guestFeedback          GuestFeedbackForm?
   emergencyContacts      EmergencyContact[]
   externalPnlLink        ExternalPnlLink?
   flights                Flight[]
@@ -691,6 +692,25 @@ model CustomerFeedback {
   @@map("customer_feedback")
 }
 
+model GuestFeedbackForm {
+  id                 String           @id @default(cuid())
+  bookingId          String           @unique
+  purpose            FeedbackPurpose?
+  accommodationRoom  FeedbackRating?
+  accommodationFood  FeedbackRating?
+  restaurantFood     FeedbackRating?
+  restaurantAmbience FeedbackRating?
+  transportVehicle   FeedbackRating?
+  transportDriver    FeedbackRating?
+  overallExperience  FeedbackRating?
+  remarks            String?          @db.Text
+  clientName         String?
+  submittedAt        DateTime         @default(now())
+  booking            Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("guest_feedback_forms")
+}
+
 model OneDriveEvent {
   id           String              @id @default(cuid())
   driveType    String
@@ -907,6 +927,8 @@ model tbl_te_service {
   interval_unit     String?   @db.VarChar(10)
   interval_start_at DateTime? @db.DateTime(0)
   retry_gap_min     Int?
+  reconfirm_enabled Boolean   @default(false)
+  post_tour_enabled Boolean   @default(false)
 
   @@index([status, updated_at], map: "idx_status")
 }
@@ -1037,4 +1059,17 @@ enum OneDriveEventStatus {
   PROCESSED
   ERROR
   SKIPPED
+}
+
+enum FeedbackRating {
+  EXCELLENT
+  GOOD
+  AVERAGE
+  POOR
+}
+
+enum FeedbackPurpose {
+  BUSINESS
+  LEISURE
+  BOTH
 }

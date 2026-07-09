@@ -23,6 +23,14 @@
     {
       "path": "/api/cron/auto-booking-create",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/customer-daily-briefing",
+      "schedule": "0 11 * * *"
+    },
+    {
+      "path": "/api/cron/customer-feedback-request",
+      "schedule": "0 11 * * *"
     }
   ]
 }
