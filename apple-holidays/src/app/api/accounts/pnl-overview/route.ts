@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { fetchAllPnlRecords, fetchPnlRecordsFiltered } from '@/lib/accounts-db'
+import { fetchAllPnlRecords, fetchPnlRecordsFiltered, type PnlRecord } from '@/lib/accounts-db'
+import { amendmentBase, parseAmendment, sortLatestFirst } from '@/lib/pnl-amendment'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -64,15 +65,58 @@ export async function GET(req: NextRequest) {
   // Map externalPnlId → link (one-to-one)
   const linkByExtId = new Map(allLinks.map(l => [l.externalPnlId, l]))
 
-  // ── 3. Split into linked / pnlOnly ───────────────────────────────────────
+  // ── 3. Group amendments by base ref, then split into linked / pnlOnly ─────
+  // All versions of a booking (VN40035, VN40035_R2/R2, …_R3/R3) collapse into
+  // one row whose primary record is the LATEST version.
+  const groupKey = (r: PnlRecord): string => {
+    const b = amendmentBase(r.is_number)
+    if (b) return `IS:${b}`
+    const t = amendmentBase(r.tour_ref)
+    if (t) return `REF:${t}`
+    return `ID:${r.id}`
+  }
+
+  const versionSummary = (v: PnlRecord, linkedExtId: number | null) => {
+    const amd = parseAmendment(v.is_number)
+    return {
+      id:             v.id,
+      is_number:      v.is_number,
+      tour_ref:       v.tour_ref,
+      invoice_number: v.invoice_number,
+      pnl_date:       v.pnl_date,
+      actual_amount:  v.actual_amount,
+      profit_loss:    v.profit_loss,
+      currency:       v.currency,
+      status:         v.status,
+      isAmendment:    amd.isAmendment,
+      amendmentLabel: amd.label,
+      isLinked:       v.id === linkedExtId,
+    }
+  }
+
+  // Preserve the incoming order (id DESC) of the first-seen member per group.
+  const groups = new Map<string, PnlRecord[]>()
+  const groupOrder: string[] = []
+  for (const row of extRows) {
+    const key = groupKey(row)
+    if (!groups.has(key)) { groups.set(key, []); groupOrder.push(key) }
+    groups.get(key)!.push(row)
+  }
+
   const linked:  object[] = []
   const pnlOnly: object[] = []
 
-  for (const row of extRows) {
-    const link = linkByExtId.get(row.id)
+  for (const key of groupOrder) {
+    const members = sortLatestFirst(groups.get(key)!, r => r.is_number, r => r.id)
+    const primary = members[0]                       // latest version
+    const linkedMember = members.find(m => linkByExtId.get(m.id))
+    const link = linkedMember ? linkByExtId.get(linkedMember.id)! : null
+    const versions = members.map(m => versionSummary(m, linkedMember?.id ?? null))
+    const isAmendment = members.length > 1 || parseAmendment(primary.is_number).isAmendment
+
     if (link) {
       linked.push({
-        pnlRecord: row,
+        pnlRecord: primary,
         link: {
           id:            link.id,
           matchedBy:     link.matchedBy,
@@ -81,9 +125,13 @@ export async function GET(req: NextRequest) {
           createdAt:     link.createdAt,
         },
         booking: link.booking,
+        versions,
+        isAmendment,
+        // true when the booking is still linked to an older version than latest
+        linkedIsStale: linkedMember!.id !== primary.id,
       })
     } else {
-      pnlOnly.push(row)
+      pnlOnly.push({ ...primary, versions, isAmendment })
     }
   }
 

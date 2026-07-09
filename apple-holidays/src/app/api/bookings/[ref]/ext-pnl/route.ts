@@ -3,11 +3,55 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { findPnlByIdentifiers, fetchPnlById } from '@/lib/accounts-db'
+import {
+  findPnlByIdentifiers, fetchPnlById, fetchPnlVersionsForBooking,
+  type PnlRecord,
+} from '@/lib/accounts-db'
+import { syncTicketsFromPnl, type PnlItemLike } from '@/lib/ext-pnl-tickets'
+import type { ExternalPnlLink } from '@prisma/client'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-/** GET — return the cached external PNL link for a booking. If none exists,
+
+/**
+ * If a newer amendment exists for the currently-linked record's base, re-point
+ * the link to it, refresh the cached snapshot, and re-sync DRAFT tickets from
+ * the new line items. Returns the updated link, or null if already latest.
+ * Best-effort: throws only on unexpected errors; callers guard the Accounts DB.
+ */
+async function autoMoveToLatest(
+  bookingId: string,
+  link: ExternalPnlLink,
+): Promise<ExternalPnlLink | null> {
+  const linkedRec = link.cachedRecord as unknown as PnlRecord | null
+  const res = await fetchPnlVersionsForBooking({
+    isNumber:      linkedRec?.is_number ?? null,
+    tourRef:       linkedRec?.tour_ref ?? null,
+    invoiceNumber: linkedRec?.invoice_number ?? null,
+  })
+  const latest = res?.versions[0]
+  if (!latest || latest.id === link.externalPnlId) return null
+
+  const full = await fetchPnlById(latest.id)
+  if (!full) return null
+
+  const updated = await prisma.externalPnlLink.update({
+    where: { bookingId },
+    data: {
+      externalPnlId: full.record.id,
+      matchedValue:  full.record.is_number ?? link.matchedValue,
+      cachedRecord:  full.record as object,
+      cachedItems:   full.items as object[],
+      lastFetchedAt: new Date(),
+    },
+  })
+  // Bring DRAFT tickets in line with the new amendment; purchased/paid untouched.
+  await syncTicketsFromPnl(bookingId, full.items as unknown as PnlItemLike[], { resync: true })
+  return updated
+}
+
+/** GET — return the cached external PNL link for a booking. If already linked,
+ *  auto-move to the latest amendment when a newer one exists. If not linked,
  *  attempt auto-linking by matching booking identifiers against the Accounts DB. */
 export async function GET(
   _req: NextRequest,
@@ -22,9 +66,16 @@ export async function GET(
   })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  // If already linked, return cached data
+  // If already linked, auto-move to the latest amendment when one exists.
   if (booking.externalPnlLink) {
-    return buildApiSuccess(booking.externalPnlLink)
+    try {
+      const moved = await autoMoveToLatest(booking.id, booking.externalPnlLink)
+      return buildApiSuccess(moved ?? booking.externalPnlLink)
+    } catch (err) {
+      // Accounts DB unreachable — fall back to the cached link.
+      console.error('[ext-pnl] auto-move check failed:', err)
+      return buildApiSuccess(booking.externalPnlLink)
+    }
   }
 
   // Try to auto-link now

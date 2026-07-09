@@ -9,6 +9,7 @@
  * LIMIT ? params on this MySQL server.
  */
 import mysql from 'mysql2/promise'
+import { amendmentBase, sortLatestFirst } from './pnl-amendment'
 
 // AWS RDS connection timeout — hard ceiling so the page never hangs forever
 const CONN_TIMEOUT_MS = 15_000
@@ -138,13 +139,45 @@ export interface PnlFullRecord {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-/** Try to auto-match a booking against the external PNL database. */
-export async function findPnlByIdentifiers(opts: {
+type MatchField = 'is_number' | 'tour_ref' | 'invoice_number'
+
+/**
+ * Fetch every PNL record whose <field> shares the amendment base of `value`.
+ * Over-fetches with a prefix LIKE, then filters precisely in JS so that
+ * `VN40035` never captures `VN400351`. Returned sorted latest-first.
+ */
+async function fetchVersionsByField(field: MatchField, value: string): Promise<PnlRecord[]> {
+  const base = amendmentBase(value)
+  if (!base) return []
+  // LIKE 'BASE%' over-fetches (e.g. VN400351); the JS filter below keeps only
+  // rows whose own amendment base equals ours.
+  const rows = await q<mysql.RowDataPacket>(
+    `SELECT * FROM pnl_records
+     WHERE deleted_at IS NULL AND UPPER(\`${field}\`) LIKE ?
+     ORDER BY id DESC`,
+    [`${base}%`],
+  )
+  const all = (rows as unknown as PnlRecord[]).filter(
+    r => amendmentBase((r as unknown as Record<string, string | null>)[field]) === base,
+  )
+  return sortLatestFirst(
+    all,
+    r => (r as unknown as Record<string, string | null>)[field],
+    r => r.id,
+  )
+}
+
+/**
+ * Resolve ALL PNL versions (base + amendments) for a booking, matched by the
+ * first identifier that yields any rows. Returns them sorted latest-first,
+ * along with which field matched and the booking value that matched.
+ */
+export async function fetchPnlVersionsForBooking(opts: {
   isNumber?: string | null
   tourRef?: string | null
   invoiceNumber?: string | null
-}): Promise<{ record: PnlRecord; matchedBy: string; matchedValue: string } | null> {
-  const checks: Array<{ field: string; value: string | null | undefined }> = [
+}): Promise<{ versions: PnlRecord[]; base: string; matchedBy: MatchField; matchedValue: string } | null> {
+  const checks: Array<{ field: MatchField; value: string | null | undefined }> = [
     { field: 'is_number',      value: opts.isNumber },
     { field: 'tour_ref',       value: opts.tourRef },
     { field: 'invoice_number', value: opts.invoiceNumber },
@@ -152,15 +185,26 @@ export async function findPnlByIdentifiers(opts: {
 
   for (const { field, value } of checks) {
     if (!value?.trim()) continue
-    const rows = await q<mysql.RowDataPacket>(
-      `SELECT * FROM pnl_records WHERE \`${field}\` = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1`,
-      [value.trim()],
-    )
-    if (rows.length > 0) {
-      return { record: rows[0] as unknown as PnlRecord, matchedBy: field, matchedValue: value.trim() }
+    const versions = await fetchVersionsByField(field, value)
+    if (versions.length > 0) {
+      return { versions, base: amendmentBase(value), matchedBy: field, matchedValue: value.trim() }
     }
   }
   return null
+}
+
+/**
+ * Try to auto-match a booking against the external PNL database.
+ * Amendment-aware: matches the base ref and returns the LATEST version.
+ */
+export async function findPnlByIdentifiers(opts: {
+  isNumber?: string | null
+  tourRef?: string | null
+  invoiceNumber?: string | null
+}): Promise<{ record: PnlRecord; matchedBy: string; matchedValue: string } | null> {
+  const res = await fetchPnlVersionsForBooking(opts)
+  if (!res) return null
+  return { record: res.versions[0], matchedBy: res.matchedBy, matchedValue: res.matchedValue }
 }
 
 /** Fetch one PNL record + its items by external ID. */
