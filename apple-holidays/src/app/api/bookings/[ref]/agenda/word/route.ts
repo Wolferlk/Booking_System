@@ -6,8 +6,9 @@ import { buildApiError } from '@/lib/utils'
 import {
   Document, Packer, Paragraph, Table, TableRow, TableCell,
   TextRun, HeadingLevel, AlignmentType, WidthType, BorderStyle,
-  ShadingType, TableLayoutType, VerticalAlign,
+  ShadingType, TableLayoutType, VerticalAlign, ImageRun,
 } from 'docx'
+import { readLocalUploadAsBuffer, getDocxImageType } from '@/lib/local-upload'
 
 export const dynamic = 'force-dynamic'
 
@@ -80,6 +81,38 @@ function dCell(text: string, opts?: { bold?: boolean; color?: string; italic?: b
         font: 'Arial',
       })],
     })],
+    shading: opts?.shade ? { type: ShadingType.CLEAR, color: 'auto', fill: opts.shade } : undefined,
+    verticalAlign: VerticalAlign.CENTER,
+    margins: { top: 55, bottom: 55, left: 80, right: 80 },
+  })
+}
+
+// Driver/vehicle cell — same look as dCell, plus a small driver photo when available.
+function driverCell(
+  text: string,
+  opts?: {
+    italic?: boolean; color?: string; shade?: string
+    photo?: { buffer: Buffer; type: 'jpg' | 'png' | 'gif' | 'bmp' } | null
+  },
+): TableCell {
+  const paragraphs: Paragraph[] = []
+  if (opts?.photo) {
+    paragraphs.push(new Paragraph({
+      children: [new ImageRun({ data: opts.photo.buffer, transformation: { width: 26, height: 26 }, type: opts.photo.type })],
+      spacing: { after: 20 },
+    }))
+  }
+  paragraphs.push(new Paragraph({
+    children: [new TextRun({
+      text: text || '—',
+      italics: opts?.italic,
+      color: opts?.color ?? CLR.dark,
+      size: 17,
+      font: 'Arial',
+    })],
+  }))
+  return new TableCell({
+    children: paragraphs,
     shading: opts?.shade ? { type: ShadingType.CLEAR, color: 'auto', fill: opts.shade } : undefined,
     verticalAlign: VerticalAlign.CENTER,
     margins: { top: 55, bottom: 55, left: 80, right: 80 },
@@ -308,6 +341,19 @@ export async function GET(
   if (items.length > 0) {
     children.push(sectionHeading('🗓️', `Movement Chart — ${items.length} item${items.length !== 1 ? 's' : ''}`))
 
+    // Pre-fetch driver/vehicle photo buffers (docx image embedding can't happen mid-build, so resolve up front)
+    const photoUrls = Array.from(new Set(
+      items.flatMap(i => [i.assignment?.driver?.photoUrl, i.assignment?.driver?.vehicle?.photoOutside])
+        .filter((u): u is string => Boolean(u)),
+    ))
+    const driverPhotos = new Map<string, { buffer: Buffer; type: 'jpg' | 'png' | 'gif' | 'bmp' }>()
+    await Promise.all(photoUrls.map(async url => {
+      const type = getDocxImageType(url)
+      if (!type) return
+      const buffer = await readLocalUploadAsBuffer(url)
+      if (buffer) driverPhotos.set(url, { buffer, type })
+    }))
+
     // Group by date
     const grouped: Record<string, typeof items> = {}
     items.forEach(item => {
@@ -366,6 +412,7 @@ export async function GET(
             }
 
             const shade = idx % 2 === 0 ? CLR.white : CLR.rowAlt
+            const driverPhoto = a?.driver?.photoUrl ? driverPhotos.get(a.driver.photoUrl) ?? null : null
 
             const rows: TableCell[] = [
               dCell(item.fromPoint || '—', { shade }),
@@ -373,7 +420,7 @@ export async function GET(
               dCell(normalizeMealPlan(item.mealPlan), { shade }),
               dCell(meetDisplay, { bold: meetDisplay !== '—', color: meetDisplay !== '—' ? CLR.green : CLR.muted, shade }),
               dCell(SVC_LABEL[svc] ?? svc, { shade }),
-              dCell(driverText, { italic: driverText === 'Not assigned', color: driverText === 'Not assigned' ? CLR.muted : undefined, shade }),
+              driverCell(driverText, { italic: driverText === 'Not assigned', color: driverText === 'Not assigned' ? CLR.muted : undefined, shade, photo: driverPhoto }),
             ]
 
             const rowCells = [new TableRow({ children: rows })]
@@ -404,6 +451,75 @@ export async function GET(
         ],
       }))
       children.push(new Paragraph({ text: '', spacing: { after: 60 } }))
+    }
+
+    // ── GROUND TRANSPORT ROSTER ──────────────────────────────────────────────
+    const seenAssignments = new Set<string>()
+    const roster = items
+      .map(i => i.assignment)
+      .filter((a): a is NonNullable<typeof items[number]['assignment']> => {
+        if (!a) return false
+        const name = a.driverName ?? a.driver?.name
+        const vendor = a.vendorName ?? a.vendor?.name
+        if (!name && !vendor) return false
+        const key = a.driver?.id ?? `${vendor ?? ''}|${name ?? ''}|${a.vehiclePlate ?? ''}`
+        if (seenAssignments.has(key)) return false
+        seenAssignments.add(key)
+        return true
+      })
+
+    if (roster.length > 0) {
+      children.push(sectionHeading('🚐', 'Ground Transport Roster'))
+      children.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        rows: [
+          new TableRow({ children: ['Driver', 'Contact', 'Vendor', 'Vehicle', 'Photo'].map(h => hCell(h)) }),
+          ...roster.map((a, i) => {
+            const shade = i % 2 === 0 ? CLR.white : CLR.rowAlt
+            const name         = a.driverName ?? a.driver?.name ?? '—'
+            const phone        = a.driverPhone ?? a.driver?.phone ?? '—'
+            const vendor       = a.vendorName ?? a.vendor?.name ?? '—'
+            const vehicleType  = a.vehicleType ?? a.driver?.vehicle?.type ?? ''
+            const vehiclePlate = a.vehiclePlate ?? a.driver?.vehicle?.plateNo ?? ''
+            const vehicleText  = [vehicleType, vehiclePlate].filter(Boolean).join(' ') || '—'
+            const driverPhoto  = a.driver?.photoUrl ? driverPhotos.get(a.driver.photoUrl) ?? null : null
+            const vehiclePhoto = a.driver?.vehicle?.photoOutside ? driverPhotos.get(a.driver.vehicle.photoOutside) ?? null : null
+
+            const photoCellChildren: Paragraph[] = []
+            if (driverPhoto) {
+              photoCellChildren.push(new Paragraph({
+                children: [new ImageRun({ data: driverPhoto.buffer, transformation: { width: 32, height: 32 }, type: driverPhoto.type })],
+              }))
+            }
+            if (vehiclePhoto) {
+              photoCellChildren.push(new Paragraph({
+                children: [new ImageRun({ data: vehiclePhoto.buffer, transformation: { width: 60, height: 40 }, type: vehiclePhoto.type })],
+                spacing: { before: 20 },
+              }))
+            }
+            if (photoCellChildren.length === 0) {
+              photoCellChildren.push(new Paragraph({ children: [new TextRun({ text: '—', color: CLR.muted, size: 17, font: 'Arial' })] }))
+            }
+
+            return new TableRow({
+              children: [
+                dCell(name,        { bold: true, shade }),
+                dCell(phone,       { shade }),
+                dCell(vendor,      { shade }),
+                dCell(vehicleText, { shade }),
+                new TableCell({
+                  children: photoCellChildren,
+                  shading: { type: ShadingType.CLEAR, color: 'auto', fill: shade },
+                  verticalAlign: VerticalAlign.CENTER,
+                  margins: { top: 55, bottom: 55, left: 80, right: 80 },
+                }),
+              ],
+            })
+          }),
+        ],
+      }))
+      children.push(new Paragraph({ text: '', spacing: { after: 80 } }))
     }
   }
 

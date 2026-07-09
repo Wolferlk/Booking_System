@@ -159,7 +159,26 @@ function TranscriptBubbles({ transcript }: { transcript: TEFeedback['transcript'
   )
 }
 
-type Tab = 'setup' | 'jobs' | 'quickcall' | 'history' | 'chatbot'
+type Tab = 'setup' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp'
+
+// ─── WhatsApp automation types ────────────────────────────────────────────────
+interface WaAutomationState {
+  briefingEnabled: boolean
+  feedbackEnabled: boolean
+  sendHour: number
+  tzOffsetHours: number
+  feedbackCount: number
+  recentSends: {
+    id: string
+    bookingRef: string
+    phone: string
+    type: 'briefing' | 'feedback'
+    recipient: string
+    status: string
+    createdAt: string
+    preview: string
+  }[]
+}
 
 export default function AICallBotPage() {
   const [tab, setTab] = useState<Tab>('setup')
@@ -225,6 +244,11 @@ export default function AICallBotPage() {
   const [chatLoading, setChatLoading] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
+  // WhatsApp automation tab
+  const [waState, setWaState]       = useState<WaAutomationState | null>(null)
+  const [waLoading, setWaLoading]   = useState(false)
+  const [waRunning, setWaRunning]   = useState<'briefing' | 'feedback' | null>(null)
+
   // ─────────────────────────────────────────────────────────────────────────
   // Load services list
   // ─────────────────────────────────────────────────────────────────────────
@@ -270,9 +294,43 @@ export default function AICallBotPage() {
     } catch { /* ignore */ } finally { setFbLoading(false) }
   }, [services])
 
+  const loadWaAutomation = useCallback(async () => {
+    setWaLoading(true)
+    try {
+      const res = await fetch('/api/te/whatsapp-automation').then(r => r.json())
+      if (res.success) setWaState(res.data as WaAutomationState)
+    } catch { /* ignore */ } finally { setWaLoading(false) }
+  }, [])
+
+  async function toggleWaSetting(key: 'briefing' | 'feedback', enabled: boolean) {
+    // Optimistic flip
+    setWaState(s => s ? { ...s, [key === 'briefing' ? 'briefingEnabled' : 'feedbackEnabled']: enabled } : s)
+    const res = await fetch('/api/te/whatsapp-automation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'toggle', key, enabled }),
+    }).then(r => r.json()).catch(() => null)
+    if (res?.success) toast.success(res.message)
+    else { toast.error(res?.error ?? 'Failed to save setting'); loadWaAutomation() }
+  }
+
+  async function runWaJob(job: 'briefing' | 'feedback') {
+    setWaRunning(job)
+    try {
+      const res = await fetch('/api/te/whatsapp-automation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run', job }),
+      }).then(r => r.json())
+      if (res.success) { toast.success(res.message); loadWaAutomation() }
+      else toast.error(res.error ?? 'Run failed')
+    } catch { toast.error('Run failed') } finally { setWaRunning(null) }
+  }
+
   useEffect(() => { loadServices(); loadCampaigns() }, [loadServices, loadCampaigns])
   useEffect(() => { if (tab === 'jobs') { loadJobs(); loadCampaigns() } }, [tab, loadJobs, loadCampaigns])
   useEffect(() => { if (tab === 'history' && services.length) loadAllFeedback() }, [tab, services, loadAllFeedback])
+  useEffect(() => { if (tab === 'whatsapp') loadWaAutomation() }, [tab, loadWaAutomation])
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMsgs])
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -762,6 +820,7 @@ export default function AICallBotPage() {
             { key: 'quickcall',label: 'Quick Call',        icon: <Zap className="w-3.5 h-3.5" /> },
             { key: 'history',  label: 'Call History',     icon: <BarChart2 className="w-3.5 h-3.5" /> },
             { key: 'chatbot',  label: 'AI Chat Bot',      icon: <Sparkles className="w-3.5 h-3.5" /> },
+            { key: 'whatsapp', label: 'WhatsApp Auto',    icon: <MessageCircle className="w-3.5 h-3.5" /> },
           ] as { key: Tab; label: string; icon: React.ReactNode }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`flex items-center gap-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${tab === t.key ? 'border-violet-500 text-violet-300 bg-violet-500/5' : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
@@ -1422,7 +1481,155 @@ export default function AICallBotPage() {
           </div>
         )}
 
+        {/* ════════════════════════════════════════════════════════════════
+            TAB 6 — WHATSAPP AUTOMATION
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'whatsapp' && (
+          <div className="space-y-6">
+            {waLoading && !waState ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="w-6 h-6 text-violet-400 animate-spin" />
+              </div>
+            ) : (
+              <>
+                {/* Automation cards */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Daily briefing card */}
+                  <div className="bg-gradient-to-br from-emerald-950/60 to-slate-900 rounded-2xl border border-emerald-800/40 overflow-hidden">
+                    <div className="px-5 py-4 flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center flex-shrink-0">
+                        <Calendar className="w-5 h-5 text-emerald-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-bold text-white">Daily Trip Briefing</h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                          Every day at {waState?.sendHour ?? 18}:00 (UTC+{waState?.tzOffsetHours ?? 7}), guests mid-trip receive
+                          tomorrow&apos;s plan on WhatsApp — flights, hotel, driver & activities.
+                        </p>
+                      </div>
+                      <ToggleSwitch
+                        on={waState?.briefingEnabled ?? true}
+                        onChange={v => toggleWaSetting('briefing', v)}
+                      />
+                    </div>
+                    <div className="px-5 pb-4 flex items-center gap-2">
+                      <button onClick={() => runWaJob('briefing')} disabled={waRunning !== null}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-600/40 text-emerald-300 text-[11px] font-semibold hover:bg-emerald-600/30 disabled:opacity-50 transition-colors">
+                        {waRunning === 'briefing' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                        Run now
+                      </button>
+                      <span className="text-[10px] text-slate-500">GCP / Vercel cron: /api/cron/customer-daily-briefing</span>
+                    </div>
+                  </div>
+
+                  {/* Feedback request card */}
+                  <div className="bg-gradient-to-br from-amber-950/60 to-slate-900 rounded-2xl border border-amber-800/40 overflow-hidden">
+                    <div className="px-5 py-4 flex items-start gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center flex-shrink-0">
+                        <Star className="w-5 h-5 text-amber-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-bold text-white">Post-Departure Feedback</h3>
+                        <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
+                          On departure day at {waState?.sendHour ?? 18}:00, guests get a link to the digital
+                          Guest Feedback Form. {waState ? `${waState.feedbackCount} response${waState.feedbackCount !== 1 ? 's' : ''} collected so far.` : ''}
+                        </p>
+                      </div>
+                      <ToggleSwitch
+                        on={waState?.feedbackEnabled ?? true}
+                        onChange={v => toggleWaSetting('feedback', v)}
+                      />
+                    </div>
+                    <div className="px-5 pb-4 flex items-center gap-2">
+                      <button onClick={() => runWaJob('feedback')} disabled={waRunning !== null}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600/20 border border-amber-600/40 text-amber-300 text-[11px] font-semibold hover:bg-amber-600/30 disabled:opacity-50 transition-colors">
+                        {waRunning === 'feedback' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                        Run now
+                      </button>
+                      <span className="text-[10px] text-slate-500">GCP / Vercel cron: /api/cron/customer-feedback-request</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Info strip */}
+                <div className="flex items-start gap-2.5 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3">
+                  <Info className="w-4 h-4 text-slate-500 flex-shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Send hour and timezone come from <span className="font-mono text-slate-300">CUSTOMER_MSG_SEND_HOUR</span> and{' '}
+                    <span className="font-mono text-slate-300">CUSTOMER_MSG_TZ_OFFSET_HOURS</span> env vars. Messages go to the
+                    booking&apos;s WhatsApp contact (falling back to phone). Each booking receives at most one message of each
+                    type per day — re-running is always safe.
+                  </p>
+                </div>
+
+                {/* Recent sends log */}
+                <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                  <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-violet-100 flex items-center justify-center"><Send className="w-4 h-4 text-violet-600" /></div>
+                      <div>
+                        <h3 className="text-sm font-bold text-slate-900">Recent Automated Sends</h3>
+                        <p className="text-xs text-slate-500">Last 50 briefing & feedback messages</p>
+                      </div>
+                    </div>
+                    <button onClick={loadWaAutomation} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50">
+                      <RefreshCw className={`w-3 h-3 ${waLoading ? 'animate-spin' : ''}`} /> Refresh
+                    </button>
+                  </div>
+                  {(waState?.recentSends?.length ?? 0) === 0 ? (
+                    <div className="px-5 py-12 text-center">
+                      <MessageCircle className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                      <p className="text-sm text-slate-400">No automated messages sent yet</p>
+                      <p className="text-xs text-slate-300 mt-1">Messages will appear here once the daily job runs</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-50 max-h-[480px] overflow-y-auto">
+                      {waState!.recentSends.map(m => (
+                        <div key={m.id} className="px-5 py-3 flex items-start gap-3 hover:bg-slate-50/70 transition-colors">
+                          <span className={`mt-0.5 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${
+                            m.type === 'feedback' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'
+                          }`}>
+                            {m.type === 'feedback' ? <Star className="w-3.5 h-3.5" /> : <Calendar className="w-3.5 h-3.5" />}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-xs font-bold text-slate-800">{m.bookingRef}</span>
+                              <span className={`text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full ${
+                                m.type === 'feedback' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              }`}>
+                                {m.type === 'feedback' ? 'Feedback link' : 'Daily briefing'}
+                              </span>
+                              <span className="text-[10px] text-slate-400">{m.recipient} · +{m.phone}</span>
+                              <span className="ml-auto text-[10px] text-slate-400">{fmtDT(m.createdAt)}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-1 truncate">{m.preview}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
       </main>
     </div>
+  )
+}
+
+// ─── Toggle switch ─────────────────────────────────────────────────────────────
+function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={() => onChange(!on)}
+      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${on ? 'bg-emerald-500' : 'bg-slate-700'}`}
+    >
+      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+    </button>
   )
 }

@@ -8,15 +8,16 @@ import {
   Plus, Trash2, Save, Loader2, Wand2, Car, MapPin, Upload,
   Search, X, CheckCircle2, Phone, AlertTriangle, Users, Plane,
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
-  Sparkles, Eye, Mail, CreditCard, Info, Building2, Pencil,
+  Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
-  ClipboardList,
+  ClipboardList, Bus, Ticket,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import Modal from '@/components/ui/modal'
+import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import { formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
@@ -37,11 +38,20 @@ function normalizeMealPlan(raw: string | null | undefined): string {
 }
 
 const SERVICE_TYPES = [
-  { value: 'PVT_TRANSFER',    label: 'Private Transfer',       color: 'blue'   as const },
-  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',           color: 'green'  as const },
-  { value: 'OWN_ARRANGEMENT', label: 'OWN Transfer',           color: 'gray'   as const },
-  { value: 'INTERNAL_TOUR',   label: 'Ticket Only',  color: 'purple' as const },
+  { value: 'PVT_TRANSFER',    label: 'Private Transfer',       color: 'blue'   as const, icon: Car },
+  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',           color: 'green'  as const, icon: Bus },
+  { value: 'OWN_ARRANGEMENT', label: 'OWN Transfer',           color: 'gray'   as const, icon: Users },
+  { value: 'INTERNAL_TOUR',   label: 'Ticket Only',  color: 'purple' as const, icon: Ticket },
 ]
+
+const SERVICE_STRIP: Record<string, { bg: string; iconBg: string; iconColor: string; icon: typeof Car }> = {
+  PVT_TRANSFER:    { bg: 'bg-blue-400',   iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   icon: Car },
+  SIC_TRANSFER:    { bg: 'bg-green-400',  iconBg: 'bg-green-100',  iconColor: 'text-green-600',  icon: Bus },
+  FLIGHT:          { bg: 'bg-indigo-400', iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', icon: Plane },
+  INTERNAL_TOUR:   { bg: 'bg-purple-400', iconBg: 'bg-purple-100', iconColor: 'text-purple-600', icon: Ticket },
+  ACCOMMODATION:   { bg: 'bg-amber-400',  iconBg: 'bg-amber-100',  iconColor: 'text-amber-600',  icon: Hotel },
+  OWN_ARRANGEMENT: { bg: 'bg-slate-300',  iconBg: 'bg-slate-100',  iconColor: 'text-slate-500',  icon: Users },
+}
 
 interface AgendaItem {
   id?: string
@@ -91,25 +101,6 @@ interface Vendor {
   country: string | null
 }
 
-interface FullDriver {
-  id: string
-  name: string
-  phone: string
-  email: string | null
-  licenseNo: string | null
-  photoUrl: string | null
-  vehicle: {
-    plateNo: string
-    type: string
-    brand: string | null
-    model: string | null
-    capacity: number
-    description: string | null
-    photoOutside: string | null
-    photoInside: string | null
-  } | null
-}
-
 interface BookingDetails {
   bookingRef: string
   agent: string
@@ -155,10 +146,8 @@ export default function AgendaPage() {
   // Drag-to-reorder state
   const [dragIndex,      setDragIndex]      = useState<number | null>(null)
   const [dragOverIndex,  setDragOverIndex]  = useState<number | null>(null)
-  // Driver view modal
-  const [driverModal,    setDriverModal]    = useState(false)
-  const [fullDriver,     setFullDriver]     = useState<FullDriver | null>(null)
-  const [loadingDriver,  setLoadingDriver]  = useState(false)
+  // Driver / vendor view modal
+  const [driverModalTarget, setDriverModalTarget] = useState<AgendaItem['assignment'] | null>(null)
 
   // PDF send modal
   const [sendModal,       setSendModal]      = useState(false)
@@ -566,29 +555,8 @@ export default function AgendaPage() {
     toast.success(`Filled descriptions from itinerary (${replaced} item${replaced !== 1 ? 's' : ''} updated)`)
   }
 
-  async function openDriverView(driverId: string | null | undefined, fallback: AgendaItem['assignment']) {
-    if (!driverId) {
-      // No stored driverId — show what we have from assignment
-      setFullDriver({
-        id: '', name: fallback?.driverName ?? '—', phone: fallback?.driverPhone ?? '—',
-        email: null, licenseNo: null, photoUrl: null,
-        vehicle: fallback?.vehiclePlate ? {
-          plateNo: fallback.vehiclePlate, type: fallback.vehicleType ?? '—',
-          brand: null, model: null, capacity: 0, description: null,
-          photoOutside: null, photoInside: null,
-        } : null,
-      })
-      setDriverModal(true)
-      return
-    }
-    setLoadingDriver(true)
-    setDriverModal(true)
-    try {
-      const res  = await fetch(`/api/ground/drivers/${driverId}`)
-      const json = await res.json()
-      if (json.success) setFullDriver(json.data as FullDriver)
-      else toast.error('Could not load driver details')
-    } finally { setLoadingDriver(false) }
+  function openDriverView(assignment: AgendaItem['assignment']) {
+    setDriverModalTarget(assignment ?? {})
   }
 
   // Reorder a movement item from one position to another.
@@ -1008,13 +976,16 @@ export default function AgendaPage() {
                     <GripVertical className="w-4 h-4 text-slate-300" />
                   </div>
                 )}
-                <div className={`w-1.5 flex-shrink-0 ${
-                  item.serviceType === 'PVT_TRANSFER'    ? 'bg-blue-400'   :
-                  item.serviceType === 'SIC_TRANSFER'    ? 'bg-green-400'  :
-                  item.serviceType === 'FLIGHT'          ? 'bg-indigo-400' :
-                  item.serviceType === 'INTERNAL_TOUR'   ? 'bg-purple-400' :
-                  item.serviceType === 'ACCOMMODATION'   ? 'bg-amber-400'  : 'bg-slate-200'
-                }`} />
+                {(() => {
+                  const strip = SERVICE_STRIP[item.serviceType]
+                  return (
+                    <div className={`w-9 flex-shrink-0 flex items-start justify-center pt-4 ${strip?.bg ?? 'bg-slate-200'}`}>
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center ${strip?.iconBg ?? 'bg-slate-100'} ${strip?.iconColor ?? 'text-slate-500'}`}>
+                        {strip ? <strip.icon className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
+                      </span>
+                    </div>
+                  )
+                })()}
 
                 <div className="flex-1 p-5">
                   {canEdit ? (
@@ -1140,7 +1111,7 @@ export default function AgendaPage() {
                               </div>
                             ) : (
                               <button
-                                onClick={() => openDriverView(item.assignment?.driverId, item.assignment)}
+                                onClick={() => openDriverView(item.assignment)}
                                 className="flex items-center gap-3 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 hover:bg-blue-100 transition-colors"
                               >
                                 <Car className="w-3.5 h-3.5 text-blue-500" />
@@ -1179,7 +1150,14 @@ export default function AgendaPage() {
                           <span className="text-sm font-semibold text-slate-900">
                             {formatDate(item.date)} · {item.location}
                           </span>
-                          {svcType && <Badge color={svcType.color}>{svcType.label}</Badge>}
+                          {svcType && (
+                            <Badge color={svcType.color}>
+                              <span className="flex items-center gap-1">
+                                <svcType.icon className="w-3 h-3" />
+                                {svcType.label}
+                              </span>
+                            </Badge>
+                          )}
                           {/* Only show meal plan badge if it has a value */}
                           {normalizeMealPlan(item.mealPlan) && (
                             <Badge color="amber">{normalizeMealPlan(item.mealPlan)}</Badge>
@@ -1252,7 +1230,7 @@ export default function AgendaPage() {
                             </div>
                           ) : (
                             <button
-                              onClick={() => openDriverView(item.assignment?.driverId, item.assignment)}
+                              onClick={() => openDriverView(item.assignment)}
                               className="mt-2 flex items-center gap-3 text-xs bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 w-fit hover:bg-blue-100 transition-colors"
                             >
                               <Car className="w-3.5 h-3.5 text-blue-500" />
@@ -1715,109 +1693,20 @@ export default function AgendaPage() {
         </div>
       </Modal>
 
-      {/* ── DRIVER VIEW MODAL ── */}
-      <Modal
-        open={driverModal}
-        onClose={() => { setDriverModal(false); setFullDriver(null) }}
-        title="Driver & Vehicle Details"
-      >
-        {loadingDriver ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
-          </div>
-        ) : fullDriver ? (
-          <div className="space-y-5">
-            {/* Driver info */}
-            <div className="flex items-start gap-4">
-              {fullDriver.photoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={fullDriver.photoUrl} alt={fullDriver.name} className="w-16 h-16 rounded-full object-cover border-2 border-slate-200" />
-              ) : (
-                <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-2xl font-bold flex-shrink-0">
-                  {fullDriver.name.charAt(0)}
-                </div>
-              )}
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">{fullDriver.name}</h3>
-                <div className="flex flex-col gap-1 mt-1">
-                  <div className="flex items-center gap-1.5 text-sm text-slate-600">
-                    <Phone className="w-3.5 h-3.5 text-slate-400" />
-                    {fullDriver.phone || <span className="text-slate-300">N/A</span>}
-                  </div>
-                  {fullDriver.email && (
-                    <div className="flex items-center gap-1.5 text-sm text-slate-600">
-                      <Mail className="w-3.5 h-3.5 text-slate-400" />
-                      {fullDriver.email}
-                    </div>
-                  )}
-                  {fullDriver.licenseNo && (
-                    <div className="flex items-center gap-1.5 text-sm text-slate-600">
-                      <CreditCard className="w-3.5 h-3.5 text-slate-400" />
-                      License: <span className="font-mono">{fullDriver.licenseNo}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Vehicle info */}
-            <div className="border-t border-slate-100 pt-4">
-              <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                <Car className="w-4 h-4 text-blue-500" /> Vehicle
-              </h4>
-              {fullDriver.vehicle ? (
-                <>
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    {[
-                      { label: 'Plate Number', value: fullDriver.vehicle.plateNo },
-                      { label: 'Type',         value: fullDriver.vehicle.type },
-                      { label: 'Brand',        value: fullDriver.vehicle.brand },
-                      { label: 'Model',        value: fullDriver.vehicle.model },
-                      { label: 'Capacity',     value: fullDriver.vehicle.capacity ? `${fullDriver.vehicle.capacity} seats` : null },
-                      { label: 'Description',  value: fullDriver.vehicle.description },
-                    ].map(({ label, value }) => (
-                      <div key={label}>
-                        <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">{label}</p>
-                        <p className="text-sm font-medium text-slate-800 mt-0.5">{value || <span className="text-slate-300">N/A</span>}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Vehicle photos */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">Outside Photo</p>
-                      {fullDriver.vehicle.photoOutside ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={fullDriver.vehicle.photoOutside} alt="Vehicle outside"
-                          className="w-full h-32 object-cover rounded-lg border border-slate-200" />
-                      ) : (
-                        <div className="w-full h-32 rounded-lg border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 text-sm font-medium">
-                          N/A
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1.5">Inside Photo</p>
-                      {fullDriver.vehicle.photoInside ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={fullDriver.vehicle.photoInside} alt="Vehicle inside"
-                          className="w-full h-32 object-cover rounded-lg border border-slate-200" />
-                      ) : (
-                        <div className="w-full h-32 rounded-lg border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-400 text-sm font-medium">
-                          N/A
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <p className="text-sm text-slate-400 italic">No vehicle assigned to this driver</p>
-              )}
-            </div>
-          </div>
-        ) : null}
-      </Modal>
+      {/* ── DRIVER / VENDOR VIEW MODAL ── */}
+      <DriverVendorModal
+        open={driverModalTarget !== null}
+        onClose={() => setDriverModalTarget(null)}
+        driverId={driverModalTarget?.driverId}
+        vendorId={driverModalTarget?.vendorId}
+        fallback={{
+          driverName:   driverModalTarget?.driverName,
+          driverPhone:  driverModalTarget?.driverPhone,
+          vehicleType:  driverModalTarget?.vehicleType,
+          vehiclePlate: driverModalTarget?.vehiclePlate,
+          vendorName:   driverModalTarget?.vendorName,
+        }}
+      />
 
       <Modal
         open={editPassengersModal}

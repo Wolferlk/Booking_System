@@ -130,3 +130,117 @@ export function formatDriverMovementMessage(params: {
     `— AppleHolidays Operations`,
   ].filter(l => l !== null).join('\n')
 }
+
+/** Format tomorrow's itinerary briefing for a guest — sent daily at 6pm while the trip is ongoing. */
+export function formatCustomerDailyBriefingMessage(params: {
+  bookingRef:    string
+  leadName:      string | null
+  date:          Date | string
+  isDeparting:   boolean
+  stayingAtHotel: string | null
+  checkIns:      { hotel: string; city: string }[]
+  checkOuts:     { hotel: string; city: string }[]
+  flights: {
+    flightNo: string
+    fromApt:  string
+    toApt:    string
+    depTime:  string
+    arrTime:  string
+    airline:  string | null
+  }[]
+  agendaItems: {
+    location:     string
+    fromPoint:    string | null
+    toPoint:      string | null
+    meetingTime:  string | null
+    mealPlan:     string | null
+    serviceType:  string
+    driverName:   string | null
+    driverPhone:  string | null
+    vehicleType:  string | null
+    vehiclePlate: string | null
+  }[]
+}): string {
+  const d = new Date(params.date)
+  const dateStr = d.toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+  const greeting = params.leadName ? `Hi *${params.leadName}*,` : `Hi there,`
+
+  const lines: (string | null)[] = [
+    `🌴 *AppleHolidays — Your Day Plan*`,
+    ``,
+    `${greeting} here's your plan for *${dateStr}*:`,
+    ``,
+  ]
+
+  if (params.flights.length > 0) {
+    lines.push(`✈️ *Flights*`)
+    for (const f of params.flights) {
+      lines.push(`   ${f.flightNo}${f.airline ? ` (${f.airline})` : ''} — ${f.fromApt} ${f.depTime} → ${f.toApt} ${f.arrTime}`)
+    }
+    lines.push(``)
+  }
+
+  if (params.checkOuts.length > 0) {
+    lines.push(`🧳 *Checking out:* ${params.checkOuts.map(c => `${c.hotel} (${c.city})`).join(', ')}`)
+  }
+  if (params.checkIns.length > 0) {
+    lines.push(`🏨 *Checking in:* ${params.checkIns.map(c => `${c.hotel} (${c.city})`).join(', ')}`)
+  }
+  if (params.stayingAtHotel && params.checkIns.length === 0 && params.checkOuts.length === 0) {
+    lines.push(`🏨 *Staying at:* ${params.stayingAtHotel}`)
+  }
+  if (params.checkIns.length > 0 || params.checkOuts.length > 0 || params.stayingAtHotel) lines.push(``)
+
+  if (params.agendaItems.length > 0) {
+    lines.push(`📋 *Movements & Activities*`)
+    for (const item of params.agendaItems) {
+      const route = [item.fromPoint, item.toPoint].filter(Boolean).join(' → ') || item.location
+      const time  = item.meetingTime ? `⏰ ${item.meetingTime} — ` : ''
+      lines.push(`   ${time}${route}`)
+      if (item.mealPlan) lines.push(`      🍽 Meals: ${item.mealPlan}`)
+      if (item.driverName) {
+        const vehicle = [item.vehicleType, item.vehiclePlate].filter(Boolean).join(' ')
+        lines.push(`      🚗 Driver: ${item.driverName}${item.driverPhone ? ` (${item.driverPhone})` : ''}${vehicle ? ` — ${vehicle}` : ''}`)
+      }
+    }
+    lines.push(``)
+  }
+
+  if (params.isDeparting) {
+    lines.push(`👋 Tomorrow is your departure day — safe travels! We'll follow up shortly after with a quick feedback form.`)
+    lines.push(``)
+  }
+
+  if (params.flights.length === 0 && params.agendaItems.length === 0 && params.checkIns.length === 0 && params.checkOuts.length === 0) {
+    lines.push(`Nothing scheduled — a free day to relax and explore at your own pace! 🌞`)
+    lines.push(``)
+  }
+
+  lines.push(`📁 *Ref:* ${params.bookingRef}`)
+  lines.push(``)
+  lines.push(`Have a wonderful day — AppleHolidays Team`)
+
+  return lines.filter(l => l !== null).join('\n')
+}
+
+/** Format the post-departure feedback-form invite WhatsApp message. */
+export function formatFeedbackRequestMessage(params: {
+  bookingRef: string
+  leadName:   string | null
+  formUrl:    string
+}): string {
+  const greeting = params.leadName ? `Hi *${params.leadName}*,` : `Hi there,`
+  return [
+    `🙏 *AppleHolidays — We'd love your feedback!*`,
+    ``,
+    `${greeting} we hope you had a wonderful trip with us.`,
+    ``,
+    `Could you spare two minutes to share your feedback? It really helps our team improve.`,
+    ``,
+    `📝 ${params.formUrl}`,
+    ``,
+    `📁 *Ref:* ${params.bookingRef}`,
+    ``,
+    `Thank you for travelling with AppleHolidays!`,
+  ].join('\n')
+}

@@ -12,6 +12,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { toast } from 'sonner'
 import { cn, formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
+import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,7 +34,11 @@ type MCRow = {
   meetingTime:    string | null
   serviceType:    ServiceType
   vendor:         string | null
+  driverId:       string | null
+  vendorId:       string | null
   driverName:     string | null
+  driverPhone:    string | null
+  driverPhotoUrl: string | null
   vehicleType:    string | null
   vehiclePlate:   string | null
   agent:          string | null
@@ -235,6 +240,7 @@ export default function MCReportPage() {
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
+  const [driverModalRow, setDriverModalRow] = useState<MCRow | null>(null)
   const exportMenuRef = useRef<HTMLDivElement>(null)
 
   // Close export menu on outside click
@@ -712,7 +718,7 @@ export default function MCReportPage() {
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal</th>
                       <SortTh field="meetingTime" label="Meet Time" sort={sort} onSort={handleSort} />
                       <SortTh field="serviceType" label="Service"   sort={sort} onSort={handleSort} />
-                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Vendor</th>
+                      <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -849,17 +855,29 @@ export default function MCReportPage() {
                               <ServiceBadge type={row.serviceType} />
                             </td>
 
-                            {/* Vendor */}
-                            <td className="px-3 py-2.5 text-slate-600 max-w-[140px]">
-                              {row.vendor ? (
-                                <div className="flex items-center gap-1.5">
-                                  <Truck className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                                  <span className="truncate" title={row.vendor}>
-                                    {q && row.vendor.toLowerCase().includes(q)
+                            {/* Driver / Vendor */}
+                            <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
+                              {row.vendor || row.driverId || row.vendorId ? (
+                                <button
+                                  onClick={e => { e.stopPropagation(); setDriverModalRow(row) }}
+                                  className="flex items-center gap-1.5 max-w-full rounded-full pl-1 pr-2.5 py-1 -ml-1 hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 transition-colors group"
+                                >
+                                  {row.driverPhotoUrl ? (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={row.driverPhotoUrl} alt={row.driverName ?? 'Driver'}
+                                      className="w-5 h-5 rounded-full object-cover flex-shrink-0 ring-1 ring-white" />
+                                  ) : (
+                                    <span className="w-5 h-5 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center flex-shrink-0">
+                                      <Truck className="w-3 h-3" />
+                                    </span>
+                                  )}
+                                  <span className="truncate text-slate-700 group-hover:text-brand-700 font-medium" title={row.vendor ?? ''}>
+                                    {q && row.vendor && row.vendor.toLowerCase().includes(q)
                                       ? <Highlight text={row.vendor} query={deepSearch} />
-                                      : row.vendor}
+                                      : row.vendor ?? 'View details'}
                                   </span>
-                                </div>
+                                  <ChevronDown className="w-3 h-3 text-slate-300 group-hover:text-brand-400 flex-shrink-0 -rotate-90" />
+                                </button>
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                           </tr>
@@ -880,7 +898,7 @@ export default function MCReportPage() {
                                     { label: 'Vehicle Plate',  value: row.vehiclePlate },
                                     { label: 'Booking Status', value: row.bookingStatus?.replace(/_/g, ' ') },
                                     { label: 'Pax',            value: `${row.paxAdults} Adults, ${row.paxChildren} Children` },
-                                    { label: 'Vendor',         value: row.vendor },
+                                    { label: 'Driver / Vendor', value: row.vendor },
                                   ].map(item =>
                                     item.value ? (
                                       <div key={item.label}>
@@ -925,6 +943,20 @@ export default function MCReportPage() {
         </Card>
 
       </div>
+
+      <DriverVendorModal
+        open={driverModalRow !== null}
+        onClose={() => setDriverModalRow(null)}
+        driverId={driverModalRow?.driverId}
+        vendorId={driverModalRow?.vendorId}
+        fallback={{
+          driverName:   driverModalRow?.driverName,
+          driverPhone:  driverModalRow?.driverPhone,
+          vehicleType:  driverModalRow?.vehicleType,
+          vehiclePlate: driverModalRow?.vehiclePlate,
+          vendorName:   driverModalRow?.vendor,
+        }}
+      />
     </div>
   )
 }

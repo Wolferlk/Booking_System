@@ -9,6 +9,22 @@ export const dynamic = 'force-dynamic'
 
 const ALLOWED_ROLES = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
+  if (!session) return buildApiError('Unauthorized', 401)
+
+  const vendor = await prisma.vehicleVendor.findUnique({
+    where: { id: params.id },
+    include: {
+      drivers:  { include: { vehicle: true } },
+      vehicles: true,
+    },
+  })
+
+  if (!vendor) return buildApiError('Vendor not found', 404)
+  return buildApiSuccess(vendor)
+}
+
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)

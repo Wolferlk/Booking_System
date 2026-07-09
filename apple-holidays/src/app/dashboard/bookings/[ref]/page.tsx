@@ -31,6 +31,7 @@ import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
+import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -1465,6 +1466,11 @@ Wishing you a wonderful trip! ✈️
             bookingRef={ref}
             booking={booking}
           />
+        )}
+
+        {/* Customer WhatsApp — manual daily briefings + feedback form */}
+        {['TE_USER', 'GT_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <CustomerWhatsappPanel bookingRef={ref} />
         )}
 
 

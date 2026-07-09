@@ -25,6 +25,7 @@ type MCRow = {
   serviceType:    ServiceType
   vendor:         string | null
   driverName:     string | null
+  driverPhotoUrl: string | null
   vehicleType:    string | null
   vehiclePlate:   string | null
   agent:          string | null
@@ -211,7 +212,7 @@ function PrintContent() {
               <th style={th}>Meal</th>
               <th style={th}>Meet Time</th>
               <th style={th}>Service</th>
-              <th style={th}>Vendor / Driver</th>
+              <th style={th}>Driver / Vendor</th>
               <th style={th}>Vehicle</th>
             </tr>
           </thead>
@@ -302,19 +303,28 @@ function PrintContent() {
                   </td>
 
                   <td style={{ ...td, color: '#475569', maxWidth: 120 }}>
-                    {row.vendor
-                      ? (q && row.vendor.toLowerCase().includes(q)
-                          ? <HighlightText text={row.vendor} query={deepSearch} />
-                          : row.vendor)
-                      : null}
-                    {row.driverName && (
-                      <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>
-                        {q && row.driverName.toLowerCase().includes(q)
-                          ? <HighlightText text={row.driverName} query={deepSearch} />
-                          : row.driverName}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5 }}>
+                      {row.driverPhotoUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={row.driverPhotoUrl} alt={row.driverName ?? 'Driver'}
+                          style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid #e2e8f0' }} />
+                      )}
+                      <div>
+                        {row.vendor
+                          ? (q && row.vendor.toLowerCase().includes(q)
+                              ? <HighlightText text={row.vendor} query={deepSearch} />
+                              : row.vendor)
+                          : null}
+                        {row.driverName && (
+                          <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>
+                            {q && row.driverName.toLowerCase().includes(q)
+                              ? <HighlightText text={row.driverName} query={deepSearch} />
+                              : row.driverName}
+                          </div>
+                        )}
+                        {!row.vendor && !row.driverName && <span style={{ color: '#cbd5e1' }}>—</span>}
                       </div>
-                    )}
-                    {!row.vendor && !row.driverName && <span style={{ color: '#cbd5e1' }}>—</span>}
+                    </div>
                   </td>
 
                   <td style={{ ...td, color: '#475569', maxWidth: 100, fontSize: 9 }}>

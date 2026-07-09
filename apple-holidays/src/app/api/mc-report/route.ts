@@ -111,6 +111,9 @@ export async function GET(req: NextRequest) {
               },
             },
           },
+          vendor: {
+            select: { id: true, name: true, phone: true },
+          },
         },
       },
     },
@@ -132,10 +135,16 @@ export async function GET(req: NextRequest) {
     mealPlan:       item.mealPlan  ?? null,
     meetingTime:    item.meetingTime ?? null,
     serviceType:    item.serviceType,
-    vendor:         item.assignment?.driver?.vehicle?.vendor?.name
+    vendor:         item.assignment?.vendor?.name
+                      ?? item.assignment?.vendorName
+                      ?? item.assignment?.driver?.vehicle?.vendor?.name
                       ?? item.assignment?.driverName
                       ?? null,
+    driverId:       item.assignment?.driverId ?? null,
+    vendorId:       item.assignment?.vendorId ?? null,
+    driverPhotoUrl: item.assignment?.driver?.photoUrl ?? null,
     driverName:     item.assignment?.driverName ?? item.assignment?.driver?.name ?? null,
+    driverPhone:    item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null,
     vehicleType:    item.assignment?.vehicleType  ?? null,
     vehiclePlate:   item.assignment?.vehiclePlate ?? null,
     agent:          item.agenda.booking.agent    ?? null,

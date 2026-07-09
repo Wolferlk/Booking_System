@@ -226,6 +226,15 @@ async function jobAutoBookingCreate() {
   }
 }
 
+async function jobCustomerMessaging() {
+  try {
+    const { maybeRunCustomerMessaging } = await import('./customer-whatsapp-automation')
+    await maybeRunCustomerMessaging()
+  } catch (err) {
+    console.error('[Scheduler] customer-messaging error:', err instanceof Error ? err.message : err)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Master switch ─────────────────────────────────────────────────────────────
 const CRON_ENABLED = true
@@ -263,6 +272,7 @@ export function startCronJobs() {
   setInterval(() => { jobRenewWebhook() },         TWELVE_HRS)
   setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
   setInterval(() => { jobAutoBookingCreate() },    60_000)   // check every minute; fires once daily at scheduled time
+  setInterval(() => { jobCustomerMessaging() },    60_000)   // check every minute; fires once daily at CUSTOMER_MSG_SEND_HOUR
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create checked every minute (also available via /api/cron/auto-booking-create for GCP Cloud Scheduler)')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create checked every minute (also available via /api/cron/auto-booking-create for GCP Cloud Scheduler), customer WhatsApp messaging checked every minute (also via /api/cron/customer-daily-briefing + /api/cron/customer-feedback-request)')
 }

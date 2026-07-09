@@ -5,6 +5,7 @@ import { extractBookingFromEmail, type ProcessedEmail, type MailboxKind, type Em
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 import { normalizeCurrencyCode } from '@/lib/utils'
+import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import fs from 'fs'
 import path from 'path'
 
@@ -442,6 +443,10 @@ export async function upsertAgenda(
     }
 
     if (!agendaItems.length) return 0
+
+    if (detectCountryFromRef(bookingRef) === 'SRILANKA') {
+      agendaItems = applySriLankaMovementDefaults(agendaItems)
+    }
 
     let agenda = await prisma.tourAgenda.findUnique({ where: { bookingId } })
     if (!agenda) {

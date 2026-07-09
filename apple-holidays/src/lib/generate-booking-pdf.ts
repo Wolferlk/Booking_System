@@ -1,5 +1,6 @@
 import { mkdir, copyFile, readdir, readFile } from 'fs/promises'
 import path from 'path'
+import { readLocalUploadAsBuffer } from './local-upload'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -409,25 +410,52 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
         const assignments = agendaItems
           .filter((item: any) => item.assignment?.driverName || item.assignment?.driver?.name)
           .map((item: any) => ({
-            date:         item.date,
-            location:     item.location,
-            driverName:   item.assignment.driverName ?? item.assignment.driver?.name,
-            driverPhone:  item.assignment.driverPhone ?? item.assignment.driver?.phone,
-            vehicleType:  item.assignment.vehicleType,
-            vehiclePlate: item.assignment.vehiclePlate,
-            notes:        item.assignment.notes,
+            date:          item.date,
+            location:      item.location,
+            driverName:    item.assignment.driverName ?? item.assignment.driver?.name,
+            driverPhone:   item.assignment.driverPhone ?? item.assignment.driver?.phone,
+            vehicleType:   item.assignment.vehicleType ?? item.assignment.driver?.vehicle?.type,
+            vehiclePlate:  item.assignment.vehiclePlate,
+            notes:         item.assignment.notes,
+            driverPhotoUrl:  item.assignment.driver?.photoUrl ?? null,
+            vehiclePhotoUrl: item.assignment.driver?.vehicle?.photoOutside ?? null,
           }))
 
         if (assignments.length > 0) {
+          // Pre-fetch photo buffers off disk — PDFKit draws synchronously so this can't happen mid-layout
+          const photoUrls = Array.from(new Set(
+            assignments.flatMap((a: any) => [a.driverPhotoUrl, a.vehiclePhotoUrl]).filter(Boolean),
+          )) as string[]
+          const photoBuffers = new Map<string, Buffer>()
+          await Promise.all(photoUrls.map(async url => {
+            const buf = await readLocalUploadAsBuffer(url)
+            if (buf) photoBuffers.set(url, buf)
+          }))
+
           sectionTitle('Drivers & Vehicle Assignments')
           assignments.forEach((a: any, i: number) => {
-            if (doc.y > 750) { doc.addPage(); doc.y = MARGIN }
+            const driverPhoto  = a.driverPhotoUrl  ? photoBuffers.get(a.driverPhotoUrl)  : null
+            const vehiclePhoto = a.vehiclePhotoUrl ? photoBuffers.get(a.vehiclePhotoUrl) : null
+            const cardH = 20 + (driverPhoto ? 30 : 0) + (vehiclePhoto ? 42 : 0)
+            if (doc.y + cardH > 770) { doc.addPage(); doc.y = MARGIN }
 
             const ay = doc.y
+            const hasPhoto = Boolean(driverPhoto)
+            const textX = MARGIN + (hasPhoto ? 40 : 8)
             doc.rect(MARGIN, ay, CONTENT_W, 16).fill('#EFF6FF')
             doc.font('Helvetica-Bold').fontSize(9).fillColor(DARK)
               .text(`Assignment ${i + 1}  ·  ${fmt(a.date)}${a.location ? '  ·  ' + a.location : ''}`,
-                MARGIN + 8, ay + 3, { width: CONTENT_W - 16, lineBreak: false })
+                textX, ay + 3, { width: CONTENT_W - (textX - MARGIN) - 8, lineBreak: false })
+
+            if (driverPhoto) {
+              try {
+                doc.save()
+                doc.circle(MARGIN + 18, ay + 18, 12).clip()
+                doc.image(driverPhoto, MARGIN + 6, ay + 6, { width: 24, height: 24 })
+                doc.restore()
+              } catch { /* unsupported image format — skip photo, text still renders */ }
+            }
+
             doc.y = ay + 20
 
             infoRow('Driver Name', a.driverName)
@@ -435,6 +463,16 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
             infoRow('Vehicle Type', a.vehicleType)
             infoRow('Plate Number', a.vehiclePlate)
             if (a.notes) infoRow('Notes', a.notes)
+
+            if (vehiclePhoto) {
+              try {
+                const vy = doc.y + 2
+                doc.image(vehiclePhoto, MARGIN + 5, vy, { width: 90, height: 36, fit: [90, 36] })
+                  .rect(MARGIN + 5, vy, 90, 36).strokeColor(LINE).lineWidth(0.5).stroke()
+                doc.y = vy + 40
+              } catch { /* unsupported image format — skip photo */ }
+            }
+
             doc.moveDown(0.3)
             divider()
           })
