@@ -10,10 +10,11 @@ import {
   ChevronRight, Hash, BookOpen, Megaphone, Search, Send,
   Zap, BarChart2, Filter, Download, Eye, Sparkles,
   Plane, Home, ThumbsUp, CalendarClock, Heart, ClipboardCheck,
-  Users, Award, MapPin,
+  Users, Award, MapPin, Bell, BellRing, ShieldAlert, ListChecks, Quote,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
+import TranscriptsExplorer from '@/components/te/transcripts-explorer'
 
 // ─── Base URL ─────────────────────────────────────────────────────────────────
 const TE_BASE = 'https://travel-parser-live.aahaas.com/v1/traveller-experience'
@@ -125,6 +126,7 @@ interface TEFeedback {
   issues?: string | null
   summary?: string | null
   transcript?: TranscriptTurn[] | string | null
+  conversation_id?: string | null
 }
 interface TranscriptTurn { role?: string; speaker?: string; text?: string; message?: string; content?: string }
 interface TEJob {
@@ -141,6 +143,69 @@ interface TECampaign {
   first_message?: string | null; is_active: boolean
 }
 interface ChatMessage { id: string; role: 'user' | 'bot' | 'system'; text: string; ts: number; meta?: Record<string, unknown> }
+
+// ── Unified call log row (GET /calls) — every call kind, one row per call ──────
+type CallKind = 'check_in' | 'reconfirm' | 'post_tour'
+interface TECall {
+  kind: CallKind
+  id: number
+  service_id?: number | null
+  schedule_id?: number | null
+  booking_ref: string
+  conversation_id?: string | null
+  sentiment?: string | null
+  outcome?: string | null
+  summary?: string | null
+  transcript?: TranscriptTurn[] | string | null
+  at?: string | null
+  // check_in specifics
+  day_no?: number | null
+  hotel_ok?: string | null
+  meals_ok?: string | null
+  driver_ok?: string | null
+  vehicle_ok?: string | null
+  highlights?: string | null
+  issues?: string | null
+  // reconfirm specifics
+  dates_ok?: TriState
+  flight_ok?: TriState
+  pax_ok?: TriState
+  contact_ok?: TriState
+  requested_change?: string | null
+  special_requests?: string | null
+  // post_tour specifics
+  rating?: number | null
+  stars?: number | null
+  reached_home_safely?: boolean | null
+  would_recommend?: boolean | null
+  best_moment?: string | null
+  improvements?: string | null
+  comment?: string | null
+}
+
+// ── Important alert row (GET /alerts) — complaints / urgent asks ──────────────
+type AlertStatus = 'open' | 'ack' | 'resolved'
+type AlertSeverity = 'low' | 'medium' | 'high'
+interface TEAlert {
+  id: number
+  service_id?: number | null
+  schedule_id?: number | null
+  booking_ref?: string | null
+  customer_name?: string | null
+  conversation_id?: string | null
+  call_kind?: CallKind | null
+  category?: string | null          // complaint | change_request | safety | low_rating
+  severity?: AlertSeverity | null   // low | medium | high
+  title?: string | null
+  details?: string | null
+  customer_quote?: string | null
+  sentiment?: string | null
+  status?: AlertStatus | null
+  resolution_note?: string | null
+  resolved_at?: string | null
+  at?: string | null
+  created_at?: string | null
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const STATUS_STYLES: Record<string, string> = {
@@ -173,6 +238,35 @@ function outcomeBadge(o?: string | null) {
   const m = o ? OUTCOME_META[o] : undefined
   const cls = m?.cls ?? 'bg-slate-100 text-slate-500 border-slate-200'
   return `inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${cls}`
+}
+
+// Call-kind meta — one visual language shared by the call log & alerts views.
+const CALL_KIND_META: Record<CallKind, { label: string; cls: string; icon: React.ElementType }> = {
+  check_in:  { label: 'Check-in',      cls: 'bg-violet-100 text-violet-700 border-violet-200', icon: PhoneCall },
+  reconfirm: { label: 'Reconfirmation',cls: 'bg-sky-100 text-sky-700 border-sky-200',          icon: ClipboardCheck },
+  post_tour: { label: 'Post-tour',     cls: 'bg-amber-100 text-amber-700 border-amber-200',     icon: Award },
+}
+function kindBadge(k?: CallKind | null) {
+  const m = k ? CALL_KIND_META[k] : undefined
+  return `inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${m?.cls ?? 'bg-slate-100 text-slate-500 border-slate-200'}`
+}
+
+// Alert category + severity meta.
+const ALERT_CATEGORY_META: Record<string, { label: string; cls: string }> = {
+  complaint:      { label: 'Complaint',      cls: 'bg-red-100 text-red-600 border-red-200' },
+  change_request: { label: 'Change request', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+  safety:         { label: 'Safety',          cls: 'bg-rose-100 text-rose-700 border-rose-200' },
+  low_rating:     { label: 'Low rating',      cls: 'bg-orange-100 text-orange-700 border-orange-200' },
+}
+const ALERT_SEVERITY_META: Record<string, { label: string; cls: string; dot: string }> = {
+  high:   { label: 'High',   cls: 'bg-red-100 text-red-700 border-red-200',       dot: 'bg-red-500' },
+  medium: { label: 'Medium', cls: 'bg-amber-100 text-amber-700 border-amber-200', dot: 'bg-amber-500' },
+  low:    { label: 'Low',    cls: 'bg-slate-100 text-slate-600 border-slate-200', dot: 'bg-slate-400' },
+}
+const ALERT_STATUS_META: Record<AlertStatus, { label: string; cls: string }> = {
+  open:     { label: 'Open',     cls: 'bg-red-100 text-red-600 border-red-200' },
+  ack:      { label: 'Acknowledged', cls: 'bg-blue-100 text-blue-700 border-blue-200' },
+  resolved: { label: 'Resolved', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
 }
 
 // Derive 1–5 stars from a 0–10 rating (prefer server-provided value).
@@ -379,7 +473,34 @@ function TranscriptBubbles({ transcript }: { transcript: TEFeedback['transcript'
   )
 }
 
-type Tab = 'setup' | 'experience' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp'
+type Tab = 'setup' | 'experience' | 'calls' | 'transcripts' | 'alerts' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp' | 'feedbackforms'
+
+// ─── Guest feedback form (digital form submissions) ───────────────────────────
+interface GuestFeedbackForm {
+  id: string
+  bookingRef: string
+  operationCountry: string | null
+  leadName: string | null
+  clientName: string | null
+  purpose: string | null
+  accommodationRoom: string | null
+  accommodationFood: string | null
+  restaurantFood: string | null
+  restaurantAmbience: string | null
+  transportVehicle: string | null
+  transportDriver: string | null
+  overallExperience: string | null
+  remarks: string | null
+  submittedAt: string
+}
+
+const FF_RATING_STYLE: Record<string, { label: string; cls: string; emoji: string }> = {
+  EXCELLENT: { label: 'Excellent', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', emoji: '🤩' },
+  GOOD:      { label: 'Good',      cls: 'bg-sky-100 text-sky-700 border-sky-200',             emoji: '😊' },
+  AVERAGE:   { label: 'Average',   cls: 'bg-amber-100 text-amber-700 border-amber-200',       emoji: '😐' },
+  POOR:      { label: 'Poor',      cls: 'bg-rose-100 text-rose-700 border-rose-200',          emoji: '😞' },
+}
+const FF_PURPOSE_LABEL: Record<string, string> = { BUSINESS: 'Only Business', LEISURE: 'Only Leisure', BOTH: 'Business & Leisure' }
 
 // ─── WhatsApp automation types ────────────────────────────────────────────────
 interface WaAutomationState {
@@ -463,7 +584,7 @@ export default function AICallBotPage() {
   const [editCampaign, setEditCampaign] = useState<TECampaign|null>(null)
 
   // ── Quick call ────────────────────────────────────────────────────────────
-  const [quickForm, setQuickForm]   = useState({ to: '', name: '', bookingRef: '', reason: '' })
+  const [quickForm, setQuickForm]   = useState({ to: '', name: '', bookingRef: '', reason: '', mode: '' as '' | CallKind })
   const [quickLoading, setQuickLoading] = useState(false)
   const [quickResult, setQuickResult] = useState<{ok:boolean;message?:string;note?:string;channel_id?:string;references_itinerary?:boolean}|null>(null)
   const [approvalLoading, setApprovalLoading] = useState(false)
@@ -486,6 +607,28 @@ export default function AICallBotPage() {
   const [waState, setWaState]       = useState<WaAutomationState | null>(null)
   const [waLoading, setWaLoading]   = useState(false)
   const [waRunning, setWaRunning]   = useState<'briefing' | 'feedback' | null>(null)
+
+  // All feedback forms tab
+  const [feedbackForms, setFeedbackForms] = useState<GuestFeedbackForm[]>([])
+  const [ffLoading, setFfLoading]         = useState(false)
+  const [ffSearch, setFfSearch]           = useState('')
+
+  // ── Unified Call Log tab ──────────────────────────────────────────────────
+  const [calls, setCalls]           = useState<TECall[]>([])
+  const [callsLoading, setCallsLoading] = useState(false)
+  const [callFilter, setCallFilter] = useState({ ref: '', kind: '' as '' | CallKind })
+  const [callExpanded, setCallExpanded] = useState<string | null>(null)
+
+  // ── Important Alerts tab + realtime notification scheduler ────────────────
+  const [alerts, setAlerts]         = useState<TEAlert[]>([])
+  const [alertsLoading, setAlertsLoading] = useState(false)
+  const [alertFilter, setAlertFilter] = useState({ ref: '', status: '' as '' | AlertStatus })
+  const [alertBusy, setAlertBusy]   = useState<number | null>(null)
+  const [resolvingAlert, setResolvingAlert] = useState<number | null>(null)
+  const [resolveNote, setResolveNote] = useState('')
+  const [openAlertCount, setOpenAlertCount] = useState(0)   // badge on the Alerts tab
+  const seenAlertIds = useRef<Set<number>>(new Set())        // ids already notified
+  const alertsPrimed = useRef(false)                          // skip toast on first load
 
   // ─────────────────────────────────────────────────────────────────────────
   // Load services list
@@ -589,6 +732,93 @@ export default function AICallBotPage() {
     } catch { /* ignore */ } finally { setWaLoading(false) }
   }, [])
 
+  const loadFeedbackForms = useCallback(async () => {
+    setFfLoading(true)
+    try {
+      const res = await fetch('/api/te/feedback-forms').then(r => r.json())
+      if (res.success) setFeedbackForms(res.data as GuestFeedbackForm[])
+    } catch { /* ignore */ } finally { setFfLoading(false) }
+  }, [])
+
+  // ── Unified call log — every call of every kind, newest first ─────────────
+  const loadCalls = useCallback(async () => {
+    setCallsLoading(true)
+    try {
+      const extra: Record<string, string> = { limit: '200' }
+      if (callFilter.ref.trim()) extra.ref = callFilter.ref.trim().toUpperCase()
+      if (callFilter.kind) extra.kind = callFilter.kind
+      const res = await teProxy('calls', 'GET', undefined, extra)
+      const rows: TECall[] = res.calls ?? res.data ?? []
+      rows.sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
+      setCalls(rows)
+    } catch { /* ignore */ } finally { setCallsLoading(false) }
+  }, [callFilter])
+
+  // ── Alerts — read the important-alerts feed ────────────────────────────────
+  // `silent` polls in the background (used by the minute scheduler) so it never
+  // flips the loading spinner.
+  const loadAlerts = useCallback(async (silent = false) => {
+    if (!silent) setAlertsLoading(true)
+    try {
+      const extra: Record<string, string> = {}
+      if (alertFilter.ref.trim()) extra.ref = alertFilter.ref.trim().toUpperCase()
+      if (alertFilter.status) extra.status = alertFilter.status
+      const res = await teProxy('alerts', 'GET', undefined, extra)
+      const rows: TEAlert[] = res.alerts ?? res.data ?? []
+      const ts = (a: TEAlert) => new Date(a.at ?? a.created_at ?? 0).getTime()
+      const sev = (a: TEAlert) => (a.severity === 'high' ? 3 : a.severity === 'medium' ? 2 : 1)
+      rows.sort((a, b) => (a.status === 'open' ? 0 : 1) - (b.status === 'open' ? 0 : 1) || sev(b) - sev(a) || ts(b) - ts(a))
+      setAlerts(rows)
+    } catch { /* ignore */ } finally { if (!silent) setAlertsLoading(false) }
+  }, [alertFilter])
+
+  // ── Minute scheduler: poll the alerts feed and pop a notification for any
+  //    brand-new open alert. Primes silently on first run (no toast storm), then
+  //    only pings on genuinely new alert ids. Runs while the page is mounted.
+  const checkNewAlerts = useCallback(async () => {
+    try {
+      const res = await teProxy('alerts', 'GET', undefined, { status: 'open' })
+      const rows: TEAlert[] = res.alerts ?? res.data ?? []
+      setOpenAlertCount(rows.length)
+      const fresh = rows.filter(a => !seenAlertIds.current.has(a.id))
+      rows.forEach(a => seenAlertIds.current.add(a.id))
+      if (!alertsPrimed.current) { alertsPrimed.current = true; return }   // first pass = baseline
+      for (const a of fresh) {
+        const sevIcon = a.severity === 'high' ? '🔴' : a.severity === 'medium' ? '🟠' : '🟡'
+        const cat = a.category ? (ALERT_CATEGORY_META[a.category]?.label ?? a.category) : 'Alert'
+        toast.error(`${sevIcon} ${a.title ?? cat}`, {
+          description: `${a.booking_ref ?? ''}${a.customer_name ? ` · ${a.customer_name}` : ''}${a.details ? ` — ${a.details}` : ''}`,
+          duration: 12000,
+          action: { label: 'View', onClick: () => { setTab('alerts'); loadAlerts() } },
+        })
+      }
+      if (fresh.length) {
+        try { if ('Notification' in window && Notification.permission === 'granted') {
+          const a = fresh[0]
+          new Notification(`⚠️ ${fresh.length} new traveller alert${fresh.length > 1 ? 's' : ''}`, {
+            body: `${a.title ?? a.category ?? 'Complaint'} · ${a.booking_ref ?? ''}`,
+          })
+        } } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }, [loadAlerts])
+
+  // Work an alert through its lifecycle: open → ack → resolved.
+  async function patchAlert(id: number, patch: { status: AlertStatus; resolution_note?: string }) {
+    setAlertBusy(id)
+    try {
+      const res = await teProxy(`alerts/${id}`, 'PATCH', patch)
+      if (res.error) throw new Error(res.error)
+      toast.success(patch.status === 'resolved' ? 'Alert resolved' : patch.status === 'ack' ? 'Alert acknowledged' : 'Alert updated')
+      setResolvingAlert(null); setResolveNote('')
+      await loadAlerts()
+      // refresh the badge count immediately
+      const open = await teProxy('alerts', 'GET', undefined, { status: 'open' })
+      setOpenAlertCount((open.alerts ?? open.data ?? []).length)
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
+    finally { setAlertBusy(null) }
+  }
+
   async function toggleWaSetting(key: 'briefing' | 'feedback', enabled: boolean) {
     // Optimistic flip
     setWaState(s => s ? { ...s, [key === 'briefing' ? 'briefingEnabled' : 'feedbackEnabled']: enabled } : s)
@@ -619,7 +849,19 @@ export default function AICallBotPage() {
   useEffect(() => { if (tab === 'history' && services.length) loadAllFeedback() }, [tab, services, loadAllFeedback])
   useEffect(() => { if (tab === 'experience' && services.length) loadExperience() }, [tab, services, loadExperience])
   useEffect(() => { if (tab === 'whatsapp') loadWaAutomation() }, [tab, loadWaAutomation])
+  useEffect(() => { if (tab === 'feedbackforms') loadFeedbackForms() }, [tab, loadFeedbackForms])
+  useEffect(() => { if (tab === 'calls') loadCalls() }, [tab, loadCalls])
+  useEffect(() => { if (tab === 'alerts') loadAlerts() }, [tab, loadAlerts])
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMsgs])
+
+  // Realtime alert scheduler — check for new important alerts every minute and
+  // pop a notification. Asks for desktop-notification permission once, up front.
+  useEffect(() => {
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {}) } catch { /* ignore */ }
+    checkNewAlerts()                                   // prime the baseline immediately
+    const iv = setInterval(() => { checkNewAlerts() }, 60_000)   // every minute
+    return () => clearInterval(iv)
+  }, [checkNewAlerts])
 
   // ─────────────────────────────────────────────────────────────────────────
   // Register booking
@@ -814,7 +1056,11 @@ export default function AICallBotPage() {
       if (quickForm.name) body.name = quickForm.name
       if (quickForm.bookingRef) { body.bookingRef = quickForm.bookingRef.trim().toUpperCase(); body.booking_ref = body.bookingRef }
       if (quickForm.reason) body.reason = quickForm.reason
-      const res = await teProxy('quick-call', 'POST', body)
+      // With a playbook mode selected we hit /test-call so staff hear the exact
+      // reconfirm/post-tour/check-in script (nothing is persisted, no alerts).
+      if (quickForm.mode) body.mode = quickForm.mode
+      const endpoint = quickForm.mode ? 'test-call' : 'quick-call'
+      const res = await teProxy(endpoint, 'POST', body)
       if (res.approval_pending) { setQuickResult({ ok: false, message: res.message ?? 'Approval pending' }); toast.info('Approval sent') }
       else if (!res.ok) { setQuickResult({ ok: false, message: res.message }); toast.info(res.message ?? 'Could not connect') }
       else { setQuickResult({ ok: true, message: res.message, note: res.note, channel_id: res.channel_id, references_itinerary: res.references_itinerary }); toast.success('Call placed') }
@@ -1171,6 +1417,7 @@ export default function AICallBotPage() {
             { label: 'Pending Calls', value: services.flatMap(s => s.schedule ?? []).filter(s => s.status === 'pending').length, color: 'text-orange-400' },
             { label: 'Calls Done', value: services.flatMap(s => s.schedule ?? []).filter(s => s.status === 'answered' || s.status === 'done').length, color: 'text-emerald-400' },
             { label: 'Jobs', value: jobs.length, color: 'text-blue-400' },
+            { label: 'Open Alerts', value: openAlertCount, color: openAlertCount > 0 ? 'text-red-400' : 'text-slate-400' },
           ].map(s => (
             <div key={s.label} className="flex items-center gap-2">
               <span className={`text-lg font-black ${s.color}`}>{s.value}</span>
@@ -1187,15 +1434,22 @@ export default function AICallBotPage() {
           {([
             { key: 'setup',    label: 'Setup & Service',  icon: <Settings className="w-3.5 h-3.5" /> },
             { key: 'experience', label: 'Experience',     icon: <Award className="w-3.5 h-3.5" /> },
+            { key: 'calls',    label: 'Call Log',         icon: <ListChecks className="w-3.5 h-3.5" /> },
+            { key: 'transcripts', label: 'Transcripts',   icon: <MessageSquare className="w-3.5 h-3.5" /> },
+            { key: 'alerts',   label: 'Alerts',           icon: <BellRing className="w-3.5 h-3.5" />, badge: openAlertCount },
             { key: 'jobs',     label: 'Custom Jobs',      icon: <Megaphone className="w-3.5 h-3.5" /> },
             { key: 'quickcall',label: 'Quick Call',        icon: <Zap className="w-3.5 h-3.5" /> },
             { key: 'history',  label: 'Call History',     icon: <BarChart2 className="w-3.5 h-3.5" /> },
             { key: 'chatbot',  label: 'AI Chat Bot',      icon: <Sparkles className="w-3.5 h-3.5" /> },
             { key: 'whatsapp', label: 'WhatsApp Auto',    icon: <MessageCircle className="w-3.5 h-3.5" /> },
-          ] as { key: Tab; label: string; icon: React.ReactNode }[]).map(t => (
+            { key: 'feedbackforms', label: 'All Feedbacks (Form)', icon: <ClipboardCheck className="w-3.5 h-3.5" /> },
+          ] as { key: Tab; label: string; icon: React.ReactNode; badge?: number }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`flex items-center gap-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${tab === t.key ? 'border-violet-500 text-violet-300 bg-violet-500/5' : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
               {t.icon}{t.label}
+              {!!t.badge && t.badge > 0 && (
+                <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-black animate-pulse">{t.badge > 99 ? '99+' : t.badge}</span>
+              )}
             </button>
           ))}
         </div>
@@ -1478,6 +1732,260 @@ export default function AICallBotPage() {
         )}
 
         {/* ════════════════════════════════════════════════════════════════
+            TAB — UNIFIED CALL LOG (every call, all kinds, full transcript)
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'calls' && (
+          <div className="space-y-4">
+            {/* Controls */}
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="form-label">Filter by Booking</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input className="form-input pl-8 h-8 text-xs w-44" placeholder="VN · IS · SG…" value={callFilter.ref}
+                    onChange={e => setCallFilter(f => ({ ...f, ref: e.target.value.toUpperCase() }))}
+                    onKeyDown={e => { if (e.key === 'Enter') loadCalls() }} />
+                </div>
+              </div>
+              <div>
+                <label className="form-label">Call kind</label>
+                <select className="form-select h-8 text-xs" value={callFilter.kind} onChange={e => setCallFilter(f => ({ ...f, kind: e.target.value as '' | CallKind }))}>
+                  <option value="">All kinds</option>
+                  <option value="check_in">Check-in</option>
+                  <option value="reconfirm">Reconfirmation</option>
+                  <option value="post_tour">Post-tour</option>
+                </select>
+              </div>
+              <button onClick={loadCalls} disabled={callsLoading} className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50 bg-white ml-auto">
+                {callsLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
+              </button>
+            </div>
+
+            {/* Kind tally */}
+            <div className="flex flex-wrap gap-2">
+              {(['check_in','reconfirm','post_tour'] as CallKind[]).map(k => {
+                const n = calls.filter(c => c.kind === k).length
+                const m = CALL_KIND_META[k]; const Icon = m.icon
+                return <span key={k} className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-bold ${m.cls}`}><Icon className="w-3 h-3" /> {m.label} · {n}</span>
+              })}
+            </div>
+
+            {callsLoading && calls.length === 0 ? (
+              <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-violet-400 animate-spin" /></div>
+            ) : calls.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+                <ListChecks className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">No calls logged yet</p>
+                <p className="text-slate-400 text-xs mt-1">Every connected call — check-in, reconfirmation, post-tour — appears here with its full transcript</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {calls.map(c => {
+                  const key = `${c.kind}-${c.id}`
+                  const isOpen = callExpanded === key
+                  const m = CALL_KIND_META[c.kind]; const Icon = m?.icon ?? PhoneCall
+                  const stars = c.kind === 'post_tour' ? toStars(c.rating, c.stars) : 0
+                  return (
+                    <div key={key} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+                      <div className="px-4 py-3 flex items-center gap-2 flex-wrap cursor-pointer hover:bg-slate-50" onClick={() => setCallExpanded(isOpen ? null : key)}>
+                        <span className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${c.kind === 'reconfirm' ? 'bg-sky-500' : c.kind === 'post_tour' ? 'bg-amber-500' : 'bg-violet-500'}`}><Icon className="w-3.5 h-3.5 text-white" /></span>
+                        <span className={kindBadge(c.kind)}>{m?.label ?? c.kind}</span>
+                        <span className="font-mono text-xs font-bold text-slate-800">{c.booking_ref}</span>
+                        {c.kind === 'check_in' && c.day_no != null && <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full">Day {c.day_no}</span>}
+                        {c.kind === 'post_tour' && c.rating != null && <span className="inline-flex items-center gap-1"><StarRating value={stars} /> <span className="text-[11px] font-black text-amber-500">{c.rating}/10</span></span>}
+                        {c.outcome && <span className={outcomeBadge(c.outcome)}>{OUTCOME_META[c.outcome]?.label ?? c.outcome}</span>}
+                        {c.sentiment && <span className="text-sm" title={c.sentiment}>{SENTIMENT_EMOJI[c.sentiment] ?? ''}</span>}
+                        {c.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDT(c.at)}</span>}
+                        {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                      </div>
+                      {c.summary && !isOpen && <p className="px-4 pb-3 -mt-1 text-xs text-slate-500 italic leading-relaxed line-clamp-2">{c.summary}</p>}
+                      {isOpen && (
+                        <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+                          {/* Kind-specific fields */}
+                          {c.kind === 'reconfirm' && (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              <FlagChip label="Dates"      value={c.dates_ok}   icon={Calendar} />
+                              <FlagChip label="Flights"    value={c.flight_ok}  icon={Plane} />
+                              <FlagChip label="Travellers" value={c.pax_ok}     icon={Users} />
+                              <FlagChip label="Contact"    value={c.contact_ok} icon={Phone} />
+                            </div>
+                          )}
+                          {c.kind === 'reconfirm' && c.requested_change && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5"><p className="text-[10px] font-bold text-amber-600 uppercase mb-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Requested change</p><p className="text-xs text-slate-800 leading-relaxed font-medium">{c.requested_change}</p></div>
+                          )}
+                          {c.kind === 'reconfirm' && c.special_requests && (
+                            <div className="bg-violet-50 border border-violet-100 rounded-xl px-3 py-2.5"><p className="text-[10px] font-bold text-violet-500 uppercase mb-1 flex items-center gap-1"><Heart className="w-3 h-3" /> Special requests</p><p className="text-xs text-slate-700 leading-relaxed">{c.special_requests}</p></div>
+                          )}
+                          {c.kind === 'post_tour' && (
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {c.reached_home_safely != null && <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border ${c.reached_home_safely ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-red-50 text-red-500 border-red-200'}`}><Home className="w-3 h-3" /> {c.reached_home_safely ? 'Home safe' : 'Not home'}</span>}
+                              {c.would_recommend != null && <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border ${c.would_recommend ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}><ThumbsUp className="w-3 h-3" /> {c.would_recommend ? 'Recommends' : 'Would not'}</span>}
+                            </div>
+                          )}
+                          {c.kind === 'post_tour' && c.best_moment && <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2.5"><p className="text-[10px] font-bold text-emerald-600 uppercase mb-1">Best moment</p><p className="text-xs text-slate-700 leading-relaxed">{c.best_moment}</p></div>}
+                          {c.kind === 'post_tour' && c.improvements && <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5"><p className="text-[10px] font-bold text-blue-500 uppercase mb-1">Could improve</p><p className="text-xs text-slate-700 leading-relaxed">{c.improvements}</p></div>}
+                          {c.kind === 'post_tour' && c.comment && <p className="text-xs text-slate-700 leading-relaxed">&ldquo;{c.comment}&rdquo;</p>}
+                          {c.kind === 'check_in' && (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                              {[['Hotel', c.hotel_ok], ['Meals', c.meals_ok], ['Driver', c.driver_ok], ['Vehicle', c.vehicle_ok]].filter(([, v]) => v).map(([label, val]) => (
+                                <span key={label as string} className={`text-[10px] px-1.5 py-1 rounded-full border font-bold text-center ${val === 'good' ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : val === 'bad' ? 'bg-red-50 text-red-500 border-red-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>{label}: {String(val)}</span>
+                              ))}
+                            </div>
+                          )}
+                          {c.kind === 'check_in' && c.highlights && <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5"><p className="text-[10px] font-bold text-blue-500 uppercase mb-1">Highlights</p><p className="text-xs text-slate-700 leading-relaxed">{c.highlights}</p></div>}
+                          {c.kind === 'check_in' && c.issues && <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2.5"><p className="text-[10px] font-bold text-red-500 uppercase mb-1">Issues</p><p className="text-xs text-slate-700 leading-relaxed">{c.issues}</p></div>}
+                          {c.summary && <p className="text-xs text-slate-500 italic leading-relaxed">{c.summary}</p>}
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><MessageCircle className="w-3 h-3 text-violet-400" /> Full conversation</p>
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptBubbles transcript={c.transcript} /></div>
+                          </div>
+                          {c.conversation_id && <p className="text-[10px] text-slate-400 font-mono">conversation: {c.conversation_id}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════════
+            TAB — TRANSCRIPTS EXPLORER (DB-backed, searchable, master-detail)
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'transcripts' && <TranscriptsExplorer />}
+
+        {/* ════════════════════════════════════════════════════════════════
+            TAB — IMPORTANT ALERTS (complaints / urgent asks · realtime)
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'alerts' && (
+          <div className="space-y-4">
+            {/* Banner */}
+            <div className="rounded-2xl border border-red-200 bg-gradient-to-r from-red-50 to-orange-50 px-5 py-3.5 flex items-center gap-3">
+              <span className="w-9 h-9 rounded-xl bg-red-500 flex items-center justify-center flex-shrink-0"><ShieldAlert className="w-4.5 h-4.5 text-white" /></span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-bold text-red-800">Important Alerts</p>
+                <p className="text-[11px] text-red-600/80">Complaints, change requests, safety flags &amp; low ratings raised on any call — checked automatically every minute.</p>
+              </div>
+              <div className="flex items-center gap-4 text-right">
+                <div><p className="text-lg font-black text-red-600">{alerts.filter(a => a.status === 'open').length}</p><p className="text-[9px] uppercase tracking-wide text-red-400 font-bold">Open</p></div>
+                <div><p className="text-lg font-black text-slate-600">{alerts.filter(a => a.severity === 'high').length}</p><p className="text-[9px] uppercase tracking-wide text-slate-400 font-bold">High</p></div>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="form-label">Filter by Booking</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input className="form-input pl-8 h-8 text-xs w-44" placeholder="VN · IS · SG…" value={alertFilter.ref}
+                    onChange={e => setAlertFilter(f => ({ ...f, ref: e.target.value.toUpperCase() }))}
+                    onKeyDown={e => { if (e.key === 'Enter') loadAlerts() }} />
+                </div>
+              </div>
+              <div>
+                <label className="form-label">Status</label>
+                <div className="flex border border-slate-200 rounded-lg overflow-hidden h-8 bg-white">
+                  {([['', 'All'], ['open', 'Open'], ['ack', 'Ack'], ['resolved', 'Resolved']] as const).map(([v, label]) => (
+                    <button key={v || 'all'} onClick={() => setAlertFilter(f => ({ ...f, status: v as '' | AlertStatus }))}
+                      className={`px-3 text-xs font-semibold transition-colors ${alertFilter.status === v ? 'bg-red-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>{label}</button>
+                  ))}
+                </div>
+              </div>
+              <button onClick={() => loadAlerts()} disabled={alertsLoading} className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50 bg-white ml-auto">
+                {alertsLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
+              </button>
+            </div>
+
+            {alertsLoading && alerts.length === 0 ? (
+              <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-red-400 animate-spin" /></div>
+            ) : alerts.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
+                <Bell className="w-10 h-10 text-slate-200 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">No alerts — all clear ✓</p>
+                <p className="text-slate-400 text-xs mt-1">Complaints and urgent requests from calls will show up here</p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {alerts.map(a => {
+                  const sev = ALERT_SEVERITY_META[a.severity ?? 'medium'] ?? ALERT_SEVERITY_META.medium
+                  const cat = a.category ? ALERT_CATEGORY_META[a.category] : undefined
+                  const st  = ALERT_STATUS_META[a.status ?? 'open'] ?? ALERT_STATUS_META.open
+                  const km  = a.call_kind ? CALL_KIND_META[a.call_kind] : undefined
+                  const isResolved = a.status === 'resolved'
+                  return (
+                    <div key={a.id} className={`bg-white rounded-2xl border overflow-hidden shadow-sm ${isResolved ? 'border-slate-200 opacity-75' : a.severity === 'high' ? 'border-red-300' : 'border-amber-200'}`}>
+                      <div className={`h-1 w-full ${sev.dot}`} />
+                      <div className="p-4 space-y-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[9px] font-bold ${sev.cls}`}><span className={`w-1.5 h-1.5 rounded-full ${sev.dot}`} /> {sev.label}</span>
+                          {cat && <span className={`inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${cat.cls}`}>{cat.label}</span>}
+                          {km && <span className={kindBadge(a.call_kind)}>{km.label}</span>}
+                          <span className={`inline-flex items-center gap-1 border font-bold rounded-full text-[9px] px-2 py-0.5 ${st.cls}`}>{st.label}</span>
+                          {a.at || a.created_at ? <span className="ml-auto text-[10px] text-slate-400">{fmtDT(a.at ?? a.created_at ?? '')}</span> : null}
+                        </div>
+
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">{a.title ?? cat?.label ?? 'Alert'}</p>
+                          <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-500">
+                            {a.booking_ref && <span className="font-mono font-bold text-slate-700">{a.booking_ref}</span>}
+                            {a.customer_name && <span>· {a.customer_name}</span>}
+                            {a.sentiment && <span title={a.sentiment}>{SENTIMENT_EMOJI[a.sentiment] ?? ''}</span>}
+                          </div>
+                        </div>
+
+                        {a.details && <p className="text-xs text-slate-700 leading-relaxed">{a.details}</p>}
+                        {a.customer_quote && (
+                          <div className="bg-slate-50 border-l-2 border-slate-300 rounded-r-lg px-3 py-2 flex gap-2">
+                            <Quote className="w-3.5 h-3.5 text-slate-300 flex-shrink-0 mt-0.5" />
+                            <p className="text-xs text-slate-600 italic leading-relaxed">{a.customer_quote}</p>
+                          </div>
+                        )}
+                        {isResolved && a.resolution_note && (
+                          <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2"><p className="text-[10px] font-bold text-emerald-600 uppercase mb-0.5 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Resolution{a.resolved_at ? ` · ${fmtDT(a.resolved_at)}` : ''}</p><p className="text-xs text-slate-700 leading-relaxed">{a.resolution_note}</p></div>
+                        )}
+
+                        {/* Lifecycle actions */}
+                        {!isResolved && (
+                          resolvingAlert === a.id ? (
+                            <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                              <label className="form-label !text-[10px]">Resolution note</label>
+                              <textarea className="form-input min-h-[56px] text-xs resize-none" placeholder="e.g. Dates moved; customer informed." value={resolveNote} onChange={e => setResolveNote(e.target.value)} />
+                              <div className="flex gap-2">
+                                <button disabled={alertBusy === a.id} onClick={() => patchAlert(a.id, { status: 'resolved', resolution_note: resolveNote.trim() || undefined })}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
+                                  {alertBusy === a.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} Mark resolved
+                                </button>
+                                <button onClick={() => { setResolvingAlert(null); setResolveNote('') }} className="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-white">Cancel</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 pt-1 border-t border-slate-100">
+                              {a.status === 'open' && (
+                                <button disabled={alertBusy === a.id} onClick={() => patchAlert(a.id, { status: 'ack' })}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 disabled:opacity-50">
+                                  {alertBusy === a.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Acknowledge
+                                </button>
+                              )}
+                              <button onClick={() => { setResolvingAlert(a.id); setResolveNote('') }}
+                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
+                              </button>
+                              {a.conversation_id && <span className="ml-auto text-[10px] text-slate-400 font-mono truncate max-w-[160px]">conv: {a.conversation_id}</span>}
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════════
             TAB 2 — CUSTOM JOBS & CAMPAIGNS
         ═══════════════════════════════════════════════════════════════ */}
         {tab === 'jobs' && (
@@ -1687,14 +2195,34 @@ export default function AICallBotPage() {
                   <textarea className="form-input min-h-[72px] resize-none" placeholder="e.g. Confirm airport pickup moved to 6:00 AM and check they're OK with it." value={quickForm.reason} onChange={e => setQuickForm(f => ({ ...f, reason: e.target.value }))} />
                 </div>
 
+                {/* Playbook test-call mode (§5) — hear the exact reconfirm / post-tour / check-in script */}
+                <div>
+                  <label className="form-label">Playbook <span className="font-normal text-slate-400">(optional — test a specific script via /test-call)</span></label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
+                    {([
+                      { key: '',          title: 'General',       icon: <Zap className="w-3.5 h-3.5" /> },
+                      { key: 'reconfirm', title: 'Reconfirm',     icon: <ClipboardCheck className="w-3.5 h-3.5" /> },
+                      { key: 'post_tour', title: 'Post-tour',     icon: <Award className="w-3.5 h-3.5" /> },
+                      { key: 'check_in',  title: 'Check-in',      icon: <PhoneCall className="w-3.5 h-3.5" /> },
+                    ] as const).map(m => (
+                      <button key={m.key || 'general'} type="button" onClick={() => setQuickForm(f => ({ ...f, mode: m.key }))}
+                        className={`flex items-center gap-1.5 justify-center px-2 py-2 rounded-xl border-2 text-xs font-semibold transition-all ${quickForm.mode === m.key ? 'border-violet-400 bg-violet-50 text-violet-700' : 'border-slate-200 text-slate-500 hover:border-slate-300'}`}>
+                        {m.icon}{m.title}
+                      </button>
+                    ))}
+                  </div>
+                  {quickForm.mode && <p className="text-[10px] text-amber-600 mt-1 flex items-center gap-1"><Info className="w-3 h-3" /> Test call — the agent runs the <b className="font-bold">{CALL_KIND_META[quickForm.mode].label}</b> script; feedback is not persisted and no alerts are raised.</p>}
+                </div>
+
                 {/* Parameters preview */}
                 <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 text-[11px] font-mono space-y-1">
-                  <p className="text-[10px] font-sans font-bold text-violet-700 mb-1.5 flex items-center gap-1"><BookOpen className="w-3 h-3" /> POST /quick-call</p>
+                  <p className="text-[10px] font-sans font-bold text-violet-700 mb-1.5 flex items-center gap-1"><BookOpen className="w-3 h-3" /> POST /{quickForm.mode ? 'test-call' : 'quick-call'}</p>
                   {[
                     ['to', quickForm.to.replace(/\D/g,'') || <span className="text-red-400">required</span>],
                     ['name', quickForm.name || '—'],
                     ['bookingRef', quickForm.bookingRef || '— (no trip attached)'],
                     ['reason', quickForm.reason.trim() || '— (general check-in)'],
+                    ...(quickForm.mode ? [['mode', quickForm.mode]] : []),
                   ].map(([k, v]) => (
                     <div key={String(k)} className="flex items-baseline gap-2">
                       <span className="text-slate-400 w-24 flex-shrink-0">{k}</span>
@@ -2166,7 +2694,123 @@ export default function AICallBotPage() {
           </div>
         )}
 
+        {/* ════════════════════════════════════════════════════════════════
+            TAB 8 — ALL FEEDBACKS (FORM)
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'feedbackforms' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center"><ClipboardCheck className="w-4 h-4 text-emerald-600" /></div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">All Bookings Feedback</h3>
+                    <p className="text-xs text-slate-500">Digital Guest Feedback Form submissions across every booking</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input value={ffSearch} onChange={e => setFfSearch(e.target.value)} placeholder="Search ref or name…"
+                      className="pl-8 pr-3 h-8 w-52 rounded-lg border border-slate-200 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                  </div>
+                  <button onClick={loadFeedbackForms} disabled={ffLoading} className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                    <RefreshCw className={`w-3 h-3 ${ffLoading ? 'animate-spin' : ''}`} /> Refresh
+                  </button>
+                </div>
+              </div>
+
+              {ffLoading && !feedbackForms.length ? (
+                <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 text-emerald-400 animate-spin" /></div>
+              ) : (() => {
+                const q = ffSearch.trim().toLowerCase()
+                const list = q
+                  ? feedbackForms.filter(f =>
+                      f.bookingRef.toLowerCase().includes(q) ||
+                      (f.leadName ?? '').toLowerCase().includes(q) ||
+                      (f.clientName ?? '').toLowerCase().includes(q))
+                  : feedbackForms
+                if (!list.length) return (
+                  <div className="px-5 py-16 text-center">
+                    <ClipboardCheck className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                    <p className="text-sm text-slate-400">{feedbackForms.length ? 'No feedback matches your search' : 'No feedback forms submitted yet'}</p>
+                    <p className="text-xs text-slate-300 mt-1">Submissions appear here once guests complete the Guest Feedback Form</p>
+                  </div>
+                )
+                return (
+                  <div className="p-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {list.map(f => <FeedbackFormCard key={f.id} f={f} />)}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
       </main>
+    </div>
+  )
+}
+
+// ─── Guest feedback form card ──────────────────────────────────────────────────
+function FfRatingBadge({ value, large }: { value: string; large?: boolean }) {
+  const s = FF_RATING_STYLE[value] ?? { label: value, cls: 'bg-slate-100 text-slate-600 border-slate-200', emoji: '' }
+  return (
+    <span className={`inline-flex items-center gap-1 font-bold rounded-full border ${s.cls} ${large ? 'text-xs px-2.5 py-1' : 'text-[10px] px-2 py-0.5'}`}>
+      <span>{s.emoji}</span> {s.label}
+    </span>
+  )
+}
+
+function FeedbackFormCard({ f }: { f: GuestFeedbackForm }) {
+  const rows: { label: string; value: string | null }[] = [
+    { label: 'Accommodation — Room',   value: f.accommodationRoom },
+    { label: 'Accommodation — Food',   value: f.accommodationFood },
+    { label: 'Restaurant — Food',      value: f.restaurantFood },
+    { label: 'Restaurant — Ambience',  value: f.restaurantAmbience },
+    { label: 'Transport — Vehicle',    value: f.transportVehicle },
+    { label: 'Transport — Driver',     value: f.transportDriver },
+  ]
+  return (
+    <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/60 to-white overflow-hidden">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-emerald-100 bg-white/60">
+        <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+          <CheckCircle2 className="w-4 h-4 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-xs font-bold text-slate-800">{f.bookingRef}</span>
+            {(f.clientName || f.leadName) && <span className="text-[11px] text-slate-500 truncate">· {f.clientName || f.leadName}</span>}
+          </div>
+          <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+            <Clock className="w-3 h-3" /> {fmtDT(f.submittedAt)}
+          </p>
+        </div>
+        {f.overallExperience && <FfRatingBadge value={f.overallExperience} large />}
+      </div>
+
+      <div className="p-4 space-y-2.5">
+        {f.purpose && (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-500">Purpose of stay</span>
+            <span className="font-semibold text-slate-700">{FF_PURPOSE_LABEL[f.purpose] ?? f.purpose}</span>
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+          {rows.map(r => (
+            <div key={r.label} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-slate-500 truncate">{r.label}</span>
+              {r.value ? <FfRatingBadge value={r.value} /> : <span className="text-slate-300">—</span>}
+            </div>
+          ))}
+        </div>
+        {f.remarks && (
+          <div className="mt-2 pt-3 border-t border-emerald-100">
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-1">Remarks</p>
+            <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{f.remarks}</p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
