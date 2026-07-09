@@ -379,7 +379,34 @@ function TranscriptBubbles({ transcript }: { transcript: TEFeedback['transcript'
   )
 }
 
-type Tab = 'setup' | 'experience' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp'
+type Tab = 'setup' | 'experience' | 'jobs' | 'quickcall' | 'history' | 'chatbot' | 'whatsapp' | 'feedbackforms'
+
+// ─── Guest feedback form (digital form submissions) ───────────────────────────
+interface GuestFeedbackForm {
+  id: string
+  bookingRef: string
+  operationCountry: string | null
+  leadName: string | null
+  clientName: string | null
+  purpose: string | null
+  accommodationRoom: string | null
+  accommodationFood: string | null
+  restaurantFood: string | null
+  restaurantAmbience: string | null
+  transportVehicle: string | null
+  transportDriver: string | null
+  overallExperience: string | null
+  remarks: string | null
+  submittedAt: string
+}
+
+const FF_RATING_STYLE: Record<string, { label: string; cls: string; emoji: string }> = {
+  EXCELLENT: { label: 'Excellent', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', emoji: '🤩' },
+  GOOD:      { label: 'Good',      cls: 'bg-sky-100 text-sky-700 border-sky-200',             emoji: '😊' },
+  AVERAGE:   { label: 'Average',   cls: 'bg-amber-100 text-amber-700 border-amber-200',       emoji: '😐' },
+  POOR:      { label: 'Poor',      cls: 'bg-rose-100 text-rose-700 border-rose-200',          emoji: '😞' },
+}
+const FF_PURPOSE_LABEL: Record<string, string> = { BUSINESS: 'Only Business', LEISURE: 'Only Leisure', BOTH: 'Business & Leisure' }
 
 // ─── WhatsApp automation types ────────────────────────────────────────────────
 interface WaAutomationState {
@@ -487,6 +514,11 @@ export default function AICallBotPage() {
   const [waLoading, setWaLoading]   = useState(false)
   const [waRunning, setWaRunning]   = useState<'briefing' | 'feedback' | null>(null)
 
+  // All feedback forms tab
+  const [feedbackForms, setFeedbackForms] = useState<GuestFeedbackForm[]>([])
+  const [ffLoading, setFfLoading]         = useState(false)
+  const [ffSearch, setFfSearch]           = useState('')
+
   // ─────────────────────────────────────────────────────────────────────────
   // Load services list
   // ─────────────────────────────────────────────────────────────────────────
@@ -589,6 +621,14 @@ export default function AICallBotPage() {
     } catch { /* ignore */ } finally { setWaLoading(false) }
   }, [])
 
+  const loadFeedbackForms = useCallback(async () => {
+    setFfLoading(true)
+    try {
+      const res = await fetch('/api/te/feedback-forms').then(r => r.json())
+      if (res.success) setFeedbackForms(res.data as GuestFeedbackForm[])
+    } catch { /* ignore */ } finally { setFfLoading(false) }
+  }, [])
+
   async function toggleWaSetting(key: 'briefing' | 'feedback', enabled: boolean) {
     // Optimistic flip
     setWaState(s => s ? { ...s, [key === 'briefing' ? 'briefingEnabled' : 'feedbackEnabled']: enabled } : s)
@@ -619,6 +659,7 @@ export default function AICallBotPage() {
   useEffect(() => { if (tab === 'history' && services.length) loadAllFeedback() }, [tab, services, loadAllFeedback])
   useEffect(() => { if (tab === 'experience' && services.length) loadExperience() }, [tab, services, loadExperience])
   useEffect(() => { if (tab === 'whatsapp') loadWaAutomation() }, [tab, loadWaAutomation])
+  useEffect(() => { if (tab === 'feedbackforms') loadFeedbackForms() }, [tab, loadFeedbackForms])
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [chatMsgs])
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1192,6 +1233,7 @@ export default function AICallBotPage() {
             { key: 'history',  label: 'Call History',     icon: <BarChart2 className="w-3.5 h-3.5" /> },
             { key: 'chatbot',  label: 'AI Chat Bot',      icon: <Sparkles className="w-3.5 h-3.5" /> },
             { key: 'whatsapp', label: 'WhatsApp Auto',    icon: <MessageCircle className="w-3.5 h-3.5" /> },
+            { key: 'feedbackforms', label: 'All Feedbacks (Form)', icon: <ClipboardCheck className="w-3.5 h-3.5" /> },
           ] as { key: Tab; label: string; icon: React.ReactNode }[]).map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
               className={`flex items-center gap-2 px-4 py-3.5 text-xs font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${tab === t.key ? 'border-violet-500 text-violet-300 bg-violet-500/5' : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}>
@@ -2166,7 +2208,123 @@ export default function AICallBotPage() {
           </div>
         )}
 
+        {/* ════════════════════════════════════════════════════════════════
+            TAB 8 — ALL FEEDBACKS (FORM)
+        ═══════════════════════════════════════════════════════════════ */}
+        {tab === 'feedbackforms' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center"><ClipboardCheck className="w-4 h-4 text-emerald-600" /></div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">All Bookings Feedback</h3>
+                    <p className="text-xs text-slate-500">Digital Guest Feedback Form submissions across every booking</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 ml-auto">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input value={ffSearch} onChange={e => setFfSearch(e.target.value)} placeholder="Search ref or name…"
+                      className="pl-8 pr-3 h-8 w-52 rounded-lg border border-slate-200 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-200" />
+                  </div>
+                  <button onClick={loadFeedbackForms} disabled={ffLoading} className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-slate-200 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                    <RefreshCw className={`w-3 h-3 ${ffLoading ? 'animate-spin' : ''}`} /> Refresh
+                  </button>
+                </div>
+              </div>
+
+              {ffLoading && !feedbackForms.length ? (
+                <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 text-emerald-400 animate-spin" /></div>
+              ) : (() => {
+                const q = ffSearch.trim().toLowerCase()
+                const list = q
+                  ? feedbackForms.filter(f =>
+                      f.bookingRef.toLowerCase().includes(q) ||
+                      (f.leadName ?? '').toLowerCase().includes(q) ||
+                      (f.clientName ?? '').toLowerCase().includes(q))
+                  : feedbackForms
+                if (!list.length) return (
+                  <div className="px-5 py-16 text-center">
+                    <ClipboardCheck className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                    <p className="text-sm text-slate-400">{feedbackForms.length ? 'No feedback matches your search' : 'No feedback forms submitted yet'}</p>
+                    <p className="text-xs text-slate-300 mt-1">Submissions appear here once guests complete the Guest Feedback Form</p>
+                  </div>
+                )
+                return (
+                  <div className="p-4 grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {list.map(f => <FeedbackFormCard key={f.id} f={f} />)}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
       </main>
+    </div>
+  )
+}
+
+// ─── Guest feedback form card ──────────────────────────────────────────────────
+function FfRatingBadge({ value, large }: { value: string; large?: boolean }) {
+  const s = FF_RATING_STYLE[value] ?? { label: value, cls: 'bg-slate-100 text-slate-600 border-slate-200', emoji: '' }
+  return (
+    <span className={`inline-flex items-center gap-1 font-bold rounded-full border ${s.cls} ${large ? 'text-xs px-2.5 py-1' : 'text-[10px] px-2 py-0.5'}`}>
+      <span>{s.emoji}</span> {s.label}
+    </span>
+  )
+}
+
+function FeedbackFormCard({ f }: { f: GuestFeedbackForm }) {
+  const rows: { label: string; value: string | null }[] = [
+    { label: 'Accommodation — Room',   value: f.accommodationRoom },
+    { label: 'Accommodation — Food',   value: f.accommodationFood },
+    { label: 'Restaurant — Food',      value: f.restaurantFood },
+    { label: 'Restaurant — Ambience',  value: f.restaurantAmbience },
+    { label: 'Transport — Vehicle',    value: f.transportVehicle },
+    { label: 'Transport — Driver',     value: f.transportDriver },
+  ]
+  return (
+    <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50/60 to-white overflow-hidden">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-emerald-100 bg-white/60">
+        <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0">
+          <CheckCircle2 className="w-4 h-4 text-white" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-xs font-bold text-slate-800">{f.bookingRef}</span>
+            {(f.clientName || f.leadName) && <span className="text-[11px] text-slate-500 truncate">· {f.clientName || f.leadName}</span>}
+          </div>
+          <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
+            <Clock className="w-3 h-3" /> {fmtDT(f.submittedAt)}
+          </p>
+        </div>
+        {f.overallExperience && <FfRatingBadge value={f.overallExperience} large />}
+      </div>
+
+      <div className="p-4 space-y-2.5">
+        {f.purpose && (
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-slate-500">Purpose of stay</span>
+            <span className="font-semibold text-slate-700">{FF_PURPOSE_LABEL[f.purpose] ?? f.purpose}</span>
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+          {rows.map(r => (
+            <div key={r.label} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-slate-500 truncate">{r.label}</span>
+              {r.value ? <FfRatingBadge value={r.value} /> : <span className="text-slate-300">—</span>}
+            </div>
+          ))}
+        </div>
+        {f.remarks && (
+          <div className="mt-2 pt-3 border-t border-emerald-100">
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 font-semibold mb-1">Remarks</p>
+            <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{f.remarks}</p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
