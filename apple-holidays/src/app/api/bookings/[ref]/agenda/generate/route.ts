@@ -7,6 +7,7 @@ import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import openai from '@/lib/openai'
 import fs from 'fs'
 import path from 'path'
+import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -421,5 +422,7 @@ ${tqDocumentText
     }
   }
 
-  return buildApiSuccess({ items }, `Generated ${items.length} agenda items`)
+  const finalItems = booking.operationCountry === 'SRILANKA' ? applySriLankaMovementDefaults(items) : items
+
+  return buildApiSuccess({ items: finalItems }, `Generated ${finalItems.length} agenda items`)
 }

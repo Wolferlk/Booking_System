@@ -73,7 +73,13 @@ interface AgendaItem {
       id: string
       name: string
       phone?: string | null
-      vehicle?: { type?: string | null; plateNo?: string | null } | null
+      photoUrl?: string | null
+      vehicle?: {
+        type?: string | null
+        plateNo?: string | null
+        photoOutside?: string | null
+        photoInside?: string | null
+      } | null
     } | null
   } | null
 }
@@ -692,25 +698,32 @@ export default function PrintAgendaPage() {
                           <div style={{
                             padding: '5px 7px',
                             display: 'flex',
-                            flexDirection: 'column' as const,
-                            justifyContent: 'center',
+                            alignItems: 'center',
+                            gap: 5,
                           }}>
-                            {a?.vendorId || displayVendorName ? (
-                              <>
-                                <p style={{ fontWeight: 700, color: '#7c3aed', fontSize: 8 }}>{displayVendorName ?? '—'}</p>
-                                {displayVendorPhone && <p style={{ marginTop: 1, color: '#64748b', fontSize: 7.5 }}>{displayVendorPhone}</p>}
-                                {displayDriverName && <p style={{ marginTop: 1, fontSize: 7.5 }}>{displayDriverName}{displayDriverPhone ? ` · ${displayDriverPhone}` : ''}</p>}
-                                {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayVehicleType} {displayVehiclePlate}</p>}
-                              </>
-                            ) : displayDriverName ? (
-                              <>
-                                <p style={{ fontWeight: 700, color: '#1d4ed8', fontSize: 8 }}>{displayDriverName}</p>
-                                {displayDriverPhone && <p style={{ color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayDriverPhone}</p>}
-                                {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayVehicleType} {displayVehiclePlate}</p>}
-                              </>
-                            ) : (
-                              <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontSize: 7.5 }}>Not assigned</span>
+                            {a?.driver?.photoUrl && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={a.driver.photoUrl} alt={displayDriverName ?? 'Driver'}
+                                style={{ width: 18, height: 18, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid #e2e8f0' }} />
                             )}
+                            <div style={{ display: 'flex', flexDirection: 'column' as const, justifyContent: 'center' }}>
+                              {a?.vendorId || displayVendorName ? (
+                                <>
+                                  <p style={{ fontWeight: 700, color: '#7c3aed', fontSize: 8 }}>{displayVendorName ?? '—'}</p>
+                                  {displayVendorPhone && <p style={{ marginTop: 1, color: '#64748b', fontSize: 7.5 }}>{displayVendorPhone}</p>}
+                                  {displayDriverName && <p style={{ marginTop: 1, fontSize: 7.5 }}>{displayDriverName}{displayDriverPhone ? ` · ${displayDriverPhone}` : ''}</p>}
+                                  {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayVehicleType} {displayVehiclePlate}</p>}
+                                </>
+                              ) : displayDriverName ? (
+                                <>
+                                  <p style={{ fontWeight: 700, color: '#1d4ed8', fontSize: 8 }}>{displayDriverName}</p>
+                                  {displayDriverPhone && <p style={{ color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayDriverPhone}</p>}
+                                  {displayVehiclePlate && <p style={{ fontFamily: 'monospace', color: '#64748b', marginTop: 1, fontSize: 7.5 }}>{displayVehicleType} {displayVehiclePlate}</p>}
+                                </>
+                              ) : (
+                                <span style={{ color: '#cbd5e1', fontStyle: 'italic', fontSize: 7.5 }}>Not assigned</span>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -749,6 +762,89 @@ export default function PrintAgendaPage() {
           })()}
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════
+          GROUND TRANSPORT ROSTER
+      ══════════════════════════════════════════════════════ */}
+      {showDrivers && (() => {
+        const seen = new Set<string>()
+        const roster = items
+          .map(i => i.assignment)
+          .filter((a): a is NonNullable<AgendaItem['assignment']> => {
+            if (!a) return false
+            const name = a.driverName ?? a.driver?.name
+            const vendor = a.vendorName ?? a.vendor?.name
+            if (!name && !vendor) return false
+            const key = a.driver?.id ?? `${vendor ?? ''}|${name ?? ''}|${a.vehiclePlate ?? ''}`
+            if (seen.has(key)) return false
+            seen.add(key)
+            return true
+          })
+
+        if (roster.length === 0) return null
+
+        return (
+          <div style={{ marginBottom: 2 }}>
+            <div style={{ ...S.sectionTitle, borderTop: '2px solid #d97706' }}>🚐 Ground Transport Roster</div>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: 8,
+              padding: '8px 10px',
+              background: '#fffbeb',
+              border: '1px solid #fde68a',
+              borderTop: 'none',
+              borderRadius: '0 0 5px 5px',
+            }}>
+              {roster.map((a, i) => {
+                const name         = a!.driverName ?? a!.driver?.name ?? null
+                const phone        = a!.driverPhone ?? a!.driver?.phone ?? null
+                const vendor       = a!.vendorName ?? a!.vendor?.name ?? null
+                const vehicleType  = a!.vehicleType ?? a!.driver?.vehicle?.type ?? null
+                const vehiclePlate = a!.vehiclePlate ?? a!.driver?.vehicle?.plateNo ?? null
+                const photoUrl     = a!.driver?.photoUrl ?? null
+                const vehiclePhoto = a!.driver?.vehicle?.photoOutside ?? null
+
+                return (
+                  <div key={i} style={{
+                    display: 'flex', gap: 8, background: '#fff',
+                    border: '1px solid #fde68a', borderRadius: 6, padding: 8,
+                  }}>
+                    {photoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={photoUrl} alt={name ?? 'Driver'}
+                        style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0, border: '1px solid #e2e8f0' }} />
+                    ) : (
+                      <div style={{
+                        width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
+                        background: '#fde68a', color: '#92400e', fontWeight: 800, fontSize: 14,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {(name ?? vendor ?? '?').charAt(0)}
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      {vendor && <p style={{ fontSize: 8, fontWeight: 700, color: '#7c3aed' }}>{vendor}</p>}
+                      {name && <p style={{ fontSize: 9, fontWeight: 700, color: '#0f172a', marginTop: vendor ? 1 : 0 }}>{name}</p>}
+                      {phone && <p style={{ fontSize: 7.5, color: '#64748b', marginTop: 1 }}>{phone}</p>}
+                      {(vehicleType || vehiclePlate) && (
+                        <p style={{ fontSize: 7.5, color: '#64748b', marginTop: 1, fontFamily: 'monospace' }}>
+                          {[vehicleType, vehiclePlate].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                    {vehiclePhoto && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={vehiclePhoto} alt="Vehicle"
+                        style={{ width: 56, height: 40, objectFit: 'cover', borderRadius: 4, flexShrink: 0, border: '1px solid #e2e8f0' }} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ══════════════════════════════════════════════════════
           EMERGENCY CONTACTS

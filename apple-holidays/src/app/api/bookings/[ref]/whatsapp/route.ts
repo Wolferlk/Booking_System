@@ -171,7 +171,7 @@ export async function POST(
                 orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
                 include: {
                   assignment: {
-                    include: { driver: true },
+                    include: { driver: { include: { vehicle: true } } },
                   },
                 },
               },
