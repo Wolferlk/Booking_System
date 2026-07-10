@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -27,6 +27,7 @@ interface Settings {
   ai_pnl_auto_extract?: string
   ai_pnl_auto_classify?: string
   onedrive_new_files_only?: string
+  ext_pnl_edit_enabled?: string
 }
 
 function AIToggleRow({
@@ -182,6 +183,8 @@ export default function ConfigPage() {
   const aiPnlExtractEnabled = settings.ai_pnl_auto_extract     !== 'false'
   const aiPnlClassifyEnabled= settings.ai_pnl_auto_classify    !== 'false'
   const onedriveNewOnly     = settings.onedrive_new_files_only === 'true'
+  // Accounts PNL editing — default OFF (view-only) unless explicitly enabled
+  const extPnlEditEnabled   = settings.ext_pnl_edit_enabled === 'true'
 
   // Token savings estimate (tokens/month, rough)
   const savedTokens =
@@ -304,6 +307,51 @@ export default function ConfigPage() {
                 </p>
               </div>
             )}
+          </CardBody>
+        </Card>
+
+        {/* ── Accounts PNL Editing ── */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Pencil className="w-4 h-4 text-slate-400" /> Accounts PNL Editing
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+            <div className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${extPnlEditEnabled ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${extPnlEditEnabled ? 'bg-amber-100' : 'bg-slate-100'}`}>
+                  <Pencil className={`w-4 h-4 ${extPnlEditEnabled ? 'text-amber-600' : 'text-slate-400'}`} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Allow Editing the Accounts PNL Panel</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {extPnlEditEnabled
+                      ? 'Editing is ON — staff can add P&L adjustments, switch versions, create tickets, unlink, and manually link records.'
+                      : 'View-only (default) — the Accounts PNL panel shows details only. No adjustments, unlink, version switching, ticket creation, or manual linking.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`text-xs font-semibold ${extPnlEditEnabled ? 'text-amber-600' : 'text-slate-400'}`}>
+                  {extPnlEditEnabled ? 'ON' : 'OFF'}
+                </span>
+                <button
+                  disabled={saving === 'ext_pnl_edit_enabled'}
+                  onClick={() => saveSetting('ext_pnl_edit_enabled', extPnlEditEnabled ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${extPnlEditEnabled ? 'bg-amber-500' : 'bg-slate-300'}`}
+                >
+                  {saving === 'ext_pnl_edit_enabled' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${extPnlEditEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+            <div className="flex items-start gap-2 text-xs text-slate-400">
+              <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <p>This only affects the live Accounts PNL panel on each booking&apos;s P&amp;L page. Editing is still additionally restricted to Accounts, Booking Team, and Admin roles.</p>
+            </div>
           </CardBody>
         </Card>
 
