@@ -165,6 +165,7 @@ model Booking {
   tickets                Ticket[]
   tourAgenda             TourAgenda?
   slDriverAllocation     SriLankaDriverAllocation?
+  driverLog              DriverLog?
 
   @@index([status])
   @@index([arrivalDate])
@@ -658,6 +659,29 @@ model SystemSetting {
   updatedAt DateTime @updatedAt
 
   @@map("system_settings")
+}
+
+/// Driver Advance Sheet (Sri Lanka). One saved snapshot per booking — tour &
+/// fuel advances derived from the Accounts PNL, hand-editable, and the source
+/// for PDF / WhatsApp auto-send. Replaces the earlier `driver_log_{ref}`
+/// SystemSetting key/value snapshots (migrated into this table).
+model DriverLog {
+  bookingRef  String    @id
+  currency    String    @default("USD")
+  tourPct     Float     @default(0)
+  fuelPct     Float     @default(0)
+  driverPhone String?
+  lines       Json
+  notes       String    @db.Text
+  autoSend    Boolean   @default(false)
+  waSentAt    DateTime?
+  updatedBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  booking     Booking   @relation(fields: [bookingRef], references: [bookingRef], onDelete: Cascade)
+
+  @@map("driver_logs")
 }
 
 model WhatsAppMessage {
