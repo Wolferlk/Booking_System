@@ -241,6 +241,19 @@ async function startCustomerWhatsAppMessagingScheduler() {
   }
 }
 
+async function startDriverLogAutoSendScheduler() {
+  try {
+    // node-cron scheduler: sends tomorrow's Sri Lanka Driver Advance Sheets at
+    // DRIVER_LOG_SEND_HOUR (default 18:00 = 6pm the day before) in DRIVER_LOG_TZ
+    // (Asia/Colombo). Backend-only — runs even with no user on the app. Gated by
+    // the global driver_log_auto_send_enabled switch inside the run function.
+    const { startDriverLogScheduler } = await import('./driver-log-scheduler')
+    await startDriverLogScheduler()
+  } catch (err) {
+    console.error('[Scheduler] driver-log auto-send scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Master switch ─────────────────────────────────────────────────────────────
 const CRON_ENABLED = true
@@ -280,6 +293,10 @@ export function startCronJobs() {
   // Customer WhatsApp messaging: node-cron daily job at 6pm (timezone-aware, boot
   // catch-up). Started once at boot instead of a per-minute interval.
   void startCustomerWhatsAppMessagingScheduler()
+
+  // Driver Log auto-send: node-cron daily job at 6pm Sri Lanka (day before tour),
+  // timezone-aware with boot catch-up. Backend-only, gated by a global switch.
+  void startDriverLogAutoSendScheduler()
 
   setInterval(() => { jobProcessMailboxes() },    FIVE_MIN)
   setInterval(() => { jobOneDrivePoll() },         THREE_MIN)
