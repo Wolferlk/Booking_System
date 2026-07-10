@@ -532,26 +532,73 @@ export default function AgendaPage() {
       toast.error('No itinerary data available for this booking')
       return
     }
-    const itinByDate = new Map<string, string>()
-    for (const it of booking.itineraryItems) {
+    // Group itinerary entries by date, preserving day order. A single date can
+    // hold several movements (e.g. a departure transfer AND an arrival transfer),
+    // so we must keep every entry — not collapse them into one description per date.
+    const itinByDate = new Map<string, { title: string; description: string }[]>()
+    for (const it of [...booking.itineraryItems].sort((a, b) => a.dayNo - b.dayNo)) {
       const d = it.date?.slice(0, 10)
       if (d && it.description?.trim()) {
-        itinByDate.set(d, it.description.trim())
+        const list = itinByDate.get(d) ?? []
+        list.push({ title: it.title ?? '', description: it.description.trim() })
+        itinByDate.set(d, list)
       }
     }
     if (itinByDate.size === 0) {
       toast.error('No descriptions found in the itinerary')
       return
     }
+
+    // Token-overlap score between an itinerary title and an agenda movement's
+    // endpoints, so the right description lands on the right movement even when
+    // several movements share a date or the agenda has been reordered.
+    const tokenize = (s: string) =>
+      new Set(
+        (s || '')
+          .toLowerCase()
+          .replace(/[^a-z0-9 ]+/g, ' ')
+          .split(/\s+/)
+          .filter(t => t.length > 2),
+      )
+    const score = (title: string, item: AgendaItem) => {
+      const itemTokens = tokenize(`${item.fromPoint} ${item.toPoint} ${item.location}`)
+      let hits = 0
+      tokenize(title).forEach(t => { if (itemTokens.has(t)) hits++ })
+      return hits
+    }
+
     let replaced = 0
-    setItems(prev => prev.map(item => {
-      const d = item.date?.slice(0, 10)
-      if (!d) return item
-      const desc = itinByDate.get(d)
-      if (!desc) return item
-      replaced++
-      return { ...item, details: desc }
-    }))
+    setItems(prev => {
+      // Track which itinerary entry (per date) has already been consumed so two
+      // agenda movements on the same day don't both grab the same description.
+      const used = new Map<string, Set<number>>()
+      return prev.map(item => {
+        const d = item.date?.slice(0, 10)
+        if (!d) return item
+        const candidates = itinByDate.get(d)
+        if (!candidates?.length) return item
+
+        const usedIdx = used.get(d) ?? new Set<number>()
+        // Pick the best-scoring unused itinerary entry for this movement.
+        let bestIdx = -1
+        let bestScore = -1
+        candidates.forEach((c, i) => {
+          if (usedIdx.has(i)) return
+          const sc = score(c.title, item)
+          if (sc > bestScore) { bestScore = sc; bestIdx = i }
+        })
+        // Fall back to the first unused entry (positional order) if nothing matched.
+        if (bestIdx === -1) {
+          bestIdx = candidates.findIndex((_, i) => !usedIdx.has(i))
+        }
+        if (bestIdx === -1) return item
+
+        usedIdx.add(bestIdx)
+        used.set(d, usedIdx)
+        replaced++
+        return { ...item, details: candidates[bestIdx].description }
+      })
+    })
     toast.success(`Filled descriptions from itinerary (${replaced} item${replaced !== 1 ? 's' : ''} updated)`)
   }
 
