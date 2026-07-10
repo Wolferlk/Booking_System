@@ -29,11 +29,15 @@ interface Computation {
   otherLines: DriverLogLine[]
   excludedLines: DriverLogLine[]
   tourTotal: number
+  otherTotal: number
+  tourAdvanceBase: number
   fuelTotal: number
   tourAdvance: number
   fuelAdvance: number
+  excludedTotal: number
   grandTotal: number
   grandAdvance: number
+  restPayment: number
 }
 
 interface DriverLogView {
@@ -378,7 +382,7 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
                   <Ticket className="w-3.5 h-3.5" />
                   <span className="text-[10px] font-bold uppercase tracking-wide">Tour Advance</span>
                 </div>
-                <SummaryRow label="Total" value={formatCurrency(comp.tourTotal, cur)} />
+                <SummaryRow label="Total" value={formatCurrency(comp.tourAdvanceBase, cur)} />
                 <SummaryRow
                   label="Advance %"
                   value={editing
@@ -419,6 +423,18 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
               </div>
             </div>
 
+            {/* ── Rest payment (balance to settle after the advance) ── */}
+            <div className="flex items-center justify-between rounded-xl border border-amber-100 bg-amber-50/60 px-4 py-3">
+              <div className="flex items-center gap-1.5 text-amber-700">
+                <Wallet className="w-3.5 h-3.5" />
+                <span className="text-[10px] font-bold uppercase tracking-wide">Rest Payment</span>
+                <span className="text-[10px] text-amber-500 font-normal normal-case">
+                  (balance after advance{comp.excludedTotal > 0 ? ` · incl. excluded ${formatCurrency(comp.excludedTotal, cur)}` : ''})
+                </span>
+              </div>
+              <span className="text-sm font-mono font-extrabold text-amber-800">{formatCurrency(comp.restPayment, cur)}</span>
+            </div>
+
             {/* ── Line groups ── */}
             <LineGroup
               title="Tour — Lunch & Entrance Tickets"
@@ -440,7 +456,7 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
             />
             {(editing ? lines.filter(l => l.category === 'OTHER') : comp.otherLines).length > 0 && (
               <LineGroup
-                title="Other (not advanced)"
+                title="Other — Advanced as Tour"
                 accent="slate"
                 lines={editing ? lines.filter(l => l.category === 'OTHER') : comp.otherLines}
                 currency={cur}
@@ -493,8 +509,9 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
             {/* ── Footer note ── */}
             {!editing && (
               <p className="text-[11px] text-slate-400 pt-1 border-t border-slate-100">
-                Tour advance = Lunch + Entrance tickets. Fuel advance = Driver Accommodation + Travel (KM × Rate) + Water Bottles.
-                Bata &amp; Guide Fee are excluded. Percentages are configured in Settings; edit here to override per booking.
+                Tour advance = Lunch + Entrance tickets + Other. Fuel advance = Driver Accommodation + Travel (KM × Rate) + Water Bottles.
+                Rest Payment = total − total advance + Bata &amp; Guide Fee (excluded, settled with the balance).
+                Percentages are configured in Settings; edit here to override per booking.
               </p>
             )}
           </>

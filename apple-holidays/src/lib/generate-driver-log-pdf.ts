@@ -98,13 +98,21 @@ export function renderDriverLogHtml(view: DriverLogView): string {
   </table>
 
   <div style="display:flex;gap:14px;margin-top:16px;">
-    ${summaryCard('Tour Advance', c.tourTotal, c.tourPct, c.tourAdvance, '#7c3aed')}
+    ${summaryCard('Tour Advance', c.tourAdvanceBase, c.tourPct, c.tourAdvance, '#7c3aed')}
     ${summaryCard('Fuel Advance', c.fuelTotal, c.fuelPct, c.fuelAdvance, '#2563eb')}
     <div style="flex:1;border:1px solid #16a34a33;background:#16a34a0d;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;justify-content:center;">
       <div style="font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#16a34a;">Total Advance</div>
       <div style="font-family:monospace;font-weight:800;font-size:22px;color:#15803d;margin-top:6px;">${money(c.grandAdvance, cur)}</div>
       <div style="font-size:11px;color:#94a3b8;margin-top:2px;">of ${money(c.grandTotal, cur)} total</div>
     </div>
+  </div>
+
+  <div style="margin-top:12px;border:1px solid #fbbf2433;background:#fbbf240d;border-radius:12px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <span style="font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#b45309;">Rest Payment</span>
+      <span style="font-size:11px;color:#94a3b8;margin-left:8px;">balance after advance${c.excludedTotal > 0 ? ` · incl. excluded ${money(c.excludedTotal, cur)}` : ''}</span>
+    </div>
+    <div style="font-family:monospace;font-weight:800;font-size:16px;color:#92400e;">${money(c.restPayment, cur)}</div>
   </div>
 
   <div class="section-title">Tour Advance — Lunch &amp; Entrance Tickets</div>
@@ -124,6 +132,16 @@ export function renderDriverLogHtml(view: DriverLogView): string {
       <td style="padding:8px 10px;text-align:right;font-family:monospace;font-weight:800;color:#1d4ed8;">${money(c.fuelTotal, cur)}</td>
     </tr></tfoot>
   </table>
+
+  ${c.otherLines.length > 0 ? `
+  <div class="section-title">Other — Advanced as Tour</div>
+  <table style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+    <tbody>${lineRows(c.otherLines, cur)}</tbody>
+    <tfoot><tr style="background:#f8fafc;">
+      <td style="padding:8px 10px;font-weight:800;color:#475569;">Other Total</td>
+      <td style="padding:8px 10px;text-align:right;font-family:monospace;font-weight:800;color:#475569;">${money(c.otherTotal, cur)}</td>
+    </tr></tfoot>
+  </table>` : ''}
 
   ${c.excludedLines.length > 0 ? `
   <div class="section-title">Excluded (not advanced) — Bata &amp; Guide Fee</div>
