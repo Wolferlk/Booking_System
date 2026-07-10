@@ -25,5 +25,15 @@ export async function POST(req: NextRequest) {
     hour:      Math.max(0, Math.min(23, Number(body.hour) ?? 6)),
     minute:    Math.max(0, Math.min(59, Number(body.minute) ?? 0)),
   })
+
+  // Apply the new run time to the live node-cron scheduler immediately
+  // (no server restart needed). Best-effort — never block saving on this.
+  try {
+    const { rescheduleAutoBookingScheduler } = await import('@/lib/auto-booking-scheduler')
+    await rescheduleAutoBookingScheduler()
+  } catch (err) {
+    console.error('[Settings] reschedule auto-booking failed:', err instanceof Error ? err.message : err)
+  }
+
   return NextResponse.json({ ok: true })
 }

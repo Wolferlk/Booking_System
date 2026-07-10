@@ -16,6 +16,11 @@ export async function register() {
     if (!process.env.VERCEL) {
       const { startCronJobs } = await import('@/lib/cron-scheduler')
       startCronJobs()
+
+      // NEW independent TQ auto-processor — checks confirm.booking@aahaas.com every
+      // 5 min and processes only new mail (shares dedup keys, so no double token spend).
+      const { startTqAutoScheduler } = await import('@/lib/tq-auto-scheduler')
+      startTqAutoScheduler()
     }
   }
 }

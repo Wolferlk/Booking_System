@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { Database, HardDrive } from 'lucide-react'
 import type { ProcessedEmail } from '@/lib/mail-processor'
 import DbMailboxView from './db-mailbox-view'
+import TqAutoAlertsView from './tq-auto-alerts-view'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -475,7 +476,7 @@ function PNLExtraction({ data, bookingRef, isNew, xlsxUsed }: {
 export default function MailInboxPage() {
   const router = useRouter()
 
-  const [mainView, setMainView]           = useState<'live' | 'db'>('live')
+  const [mainView, setMainView]           = useState<'live' | 'db' | 'auto'>('live')
   const [emails, setEmails]               = useState<EmailWithMailbox[]>([])
   const [fetching, setFetching]           = useState(true)
   const [polling, setPolling]             = useState(false)
@@ -1224,7 +1225,19 @@ export default function MailInboxPage() {
             <Database className="w-4 h-4" />
             DB Mailbox Store
           </button>
+          <button
+            onClick={() => setMainView('auto')}
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all ${
+              mainView === 'auto' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            Auto-Processed
+          </button>
         </div>
+
+        {/* ── Auto-Processed alerts view (backend 5-min scheduler) ───────── */}
+        {mainView === 'auto' && <TqAutoAlertsView />}
 
         {/* ── DB Mailbox view ───────────────────────────────────────────── */}
         {mainView === 'db' && <DbMailboxView />}

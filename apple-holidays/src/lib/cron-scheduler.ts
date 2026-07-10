@@ -217,12 +217,15 @@ async function jobFeedbackSummary() {
   }
 }
 
-async function jobAutoBookingCreate() {
+async function startAutoBookingCreateScheduler() {
   try {
-    const { maybeRunAutoBookingCreate } = await import('./auto-booking-create')
-    await maybeRunAutoBookingCreate()
+    // node-cron scheduler: fires once daily at the configured time (default 04:00
+    // AUTO_BOOKING_TZ). Started once at boot — no per-minute polling, timezone-aware,
+    // with boot catch-up. Replaces the old setInterval + exact-minute-match approach.
+    const { startAutoBookingScheduler } = await import('./auto-booking-scheduler')
+    await startAutoBookingScheduler()
   } catch (err) {
-    console.error('[Scheduler] auto-booking-create error:', err instanceof Error ? err.message : err)
+    console.error('[Scheduler] auto-booking-create scheduler error:', err instanceof Error ? err.message : err)
   }
 }
 
@@ -267,12 +270,15 @@ export function startCronJobs() {
   setTimeout(() => { jobProcessMailboxes() }, 30_000)   // 30 s after boot
   setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
 
+  // Auto-booking-create: node-cron daily job (timezone-aware, boot catch-up).
+  // Started once at boot instead of a per-minute interval.
+  void startAutoBookingCreateScheduler()
+
   setInterval(() => { jobProcessMailboxes() },    FIVE_MIN)
   setInterval(() => { jobOneDrivePoll() },         THREE_MIN)
   setInterval(() => { jobRenewWebhook() },         TWELVE_HRS)
   setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
-  setInterval(() => { jobAutoBookingCreate() },    60_000)   // check every minute; fires once daily at scheduled time
   setInterval(() => { jobCustomerMessaging() },    60_000)   // check every minute; fires once daily at CUSTOMER_MSG_SEND_HOUR
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create checked every minute (also available via /api/cron/auto-booking-create for GCP Cloud Scheduler), customer WhatsApp messaging checked every minute (also via /api/cron/customer-daily-briefing + /api/cron/customer-feedback-request)')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging checked every minute (also via /api/cron/customer-daily-briefing + /api/cron/customer-feedback-request)')
 }
