@@ -77,12 +77,16 @@ export interface DriverLogComputation {
   fuelLines: DriverLogLine[]
   otherLines: DriverLogLine[]
   excludedLines: DriverLogLine[]
-  tourTotal: number
+  tourTotal: number        // Lunch + Entrance lines only
+  otherTotal: number       // Other (now folded into the tour advance)
+  tourAdvanceBase: number  // tourTotal + otherTotal — the base the tour % applies to
   fuelTotal: number
   tourAdvance: number
   fuelAdvance: number
-  grandTotal: number       // tourTotal + fuelTotal
+  excludedTotal: number    // Bata + Guide Fee — never advanced, settled with the rest
+  grandTotal: number       // tourAdvanceBase + fuelTotal
   grandAdvance: number     // tourAdvance + fuelAdvance
+  restPayment: number      // grandTotal − grandAdvance + excludedTotal
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -167,9 +171,18 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
+/**
+ * The "Total Tour Package" PNL line is an aggregate of the whole package price
+ * (every PNL carries one). It is never a driver-advanced cost — including it would
+ * double-count against its own components — so it is dropped from the sheet entirely.
+ */
+export function isTotalTourPackage(item: PnlItemLike): boolean {
+  return /total\s*tour\s*package/i.test(pnlItemName(item))
+}
+
 /** Build driver-log lines straight from a set of PNL items. */
 export function linesFromPnlItems(items: PnlItemLike[]): DriverLogLine[] {
-  return items.map((item, i) => {
+  return items.filter(item => !isTotalTourPackage(item)).map((item, i) => {
     const category = classifyPnlItem(item)
     const name     = pnlItemName(item) || CATEGORY_LABEL[category]
     return {
@@ -199,11 +212,20 @@ export function computeDriverLog(
   const excludedLines = lines.filter(l => l.category === 'EXCLUDED')
   const otherLines    = lines.filter(l => l.category === 'OTHER')
 
-  const tourTotal = round2(tourLines.reduce((s, l) => s + num(l.amount), 0))
-  const fuelTotal = round2(fuelLines.reduce((s, l) => s + num(l.amount), 0))
+  const tourTotal  = round2(tourLines.reduce((s, l) => s + num(l.amount), 0))
+  const otherTotal = round2(otherLines.reduce((s, l) => s + num(l.amount), 0))
+  const fuelTotal  = round2(fuelLines.reduce((s, l) => s + num(l.amount), 0))
+  const excludedTotal = round2(excludedLines.reduce((s, l) => s + num(l.amount), 0))
 
-  const tourAdvance = round2(tourTotal * (tourPct / 100))
+  // "Other" is folded into the tour advance base — the tour % applies to it too.
+  const tourAdvanceBase = round2(tourTotal + otherTotal)
+  const tourAdvance = round2(tourAdvanceBase * (tourPct / 100))
   const fuelAdvance = round2(fuelTotal * (fuelPct / 100))
+
+  const grandTotal   = round2(tourAdvanceBase + fuelTotal)
+  const grandAdvance = round2(tourAdvance + fuelAdvance)
+  // Balance left to settle after the advance, plus the never-advanced excluded items.
+  const restPayment  = round2(grandTotal - grandAdvance + excludedTotal)
 
   return {
     currency: opts.currency ?? 'USD',
@@ -215,11 +237,15 @@ export function computeDriverLog(
     otherLines,
     excludedLines,
     tourTotal,
+    otherTotal,
+    tourAdvanceBase,
     fuelTotal,
     tourAdvance,
     fuelAdvance,
-    grandTotal:   round2(tourTotal + fuelTotal),
-    grandAdvance: round2(tourAdvance + fuelAdvance),
+    excludedTotal,
+    grandTotal,
+    grandAdvance,
+    restPayment,
   }
 }
 

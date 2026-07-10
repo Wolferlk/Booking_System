@@ -168,7 +168,8 @@ export async function buildDriverLogView(bookingRef: string): Promise<DriverLogV
   const tourPct  = snapshot ? clampPct(snapshot.tourPct) : globals.tourPct
   const fuelPct  = snapshot ? clampPct(snapshot.fuelPct) : globals.fuelPct
   const currency = snapshot?.currency || pnlCurrency
-  const lines    = snapshot ? snapshot.lines : freshLines
+  // Drop the aggregate "Total Tour Package" line even from older saved snapshots.
+  const lines    = (snapshot ? snapshot.lines : freshLines).filter(l => !/total\s*tour\s*package/i.test(l.label))
 
   const computation = computeDriverLog(lines, { currency, tourPct, fuelPct })
 
