@@ -191,7 +191,19 @@ export default function ExternalPnlPanel({ bookingRef, role }: Props) {
   const [linking, setLinking]       = useState<number | null>(null)
   const searchDebounce              = useRef<ReturnType<typeof setTimeout>>()
 
-  const canEdit = ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  // Editing the Accounts PNL panel (adjustments, unlink, version switching,
+  // ticket creation, manual linking) is gated behind a system setting that
+  // defaults to OFF — the panel is view-only until an admin enables it in
+  // Settings. Role alone is not sufficient.
+  const [editEnabled, setEditEnabled] = useState(false)
+  const canEdit = editEnabled && ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  useEffect(() => {
+    fetch('/api/settings/ext-pnl-edit')
+      .then(r => r.json())
+      .then(json => { if (json.success) setEditEnabled(json.data?.editEnabled === true) })
+      .catch(() => {})
+  }, [])
 
   // Amendment versions
   const [versions, setVersions]         = useState<PnlVersion[]>([])
