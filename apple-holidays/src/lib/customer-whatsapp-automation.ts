@@ -395,43 +395,8 @@ export async function runCustomerFeedbackRequest(): Promise<AutomationRunResult>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// In-process scheduler entry — checked every minute, fires once daily at the
-// configured local hour (same pattern as auto-booking-create.ts)
+// The daily 6pm trigger now lives in customer-whatsapp-scheduler.ts (node-cron,
+// timezone-aware, boot catch-up). It calls runCustomerDailyBriefing() and
+// runCustomerFeedbackRequest() above. The HTTP cron routes remain as a manual /
+// external fallback but are no longer required for the backend to send on its own.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const SEND_HOUR = Number(process.env.CUSTOMER_MSG_SEND_HOUR ?? '18')
-const SETTING_LAST_RUN_DATE = 'customer_whatsapp_last_run_date'
-
-let _lastFiredDate = ''
-
-export async function maybeRunCustomerMessaging(): Promise<void> {
-  try {
-    const localMs = Date.now() + TZ_OFFSET_MS
-    const local = new Date(localMs)
-    const nowH = local.getUTCHours()
-    const nowM = local.getUTCMinutes()
-    const today = localDateStr(0)
-
-    if (nowH !== SEND_HOUR || nowM > 4) return
-    if (_lastFiredDate === today) return
-
-    const lastRunRow = await prisma.systemSetting.findUnique({ where: { key: SETTING_LAST_RUN_DATE } })
-    if (lastRunRow?.value === today) {
-      _lastFiredDate = today
-      return
-    }
-
-    _lastFiredDate = today
-    await prisma.systemSetting.upsert({
-      where:  { key: SETTING_LAST_RUN_DATE },
-      update: { value: today },
-      create: { key: SETTING_LAST_RUN_DATE, value: today },
-    })
-
-    console.log(`[CustomerMessaging] Daily trigger at local ${SEND_HOUR}:00 (${today})`)
-    void runCustomerDailyBriefing().catch(err => console.error('[CustomerMessaging] briefing error:', err))
-    void runCustomerFeedbackRequest().catch(err => console.error('[CustomerMessaging] feedback error:', err))
-  } catch (err) {
-    console.error('[CustomerMessaging] maybeRunCustomerMessaging error:', err)
-  }
-}

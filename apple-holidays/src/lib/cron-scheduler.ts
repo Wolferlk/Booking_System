@@ -229,12 +229,15 @@ async function startAutoBookingCreateScheduler() {
   }
 }
 
-async function jobCustomerMessaging() {
+async function startCustomerWhatsAppMessagingScheduler() {
   try {
-    const { maybeRunCustomerMessaging } = await import('./customer-whatsapp-automation')
-    await maybeRunCustomerMessaging()
+    // node-cron scheduler: fires once daily at CUSTOMER_MSG_SEND_HOUR (default 18:00
+    // = 6pm) in CUSTOMER_MSG_TZ. Started once at boot — timezone-aware, with boot
+    // catch-up. Replaces the old setInterval(60s) + exact-minute-match approach.
+    const { startCustomerWhatsAppScheduler } = await import('./customer-whatsapp-scheduler')
+    await startCustomerWhatsAppScheduler()
   } catch (err) {
-    console.error('[Scheduler] customer-messaging error:', err instanceof Error ? err.message : err)
+    console.error('[Scheduler] customer-messaging scheduler error:', err instanceof Error ? err.message : err)
   }
 }
 
@@ -274,11 +277,14 @@ export function startCronJobs() {
   // Started once at boot instead of a per-minute interval.
   void startAutoBookingCreateScheduler()
 
+  // Customer WhatsApp messaging: node-cron daily job at 6pm (timezone-aware, boot
+  // catch-up). Started once at boot instead of a per-minute interval.
+  void startCustomerWhatsAppMessagingScheduler()
+
   setInterval(() => { jobProcessMailboxes() },    FIVE_MIN)
   setInterval(() => { jobOneDrivePoll() },         THREE_MIN)
   setInterval(() => { jobRenewWebhook() },         TWELVE_HRS)
   setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
-  setInterval(() => { jobCustomerMessaging() },    60_000)   // check every minute; fires once daily at CUSTOMER_MSG_SEND_HOUR
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging checked every minute (also via /api/cron/customer-daily-briefing + /api/cron/customer-feedback-request)')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging via node-cron daily at 6pm (timezone-aware, boot catch-up)')
 }
