@@ -97,12 +97,25 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json()
-  const { name, phone, email, licenseNo, vehicleId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive, photoUrl, country } = body
+  const { name, phone, email, licenseNo, vehicleId, vendorId, bankName, bankAccountNo, bankHolder, bankBranch, bankCode, isActive, photoUrl, country } = body
   if (!name || !phone) return buildApiError('name and phone are required')
+
+  // If added under a vendor, inherit the vendor's country when the caller doesn't set one
+  let vendorCountry: OperationCountry | null = null
+  if (vendorId) {
+    const vendor = await prisma.vehicleVendor.findUnique({
+      where: { id: vendorId },
+      select: { country: true },
+    })
+    if (!vendor) return buildApiError('Selected vendor not found', 400)
+    vendorCountry = vendor.country
+  }
 
   // Non-ALL users can only create drivers for their own country
   const userCountry = session.user.country as OperationCountry | undefined
-  const driverCountry = (!userCountry || userCountry === 'ALL') ? (country || null) : userCountry
+  const driverCountry = (!userCountry || userCountry === 'ALL')
+    ? (country || vendorCountry || null)
+    : userCountry
 
   let driver
   try {
@@ -114,6 +127,7 @@ export async function POST(req: NextRequest) {
         isActive:      isActive      ?? true,
         photoUrl:      photoUrl      || null,
         vehicleId:     vehicleId     || null,
+        vendorId:      vendorId      || null,
         country:       driverCountry || null,
         bankName:      bankName      || null,
         bankAccountNo: bankAccountNo || null,
