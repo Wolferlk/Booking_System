@@ -60,6 +60,8 @@ interface DriverLogView {
 interface Props {
   bookingRef: string
   role: UserRole
+  /** Start expanded (used by the standalone full-page Driver Log view). */
+  defaultOpen?: boolean
 }
 
 const WRITE_ROLES: UserRole[] = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
@@ -70,10 +72,10 @@ const CATEGORY_OPTIONS: DriverLogCategory[] = [
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function DriverLogPanel({ bookingRef, role }: Props) {
+export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }: Props) {
   const canEdit = WRITE_ROLES.includes(role)
 
-  const [open, setOpen]       = useState(false)
+  const [open, setOpen]       = useState(defaultOpen)
   const [view, setView]       = useState<DriverLogView | null>(null)
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded]   = useState(false)

@@ -78,25 +78,54 @@ async function readGlobalSettings() {
   }
 }
 
+/** Read the saved snapshot for a booking from the DriverLog table. Falls back
+ *  to a legacy `driver_log_{ref}` SystemSetting row if no table row exists yet
+ *  (backward compatibility for any snapshot not carried over by the migration). */
 export async function readSnapshot(bookingRef: string): Promise<DriverLogSnapshot | null> {
-  const row = await prisma.systemSetting.findUnique({
+  const row = await prisma.driverLog.findUnique({ where: { bookingRef } })
+  if (row) {
+    return {
+      currency:    row.currency,
+      tourPct:     row.tourPct,
+      fuelPct:     row.fuelPct,
+      driverPhone: row.driverPhone,
+      lines:       (row.lines as unknown as DriverLogLine[]) ?? [],
+      notes:       row.notes,
+      autoSend:    row.autoSend,
+      waSentAt:    row.waSentAt ? row.waSentAt.toISOString() : null,
+      updatedBy:   row.updatedBy,
+      updatedAt:   row.updatedAt.toISOString(),
+    }
+  }
+
+  // Legacy fallback — a snapshot still living in SystemSetting.
+  const legacy = await prisma.systemSetting.findUnique({
     where: { key: settingKeyForBooking(bookingRef) },
   })
-  if (!row?.value) return null
+  if (!legacy?.value) return null
   try {
-    return JSON.parse(row.value) as DriverLogSnapshot
+    return JSON.parse(legacy.value) as DriverLogSnapshot
   } catch {
     return null
   }
 }
 
 export async function saveSnapshot(bookingRef: string, snap: DriverLogSnapshot): Promise<void> {
-  const key = settingKeyForBooking(bookingRef)
-  const value = JSON.stringify(snap)
-  await prisma.systemSetting.upsert({
-    where:  { key },
-    update: { value },
-    create: { key, value },
+  const data = {
+    currency:    snap.currency,
+    tourPct:     snap.tourPct,
+    fuelPct:     snap.fuelPct,
+    driverPhone: snap.driverPhone,
+    lines:       (snap.lines ?? []) as unknown as object,
+    notes:       snap.notes,
+    autoSend:    snap.autoSend,
+    waSentAt:    snap.waSentAt ? new Date(snap.waSentAt) : null,
+    updatedBy:   snap.updatedBy,
+  }
+  await prisma.driverLog.upsert({
+    where:  { bookingRef },
+    update: data,
+    create: { bookingRef, ...data },
   })
 }
 
