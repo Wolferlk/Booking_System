@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -28,6 +28,10 @@ interface Settings {
   ai_pnl_auto_classify?: string
   onedrive_new_files_only?: string
   ext_pnl_edit_enabled?: string
+  // Driver Log (Sri Lanka) advance sheet
+  driver_log_tour_advance_pct?: string
+  driver_log_fuel_advance_pct?: string
+  driver_log_auto_send_enabled?: string
 }
 
 function AIToggleRow({
@@ -185,6 +189,10 @@ export default function ConfigPage() {
   const onedriveNewOnly     = settings.onedrive_new_files_only === 'true'
   // Accounts PNL editing — default OFF (view-only) unless explicitly enabled
   const extPnlEditEnabled   = settings.ext_pnl_edit_enabled === 'true'
+  // Driver Log (Sri Lanka) advance sheet — percentages default 100%, auto-send OFF
+  const driverLogTourPct    = settings.driver_log_tour_advance_pct ?? '100'
+  const driverLogFuelPct    = settings.driver_log_fuel_advance_pct ?? '100'
+  const driverLogAutoSend   = settings.driver_log_auto_send_enabled === 'true'
 
   // Token savings estimate (tokens/month, rough)
   const savedTokens =
@@ -351,6 +359,90 @@ export default function ConfigPage() {
             <div className="flex items-start gap-2 text-xs text-slate-400">
               <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
               <p>This only affects the live Accounts PNL panel on each booking&apos;s P&amp;L page. Editing is still additionally restricted to Accounts, Booking Team, and Admin roles.</p>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* ── Driver Log (Sri Lanka) Advance Sheet ── */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Truck className="w-4 h-4 text-amber-500" /> Driver Advance Sheet (Sri Lanka)
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+            <p className="text-xs text-slate-500">
+              Controls the Driver Advance Sheet shown on Sri Lanka bookings. The advance percentages
+              set the default share of each total that is advanced to the driver
+              (Tour = Lunch + Entrance tickets, Fuel = Driver Accommodation + Travel KM×Rate + Water).
+              These can be overridden per booking on the sheet itself.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-purple-200 bg-purple-50/50 p-4">
+                <div className="flex items-center gap-2 mb-2 text-purple-700">
+                  <Ticket className="w-4 h-4" />
+                  <span className="text-xs font-bold uppercase tracking-wide">Tour Advance %</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min={0} max={100} step={1}
+                    defaultValue={driverLogTourPct}
+                    onBlur={e => { if (e.target.value !== driverLogTourPct) saveSetting('driver_log_tour_advance_pct', String(Math.min(100, Math.max(0, Number(e.target.value))))) }}
+                    className="w-24 px-2 py-1 text-sm font-mono border border-purple-200 rounded bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  />
+                  <span className="text-slate-400 text-sm">% of Lunch + Entrance tickets</span>
+                  {saving === 'driver_log_tour_advance_pct' && <Loader2 className="w-4 h-4 text-purple-500 animate-spin" />}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+                <div className="flex items-center gap-2 mb-2 text-blue-700">
+                  <Fuel className="w-4 h-4" />
+                  <span className="text-xs font-bold uppercase tracking-wide">Fuel Advance %</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min={0} max={100} step={1}
+                    defaultValue={driverLogFuelPct}
+                    onBlur={e => { if (e.target.value !== driverLogFuelPct) saveSetting('driver_log_fuel_advance_pct', String(Math.min(100, Math.max(0, Number(e.target.value))))) }}
+                    className="w-24 px-2 py-1 text-sm font-mono border border-blue-200 rounded bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <span className="text-slate-400 text-sm">% of Accommodation + Travel + Water</span>
+                  {saving === 'driver_log_fuel_advance_pct' && <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />}
+                </div>
+              </div>
+            </div>
+
+            <div className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${driverLogAutoSend ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${driverLogAutoSend ? 'bg-emerald-100' : 'bg-slate-100'}`}>
+                  <Send className={`w-4 h-4 ${driverLogAutoSend ? 'text-emerald-600' : 'text-slate-400'}`} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Auto-send to driver (6pm, day before tour)</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {driverLogAutoSend
+                      ? 'ON — every Sri Lanka booking starting the next day has its advance sheet WhatsApped to the allocated driver at 6pm (Asia/Colombo). Runs on the backend even with no user online.'
+                      : 'OFF — driver advance sheets are only sent manually from each booking.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`text-xs font-semibold ${driverLogAutoSend ? 'text-emerald-600' : 'text-slate-400'}`}>
+                  {driverLogAutoSend ? 'ON' : 'OFF'}
+                </span>
+                <button
+                  disabled={saving === 'driver_log_auto_send_enabled'}
+                  onClick={() => saveSetting('driver_log_auto_send_enabled', driverLogAutoSend ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none ${driverLogAutoSend ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                >
+                  {saving === 'driver_log_auto_send_enabled' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${driverLogAutoSend ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
             </div>
           </CardBody>
         </Card>

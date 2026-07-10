@@ -7,16 +7,30 @@ import {
   Plane, Hotel, Users, Calendar, Clock, MapPin,
   ChevronRight, Phone, RefreshCw, Loader2,
   AlertCircle, CheckCircle, Zap, LayoutList, CalendarDays, Printer,
+  Search, Filter, X,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
+import { CountryFlag } from '@/components/ui/country-flag'
 import Link from 'next/link'
 import DailyOpsView from '@/components/te/daily-ops-view'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 
 type Mode    = 'today' | 'week' | 'range'
 type MainTab = 'overview' | 'daily'
+
+const COUNTRY_LABELS: Record<string, string> = {
+  VIETNAM: 'Vietnam',
+  SRILANKA: 'Sri Lanka',
+  SINGAPORE: 'Singapore',
+  MALAYSIA: 'Malaysia',
+  SINGAPORE_MALAYSIA: 'Singapore & Malaysia',
+}
+
+function prettyStatus(status: string) {
+  return status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Booking = any
@@ -47,6 +61,12 @@ function BookingsOverview() {
   const [loading, setLoading]     = useState(true)
   const [rangeInfo, setRangeInfo] = useState<{ start: string; end: string } | null>(null)
 
+  // ── In-tab filters ──
+  const [search, setSearch]             = useState('')
+  const [countryLocal, setCountryLocal] = useState('ALL')
+  const [statusLocal, setStatusLocal]   = useState('ALL')
+  const [agentLocal, setAgentLocal]     = useState('ALL')
+
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
@@ -72,10 +92,43 @@ function BookingsOverview() {
   }, [load])
 
   const today       = new Date().toISOString().slice(0, 10)
-  const totalPax    = bookings.reduce((s: number, b: Booking) => s + (b.paxAdults ?? 0) + (b.paxChildren ?? 0), 0)
-  const activeCount = bookings.filter((b: Booking) => ['IN_PROGRESS', 'CLIENT_LIVE'].includes(b.status)).length
 
-  const todayFlights = bookings.flatMap((b: Booking) =>
+  // ── Filter option lists (derived from loaded data) ──
+  const countryOptions = Array.from(
+    new Set(bookings.map((b: Booking) => b.operationCountry).filter(Boolean)),
+  ) as string[]
+  const statusOptions = Array.from(new Set(bookings.map((b: Booking) => b.status).filter(Boolean))) as string[]
+  const agentOptions  = Array.from(new Set(bookings.map((b: Booking) => b.agent).filter(Boolean))) as string[]
+
+  // ── Apply in-tab filters ──
+  const q = search.trim().toLowerCase()
+  const filtered = bookings.filter((b: Booking) => {
+    if (countryLocal !== 'ALL' && b.operationCountry !== countryLocal) return false
+    if (statusLocal  !== 'ALL' && b.status !== statusLocal) return false
+    if (agentLocal   !== 'ALL' && b.agent !== agentLocal) return false
+    if (q) {
+      const hay = [
+        b.bookingRef, b.agent, b.fileHandler,
+        ...(b.passengers ?? []).map((p: Booking) => p.name),
+        ...(b.flights ?? []).map((f: Booking) => f.flightNo),
+        ...(b.accommodations ?? []).map((a: Booking) => `${a.hotel} ${a.city}`),
+      ].filter(Boolean).join(' ').toLowerCase()
+      if (!hay.includes(q)) return false
+    }
+    return true
+  })
+
+  const activeFilterCount =
+    (countryLocal !== 'ALL' ? 1 : 0) +
+    (statusLocal !== 'ALL' ? 1 : 0) +
+    (agentLocal !== 'ALL' ? 1 : 0) +
+    (q ? 1 : 0)
+  const clearFilters = () => { setSearch(''); setCountryLocal('ALL'); setStatusLocal('ALL'); setAgentLocal('ALL') }
+
+  const totalPax    = filtered.reduce((s: number, b: Booking) => s + (b.paxAdults ?? 0) + (b.paxChildren ?? 0), 0)
+  const activeCount = filtered.filter((b: Booking) => ['IN_PROGRESS', 'CLIENT_LIVE'].includes(b.status)).length
+
+  const todayFlights = filtered.flatMap((b: Booking) =>
     (b.flights ?? []).filter((f: Booking) => f.date?.slice(0, 10) === today)
       .map((f: Booking) => ({ ...f, bookingRef: b.bookingRef })),
   )
@@ -125,7 +178,87 @@ function BookingsOverview() {
       {rangeInfo && (
         <p className="text-xs text-slate-400">
           {fmtDate(rangeInfo.start)} → {fmtDate(rangeInfo.end)} · {bookings.length} active booking{bookings.length !== 1 ? 's' : ''}
+          {activeFilterCount > 0 && (
+            <span className="text-brand-600 font-medium"> · showing {filtered.length} after filters</span>
+          )}
         </p>
+      )}
+
+      {/* ── Filter bar ── */}
+      {!loading && bookings.length > 0 && (
+        <Card className="p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search ref, passenger, agent, hotel, flight…"
+                className="form-input pl-9 w-full"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Country filter — only when more than one country is present */}
+            {countryOptions.length > 1 && (
+              <select
+                value={countryLocal}
+                onChange={e => setCountryLocal(e.target.value)}
+                className="form-select w-auto"
+              >
+                <option value="ALL">All countries</option>
+                {countryOptions.map(c => (
+                  <option key={c} value={c}>{COUNTRY_LABELS[c] ?? c}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Status filter */}
+            {statusOptions.length > 1 && (
+              <select
+                value={statusLocal}
+                onChange={e => setStatusLocal(e.target.value)}
+                className="form-select w-auto"
+              >
+                <option value="ALL">All statuses</option>
+                {statusOptions.map(s => (
+                  <option key={s} value={s}>{prettyStatus(s)}</option>
+                ))}
+              </select>
+            )}
+
+            {/* Agent filter */}
+            {agentOptions.length > 1 && (
+              <select
+                value={agentLocal}
+                onChange={e => setAgentLocal(e.target.value)}
+                className="form-select w-auto max-w-[180px]"
+              >
+                <option value="ALL">All agents</option>
+                {agentOptions.map(a => (
+                  <option key={a} value={a}>{a}</option>
+                ))}
+              </select>
+            )}
+
+            {activeFilterCount > 0 && (
+              <button
+                onClick={clearFilters}
+                className="btn btn-sm btn-secondary flex items-center gap-1"
+              >
+                <Filter className="w-3.5 h-3.5" /> Clear ({activeFilterCount})
+              </button>
+            )}
+          </div>
+        </Card>
       )}
 
       {/* Custom range inputs */}
@@ -148,10 +281,10 @@ function BookingsOverview() {
       )}
 
       {/* Summary stats */}
-      {!loading && bookings.length > 0 && (
+      {!loading && filtered.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Active Bookings',  value: bookings.length,     color: 'text-brand-600',  icon: <Calendar className="w-5 h-5" /> },
+            { label: 'Active Bookings',  value: filtered.length,     color: 'text-brand-600',  icon: <Calendar className="w-5 h-5" /> },
             { label: 'Total Pax',        value: totalPax,             color: 'text-blue-600',   icon: <Users className="w-5 h-5" /> },
             { label: 'In Progress',      value: activeCount,          color: 'text-green-600',  icon: <Zap className="w-5 h-5" /> },
             { label: "Today's Flights",  value: todayFlights.length,  color: 'text-purple-600', icon: <Plane className="w-5 h-5" /> },
@@ -201,8 +334,17 @@ function BookingsOverview() {
         </Card>
       )}
 
+      {/* No results after filtering */}
+      {!loading && bookings.length > 0 && filtered.length === 0 && (
+        <Card className="p-16 text-center">
+          <Filter className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="font-semibold text-slate-500">No bookings match your filters</p>
+          <button onClick={clearFilters} className="btn btn-sm btn-secondary mt-3">Clear filters</button>
+        </Card>
+      )}
+
       {/* Booking cards */}
-      {!loading && bookings.map((b: Booking) => {
+      {!loading && filtered.map((b: Booking) => {
         const daysBadge  = daysLeft(b.departureDate)
         const isToday    = b.arrivalDate?.slice(0, 10) === today
         const tonightHotel = (b.accommodations ?? []).find((a: Booking) =>
@@ -214,6 +356,7 @@ function BookingsOverview() {
           <Card key={b.id} className={`overflow-hidden ${isToday ? 'ring-2 ring-brand-400 ring-offset-1' : ''}`}>
             <div className="px-5 pt-4 pb-3 flex items-start justify-between gap-4">
               <div className="flex items-center gap-3 flex-wrap">
+                {b.operationCountry && <CountryFlag country={b.operationCountry} className="w-5 h-4 rounded-sm" />}
                 <span className="text-lg font-bold font-mono text-slate-900">{b.bookingRef}</span>
                 <StatusBadge status={b.status} />
                 {isToday && (

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, useRef } from 'react'
+import { Fragment, useCallback, useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -619,6 +619,31 @@ export default function AgendaPage() {
     })
   }
 
+  // Insert a fresh movement item at a specific position (between two existing items,
+  // or at the very top / bottom). The new item inherits the date & service type of the
+  // item just above it so a "same-day" stop slots in without re-typing the date.
+  function insertItemAt(index: number) {
+    setItems(prev => {
+      const above = prev[index - 1]
+      const below = prev[index]
+      const dateHint = above?.date || below?.date || ''
+      const svcHint  = above?.serviceType || 'PVT_TRANSFER'
+      const next = [...prev]
+      next.splice(index, 0, {
+        date: dateHint, location: '', fromPoint: above?.toPoint || '', toPoint: '',
+        details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: svcHint,
+      })
+      return next
+    })
+    // Keep any already-expanded detail editors open by shifting their indices past the insert
+    setExpandedDetails(prev => {
+      const shifted = new Set<number>()
+      prev.forEach(x => shifted.add(x >= index ? x + 1 : x))
+      return shifted
+    })
+    toast.success('New movement item inserted')
+  }
+
   function toggleDetails(idx: number) {
     setExpandedDetails(prev => {
       const next = new Set(prev)
@@ -642,6 +667,26 @@ export default function AgendaPage() {
 
   function toggleSection(key: string) {
     setExpandedSection(s => s === key ? null : key)
+  }
+
+  // Creative "insert here" affordance rendered between movement items. A thin line
+  // that expands on hover to reveal an "Insert stop" pill — click to slot a new item
+  // exactly at that position.
+  function renderInsertZone(index: number) {
+    if (!canEdit || generating) return null
+    return (
+      <div className="group relative -my-1 flex items-center justify-center py-1.5 transition-all">
+        <div className="absolute inset-x-10 top-1/2 h-px bg-transparent group-hover:bg-brand-200 transition-colors" />
+        <button
+          type="button"
+          onClick={() => insertItemAt(index)}
+          title="Insert a movement item here"
+          className="relative z-10 flex items-center gap-1.5 rounded-full border border-dashed border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-300 opacity-0 shadow-sm transition-all duration-200 hover:scale-105 group-hover:border-brand-400 group-hover:text-brand-600 group-hover:opacity-100"
+        >
+          <Plus className="w-3.5 h-3.5" /> Insert stop
+        </button>
+      </div>
+    )
   }
 
   if (loading) return (
@@ -994,8 +1039,10 @@ export default function AgendaPage() {
           const detailsOpen = expandedDetails.has(i)
 
           return (
+           <Fragment key={i}>
+            {/* Insert-between affordance (also covers inserting before the first item) */}
+            {renderInsertZone(i)}
             <Card
-              key={i}
               className={`overflow-hidden transition-all ${
                 dragIndex === i ? 'opacity-40' : ''
               } ${
@@ -1312,6 +1359,7 @@ export default function AgendaPage() {
                 </div>
               </div>
             </Card>
+           </Fragment>
           )
         })}
 

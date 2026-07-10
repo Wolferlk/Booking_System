@@ -27,6 +27,7 @@ import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
+import DriverLogPanel from '@/components/bookings/driver-log-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
@@ -2083,6 +2084,12 @@ Wishing you a wonderful trip! ✈️
         {/* Accounts PNL (Reetha) — auto-linked or manually linked external record */}
         {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <ExternalPnlPanel bookingRef={ref} role={role} />
+        )}
+
+        {/* Driver Advance Sheet (Sri Lanka) — tour & fuel advances derived from the Accounts PNL */}
+        {booking.operationCountry === 'SRILANKA'
+          && ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <DriverLogPanel bookingRef={ref} role={role} />
         )}
 
         {/* Status history */}
