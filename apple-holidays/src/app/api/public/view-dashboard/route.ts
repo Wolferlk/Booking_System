@@ -31,6 +31,8 @@ export async function GET(req: NextRequest) {
     ongoingPax,
     upcomingByCountry,
     recentBookings,
+    todayArrivalFlights,
+    todayFlightsTotal,
   ] = await Promise.all([
     // Total lifetime bookings (excl cancelled) — the always-on headline number.
     prisma.booking.count({ where: notCancelled }),
@@ -87,6 +89,19 @@ export async function GET(req: NextRequest) {
         createdAt: true,
       },
     }),
+
+    // Today's ARRIVAL flights — inbound flights for tours landing today.
+    prisma.flight.count({
+      where: {
+        date: { gte: todayStart, lt: todayEnd },
+        booking: { ...notCancelled, arrivalDate: { gte: todayStart, lt: todayEnd } },
+      },
+    }),
+
+    // Every flight scheduled today (arrivals + departures + internal legs).
+    prisma.flight.count({
+      where: { date: { gte: todayStart, lt: todayEnd } },
+    }),
   ])
 
   const toMap = (rows: { operationCountry: OperationCountry | null; _count: { id: number } }[]) => {
@@ -109,6 +124,8 @@ export async function GET(req: NextRequest) {
       ongoingToday:  sum(ongoing),
       upcoming:      sum(upcoming),
       paxOnTour:     (pax?.paxAdults ?? 0) + (pax?.paxChildren ?? 0) + (pax?.paxInfants ?? 0),
+      arrivalFlightsToday: todayArrivalFlights,
+      flightsToday:  todayFlightsTotal,
     },
     byCountry: { ongoing, upcoming, lifetime },
     recentBookings,
