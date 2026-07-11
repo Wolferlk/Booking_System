@@ -1201,6 +1201,26 @@ Wishing you a wonderful trip! ✈️
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
               )}
+              {['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`/api/bookings/${ref}/portal-link`)
+                      const json = await res.json()
+                      if (!json.success) throw new Error(json.error)
+                      const url = `${window.location.origin}${json.data.path}`
+                      await navigator.clipboard.writeText(url)
+                      toast.success('Customer portal link copied! 🔗 Share it with the traveller — no login needed.')
+                    } catch {
+                      toast.error('Could not generate portal link')
+                    }
+                  }}
+                  className="btn btn-sm bg-brand-600 text-white border border-brand-700 hover:bg-brand-700 flex items-center gap-1.5"
+                  title="Copy a no-login link the customer can open to view their whole trip"
+                >
+                  <Copy className="w-3.5 h-3.5" /> Portal Link
+                </button>
+              )}
               {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openWhatsApp}

@@ -1,5 +1,6 @@
 import DashboardShell from '@/components/layout/dashboard-shell'
 import OneDriveSyncOnLogin from '@/components/layout/onedrive-sync-on-login'
+import WelcomeSplash from '@/components/layout/welcome-splash'
 import { CountryFilterProvider } from '@/hooks/use-country-filter'
 import { SidebarProvider } from '@/hooks/use-sidebar'
 
@@ -11,6 +12,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </DashboardShell>
         <OneDriveSyncOnLogin />
+        <WelcomeSplash />
       </CountryFilterProvider>
     </SidebarProvider>
   )
