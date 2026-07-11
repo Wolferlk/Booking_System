@@ -521,8 +521,19 @@ interface WaAutomationState {
   }[]
 }
 
+const TAB_KEYS: Tab[] = ['setup', 'experience', 'calls', 'transcripts', 'alerts', 'jobs', 'quickcall', 'history', 'chatbot', 'whatsapp', 'feedbackforms']
+
 export default function AICallBotPage() {
   const [tab, setTab] = useState<Tab>('setup')
+
+  // Deep-link support (?tab=alerts) — the header's notification bell lands ops
+  // straight on the Alerts tab. Read once on mount; window keeps this SSR-safe.
+  useEffect(() => {
+    try {
+      const want = new URLSearchParams(window.location.search).get('tab') as Tab | null
+      if (want && TAB_KEYS.includes(want)) setTab(want)
+    } catch { /* ignore */ }
+  }, [])
 
   // ── Booking selector ─────────────────────────────────────────────────────
   const [bookingRef, setBookingRef] = useState('')
