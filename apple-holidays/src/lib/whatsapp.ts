@@ -182,6 +182,112 @@ export function formatDriverMovementMessage(params: {
   ].filter(l => l !== null).join('\n')
 }
 
+/**
+ * Format a consolidated driver briefing covering one OR MORE movements assigned to
+ * the same driver within a single booking. Used when the whole movement chart is
+ * saved, so a driver handling several activities on the same file receives a single
+ * message listing every movement rather than one message per stop.
+ */
+export function formatDriverBriefingMessage(params: {
+  driverName:    string
+  bookingRef:    string
+  paxAdults:     number
+  paxChildren:   number
+  leadPassenger: string | null
+  vehicleType:   string | null
+  vehiclePlate:  string | null
+  driverRate?:   number | null
+  rateCurrency?: string | null
+  movements: {
+    date:        Date | string
+    location:    string
+    fromPoint:   string | null
+    toPoint:     string | null
+    details:     string | null
+    meetingTime: string | null
+  }[]
+}): string {
+  // Single movement → reuse the detailed single-movement layout for consistency.
+  if (params.movements.length === 1) {
+    const m = params.movements[0]
+    return formatDriverMovementMessage({
+      driverName:    params.driverName,
+      bookingRef:    params.bookingRef,
+      date:          m.date,
+      location:      m.location,
+      fromPoint:     m.fromPoint,
+      toPoint:       m.toPoint,
+      details:       m.details,
+      meetingTime:   m.meetingTime,
+      paxAdults:     params.paxAdults,
+      paxChildren:   params.paxChildren,
+      leadPassenger: params.leadPassenger,
+      vehicleType:   params.vehicleType,
+      vehiclePlate:  params.vehiclePlate,
+      driverRate:    params.driverRate,
+      rateCurrency:  params.rateCurrency,
+    })
+  }
+
+  const pax = params.paxChildren > 0
+    ? `${params.paxAdults} Adult(s), ${params.paxChildren} Child(ren)`
+    : `${params.paxAdults} Adult(s)`
+  const vehicle = [params.vehicleType, params.vehiclePlate].filter(Boolean).join(' · ') || 'TBC'
+  const rateStr = params.driverRate
+    ? `${params.rateCurrency ?? 'USD'} ${Number(params.driverRate).toFixed(2)}`
+    : null
+
+  const sorted = [...params.movements].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+  const lines: (string | null)[] = [
+    `🚗 *AppleHolidays — Driver Briefing*`,
+    ``,
+    `Hi *${params.driverName}*, you have been assigned for the following *${sorted.length}* movements:`,
+    ``,
+    `👥 *Pax:*     ${pax}`,
+    params.leadPassenger ? `👤 *Guest:*   ${params.leadPassenger}` : null,
+    `🚌 *Vehicle:* ${vehicle}`,
+    rateStr ? `💰 *Rate:*    ${rateStr}` : null,
+    ``,
+  ]
+
+  sorted.forEach((m, idx) => {
+    const d       = new Date(m.date)
+    const dateStr = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+    const from    = m.fromPoint ?? m.location
+    const to      = m.toPoint ?? ''
+    lines.push(`*${idx + 1}. ${dateStr}*`)
+    lines.push(`   📍 ${m.location}`)
+    lines.push(`   🛣  ${from}${to ? ` → ${to}` : ''}`)
+    if (m.meetingTime) lines.push(`   ⏰ Pick-up: ${m.meetingTime}`)
+    if (m.details)     lines.push(`   📋 ${m.details}`)
+    lines.push(``)
+  })
+
+  lines.push(`📁 *Ref:*     ${params.bookingRef}`)
+  lines.push(``)
+  lines.push(`Please confirm receipt of this assignment.`)
+  lines.push(`— AppleHolidays Operations`)
+
+  return lines.filter(l => l !== null).join('\n')
+}
+
+/** Format a cancellation notice sent to a driver who has been un-assigned / replaced. */
+export function formatDriverCancellationMessage(params: {
+  driverName: string
+  bookingRef: string
+}): string {
+  return [
+    `⚠️ *AppleHolidays — Assignment Cancelled*`,
+    ``,
+    `Hi *${params.driverName}*, your assignment for booking *${params.bookingRef}* has been *cancelled* and is no longer required.`,
+    ``,
+    `Please disregard the earlier movement briefing for this booking. We're sorry for any inconvenience and will be in touch for future trips.`,
+    ``,
+    `— AppleHolidays Operations`,
+  ].join('\n')
+}
+
 export interface BriefingTicket {
   label:     string          // human ticket/voucher name (type or category)
   reference: string | null   // booking/confirmation reference

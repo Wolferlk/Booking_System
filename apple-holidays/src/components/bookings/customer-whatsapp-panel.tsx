@@ -91,7 +91,7 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'briefing', date }),
       }).then(r => r.json())
-      if (res.success) { toast.success(res.message); load() }
+      if (res.success) { toast.success(res.message ?? `Trip details for ${fmtDay(date)} sent to the guest`); load() }
       else toast.error(res.error ?? 'Send failed')
     } catch { toast.error('Send failed') } finally { setSendingDate(null) }
   }
@@ -103,7 +103,7 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'feedback' }),
       }).then(r => r.json())
-      if (res.success) { toast.success(res.message); load() }
+      if (res.success) { toast.success(res.message ?? 'Feedback form sent to the guest'); load() }
       else toast.error(res.error ?? 'Send failed')
     } catch { toast.error('Send failed') } finally { setSendingFeedback(false) }
   }
