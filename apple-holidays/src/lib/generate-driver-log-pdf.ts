@@ -10,9 +10,28 @@ import { CATEGORY_LABEL, type DriverLogCategory } from '@/lib/driver-log'
 import type { DriverLogView } from '@/lib/driver-log-server'
 
 function money(n: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency', currency, minimumFractionDigits: 2,
-  }).format(n)
+  const amount = Number.isFinite(n) ? n : 0
+  const raw    = (currency ?? '').trim()
+  const code   = raw.toUpperCase()
+
+  // `style: 'currency'` only accepts valid ISO-4217 codes. Sri Lanka sheets often
+  // carry "Rs", "Rs.", "US$" or an empty string, which make Intl throw a
+  // RangeError and blow up the whole PDF. Guard against that and fall back to a
+  // plain grouped number prefixed with the raw label.
+  if (/^[A-Z]{3}$/.test(code)) {
+    try {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency', currency: code, minimumFractionDigits: 2,
+      }).format(amount)
+    } catch {
+      /* invalid ISO code — fall through to the plain format below */
+    }
+  }
+
+  const num = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  }).format(amount)
+  return raw ? `${raw} ${num}` : num
 }
 
 function esc(s: string | null | undefined): string {

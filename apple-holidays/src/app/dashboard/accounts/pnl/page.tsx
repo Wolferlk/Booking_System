@@ -797,12 +797,15 @@ export default function AccountsPNLPage() {
                           <th>Arrival</th>
                           <th>Departure</th>
                           <th>Pax</th>
+                          <th>Total</th>
+                          <th>Country</th>
+                          <th>Status</th>
                           <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         {bookingsOnly.map(b => {
-                          const lead = b.passengers[0]?.name ?? '—'
+                          const lead = b.passengers?.[0]?.name ?? '—'
                           return (
                             <tr key={b.id} className="hover:bg-rose-50/30">
                               <td>

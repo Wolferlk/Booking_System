@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, Suspense } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -120,13 +120,6 @@ function LoginForm() {
   const [password,         setPassword]         = useState('')
   const [showPw,           setShowPw]           = useState(false)
   const [loading,          setLoading]          = useState(false)
-
-  useEffect(() => {
-    if (roleMeta) {
-      setEmail(roleMeta.email)
-      setPassword('password123')
-    }
-  }, [roleMeta])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

@@ -1089,9 +1089,9 @@ export default function OneDriveBookingsExplorer() {
       ) : filteredTree.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-400">
           <BookOpen className="w-10 h-10 opacity-20" />
-          <p className="text-sm font-medium">
+          <p className="text-sm font-medium max-w-md text-center break-words">
             {search
-              ? `No folders matching "${search}"`
+              ? <>No folders matching &ldquo;{search.length > 40 ? `${search.slice(0, 40)}…` : search}&rdquo;</>
               : 'No booking folders found — run a sync first'}
           </p>
           {!search && (

@@ -205,6 +205,7 @@ function BookingsPageInner() {
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
+  const [dateBasis, setDateBasis]     = useState<'arrivalDate' | 'createdAt'>('arrivalDate')
   const [dateFrom, setDateFrom]       = useState('')
   const [dateTo, setDateTo]           = useState('')
   const [sortBy, setSortBy]           = useState<SortField>((searchParams.get('sortBy') ?? 'createdAt') as SortField)
@@ -249,6 +250,7 @@ function BookingsPageInner() {
     if (contentSearch)                                  params.set('contentSearch', contentSearch)
     if (status)                                         params.set('status',        status)
     if (dateFilter)                                     params.set('dateFilter',    dateFilter)
+    if (dateFilter)                                     params.set('dateField',     dateBasis)
     if (dateFrom)                                       params.set('dateFrom',      dateFrom)
     if (dateTo)                                         params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
@@ -266,7 +268,7 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, dateFilter, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
+  }, [search, refSearch, contentSearch, status, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
 
   // Close download menu on outside click
   useEffect(() => {
@@ -455,6 +457,7 @@ function BookingsPageInner() {
     if (contentSearch)                            params.set('contentSearch', contentSearch)
     if (status)                                   params.set('status',        status)
     if (dateFilter)                               params.set('dateFilter',    dateFilter)
+    if (dateFilter)                               params.set('dateField',     dateBasis)
     if (dateFrom)                                 params.set('dateFrom',      dateFrom)
     if (dateTo)                                   params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
@@ -473,6 +476,7 @@ function BookingsPageInner() {
       if (contentSearch)                            params.set('contentSearch', contentSearch)
       if (status)                                   params.set('status',        status)
       if (dateFilter)                               params.set('dateFilter',    dateFilter)
+      if (dateFilter)                               params.set('dateField',     dateBasis)
       if (dateFrom)                                 params.set('dateFrom',      dateFrom)
       if (dateTo)                                   params.set('dateTo',        dateTo)
       if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
@@ -702,6 +706,18 @@ function BookingsPageInner() {
                   {opt.label}
                 </button>
               ))}
+
+              {/* Which date the period pills apply to */}
+              <span className="text-xs text-slate-400 ml-1.5 whitespace-nowrap">by</span>
+              <select
+                value={dateBasis}
+                onChange={e => { setDateBasis(e.target.value as 'arrivalDate' | 'createdAt'); setPage(1) }}
+                className="form-select text-xs py-1 pr-7"
+                title="Choose whether the period filter applies to the trip arrival date or the date the booking was added"
+              >
+                <option value="arrivalDate">Arrival date</option>
+                <option value="createdAt">Created date</option>
+              </select>
             </div>
 
             <div className="sm:ml-auto flex items-center gap-2 flex-wrap">

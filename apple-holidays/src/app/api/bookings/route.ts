@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
   const page  = parseInt(searchParams.get('page')  ?? '1')
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200)
   const dateFilter = searchParams.get('dateFilter') ?? ''
+  // Which date column the quick period pills apply to (arrival vs created)
+  const dateField = searchParams.get('dateField') === 'createdAt' ? 'createdAt' : 'arrivalDate'
   const rawSortBy = searchParams.get('sortBy') ?? 'arrivalDate'
   const sortDir = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
 
@@ -129,15 +131,15 @@ export async function GET(req: NextRequest) {
     andClauses.push({ createdAt: createdRange })
   }
 
-  // Date period filter applied to arrivalDate
+  // Date period filter applied to the chosen date column (arrivalDate or createdAt)
   if (dateFilter) {
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     if (dateFilter === 'today') {
       andClauses.push({
-        arrivalDate: {
-        gte: todayStart,
-        lt: new Date(todayStart.getTime() + 86_400_000),
+        [dateField]: {
+          gte: todayStart,
+          lt: new Date(todayStart.getTime() + 86_400_000),
         },
       })
     } else if (dateFilter === 'this_week') {
@@ -145,12 +147,12 @@ export async function GET(req: NextRequest) {
       startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
       const endOfWeek = new Date(startOfWeek)
       endOfWeek.setDate(startOfWeek.getDate() + 7)
-      andClauses.push({ arrivalDate: { gte: startOfWeek, lt: endOfWeek } })
+      andClauses.push({ [dateField]: { gte: startOfWeek, lt: endOfWeek } })
     } else if (dateFilter === 'this_month') {
       andClauses.push({
-        arrivalDate: {
-        gte: new Date(now.getFullYear(), now.getMonth(), 1),
-        lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+        [dateField]: {
+          gte: new Date(now.getFullYear(), now.getMonth(), 1),
+          lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
         },
       })
     }

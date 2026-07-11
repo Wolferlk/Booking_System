@@ -236,6 +236,7 @@ export default function MCReportPage() {
   const [svcFilter, setSvcFilter]       = useState('')
   const [localCountry, setLocalCountry] = useState('')
   const [activeRange, setActiveRange]   = useState<string | null>(null)
+  const [resetNonce, setResetNonce]     = useState(0)
   const [sort, setSort]           = useState<{ field: SortField; dir: SortDir }>({ field: 'date', dir: 'asc' })
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const [showExportMenu, setShowExportMenu] = useState(false)
@@ -290,7 +291,7 @@ export default function MCReportPage() {
   useEffect(() => {
     if (dateFrom && dateTo) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, svcFilter])
+  }, [dateFrom, dateTo, svcFilter, resetNonce])
 
   // ── Quick range ──────────────────────────────────────────────────────────────
 
@@ -301,8 +302,14 @@ export default function MCReportPage() {
   }
 
   function clearFilters() {
-    setDateFrom(''); setDateTo(''); setSearch(''); setSvcFilter('')
-    setLocalCountry(''); setActiveRange(null); setDeepSearch('')
+    // Reset back to the default view (Today) rather than an empty range, so the
+    // data list refreshes instead of staying on the previously-filtered result.
+    const today = todayISO()
+    setDateFrom(today); setDateTo(today); setSearch(''); setSvcFilter('')
+    setLocalCountry(''); setActiveRange('Today'); setDeepSearch('')
+    // Bump the nonce so the list always refetches with the cleared filters,
+    // even when the date range was already Today (e.g. only a text search was set).
+    setResetNonce(n => n + 1)
   }
 
   // ── Sort ─────────────────────────────────────────────────────────────────────
