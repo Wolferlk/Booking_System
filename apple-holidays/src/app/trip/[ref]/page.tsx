@@ -13,7 +13,7 @@ import {
   Calendar, Users, Plane, Hotel, MapPin, CreditCard, Phone, Car,
   Loader2, ChevronRight, Clock, CheckCircle2, AlertCircle, Lock,
   Ticket as TicketIcon, Download, Sparkles, Home, Baby, Utensils,
-  ShieldAlert, Globe2, PartyPopper,
+  ShieldAlert, Globe2, PartyPopper, MessageCircle, BadgeCheck,
 } from 'lucide-react'
 import { differenceInDays, format } from 'date-fns'
 
@@ -70,6 +70,12 @@ const STATUS_COLOR: Record<string, string> = {
 function money(amount: number, currency = 'USD') {
   try { return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount) }
   catch { return `${currency} ${amount.toLocaleString()}` }
+}
+
+/** wa.me link from a phone number (strips spaces / punctuation, keeps a leading +). */
+function waLink(phone: string) {
+  const digits = phone.replace(/[^\d]/g, '')
+  return `https://wa.me/${digits}`
 }
 
 // ─── Small building blocks ──────────────────────────────────────────────────
@@ -138,6 +144,17 @@ export default function CustomerTripPage() {
     return () => { alive = false; clearInterval(id) }
   }, [ref, token])
 
+  // AI destination background — generated once per destination, cached server-side.
+  const [bgUrl, setBgUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (!data) return
+    const url = `/api/public/destination-image/${ref}?t=${encodeURIComponent(token)}`
+    const img = new window.Image()
+    img.onload = () => setBgUrl(url)
+    img.onerror = () => setBgUrl(null)
+    img.src = url
+  }, [data, ref, token])
+
   const theme = useMemo(() => THEME[data?.operationCountry ?? 'DEFAULT'] ?? THEME.DEFAULT, [data?.operationCountry])
 
   // ── Loading ──
@@ -181,6 +198,17 @@ export default function CustomerTripPage() {
   const pendingPayments = data.payments.filter(p => p.status === 'PENDING')
   const totalPaid = data.payments.filter(p => ['CONFIRMED', 'PAID'].includes(p.status)).reduce((s, p) => s + Number(p.amount), 0)
   const drivers = data.agenda?.items.filter(i => i.assignment?.driverName) ?? []
+  // Unique drivers (by name+phone) with the days they cover — for prominent cards.
+  const uniqueDrivers = Array.from(
+    drivers.reduce((map, i) => {
+      const a = i.assignment!
+      const key = `${a.driverName}|${a.driverPhone ?? ''}`
+      const entry = map.get(key) ?? { ...a, days: [] as string[] }
+      entry.days.push(format(new Date(i.date), 'dd MMM'))
+      map.set(key, entry)
+      return map
+    }, new Map<string, Assignment & { days: string[] }>()).values(),
+  )
 
   const TABS: { key: Tab; label: string; icon: React.ComponentType<{ className?: string }>; badge?: number }[] = [
     { key: 'overview', label: 'Home', icon: Home },
@@ -194,11 +222,43 @@ export default function CustomerTripPage() {
   const heroEmoji = completed ? '🎊' : inProgress ? '🌴' : '🧳'
 
   return (
-    <div className="min-h-[100dvh] bg-slate-950 text-white pb-28 selection:bg-brand-500/30">
+    <div className="relative min-h-[100dvh] bg-slate-950 text-white pb-28 selection:bg-brand-500/30">
+      {/* ─── AI destination background (fixed, whole page) ─── */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <AnimatePresence>
+          {bgUrl && (
+            <motion.img
+              key={bgUrl}
+              src={bgUrl}
+              alt=""
+              initial={{ opacity: 0, scale: 1.08 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 1.4, ease: 'easeOut' }}
+              className="absolute inset-0 w-full h-full object-cover"
+            />
+          )}
+        </AnimatePresence>
+        {/* Readability overlay */}
+        <div className="absolute inset-0 bg-gradient-to-b from-slate-950/70 via-slate-950/88 to-slate-950" />
+      </div>
+
+      {/* All content sits above the background */}
+      <div className="relative z-10">
       {/* ─── Animated hero ─── */}
       <div className="relative overflow-hidden">
-        <div className={`absolute inset-0 bg-gradient-to-br ${theme.from} ${theme.via} ${theme.to} opacity-90`} />
-        <div className="absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_-20%,transparent_40%,rgba(2,6,23,0.85)_100%)]" />
+        {/* Destination image as the hero backdrop, fading to the themed gradient */}
+        {bgUrl ? (
+          <motion.img
+            src={bgUrl}
+            alt={data.tourDestination || theme.name}
+            initial={{ opacity: 0, scale: 1.1 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1.6, ease: 'easeOut' }}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : null}
+        <div className={`absolute inset-0 bg-gradient-to-br ${theme.from} ${theme.via} ${theme.to} ${bgUrl ? 'opacity-40 mix-blend-overlay' : 'opacity-90'}`} />
+        <div className="absolute inset-0 bg-[radial-gradient(120%_120%_at_50%_-20%,transparent_30%,rgba(2,6,23,0.9)_100%)]" />
         {/* Floating emojis */}
         {theme.emojis.map((e, i) => (
           <motion.span
@@ -300,6 +360,52 @@ export default function CustomerTripPage() {
                     <PartyPopper className="w-5 h-5 text-pink-300 flex-shrink-0" />
                     <p className="text-sm text-pink-100"><span className="font-bold">Celebrating:</span> {data.specialOccasions} 🎉</p>
                   </motion.div>
+                )}
+
+                {/* Prominent chauffeur / driver card(s) */}
+                {uniqueDrivers.length > 0 && (
+                  <Section icon={Car} title="Your Chauffeur" emoji="🚘" accent={theme.accentText}>
+                    <div className="space-y-3">
+                      {uniqueDrivers.map((d, i) => (
+                        <motion.div
+                          key={i}
+                          initial={{ opacity: 0, y: 14 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.06 }}
+                          className="relative overflow-hidden rounded-2xl border border-blue-400/25 bg-gradient-to-br from-blue-500/[0.12] to-indigo-500/[0.08]"
+                        >
+                          <span className="absolute -top-3 -right-1 text-6xl opacity-15 select-none">🚗</span>
+                          <div className="relative p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-14 h-14 rounded-2xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center flex-shrink-0">
+                                <span className="text-2xl">🧑‍✈️</span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-black text-base truncate">{d.driverName}</p>
+                                  <BadgeCheck className="w-4 h-4 text-blue-300 flex-shrink-0" />
+                                </div>
+                                <p className="text-xs text-slate-300 truncate">
+                                  {[d.vehicleType, d.vehiclePlate].filter(Boolean).join(' · ') || 'Private vehicle'}
+                                </p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">🗓️ {d.days.slice(0, 4).join(', ')}{d.days.length > 4 ? ` +${d.days.length - 4}` : ''}</p>
+                              </div>
+                            </div>
+                            {d.driverPhone && (
+                              <div className="flex gap-2 mt-3">
+                                <a href={`tel:${d.driverPhone}`} className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 text-sm font-bold">
+                                  <Phone className="w-4 h-4" /> Call
+                                </a>
+                                <a href={waLink(d.driverPhone)} target="_blank" rel="noopener noreferrer" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-green-500/20 border border-green-400/30 text-green-200 text-sm font-bold">
+                                  <MessageCircle className="w-4 h-4" /> WhatsApp
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </Section>
                 )}
 
                 {/* Travellers */}
@@ -528,9 +634,14 @@ export default function CustomerTripPage() {
                             </p>
                           </div>
                           {item.assignment!.driverPhone && (
-                            <a href={`tel:${item.assignment!.driverPhone}`} className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/15 border border-emerald-400/25 text-emerald-300 text-xs font-semibold flex-shrink-0">
-                              <Phone className="w-3.5 h-3.5" /> Call
-                            </a>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <a href={`tel:${item.assignment!.driverPhone}`} className="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-400/25 text-emerald-300 flex items-center justify-center">
+                                <Phone className="w-4 h-4" />
+                              </a>
+                              <a href={waLink(item.assignment!.driverPhone)} target="_blank" rel="noopener noreferrer" className="w-9 h-9 rounded-xl bg-green-500/15 border border-green-400/25 text-green-300 flex items-center justify-center">
+                                <MessageCircle className="w-4 h-4" />
+                              </a>
+                            </div>
                           )}
                         </div>
                       ))}
@@ -608,6 +719,7 @@ export default function CustomerTripPage() {
           </div>
         </div>
       </div>
+      </div>{/* /content z-10 */}
     </div>
   )
 }
@@ -661,9 +773,14 @@ function ItineraryView({ data, theme }: { data: PortalData; theme: (typeof THEME
                         <p className="text-[11px] text-slate-400 truncate">{[item.assignment.vehicleType, item.assignment.vehiclePlate].filter(Boolean).join(' · ')}</p>
                       </div>
                       {item.assignment.driverPhone && (
-                        <a href={`tel:${item.assignment.driverPhone}`} className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-400/25 flex items-center justify-center flex-shrink-0">
-                          <Phone className="w-3.5 h-3.5 text-emerald-300" />
-                        </a>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <a href={`tel:${item.assignment.driverPhone}`} className="w-8 h-8 rounded-lg bg-emerald-500/15 border border-emerald-400/25 flex items-center justify-center">
+                            <Phone className="w-3.5 h-3.5 text-emerald-300" />
+                          </a>
+                          <a href={waLink(item.assignment.driverPhone)} target="_blank" rel="noopener noreferrer" className="w-8 h-8 rounded-lg bg-green-500/15 border border-green-400/25 flex items-center justify-center">
+                            <MessageCircle className="w-3.5 h-3.5 text-green-300" />
+                          </a>
+                        </div>
                       )}
                     </div>
                   )}
