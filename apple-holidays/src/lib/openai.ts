@@ -922,31 +922,56 @@ export async function generateDestinationImage(destination: string): Promise<Buf
 // ─── Web-search image fallback ───────────────────────────────────────────────
 
 const IMG_URL_RE = /https?:\/\/[^\s"'<>()]+?\.(?:jpg|jpeg|png|webp)/i
+const UA = 'AppleHolidays-Portal/1.0 (+https://aahaas.com)'
 
-/** Downloads an image URL and returns its bytes, validating it's really an image. */
+// Skip non-scenic imagery: flags, maps, emblems, logos, icons, vector art.
+const BAD_IMG_RE = /flag|\bmap\b|locator|emblem|coat[_-]?of[_-]?arms|logo|icon|seal|\.svg/i
+
+/** Downloads an image URL and returns its bytes, validating it's a real photo. */
 async function downloadImage(url: string): Promise<Buffer> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'AppleHolidays-Portal/1.0 (+https://aahaas.com)' },
-    redirect: 'follow',
-  })
+  if (BAD_IMG_RE.test(url)) throw new Error('non-scenic image skipped')
+  const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' })
   if (!res.ok) throw new Error(`download ${res.status}`)
   const ct = res.headers.get('content-type') ?? ''
-  if (!ct.startsWith('image/')) throw new Error(`not an image (${ct})`)
+  if (!ct.startsWith('image/') || ct.includes('svg')) throw new Error(`not a photo (${ct})`)
   const buf = Buffer.from(await res.arrayBuffer())
-  if (buf.length < 4_000) throw new Error('image too small')
+  if (buf.length < 20_000) throw new Error('image too small (likely an icon/flag)')
   return buf
 }
 
-/** Wikipedia REST lead image — deterministic, reliable last-resort source. */
+/** Wikimedia Commons photo search — reliable source of real scenic photos. */
+async function commonsImageUrls(destination: string): Promise<string[]> {
+  try {
+    const term = `${destination.split(',')[0].trim()} landscape landmark`
+    const api = 'https://commons.wikimedia.org/w/api.php?format=json&action=query' +
+      '&generator=search&gsrnamespace=6&gsrlimit=12' +
+      `&gsrsearch=${encodeURIComponent(term)}` +
+      '&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=1600'
+    const res = await fetch(api, { headers: { 'User-Agent': UA } })
+    if (!res.ok) return []
+    const j = await res.json()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pages: any[] = Object.values(j?.query?.pages ?? {})
+    return pages
+      .map(p => p?.imageinfo?.[0])
+      .filter(info => info && typeof info.mime === 'string' && info.mime.startsWith('image/') && !info.mime.includes('svg'))
+      // Prefer a resized 1600px thumbnail (fast, landscape-friendly) over the full original.
+      .map(info => info.thumburl || info.url)
+      .filter((u: string) => u && !BAD_IMG_RE.test(u))
+  } catch { return [] }
+}
+
+/** Wikipedia REST lead image — last-resort (filtered to skip flags/maps). */
 async function wikipediaImageUrl(destination: string): Promise<string | null> {
   try {
     const title = encodeURIComponent(destination.split(',')[0].trim())
     const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
-      headers: { 'User-Agent': 'AppleHolidays-Portal/1.0 (+https://aahaas.com)' },
+      headers: { 'User-Agent': UA },
     })
     if (!res.ok) return null
     const j = await res.json()
-    return j?.originalimage?.source ?? j?.thumbnail?.source ?? null
+    const url = j?.originalimage?.source ?? j?.thumbnail?.source ?? null
+    return url && !BAD_IMG_RE.test(url) ? url : null
   } catch { return null }
 }
 
