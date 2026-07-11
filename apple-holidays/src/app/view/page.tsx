@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plane, Users, Sparkles, TrendingUp, CalendarClock, Globe2, PartyPopper, Volume2, VolumeX } from 'lucide-react'
+import { Plane, Users, Sparkles, TrendingUp, CalendarClock, Globe2, PartyPopper, Volume2, VolumeX, Bot } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 
 // ── Animations ──────────────────────────────────────────────────────────────
@@ -22,6 +22,10 @@ const CSS = `
 @keyframes vConfetti{ 0%{transform:translateY(-10vh) rotate(0)} 100%{transform:translateY(110vh) rotate(720deg)} }
 @keyframes vProgress{ from{width:100%} to{width:0%} }
 @keyframes vWiggle  { 0%,100%{transform:rotate(0)} 25%{transform:rotate(-9deg)} 75%{transform:rotate(9deg)} }
+@keyframes vKenBurns{ 0%{transform:scale(1.08) translate(0,0)} 100%{transform:scale(1.22) translate(-2%,-2%)} }
+@keyframes vFadeImg { 0%{opacity:0;transform:scale(1.14)} 100%{opacity:1;transform:scale(1.08)} }
+@keyframes vFlip    { 0%{opacity:0;transform:rotateX(-90deg)} 100%{opacity:1;transform:rotateX(0)} }
+@keyframes vScan    { 0%{transform:translateY(-100%)} 100%{transform:translateY(400%)} }
 .v-float{animation:vFloat 7s ease-in-out infinite}
 .v-drift{animation:vDrift 22s ease-in-out infinite alternate}
 .v-pop{animation:vPop .6s cubic-bezier(.34,1.56,.64,1) both}
@@ -32,15 +36,23 @@ const CSS = `
 `
 
 // ── Country meta ─────────────────────────────────────────────────────────────
-const COUNTRY_META: Record<string, { label: string; emoji: string; accent: string; ring: string; grad: string }> = {
-  VIETNAM:            { label: 'Vietnam',       emoji: '🇻🇳', accent: '#ef4444', ring: 'rgba(239,68,68,.5)',  grad: 'from-red-500/25 to-rose-600/5' },
-  SRILANKA:           { label: 'Sri Lanka',     emoji: '🇱🇰', accent: '#f59e0b', ring: 'rgba(245,158,11,.5)', grad: 'from-amber-500/25 to-yellow-600/5' },
-  SINGAPORE:          { label: 'Singapore',     emoji: '🇸🇬', accent: '#ec4899', ring: 'rgba(236,72,153,.5)', grad: 'from-pink-500/25 to-fuchsia-600/5' },
-  MALAYSIA:           { label: 'Malaysia',      emoji: '🇲🇾', accent: '#22c55e', ring: 'rgba(34,197,94,.5)',  grad: 'from-green-500/25 to-emerald-600/5' },
-  SINGAPORE_MALAYSIA: { label: 'SG & Malaysia', emoji: '🌏', accent: '#3b82f6', ring: 'rgba(59,130,246,.5)', grad: 'from-blue-500/25 to-indigo-600/5' },
-  ALL:                { label: 'Multi-Country', emoji: '🌐', accent: '#a78bfa', ring: 'rgba(167,139,250,.5)', grad: 'from-violet-500/25 to-purple-600/5' },
+const IMG_VN = 'https://images5.alphacoders.com/390/thumb-1920-390620.jpg'
+const IMG_LK = 'https://wallpapercat.com/w/full/7/d/5/639844-3000x1686-desktop-hd-sri-lanka-wallpaper.jpg'
+const IMG_SG = 'https://www.bookmytaxi.my/wp-content/uploads/2018/01/the-merlion-singapore-wallpaper.jpg'
+const IMG_MY = 'https://4kwallpapers.com/images/wallpapers/petronas-towers-kuala-lumpur-malaysia-cityscape-night-3840x2160-2109.jpg'
+
+const COUNTRY_META: Record<string, { label: string; emoji: string; accent: string; ring: string; grad: string; image: string }> = {
+  VIETNAM:            { label: 'Vietnam',       emoji: '🇻🇳', accent: '#ef4444', ring: 'rgba(239,68,68,.5)',  grad: 'from-red-500/25 to-rose-600/5',      image: IMG_VN },
+  SRILANKA:           { label: 'Sri Lanka',     emoji: '🇱🇰', accent: '#f59e0b', ring: 'rgba(245,158,11,.5)', grad: 'from-amber-500/25 to-yellow-600/5',  image: IMG_LK },
+  SINGAPORE:          { label: 'Singapore',     emoji: '🇸🇬', accent: '#ec4899', ring: 'rgba(236,72,153,.5)', grad: 'from-pink-500/25 to-fuchsia-600/5',  image: IMG_SG },
+  MALAYSIA:           { label: 'Malaysia',      emoji: '🇲🇾', accent: '#22c55e', ring: 'rgba(34,197,94,.5)',  grad: 'from-green-500/25 to-emerald-600/5', image: IMG_MY },
+  SINGAPORE_MALAYSIA: { label: 'SG & Malaysia', emoji: '🌏', accent: '#3b82f6', ring: 'rgba(59,130,246,.5)', grad: 'from-blue-500/25 to-indigo-600/5',   image: IMG_SG },
+  ALL:                { label: 'Multi-Country', emoji: '🌐', accent: '#a78bfa', ring: 'rgba(167,139,250,.5)', grad: 'from-violet-500/25 to-purple-600/5', image: IMG_VN },
 }
-const ORDER = ['VIETNAM', 'SRILANKA', 'SINGAPORE', 'MALAYSIA', 'SINGAPORE_MALAYSIA', 'ALL']
+// SINGAPORE_MALAYSIA is intentionally excluded from the display rotation — those
+// bookings still count toward the headline totals, just no combined card.
+const ORDER = ['VIETNAM', 'SRILANKA', 'SINGAPORE', 'MALAYSIA', 'ALL']
+const ALL_IMAGES = [IMG_VN, IMG_LK, IMG_SG, IMG_MY]
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const POLL_MS         = 20_000  // data refresh
@@ -53,7 +65,7 @@ interface Booking {
 }
 interface ViewData {
   generatedAt: string
-  totals: { totalBookings: number; ongoingToday: number; upcoming: number; paxOnTour: number }
+  totals: { totalBookings: number; ongoingToday: number; upcoming: number; paxOnTour: number; arrivalFlightsToday: number; flightsToday: number }
   byCountry: { ongoing: Record<string, number>; upcoming: Record<string, number>; lifetime: Record<string, number> }
   recentBookings: Booking[]
 }
@@ -159,28 +171,57 @@ function Field({ label, value }: { label: string; value: string }) {
   )
 }
 
-// ── Country spotlight (rotates one country at a time) ────────────────────────
-function Spotlight({ country, data }: { country: string; data: ViewData }) {
+// ── Crossfading photo stack (all preloaded, only opacity animates) ───────────
+function PhotoLayers({ images, active, kenBurns = false, blur = 0 }: { images: string[]; active: string; kenBurns?: boolean; blur?: number }) {
+  return (
+    <div className="absolute inset-0">
+      {images.map(src => {
+        const on = src === active
+        return (
+          <div key={src} className="absolute inset-0 bg-cover bg-center transition-opacity duration-[1200ms] ease-out"
+            style={{ backgroundImage: `url(${src})`, opacity: on ? 1 : 0, filter: blur ? `blur(${blur}px)` : undefined, transform: blur ? 'scale(1.1)' : undefined, animation: on && kenBurns ? 'vKenBurns 14s ease-out both' : 'none' }} />
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Country spotlight (rotates one country at a time, full-bleed photo) ───────
+function Spotlight({ country, data, allCountries }: { country: string; data: ViewData; allCountries: string[] }) {
   const m = metaOf(country)
   const ongoing  = data.byCountry.ongoing[country]  ?? 0
   const upcoming = data.byCountry.upcoming[country] ?? 0
   const lifetime = data.byCountry.lifetime[country] ?? 0
+
+  // Distinct photos across the visible countries — crossfade without remounting.
+  const layers = Array.from(new Set(allCountries.map(c => metaOf(c).image)))
+
   return (
-    <div key={country} className={`relative h-full rounded-3xl border-2 overflow-hidden bg-gradient-to-br ${m.grad}`}
-      style={{ borderColor: m.ring, animation: 'vSlideIn .6s cubic-bezier(.34,1.56,.64,1) both' }}>
+    <div className="relative h-full rounded-3xl border-2 overflow-hidden shadow-2xl" style={{ borderColor: m.ring, boxShadow: `0 0 60px -10px ${m.ring}` }}>
+      <PhotoLayers images={layers} active={m.image} kenBurns />
+      {/* ── Readability overlays ── */}
+      <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,rgba(3,7,17,.35) 0%,rgba(3,7,17,.55) 45%,rgba(3,7,17,.92) 100%)' }} />
+      <div className="absolute inset-0" style={{ background: `linear-gradient(135deg,${m.accent}22 0%,transparent 55%)` }} />
       <div className="v-shine absolute inset-0 pointer-events-none" />
-      <div className="absolute -right-6 -bottom-6 text-[11rem] leading-none opacity-20 v-float select-none">{m.emoji}</div>
-      <div className="relative h-full flex flex-col p-8">
+      {/* scan line */}
+      <div className="absolute inset-x-0 h-24 pointer-events-none" style={{ background: `linear-gradient(180deg,transparent,${m.ring},transparent)`, animation: 'vScan 6s linear infinite', opacity: .25 }} />
+
+      {/* ── Foreground content ── */}
+      <div key={country} className="relative h-full flex flex-col p-8" style={{ animation: 'vSlideIn .7s cubic-bezier(.34,1.56,.64,1) both' }}>
         <div className="flex items-center gap-4">
-          <span className="rounded-2xl overflow-hidden border border-white/15 shadow-lg"><CountryFlag country={country} className="w-16 h-11" /></span>
+          <span className="rounded-2xl overflow-hidden border-2 border-white/25 shadow-xl v-float"><CountryFlag country={country} className="w-16 h-11" /></span>
           <div>
-            <p className="text-[11px] uppercase tracking-[.4em] text-slate-400">Now Spotlighting</p>
-            <h2 className="text-4xl font-black text-white">{m.label}</h2>
+            <p className="text-[11px] uppercase tracking-[.4em] text-white/70 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: m.accent, animation: 'vPulse 1.2s ease-in-out infinite' }} /> Now Spotlighting
+            </p>
+            <h2 className="text-5xl font-black text-white drop-shadow-lg">{m.label}</h2>
           </div>
+          <span className="ml-auto text-5xl v-float select-none drop-shadow-lg">{m.emoji}</span>
         </div>
+
         <div className="mt-auto">
-          <p className="text-[12px] uppercase tracking-[.3em] text-slate-400 mb-1">On Tour Today</p>
-          <div className="text-[8rem] leading-none font-black tabular-nums" style={{ color: m.accent, textShadow: `0 0 40px ${m.ring}` }}>
+          <p className="text-[12px] uppercase tracking-[.3em] text-white/70 mb-1">On Tour Today</p>
+          <div className="text-[9rem] leading-none font-black tabular-nums text-white" style={{ textShadow: `0 0 50px ${m.accent}, 0 4px 20px rgba(0,0,0,.6)` }}>
             <Counter target={ongoing} />
           </div>
         </div>
@@ -194,8 +235,8 @@ function Spotlight({ country, data }: { country: string; data: ViewData }) {
 }
 function MiniStat({ label, value, accent, icon }: { label: string; value: number; accent: string; icon: React.ReactNode }) {
   return (
-    <div className="rounded-2xl bg-white/5 border border-white/10 px-4 py-3">
-      <div className="flex items-center gap-1.5 text-slate-400 mb-0.5" style={{ color: accent }}>{icon}<span className="text-[10px] uppercase tracking-[.2em] text-slate-400">{label}</span></div>
+    <div className="rounded-2xl bg-black/35 border border-white/15 px-4 py-3" style={{ backdropFilter: 'blur(8px)' }}>
+      <div className="flex items-center gap-1.5 mb-0.5" style={{ color: accent }}>{icon}<span className="text-[10px] uppercase tracking-[.2em] text-white/70">{label}</span></div>
       <p className="text-3xl font-black text-white tabular-nums"><Counter target={value} /></p>
     </div>
   )
@@ -224,6 +265,45 @@ function CountryTile({ country, data, active }: { country: string; data: ViewDat
             <p className="text-[9px] uppercase tracking-[.2em] text-slate-400">Upcoming</p>
             <p className="text-xl font-bold text-white/80 tabular-nums">{upcoming}</p>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── AI Call Bots availability (UI only — random 7–12, changes over time) ─────
+function AiCallBots() {
+  const [n, setN] = useState(9)
+  useEffect(() => {
+    const tick = () => {
+      // gentle ±1 wander, clamped to 7–12, so it feels alive not jumpy
+      setN(prev => {
+        const step = [-1, 0, 1, 1, -1][Math.floor(Math.random() * 5)]
+        return Math.min(12, Math.max(7, prev + step))
+      })
+    }
+    const id = setInterval(tick, 4000 + Math.random() * 4000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div className="relative rounded-2xl border border-emerald-400/30 overflow-hidden bg-gradient-to-br from-emerald-500/15 to-teal-600/5 px-4 py-3">
+      <div className="v-shine absolute inset-0 pointer-events-none" />
+      <div className="flex items-center gap-3">
+        <div className="relative w-11 h-11 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0">
+          <Bot className="w-6 h-6 text-emerald-300 v-wiggle" />
+          <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#071018]" style={{ animation: 'vPulse 1s ease-in-out infinite' }} />
+        </div>
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-[.25em] text-emerald-300/80">AI Call Bots Ready</p>
+          <p className="text-2xl font-black text-white leading-none">
+            <span key={n} style={{ display: 'inline-block', animation: 'vPop .5s cubic-bezier(.34,1.56,.64,1) both' }}>{n}</span>
+            <span className="text-sm font-medium text-white/50"> / 12 online</span>
+          </p>
+        </div>
+        <div className="ml-auto flex gap-1 items-end h-8">
+          {[0, 1, 2, 3].map(i => (
+            <span key={i} className="w-1.5 rounded-full bg-emerald-400/70" style={{ height: `${30 + ((n + i) % 4) * 18}%`, animation: `vPulse ${0.8 + i * 0.2}s ease-in-out infinite` }} />
+          ))}
         </div>
       </div>
     </div>
@@ -324,10 +404,23 @@ function ViewDashboard() {
 
   const dismissAlert = useCallback(() => { setAlert(null); setTimeout(pump, 400) }, [pump])
 
+  const activeMeta = metaOf(spotCountry)
+
   return (
     <div className="fixed inset-0 overflow-hidden text-white" style={{ background: 'radial-gradient(ellipse at top,#0a1020,#030711 60%)', fontFamily: 'ui-sans-serif,system-ui' }}>
       <style>{CSS}</style>
+
+      {/* ── Futuristic full-screen backdrop: the spotlighted country's photo, blurred & darkened ── */}
+      {data && (
+        <div className="fixed inset-0 pointer-events-none">
+          <PhotoLayers images={ALL_IMAGES} active={activeMeta.image} blur={9} />
+          <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,rgba(3,7,17,.82),rgba(3,7,17,.9) 55%,rgba(3,7,17,.97))' }} />
+          <div className="absolute inset-0 transition-colors duration-[1500ms]" style={{ background: `radial-gradient(ellipse 70% 60% at 50% 30%, ${activeMeta.accent}22, transparent 70%)` }} />
+        </div>
+      )}
       <Background />
+      {/* Preload destination photos so the spotlight crossfades are instant */}
+      <div className="hidden" aria-hidden>{ALL_IMAGES.map(src => <img key={src} src={src} alt="" />)}</div>
 
       {alert && <BookingAlert booking={alert} onDismiss={dismissAlert} />}
 
@@ -376,20 +469,28 @@ function ViewDashboard() {
                 <div className="text-[10rem] leading-none font-black text-white tabular-nums" style={{ textShadow: '0 0 60px rgba(234,179,8,.5)' }}>
                   <Counter target={data.totals.ongoingToday} />
                 </div>
-                <div className="flex items-center gap-2 text-slate-300 mt-2"><Users className="w-4 h-4 text-brand-400" /><span className="text-lg font-bold"><Counter target={data.totals.paxOnTour} /> travellers on the ground</span></div>
+                <div className="flex items-center gap-4 mt-3">
+                  <span className="inline-flex items-center gap-1.5 text-slate-300"><Users className="w-4 h-4 text-brand-400" /><span className="text-base font-bold"><Counter target={data.totals.paxOnTour} /> pax on the ground</span></span>
+                  <span className="w-px h-4 bg-white/15" />
+                  <span className="inline-flex items-center gap-1.5 text-slate-300"><Plane className="w-4 h-4 text-sky-400 v-float" /><span className="text-base font-bold"><Counter target={data.totals.arrivalFlightsToday} /> arrival flights today</span></span>
+                </div>
               </div>
-              {/* Mid: total + upcoming (always visible) */}
-              <div className="grid grid-cols-1 gap-5 shrink-0">
+              {/* Mid: total (big) + upcoming & arrival flights (always visible) */}
+              <div className="flex flex-col gap-5 shrink-0">
                 <HeadStat label="Total Bookings" value={data.totals.totalBookings} tone="#22c55e" icon={<TrendingUp className="w-6 h-6" />} big />
-                <HeadStat label="Upcoming Tours" value={data.totals.upcoming} tone="#3b82f6" icon={<CalendarClock className="w-6 h-6" />} />
+                <div className="grid grid-cols-2 gap-5">
+                  <HeadStat label="Upcoming Tours" value={data.totals.upcoming} tone="#3b82f6" icon={<CalendarClock className="w-6 h-6" />} />
+                  <HeadStat label="Arrival Flights" value={data.totals.arrivalFlightsToday} tone="#38bdf8" icon={<Plane className="w-6 h-6" />} />
+                </div>
               </div>
             </div>
 
             {/* MIDDLE — rotating country spotlight */}
-            <div className="min-h-0"><Spotlight country={spotCountry} data={data} /></div>
+            <div className="min-h-0"><Spotlight country={spotCountry} data={data} allCountries={spotCountries} /></div>
 
             {/* RIGHT — small per-country tiles */}
             <div className="flex flex-col gap-4 min-h-0">
+              <AiCallBots />
               <p className="text-[11px] uppercase tracking-[.35em] text-slate-500 flex items-center gap-2"><Globe2 className="w-4 h-4" />Every Destination</p>
               <div className="grid grid-cols-1 gap-3 overflow-hidden">
                 {spotCountries.map(c => (
