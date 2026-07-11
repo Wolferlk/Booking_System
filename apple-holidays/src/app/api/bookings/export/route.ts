@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const dateFrom      = searchParams.get('dateFrom')
   const dateTo        = searchParams.get('dateTo')
   const dateFilter    = searchParams.get('dateFilter') ?? ''
+  const dateField     = searchParams.get('dateField') === 'createdAt' ? 'createdAt' : 'arrivalDate'
   const rawSortBy     = searchParams.get('sortBy') ?? 'createdAt'
   const sortDir       = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
 
@@ -125,14 +126,14 @@ export async function GET(req: NextRequest) {
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     if (dateFilter === 'today') {
-      andClauses.push({ arrivalDate: { gte: todayStart, lt: new Date(todayStart.getTime() + 86_400_000) } })
+      andClauses.push({ [dateField]: { gte: todayStart, lt: new Date(todayStart.getTime() + 86_400_000) } })
     } else if (dateFilter === 'this_week') {
       const startOfWeek = new Date(todayStart)
       startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
-      andClauses.push({ arrivalDate: { gte: startOfWeek, lt: new Date(startOfWeek.getTime() + 7 * 86_400_000) } })
+      andClauses.push({ [dateField]: { gte: startOfWeek, lt: new Date(startOfWeek.getTime() + 7 * 86_400_000) } })
     } else if (dateFilter === 'this_month') {
       andClauses.push({
-        arrivalDate: {
+        [dateField]: {
           gte: new Date(now.getFullYear(), now.getMonth(), 1),
           lt:  new Date(now.getFullYear(), now.getMonth() + 1, 1),
         },

@@ -48,7 +48,7 @@ function PrintContent() {
 
   useEffect(() => {
     const params = new URLSearchParams()
-    const passthrough = ['search', 'refSearch', 'contentSearch', 'status', 'dateFilter',
+    const passthrough = ['search', 'refSearch', 'contentSearch', 'status', 'dateFilter', 'dateField',
       'dateFrom', 'dateTo', 'sortBy', 'sortDir', 'country']
     passthrough.forEach(k => { const v = sp.get(k); if (v) params.set(k, v) })
     params.set('limit', '500')
