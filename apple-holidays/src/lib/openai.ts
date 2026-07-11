@@ -865,3 +865,146 @@ Booking context: ${bookingContext.slice(0, 4000)}`,
   await logAiUsage({ callType: 'ai_suggestion', model: 'gpt-4o', usage: response.usage, source: 'manual' })
   return response.choices[0]?.message?.content ?? 'Unable to generate response.'
 }
+
+// ─── Destination hero images (DALL·E 3) ──────────────────────────────────────
+
+/**
+ * Generates a cute, dreamy travel-poster background for a destination and
+ * returns the raw PNG bytes. Callers are expected to cache the result on disk
+ * (one image per destination slug) — this is a paid call (~$0.08 / image).
+ */
+export async function generateDestinationImage(destination: string): Promise<Buffer> {
+  const prompt =
+    `A cute, dreamy travel-poster illustration of ${destination}. ` +
+    `Soft pastel colours, warm golden light, iconic landmarks and nature of the destination, ` +
+    `whimsical kawaii storybook style, gentle gradients, tiny cute details, no text, no words, ` +
+    `vertical portrait composition suitable as a phone wallpaper background, highly detailed, joyful and inviting.`
+
+  // This deployment's OpenAI backend serves gpt-image-1 (portrait 1024x1536,
+  // quality low|medium|high|auto, always returns b64 — no response_format).
+  const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
+  const response = await openai.images.generate({
+    model,
+    prompt,
+    n: 1,
+    size: '1024x1536',
+    quality: 'medium',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any)
+
+  const datum = response.data?.[0]
+  let buffer: Buffer
+  if (datum?.b64_json) {
+    buffer = Buffer.from(datum.b64_json, 'base64')
+  } else if (datum?.url) {
+    const img = await fetch(datum.url)
+    if (!img.ok) throw new Error(`Image download failed: ${img.status}`)
+    buffer = Buffer.from(await img.arrayBuffer())
+  } else {
+    throw new Error('Image generation returned no data')
+  }
+
+  // Best-effort cost log (image API returns no token usage)
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    await prisma.aiUsageLog.create({
+      data: {
+        callType: 'destination_image', model: 'dall-e-3',
+        promptTokens: 0, completionTokens: 0, totalTokens: 0,
+        estimatedCostUsd: 0.08, source: 'portal',
+      },
+    })
+  } catch { /* never let logging crash the flow */ }
+
+  return buffer
+}
+
+// ─── Web-search image fallback ───────────────────────────────────────────────
+
+const IMG_URL_RE = /https?:\/\/[^\s"'<>()]+?\.(?:jpg|jpeg|png|webp)/i
+
+/** Downloads an image URL and returns its bytes, validating it's really an image. */
+async function downloadImage(url: string): Promise<Buffer> {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'AppleHolidays-Portal/1.0 (+https://aahaas.com)' },
+    redirect: 'follow',
+  })
+  if (!res.ok) throw new Error(`download ${res.status}`)
+  const ct = res.headers.get('content-type') ?? ''
+  if (!ct.startsWith('image/')) throw new Error(`not an image (${ct})`)
+  const buf = Buffer.from(await res.arrayBuffer())
+  if (buf.length < 4_000) throw new Error('image too small')
+  return buf
+}
+
+/** Wikipedia REST lead image — deterministic, reliable last-resort source. */
+async function wikipediaImageUrl(destination: string): Promise<string | null> {
+  try {
+    const title = encodeURIComponent(destination.split(',')[0].trim())
+    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+      headers: { 'User-Agent': 'AppleHolidays-Portal/1.0 (+https://aahaas.com)' },
+    })
+    if (!res.ok) return null
+    const j = await res.json()
+    return j?.originalimage?.source ?? j?.thumbnail?.source ?? null
+  } catch { return null }
+}
+
+/**
+ * Fallback for when image generation fails: uses OpenAI web search to find a
+ * real travel photo of the destination on the internet, downloads it, and
+ * returns the bytes. Falls back to Wikipedia's page image if search yields
+ * nothing usable. Throws only if no working image could be obtained.
+ */
+export async function fetchDestinationImageFromWeb(destination: string): Promise<Buffer> {
+  const candidates: string[] = []
+
+  // 1) Ask OpenAI (with live web search) for direct, hotlinkable image URLs.
+  try {
+    const res = await openai.responses.create({
+      model: process.env.OPENAI_SEARCH_MODEL || 'gpt-4o',
+      tools: [{ type: 'web_search_preview' }],
+      input:
+        `Find real, currently-working DIRECT image file URLs (ending in .jpg, .jpeg, .png or .webp) ` +
+        `of beautiful, high-quality travel photographs of ${destination}. ` +
+        `Strongly prefer images hosted on upload.wikimedia.org. ` +
+        `Reply with 3 to 5 raw URLs only, one per line, no other text.`,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const text: string = (res as any).output_text ?? ''
+    for (const line of text.split(/\s+/)) {
+      const m = line.match(IMG_URL_RE)
+      if (m) candidates.push(m[0])
+    }
+  } catch (e) {
+    console.warn('[destination-image] web search unavailable:', (e as Error).message)
+  }
+
+  // 2) Deterministic fallback source.
+  const wiki = await wikipediaImageUrl(destination)
+  if (wiki) candidates.push(wiki)
+
+  // 3) Try each candidate until one downloads as a valid image.
+  const seen = new Set<string>()
+  for (const url of candidates) {
+    if (seen.has(url)) continue
+    seen.add(url)
+    try {
+      const buf = await downloadImage(url)
+      try {
+        const { prisma } = await import('@/lib/prisma')
+        await prisma.aiUsageLog.create({
+          data: {
+            callType: 'destination_image_web', model: 'web-search',
+            promptTokens: 0, completionTokens: 0, totalTokens: 0,
+            estimatedCostUsd: 0.03, source: 'portal',
+          },
+        })
+      } catch { /* ignore logging errors */ }
+      return buf
+    } catch { /* try next candidate */ }
+  }
+
+  throw new Error('No usable web image found for destination')
+}
