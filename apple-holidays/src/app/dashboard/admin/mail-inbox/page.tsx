@@ -483,9 +483,9 @@ export default function MailInboxPage() {
   const [results, setResults]             = useState<Map<string, { success: boolean; data?: ProcessResult; error?: string }>>(new Map())
   const [expandedId, setExpandedId]       = useState<string | null>(null)
   const [rawBodyId, setRawBodyId]         = useState<string | null>(null)
-  const [limit, setLimit]                 = useState(50)
+  const [limit, setLimit]                 = useState(10000)
   const [folder, setFolder]               = useState<'all' | 'inbox'>('all')
-  const [mailboxFilter, setMailboxFilter] = useState<MailboxFilter>('all')
+  const [mailboxFilter, setMailboxFilter] = useState<MailboxFilter>('tq')
   const [subStatus, setSubStatus]         = useState<SubStatus | null>(null)
   const [lastRefresh, setLastRefresh]     = useState<Date | null>(null)
   const [searchQuery, setSearchQuery]     = useState('')
@@ -768,6 +768,20 @@ export default function MailInboxPage() {
     const numericQ = q.replace(/cntl/gi, '').replace(/[^0-9]/g, '')
     // Detect if query looks like a booking ref prefix (IS/VN/SG/MY + digits)
     const isRefPrefix = /^(is|vn|sg|my|lk)\d*/i.test(q.trim())
+
+    // "Search by" chip: a bare country code (IS/VN/SG/MY/LK with no digits) should
+    // filter to emails that actually reference that country's booking refs
+    // (e.g. IS2400123), not every message that merely contains the letters "is".
+    const barePrefix = /^(is|vn|sg|my|lk)$/i.test(q) ? q.toUpperCase() : null
+    if (barePrefix) {
+      const refRegex = new RegExp(`\\b${barePrefix}\\d{4,}`, 'i')
+      return emails.filter(email => {
+        const ref = results.get(email.graphId)?.data?.bookingRef ?? ''
+        return refRegex.test(email.subject)
+          || refRegex.test(email.rawBody ?? '')
+          || refRegex.test(ref)
+      })
+    }
 
     return emails.filter(email => {
       // Subject
@@ -1450,19 +1464,22 @@ export default function MailInboxPage() {
             <span className="text-[10px] text-slate-300">|</span>
             <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Search by:</span>
             {([
-              { flag: '🇱🇰', label: 'IS Number',  desc: 'IS2400123',  color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
-              { flag: '🇻🇳', label: 'VN Number',  desc: 'VN2400123',  color: 'bg-red-50 border-red-200 text-red-700' },
-              { flag: '🇸🇬', label: 'SG Number',  desc: 'SG2400123',  color: 'bg-blue-50 border-blue-200 text-blue-700' },
-              { flag: '🔢',  label: 'CNTL No.',   desc: '469083',     color: 'bg-slate-100 border-slate-200 text-slate-600' },
-            ] as { flag: string; label: string; desc: string; color: string }[]).map(chip => (
-              <button
-                key={chip.label}
-                onClick={() => setSearchQuery(chip.desc)}
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all hover:opacity-80 cursor-pointer ${chip.color}`}
-              >
-                <span>{chip.flag}</span>{chip.label}
-              </button>
-            ))}
+              { flag: '🇱🇰', label: 'IS Number', query: 'IS', color: 'bg-yellow-50 border-yellow-200 text-yellow-700' },
+              { flag: '🇻🇳', label: 'VN Number', query: 'VN', color: 'bg-red-50 border-red-200 text-red-700' },
+              { flag: '🇸🇬', label: 'SG Number', query: 'SG', color: 'bg-blue-50 border-blue-200 text-blue-700' },
+              { flag: '🇲🇾', label: 'MY Number', query: 'MY', color: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+            ] as { flag: string; label: string; query: string; color: string }[]).map(chip => {
+              const active = searchQuery.trim().toUpperCase() === chip.query
+              return (
+                <button
+                  key={chip.label}
+                  onClick={() => setSearchQuery(active ? '' : chip.query)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-semibold transition-all hover:opacity-80 cursor-pointer ${chip.color} ${active ? 'ring-2 ring-offset-1 ring-slate-300' : ''}`}
+                >
+                  <span>{chip.flag}</span>{chip.label}
+                </button>
+              )
+            })}
           </div>
         </div>
 
