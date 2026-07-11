@@ -969,9 +969,12 @@ export default function AICallBotPage() {
     if (!addDayForm.call_date) { toast.error('Select a date'); return }
     setAddDayLoading(true)
     try {
+      // Ignore the reserved special slots (0 = reconfirm, 9999 = post-tour) when
+      // auto-numbering, or a booking with a post-tour call would add "day 10000".
+      const realDays = existingSchedule.filter(s => s.day_no > 0 && s.day_no < 9000)
       const nextDayNo = addDayForm.day_no
         ? Number(addDayForm.day_no)
-        : (existingSchedule.length > 0 ? Math.max(...existingSchedule.map(s => s.day_no)) + 1 : 1)
+        : (realDays.length > 0 ? Math.max(...realDays.map(s => s.day_no)) + 1 : 1)
       const body: Record<string, unknown> = { call_date: addDayForm.call_date, day_no: nextDayNo }
       if (addDayForm.brief) body.brief = addDayForm.brief
       if (addDayForm.scheduled_at) body.scheduled_at = new Date(addDayForm.scheduled_at).toISOString()
@@ -1000,7 +1003,10 @@ export default function AICallBotPage() {
         start_at: jobForm.start_at || 'now',
         respect_window: jobForm.respect_window,
       }
-      if (jobForm.bookingRef ?? bookingRef) body.booking_ref = (jobForm.bookingRef ?? bookingRef)
+      // `?? ` never fell back here (an empty string isn't nullish) — use || so a
+      // blank job field genuinely falls back to the page's selected booking.
+      const jobRef = (jobForm.bookingRef || bookingRef || '').trim()
+      if (jobRef) body.booking_ref = jobRef.toUpperCase()
       if (jobForm.campaign_id) body.campaign_id = Number(jobForm.campaign_id)
       if (jobForm.interval_count && jobForm.interval_unit) { body.interval_count = Number(jobForm.interval_count); body.interval_unit = jobForm.interval_unit }
       if (jobForm.max_runs) body.max_runs = Number(jobForm.max_runs)
@@ -1057,7 +1063,8 @@ export default function AICallBotPage() {
       if (quickForm.bookingRef) { body.bookingRef = quickForm.bookingRef.trim().toUpperCase(); body.booking_ref = body.bookingRef }
       if (quickForm.reason) body.reason = quickForm.reason
       // With a playbook mode selected we hit /test-call so staff hear the exact
-      // reconfirm/post-tour/check-in script (nothing is persisted, no alerts).
+      // reconfirm/post-tour/check-in script. Test calls log like real calls
+      // (call log + alerts), keyed by conversation_id.
       if (quickForm.mode) body.mode = quickForm.mode
       const endpoint = quickForm.mode ? 'test-call' : 'quick-call'
       const res = await teProxy(endpoint, 'POST', body)
