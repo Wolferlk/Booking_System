@@ -163,7 +163,8 @@ export function buildApiError(message: string, status = 400) {
 
 export function buildApiSuccess<T>(data: T, statusOrMessage?: number | string) {
   const status = typeof statusOrMessage === 'number' ? statusOrMessage : 200
-  return Response.json({ success: true, data }, { status })
+  const message = typeof statusOrMessage === 'string' ? statusOrMessage : undefined
+  return Response.json({ success: true, data, ...(message ? { message } : {}) }, { status })
 }
 
 // Credit-based agents pay in bulk on 15th & 30th — no per-booking payment approval needed

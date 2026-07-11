@@ -212,6 +212,10 @@ export default function DriversPage() {
 
   useEffect(() => { loadDrivers() }, [countryFilter]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load vehicles once on mount so the "All Vehicles" / "Total Vehicles" counts are
+  // correct before the user ever opens the Vehicles tab.
+  useEffect(() => { loadVehicles() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (activeTab === 'vehicles' && !vehLoaded) loadVehicles()
   }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps

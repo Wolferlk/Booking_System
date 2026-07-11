@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
-import { sendWhatsAppText, formatDriverMovementMessage, normalisePhone } from '@/lib/whatsapp'
+import { sendWhatsAppText, formatDriverBriefingMessage, formatDriverCancellationMessage, normalisePhone } from '@/lib/whatsapp'
 import type { UserRole, ServiceType } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -66,7 +66,10 @@ export async function POST(
 
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: params.ref },
-    include: { tourAgenda: true },
+    include: {
+      tourAgenda: true,
+      passengers: { where: { isLead: true }, take: 1 },
+    },
   })
   if (!booking) return buildApiError('Booking not found', 404)
 
@@ -158,6 +161,108 @@ export async function POST(
     }),
   )
 
+  // ── Driver WhatsApp notifications ──────────────────────────────────────────
+  // Notifications are sent here (on Save) rather than on individual driver
+  // selection. Logic is idempotent against the durable WhatsApp message log so a
+  // driver is briefed only once per booking, is cancelled when un-assigned/replaced,
+  // and receives a single consolidated message when handling several movements.
+  try {
+    const DRIVER_TAG = '[DRIVER]'
+    const CANCEL_TAG = '[DRIVER-CANCEL]'
+
+    // Current drivers assigned across the saved chart, keyed by normalised phone,
+    // with every movement they cover folded into one entry.
+    type Mv = { date: string; location: string; fromPoint: string | null; toPoint: string | null; details: string | null; meetingTime: string | null }
+    const currentDrivers = new Map<string, {
+      name: string; vehicleType: string | null; vehiclePlate: string | null
+      driverRate: number | null; rateCurrency: string | null; movements: Mv[]
+    }>()
+
+    for (const raw of items as Record<string, unknown>[]) {
+      const a = raw.assignment as { driverName?: string | null; driverPhone?: string | null; vehicleType?: string | null; vehiclePlate?: string | null; driverRate?: number | null; rateCurrency?: string | null } | null | undefined
+      if (!a?.driverPhone || !a?.driverName) continue
+      const phone = normalisePhone(a.driverPhone)
+      if (!phone) continue
+      const existing = currentDrivers.get(phone)
+      const mv: Mv = {
+        date:        String(raw.date ?? ''),
+        location:    String(raw.location ?? ''),
+        fromPoint:   (raw.fromPoint as string) ?? null,
+        toPoint:     (raw.toPoint as string) ?? null,
+        details:     (raw.details as string) ?? null,
+        meetingTime: (raw.meetingTime as string) ?? null,
+      }
+      if (existing) {
+        existing.movements.push(mv)
+      } else {
+        currentDrivers.set(phone, {
+          name:         a.driverName,
+          vehicleType:  a.vehicleType ?? null,
+          vehiclePlate: a.vehiclePlate ?? null,
+          driverRate:   a.driverRate != null ? Number(a.driverRate) : null,
+          rateCurrency: a.rateCurrency ?? 'USD',
+          movements:    [mv],
+        })
+      }
+    }
+
+    // Reconstruct the last-known state per driver phone from the message log.
+    const driverLogs = await prisma.whatsAppMessage.findMany({
+      where: { bookingRef: params.ref, direction: 'outbound', senderName: { startsWith: '[DRIVER' } },
+      orderBy: { createdAt: 'asc' },
+      select: { phone: true, senderName: true },
+    })
+    const lastState = new Map<string, 'briefed' | 'cancelled'>()
+    const lastName  = new Map<string, string>()
+    for (const m of driverLogs) {
+      const p = normalisePhone(m.phone)
+      const isCancel = m.senderName?.startsWith(CANCEL_TAG)
+      lastState.set(p, isCancel ? 'cancelled' : 'briefed')
+      const nm = m.senderName?.replace(CANCEL_TAG, '').replace(DRIVER_TAG, '').trim()
+      if (nm) lastName.set(p, nm)
+    }
+
+    // Newly-assigned drivers (not currently in a briefed state) → send consolidated briefing.
+    for (const [phone, d] of Array.from(currentDrivers.entries())) {
+      if (lastState.get(phone) === 'briefed') continue
+      const msg = formatDriverBriefingMessage({
+        driverName:    d.name,
+        bookingRef:    params.ref,
+        paxAdults:     booking.paxAdults,
+        paxChildren:   booking.paxChildren,
+        leadPassenger: booking.passengers[0]?.name ?? null,
+        vehicleType:   d.vehicleType,
+        vehiclePlate:  d.vehiclePlate,
+        driverRate:    d.driverRate,
+        rateCurrency:  d.rateCurrency,
+        movements:     d.movements,
+      })
+      const sent = await sendWhatsAppText(phone, msg, d.name)
+      if (sent) {
+        await prisma.whatsAppMessage.create({
+          data: { bookingRef: params.ref, phone, direction: 'outbound', body: msg, status: 'sent', senderName: `${DRIVER_TAG} ${d.name}` },
+        })
+        console.log(`[Agenda] Driver briefing sent to ${d.name} (${phone}) for ${params.ref} — ${d.movements.length} movement(s)`)
+      }
+    }
+
+    // Drivers previously briefed but no longer assigned → send cancellation.
+    for (const [phone, state] of Array.from(lastState.entries())) {
+      if (state !== 'briefed' || currentDrivers.has(phone)) continue
+      const name = lastName.get(phone) ?? 'Driver'
+      const msg  = formatDriverCancellationMessage({ driverName: name, bookingRef: params.ref })
+      const sent = await sendWhatsAppText(phone, msg, name)
+      if (sent) {
+        await prisma.whatsAppMessage.create({
+          data: { bookingRef: params.ref, phone, direction: 'outbound', body: msg, status: 'sent', senderName: `${CANCEL_TAG} ${name}` },
+        })
+        console.log(`[Agenda] Driver cancellation sent to ${name} (${phone}) for ${params.ref}`)
+      }
+    }
+  } catch (waErr) {
+    console.error('[Agenda] Driver WhatsApp notification error (non-fatal):', waErr)
+  }
+
   return buildApiSuccess({ agenda, items: createdItems }, 'Agenda saved')
 }
 
@@ -210,52 +315,10 @@ export async function PUT(
         return buildApiError(`Assignment save failed: ${msg}`, 500)
       }
 
-      // Auto-send WhatsApp to driver when phone is provided
-      if (data.driverPhone && data.driverName) {
-        try {
-          const booking = await prisma.booking.findUnique({
-            where: { bookingRef: params.ref },
-            include: {
-              passengers: { where: { isLead: true }, take: 1 },
-            },
-          })
-          if (booking) {
-            const msg = formatDriverMovementMessage({
-              driverName:    data.driverName,
-              bookingRef:    params.ref,
-              date:          agendaItem.date,
-              location:      agendaItem.location,
-              fromPoint:     agendaItem.fromPoint,
-              toPoint:       agendaItem.toPoint,
-              details:       agendaItem.details,
-              meetingTime:   agendaItem.meetingTime,
-              paxAdults:     booking.paxAdults,
-              paxChildren:   booking.paxChildren,
-              leadPassenger: booking.passengers[0]?.name ?? null,
-              vehicleType:   data.vehicleType,
-              vehiclePlate:  data.vehiclePlate,
-              driverRate:    data.driverRate,
-              rateCurrency:  data.rateCurrency,
-            })
-            const sent = await sendWhatsAppText(data.driverPhone, msg, data.driverName)
-            if (sent) {
-              await prisma.whatsAppMessage.create({
-                data: {
-                  bookingRef:  params.ref,
-                  phone:       normalisePhone(data.driverPhone),
-                  direction:   'outbound',
-                  body:        msg,
-                  status:      'sent',
-                  senderName:  `[DRIVER] ${data.driverName}`,
-                },
-              })
-              console.log(`[Agenda] Driver WhatsApp sent to ${data.driverName} (${data.driverPhone}) for ${params.ref}`)
-            }
-          }
-        } catch (waErr) {
-          console.error('[Agenda] Driver WhatsApp error (non-fatal):', waErr)
-        }
-      }
+      // NOTE: Driver WhatsApp notifications are intentionally NOT sent here.
+      // They are sent from the POST (whole-chart "Save") handler so messages fire
+      // on Save — not on individual driver selection — and can be de-duplicated /
+      // consolidated / cancelled across the full set of assignments.
     }
     const updated = await prisma.agendaItem.findUnique({
       where: { id: itemId },
