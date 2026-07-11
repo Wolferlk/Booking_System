@@ -924,8 +924,9 @@ export async function generateDestinationImage(destination: string): Promise<Buf
 const IMG_URL_RE = /https?:\/\/[^\s"'<>()]+?\.(?:jpg|jpeg|png|webp)/i
 const UA = 'AppleHolidays-Portal/1.0 (+https://aahaas.com)'
 
-// Skip non-scenic imagery: flags, maps, emblems, logos, icons, vector art.
-const BAD_IMG_RE = /flag|\bmap\b|locator|emblem|coat[_-]?of[_-]?arms|logo|icon|seal|\.svg/i
+// Skip non-scenic imagery: flags, maps, emblems, logos, icons, vector art, and
+// off-theme results (war/memorial/historical) that pollute bare-country searches.
+const BAD_IMG_RE = /flag|\bmap\b|locator|emblem|coat[_-]?of[_-]?arms|logo|icon|seal|\.svg|veteran|memorial|\bwar\b|cemetery|protest|militar|aerial/i
 
 /** Downloads an image URL and returns its bytes, validating it's a real photo. */
 async function downloadImage(url: string): Promise<Buffer> {
@@ -939,10 +940,10 @@ async function downloadImage(url: string): Promise<Buffer> {
   return buf
 }
 
-/** Wikimedia Commons photo search — reliable source of real scenic photos. */
+/** Wikimedia Commons photo search — last-resort source of real scenic photos. */
 async function commonsImageUrls(destination: string): Promise<string[]> {
   try {
-    const term = `${destination.split(',')[0].trim()} landscape landmark`
+    const term = `${destination.split(',')[0].trim()} tourism scenery cityscape`
     const api = 'https://commons.wikimedia.org/w/api.php?format=json&action=query' +
       '&generator=search&gsrnamespace=6&gsrlimit=12' +
       `&gsrsearch=${encodeURIComponent(term)}` +
@@ -961,17 +962,36 @@ async function commonsImageUrls(destination: string): Promise<string[]> {
   } catch { return [] }
 }
 
-/** Wikipedia REST lead image — last-resort (filtered to skip flags/maps). */
-async function wikipediaImageUrl(destination: string): Promise<string | null> {
+/** Resolve a possibly-messy query to a real Wikipedia article title. */
+async function resolveWikipediaTitle(query: string): Promise<string | null> {
   try {
-    const title = encodeURIComponent(destination.split(',')[0].trim())
-    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`, {
+    const api = `https://en.wikipedia.org/w/api.php?format=json&action=opensearch&limit=1&search=${encodeURIComponent(query)}`
+    const res = await fetch(api, { headers: { 'User-Agent': UA } })
+    if (!res.ok) return null
+    const j = await res.json()
+    return Array.isArray(j?.[1]) && j[1][0] ? j[1][0] : null
+  } catch { return null }
+}
+
+/** Wikipedia REST lead image — reliable source (filtered to skip flags/maps). */
+async function wikipediaImageUrl(destination: string): Promise<string | null> {
+  const fetchSummaryImage = async (title: string): Promise<string | null> => {
+    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`, {
       headers: { 'User-Agent': UA },
     })
     if (!res.ok) return null
     const j = await res.json()
     const url = j?.originalimage?.source ?? j?.thumbnail?.source ?? null
     return url && !BAD_IMG_RE.test(url) ? url : null
+  }
+  try {
+    const clean = destination.split(',')[0].trim()
+    // Try the title directly, then fall back to search-resolving it.
+    return (await fetchSummaryImage(clean))
+      ?? (await (async () => {
+        const resolved = await resolveWikipediaTitle(clean)
+        return resolved ? fetchSummaryImage(resolved) : null
+      })())
   } catch { return null }
 }
 
@@ -981,8 +1001,22 @@ async function wikipediaImageUrl(destination: string): Promise<string | null> {
  * returns the bytes. Falls back to Wikipedia's page image if search yields
  * nothing usable. Throws only if no working image could be obtained.
  */
+// Bare country names are ambiguous (Wikipedia gives a flag; searches surface
+// war/memorial content). Map them to an iconic, unmistakably scenic landmark so
+// every image source returns a beautiful, on-theme photo.
+const COUNTRY_LANDMARK: Record<string, string> = {
+  'vietnam': 'Ha Long Bay',
+  'sri lanka': 'Sigiriya',
+  'singapore': 'Marina Bay Sands',
+  'malaysia': 'Petronas Towers',
+  'singapore and malaysia': 'Marina Bay Sands',
+}
+
 export async function fetchDestinationImageFromWeb(destination: string): Promise<Buffer> {
   const candidates: string[] = []
+  // Resolve a bare country to a landmark; keep specific destinations as-is.
+  const key = destination.split(',')[0].trim().toLowerCase()
+  const subject = COUNTRY_LANDMARK[key] ?? destination
 
   // 1) Ask OpenAI (with live web search) for direct, hotlinkable image URLs.
   try {
@@ -991,7 +1025,9 @@ export async function fetchDestinationImageFromWeb(destination: string): Promise
       tools: [{ type: 'web_search_preview' }],
       input:
         `Find real, currently-working DIRECT image file URLs (ending in .jpg, .jpeg, .png or .webp) ` +
-        `of beautiful, high-quality travel photographs of ${destination}. ` +
+        `of beautiful, vibrant, full-colour TOURISM photographs of ${subject}: ` +
+        `iconic landmarks, scenic landscapes, beaches, temples, or cityscapes that make people want to travel there. ` +
+        `Do NOT return flags, maps, emblems, logos, war or memorial imagery, or black-and-white historical photos. ` +
         `Strongly prefer images hosted on upload.wikimedia.org. ` +
         `Reply with 3 to 5 raw URLs only, one per line, no other text.`,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1000,17 +1036,21 @@ export async function fetchDestinationImageFromWeb(destination: string): Promise
     const text: string = (res as any).output_text ?? ''
     for (const line of text.split(/\s+/)) {
       const m = line.match(IMG_URL_RE)
-      if (m) candidates.push(m[0])
+      if (m && !BAD_IMG_RE.test(m[0])) candidates.push(m[0])
     }
+    console.log(`[destination-image] web search yielded ${candidates.length} candidate URL(s) for "${subject}"`)
   } catch (e) {
     console.warn('[destination-image] web search unavailable:', (e as Error).message)
   }
 
-  // 2) Deterministic fallback source.
-  const wiki = await wikipediaImageUrl(destination)
+  // 2) Wikimedia Commons scenic-photo search (reliable, real photos).
+  candidates.push(...await commonsImageUrls(subject))
+
+  // 3) Wikipedia lead image as a last resort.
+  const wiki = await wikipediaImageUrl(subject)
   if (wiki) candidates.push(wiki)
 
-  // 3) Try each candidate until one downloads as a valid image.
+  // 4) Try each candidate until one downloads as a valid photo.
   const seen = new Set<string>()
   for (const url of candidates) {
     if (seen.has(url)) continue
@@ -1028,7 +1068,9 @@ export async function fetchDestinationImageFromWeb(destination: string): Promise
         })
       } catch { /* ignore logging errors */ }
       return buf
-    } catch { /* try next candidate */ }
+    } catch (e) {
+      console.warn(`[destination-image]   ✗ ${url.slice(0, 90)} — ${(e as Error).message}`)
+    }
   }
 
   throw new Error('No usable web image found for destination')
