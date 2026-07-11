@@ -1,10 +1,11 @@
 'use client'
 
 import { useSession } from 'next-auth/react'
-import { Bell, Menu } from 'lucide-react'
+import { Menu } from 'lucide-react'
 import { ROLE_LABELS } from '@/lib/rbac'
 import { getInitials } from '@/lib/utils'
 import { useSidebar } from '@/hooks/use-sidebar'
+import NotificationsBell from '@/components/layout/notifications-bell'
 import type { UserRole } from '@prisma/client'
 
 interface HeaderProps {
@@ -40,9 +41,8 @@ export default function Header({ title, subtitle, actions }: HeaderProps) {
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {actions}
 
-          {/* <button className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700 transition-colors">
-            <Bell className="w-5 h-5" />
-          </button> */}
+          {/* Live traveller-experience alerts (complaints raised on AI calls) */}
+          <NotificationsBell />
 
           <div className="flex items-center gap-2 pl-2 sm:pl-3 border-l border-slate-200">
             <div className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0">
