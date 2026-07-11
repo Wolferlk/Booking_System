@@ -580,6 +580,10 @@ export default function AICallBotPage() {
   const [campaigns, setCampaigns]   = useState<TECampaign[]>([])
   const [campaignOpen, setCampaignOpen] = useState(false)
   const [campaignForm, setCampaignForm] = useState({ name: '', approach: '', collect: '', first_message: '', is_active: true })
+  // AI compose — staff describe the call in their own words; OpenAI drafts the
+  // campaign brief (approach + what to collect + opening line) for review.
+  const [composeText, setComposeText] = useState('')
+  const [composeLoading, setComposeLoading] = useState(false)
   const [campaignLoading, setCampaignLoading] = useState(false)
   const [editCampaign, setEditCampaign] = useState<TECampaign|null>(null)
 
@@ -1037,6 +1041,28 @@ export default function AICallBotPage() {
   // ─────────────────────────────────────────────────────────────────────────
   // Campaigns
   // ─────────────────────────────────────────────────────────────────────────
+  // AI compose: turn the staff's plain-language description of the call into a
+  // reviewed-and-editable campaign draft (approach, what to collect, opening line).
+  async function composeCampaignAI() {
+    const description = composeText.trim()
+    if (!description) { toast.error('Describe the call first — what should the agent say, and what should it find out?'); return }
+    setComposeLoading(true)
+    try {
+      const res = await teProxy('campaigns/compose', 'POST', { description, name: campaignForm.name.trim() || undefined })
+      const c = res.campaign
+      if (!res.ok || !c?.approach) throw new Error(res.message ?? res.error ?? 'AI could not draft this campaign')
+      setCampaignForm((f: typeof campaignForm) => ({
+        ...f,
+        name: c.name ?? f.name,
+        approach: c.approach ?? f.approach,
+        collect: c.collect ?? f.collect,
+        first_message: c.first_message ?? f.first_message,
+      }))
+      toast.success('Draft ready — review and edit below, then save')
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'AI compose failed') }
+    finally { setComposeLoading(false) }
+  }
+
   async function saveCampaign() {
     if (!campaignForm.name.trim()) { toast.error('Name required'); return }
     setCampaignLoading(true)
@@ -1997,6 +2023,16 @@ export default function AICallBotPage() {
         ═══════════════════════════════════════════════════════════════ */}
         {tab === 'jobs' && (
           <div className="space-y-6">
+            {/* How this tab relates to Setup & Service — the two get confused */}
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/60 px-4 py-3 flex items-start gap-2.5">
+              <Info className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+              <p className="text-xs text-blue-900 leading-relaxed">
+                <span className="font-bold">Custom Jobs</span> are for <span className="font-semibold">any call about anything</span> — one-off or repeating.
+                Two steps: <span className="font-semibold">1)</span> create a <span className="font-semibold">Campaign</span> (the brief — what the agent says and what it collects; describe it in plain words and AI writes it),
+                then <span className="font-semibold">2)</span> schedule a <span className="font-semibold">Job</span> that dials a number using that campaign.
+                Booking-bound trip calls (daily check-ins, reconfirmation, post-tour) live in <span className="font-semibold">Setup &amp; Service</span> instead.
+              </p>
+            </div>
             {/* Campaigns */}
             <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
@@ -2005,7 +2041,7 @@ export default function AICallBotPage() {
                   <div><h3 className="text-sm font-bold text-slate-900">Campaigns</h3><p className="text-xs text-slate-500">Reusable call scripts — guide the AI agent&apos;s approach</p></div>
                 </div>
                 {!campaignOpen && (
-                  <button onClick={() => { setEditCampaign(null); setCampaignForm({ name: '', approach: '', collect: '', first_message: '', is_active: true }); setCampaignOpen(true) }}
+                  <button onClick={() => { setEditCampaign(null); setCampaignForm({ name: '', approach: '', collect: '', first_message: '', is_active: true }); setComposeText(''); setCampaignOpen(true) }}
                     className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-800 font-semibold">
                     <Plus className="w-3 h-3" /> New Campaign
                   </button>
@@ -2015,6 +2051,27 @@ export default function AICallBotPage() {
               {campaignOpen && (
                 <div className="p-4 bg-violet-50 border-b border-violet-200 space-y-3">
                   <p className="text-xs font-bold text-violet-800">{editCampaign ? `Edit: ${editCampaign.name}` : 'New Campaign'}</p>
+
+                  {/* ✨ AI compose — describe the call, OpenAI drafts the brief */}
+                  <div className="rounded-xl border border-violet-200 bg-white p-3 space-y-2">
+                    <p className="text-[11px] font-bold text-violet-700 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" /> Describe the call — AI writes the brief
+                    </p>
+                    <textarea
+                      className="form-input min-h-[64px] resize-none text-xs"
+                      placeholder='e.g. "Call the customer about the visa documents we emailed yesterday. Check they received them, explain the embassy appointment is on the 20th, and find out if they need help filling the forms or a preferred callback time."'
+                      value={composeText}
+                      onChange={(e: { target: { value: string } }) => setComposeText(e.target.value)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <button onClick={composeCampaignAI} disabled={composeLoading || !composeText.trim()}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-bold hover:bg-violet-700 disabled:opacity-50">
+                        {composeLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Drafting…</> : <><Sparkles className="w-3.5 h-3.5" /> Generate with AI</>}
+                      </button>
+                      <span className="text-[10px] text-slate-400">Fills the fields below — review and edit before saving.</span>
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div className="col-span-2"><label className="form-label">Name *</label><input className="form-input" value={campaignForm.name} onChange={e => setCampaignForm(f => ({ ...f, name: e.target.value }))} /></div>
                     <div className="col-span-2"><label className="form-label">Approach <span className="text-slate-400 font-normal">(how the agent should open)</span></label><textarea className="form-input min-h-[60px] resize-none" value={campaignForm.approach} onChange={e => setCampaignForm(f => ({ ...f, approach: e.target.value }))} /></div>
@@ -2026,7 +2083,7 @@ export default function AICallBotPage() {
                     <button onClick={saveCampaign} disabled={campaignLoading} className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700 disabled:opacity-60">
                       {campaignLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : editCampaign ? 'Update' : 'Create'}
                     </button>
-                    <button onClick={() => { setCampaignOpen(false); setEditCampaign(null) }} className="px-4 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50">Cancel</button>
+                    <button onClick={() => { setCampaignOpen(false); setEditCampaign(null); setComposeText('') }} className="px-4 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50">Cancel</button>
                   </div>
                 </div>
               )}
