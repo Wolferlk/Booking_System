@@ -101,6 +101,32 @@ const POLL_INTERVAL    = 30_000
 const TQ_EMAIL         = 'confirm.booking@aahaas.com'
 const PNL_EMAIL        = 'accounts.payable@aahaas.com'
 
+// ── Throttled fetch ─────────────────────────────────────────────────────────────
+// The inbox can render thousands of processed emails, each needing a PNL-status
+// lookup (`/api/bookings/{ref}`). Firing them all at once floods the hosted
+// reverse-proxy / WAF, which then returns HTML 403 "Forbidden" pages (works fine
+// locally where there is no proxy). Cap concurrency so we never burst the server.
+const MAX_CONCURRENT_BOOKING_FETCHES = 4
+let activeBookingFetches = 0
+const bookingFetchQueue: (() => void)[] = []
+
+function throttledFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const run = () => {
+      activeBookingFetches++
+      fetch(input, init)
+        .then(resolve, reject)
+        .finally(() => {
+          activeBookingFetches--
+          const next = bookingFetchQueue.shift()
+          if (next) next()
+        })
+    }
+    if (activeBookingFetches < MAX_CONCURRENT_BOOKING_FETCHES) run()
+    else bookingFetchQueue.push(run)
+  })
+}
+
 const CAT_COLOR: Record<string, string> = {
   HOTEL: 'bg-blue-100 text-blue-700', FLIGHT_TICKETS: 'bg-indigo-100 text-indigo-700',
   CRUISE: 'bg-cyan-100 text-cyan-700', TICKETS: 'bg-purple-100 text-purple-700',
@@ -522,7 +548,7 @@ export default function MailInboxPage() {
   const checkBookingPnl = useCallback(async (bookingRef: string) => {
     setPnlStatusMap(prev => new Map(prev).set(bookingRef, { hasPNL: false, lineCount: 0, checking: true }))
     try {
-      const res  = await fetch(`/api/bookings/${bookingRef}`)
+      const res  = await throttledFetch(`/api/bookings/${bookingRef}`)
       const json = await res.json()
       if (json.success) {
         const pnl = json.data?.pnl
