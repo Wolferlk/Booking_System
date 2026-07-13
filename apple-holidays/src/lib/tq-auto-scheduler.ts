@@ -216,7 +216,18 @@ export async function runTqAutoProcess(trigger: string = 'scheduler'): Promise<T
       // so we never re-run GPT extraction and never spend tokens twice.
       const dedupKey = `processed_email_${email.graphId}`
       const already = await prisma.systemSetting.findUnique({ where: { key: dedupKey } })
-      if (already) continue
+      if (already) {
+        // This mail was already processed (by this job or any other pipeline) but its
+        // cached MailMessage is still RECEIVED, so it keeps reappearing in the window
+        // and starves newer mail. Mark it PROCESSED so it leaves the unprocessed pool.
+        const [bookingRef] = (already.value || '').split('|')
+        await upsertCachedMailMessage({
+          email, mailboxUser: mailbox.user, mailboxKind: mailbox.kind,
+          bookingRef: bookingRef || undefined, status: 'PROCESSED',
+          processedAt: new Date().toISOString(),
+        }).catch(() => {})
+        continue
+      }
 
       try {
         await upsertCachedMailMessage({
