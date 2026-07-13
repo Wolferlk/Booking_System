@@ -15,7 +15,6 @@ import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
-import BookingLifecycle from '@/components/bookings/booking-lifecycle'
 import Modal from '@/components/ui/modal'
 import { formatDate, formatCurrency, getDaysUntilTrip } from '@/lib/utils'
 import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
@@ -134,6 +133,11 @@ export default function BookingDetailPage() {
   const [origin, setOrigin] = useState<CustomerOrigin | null>(null)
   const [originLoading, setOriginLoading] = useState(false)
 
+  // Whether an Accounts (external) PNL record is linked to this booking.
+  // Drives the "P&L Added" step in the Operation Checklist — it goes green as
+  // soon as the Accounts PNL is connected, not only when an internal P&L exists.
+  const [extPnlLinked, setExtPnlLinked] = useState(false)
+
   // Meal preference inline editing
   const [mealPrefs, setMealPrefs] = useState<Record<string, string>>({})
   const [mealPrefsDirty, setMealPrefsDirty] = useState(false)
@@ -247,26 +251,43 @@ export default function BookingDetailPage() {
 
   useEffect(() => { load() }, [ref])
 
-  // Load any previously-detected customer origin from cache
+  // Load any previously-detected customer origin from cache — and auto-detect
+  // once if nothing has been detected yet, so the card fills in on open.
   useEffect(() => {
     let active = true
     fetch(`/api/bookings/${ref}/origin`)
       .then(r => r.json())
-      .then(j => { if (active && j.success && j.data) setOrigin(j.data) })
+      .then(j => {
+        if (!active) return
+        if (j.success && j.data) setOrigin(j.data)
+        else detectOrigin(true) // no cache yet → detect silently in the background
+      })
       .catch(() => { /* non-critical */ })
     return () => { active = false }
   }, [ref])
 
-  async function detectOrigin() {
+  // Is an Accounts (external) PNL record linked? Used by the Operation Checklist.
+  useEffect(() => {
+    let active = true
+    fetch(`/api/bookings/${ref}/ext-pnl`)
+      .then(r => r.json())
+      .then(j => { if (active) setExtPnlLinked(!!(j.success && j.data)) })
+      .catch(() => { /* non-critical */ })
+    return () => { active = false }
+  }, [ref])
+
+  // detectOrigin(auto): `auto` runs silently on page open (no toasts); the
+  // Re-detect button calls it with auto=false to surface success/errors.
+  async function detectOrigin(auto = false) {
     setOriginLoading(true)
     try {
       const res = await fetch(`/api/bookings/${ref}/origin`, { method: 'POST' })
       const json = await res.json()
       if (!json.success) throw new Error(json.error || 'Detection failed')
       setOrigin(json.data)
-      toast.success(`Origin detected: ${json.data.country}`)
+      if (!auto) toast.success(`Origin detected: ${json.data.country}`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Origin detection failed')
+      if (!auto) toast.error(err instanceof Error ? err.message : 'Origin detection failed')
     } finally {
       setOriginLoading(false)
     }
@@ -1308,15 +1329,11 @@ Wishing you a wonderful trip! ✈️
             </div>
           </div>
 
-          {/* Lifecycle */}
-          <div className="mt-6 pt-5 border-t border-slate-100">
-            <BookingLifecycle status={status} />
-          </div>
-
           {/* Operation Checklist */}
           <OperationChecklist
             status={status}
             hasPnl={!!(pnl && (booking.pnl as any)?.lineItems?.length > 0)}
+            extPnlLinked={extPnlLinked}
             ticketCount={(booking.tickets as any[])?.length ?? 0}
             agendaItems={(booking.tourAgenda as any)?.items ?? []}
           />
@@ -1553,7 +1570,7 @@ Wishing you a wonderful trip! ✈️
                 {origin?.reasoning && <p className="text-[11px] text-slate-500 mt-0.5 truncate" title={origin.reasoning}>{origin.reasoning}</p>}
               </div>
               <button
-                onClick={detectOrigin}
+                onClick={() => detectOrigin(false)}
                 disabled={originLoading}
                 className="flex-shrink-0 flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
                 title="Use AI to identify the customer's country of origin from flight details"
@@ -3337,6 +3354,7 @@ import { getCurrentStep } from '@/lib/state-machine'
 interface OpChecklistProps {
   status: BookingStatus
   hasPnl: boolean
+  extPnlLinked: boolean
   ticketCount: number
   agendaItems: { assignment?: { id?: string; driverName?: string | null; driverId?: string | null } | null }[]
 }
@@ -3367,8 +3385,9 @@ const CHECKLIST: {
     label:  'P&L Added',
     key:    'pnl',
     icon:   '📊',
-    done:   p => p.hasPnl,
-    active: p => !p.hasPnl && getCurrentStep(p.status) >= 5,
+    // Green as soon as an internal P&L exists OR an Accounts (external) PNL is linked.
+    done:   p => p.hasPnl || p.extPnlLinked,
+    active: p => !(p.hasPnl || p.extPnlLinked) && getCurrentStep(p.status) >= 5,
   },
   {
     label:  'Driver Allocated',
