@@ -21,12 +21,10 @@ export function CountryFlag({ country, className = 'w-5 h-4' }: CountryFlagProps
     case 'MALAYSIA':
       return <MY className={className} title="Malaysia" />
     case 'SINGAPORE_MALAYSIA':
-      // Apply the sizing className to the wrapper and split the width between the
-      // two flags so this works even when className only sets width (not font-size).
       return (
-        <span className={`inline-flex items-center justify-center gap-0.5 ${className}`}>
-          <SG className="w-1/2 h-auto rounded-[1px]" title="Singapore" />
-          <MY className="w-1/2 h-auto rounded-[1px]" title="Malaysia" />
+        <span className="inline-flex gap-0.5">
+          <SG className={className} title="Singapore" />
+          <MY className={className} title="Malaysia" />
         </span>
       )
     default:

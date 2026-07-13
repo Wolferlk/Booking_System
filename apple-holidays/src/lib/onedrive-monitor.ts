@@ -25,7 +25,7 @@ import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractBookingFromEmail } from '@/lib/mail-processor'
-import { classifyPNLCategories, extractPNLFromText, extractBookingFromText } from '@/lib/openai'
+import { classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
 import { detectCountryFromRef, detectCountryFromPath } from '@/lib/country-detection'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
@@ -625,12 +625,7 @@ async function processTCFile(
     text = await extractTextFromDocx(buffer)
   }
 
-  // OneDrive TC files are clean documents — identical to the /dashboard/bookings/new
-  // upload flow — so use the same proven document extractor (BOOKING_EXTRACTION_PROMPT),
-  // NOT the email-thread extractor. The email path's extractTCSection noise-stripper can
-  // truncate clean docs and its prompt misses fields the document prompt captures.
-  const extracted = await extractBookingFromText(text, bookingRef) as unknown as
-    Awaited<ReturnType<typeof extractBookingFromEmail>>
+  const extracted = await extractBookingFromEmail(text, 'TOUR_CONFIRMATION')
 
   // Override booking ref with the folder name ref (more reliable)
   if (bookingRef) extracted.bookingRef = bookingRef

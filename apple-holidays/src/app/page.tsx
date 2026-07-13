@@ -182,7 +182,7 @@ export default function HomePage() {
               {/* Flag — large, centered */}
               <div className="flex justify-center items-center px-6 py-6">
                 <div className={`w-28 h-28 rounded-2xl flex items-center justify-center border ${dest.accentBg} transition-colors`}>
-                  <CountryFlag country={dest.country} className="w-20 h-auto" />
+                  <CountryFlag country={dest.country} className="text-[56px] leading-none" />
                 </div>
               </div>
 
