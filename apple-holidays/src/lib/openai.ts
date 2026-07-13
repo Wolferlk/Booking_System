@@ -69,7 +69,7 @@ export async function logAiUsage(params: {
 
 // ─── System prompts ──────────────────────────────────────────────────────
 
-const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
+export const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
 Extract structured booking data from the provided tour confirmation document text.
 Return ONLY valid JSON matching the schema below. If a field is not found, use null.
 
@@ -129,11 +129,13 @@ Schema:
   "agentPhone": "string or null — phone of the BOOKING AGENT company. NEVER extract the tour operator's letterhead phone (e.g. the +94 11 number in the AppleHolidays/Sharmila Travels letterhead). Return null if no agent phone is found.",
   "agentWhatsapp": "string or null — WhatsApp number of the agent ONLY if explicitly labeled 'WA:' or 'WhatsApp:' separately from the phone number. Do NOT duplicate agentPhone here.",
   "agentCountry": "string or null — country of the travel agent company",
+  "agentAddress": "string or null — agent company full office/mailing address (labeled 'Agent:', 'Company:', 'Address:' near the agent contact block)",
 
   "contactEmail": "string or null — personal email of the lead tourist / end customer (found in passenger section, 'Guest Email', or different domain from agent)",
   "contactPhone": "string or null — personal mobile/phone of the lead tourist. A phone number appearing next to the guest/passenger name is the contactPhone.",
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist ONLY if explicitly labeled 'WA:' or 'WhatsApp:' separately. Do NOT copy contactPhone into contactWhatsapp unless it is separately labeled as WhatsApp.",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
+  "contactAddress": "string or null — home/mailing address of the lead tourist / end customer",
 
   "isNumber": "string or null — CRITICAL: IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122. Extract EXACTLY as written, remove spaces (VN 19785 → VN19785). Labeled 'IS Number:' in the document. ALWAYS extract if present. Return null only if truly absent.",
   "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
@@ -152,7 +154,8 @@ Schema:
       "isLead": "boolean",
       "passport": "string or null — passport DOCUMENT NUMBER only (e.g. 'N1234567', 'A9876543'). NEVER put a phone/mobile number here. If you see a phone number next to a passenger name, put it in 'contact' instead.",
       "nationality": "string or null — passenger nationality or country",
-      "contact": "string or null — personal phone, mobile or WhatsApp of this passenger. NEVER put a passport document number here."
+      "contact": "string or null — personal phone, mobile or WhatsApp of this passenger. NEVER put a passport document number here.",
+      "mealPreference": "string or null — dietary preference for this passenger e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement' fields. Normalise to title-case. Return null if not specified."
     }
   ],
   "flights": [

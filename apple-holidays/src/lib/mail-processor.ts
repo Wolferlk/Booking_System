@@ -1,4 +1,4 @@
-import openai from '@/lib/openai'
+import openai, { BOOKING_EXTRACTION_PROMPT } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
@@ -84,7 +84,7 @@ export interface ExtractedBooking {
   contactWhatsapp: string | null
   contactCountry: string | null
   contactAddress: string | null
-  passengers: { name: string; type: string; isLead: boolean; passport?: string | null; nationality?: string | null; contact?: string | null; age?: number | null }[]
+  passengers: { name: string; type: string; isLead: boolean; passport?: string | null; nationality?: string | null; contact?: string | null; age?: number | null; mealPreference?: string | null }[]
   flights: { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string; notes?: string }[]
   accommodations: { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string; mealType?: string }[]
   itineraryItems: { dayNo: number; date: string; title: string; description?: string }[]
@@ -357,6 +357,23 @@ Category mapping:
 
 IMPORTANT: pnlLines must NOT be empty if the email contains a cost table.`
 
+async function runBookingCompletion(systemPrompt: string, userContent: string): Promise<Partial<ExtractedBooking>> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
+
+  return JSON.parse(content) as Partial<ExtractedBooking>
+}
+
 export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL', emailSubject?: string): Promise<ExtractedBooking> {
   const prompt = emailType === 'TOUR_CONFIRMATION' ? TOUR_CONFIRMATION_PROMPT : PNL_PROMPT
 
@@ -370,20 +387,46 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     ? `Email Subject: ${emailSubject}\n\nExtract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
     : `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: prompt },
-      { role: 'user', content: userContent },
-    ],
-    response_format: { type: 'json_object' },
-    temperature: 0.1,
+  const parsed = await runBookingCompletion(prompt, userContent)
+  return finalizeExtractedBooking(parsed, { emailBody, relevantBody, emailSubject, emailType })
+}
+
+/**
+ * Document-mode extraction for OneDrive booking files (.docx / .pdf / .txt).
+ *
+ * OneDrive TC files are CLEAN, single-booking documents — NOT email threads. So this path:
+ *   1. SKIPS the email-thread section isolation (extractTCSection), which can truncate long
+ *      itineraries/inclusions at the 12k boundary or on a stray "From: … Date:" match.
+ *   2. Uses the richer, document-tuned BOOKING_EXTRACTION_PROMPT — the same prompt the
+ *      "New Booking → upload" flow uses, which extracts noticeably more accurately.
+ *   3. Still runs every server-side regex override (IS/CNTL/agent-ref/guest-phone) on the
+ *      FULL document text, so booking IDs remain authoritative and can't be fabricated.
+ *
+ * This is why the New Booking upload extracted correctly while the OneDrive auto-scan did not —
+ * this function brings the scan path up to the same (or better) accuracy.
+ */
+export async function extractBookingFromDocument(documentText: string, sourceName?: string): Promise<ExtractedBooking> {
+  const userContent = `Extract booking data from this tour confirmation document${sourceName ? ` (${sourceName})` : ''}:\n\n${documentText.slice(0, 16000)}`
+  const parsed = await runBookingCompletion(BOOKING_EXTRACTION_PROMPT, userContent)
+  // Clean document → run the regex overrides on the full text (no thread noise to isolate).
+  return finalizeExtractedBooking(parsed, {
+    emailBody:    documentText,
+    relevantBody: documentText,
+    emailSubject: undefined,
+    emailType:    'TOUR_CONFIRMATION',
   })
+}
 
-  const content = response.choices[0]?.message?.content
-  if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
-
-  const parsed = JSON.parse(content) as Partial<ExtractedBooking>
+/**
+ * Shared post-processing for both email- and document-mode extraction: applies the
+ * authoritative server-side regex overrides (IS number, CNTL, tour ref, agent booking id,
+ * guest phone) on top of the AI output and normalises the result to ExtractedBooking.
+ */
+function finalizeExtractedBooking(
+  parsed: Partial<ExtractedBooking>,
+  ctx: { emailBody: string; relevantBody: string; emailSubject?: string; emailType: 'TOUR_CONFIRMATION' | 'PNL' },
+): ExtractedBooking {
+  const { emailBody, relevantBody, emailSubject, emailType } = ctx
 
   // Use the TC-isolated section for server-side regex too — prevents false matches from
   // quoted email thread replies above/below the actual TC block.

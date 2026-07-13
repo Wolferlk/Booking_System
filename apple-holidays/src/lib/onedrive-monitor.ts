@@ -24,7 +24,7 @@ import {
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
-import { extractBookingFromEmail } from '@/lib/mail-processor'
+import { extractBookingFromEmail, extractBookingFromDocument } from '@/lib/mail-processor'
 import { classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
 import { detectCountryFromRef, detectCountryFromPath } from '@/lib/country-detection'
 import { logActivity, ACTION } from '@/lib/activity'
@@ -625,7 +625,9 @@ async function processTCFile(
     text = await extractTextFromDocx(buffer)
   }
 
-  const extracted = await extractBookingFromEmail(text, 'TOUR_CONFIRMATION')
+  // OneDrive TC files are clean documents, not email threads — use the document-tuned
+  // extractor (same accurate pipeline as the New Booking upload) instead of the email path.
+  const extracted = await extractBookingFromDocument(text, item.name)
 
   // Override booking ref with the folder name ref (more reliable)
   if (bookingRef) extracted.bookingRef = bookingRef
@@ -938,6 +940,11 @@ async function replaceBookingChildren(
         name: p.name,
         type: (p.type === 'CHILD' ? 'CHILD' : 'ADULT') as 'ADULT' | 'CHILD',
         isLead: p.isLead ?? false,
+        age: p.age ?? null,
+        passport: p.passport ?? null,
+        nationality: p.nationality ?? null,
+        contact: p.contact ?? null,
+        mealPreference: p.mealPreference ?? null,
       })),
     })
   }
