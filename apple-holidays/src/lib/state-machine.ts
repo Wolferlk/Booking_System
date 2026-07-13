@@ -18,7 +18,7 @@ export const TRANSITIONS: Transition[] = [
     label: 'Confirm Booking',
   },
   {
-    from: ['DRAFT', 'BT_CONFIRMED', 'CHANGE_REQUESTED'],
+    from: 'BT_CONFIRMED',
     to: 'GT_REVIEW',
     allowedRoles: ['BT_USER', 'TE_USER', 'SUPER_ADMIN', 'GT_TE_USER' , 'ULTRA_SUPER_ADMIN'],
     label: 'Submit to Travel Experience',
