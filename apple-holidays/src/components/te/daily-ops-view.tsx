@@ -11,6 +11,7 @@ import {
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Link from 'next/link'
+import { useCountryFilter } from '@/hooks/use-country-filter'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -470,6 +471,7 @@ type ViewMode  = 'single' | 'range'
 
 export default function DailyOpsView() {
   const todayYMD = toYMD(new Date())
+  const { countryFilter } = useCountryFilter()
 
   // ── Single-day state ────────────────────────────────────────────────────────
   const [date, setDate]               = useState(todayYMD)
@@ -494,7 +496,9 @@ export default function DailyOpsView() {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const res  = await fetch(`/api/te/daily?date=${date}`)
+      let url = `/api/te/daily?date=${date}`
+      if (countryFilter && countryFilter !== 'ALL') url += `&country=${countryFilter}`
+      const res  = await fetch(url)
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       setBookings(json.data.bookings)
@@ -504,7 +508,7 @@ export default function DailyOpsView() {
     } finally {
       setLoading(false)
     }
-  }, [date])
+  }, [date, countryFilter])
 
   useEffect(() => { load(); setFilter('all') }, [load])
 
@@ -519,7 +523,9 @@ export default function DailyOpsView() {
     if (!appliedRange) return
     setRangeLoading(true)
     try {
-      const res  = await fetch(`/api/te/daily-range?from=${appliedRange.from}&to=${appliedRange.to}`)
+      let url = `/api/te/daily-range?from=${appliedRange.from}&to=${appliedRange.to}`
+      if (countryFilter && countryFilter !== 'ALL') url += `&country=${countryFilter}`
+      const res  = await fetch(url)
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       setRangeData(json.data.days)
@@ -528,7 +534,7 @@ export default function DailyOpsView() {
     } finally {
       setRangeLoading(false)
     }
-  }, [appliedRange])
+  }, [appliedRange, countryFilter])
 
   useEffect(() => { loadRange() }, [loadRange])
 
