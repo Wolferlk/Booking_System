@@ -1,24 +1,17 @@
 import { NextRequest } from 'next/server'
 import { BookingStatus, type OperationCountry } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { buildApiSuccess } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Public, token-gated feed for the office "Live Screen" view dashboard (/view).
- * No login — a TV just loads /view?token=…. The token is generated & copied
- * from the admin config page and stored in SystemSetting `view_dashboard_token`.
+ * Public feed for the office "Live Screen" view dashboard (/view).
+ * No login and no token — the link is permanent and never expires. A TV just
+ * loads /view and it works forever. Data is read-only aggregate booking counts,
+ * so there is no sensitive per-record exposure. Keep the link internal.
  */
-export async function GET(req: NextRequest) {
-  const token = req.nextUrl.searchParams.get('token')?.trim()
-
-  const stored = await prisma.systemSetting.findUnique({
-    where: { key: 'view_dashboard_token' },
-  })
-  if (!stored?.value) return buildApiError('Live dashboard link is not configured yet', 404)
-  if (!token || token !== stored.value) return buildApiError('Invalid dashboard link', 403)
-
+export async function GET(_req: NextRequest) {
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const todayEnd   = new Date(todayStart.getTime() + 86_400_000)

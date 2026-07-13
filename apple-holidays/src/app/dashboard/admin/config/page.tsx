@@ -36,20 +36,11 @@ interface Settings {
   view_dashboard_token?: string
 }
 
-function LiveScreenCard({ token, saving, onSave }: {
-  token?: string
-  saving: boolean
-  onSave: (value: string) => void
-}) {
+function LiveScreenCard() {
   const [copied, setCopied] = useState(false)
-  const link = token && typeof window !== 'undefined' ? `${window.location.origin}/view?token=${token}` : ''
+  const link = typeof window !== 'undefined' ? `${window.location.origin}/view` : '/view'
 
-  const generate = () => {
-    const t = (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)).replace(/-/g, '')
-    onSave(t)
-  }
   const copy = async () => {
-    if (!link) return
     try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000) }
     catch { toast.error('Could not copy — copy it manually') }
   }
@@ -64,34 +55,22 @@ function LiveScreenCard({ token, saving, onSave }: {
       <CardBody className="p-5 space-y-4">
         <p className="text-xs text-slate-500">
           A big, animated real-time board for the office TV — today&apos;s tours on the ground per country,
-          total &amp; upcoming bookings, and a sound alert whenever a new booking arrives. Open this link on
-          any screen; no login required. Anyone with the link can view it, so keep it internal.
+          total &amp; upcoming bookings, and a sound alert whenever a new booking arrives. The link below is
+          permanent — it never expires and needs no login. Data refreshes automatically every 2 minutes.
+          Anyone with the link can view it, so keep it internal.
         </p>
 
-        {token ? (
-          <>
-            <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50">
-              <Link2 className="w-4 h-4 text-slate-400 shrink-0" />
-              <input readOnly value={link} className="flex-1 bg-transparent text-xs text-slate-700 font-mono outline-none truncate" onFocus={e => e.target.select()} />
-              <button onClick={copy} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800">
-                {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                {copied ? 'Copied' : 'Copy link'}
-              </button>
-            </div>
-            <div className="flex items-center gap-3">
-              <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700">
-                <ExternalLink className="w-3.5 h-3.5" /> Open dashboard
-              </a>
-              <button onClick={generate} disabled={saving} className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-red-600 disabled:opacity-50">
-                {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Regenerate link (revokes the old one)
-              </button>
-            </div>
-          </>
-        ) : (
-          <button onClick={generate} disabled={saving} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-50">
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} Generate shareable link
+        <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50">
+          <Link2 className="w-4 h-4 text-slate-400 shrink-0" />
+          <input readOnly value={link} className="flex-1 bg-transparent text-xs text-slate-700 font-mono outline-none truncate" onFocus={e => e.target.select()} />
+          <button onClick={copy} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800">
+            {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? 'Copied' : 'Copy link'}
           </button>
-        )}
+        </div>
+        <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700">
+          <ExternalLink className="w-3.5 h-3.5" /> Open dashboard
+        </a>
       </CardBody>
     </Card>
   )
@@ -279,11 +258,7 @@ export default function ConfigPage() {
       <div className="p-8 space-y-6 max-w-3xl">
 
         {/* Live Screen Dashboard link */}
-        <LiveScreenCard
-          token={settings.view_dashboard_token}
-          saving={saving === 'view_dashboard_token'}
-          onSave={(value) => saveSetting('view_dashboard_token', value)}
-        />
+        <LiveScreenCard />
 
         {/* Data Mode Toggle */}
         <Card>
