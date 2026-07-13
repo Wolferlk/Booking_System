@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { Plane, Users, Sparkles, TrendingUp, CalendarClock, Globe2, PartyPopper, Volume2, VolumeX, Bot } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 
@@ -55,7 +54,7 @@ const ORDER = ['VIETNAM', 'SRILANKA', 'SINGAPORE', 'MALAYSIA', 'ALL']
 const ALL_IMAGES = [IMG_VN, IMG_LK, IMG_SG, IMG_MY]
 
 // ── Config ───────────────────────────────────────────────────────────────────
-const POLL_MS         = 20_000  // data refresh
+const POLL_MS         = 120_000 // data refresh — every 2 minutes
 const SPOTLIGHT_MS    = 5_000   // country spotlight rotation
 const ALERT_DURATION  = 30      // seconds each new-booking alert stays
 
@@ -325,9 +324,6 @@ function HeadStat({ label, value, icon, tone, big }: { label: string; value: num
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 function ViewDashboard() {
-  const params = useSearchParams()
-  const token = params.get('token') ?? ''
-
   const [data, setData]   = useState<ViewData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow]     = useState(new Date())
@@ -367,9 +363,8 @@ function ViewDashboard() {
   }, [chime])
 
   const load = useCallback(async () => {
-    if (!token) { setError('Missing access token in the link.'); return }
     try {
-      const res = await fetch(`/api/public/view-dashboard?token=${encodeURIComponent(token)}`, { cache: 'no-store' })
+      const res = await fetch('/api/public/view-dashboard', { cache: 'no-store' })
       const j = await res.json()
       if (!res.ok || !j?.data) { setError(j?.error || 'Unable to load dashboard.'); return }
       setError(null)
@@ -385,7 +380,7 @@ function ViewDashboard() {
       }
       setData(d)
     } catch { setError('Network error — retrying…') }
-  }, [token, pump])
+  }, [pump])
 
   useEffect(() => { load(); const id = setInterval(load, POLL_MS); return () => clearInterval(id) }, [load])
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id) }, [])
@@ -453,7 +448,7 @@ function ViewDashboard() {
             <div className="text-center v-pop">
               <Globe2 className="w-16 h-16 text-slate-600 mx-auto mb-4" />
               <p className="text-xl font-bold text-slate-300">{error}</p>
-              <p className="text-sm text-slate-500 mt-2">Generate a fresh link from Admin → Config → Live Screen Dashboard.</p>
+              <p className="text-sm text-slate-500 mt-2">This screen reloads automatically — it will reconnect on its own.</p>
             </div>
           </div>
         )}
