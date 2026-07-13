@@ -9,10 +9,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   MessageSquareText, ChevronDown, RefreshCw, Loader2, Star,
-  Calendar, Plane, Users, Phone, Home, ThumbsUp, AlertCircle, Heart,
+  Calendar, Plane, Users, Phone, Home, ThumbsUp, AlertCircle, Heart, PhoneCall,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import {
-  KIND_META, SENTIMENT_META, OUTCOME_LABEL, TranscriptChat, fmtDate, triState,
+  KIND_META, SENTIMENT_META, OUTCOME_LABEL, TranscriptChat, CallRecordingPlayer, fmtDate, triState,
   type TranscriptRecord, type TranscriptStats, type Kind,
 } from '@/components/te/transcript-shared'
 
@@ -45,7 +46,7 @@ function Stars({ rating }: { rating: number }) {
   )
 }
 
-function CallCard({ rec }: { rec: TranscriptRecord }) {
+function CallCard({ rec, onRetry, retryBusy }: { rec: TranscriptRecord; onRetry?: () => void; retryBusy?: boolean }) {
   const [open, setOpen] = useState(false)
   const m = KIND_META[rec.kind]
   const Icon = m.icon
@@ -113,12 +114,34 @@ function CallCard({ rec }: { rec: TranscriptRecord }) {
 
               {rec.summary && <p className="text-xs text-slate-500 italic leading-relaxed">{rec.summary}</p>}
 
+              {/* Call recording */}
+              {rec.conversation_id && (
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><Phone className="w-3 h-3 text-violet-400" /> Recording</p>
+                  <CallRecordingPlayer conversationId={rec.conversation_id} />
+                </div>
+              )}
+
               {/* Conversation */}
               <div>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><MessageSquareText className="w-3 h-3 text-violet-400" /> Conversation</p>
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptChat transcript={rec.transcript} /></div>
               </div>
-              {rec.conversation_id && <p className="text-[10px] text-slate-400 font-mono">conversation: {rec.conversation_id}</p>}
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {onRetry && (
+                  <button
+                    type="button"
+                    disabled={retryBusy}
+                    onClick={onRetry}
+                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60 transition-colors"
+                  >
+                    {retryBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PhoneCall className="w-3.5 h-3.5" />}
+                    {rec.kind === 'reconfirm' ? 'Retry reconfirmation call' : rec.kind === 'post_tour' ? 'Retry post-tour call' : 'Call again'}
+                  </button>
+                )}
+                {rec.conversation_id && <p className="ml-auto text-[10px] text-slate-400 font-mono">conversation: {rec.conversation_id}</p>}
+              </div>
             </div>
           </motion.div>
         )}
@@ -145,6 +168,7 @@ export default function BookingCallTranscripts({ bookingRef }: { bookingRef: str
   const [stats, setStats] = useState<TranscriptStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<Kind | 'all'>('all')
+  const [retryBusy, setRetryBusy] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -159,6 +183,45 @@ export default function BookingCallTranscripts({ bookingRef }: { bookingRef: str
   }, [bookingRef])
 
   useEffect(() => { load() }, [load])
+
+  // Re-place the call behind a logged record: the record's own schedule row when
+  // it has one, else the booking's schedule row of the same phase (reconfirm /
+  // post_tour). The dial honours the WhatsApp approval flow — if the customer's
+  // call permission lapsed, they get the "Allow calls?" request instead.
+  const teProxy = useCallback(async (path: string, method = 'GET', body?: unknown) => {
+    const url = new URL('/api/te/proxy', location.origin)
+    url.searchParams.set('path', path)
+    const res = await fetch(url.toString(), {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+    return res.json()
+  }, [])
+
+  const retryCall = useCallback(async (rec: TranscriptRecord) => {
+    setRetryBusy(rec.uid)
+    try {
+      let scheduleId = rec.schedule_id
+      if (!scheduleId && (rec.kind === 'reconfirm' || rec.kind === 'post_tour')) {
+        const phase = rec.kind
+        const detail = await teProxy(`services/${encodeURIComponent(bookingRef)}`)
+        const rows: { id: number; phase?: string | null }[] = detail?.schedule ?? detail?.service?.schedule ?? []
+        const match = rows.filter(r => r.phase === phase).pop()
+        scheduleId = match?.id ?? null
+      }
+      if (!scheduleId) {
+        toast.error('No scheduled call found to retry — check the AI Auto-Call Bot schedule for this booking.')
+        return
+      }
+      const res = await teProxy(`schedule/${scheduleId}/call`, 'POST', { force: true })
+      if (res.approval_pending) toast.info(res.message ?? 'WhatsApp call approval pending — the customer must tap Allow first.')
+      else if (res.ok === false) toast.error(res.message ?? res.error ?? 'Call could not be placed')
+      else toast.success('Call placed — the customer’s phone is ringing.')
+    } catch {
+      toast.error('Failed to place the call')
+    } finally { setRetryBusy(null) }
+  }, [bookingRef, teProxy])
 
   const shown = useMemo(() => filter === 'all' ? records : records.filter(r => r.kind === filter), [records, filter])
 
@@ -199,7 +262,9 @@ export default function BookingCallTranscripts({ bookingRef }: { bookingRef: str
             <p className="text-xs text-slate-400 mt-0.5">Reconfirmation, on-tour and post-tour transcripts will appear here.</p>
           </div>
         ) : (
-          shown.map(rec => <CallCard key={rec.uid} rec={rec} />)
+          shown.map(rec => (
+            <CallCard key={rec.uid} rec={rec} retryBusy={retryBusy === rec.uid} onRetry={() => retryCall(rec)} />
+          ))
         )}
       </div>
     </div>

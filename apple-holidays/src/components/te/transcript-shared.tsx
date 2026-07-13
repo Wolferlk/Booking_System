@@ -8,7 +8,8 @@
  * Fed by GET /api/te/transcripts. Keeps normalisation, kind/sentiment styling
  * and the chat-bubble renderer in one place so both surfaces stay identical.
  */
-import { Phone, ClipboardCheck, Award, Bot, User } from 'lucide-react'
+import { useState } from 'react'
+import { Phone, ClipboardCheck, Award, Bot, User, Volume2, Loader2, AlertCircle } from 'lucide-react'
 import type { ElementType } from 'react'
 
 export type Kind = 'on_tour' | 'reconfirm' | 'post_tour'
@@ -141,6 +142,56 @@ export function TranscriptChat({ transcript, dark = false }: { transcript: Trans
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * Call RECORDING player — lazy: nothing is downloaded until the user presses
+ * "Play recording", then it swaps to a native audio player streaming from
+ * /api/te/recordings/:conversationId/audio. Handles the "still processing"
+ * window right after a call with a friendly retryable message.
+ */
+export function CallRecordingPlayer({ conversationId, dark = false }: { conversationId: string | null | undefined; dark?: boolean }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  if (!conversationId) return null
+  const src = `/api/te/recordings/${encodeURIComponent(conversationId)}/audio`
+
+  if (state === 'idle' || state === 'error') {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setState('loading')}
+          className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ${
+            dark
+              ? 'bg-violet-500/10 text-violet-300 border-violet-500/30 hover:bg-violet-500/20'
+              : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100'
+          }`}
+        >
+          <Volume2 className="w-3.5 h-3.5" /> {state === 'error' ? 'Try recording again' : 'Play call recording'}
+        </button>
+        {state === 'error' && (
+          <span className={`inline-flex items-center gap-1 text-[10px] ${dark ? 'text-amber-300' : 'text-amber-600'}`}>
+            <AlertCircle className="w-3 h-3" /> Recording not ready yet — it appears a few minutes after the call ends.
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 w-full">
+      {state === 'loading' && <Loader2 className={`w-3.5 h-3.5 animate-spin flex-shrink-0 ${dark ? 'text-violet-300' : 'text-violet-400'}`} />}
+      <audio
+        controls
+        autoPlay
+        preload="auto"
+        src={src}
+        className="w-full h-9"
+        onCanPlay={() => setState('ready')}
+        onError={() => setState('error')}
+      />
     </div>
   )
 }
