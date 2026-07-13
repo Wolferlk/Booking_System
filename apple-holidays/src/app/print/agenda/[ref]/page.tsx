@@ -802,8 +802,9 @@ export default function PrintAgendaPage() {
                 const vendor       = a!.vendorName ?? a!.vendor?.name ?? null
                 const vehicleType  = a!.vehicleType ?? a!.driver?.vehicle?.type ?? null
                 const vehiclePlate = a!.vehiclePlate ?? a!.driver?.vehicle?.plateNo ?? null
-                const photoUrl     = a!.driver?.photoUrl ?? null
-                const vehiclePhoto = a!.driver?.vehicle?.photoOutside ?? null
+                const photoUrl      = a!.driver?.photoUrl ?? null
+                const vehicleOutside = a!.driver?.vehicle?.photoOutside ?? null
+                const vehicleInside  = a!.driver?.vehicle?.photoInside ?? null
 
                 return (
                   <div key={i} style={{
@@ -833,10 +834,19 @@ export default function PrintAgendaPage() {
                         </p>
                       )}
                     </div>
-                    {vehiclePhoto && (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={vehiclePhoto} alt="Vehicle"
-                        style={{ width: 56, height: 40, objectFit: 'cover', borderRadius: 4, flexShrink: 0, border: '1px solid #e2e8f0' }} />
+                    {(vehicleOutside || vehicleInside) && (
+                      <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 3, flexShrink: 0 }}>
+                        {vehicleOutside && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={vehicleOutside} alt="Vehicle exterior"
+                            style={{ width: 56, height: 34, objectFit: 'cover', borderRadius: 4, border: '1px solid #e2e8f0' }} />
+                        )}
+                        {vehicleInside && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={vehicleInside} alt="Vehicle interior"
+                            style={{ width: 56, height: 34, objectFit: 'cover', borderRadius: 4, border: '1px solid #e2e8f0' }} />
+                        )}
+                      </div>
                     )}
                   </div>
                 )

@@ -869,6 +869,85 @@ Booking context: ${bookingContext.slice(0, 4000)}`,
   return response.choices[0]?.message?.content ?? 'Unable to generate response.'
 }
 
+// ─── Customer origin detection ───────────────────────────────────────────────
+
+export interface CustomerOrigin {
+  /** Full English country name, e.g. "India" */
+  country: string
+  /** ISO 3166-1 alpha-2 code, e.g. "IN" — uppercase */
+  iso2: string
+  /** Departure city / airport the customer flew out from, if known */
+  city: string | null
+  /** high | medium | low */
+  confidence: 'high' | 'medium' | 'low'
+  /** One short sentence explaining the reasoning */
+  reasoning: string
+}
+
+/**
+ * Works out which country a customer travelled FROM (their home / origin) using
+ * their inbound flight routing plus any agent/contact/passenger hints. The
+ * first inbound flight's departure airport is the strongest signal — GPT maps
+ * airport codes/cities to countries and reconciles that with the other hints.
+ */
+export async function identifyCustomerOrigin(
+  input: {
+    flights: { flightNo?: string | null; date?: string | null; fromApt?: string | null; toApt?: string | null; airline?: string | null }[]
+    agentCountry?: string | null
+    contactCountry?: string | null
+    nationalities?: (string | null | undefined)[]
+    operationCountry?: string | null
+  },
+  bookingRef?: string,
+): Promise<CustomerOrigin> {
+  const context = JSON.stringify({
+    flights: input.flights.slice(0, 12),
+    agentCountry: input.agentCountry ?? null,
+    contactCountry: input.contactCountry ?? null,
+    nationalities: (input.nationalities ?? []).filter(Boolean),
+    tourOperatingIn: input.operationCountry ?? null,
+  })
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      {
+        role: 'system',
+        content: `You are a travel-operations analyst. Determine the COUNTRY a customer travelled FROM (their home / point of origin) for a tour.
+
+Rules:
+- The tour operates in "tourOperatingIn"; that is the DESTINATION, never the origin. Ignore it as an origin candidate.
+- The strongest signal is the first inbound flight: its departure airport ("fromApt") is closest to the customer's home country. Map airport IATA codes or city names to their country (e.g. BOM/DEL → India, LHR → United Kingdom, DXB → United Arab Emirates, SIN → Singapore).
+- If a flight connects (e.g. DEL→DXB→CMB), the ORIGINAL departure airport of the earliest inbound segment indicates the home country.
+- Use agentCountry, contactCountry and passenger nationalities to confirm or break ties.
+- Return your best single answer even with partial data; set confidence accordingly.
+
+Respond ONLY with strict JSON:
+{"country":"<full English name>","iso2":"<ISO alpha-2 uppercase>","city":"<departure city or airport name or null>","confidence":"high|medium|low","reasoning":"<one short sentence>"}`,
+      },
+      { role: 'user', content: `Booking signals:\n${context}` },
+    ],
+    temperature: 0,
+    max_tokens: 200,
+    response_format: { type: 'json_object' },
+  })
+
+  await logAiUsage({ callType: 'customer_origin', model: 'gpt-4o-mini', usage: response.usage, bookingRef, source: 'manual' })
+
+  const raw = response.choices[0]?.message?.content ?? '{}'
+  let parsed: Partial<CustomerOrigin> = {}
+  try { parsed = JSON.parse(raw) } catch { /* fall through to defaults */ }
+
+  const iso2 = String(parsed.iso2 ?? '').trim().toUpperCase().slice(0, 2)
+  return {
+    country: String(parsed.country ?? 'Unknown').trim() || 'Unknown',
+    iso2: /^[A-Z]{2}$/.test(iso2) ? iso2 : '',
+    city: parsed.city ? String(parsed.city).trim() : null,
+    confidence: (['high', 'medium', 'low'] as const).includes(parsed.confidence as never) ? parsed.confidence as CustomerOrigin['confidence'] : 'low',
+    reasoning: String(parsed.reasoning ?? '').trim() || 'Derived from available booking signals.',
+  }
+}
+
 // ─── Destination hero images (DALL·E 3) ──────────────────────────────────────
 
 /**
