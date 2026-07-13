@@ -6,8 +6,18 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { verifyFeedbackLinkToken } from '@/lib/customer-whatsapp-automation'
+import { verifyPortalLinkToken } from '@/lib/portal-link'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Access is granted by either the dedicated feedback link token (WhatsApp) or
+ * the customer trip portal token — both prove the holder has access to this booking,
+ * so the in-portal "Feedback" tab can reuse the same ?t= it already has.
+ */
+function hasFeedbackAccess(ref: string, token: string): boolean {
+  return verifyFeedbackLinkToken(ref, token) || verifyPortalLinkToken(ref, token)
+}
 
 const RATINGS = ['EXCELLENT', 'GOOD', 'AVERAGE', 'POOR'] as const
 const PURPOSES = ['BUSINESS', 'LEISURE', 'BOTH'] as const
@@ -25,7 +35,7 @@ function validRating(v: unknown): v is (typeof RATINGS)[number] | null {
 
 export async function GET(req: NextRequest, { params }: { params: { ref: string } }) {
   const token = req.nextUrl.searchParams.get('t') ?? ''
-  if (!verifyFeedbackLinkToken(params.ref, token)) {
+  if (!hasFeedbackAccess(params.ref, token)) {
     return buildApiError('Invalid or expired link', 403)
   }
 
@@ -57,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: { ref: string 
 
 export async function POST(req: NextRequest, { params }: { params: { ref: string } }) {
   const token = req.nextUrl.searchParams.get('t') ?? ''
-  if (!verifyFeedbackLinkToken(params.ref, token)) {
+  if (!hasFeedbackAccess(params.ref, token)) {
     return buildApiError('Invalid or expired link', 403)
   }
 

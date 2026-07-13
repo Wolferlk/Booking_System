@@ -43,6 +43,7 @@ export async function GET(
         orderBy: { createdAt: 'asc' },
         include: { agendaItem: { select: { date: true, location: true } } },
       },
+      guestFeedback: true,
     },
   })
 
@@ -140,6 +141,21 @@ export async function GET(
       paidAt: p.paidAt,
       refNumber: p.refNumber ?? null,
     })),
+    feedback: booking.guestFeedback
+      ? {
+          purpose:            booking.guestFeedback.purpose,
+          accommodationRoom:  booking.guestFeedback.accommodationRoom,
+          accommodationFood:  booking.guestFeedback.accommodationFood,
+          restaurantFood:     booking.guestFeedback.restaurantFood,
+          restaurantAmbience: booking.guestFeedback.restaurantAmbience,
+          transportVehicle:   booking.guestFeedback.transportVehicle,
+          transportDriver:    booking.guestFeedback.transportDriver,
+          overallExperience:  booking.guestFeedback.overallExperience,
+          remarks:            booking.guestFeedback.remarks,
+          clientName:         booking.guestFeedback.clientName,
+          submittedAt:        booking.guestFeedback.submittedAt,
+        }
+      : null,
   }
 
   return buildApiSuccess(portalData)

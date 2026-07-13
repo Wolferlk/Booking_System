@@ -69,7 +69,7 @@ export async function logAiUsage(params: {
 
 // ─── System prompts ──────────────────────────────────────────────────────
 
-const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
+export const BOOKING_EXTRACTION_PROMPT = `You are a travel booking data extraction assistant for AppleHolidays.
 Extract structured booking data from the provided tour confirmation document text.
 Return ONLY valid JSON matching the schema below. If a field is not found, use null.
 
@@ -129,11 +129,13 @@ Schema:
   "agentPhone": "string or null — phone of the BOOKING AGENT company. NEVER extract the tour operator's letterhead phone (e.g. the +94 11 number in the AppleHolidays/Sharmila Travels letterhead). Return null if no agent phone is found.",
   "agentWhatsapp": "string or null — WhatsApp number of the agent ONLY if explicitly labeled 'WA:' or 'WhatsApp:' separately from the phone number. Do NOT duplicate agentPhone here.",
   "agentCountry": "string or null — country of the travel agent company",
+  "agentAddress": "string or null — agent company full office/mailing address (labeled 'Agent:', 'Company:', 'Address:' near the agent contact block)",
 
   "contactEmail": "string or null — personal email of the lead tourist / end customer (found in passenger section, 'Guest Email', or different domain from agent)",
   "contactPhone": "string or null — personal mobile/phone of the lead tourist. A phone number appearing next to the guest/passenger name is the contactPhone.",
   "contactWhatsapp": "string or null — WhatsApp of the lead tourist ONLY if explicitly labeled 'WA:' or 'WhatsApp:' separately. Do NOT copy contactPhone into contactWhatsapp unless it is separately labeled as WhatsApp.",
   "contactCountry": "string or null — home country or nationality country of the lead tourist",
+  "contactAddress": "string or null — home/mailing address of the lead tourist / end customer",
 
   "isNumber": "string or null — CRITICAL: IS/VN/SG/MY number e.g. VN19005, IS48377, SG22232, MY23122. Extract EXACTLY as written, remove spaces (VN 19785 → VN19785). Labeled 'IS Number:' in the document. ALWAYS extract if present. Return null only if truly absent.",
   "dealName": "string or null — deal name e.g. 'Rakshitha - Vietnam - 060626' (labeled 'Deal Name' in TC)",
@@ -152,7 +154,8 @@ Schema:
       "isLead": "boolean",
       "passport": "string or null — passport DOCUMENT NUMBER only (e.g. 'N1234567', 'A9876543'). NEVER put a phone/mobile number here. If you see a phone number next to a passenger name, put it in 'contact' instead.",
       "nationality": "string or null — passenger nationality or country",
-      "contact": "string or null — personal phone, mobile or WhatsApp of this passenger. NEVER put a passport document number here."
+      "contact": "string or null — personal phone, mobile or WhatsApp of this passenger. NEVER put a passport document number here.",
+      "mealPreference": "string or null — dietary preference for this passenger e.g. 'Vegetarian', 'Vegan', 'Halal', 'Jain', 'Non-Vegetarian', 'Gluten-Free'. Look for 'Meal Preference', 'Food Preference', 'Dietary Requirement' fields. Normalise to title-case. Return null if not specified."
     }
   ],
   "flights": [
@@ -864,4 +867,214 @@ Booking context: ${bookingContext.slice(0, 4000)}`,
 
   await logAiUsage({ callType: 'ai_suggestion', model: 'gpt-4o', usage: response.usage, source: 'manual' })
   return response.choices[0]?.message?.content ?? 'Unable to generate response.'
+}
+
+// ─── Destination hero images (DALL·E 3) ──────────────────────────────────────
+
+/**
+ * Generates a cute, dreamy travel-poster background for a destination and
+ * returns the raw PNG bytes. Callers are expected to cache the result on disk
+ * (one image per destination slug) — this is a paid call (~$0.08 / image).
+ */
+export async function generateDestinationImage(destination: string): Promise<Buffer> {
+  const prompt =
+    `A cute, dreamy travel-poster illustration of ${destination}. ` +
+    `Soft pastel colours, warm golden light, iconic landmarks and nature of the destination, ` +
+    `whimsical kawaii storybook style, gentle gradients, tiny cute details, no text, no words, ` +
+    `vertical portrait composition suitable as a phone wallpaper background, highly detailed, joyful and inviting.`
+
+  // This deployment's OpenAI backend serves gpt-image-1 (portrait 1024x1536,
+  // quality low|medium|high|auto, always returns b64 — no response_format).
+  const model = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1'
+  const response = await openai.images.generate({
+    model,
+    prompt,
+    n: 1,
+    size: '1024x1536',
+    quality: 'medium',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any)
+
+  const datum = response.data?.[0]
+  let buffer: Buffer
+  if (datum?.b64_json) {
+    buffer = Buffer.from(datum.b64_json, 'base64')
+  } else if (datum?.url) {
+    const img = await fetch(datum.url)
+    if (!img.ok) throw new Error(`Image download failed: ${img.status}`)
+    buffer = Buffer.from(await img.arrayBuffer())
+  } else {
+    throw new Error('Image generation returned no data')
+  }
+
+  // Best-effort cost log (image API returns no token usage)
+  try {
+    const { prisma } = await import('@/lib/prisma')
+    await prisma.aiUsageLog.create({
+      data: {
+        callType: 'destination_image', model: 'dall-e-3',
+        promptTokens: 0, completionTokens: 0, totalTokens: 0,
+        estimatedCostUsd: 0.08, source: 'portal',
+      },
+    })
+  } catch { /* never let logging crash the flow */ }
+
+  return buffer
+}
+
+// ─── Web-search image fallback ───────────────────────────────────────────────
+
+const IMG_URL_RE = /https?:\/\/[^\s"'<>()]+?\.(?:jpg|jpeg|png|webp)/i
+const UA = 'AppleHolidays-Portal/1.0 (+https://aahaas.com)'
+
+// Skip non-scenic imagery: flags, maps, emblems, logos, icons, vector art, and
+// off-theme results (war/memorial/historical) that pollute bare-country searches.
+const BAD_IMG_RE = /flag|\bmap\b|locator|emblem|coat[_-]?of[_-]?arms|logo|icon|seal|\.svg|veteran|memorial|\bwar\b|cemetery|protest|militar|aerial/i
+
+/** Downloads an image URL and returns its bytes, validating it's a real photo. */
+async function downloadImage(url: string): Promise<Buffer> {
+  if (BAD_IMG_RE.test(url)) throw new Error('non-scenic image skipped')
+  const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' })
+  if (!res.ok) throw new Error(`download ${res.status}`)
+  const ct = res.headers.get('content-type') ?? ''
+  if (!ct.startsWith('image/') || ct.includes('svg')) throw new Error(`not a photo (${ct})`)
+  const buf = Buffer.from(await res.arrayBuffer())
+  if (buf.length < 20_000) throw new Error('image too small (likely an icon/flag)')
+  return buf
+}
+
+/** Wikimedia Commons photo search — last-resort source of real scenic photos. */
+async function commonsImageUrls(destination: string): Promise<string[]> {
+  try {
+    const term = `${destination.split(',')[0].trim()} tourism scenery cityscape`
+    const api = 'https://commons.wikimedia.org/w/api.php?format=json&action=query' +
+      '&generator=search&gsrnamespace=6&gsrlimit=12' +
+      `&gsrsearch=${encodeURIComponent(term)}` +
+      '&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=1600'
+    const res = await fetch(api, { headers: { 'User-Agent': UA } })
+    if (!res.ok) return []
+    const j = await res.json()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pages: any[] = Object.values(j?.query?.pages ?? {})
+    return pages
+      .map(p => p?.imageinfo?.[0])
+      .filter(info => info && typeof info.mime === 'string' && info.mime.startsWith('image/') && !info.mime.includes('svg'))
+      // Prefer a resized 1600px thumbnail (fast, landscape-friendly) over the full original.
+      .map(info => info.thumburl || info.url)
+      .filter((u: string) => u && !BAD_IMG_RE.test(u))
+  } catch { return [] }
+}
+
+/** Resolve a possibly-messy query to a real Wikipedia article title. */
+async function resolveWikipediaTitle(query: string): Promise<string | null> {
+  try {
+    const api = `https://en.wikipedia.org/w/api.php?format=json&action=opensearch&limit=1&search=${encodeURIComponent(query)}`
+    const res = await fetch(api, { headers: { 'User-Agent': UA } })
+    if (!res.ok) return null
+    const j = await res.json()
+    return Array.isArray(j?.[1]) && j[1][0] ? j[1][0] : null
+  } catch { return null }
+}
+
+/** Wikipedia REST lead image — reliable source (filtered to skip flags/maps). */
+async function wikipediaImageUrl(destination: string): Promise<string | null> {
+  const fetchSummaryImage = async (title: string): Promise<string | null> => {
+    const res = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`, {
+      headers: { 'User-Agent': UA },
+    })
+    if (!res.ok) return null
+    const j = await res.json()
+    const url = j?.originalimage?.source ?? j?.thumbnail?.source ?? null
+    return url && !BAD_IMG_RE.test(url) ? url : null
+  }
+  try {
+    const clean = destination.split(',')[0].trim()
+    // Try the title directly, then fall back to search-resolving it.
+    return (await fetchSummaryImage(clean))
+      ?? (await (async () => {
+        const resolved = await resolveWikipediaTitle(clean)
+        return resolved ? fetchSummaryImage(resolved) : null
+      })())
+  } catch { return null }
+}
+
+/**
+ * Fallback for when image generation fails: uses OpenAI web search to find a
+ * real travel photo of the destination on the internet, downloads it, and
+ * returns the bytes. Falls back to Wikipedia's page image if search yields
+ * nothing usable. Throws only if no working image could be obtained.
+ */
+// Bare country names are ambiguous (Wikipedia gives a flag; searches surface
+// war/memorial content). Map them to an iconic, unmistakably scenic landmark so
+// every image source returns a beautiful, on-theme photo.
+const COUNTRY_LANDMARK: Record<string, string> = {
+  'vietnam': 'Ha Long Bay',
+  'sri lanka': 'Sigiriya',
+  'singapore': 'Marina Bay Sands',
+  'malaysia': 'Petronas Towers',
+  'singapore and malaysia': 'Marina Bay Sands',
+}
+
+export async function fetchDestinationImageFromWeb(destination: string): Promise<Buffer> {
+  const candidates: string[] = []
+  // Resolve a bare country to a landmark; keep specific destinations as-is.
+  const key = destination.split(',')[0].trim().toLowerCase()
+  const subject = COUNTRY_LANDMARK[key] ?? destination
+
+  // 1) Ask OpenAI (with live web search) for direct, hotlinkable image URLs.
+  try {
+    const res = await openai.responses.create({
+      model: process.env.OPENAI_SEARCH_MODEL || 'gpt-4o',
+      tools: [{ type: 'web_search_preview' }],
+      input:
+        `Find real, currently-working DIRECT image file URLs (ending in .jpg, .jpeg, .png or .webp) ` +
+        `of beautiful, vibrant, full-colour TOURISM photographs of ${subject}: ` +
+        `iconic landmarks, scenic landscapes, beaches, temples, or cityscapes that make people want to travel there. ` +
+        `Do NOT return flags, maps, emblems, logos, war or memorial imagery, or black-and-white historical photos. ` +
+        `Strongly prefer images hosted on upload.wikimedia.org. ` +
+        `Reply with 3 to 5 raw URLs only, one per line, no other text.`,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const text: string = (res as any).output_text ?? ''
+    for (const line of text.split(/\s+/)) {
+      const m = line.match(IMG_URL_RE)
+      if (m && !BAD_IMG_RE.test(m[0])) candidates.push(m[0])
+    }
+    console.log(`[destination-image] web search yielded ${candidates.length} candidate URL(s) for "${subject}"`)
+  } catch (e) {
+    console.warn('[destination-image] web search unavailable:', (e as Error).message)
+  }
+
+  // 2) Wikimedia Commons scenic-photo search (reliable, real photos).
+  candidates.push(...await commonsImageUrls(subject))
+
+  // 3) Wikipedia lead image as a last resort.
+  const wiki = await wikipediaImageUrl(subject)
+  if (wiki) candidates.push(wiki)
+
+  // 4) Try each candidate until one downloads as a valid photo.
+  const seen = new Set<string>()
+  for (const url of candidates) {
+    if (seen.has(url)) continue
+    seen.add(url)
+    try {
+      const buf = await downloadImage(url)
+      try {
+        const { prisma } = await import('@/lib/prisma')
+        await prisma.aiUsageLog.create({
+          data: {
+            callType: 'destination_image_web', model: 'web-search',
+            promptTokens: 0, completionTokens: 0, totalTokens: 0,
+            estimatedCostUsd: 0.03, source: 'portal',
+          },
+        })
+      } catch { /* ignore logging errors */ }
+      return buf
+    } catch (e) {
+      console.warn(`[destination-image]   ✗ ${url.slice(0, 90)} — ${(e as Error).message}`)
+    }
+  }
+
+  throw new Error('No usable web image found for destination')
 }

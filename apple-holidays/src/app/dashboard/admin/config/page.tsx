@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
@@ -32,6 +32,48 @@ interface Settings {
   driver_log_tour_advance_pct?: string
   driver_log_fuel_advance_pct?: string
   driver_log_auto_send_enabled?: string
+  // Live Screen (office TV) dashboard — public token-gated /view link
+  view_dashboard_token?: string
+}
+
+function LiveScreenCard() {
+  const [copied, setCopied] = useState(false)
+  const link = typeof window !== 'undefined' ? `${window.location.origin}/view` : '/view'
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000) }
+    catch { toast.error('Could not copy — copy it manually') }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+          <MonitorPlay className="w-4 h-4 text-slate-400" /> Live Screen Dashboard
+        </h3>
+      </CardHeader>
+      <CardBody className="p-5 space-y-4">
+        <p className="text-xs text-slate-500">
+          A big, animated real-time board for the office TV — today&apos;s tours on the ground per country,
+          total &amp; upcoming bookings, and a sound alert whenever a new booking arrives. The link below is
+          permanent — it never expires and needs no login. Data refreshes automatically every 2 minutes.
+          Anyone with the link can view it, so keep it internal.
+        </p>
+
+        <div className="flex items-center gap-2 p-3 rounded-xl border border-slate-200 bg-slate-50">
+          <Link2 className="w-4 h-4 text-slate-400 shrink-0" />
+          <input readOnly value={link} className="flex-1 bg-transparent text-xs text-slate-700 font-mono outline-none truncate" onFocus={e => e.target.select()} />
+          <button onClick={copy} className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800">
+            {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? 'Copied' : 'Copy link'}
+          </button>
+        </div>
+        <a href={link} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-700">
+          <ExternalLink className="w-3.5 h-3.5" /> Open dashboard
+        </a>
+      </CardBody>
+    </Card>
+  )
 }
 
 function AIToggleRow({
@@ -214,6 +256,9 @@ export default function ConfigPage() {
       <Header title="Settings" subtitle="System configuration" />
 
       <div className="p-8 space-y-6 max-w-3xl">
+
+        {/* Live Screen Dashboard link */}
+        <LiveScreenCard />
 
         {/* Data Mode Toggle */}
         <Card>

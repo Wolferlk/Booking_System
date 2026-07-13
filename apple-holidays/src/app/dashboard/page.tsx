@@ -277,7 +277,7 @@ export default function DashboardPage() {
         subtitle={
           countryMeta
             ? <span className="inline-flex items-center gap-1.5">
-                <CountryFlag country={countryFilter} className="text-base leading-none" />
+                <CountryFlag country={countryFilter} className="w-5 h-auto" />
                 {ROLE_LABELS[role ?? ''] ?? role} · {countryMeta.name} Operations
               </span>
             : "Here's what's happening with your bookings today"
