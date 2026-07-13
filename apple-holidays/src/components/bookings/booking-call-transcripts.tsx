@@ -125,7 +125,7 @@ function CallCard({ rec, onRetry, retryBusy }: { rec: TranscriptRecord; onRetry?
               {/* Conversation */}
               <div>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><MessageSquareText className="w-3 h-3 text-violet-400" /> Conversation</p>
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptChat transcript={rec.transcript} /></div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptChat transcript={rec.transcript} conversationId={rec.conversation_id} /></div>
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">

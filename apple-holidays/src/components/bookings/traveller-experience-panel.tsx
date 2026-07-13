@@ -223,11 +223,29 @@ function normaliseTranscript(raw: TranscriptTurn[] | string | null | undefined):
   })
 }
 
-function TranscriptViewer({ transcript }: { transcript: TranscriptTurn[] | string | null | undefined }) {
-  const lines = normaliseTranscript(transcript)
+function TranscriptViewer({ transcript, conversationId }: { transcript: TranscriptTurn[] | string | null | undefined; conversationId?: string | null }) {
+  const stored = normaliseTranscript(transcript)
+  const [fetched, setFetched] = useState<ReturnType<typeof normaliseTranscript> | null>(null)
+  const [loadingT, setLoadingT] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [])
-  if (lines.length === 0) return <p className="text-xs text-slate-400 italic px-3 py-2">No transcript recorded</p>
+  // On demand: if nothing is stored but we have a conversation id, pull the full
+  // conversation from the voice service (fetched from ElevenLabs + cached back).
+  useEffect(() => {
+    if (stored.length || !conversationId) return
+    let cancelled = false
+    setLoadingT(true)
+    fetch(`/api/te/proxy?path=${encodeURIComponent(`conversations/${conversationId}/transcript`)}`)
+      .then(r => r.json())
+      .then(j => { if (!cancelled) setFetched(normaliseTranscript(j?.transcript)) })
+      .catch(() => { if (!cancelled) setFetched([]) })
+      .finally(() => { if (!cancelled) setLoadingT(false) })
+    return () => { cancelled = true }
+  }, [conversationId, stored.length])
+  const lines = stored.length ? stored : (fetched ?? [])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines.length])
+  if (lines.length === 0) {
+    return <p className="text-xs text-slate-400 italic px-3 py-2">{loadingT ? 'Loading the conversation…' : 'No transcript recorded'}</p>
+  }
   return (
     <div className="max-h-80 overflow-y-auto space-y-2 px-1 py-2">
       {lines.map((line, i) => (
@@ -370,7 +388,7 @@ function ReconfirmCard({ row, onRetry, retryBusy }: { row: TEReconfirmation; onR
             <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-sky-600 hover:text-sky-800">
               <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
-            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} /></div>}
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} conversationId={row.conversation_id} /></div>}
           </div>
         )}
       </div>
@@ -436,7 +454,7 @@ function PostTourCard({ row, onRetry, retryBusy }: { row: TEPostTour; onRetry?: 
             <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-800">
               <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
-            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} /></div>}
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} conversationId={row.conversation_id} /></div>}
           </div>
         )}
       </div>
@@ -536,6 +554,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [reconfirmPlan, setReconfirmPlan] = useState({ enabled: true, days_before: '5', call_time: '' })
   const [postTourPlan, setPostTourPlan]   = useState({ enabled: true, days_after: '3', call_time: '' })
   const [planBusy, setPlanBusy]           = useState<'reconfirm' | 'post_tour' | null>(null)
+  // Inline timing editor for a REGISTERED service's special calls (which day /
+  // what time). Open one card's editor at a time; the form holds its draft.
+  const [planEdit, setPlanEdit]           = useState<'reconfirm' | 'post_tour' | null>(null)
+  const [planEditForm, setPlanEditForm]   = useState({ days: '', call_time: '' })
 
   // ── Edit service form ─────────────────────────────────────────────────────
   const [editOpen, setEditOpen]       = useState(false)
@@ -626,6 +648,28 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       await loadService(true)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
     finally { setPlanBusy(null) }
+  }
+
+  // Open the inline timing editor for a special call, seeded from current values.
+  function openPlanEdit(kind: 'reconfirm' | 'post_tour') {
+    if (kind === 'reconfirm') {
+      setPlanEditForm({ days: String(service?.reconfirm_days_before ?? 5), call_time: service?.reconfirm_call_time ?? '' })
+    } else {
+      setPlanEditForm({ days: String(service?.post_tour_days_after ?? 3), call_time: service?.post_tour_call_time ?? '' })
+    }
+    setPlanEdit(kind)
+  }
+
+  // Save the edited timing — re-lays the special call's schedule row on the API.
+  async function savePlanEdit(kind: 'reconfirm' | 'post_tour') {
+    const daysKey = kind === 'reconfirm' ? 'days_before' : 'days_after'
+    const patch: Record<string, unknown> = {
+      enabled: true,
+      [daysKey]: Number(planEditForm.days) || (kind === 'reconfirm' ? 5 : 3),
+    }
+    if (planEditForm.call_time) patch.call_time = planEditForm.call_time
+    await updatePlan(kind, patch)
+    setPlanEdit(null)
   }
 
   // ── Edit service ──────────────────────────────────────────────────────────
@@ -1100,6 +1144,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                         <span className="text-[10px] text-sky-600 font-semibold">−{service!.reconfirm_days_before}d{service!.reconfirm_call_time ? ` · ${service!.reconfirm_call_time}` : ''}</span>
                       )}
                       <span className="ml-auto flex items-center gap-1.5">
+                        {service!.reconfirm_enabled && planEdit !== 'reconfirm' && (
+                          <button type="button" onClick={() => openPlanEdit('reconfirm')} title="Edit when this call is placed"
+                            className="p-1 rounded-lg text-sky-500 hover:bg-sky-100 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                        )}
                         {service!.reconfirm_enabled && schedule.some(s => s.phase === 'reconfirm') && (
                           <button type="button" disabled={specialBusy === 'reconfirm'} onClick={() => retrySpecial('reconfirm')} title="Place the reconfirmation call now"
                             className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-60 transition-colors">
@@ -1111,6 +1159,18 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                           : <ToggleSwitch on={!!service!.reconfirm_enabled} onChange={v => updatePlan('reconfirm', { enabled: v, days_before: service!.reconfirm_days_before ?? 5 })} />}
                       </span>
                     </div>
+                    {planEdit === 'reconfirm' && (
+                      <div className="mt-2.5 pt-2.5 border-t border-sky-100 grid grid-cols-2 gap-2 items-end">
+                        <div><label className="form-label !text-[10px]">Days before arrival</label><input type="number" min="0" max="30" className="form-input h-8 text-xs" value={planEditForm.days} onChange={e => setPlanEditForm(f => ({ ...f, days: e.target.value }))} /></div>
+                        <div><label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={planEditForm.call_time} onChange={e => setPlanEditForm(f => ({ ...f, call_time: e.target.value }))} /></div>
+                        <div className="col-span-2 flex gap-2">
+                          <button type="button" disabled={planBusy === 'reconfirm'} onClick={() => savePlanEdit('reconfirm')} className="flex items-center gap-1 px-3 py-1 rounded-lg bg-sky-600 text-white text-[11px] font-semibold hover:bg-sky-700 disabled:opacity-60 transition-colors">
+                            {planBusy === 'reconfirm' ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : 'Save timing'}
+                          </button>
+                          <button type="button" onClick={() => setPlanEdit(null)} className="px-3 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 text-[11px] font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className={`rounded-xl border p-3 ${service!.post_tour_enabled ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'}`}>
                     <div className="flex items-center gap-2">
@@ -1120,6 +1180,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                         <span className="text-[10px] text-amber-600 font-semibold">+{service!.post_tour_days_after}d{service!.post_tour_call_time ? ` · ${service!.post_tour_call_time}` : ''}</span>
                       )}
                       <span className="ml-auto flex items-center gap-1.5">
+                        {service!.post_tour_enabled && planEdit !== 'post_tour' && (
+                          <button type="button" onClick={() => openPlanEdit('post_tour')} title="Edit when this call is placed"
+                            className="p-1 rounded-lg text-amber-500 hover:bg-amber-100 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                        )}
                         {service!.post_tour_enabled && schedule.some(s => s.phase === 'post_tour') && (
                           <button type="button" disabled={specialBusy === 'post_tour'} onClick={() => retrySpecial('post_tour')} title="Place the post-tour feedback call now"
                             className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 transition-colors">
@@ -1131,6 +1195,18 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                           : <ToggleSwitch on={!!service!.post_tour_enabled} onChange={v => updatePlan('post_tour', { enabled: v, days_after: service!.post_tour_days_after ?? 3 })} />}
                       </span>
                     </div>
+                    {planEdit === 'post_tour' && (
+                      <div className="mt-2.5 pt-2.5 border-t border-amber-100 grid grid-cols-2 gap-2 items-end">
+                        <div><label className="form-label !text-[10px]">Days after departure</label><input type="number" min="0" max="30" className="form-input h-8 text-xs" value={planEditForm.days} onChange={e => setPlanEditForm(f => ({ ...f, days: e.target.value }))} /></div>
+                        <div><label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={planEditForm.call_time} onChange={e => setPlanEditForm(f => ({ ...f, call_time: e.target.value }))} /></div>
+                        <div className="col-span-2 flex gap-2">
+                          <button type="button" disabled={planBusy === 'post_tour'} onClick={() => savePlanEdit('post_tour')} className="flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-600 text-white text-[11px] font-semibold hover:bg-amber-700 disabled:opacity-60 transition-colors">
+                            {planBusy === 'post_tour' ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : 'Save timing'}
+                          </button>
+                          <button type="button" onClick={() => setPlanEdit(null)} className="px-3 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 text-[11px] font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

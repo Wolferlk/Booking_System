@@ -8,7 +8,7 @@
  * Fed by GET /api/te/transcripts. Keeps normalisation, kind/sentiment styling
  * and the chat-bubble renderer in one place so both surfaces stay identical.
  */
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Phone, ClipboardCheck, Award, Bot, User, Volume2, Loader2, AlertCircle } from 'lucide-react'
 import type { ElementType } from 'react'
 
@@ -107,10 +107,45 @@ export function normaliseTranscript(raw: TranscriptTurn[] | string | null | unde
     })
 }
 
-/** Chat-style transcript renderer. `dark` swaps to the AI Call Bot palette. */
-export function TranscriptChat({ transcript, dark = false }: { transcript: TranscriptRecord['transcript']; dark?: boolean }) {
-  const lines = normaliseTranscript(transcript)
+/**
+ * Chat-style transcript renderer. `dark` swaps to the AI Call Bot palette.
+ * When the stored transcript is empty but a `conversationId` is given, it fetches
+ * the full conversation on demand from the voice service (which pulls it from
+ * ElevenLabs and caches it back) — so older calls whose transcript was stored
+ * empty still show their conversation here.
+ */
+export function TranscriptChat({ transcript, conversationId, dark = false }: { transcript: TranscriptRecord['transcript']; conversationId?: string | null; dark?: boolean }) {
+  const stored = useMemo(() => normaliseTranscript(transcript), [transcript])
+  const [fetched, setFetched] = useState<NormLine[] | null>(null)
+  const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'error'>('idle')
+
+  useEffect(() => {
+    if (stored.length || !conversationId) return
+    let cancelled = false
+    setFetchState('loading')
+    fetch(`/api/te/proxy?path=${encodeURIComponent(`conversations/${conversationId}/transcript`)}`)
+      .then(r => r.json())
+      .then(j => {
+        if (cancelled) return
+        const l = normaliseTranscript(j?.transcript)
+        setFetched(l)
+        setFetchState(l.length ? 'idle' : 'error')
+      })
+      .catch(() => { if (!cancelled) setFetchState('error') })
+    return () => { cancelled = true }
+  }, [conversationId, stored.length])
+
+  const lines = stored.length ? stored : (fetched ?? [])
+
   if (!lines.length) {
+    if (fetchState === 'loading') {
+      return (
+        <div className={`flex flex-col items-center justify-center gap-2 py-8 text-center ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+          <Loader2 className="w-6 h-6 animate-spin opacity-60" />
+          <p className="text-xs italic">Loading the conversation…</p>
+        </div>
+      )
+    }
     return (
       <div className={`flex flex-col items-center justify-center gap-2 py-8 text-center ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
         <Bot className="w-7 h-7 opacity-40" />
