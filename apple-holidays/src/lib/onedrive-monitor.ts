@@ -207,6 +207,9 @@ async function saveDeltaToken(driveKey: string, token: string): Promise<void> {
 
 // ── Main scan ─────────────────────────────────────────────────────────────────
 
+/** Which document types a manual scan should process. */
+export type ProcessDocType = 'TC' | 'PNL'
+
 export interface ScanResult {
   driveKey:    string
   label:       string
@@ -1122,6 +1125,7 @@ function matchesDayFolder(name: string, targetDay: number, monthIdx: number): bo
 export async function scanDriveByTargetDate(
   cfg:        DriveConfig,
   targetDate: Date,
+  types:      ProcessDocType[] = ['TC', 'PNL'],
 ): Promise<ScanResult> {
   const result: ScanResult = {
     driveKey: cfg.key, label: cfg.label,
@@ -1197,7 +1201,7 @@ export async function scanDriveByTargetDate(
         for (const dc of dayChildren) {
           result.scanned += 1
           if (dc.folder && isBookingFolder(dc)) {
-            await processBookingFolderDirect(driveId, dc, cfg, result, 0)
+            await processBookingFolderDirect(driveId, dc, cfg, result, 0, types)
           }
         }
       }
@@ -1229,6 +1233,7 @@ export async function scanDriveByDateRange(
   dateFrom:     Date,
   dateTo:       Date,
   dedupMinutes: number = 0,
+  types:        ProcessDocType[] = ['TC', 'PNL'],
 ): Promise<ScanResult> {
   const result: ScanResult = {
     driveKey: cfg.key, label: cfg.label,
@@ -1266,7 +1271,7 @@ export async function scanDriveByDateRange(
 
       if (child.folder && isBookingFolder(child)) {
         // Direct booking folder (SL-style)
-        await processBookingFolderDirect(driveId, child, cfg, result, dedupMinutes)
+        await processBookingFolderDirect(driveId, child, cfg, result, dedupMinutes, types)
       } else if (child.folder) {
         // Possible date subfolder (e.g. "02 June") — recurse one level
         let dateChildren: DriveItem[]
@@ -1278,7 +1283,7 @@ export async function scanDriveByDateRange(
         for (const dc of dateChildren) {
           result.scanned += 1
           if (dc.folder && isBookingFolder(dc)) {
-            await processBookingFolderDirect(driveId, dc, cfg, result, dedupMinutes)
+            await processBookingFolderDirect(driveId, dc, cfg, result, dedupMinutes, types)
           }
         }
       }
@@ -1343,9 +1348,13 @@ async function processBookingFolderDirect(
   cfg:          DriveConfig,
   result:       ScanResult,
   dedupMinutes: number = 0,
+  types:        ProcessDocType[] = ['TC', 'PNL'],
 ): Promise<void> {
   const bookingRef = extractRefFromFolderName(folder.name)
   if (!bookingRef) return
+
+  const doTC  = types.includes('TC')
+  const doPNL = types.includes('PNL')
 
   // List files by folder ID — works for both personal OneDrive and SharePoint without path issues
   let files: DriveItem[]
@@ -1369,8 +1378,8 @@ async function processBookingFolderDirect(
     await prisma.booking.updateMany({ where: { bookingRef }, data: { onedriveFolderUrl: folderWebUrl } })
   }
 
-  const tcFile  = files.find(f => f.file && isTCFile(f.name))
-  const pnlFile = files.find(f => f.file && isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda'))
+  const tcFile  = doTC  ? files.find(f => f.file && isTCFile(f.name)) : undefined
+  const pnlFile = doPNL ? files.find(f => f.file && isPNLFile(f.name) && !f.name.toLowerCase().includes('agenda')) : undefined
 
   if (tcFile) {
     if (await wasRecentlyProcessed(tcFile.id, dedupMinutes)) {

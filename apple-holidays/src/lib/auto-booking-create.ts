@@ -1,5 +1,8 @@
 import { prisma } from '@/lib/prisma'
-import { DRIVE_CONFIGS, scanDriveByTargetDate, type ScanResult } from './onedrive-monitor'
+import {
+  DRIVE_CONFIGS, scanDriveByTargetDate, scanDriveByDateRange,
+  type ScanResult, type ProcessDocType,
+} from './onedrive-monitor'
 
 // ── Settings keys stored in system_settings ───────────────────────────────────
 export const SETTING_ENABLED      = 'auto_booking_create_enabled'
@@ -59,6 +62,7 @@ export async function runBookingCreateForDate(
   triggeredBy:    string = 'auto',
   driveKeys?:     string[],
   preCreatedJobId?: string,
+  types:          ProcessDocType[] = ['TC', 'PNL'],
 ): Promise<BookingCreateJobResult> {
   const job = preCreatedJobId
     ? { id: preCreatedJobId }
@@ -76,8 +80,8 @@ export async function runBookingCreateForDate(
 
   for (const cfg of configs) {
     try {
-      console.log(`[AutoCreate] Scanning ${cfg.key} for ${targetDate.toISOString().slice(0, 10)}`)
-      const r = await scanDriveByTargetDate(cfg, targetDate)
+      console.log(`[AutoCreate] Scanning ${cfg.key} for ${targetDate.toISOString().slice(0, 10)} (types: ${types.join('+')})`)
+      const r = await scanDriveByTargetDate(cfg, targetDate, types)
       results.push(r)
       totalCreated += r.bookingsCreated
       totalUpdated += r.bookingsUpdated
@@ -114,6 +118,83 @@ export async function runBookingCreateForDate(
   return {
     jobId:      job.id,
     targetDate: targetDate.toISOString().slice(0, 10),
+    results,
+    totalCreated,
+    totalUpdated,
+    totalErrors,
+    durationMs,
+  }
+}
+
+/**
+ * Manual backfill: scan a date range (inclusive) across the given drives.
+ * Walks Year → Month → [Date subfolder] → BookingFolder for every month the
+ * range touches. Job history stores `dateFrom` as the target date.
+ */
+export async function runBookingCreateForDateRange(
+  dateFrom:       Date,
+  dateTo:         Date,
+  triggeredBy:    string = 'manual',
+  driveKeys?:     string[],
+  preCreatedJobId?: string,
+  types:          ProcessDocType[] = ['TC', 'PNL'],
+): Promise<BookingCreateJobResult> {
+  const job = preCreatedJobId
+    ? { id: preCreatedJobId }
+    : await prisma.oneDriveBookingJob.create({
+        data: { targetDate: dateFrom, triggeredBy, status: 'running' },
+      })
+
+  const start   = Date.now()
+  const configs = driveKeys
+    ? DRIVE_CONFIGS.filter(c => driveKeys.includes(c.key))
+    : DRIVE_CONFIGS
+
+  const results: ScanResult[] = []
+  let totalCreated = 0, totalUpdated = 0, totalErrors = 0
+
+  const rangeLabel = `${dateFrom.toISOString().slice(0, 10)} → ${dateTo.toISOString().slice(0, 10)}`
+
+  for (const cfg of configs) {
+    try {
+      console.log(`[AutoCreate] Range scan ${cfg.key} for ${rangeLabel} (types: ${types.join('+')})`)
+      const r = await scanDriveByDateRange(cfg, dateFrom, dateTo, 0, types)
+      results.push(r)
+      totalCreated += r.bookingsCreated
+      totalUpdated += r.bookingsUpdated
+      totalErrors  += r.errors
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[AutoCreate] ${cfg.key} range error:`, msg)
+      results.push({
+        driveKey: cfg.key, label: cfg.label,
+        scanned: 0, bookingsCreated: 0, bookingsUpdated: 0, pnlsUpdated: 0,
+        errors: 1, events: [],
+      })
+      totalErrors += 1
+    }
+  }
+
+  const durationMs = Date.now() - start
+
+  await prisma.oneDriveBookingJob.update({
+    where: { id: job.id },
+    data: {
+      status:       'done',
+      results:      JSON.stringify(results),
+      totalCreated,
+      totalUpdated,
+      totalErrors,
+      durationMs,
+      completedAt:  new Date(),
+    },
+  })
+
+  console.log(`[AutoCreate] Range done — ${rangeLabel}: created=${totalCreated} updated=${totalUpdated} errors=${totalErrors} (${durationMs}ms)`)
+
+  return {
+    jobId:      job.id,
+    targetDate: dateFrom.toISOString().slice(0, 10),
     results,
     totalCreated,
     totalUpdated,

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react'
-import { Plane, Users, Sparkles, TrendingUp, CalendarClock, Globe2, PartyPopper, Volume2, VolumeX, Bot } from 'lucide-react'
+import { Plane, Users, Sparkles, TrendingUp, CalendarClock, Globe2, PartyPopper, Volume2, VolumeX, Bot, ShieldAlert, AlertTriangle, Quote } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 
 // ── Animations ──────────────────────────────────────────────────────────────
@@ -25,6 +25,10 @@ const CSS = `
 @keyframes vFadeImg { 0%{opacity:0;transform:scale(1.14)} 100%{opacity:1;transform:scale(1.08)} }
 @keyframes vFlip    { 0%{opacity:0;transform:rotateX(-90deg)} 100%{opacity:1;transform:rotateX(0)} }
 @keyframes vScan    { 0%{transform:translateY(-100%)} 100%{transform:translateY(400%)} }
+@keyframes vAlarm   { 0%,100%{box-shadow:0 0 30px 4px rgba(239,68,68,.35)} 50%{box-shadow:0 0 90px 20px rgba(239,68,68,.85)} }
+@keyframes vSiren   { 0%,100%{opacity:.35} 50%{opacity:1} }
+@keyframes vShake   { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-5px)} 80%{transform:translateX(5px)} }
+@keyframes vMarquee { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
 .v-float{animation:vFloat 7s ease-in-out infinite}
 .v-drift{animation:vDrift 22s ease-in-out infinite alternate}
 .v-pop{animation:vPop .6s cubic-bezier(.34,1.56,.64,1) both}
@@ -32,6 +36,8 @@ const CSS = `
 .v-glow{animation:vGlow 3.2s ease-in-out infinite}
 .v-wiggle{animation:vWiggle 2.5s ease-in-out infinite}
 .v-shine{background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.14) 45%,transparent 70%);background-size:200% 100%;animation:vShine 4.5s linear infinite}
+.v-alarm{animation:vAlarm 1.1s ease-in-out infinite}
+.v-shake{animation:vShake .5s ease-in-out}
 `
 
 // ── Country meta ─────────────────────────────────────────────────────────────
@@ -55,13 +61,28 @@ const ALL_IMAGES = [IMG_VN, IMG_LK, IMG_SG, IMG_MY]
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const POLL_MS         = 120_000 // data refresh — every 2 minutes
+const ALERT_POLL_MS   = 30_000  // traveller-alert refresh — every 30 seconds
 const SPOTLIGHT_MS    = 5_000   // country spotlight rotation
 const ALERT_DURATION  = 30      // seconds each new-booking alert stays
+const CRITICAL_DURATION = 45    // seconds each new traveller-alert popup stays
 
 interface Booking {
   id: string; bookingRef: string; agent: string | null; operationCountry: string | null
   paxAdults: number; paxChildren: number; arrivalDate: string; departureDate: string; createdAt: string
 }
+interface TEAlert {
+  id: number; booking_ref: string | null; customer_name: string | null
+  call_kind: string | null; category: string | null; severity: string | null
+  title: string | null; details: string | null; customer_quote: string | null; at: string | null
+}
+const SEV: Record<string, { label: string; accent: string; ring: string; chip: string }> = {
+  high:   { label: 'HIGH',   accent: '#ef4444', ring: 'rgba(239,68,68,.6)',  chip: 'bg-red-500/15 text-red-300 border-red-500/40' },
+  medium: { label: 'MEDIUM', accent: '#f59e0b', ring: 'rgba(245,158,11,.6)', chip: 'bg-amber-500/15 text-amber-300 border-amber-500/40' },
+  low:    { label: 'LOW',    accent: '#eab308', ring: 'rgba(234,179,8,.55)', chip: 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40' },
+}
+const sevOf = (s?: string | null) => SEV[s ?? 'medium'] ?? SEV.medium
+const KIND_LABEL: Record<string, string> = { check_in: 'On-tour check-in', reconfirm: 'Reconfirmation', post_tour: 'Post-tour', campaign: 'Custom call' }
+const CATEGORY_LABEL: Record<string, string> = { complaint: 'Complaint', change_request: 'Change request', safety: 'Safety', low_rating: 'Low rating' }
 interface ViewData {
   generatedAt: string
   totals: { totalBookings: number; ongoingToday: number; upcoming: number; paxOnTour: number; arrivalFlightsToday: number; flightsToday: number }
@@ -322,6 +343,103 @@ function HeadStat({ label, value, icon, tone, big }: { label: string; value: num
   )
 }
 
+// ── Critical traveller-alert popup (full-screen, alarming) ───────────────────
+function CriticalAlert({ alert, onDismiss }: { alert: TEAlert; onDismiss: () => void }) {
+  const [left, setLeft] = useState(CRITICAL_DURATION)
+  useEffect(() => {
+    const id = setInterval(() => setLeft(c => { if (c <= 1) { onDismiss(); return 0 } return c - 1 }), 1000)
+    return () => clearInterval(id)
+  }, [onDismiss])
+  const s = sevOf(alert.severity)
+  const meta: string[] = []
+  if (alert.booking_ref) meta.push(alert.booking_ref)
+  if (alert.customer_name) meta.push(alert.customer_name)
+  if (alert.call_kind) meta.push(KIND_LABEL[alert.call_kind] ?? alert.call_kind)
+  if (alert.category) meta.push(CATEGORY_LABEL[alert.category] ?? alert.category)
+
+  return (
+    <div className="fixed inset-0 z-[110] flex items-center justify-center" onClick={onDismiss}
+      style={{ background: 'rgba(20,2,2,.88)', backdropFilter: 'blur(14px)', animation: 'vPop .3s ease-out both' }}>
+      {/* pulsing red rings */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        {[300, 460, 620, 780].map((sz, i) => (
+          <div key={i} className="absolute rounded-full border" style={{ width: sz, height: sz, borderColor: s.ring, animation: `vRing ${1.6 + i * .35}s ease-in-out infinite`, animationDelay: `${i * .2}s` }} />
+        ))}
+      </div>
+
+      <div className="relative w-full max-w-2xl mx-6" onClick={e => e.stopPropagation()} style={{ animation: 'vBounceIn .55s cubic-bezier(.34,1.56,.64,1) both' }}>
+        <div className="relative rounded-[2rem] border-2 overflow-hidden v-alarm" style={{ borderColor: s.ring, background: 'linear-gradient(150deg,rgba(28,6,6,.98),rgba(38,10,12,.98))' }}>
+          {/* header */}
+          <div className="px-8 py-5 flex items-center gap-4 border-b" style={{ borderColor: s.ring, background: `${s.accent}18` }}>
+            <AlertTriangle className="w-9 h-9" style={{ color: s.accent, animation: 'vSiren 1s ease-in-out infinite' }} />
+            <div className="min-w-0">
+              <p className="text-[11px] font-black uppercase tracking-[.4em]" style={{ color: s.accent }}>Traveller Alert · Action Needed</p>
+              <p className="text-2xl font-black text-white leading-tight truncate">{alert.title ?? CATEGORY_LABEL[alert.category ?? ''] ?? 'Issue reported on tour'}</p>
+            </div>
+            <span className={`ml-auto shrink-0 text-[11px] font-black px-3 py-1 rounded-full border ${s.chip}`}>{s.label}</span>
+          </div>
+          {/* body */}
+          <div className="px-8 py-6 space-y-4">
+            <p className="text-sm font-semibold tracking-wide" style={{ color: '#fca5a5' }}>{meta.join('  ·  ')}</p>
+            {alert.details && <p className="text-lg text-white/90 leading-snug">{alert.details}</p>}
+            {alert.customer_quote && (
+              <p className="text-base text-white/70 italic flex items-start gap-2 leading-snug">
+                <Quote className="w-5 h-5 mt-0.5 shrink-0 text-white/30" />
+                <span>&ldquo;{alert.customer_quote}&rdquo;</span>
+              </p>
+            )}
+          </div>
+          {/* countdown */}
+          <div className="h-1.5 w-full bg-white/5">
+            <div className="h-full" style={{ background: s.accent, animation: `vProgress ${CRITICAL_DURATION}s linear forwards` }} />
+          </div>
+          <p className="text-center text-[10px] text-red-300/70 py-2 tracking-widest uppercase">Auto-closes in {left}s · tap to dismiss</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Standing traveller-alerts bar (all open alerts, scrolling ticker) ────────
+function AlertsBar({ alerts }: { alerts: TEAlert[] }) {
+  const highCount = alerts.filter(a => a.severity === 'high').length
+  // Duplicate the list so the marquee loops seamlessly (translateX -50%).
+  const loop = alerts.length > 0 ? [...alerts, ...alerts] : []
+  return (
+    <div className="shrink-0 rounded-2xl border overflow-hidden flex items-stretch"
+      style={{ borderColor: highCount ? 'rgba(239,68,68,.5)' : 'rgba(245,158,11,.4)', background: highCount ? 'rgba(40,8,10,.55)' : 'rgba(40,26,6,.45)' }}>
+      {/* label */}
+      <div className="shrink-0 flex items-center gap-2.5 px-5 py-3 border-r" style={{ borderColor: 'rgba(255,255,255,.08)', background: highCount ? 'rgba(239,68,68,.14)' : 'rgba(245,158,11,.12)' }}>
+        <ShieldAlert className="w-5 h-5" style={{ color: highCount ? '#f87171' : '#fbbf24', animation: highCount ? 'vSiren 1s ease-in-out infinite' : 'none' }} />
+        <div className="leading-none">
+          <p className="text-[9px] uppercase tracking-[.3em] text-white/60">Traveller Alerts</p>
+          <p className="text-lg font-black tabular-nums" style={{ color: highCount ? '#fca5a5' : '#fcd34d' }}>{alerts.length} <span className="text-[11px] font-semibold text-white/50">open{highCount ? ` · ${highCount} high` : ''}</span></p>
+        </div>
+      </div>
+      {/* scrolling ticker */}
+      <div className="relative flex-1 overflow-hidden flex items-center">
+        {alerts.length === 0 ? (
+          <p className="px-5 text-sm text-emerald-300/80">All quiet — no open traveller alerts right now.</p>
+        ) : (
+          <div className="flex items-center gap-8 whitespace-nowrap px-6" style={{ animation: `vMarquee ${Math.max(22, loop.length * 5)}s linear infinite` }}>
+            {loop.map((a, i) => {
+              const s = sevOf(a.severity)
+              return (
+                <span key={`${a.id}-${i}`} className="inline-flex items-center gap-2 text-sm">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.accent }} />
+                  {a.booking_ref && <span className="font-mono font-bold text-white/85">{a.booking_ref}</span>}
+                  <span className="text-white/70">{a.title ?? a.details ?? CATEGORY_LABEL[a.category ?? ''] ?? 'Issue reported'}</span>
+                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-full border ${s.chip}`}>{s.label}</span>
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 function ViewDashboard() {
   const [data, setData]   = useState<ViewData | null>(null)
@@ -330,13 +448,19 @@ function ViewDashboard() {
   const [spotlightIdx, setSpotlightIdx] = useState(0)
   const [soundOn, setSoundOn] = useState(true)
 
-  // alert queue
+  // new-booking alert queue
   const [alert, setAlert] = useState<Booking | null>(null)
   const queueRef = useRef<Booking[]>([])
   const seenRef  = useRef<Set<string> | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const soundOnRef = useRef(true)
   useEffect(() => { soundOnRef.current = soundOn }, [soundOn])
+
+  // traveller-alert state (standing list + critical popup for new ones)
+  const [alerts, setAlerts] = useState<TEAlert[]>([])
+  const [critical, setCritical] = useState<TEAlert | null>(null)
+  const critQueueRef = useRef<TEAlert[]>([])
+  const seenAlertsRef = useRef<Set<number> | null>(null)
 
   const chime = useCallback(() => {
     if (!soundOnRef.current) return
@@ -362,6 +486,35 @@ function ViewDashboard() {
     setAlert(cur => { if (cur) return cur; const next = queueRef.current.shift() ?? null; if (next) chime(); return next })
   }, [chime])
 
+  // Harsh alarm for traveller alerts — a repeating two-tone siren, unmistakably
+  // different from the cheerful new-booking chime.
+  const alarm = useCallback(() => {
+    if (!soundOnRef.current) return
+    try {
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const ctx = audioCtxRef.current ?? (audioCtxRef.current = new AC())
+      if (ctx.state === 'suspended') ctx.resume()
+      const t0 = ctx.currentTime
+      // 3 sweeps of a high→low two-tone wail.
+      for (let i = 0; i < 3; i++) {
+        const base = t0 + i * 0.5
+        ;[[880, base], [660, base + 0.25]].forEach(([f, t]) => {
+          const osc = ctx.createOscillator(), gain = ctx.createGain()
+          osc.type = 'sawtooth'; osc.frequency.value = f
+          gain.gain.setValueAtTime(0, t)
+          gain.gain.linearRampToValueAtTime(0.32, t + 0.03)
+          gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.24)
+          osc.connect(gain); gain.connect(ctx.destination)
+          osc.start(t); osc.stop(t + 0.26)
+        })
+      }
+    } catch { /* audio not available */ }
+  }, [])
+
+  const pumpCritical = useCallback(() => {
+    setCritical(cur => { if (cur) return cur; const next = critQueueRef.current.shift() ?? null; if (next) alarm(); return next })
+  }, [alarm])
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/public/view-dashboard', { cache: 'no-store' })
@@ -382,7 +535,30 @@ function ViewDashboard() {
     } catch { setError('Network error — retrying…') }
   }, [pump])
 
+  const loadAlerts = useCallback(async () => {
+    try {
+      const res = await fetch('/api/public/te-alerts', { cache: 'no-store' })
+      const j = await res.json()
+      const rows: TEAlert[] = j?.alerts ?? []
+      // Sort high → medium → low, then newest first.
+      const rank = (a: TEAlert) => (a.severity === 'high' ? 3 : a.severity === 'medium' ? 2 : 1)
+      rows.sort((a, b) => rank(b) - rank(a) || new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
+
+      // Raise a critical popup for brand-new alerts (skip the first load so a
+      // freshly-opened screen doesn't alarm on the whole backlog).
+      if (seenAlertsRef.current === null) {
+        seenAlertsRef.current = new Set(rows.map(a => a.id))
+      } else {
+        const fresh = rows.filter(a => !seenAlertsRef.current!.has(a.id))
+        fresh.reverse().forEach(a => { seenAlertsRef.current!.add(a.id); critQueueRef.current.push(a) })
+        if (fresh.length) pumpCritical()
+      }
+      setAlerts(rows)
+    } catch { /* keep last known alerts — never break the screen */ }
+  }, [pumpCritical])
+
   useEffect(() => { load(); const id = setInterval(load, POLL_MS); return () => clearInterval(id) }, [load])
+  useEffect(() => { loadAlerts(); const id = setInterval(loadAlerts, ALERT_POLL_MS); return () => clearInterval(id) }, [loadAlerts])
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id) }, [])
 
   // Which countries actually have data (any bucket) — keeps the screen relevant.
@@ -398,6 +574,7 @@ function ViewDashboard() {
   const spotCountry = spotCountries[spotlightIdx % spotCountries.length]
 
   const dismissAlert = useCallback(() => { setAlert(null); setTimeout(pump, 400) }, [pump])
+  const dismissCritical = useCallback(() => { setCritical(null); setTimeout(pumpCritical, 400) }, [pumpCritical])
 
   const activeMeta = metaOf(spotCountry)
 
@@ -418,6 +595,7 @@ function ViewDashboard() {
       <div className="hidden" aria-hidden>{ALL_IMAGES.map(src => <img key={src} src={src} alt="" />)}</div>
 
       {alert && <BookingAlert booking={alert} onDismiss={dismissAlert} />}
+      {critical && <CriticalAlert alert={critical} onDismiss={dismissCritical} />}
 
       <div className="relative h-full flex flex-col p-6 gap-5">
         {/* Header */}
@@ -454,6 +632,7 @@ function ViewDashboard() {
         )}
 
         {data && (
+          <>
           <div className="flex-1 grid grid-cols-3 gap-5 min-h-0">
             {/* LEFT — big ongoing + headline stats */}
             <div className="flex flex-col gap-5 min-h-0">
@@ -506,6 +685,8 @@ function ViewDashboard() {
               </div>
             </div>
           </div>
+          <AlertsBar alerts={alerts} />
+          </>
         )}
       </div>
     </div>

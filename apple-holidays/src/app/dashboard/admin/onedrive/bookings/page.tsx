@@ -92,8 +92,22 @@ export default function OneDriveBookingsPage() {
   const [expandedJob, setExpandedJob]       = useState<string | null>(null)
   const [manualDate, setManualDate]         = useState('')
   const [manualDrives, setManualDrives]     = useState<string[]>([])
+  // Document-type filter — default: TC on, PNL off
+  const [doTC, setDoTC]                     = useState(true)
+  const [doPNL, setDoPNL]                   = useState(false)
+  // Date-range manual trigger
+  const [rangeFrom, setRangeFrom]           = useState('')
+  const [rangeTo, setRangeTo]               = useState('')
+  const [runningRange, setRunningRange]     = useState(false)
 
   const ALL_DRIVES = ['VN', 'SL', 'SG', 'MY']
+
+  function selectedTypes(): string[] {
+    const t: string[] = []
+    if (doTC) t.push('TC')
+    if (doPNL) t.push('PNL')
+    return t
+  }
 
   useEffect(() => {
     if (status === 'loading') return
@@ -141,14 +155,11 @@ export default function OneDriveBookingsPage() {
     setSavingSettings(false)
   }
 
-  async function handleRunNow() {
-    setRunning(true)
+  // Shared: fire a run and poll the job until it finishes
+  async function executeRun(body: Record<string, unknown>, setBusy: (v: boolean) => void) {
+    setBusy(true)
     toast.info('Starting auto-booking create…')
     try {
-      const body: Record<string, unknown> = {}
-      if (manualDate) body.targetDate = manualDate
-      if (manualDrives.length > 0) body.driveKeys = manualDrives
-
       const res = await fetch('/api/admin/onedrive-booking-auto/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,7 +168,7 @@ export default function OneDriveBookingsPage() {
       const data = await res.json()
       if (!res.ok) {
         toast.error(data.error ?? 'Run failed')
-        setRunning(false)
+        setBusy(false)
         return
       }
 
@@ -183,7 +194,26 @@ export default function OneDriveBookingsPage() {
         } catch { /* keep polling */ }
       }
     } catch { toast.error('Network error') }
-    setRunning(false)
+    setBusy(false)
+  }
+
+  async function handleRunNow() {
+    const types = selectedTypes()
+    if (types.length === 0) { toast.error('Enable at least one of TC / PNL'); return }
+    const body: Record<string, unknown> = { types }
+    if (manualDate) body.targetDate = manualDate
+    if (manualDrives.length > 0) body.driveKeys = manualDrives
+    await executeRun(body, setRunning)
+  }
+
+  async function handleRunRange() {
+    const types = selectedTypes()
+    if (types.length === 0) { toast.error('Enable at least one of TC / PNL'); return }
+    if (!rangeFrom || !rangeTo) { toast.error('Pick both a start and end date'); return }
+    if (rangeFrom > rangeTo) { toast.error('Start date must be on or before end date'); return }
+    const body: Record<string, unknown> = { types, dateFrom: rangeFrom, dateTo: rangeTo }
+    if (manualDrives.length > 0) body.driveKeys = manualDrives
+    await executeRun(body, setRunningRange)
   }
 
   function toggleDrive(key: string) {
@@ -379,7 +409,45 @@ export default function OneDriveBookingsPage() {
                 </div>
               </div>
 
-              <Button onClick={handleRunNow} disabled={running} variant="primary" className="w-full">
+              <div>
+                <p className="text-sm font-medium text-gray-700 mb-2">
+                  Document Types
+                  <span className="ml-2 text-xs text-gray-400">(what to create / update)</span>
+                </p>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setDoTC(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-sm">
+                      <span className="font-semibold text-gray-800">TC</span>
+                      <span className="ml-2 text-xs text-gray-500">Tour Confirmation → booking</span>
+                    </span>
+                    {doTC
+                      ? <ToggleRight className="w-8 h-8 text-brand-600" />
+                      : <ToggleLeft className="w-8 h-8 text-gray-400" />
+                    }
+                  </button>
+                  <button
+                    onClick={() => setDoPNL(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                  >
+                    <span className="text-sm">
+                      <span className="font-semibold text-gray-800">PNL</span>
+                      <span className="ml-2 text-xs text-gray-500">P&amp;L sheet → line items</span>
+                    </span>
+                    {doPNL
+                      ? <ToggleRight className="w-8 h-8 text-brand-600" />
+                      : <ToggleLeft className="w-8 h-8 text-gray-400" />
+                    }
+                  </button>
+                </div>
+                {!doTC && !doPNL && (
+                  <p className="text-xs text-red-600 mt-1.5">Enable at least one type.</p>
+                )}
+              </div>
+
+              <Button onClick={handleRunNow} disabled={running || (!doTC && !doPNL)} variant="primary" className="w-full">
                 {running
                   ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Running…</>
                   : <><Play className="w-4 h-4 mr-2" />Run Now</>
@@ -388,6 +456,72 @@ export default function OneDriveBookingsPage() {
             </CardBody>
           </Card>
         </div>
+
+        {/* Date-range backfill */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-brand-500" />
+              <span className="font-semibold text-gray-800">Backfill by Date Range</span>
+            </div>
+          </CardHeader>
+          <CardBody className="space-y-5">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex gap-2">
+              <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-blue-700">
+                Process every booking folder whose date falls within the range (inclusive).
+                Uses the <strong>Document Types</strong> and <strong>Drives</strong> selected in the Manual Trigger panel above.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">From date</label>
+                <input
+                  type="date"
+                  value={rangeFrom}
+                  onChange={e => setRangeFrom(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-300"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">To date</label>
+                <input
+                  type="date"
+                  value={rangeTo}
+                  onChange={e => setRangeTo(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-300"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+              <span>Will process:</span>
+              {selectedTypes().length > 0
+                ? selectedTypes().map(t => (
+                    <span key={t} className="bg-brand-100 text-brand-700 px-2 py-0.5 rounded-full font-semibold">{t}</span>
+                  ))
+                : <span className="text-red-600">no types selected</span>
+              }
+              <span className="ml-2">on drives:</span>
+              <span className="font-semibold text-gray-700">
+                {manualDrives.length > 0 ? manualDrives.join(', ') : 'all 4'}
+              </span>
+            </div>
+
+            <Button
+              onClick={handleRunRange}
+              disabled={runningRange || (!doTC && !doPNL) || !rangeFrom || !rangeTo}
+              variant="primary"
+              className="w-full"
+            >
+              {runningRange
+                ? <><Loader2 className="w-4 h-4 animate-spin mr-2" />Running…</>
+                : <><Play className="w-4 h-4 mr-2" />Run Date Range</>
+              }
+            </Button>
+          </CardBody>
+        </Card>
 
         {/* Job history */}
         <Card>
