@@ -9,7 +9,7 @@ import {
   AlertCircle, Clock, Loader2, Save,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
-  FlaskConical, ScanLine, Upload, HardDrive,
+  FlaskConical, ScanLine, Upload, HardDrive, Globe, Sparkles, PlaneLanding,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -18,7 +18,7 @@ import Button from '@/components/ui/button'
 import BookingLifecycle from '@/components/bookings/booking-lifecycle'
 import Modal from '@/components/ui/modal'
 import { formatDate, formatCurrency, getDaysUntilTrip } from '@/lib/utils'
-import { CountryFlag } from '@/components/ui/country-flag'
+import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
 import { getAvailableTransitions } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
@@ -34,6 +34,22 @@ import TravellerExperiencePanel from '@/components/bookings/traveller-experience
 import BookingCallTranscripts from '@/components/bookings/booking-call-transcripts'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
+
+/**
+ * Detects whether an accommodation is the customer's OWN arrangement (booked by
+ * the guest / agent themselves, not by Apple Holidays). We infer this from the
+ * text fields the TC extraction fills in — hotels marked "own arrangement",
+ * "self booked", "TBA", or with no hotel name are treated as own-arrangement.
+ */
+function isOwnArrangement(a: Record<string, unknown>): boolean {
+  const hay = [a.hotel, a.roomType, a.mealType, a.address, a.contact]
+    .map(v => String(v ?? '').toLowerCase())
+    .join(' | ')
+  if (/own\s*arrangement|self[\s-]*book|guest\s*arrang|by\s*guest|not\s*included|own\s*acc/.test(hay)) return true
+  const hotel = String(a.hotel ?? '').trim().toLowerCase()
+  if (!hotel || ['tba', 'tbc', 'n/a', 'na', 'to be advised', 'to be confirmed', '-'].includes(hotel)) return true
+  return false
+}
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -112,6 +128,11 @@ export default function BookingDetailPage() {
 
   // QC auto-send
   const [qcAutoSending, setQcAutoSending] = useState(false)
+
+  // Customer origin (where the customer travelled FROM) — AI/flight derived
+  type CustomerOrigin = { country: string; iso2: string; city: string | null; confidence: 'high' | 'medium' | 'low'; reasoning: string; detectedAt?: string }
+  const [origin, setOrigin] = useState<CustomerOrigin | null>(null)
+  const [originLoading, setOriginLoading] = useState(false)
 
   // Meal preference inline editing
   const [mealPrefs, setMealPrefs] = useState<Record<string, string>>({})
@@ -225,6 +246,31 @@ export default function BookingDetailPage() {
   }
 
   useEffect(() => { load() }, [ref])
+
+  // Load any previously-detected customer origin from cache
+  useEffect(() => {
+    let active = true
+    fetch(`/api/bookings/${ref}/origin`)
+      .then(r => r.json())
+      .then(j => { if (active && j.success && j.data) setOrigin(j.data) })
+      .catch(() => { /* non-critical */ })
+    return () => { active = false }
+  }, [ref])
+
+  async function detectOrigin() {
+    setOriginLoading(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/origin`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error || 'Detection failed')
+      setOrigin(json.data)
+      toast.success(`Origin detected: ${json.data.country}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Origin detection failed')
+    } finally {
+      setOriginLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (booking) {
@@ -1416,6 +1462,14 @@ Wishing you a wonderful trip! ✈️
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5 flex items-center gap-1">
+                <UserCheck className="w-3 h-3 text-slate-400" /> Agent / Tour Operator
+              </p>
+              {booking.agent
+                ? <p className="text-sm font-semibold text-slate-800">{booking.agent as string}</p>
+                : <p className="text-sm text-slate-300">—</p>}
+            </div>
+            <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Destination</p>
               {booking.tourDestination
                 ? <p className="text-sm text-slate-700">{booking.tourDestination as string}</p>
@@ -1468,6 +1522,46 @@ Wishing you a wonderful trip! ✈️
               {booking.chauffeurContact
                 ? <p className="text-sm text-slate-700 whitespace-pre-line">{booking.chauffeurContact as string}</p>
                 : <p className="text-sm text-slate-300">—</p>}
+            </div>
+          </div>
+
+          {/* Customer Origin — where the traveller came from (flights + AI) */}
+          <div className="mt-4 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 via-sky-50 to-white overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3">
+              <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-200 flex items-center justify-center overflow-hidden">
+                {origin?.iso2
+                  ? <FlagByCode code={origin.iso2} className="w-7 h-5 rounded-sm shadow-sm" title={origin.country} />
+                  : <PlaneLanding className="w-5 h-5 text-indigo-500" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-indigo-400 font-semibold flex items-center gap-1">
+                  <Globe className="w-3 h-3" /> Customer Came From
+                </p>
+                {origin ? (
+                  <div className="flex items-center flex-wrap gap-x-2 gap-y-0.5">
+                    <span className="text-base font-bold text-slate-900">{origin.country}</span>
+                    {origin.city && <span className="text-xs text-slate-500">via {origin.city}</span>}
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${
+                      origin.confidence === 'high'   ? 'bg-emerald-50 text-emerald-600 border-emerald-200' :
+                      origin.confidence === 'medium' ? 'bg-amber-50 text-amber-600 border-amber-200' :
+                                                       'bg-slate-50 text-slate-500 border-slate-200'
+                    }`}>{origin.confidence} confidence</span>
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-400 italic">Not yet identified — detect from flight routing &amp; booking signals</p>
+                )}
+                {origin?.reasoning && <p className="text-[11px] text-slate-500 mt-0.5 truncate" title={origin.reasoning}>{origin.reasoning}</p>}
+              </div>
+              <button
+                onClick={detectOrigin}
+                disabled={originLoading}
+                className="flex-shrink-0 flex items-center gap-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 px-3 py-2 rounded-lg transition-colors"
+                title="Use AI to identify the customer's country of origin from flight details"
+              >
+                {originLoading
+                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Detecting…</>
+                  : <><Sparkles className="w-3.5 h-3.5" /> {origin ? 'Re-detect' : 'Detect Origin'}</>}
+              </button>
             </div>
           </div>
         </Card>
@@ -1744,15 +1838,25 @@ Wishing you a wonderful trip! ✈️
               </h3>
             </CardHeader>
             <CardBody className="p-0">
-              {accommodations.map((a) => (
+              {accommodations.map((a) => {
+                const own = isOwnArrangement(a)
+                return (
                 <div key={a.id as string} className="px-4 py-3 border-b border-slate-100 last:border-0">
-                  <p className="text-sm font-semibold text-slate-900">{a.hotel as string}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold text-slate-900">{(a.hotel as string) || <span className="text-slate-400 italic">Hotel not specified</span>}</p>
+                    <span className={`flex-shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                      own ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    }`} title={own ? 'Accommodation arranged by the guest / agent' : 'Accommodation arranged by Apple Holidays'}>
+                      {own ? <><Shield className="w-2.5 h-2.5" /> Own Arrangement</> : <><Hotel className="w-2.5 h-2.5" /> Company Arranged</>}
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-500">{a.city as string} · {a.nights as number} nights</p>
                   {a.roomType && <p className="text-xs text-brand-600 font-medium">{a.roomType as string}</p>}
                   <p className="text-xs text-slate-400">{formatDate(a.checkIn as string)} → {formatDate(a.checkOut as string)}</p>
                   {a.contact && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{a.contact as string}</p>}
                 </div>
-              ))}
+                )
+              })}
             </CardBody>
           </Card>
         </div>

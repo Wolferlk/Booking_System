@@ -10,8 +10,9 @@ import {
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
-  ClipboardList, Bus, Ticket,
+  ClipboardList, Bus, Ticket, Hash, UserCheck,
 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
@@ -104,6 +105,11 @@ interface Vendor {
 interface BookingDetails {
   bookingRef: string
   agent: string
+  agentBookingId?: string | null
+  isNumber?: string | null
+  cntlNumber?: string | null
+  tourDestination?: string | null
+  operationCountry?: string | null
   paxAdults: number
   paxChildren: number
   paxInfants: number
@@ -820,6 +826,50 @@ export default function AgendaPage() {
         {/* ── BOOKING INFO PANELS ── */}
         {booking && (
           <div className="space-y-2">
+            {/* Booking Details — key identifiers for the movement chart */}
+            <Card className="overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-brand-50 to-white border-b border-slate-100">
+                <FileText className="w-4 h-4 text-brand-500" />
+                <span className="text-sm font-semibold text-slate-800">Booking Details</span>
+                {booking.operationCountry && (
+                  <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                    <CountryFlag country={booking.operationCountry} className="w-4 h-3" />
+                    {booking.tourDestination || ''}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-3 px-4 py-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5 flex items-center gap-1"><Hash className="w-3 h-3" /> Tour Ref</p>
+                  <p className="text-sm font-mono font-bold text-slate-900">{booking.bookingRef}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">IS Number</p>
+                  {booking.isNumber
+                    ? <p className="text-sm font-mono font-semibold text-brand-600">{booking.isNumber}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">CNTL No.</p>
+                  {booking.cntlNumber
+                    ? <p className="text-sm font-mono font-semibold text-violet-600">{booking.cntlNumber}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5 flex items-center gap-1"><UserCheck className="w-3 h-3" /> Agent</p>
+                  {booking.agent
+                    ? <p className="text-sm font-semibold text-slate-800 truncate" title={booking.agent}>{booking.agent}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent ID</p>
+                  {booking.agentBookingId
+                    ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+              </div>
+            </Card>
+
             {/* Passengers */}
             {booking.passengers.length > 0 && (
               <Card className="overflow-hidden">
