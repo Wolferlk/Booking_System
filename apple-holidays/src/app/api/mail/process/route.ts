@@ -229,6 +229,18 @@ export async function POST(req: NextRequest) {
 
   if (existingBooking) {
     bookingId = existingBooking.id
+    // Backfill CNTL / IS number when re-processing an email onto a booking that
+    // was created (or previously processed) without them. Only fill blanks so we
+    // never overwrite a value an operator may have corrected by hand.
+    const cntlBackfill = !existingBooking.cntlNumber && extracted.cntlNumber ? extracted.cntlNumber : undefined
+    const isBackfill   = !existingBooking.isNumber   && extracted.isNumber   ? extracted.isNumber   : undefined
+    if (cntlBackfill || isBackfill) {
+      await prisma.booking.update({
+        where: { id: bookingId },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: { cntlNumber: cntlBackfill, isNumber: isBackfill } as any,
+      })
+    }
   } else {
     // PNL emails never contain arrival/departure dates — they only carry cost data.
     // Store as PNL_WAITING — when the TQ arrives, the UI will auto-retry linking.
@@ -294,6 +306,12 @@ export async function POST(req: NextRequest) {
       data: {
         bookingRef,
         agentBookingId:   extracted.agentBookingId,
+        // CNTL / quotation number and IS number — the extractor resolves these
+        // (extractBookingFromEmail) but this path previously dropped them, so
+        // bookings created via the Mail Inbox search bar lost their CNTL code.
+        // Kept in parity with the TQ auto-mail flow (incoming-mail-automation.ts).
+        cntlNumber:       extracted.cntlNumber ?? undefined,
+        isNumber:         extracted.isNumber ?? undefined,
         agent:            extracted.agent ?? 'Unknown Agent',
         fileHandler:      extracted.fileHandler,
         arrivalDate:      new Date(extracted.arrivalDate),
@@ -304,6 +322,21 @@ export async function POST(req: NextRequest) {
         currency:         extracted.currency ?? 'USD',
         terms:            extracted.terms,
         exclusions:       extracted.exclusions,
+        // TC-specific fields — also persisted by the auto-mail flow.
+        dealName:           extracted.dealName ?? undefined,
+        tourDestination:    extracted.tourDestination ?? undefined,
+        chauffeurContact:   extracted.chauffeurContact ?? undefined,
+        languagePreference: extracted.languagePreference ?? undefined,
+        specialOccasions:   extracted.specialOccasions ?? undefined,
+        checkedBy:          extracted.checkedBy ?? undefined,
+        reconfirmBy:        extracted.reconfirmBy ?? undefined,
+        valueAddedServices: extracted.valueAddedServices ?? undefined,
+        packageIncludes:    extracted.packageIncludes ?? undefined,
+        packageExcludes:    extracted.packageExcludes ?? undefined,
+        importantNotes:     extracted.importantNotes ?? undefined,
+        tips:               extracted.tips ?? undefined,
+        otherNote:          extracted.otherNote ?? undefined,
+        clientRequest:      extracted.clientRequest ?? undefined,
         agentEmail:       extracted.agentEmail,
         agentPhone:       extracted.agentPhone,
         agentWhatsapp:    extracted.agentWhatsapp,
