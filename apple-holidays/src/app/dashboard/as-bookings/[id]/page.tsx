@@ -6,11 +6,31 @@ import {
   ArrowLeft, Loader2, AlertCircle, RefreshCw, Cloud, Users, Moon, Sun,
   TrendingUp, TrendingDown, Wallet, Receipt, MapPin, Hash, Building2, Bus, Utensils,
   Ticket, ChevronDown, Code2, Calendar, Plane, CheckCircle2, Clock,
-  Percent, Droplet, PlusCircle, Ship, User, PieChart,
+  Percent, Droplet, PlusCircle, Ship, User, PieChart, Bed, Route, Sparkles,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { CountryFlag } from '@/components/ui/country-flag'
+
+interface EnrichedAccommodation {
+  hotelId: string | null
+  placeId: string | null
+  placeName: string | null
+  checkIn: string | null
+  checkOut: string | null
+  nights: number
+  mealPlan: string | null
+  roomCategoryId: string | null
+  driverAccommodation: boolean
+  provider: string | null
+}
+interface Enriched {
+  accommodations: EnrichedAccommodation[]
+  transport: { vehicleId: string | null; vehicleName: string | null; distanceKm: number | null } | null
+  attractionCount: number
+  cityTourCount: number
+  placesVisited: string[]
+}
 
 interface QuotationInfo {
   quotation_no?: string
@@ -88,6 +108,7 @@ function ASBookingDetailInner() {
   const referenceId = decodeURIComponent(params.id ?? '')
   const quotationNo = searchParams.get('quotation_no') ?? referenceId
   const currency = searchParams.get('currency') ?? 'USD'
+  const countryId = searchParams.get('country') ?? ''
 
   // ── Rich context passed from the list card ────────────────────────────────
   const ctx = useMemo(() => {
@@ -110,6 +131,7 @@ function ASBookingDetailInner() {
   }, [searchParams])
 
   const [detail, setDetail] = useState<Detail | null>(null)
+  const [enriched, setEnriched] = useState<Enriched | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
@@ -120,6 +142,7 @@ function ASBookingDetailInner() {
     try {
       const q = new URLSearchParams({ reference_id: referenceId, quotation_no: quotationNo })
       if (currency) q.set('currency', currency)
+      if (countryId) q.set('country', countryId)
       const res = await fetch(`/api/as-bookings/detail?${q.toString()}`)
       const json = await res.json()
       if (!json.success) {
@@ -127,12 +150,13 @@ function ASBookingDetailInner() {
         return
       }
       setDetail(json.data.detail)
+      setEnriched(json.data.enriched ?? null)
     } catch {
       setError('Network error — could not reach AppleSystem')
     } finally {
       setLoading(false)
     }
-  }, [referenceId, quotationNo, currency])
+  }, [referenceId, quotationNo, currency, countryId])
 
   useEffect(() => { fetchDetail() }, [fetchDetail])
 
@@ -463,6 +487,110 @@ function ASBookingDetailInner() {
                   </div>
                 </div>
               </Card>
+            )}
+
+            {/* ── Accommodation ──────────────────────────────────────── */}
+            {enriched && enriched.accommodations.length > 0 && (
+              <Card className="p-6">
+                <h2 className="text-sm font-semibold text-slate-700 mb-5 flex items-center gap-2">
+                  <Bed className="w-4 h-4 text-amber-500" /> Accommodation — {enriched.accommodations.length} stay{enriched.accommodations.length !== 1 ? 's' : ''}
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {enriched.accommodations.map((a, i) => {
+                    const transit = !a.hotelId
+                    return (
+                      <div key={i} className={`rounded-xl border p-4 ${transit ? 'border-dashed border-slate-200 bg-slate-50/50' : 'border-slate-100 bg-white'}`}>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+                              {transit ? <Bus className="w-4 h-4" /> : <Building2 className="w-4 h-4" />}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-slate-800 truncate">
+                                {a.placeName ?? (a.placeId ? `Place #${a.placeId}` : 'Stay')}
+                              </p>
+                              <p className="text-[11px] text-slate-400">
+                                {transit ? 'In-transit / no hotel' : a.hotelId ? `Hotel #${a.hotelId}` : ''}
+                                {a.provider ? ` · ${a.provider}` : ''}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 text-slate-600 flex-shrink-0">
+                            <Moon className="w-3 h-3" /> {a.nights}N
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-2">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                          {fmtDay(a.checkIn)} <ArrowLeft className="w-3 h-3 rotate-180 text-slate-300" /> {fmtDay(a.checkOut)}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {a.mealPlan && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-rose-50 text-rose-600 border border-rose-100">
+                              <Utensils className="w-3 h-3" /> {a.mealPlan}
+                            </span>
+                          )}
+                          {a.roomCategoryId && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-violet-50 text-violet-600 border border-violet-100">
+                              <Bed className="w-3 h-3" /> Room cat #{a.roomCategoryId}
+                            </span>
+                          )}
+                          {a.driverAccommodation && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-sky-50 text-sky-600 border border-sky-100">
+                              <User className="w-3 h-3" /> Driver acc.
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </Card>
+            )}
+
+            {/* ── Transport & Activities ─────────────────────────────── */}
+            {enriched && (enriched.transport || enriched.attractionCount > 0 || enriched.cityTourCount > 0) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {enriched.transport && (enriched.transport.vehicleName || enriched.transport.vehicleId || enriched.transport.distanceKm) && (
+                  <Card className="p-6">
+                    <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                      <Bus className="w-4 h-4 text-sky-500" /> Transport
+                    </h2>
+                    <div className="flex items-center gap-3">
+                      <div className="w-11 h-11 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center flex-shrink-0">
+                        <Bus className="w-5 h-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800 truncate">
+                          {enriched.transport.vehicleName ?? (enriched.transport.vehicleId ? `Vehicle #${enriched.transport.vehicleId}` : 'Vehicle')}
+                        </p>
+                        {enriched.transport.distanceKm != null && (
+                          <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+                            <Route className="w-3 h-3" /> {enriched.transport.distanceKm.toLocaleString()} km planned
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                {(enriched.attractionCount > 0 || enriched.cityTourCount > 0) && (
+                  <Card className="p-6">
+                    <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-violet-500" /> Activities
+                    </h2>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-violet-100 bg-violet-50/50 px-3 py-3 text-center">
+                        <p className="text-2xl font-bold text-violet-700 tabular-nums">{enriched.attractionCount}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide mt-0.5">Attractions</p>
+                      </div>
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/50 px-3 py-3 text-center">
+                        <p className="text-2xl font-bold text-blue-700 tabular-nums">{enriched.cityTourCount}</p>
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide mt-0.5">City tours</p>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+              </div>
             )}
 
             {/* ── Itinerary timeline ─────────────────────────────────── */}

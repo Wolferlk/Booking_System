@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { getBookingPnl } from '@/lib/applesystem'
+import { getBookingPnl, enrichBookingDetail } from '@/lib/applesystem'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,12 +18,15 @@ export async function GET(req: Request) {
   const referenceId = url.searchParams.get('reference_id') || ''
   const quotationNo = url.searchParams.get('quotation_no') || referenceId
   const currency = url.searchParams.get('currency') || 'USD'
+  const countryId = url.searchParams.get('country') || null
 
   if (!referenceId) return buildApiError('reference_id is required', 400)
 
   try {
     const data = await getBookingPnl(referenceId, quotationNo, currency)
-    return buildApiSuccess({ detail: data })
+    // Resolve place / vehicle / meal-plan ids to names and flatten hotels + transport.
+    const enriched = await enrichBookingDetail(data, countryId).catch(() => null)
+    return buildApiSuccess({ detail: data, enriched })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Failed to load booking detail'
     return buildApiError(msg, 502)

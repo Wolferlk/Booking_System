@@ -188,6 +188,7 @@ function ASBookingsInner() {
     const q = new URLSearchParams({ quotation_no: b.quotation_no })
     if (b.currency) q.set('currency', 'USD')
     if (b.status) q.set('status', b.status)
+    if (b.country) q.set('country', b.country)
     if (b.country_name) q.set('country_name', b.country_name)
     if (b.tour_type) q.set('tour_type', b.tour_type)
     if (b.map_image_url) q.set('map', b.map_image_url)
@@ -466,8 +467,10 @@ function BookingCard({ booking, onOpen }: { booking: ASBooking; onOpen: () => vo
         <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-slate-400" /> {paxTotal(booking)} pax</span>
       </div>
 
-      <div className="flex items-center justify-end mt-3 text-brand-600 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-        View breakdown <ArrowRight className="w-3.5 h-3.5 ml-1" />
+      <div className="mt-4">
+        <span className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-100 group-hover:bg-brand-600 group-hover:text-white group-hover:border-brand-600 transition-colors">
+          View Booking Details <ArrowRight className="w-3.5 h-3.5" />
+        </span>
       </div>
     </button>
   )
@@ -507,7 +510,11 @@ function BookingTable({ bookings, onOpen }: { bookings: ASBooking[]; onOpen: (b:
                 <td className="text-xs text-slate-600 whitespace-nowrap">{arrivalDate(b)}</td>
                 <td className="text-xs text-slate-600">{paxTotal(b)}</td>
                 <td><StatusChip booking={b} /></td>
-                <td><ArrowRight className="w-4 h-4 text-slate-300" /></td>
+                <td onClick={(e) => { e.stopPropagation(); onOpen(b) }}>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-100 hover:bg-brand-600 hover:text-white hover:border-brand-600 transition-colors whitespace-nowrap">
+                    View Details <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
