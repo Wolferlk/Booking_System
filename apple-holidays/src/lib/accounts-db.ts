@@ -230,13 +230,41 @@ export async function fetchPnlById(externalId: number): Promise<PnlFullRecord | 
   }
 }
 
+// Hard ceiling on how many PNL records a single overview request may pull.
+// The live DB holds ~2k active records; 5000 leaves generous headroom.
+export const PNL_MAX_LIMIT = 500000
+
 /** Fetch all PNL records ordered by newest first. Limit is inlined (validated int). */
 export async function fetchAllPnlRecords(limit: number): Promise<PnlRecord[]> {
-  const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 1000)
+  const safeLimit = Math.min(Math.max(1, Math.floor(limit)), PNL_MAX_LIMIT)
   const rows = await q<mysql.RowDataPacket>(
     `SELECT * FROM pnl_records WHERE deleted_at IS NULL ORDER BY id DESC LIMIT ${safeLimit}`,
   )
   return rows as unknown as PnlRecord[]
+}
+
+/**
+ * Count active PNL records — optionally matching the same search predicate as
+ * fetchPnlRecordsFiltered. Cheap COUNT(*) so the UI can show the true DB total
+ * immediately, before the (larger) row payload has finished streaming.
+ */
+export async function fetchPnlCount(search = ''): Promise<number> {
+  const term = search.trim()
+  if (!term) {
+    const rows = await q<mysql.RowDataPacket>(
+      `SELECT COUNT(*) AS n FROM pnl_records WHERE deleted_at IS NULL`,
+    )
+    return Number(rows[0]?.n ?? 0)
+  }
+  const like = `%${term}%`
+  const rows = await q<mysql.RowDataPacket>(
+    `SELECT COUNT(*) AS n FROM pnl_records
+     WHERE deleted_at IS NULL
+       AND (is_number LIKE ? OR tour_ref LIKE ? OR invoice_number LIKE ?
+            OR control_number LIKE ? OR vendor_name LIKE ? OR agent_name LIKE ?)`,
+    [like, like, like, like, like, like],
+  )
+  return Number(rows[0]?.n ?? 0)
 }
 
 /** Fetch PNL records filtered by a search term. */
