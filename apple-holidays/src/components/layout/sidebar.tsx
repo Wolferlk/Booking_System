@@ -9,7 +9,7 @@ import {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
-  HardDrive, FolderOpen, X, Bot, Navigation2,
+  HardDrive, FolderOpen, X, Bot, Navigation2, Trash2,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -31,7 +31,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
-  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2,
+  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
@@ -117,6 +117,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
   ],
   GT_TE_USER: [
@@ -165,6 +166,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
   ],
 }
