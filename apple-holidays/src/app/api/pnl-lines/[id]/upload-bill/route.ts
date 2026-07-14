@@ -3,8 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 export async function POST(
@@ -30,12 +29,8 @@ export async function POST(
 
   const ext     = file.name.split('.').pop()?.toLowerCase() ?? 'bin'
   const safeName = `bill-${params.id}-${Date.now()}.${ext}`
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'bills')
-
-  await mkdir(uploadDir, { recursive: true })
-  await writeFile(path.join(uploadDir, safeName), Buffer.from(await file.arrayBuffer()))
-
-  const fileUrl = `/uploads/bills/${safeName}`
+  const buffer = Buffer.from(await file.arrayBuffer())
+  const fileUrl = await putUpload(`bills/${safeName}`, buffer, file.type)
 
   return buildApiSuccess({ fileUrl, fileName: file.name })
 }

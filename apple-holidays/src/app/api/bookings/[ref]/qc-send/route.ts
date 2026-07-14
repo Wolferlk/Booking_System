@@ -5,8 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
-import { mkdir, writeFile } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
@@ -206,9 +205,7 @@ Thank you! 🙏
 
       const pdfBuffer = await generateConfirmationPdf(booking)
       const pdfFilename = `AppleHolidays-${params.ref}-TourConfirmation-${Date.now()}.pdf`
-      const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'whatsapp')
-      await mkdir(uploadDir, { recursive: true })
-      await writeFile(path.join(uploadDir, pdfFilename), pdfBuffer)
+      await putUpload(`whatsapp/${pdfFilename}`, pdfBuffer, 'application/pdf')
 
       const normPhone = waPhone.replace(/\D/g, '')
       await sendWhatsAppMessage({
