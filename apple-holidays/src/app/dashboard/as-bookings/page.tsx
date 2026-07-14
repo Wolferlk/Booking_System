@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card'
 
 type StatusFilter = '2' | '1' | 'all'
 type ViewMode = 'grid' | 'table'
+type DateFilter = 'today' | 'this_week' | 'this_month' | 'custom'
 
 interface ASBooking {
   id: number
@@ -28,12 +29,19 @@ interface ASBooking {
   pax?: { adult?: string; cwb?: string; cnb?: string; total_children?: number }
   quotation_update_count_C?: number
   quotation_update_count_R?: number
+  map_image_url?: string
 }
 
 const STATUS_TABS: { value: StatusFilter; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { value: '2',   label: 'Confirmed',   icon: CheckCircle2 },
   { value: '1',   label: 'Unconfirmed', icon: Clock },
   { value: 'all', label: 'All',         icon: Layers },
+]
+
+const DATE_FILTER_OPTIONS: { value: DateFilter; label: string }[] = [
+  { value: 'today',      label: 'Today' },
+  { value: 'this_week',  label: 'This Week' },
+  { value: 'this_month', label: 'This Month' },
 ]
 
 const COUNTRY_STYLE: Record<string, string> = {
@@ -68,12 +76,31 @@ function cntlNumber(b: ASBooking): string | null {
   return b.reference_id_full?.find((r) => /CNTL/i.test(r)) ?? null
 }
 
-function defaultRange() {
+const fmtDate = (d: Date) => {
+  // Local-date ISO (avoid UTC shift from toISOString)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Arrival-date window for a named period filter. */
+function rangeForFilter(filter: DateFilter): { from: string; to: string } {
   const now = new Date()
-  const from = new Date(now.getFullYear() - 1, 0, 1)
-  const to = new Date(now.getFullYear() + 1, 11, 31)
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
-  return { from: fmt(from), to: fmt(to) }
+  if (filter === 'today') {
+    return { from: fmtDate(now), to: fmtDate(now) }
+  }
+  if (filter === 'this_week') {
+    const day = now.getDay() // 0 = Sun
+    const diffToMon = (day + 6) % 7
+    const mon = new Date(now); mon.setDate(now.getDate() - diffToMon)
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+    return { from: fmtDate(mon), to: fmtDate(sun) }
+  }
+  // this_month
+  const first = new Date(now.getFullYear(), now.getMonth(), 1)
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return { from: fmtDate(first), to: fmtDate(last) }
 }
 
 function ASBookingsInner() {
@@ -89,9 +116,20 @@ function ASBookingsInner() {
   const [country, setCountry] = useState<string>('ALL')
   const [view, setView] = useState<ViewMode>('grid')
 
-  const range = useMemo(defaultRange, [])
-  const [from, setFrom] = useState(range.from)
-  const [to, setTo] = useState(range.to)
+  const [dateFilter, setDateFilter] = useState<DateFilter>('today')
+  const initialRange = useMemo(() => rangeForFilter('today'), [])
+  const [from, setFrom] = useState(initialRange.from)
+  const [to, setTo] = useState(initialRange.to)
+
+  // Apply a named period → sets the arrival window
+  const applyDateFilter = useCallback((f: DateFilter) => {
+    setDateFilter(f)
+    if (f !== 'custom') {
+      const r = rangeForFilter(f)
+      setFrom(r.from)
+      setTo(r.to)
+    }
+  }, [])
 
   // Debounce the search input
   useEffect(() => {
@@ -145,8 +183,28 @@ function ASBookingsInner() {
   const pendingCount = visible.length - confirmedCount
 
   function openDetail(b: ASBooking) {
+    // Pass the rich list context so the detail page can render everything the
+    // P&L endpoint doesn't return (pax breakdown, arrival, status, map, …).
     const q = new URLSearchParams({ quotation_no: b.quotation_no })
-    if (b.currency) q.set('currency', b.currency)
+    if (b.currency) q.set('currency', 'USD')
+    if (b.status) q.set('status', b.status)
+    if (b.country_name) q.set('country_name', b.country_name)
+    if (b.tour_type) q.set('tour_type', b.tour_type)
+    if (b.map_image_url) q.set('map', b.map_image_url)
+    const cntl = cntlNumber(b)
+    if (cntl) q.set('cntl', cntl)
+    if (b.reference_id_full?.length) q.set('refs', b.reference_id_full.join(','))
+    const m = b.main
+    if (m?.arrival_year && m?.arrival_month && m?.arrival_day) {
+      q.set('arrival', `${m.arrival_year}-${String(m.arrival_month).padStart(2, '0')}-${String(m.arrival_day).padStart(2, '0')}`)
+    }
+    if (b.pax) {
+      q.set('adult', String(b.pax.adult ?? 0))
+      q.set('cwb', String(b.pax.cwb ?? 0))
+      q.set('cnb', String(b.pax.cnb ?? 0))
+    }
+    if (b.quotation_update_count_R != null) q.set('revR', String(b.quotation_update_count_R))
+    if (b.quotation_update_count_C != null) q.set('revC', String(b.quotation_update_count_C))
     router.push(`/dashboard/as-bookings/${encodeURIComponent(b.reference_id)}?${q.toString()}`)
   }
 
@@ -245,10 +303,33 @@ function ASBookingsInner() {
 
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className="text-xs text-slate-400 whitespace-nowrap">Arrival</span>
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="form-input text-sm py-1.5 w-40" />
+              <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setDateFilter('custom') }} className="form-input text-sm py-1.5 w-40" />
               <span className="text-xs text-slate-400">→</span>
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="form-input text-sm py-1.5 w-40" />
+              <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setDateFilter('custom') }} className="form-input text-sm py-1.5 w-40" />
             </div>
+          </div>
+
+          {/* Quick period pills — default is Today */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-0.5" />
+            {DATE_FILTER_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => applyDateFilter(opt.value)}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  dateFilter === opt.value
+                    ? 'bg-brand-600 text-white border-brand-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+            {dateFilter === 'custom' && (
+              <span className="px-3 py-1 rounded-full text-xs font-medium border bg-brand-600 text-white border-brand-600">
+                Custom
+              </span>
+            )}
           </div>
 
           {/* Country pills (derived from result set) */}
