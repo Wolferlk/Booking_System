@@ -298,7 +298,9 @@ export async function POST(req: NextRequest) {
       departureDate: new Date(departureDate),
       paxAdults: Number(paxAdults),
       paxChildren: Number(paxChildren),
-      quotedTotal: Number(quotedTotal),
+      quotedTotal: quotedTotal != null && String(quotedTotal).trim() !== '' && Number.isFinite(Number(quotedTotal))
+        ? Number(quotedTotal)
+        : null,
       currency,
       terms,
       exclusions,

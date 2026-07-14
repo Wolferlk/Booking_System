@@ -480,7 +480,9 @@ function finalizeExtractedBooking(
     departureDate:    parsed.departureDate    ?? null,
     paxAdults:        Number(parsed.paxAdults  ?? 0),
     paxChildren:      Number(parsed.paxChildren ?? 0),
-    quotedTotal:      parsed.quotedTotal      ? Number(parsed.quotedTotal) : null,
+    quotedTotal:      (parsed.quotedTotal && Number(parsed.quotedTotal) > 0
+                        ? Number(parsed.quotedTotal)
+                        : extractQuotedTotalFromText(regexText) ?? extractQuotedTotalFromText(emailBody)),
     currency:         parsed.currency         ?? 'USD',
     terms:            parsed.terms            ?? null,
     exclusions:       parsed.exclusions       ?? null,
@@ -607,6 +609,40 @@ function extractCntlFromBody(text: string): string | null {
       // Normalise: if captured group is just digits, append CNTL
       const cntl = /^\d+$/.test(v) ? `${v}CNTL` : v
       if (/^\d+CNTL$/.test(cntl) || /^CNTL\d+$/.test(cntl)) return cntl
+    }
+  }
+  return null
+}
+
+// Extract the overall package total from the TC body when the AI misses it.
+// Prefers the grand/overall total labels over per-person figures — e.g. given
+// "Cost Per Person $ 288.00 x 2" and "Total Tour Cost $ 576.80", returns 576.80.
+function extractQuotedTotalFromText(text: string): number | null {
+  // Currency prefix (optional) followed by the amount. Handles "$ 576.80",
+  // "USD 652.00", "Rs. 1,20,000", "₹576.80", "576.80 USD".
+  const money =
+    '(?:(?:USD|US\\$|INR|SGD|LKR|MYR|AUD|AED|THB|EUR|GBP|VND|Rs\\.?|\\$|₹|£|€)\\s*)?' +
+    '([0-9][0-9,]*(?:\\.[0-9]{1,2})?)' +
+    '(?:\\s*(?:USD|INR|SGD|LKR|MYR|AUD|AED|THB|EUR|GBP|VND))?'
+
+  // Ordered by preference — overall/package totals win over per-person amounts.
+  const labels = [
+    'total\\s+tour\\s+cost',
+    'total\\s+package\\s+(?:price|cost|rate|amount)',
+    'grand\\s+total',
+    'package\\s+(?:price|cost|total|rate)',
+    'net\\s+(?:rate|total|amount)',
+    'total\\s+amount',
+    'total\\s+cost',
+    'total\\s+price',
+  ]
+
+  for (const lb of labels) {
+    const re = new RegExp(lb + '\\s*[:=]?\\s*' + money, 'i')
+    const m = text.match(re)
+    if (m?.[1]) {
+      const n = parseFloat(m[1].replace(/,/g, ''))
+      if (Number.isFinite(n) && n > 0) return n
     }
   }
   return null
