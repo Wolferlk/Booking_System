@@ -103,12 +103,24 @@ interface PnlOnlyRow extends PnlRecord {
 }
 
 interface OverviewData {
-  summary: { totalExtPnl: number; linked: number; pnlOnly: number; bookingsOnly: number }
+  summary: {
+    totalExtPnl: number
+    totalInDb: number
+    linked: number
+    pnlOnly: number
+    bookingsOnly: number
+    truncated: boolean
+  }
   linked: LinkedRow[]
   pnlOnly: PnlOnlyRow[]
   bookingsOnly: BookingSnap[]
   externalDbError?: string | null
 }
+
+// Progressive load: paint a fast first batch, then fetch the whole DB in the
+// background so the user sees data immediately instead of a blank spinner.
+const FIRST_BATCH = 300
+const FULL_LIMIT  = 5000
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -325,6 +337,45 @@ function AssignBookingModal({
   )
 }
 
+// ─── Load progress pill ───────────────────────────────────────────────────────
+// Shows live state of the progressive loader: initial load → loading remaining
+// records (with a running count) → fully loaded.
+function LoadProgress({
+  loading, loadingMore, fullyLoaded, loaded, total,
+}: {
+  loading: boolean
+  loadingMore: boolean
+  fullyLoaded: boolean
+  loaded?: number
+  total?: number
+}) {
+  if (loading) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-600 border border-slate-200">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        Loading…
+      </span>
+    )
+  }
+  if (loadingMore) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-50 text-blue-700 border border-blue-200">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        Loading all records… {loaded != null && total != null ? `${loaded} of ${total}` : ''}
+      </span>
+    )
+  }
+  if (fullyLoaded && total != null) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200">
+        <CheckCircle2 className="w-3.5 h-3.5" />
+        All {total} loaded
+      </span>
+    )
+  }
+  return null
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AccountsPNLPage() {
@@ -333,7 +384,9 @@ export default function AccountsPNLPage() {
   const role = session?.user?.role ?? ''
 
   const [data, setData]         = useState<OverviewData | null>(null)
-  const [loading, setLoading]   = useState(true)
+  const [loading, setLoading]   = useState(true)      // full-screen spinner (until first data)
+  const [loadingMore, setLoadingMore] = useState(false)  // background full-load in progress
+  const [fullyLoaded, setFullyLoaded] = useState(false)  // whole DB has been loaded
   const [refreshing, setRefreshing] = useState(false)
   const [dbError, setDbError]   = useState<string | null>(null)
   const [tab, setTab]           = useState<Tab>('linked')
@@ -351,27 +404,63 @@ export default function AccountsPNLPage() {
   }
 
   const searchDebounce = useRef<ReturnType<typeof setTimeout>>()
+  // Bumped on every new load() so a stale background phase-2 can't overwrite
+  // fresher data (e.g. user searches while the full load is still streaming).
+  const loadSeq = useRef(0)
 
+  const fetchOverview = useCallback(async (q: string, limit: number): Promise<OverviewData> => {
+    const qs  = q ? `&search=${encodeURIComponent(q)}` : ''
+    const res  = await fetch(`/api/accounts/pnl-overview?limit=${limit}${qs}`)
+    const json = await res.json()
+    if (!json.success) throw new Error(json.error)
+    return json.data as OverviewData
+  }, [])
+
+  /**
+   * Progressive load:
+   *   Phase 1 — pull FIRST_BATCH records so the table paints in ~1s.
+   *   Phase 2 — pull the full DB in the background, then swap in the complete set.
+   * `silent` skips the full-screen spinner (used for refresh / search).
+   */
   const load = useCallback(async (q = '', silent = false) => {
+    const seq = ++loadSeq.current
     if (!silent) setLoading(true)
     else setRefreshing(true)
     setDbError(null)
+    setFullyLoaded(false)
+
     try {
-      const qs  = q ? `&search=${encodeURIComponent(q)}` : ''
-      const res  = await fetch(`/api/accounts/pnl-overview?limit=300${qs}`)
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      setData(json.data)
-      if (json.data?.externalDbError) setDbError(json.data.externalDbError)
+      // ── Phase 1: fast first paint ──
+      const first = await fetchOverview(q, FIRST_BATCH)
+      if (seq !== loadSeq.current) return              // superseded by a newer load
+      setData(first)
+      if (first.externalDbError) setDbError(first.externalDbError)
+      setLoading(false)
+      setRefreshing(false)
+
+      // Already have everything? Nothing more to fetch.
+      if (!first.summary.truncated) { setFullyLoaded(true); return }
+
+      // ── Phase 2: load the rest in the background ──
+      setLoadingMore(true)
+      const full = await fetchOverview(q, FULL_LIMIT)
+      if (seq !== loadSeq.current) return
+      setData(full)
+      if (full.externalDbError) setDbError(full.externalDbError)
+      setFullyLoaded(!full.summary.truncated)
     } catch (err) {
+      if (seq !== loadSeq.current) return
       const msg = err instanceof Error ? err.message : 'Failed to load PNL overview'
       setDbError(msg)
       toast.error(msg)
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      if (seq === loadSeq.current) {
+        setLoading(false)
+        setRefreshing(false)
+        setLoadingMore(false)
+      }
     }
-  }, [])
+  }, [fetchOverview])
 
   useEffect(() => { load() }, [load])
 
@@ -426,14 +515,23 @@ export default function AccountsPNLPage() {
         title="Accounts PNL Overview"
         subtitle="External PNL database matched against bookings"
         actions={
-          <button
-            onClick={() => load(search, true)}
-            disabled={refreshing}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
-          >
-            {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <LoadProgress
+              loading={loading}
+              loadingMore={loadingMore}
+              fullyLoaded={fullyLoaded}
+              loaded={summary?.totalExtPnl}
+              total={summary?.totalInDb}
+            />
+            <button
+              onClick={() => load(search, true)}
+              disabled={refreshing || loadingMore}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-colors"
+            >
+              {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -460,7 +558,7 @@ export default function AccountsPNLPage() {
         {summary && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { label: 'Total Accounts PNL', value: summary.totalExtPnl, icon: <Database className="w-5 h-5" />, color: 'blue'    },
+              { label: 'Total Accounts PNL', value: summary.totalInDb ?? summary.totalExtPnl, icon: <Database className="w-5 h-5" />, color: 'blue'    },
               { label: 'Linked to Bookings', value: summary.linked,      icon: <CheckCircle2 className="w-5 h-5" />, color: 'emerald' },
               { label: 'PNL — No Booking',   value: summary.pnlOnly,     icon: <AlertCircle className="w-5 h-5" />, color: 'amber'   },
               { label: 'Bookings — No PNL',  value: summary.bookingsOnly, icon: <FileText className="w-5 h-5" />, color: 'rose'    },
