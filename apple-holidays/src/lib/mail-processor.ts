@@ -578,21 +578,27 @@ function extractIsNumberFromBody(text: string): string | null {
 // Extract CNTL number from email body.
 // Handles: "471416CNTL", "CNTL471416", "Tour Ref 471416 CNTL" (space between digits and CNTL).
 function extractCntlFromBody(text: string): string | null {
+  // Labelled patterns FIRST — the value next to an explicit "Tour Ref"/"NAV ID"/
+  // "Quotation No" label is authoritative and must win over any stray "…CNTL"
+  // token that may appear elsewhere in a quoted email thread.
   const patterns = [
-    // "471416CNTL" — digits immediately followed by CNTL
-    /\b(\d{4,}CNTL)\b/i,
-    // "CNTL471416" — CNTL followed by digits
-    /\bCNTL(\d{4,})\b/i,
     // "Tour Ref: 471416CNTL" or multiline "Tour Ref\n471416CNTL"
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
-    // "Tour Ref 471416 CNTL" — space between number and CNTL keyword
+    // "Tour Ref 471416 CNTL" — space/newline between number and CNTL keyword
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
+    // "Tour Ref: CNTL471416" — CNTL prefix form under the label
+    /\btour\s*ref(?:erence)?\s*[:=#-]?\s*CNTL\s*(\d{4,})\b/i,
     // "NAV ID: 471416CNTL" — alternate label used by some agents
     /\bnav\s*id\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
     /\bnav\s*id\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
     // Quotation number patterns
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,}CNTL)\b/i,
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,})\s+CNTL\b/i,
+    // Fallbacks — bare tokens anywhere in the body:
+    // "471416CNTL" — digits immediately followed by CNTL
+    /\b(\d{4,}CNTL)\b/i,
+    // "CNTL471416" — CNTL followed by digits
+    /\bCNTL(\d{4,})\b/i,
   ]
   for (const re of patterns) {
     const m = text.match(re)

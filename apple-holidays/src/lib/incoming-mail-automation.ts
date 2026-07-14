@@ -133,12 +133,15 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
 
   const docText = JSON.stringify({
     bookingRef,
+    tourDestination: data.tourDestination,
     arrivalDate:    data.arrivalDate,
     departureDate:  data.departureDate,
     paxAdults:      data.paxAdults,
     paxChildren:    data.paxChildren,
     flights:        data.flights,
     accommodations: data.accommodations,
+    // Confirmed services (each MUST become at least one agenda item)
+    packageIncludes: data.packageIncludes,
     itineraryItems: data.itineraryItems,
   }, null, 2)
 
@@ -149,6 +152,18 @@ async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFr
         role: 'system',
         content: `Vietnam/Asia tour operations expert. Generate movement chart from booking data.
 RULES: ${conditions}
+
+COVERAGE — MANDATORY (do NOT miss any confirmation):
+- Produce at least ONE agenda item for EVERY entry in itineraryItems[]. Never merge, skip, drop, or collapse two confirmed services into one item.
+- Also cover every service listed in packageIncludes[] — if a Package-Includes service has no matching itinerary day, RECONSTRUCT its date from the hotel city / check-in dates and add it as its own item.
+- A single calendar date can (and often does) have MULTIPLE items — output them all separately.
+- If itineraryItems has N entries, the output MUST have N items or more.
+
+LOCATION + TITLE — MANDATORY (destination must travel with the tour title):
+- "location" = the destination city / area for that item (e.g. "Phu Quoc", "Hanoi", "Da Nang", "Ha Long", "Colombo"). NEVER leave it empty. If a specific city is unclear, use the booking's tourDestination.
+- "toPoint" for a TOUR/ACTIVITY = the COMPLETE verbatim activity title copied EXACTLY from itineraryItems[].title (or the packageIncludes line). Never shorten, paraphrase, or truncate. e.g. "Phu Quoc Airport to Hotel city center | Private Transfer" stays in full.
+- "toPoint" for a TRANSFER = the exact destination (hotel name, or "CODE Airport").
+- Together the item reads as "<destination city> — <full tour title>". Both must always be present.
 
 SERVICE TYPE — MANDATORY (use exactly one of these values):
 - International/domestic flight leg → serviceType="FLIGHT", meetingTime = depTime minus 3 hours, fromPoint = "Flight <flightNo>" (e.g. "Flight VZ123"), toPoint = destination airport code
@@ -198,7 +213,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
     const SIC_RE           = /\bsic\b/i
     const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
 
-    return rawItems.map((item: any) => {
+    const aiItems = rawItems.map((item: any) => {
       const from = String(item.fromPoint ?? '')
       const to   = String(item.toPoint   ?? '')
       const det  = String(item.details   ?? '')
@@ -225,8 +240,12 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
         ? null
         : (item.meetingTime ?? null)
 
+      // Destination must always be present on the visible title line.
+      const location = loc.trim() || (data.tourDestination ?? '')
+
       return {
         ...item,
+        location,
         serviceType,
         meetingTime,
         mealPlan: normalizeMealPlan(item.mealPlan),
@@ -234,6 +253,48 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
         timeTo:   item.timeTo   ?? null,
       }
     })
+
+    // ── Coverage safety net ──────────────────────────────────────────────────
+    // The AI can silently drop or merge confirmed services. Guarantee that every
+    // itinerary confirmation appears as an agenda item — append any that the AI
+    // left out, so no confirmation is ever missed.
+    const norm = (s: string) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const haystacks = aiItems.map(it => norm(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''}`))
+
+    const appended: any[] = []
+    for (const it of data.itineraryItems ?? []) {
+      const title = String(it.title ?? '').trim()
+      if (!title || !it.date) continue
+      const key    = norm(title)
+      const tokens = key.split(' ').filter(t => t.length > 3)
+      const covered = haystacks.some(h => {
+        if (key && h.includes(key)) return true
+        if (!tokens.length) return false
+        const hits = tokens.filter(t => h.includes(t)).length
+        return hits / tokens.length >= 0.6
+      })
+      if (covered) continue
+
+      const sic = /\bsic\b/i.test(title)
+      const own = /own arrangement|at leisure|free day|leisure|free time/i.test(title)
+      const serviceType = sic ? 'SIC_TRANSFER' : own ? 'OWN_ARRANGEMENT' : 'PVT_TRANSFER'
+      appended.push({
+        date:        it.date,
+        location:    data.tourDestination ?? '',
+        fromPoint:   null,
+        toPoint:     title,                              // full verbatim confirmation title
+        details:     it.description ?? null,
+        mealPlan:    null,
+        meetingTime: serviceType === 'OWN_ARRANGEMENT' ? null : '08:00',
+        timeFrom:    null,
+        timeTo:      null,
+        serviceType,
+      })
+    }
+
+    const all = [...aiItems, ...appended]
+    all.sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')))
+    return all
   } catch {
     return []
   }
