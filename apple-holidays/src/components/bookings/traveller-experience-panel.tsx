@@ -3,16 +3,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Phone, PhoneCall, PhoneIncoming, PhoneMissed,
-  Calendar, RefreshCw, Plus, Play, Pause,
+  Calendar, RefreshCw, Plus,
   SkipForward, Trash2, Edit2, CheckCircle2,
-  XCircle, Clock, Mic, ChevronDown, ChevronUp,
+  XCircle, Clock, ChevronDown, ChevronUp,
   AlertCircle, Loader2, MessageSquare, Volume2, Settings,
-  User, Star, MessageCircle, Bot, Info,
-  ChevronRight, Hash, BookOpen, Megaphone,
+  User, Star, MessageCircle, Bot, Info, BookOpen,
   Plane, Home, ThumbsUp, ClipboardCheck, Users, Award, Heart,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
+import { CallRecordingPlayer } from '@/components/te/transcript-shared'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -128,6 +128,7 @@ interface TEFeedback {
   vehicle_ok?: string | null
   issues?: string | null
   summary?: string | null
+  conversation_id?: string | null
   transcript?: TranscriptTurn[] | string | null
   raw?: Record<string, unknown> | null
 }
@@ -138,38 +139,6 @@ interface TranscriptTurn {
   text?: string
   message?: string
   content?: string
-}
-
-interface TEJob {
-  id: number
-  name: string
-  phone: string
-  customer_name: string
-  campaign_id?: number | null
-  booking_ref?: string | null
-  start_at: string
-  interval_count?: number | null
-  interval_unit?: string | null
-  end_at?: string | null
-  max_runs?: number | null
-  next_run_at?: string | null
-  last_run_at?: string | null
-  runs: number
-  status: 'scheduled' | 'paused' | 'done' | 'cancelled'
-  respect_window: boolean
-  last_result?: string | null
-  conversation_id?: string | null
-  context?: Record<string, unknown>
-}
-
-interface TECampaign {
-  id: number
-  name: string
-  slug?: string
-  approach?: string | null
-  collect?: string | null
-  first_message?: string | null
-  is_active: boolean
 }
 
 interface Props {
@@ -254,11 +223,29 @@ function normaliseTranscript(raw: TranscriptTurn[] | string | null | undefined):
   })
 }
 
-function TranscriptViewer({ transcript }: { transcript: TranscriptTurn[] | string | null | undefined }) {
-  const lines = normaliseTranscript(transcript)
+function TranscriptViewer({ transcript, conversationId }: { transcript: TranscriptTurn[] | string | null | undefined; conversationId?: string | null }) {
+  const stored = normaliseTranscript(transcript)
+  const [fetched, setFetched] = useState<ReturnType<typeof normaliseTranscript> | null>(null)
+  const [loadingT, setLoadingT] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [])
-  if (lines.length === 0) return <p className="text-xs text-slate-400 italic px-3 py-2">No transcript recorded</p>
+  // On demand: if nothing is stored but we have a conversation id, pull the full
+  // conversation from the voice service (fetched from ElevenLabs + cached back).
+  useEffect(() => {
+    if (stored.length || !conversationId) return
+    let cancelled = false
+    setLoadingT(true)
+    fetch(`/api/te/proxy?path=${encodeURIComponent(`conversations/${conversationId}/transcript`)}`)
+      .then(r => r.json())
+      .then(j => { if (!cancelled) setFetched(normaliseTranscript(j?.transcript)) })
+      .catch(() => { if (!cancelled) setFetched([]) })
+      .finally(() => { if (!cancelled) setLoadingT(false) })
+    return () => { cancelled = true }
+  }, [conversationId, stored.length])
+  const lines = stored.length ? stored : (fetched ?? [])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [lines.length])
+  if (lines.length === 0) {
+    return <p className="text-xs text-slate-400 italic px-3 py-2">{loadingT ? 'Loading the conversation…' : 'No transcript recorded'}</p>
+  }
   return (
     <div className="max-h-80 overflow-y-auto space-y-2 px-1 py-2">
       {lines.map((line, i) => (
@@ -283,84 +270,6 @@ function TranscriptViewer({ transcript }: { transcript: TranscriptTurn[] | strin
         </div>
       ))}
       <div ref={bottomRef} />
-    </div>
-  )
-}
-
-// ─── Feedback Data View ───────────────────────────────────────────────────────
-
-const SENTIMENT_STYLES: Record<string, string> = {
-  positive: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  happy:    'bg-emerald-100 text-emerald-700 border-emerald-200',
-  neutral:  'bg-amber-50 text-amber-600 border-amber-200',
-  negative: 'bg-red-100 text-red-600 border-red-200',
-}
-
-function okChip(val: string | null | undefined) {
-  if (!val) return null
-  const v = val.toLowerCase()
-  if (v === 'good' || v === 'yes' || v === 'ok') return 'text-emerald-700 bg-emerald-50 border-emerald-200'
-  if (v === 'bad' || v === 'no') return 'text-red-600 bg-red-50 border-red-200'
-  return 'text-slate-500 bg-slate-50 border-slate-200'
-}
-
-function FeedbackDataView({ fb }: { fb: TEFeedback }) {
-  const ratingItems = [
-    { label: 'Hotel', val: fb.hotel_ok },
-    { label: 'Meals', val: fb.meals_ok },
-    { label: 'Driver', val: fb.driver_ok },
-    { label: 'Vehicle', val: fb.vehicle_ok },
-  ].filter(i => i.val)
-
-  const hasStructured = !!(fb.highlights || fb.issues || fb.summary || ratingItems.length > 0)
-  const hasRaw = fb.raw && Object.keys(fb.raw).length > 0
-
-  if (!hasStructured && !hasRaw) {
-    return <p className="text-xs text-slate-400 italic py-2 text-center">No feedback data from this call</p>
-  }
-
-  return (
-    <div className="space-y-2.5">
-      {ratingItems.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {ratingItems.map(({ label, val }) => {
-            const cls = okChip(val)
-            return cls ? (
-              <span key={label} className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cls}`}>
-                {label}: {val}
-              </span>
-            ) : null
-          })}
-        </div>
-      )}
-      {fb.highlights && (
-        <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2.5">
-          <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wide mb-1 flex items-center gap-1"><Star className="w-2.5 h-2.5" /> Highlights</p>
-          <p className="text-xs text-slate-700 leading-relaxed">{fb.highlights}</p>
-        </div>
-      )}
-      {fb.issues && (
-        <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2.5">
-          <p className="text-[10px] font-bold text-red-500 uppercase tracking-wide mb-1 flex items-center gap-1"><AlertCircle className="w-2.5 h-2.5" /> Issues</p>
-          <p className="text-xs text-slate-700 leading-relaxed">{fb.issues}</p>
-        </div>
-      )}
-      {fb.summary && (
-        <div className="bg-violet-50 border border-violet-100 rounded-xl px-3 py-2.5">
-          <p className="text-[10px] font-bold text-violet-500 uppercase tracking-wide mb-1">AI Summary</p>
-          <p className="text-xs text-slate-700 leading-relaxed">{fb.summary}</p>
-        </div>
-      )}
-      {!hasStructured && hasRaw && (
-        <div className="space-y-1.5">
-          {Object.entries(fb.raw!).filter(([, v]) => v != null && v !== '').map(([k, v]) => (
-            <div key={k} className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
-              <p className="text-[10px] font-bold text-slate-400 uppercase mb-0.5">{k.replace(/_/g, ' ')}</p>
-              <p className="text-xs text-slate-700">{String(v)}</p>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -433,7 +342,7 @@ function ToggleSwitch({ on, onChange }: { on: boolean; onChange: (v: boolean) =>
 }
 
 // ─── Reconfirmation result card ────────────────────────────────────────────────
-function ReconfirmCard({ row }: { row: TEReconfirmation }) {
+function ReconfirmCard({ row, onRetry, retryBusy }: { row: TEReconfirmation; onRetry?: () => void; retryBusy?: boolean }) {
   const [open, setOpen] = useState(false)
   const hasChange = !!(row.requested_change && row.requested_change.trim())
   return (
@@ -443,7 +352,15 @@ function ReconfirmCard({ row }: { row: TEReconfirmation }) {
         <span className="text-[10px] font-bold text-sky-700 uppercase tracking-wide">Reconfirmation</span>
         {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
         {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
-        {row.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDateTime(row.at)}</span>}
+        <span className="ml-auto flex items-center gap-2">
+          {row.at && <span className="text-[10px] text-slate-400">{fmtDateTime(row.at)}</span>}
+          {onRetry && (
+            <button type="button" disabled={retryBusy} onClick={onRetry} title="Place the reconfirmation call again now"
+              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-60 transition-colors">
+              {retryBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />} Retry call
+            </button>
+          )}
+        </span>
       </div>
       <div className="p-3 space-y-2.5">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
@@ -465,12 +382,13 @@ function ReconfirmCard({ row }: { row: TEReconfirmation }) {
           </div>
         )}
         {row.summary && <p className="text-xs text-slate-600 italic leading-relaxed">{row.summary}</p>}
+        {row.conversation_id && <CallRecordingPlayer conversationId={row.conversation_id} />}
         {row.transcript && (
           <div>
             <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-sky-600 hover:text-sky-800">
               <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
-            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} /></div>}
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} conversationId={row.conversation_id} /></div>}
           </div>
         )}
       </div>
@@ -479,7 +397,7 @@ function ReconfirmCard({ row }: { row: TEReconfirmation }) {
 }
 
 // ─── Post-tour result card ─────────────────────────────────────────────────────
-function PostTourCard({ row }: { row: TEPostTour }) {
+function PostTourCard({ row, onRetry, retryBusy }: { row: TEPostTour; onRetry?: () => void; retryBusy?: boolean }) {
   const [open, setOpen] = useState(false)
   const stars = toStars(row.rating, row.stars)
   return (
@@ -489,7 +407,15 @@ function PostTourCard({ row }: { row: TEPostTour }) {
         <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Post-tour</span>
         {row.outcome && <span className={outcomeBadge(row.outcome)}>{OUTCOME_META[row.outcome]?.label ?? row.outcome}</span>}
         {row.sentiment && <span className="text-sm" title={row.sentiment}>{SENTIMENT_EMOJI[row.sentiment] ?? ''}</span>}
-        {row.at && <span className="ml-auto text-[10px] text-slate-400">{fmtDateTime(row.at)}</span>}
+        <span className="ml-auto flex items-center gap-2">
+          {row.at && <span className="text-[10px] text-slate-400">{fmtDateTime(row.at)}</span>}
+          {onRetry && (
+            <button type="button" disabled={retryBusy} onClick={onRetry} title="Place the post-tour feedback call again now"
+              className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 transition-colors">
+              {retryBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />} Retry call
+            </button>
+          )}
+        </span>
       </div>
       <div className="p-3 space-y-2.5">
         <div className="flex items-center gap-2 flex-wrap">
@@ -522,95 +448,16 @@ function PostTourCard({ row }: { row: TEPostTour }) {
         )}
         {row.comment && <p className="text-xs text-slate-700 leading-relaxed">&ldquo;{row.comment}&rdquo;</p>}
         {row.summary && <p className="text-xs text-slate-500 italic leading-relaxed">{row.summary}</p>}
+        {row.conversation_id && <CallRecordingPlayer conversationId={row.conversation_id} />}
         {row.transcript && (
           <div>
             <button onClick={() => setOpen(o => !o)} className="flex items-center gap-1 text-[11px] font-semibold text-amber-600 hover:text-amber-800">
               <MessageCircle className="w-3 h-3" /> {open ? 'Hide' : 'View'} transcript {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
-            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} /></div>}
+            {open && <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg"><TranscriptViewer transcript={row.transcript} conversationId={row.conversation_id} /></div>}
           </div>
         )}
       </div>
-    </div>
-  )
-}
-
-// ─── Call History Card ────────────────────────────────────────────────────────
-
-function CallHistoryCard({ fb, scheduleItems }: { fb: TEFeedback; scheduleItems: TEScheduleItem[] }) {
-  const [open, setOpen] = useState(false)
-  const [activeView, setActiveView] = useState<'data' | 'transcript'>('data')
-  const schedule = scheduleItems.find(s => s.id === fb.schedule_id)
-  const phaseLabel: Record<string, string> = { arrival: 'Arrival', mid: 'Mid-Trip', departure: 'Departure' }
-
-  const callResult = schedule?.status === 'answered' ? 'answered'
-    : schedule?.status === 'missed' ? 'missed'
-    : (fb.highlights || fb.hotel_ok) ? 'answered' : 'missed'
-
-  const hasTranscript = !!(fb.transcript && (Array.isArray(fb.transcript) ? fb.transcript.length > 0 : String(fb.transcript).trim()))
-  const hasFeedback   = !!(fb.highlights || fb.issues || fb.summary || fb.hotel_ok || fb.meals_ok || fb.driver_ok || fb.vehicle_ok || (fb.raw && Object.keys(fb.raw).length > 0))
-  const sentimentStyle = fb.sentiment ? (SENTIMENT_STYLES[fb.sentiment] ?? null) : null
-
-  return (
-    <div className={`border rounded-xl overflow-hidden transition-all ${open ? 'border-violet-200 shadow-sm' : 'border-slate-100 hover:border-slate-200'}`}>
-      <button className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left" onClick={() => setOpen(v => !v)}>
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${callResult === 'answered' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-400'}`}>
-          {callResult === 'answered' ? <Phone className="w-3.5 h-3.5" /> : <PhoneMissed className="w-3.5 h-3.5" />}
-        </div>
-        <div className="flex-1 min-w-0 text-left">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-bold text-slate-800">{fb.call_date ? fmtDate(fb.call_date) : fmtDateTime(fb.created_at)}</span>
-            {fb.day_no != null && <span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded-full">Day {fb.day_no}</span>}
-            {schedule?.phase && <span className="text-[9px] text-violet-500 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-full font-semibold">{phaseLabel[schedule.phase] ?? schedule.phase}</span>}
-            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${STATUS_STYLES[callResult] ?? 'bg-slate-100 text-slate-500 border-slate-200'}`}>{callResult.toUpperCase()}</span>
-            {sentimentStyle && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${sentimentStyle}`}>{fb.sentiment!.toUpperCase()}</span>}
-          </div>
-          <div className="flex items-center gap-2 mt-0.5 text-[11px] text-slate-400">
-            <span>{fmtDateTime(fb.created_at)}</span>
-            {schedule && schedule.attempts > 0 && <span>{schedule.attempts} attempt{schedule.attempts !== 1 ? 's' : ''}</span>}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {hasTranscript && <span className="hidden sm:flex text-[9px] text-violet-500 bg-violet-50 border border-violet-100 px-1.5 py-0.5 rounded-full font-semibold items-center gap-1"><MessageCircle className="w-2.5 h-2.5" /> transcript</span>}
-          {open ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
-        </div>
-      </button>
-
-      {open && (
-        <div className="border-t border-slate-100">
-          {schedule?.day_brief && (
-            <div className="px-4 py-2.5 bg-violet-50/60 border-b border-violet-100">
-              <p className="text-[10px] font-bold text-violet-500 uppercase tracking-wide mb-0.5">Bot Context</p>
-              <p className="text-xs text-slate-700 leading-relaxed">{schedule.day_brief}</p>
-            </div>
-          )}
-          {schedule?.error && (
-            <div className="px-4 py-2 bg-red-50 border-b border-red-100">
-              <p className="text-[10px] font-bold text-red-500 uppercase mb-0.5">Error</p>
-              <p className="text-xs text-red-700">{schedule.error}</p>
-            </div>
-          )}
-          {hasFeedback && hasTranscript && (
-            <div className="flex border-b border-slate-100 px-4">
-              {([['data', '📋 Feedback'], ['transcript', '💬 Conversation']] as const).map(([v, label]) => (
-                <button key={v} onClick={() => setActiveView(v)}
-                  className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors ${activeView === v ? 'border-violet-500 text-violet-700' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="px-4 py-3">
-            {(!hasTranscript || activeView === 'data') && <FeedbackDataView fb={fb} />}
-            {((!hasFeedback && hasTranscript) || activeView === 'transcript') && hasTranscript && (
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1.5"><MessageCircle className="w-3 h-3 text-violet-400" /> Full Conversation</p>
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3"><TranscriptViewer transcript={fb.transcript} /></div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -633,9 +480,12 @@ function ScheduleRow({ item, busy, onCallNow, onSkip, onDelete, onEdit }: {
 
   const isPast = new Date(item.call_date + 'T23:59:59') < new Date()
   const isToday = item.call_date === new Date().toISOString().slice(0, 10)
-  const canCall = item.status === 'pending' || item.status === 'missed'
   const isReconfirm = item.phase === 'reconfirm'
   const isPostTour  = item.phase === 'post_tour'
+  // Reconfirmation / post-tour calls can always be RE-placed (retry after a bad
+  // line, an unanswered attempt, or simply to run the script again) — day
+  // check-ins only while still open.
+  const canCall = item.status === 'pending' || item.status === 'missed' || isReconfirm || isPostTour
 
   return (
     <div className={`flex items-center gap-2 py-3 border-b border-slate-50 last:border-0 group ${busy ? 'opacity-40 pointer-events-none' : ''} ${isReconfirm ? 'bg-sky-50/40' : isPostTour ? 'bg-amber-50/30' : ''}`}>
@@ -678,62 +528,19 @@ function ScheduleRow({ item, busy, onCallNow, onSkip, onDelete, onEdit }: {
   )
 }
 
-// ─── Job Row ─────────────────────────────────────────────────────────────────
-
-function JobRow({ job, campaigns, busy, onRun, onPause, onResume, onCancel, onDelete }: {
-  job: TEJob; campaigns: TECampaign[]; busy: boolean
-  onRun: () => void; onPause: () => void; onResume: () => void; onCancel: () => void; onDelete: () => void
-}) {
-  const cadence = job.interval_count && job.interval_unit ? `Every ${job.interval_count} ${job.interval_unit}` : 'One-off'
-  const campaign = campaigns.find(c => c.id === job.campaign_id)
-
-  return (
-    <div className={`flex items-start gap-3 p-3 rounded-xl border border-slate-100 group hover:border-slate-200 ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-semibold text-slate-800 truncate">{job.name}</span>
-          <span className={statusBadge(job.status, true)}>{job.status.toUpperCase()}</span>
-          <span className="text-[9px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-full font-medium">{cadence}</span>
-        </div>
-        {campaign && <p className="text-[10px] text-violet-500 mt-0.5 flex items-center gap-1"><Megaphone className="w-2.5 h-2.5" />{campaign.name}</p>}
-        <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 flex-wrap">
-          <span className="flex items-center gap-1"><Phone className="w-2.5 h-2.5" />{job.phone}</span>
-          <span>{job.runs} run{job.runs !== 1 ? 's' : ''}</span>
-          {job.next_run_at && job.status === 'scheduled' && <span className="text-blue-500 flex items-center gap-1"><Clock className="w-2.5 h-2.5" />Next: {fmtDateTime(job.next_run_at)}</span>}
-          {job.last_run_at && <span>Last: {fmtDateTime(job.last_run_at)}</span>}
-        </div>
-        {job.last_result && <p className="text-[10px] text-slate-400 mt-0.5 italic">{job.last_result}</p>}
-      </div>
-      <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        {['scheduled', 'paused'].includes(job.status) && <button onClick={onRun} title="Run now" className="p-1.5 rounded-lg hover:bg-green-50 text-slate-300 hover:text-green-600 transition-colors"><Play className="w-3.5 h-3.5" /></button>}
-        {job.status === 'scheduled' && <button onClick={onPause} title="Pause" className="p-1.5 rounded-lg hover:bg-amber-50 text-slate-300 hover:text-amber-500 transition-colors"><Pause className="w-3.5 h-3.5" /></button>}
-        {job.status === 'paused' && <button onClick={onResume} title="Resume" className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-300 hover:text-blue-500 transition-colors"><RefreshCw className="w-3.5 h-3.5" /></button>}
-        {!['done', 'cancelled'].includes(job.status) && <button onClick={onCancel} title="Cancel" className="p-1.5 rounded-lg hover:bg-red-50 text-slate-200 hover:text-red-500 transition-colors"><XCircle className="w-3.5 h-3.5" /></button>}
-        <button onClick={onDelete} title="Delete" className="p-1.5 rounded-lg hover:bg-red-50 text-slate-200 hover:text-red-500 transition-colors"><Trash2 className="w-3 h-3" /></button>
-      </div>
-    </div>
-  )
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'schedule' | 'jobs' | 'quickcall' | 'history'
+// Three tabs only — setup+results, the call schedule, and a quick call. The old
+// "Recurring Jobs" and "Calls & Feedback" tabs were noise on a booking page:
+// jobs live in the global AI Call Bot dashboard, and every conversation (with
+// recording + transcript) is in the "AI Call Transcripts" card right below.
+type Tab = 'overview' | 'schedule' | 'quickcall'
 
 export default function TravellerExperiencePanel({ bookingRef, booking }: Props) {
   const [tab, setTab]         = useState<Tab>('overview')
   const [loading, setLoading] = useState(true)
   const [service, setService] = useState<TEService | null>(null)
   const [config, setConfig]   = useState<TEConfig | null>(null)
-
-  // feedback
-  const [feedbackList, setFeedbackList] = useState<TEFeedback[]>([])
-  const [feedbackLoading, setFeedbackLoading] = useState(false)
-
-  // jobs + campaigns
-  const [jobs, setJobs]               = useState<TEJob[]>([])
-  const [jobsLoading, setJobsLoading] = useState(false)
-  const [campaigns, setCampaigns]     = useState<TECampaign[]>([])
-  const [campaignsLoading, setCampaignsLoading] = useState(false)
 
   const lead        = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
   const defaultPhone = (booking.contactWhatsapp ?? booking.contactPhone ?? lead?.contact ?? '') as string
@@ -747,6 +554,10 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [reconfirmPlan, setReconfirmPlan] = useState({ enabled: true, days_before: '5', call_time: '' })
   const [postTourPlan, setPostTourPlan]   = useState({ enabled: true, days_after: '3', call_time: '' })
   const [planBusy, setPlanBusy]           = useState<'reconfirm' | 'post_tour' | null>(null)
+  // Inline timing editor for a REGISTERED service's special calls (which day /
+  // what time). Open one card's editor at a time; the form holds its draft.
+  const [planEdit, setPlanEdit]           = useState<'reconfirm' | 'post_tour' | null>(null)
+  const [planEditForm, setPlanEditForm]   = useState({ days: '', call_time: '' })
 
   // ── Edit service form ─────────────────────────────────────────────────────
   const [editOpen, setEditOpen]       = useState(false)
@@ -761,18 +572,6 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [addDayOpen, setAddDayOpen]     = useState(false)
   const [addDayForm, setAddDayForm]     = useState({ call_date: '', brief: '', scheduled_at: '', day_no: '' })
   const [addDayLoading, setAddDayLoading] = useState(false)
-
-  // ── Jobs ──────────────────────────────────────────────────────────────────
-  const [newJobOpen, setNewJobOpen] = useState(false)
-  const [jobForm, setJobForm]       = useState({ name: '', phone: defaultPhone, customer_name: leadName, campaign_id: '' as string, start_at: 'now', interval_count: '', interval_unit: '' as '' | 'minute' | 'hour' | 'day', max_runs: '', end_at: '', respect_window: false })
-  const [jobLoading, setJobLoading] = useState(false)
-  const [jobBusy, setJobBusy]       = useState<number | null>(null)
-
-  // ── Campaigns ─────────────────────────────────────────────────────────────
-  const [campaignOpen, setCampaignOpen] = useState(false)
-  const [campaignForm, setCampaignForm] = useState({ name: '', approach: '', collect: '', first_message: '', is_active: true })
-  const [campaignLoading, setCampaignLoading] = useState(false)
-  const [editCampaign, setEditCampaign] = useState<TECampaign | null>(null)
 
   // ── Quick Call ────────────────────────────────────────────────────────────
   const [quickForm, setQuickForm] = useState({ to: defaultPhone, name: leadName, reason: '' })
@@ -797,37 +596,21 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
   useEffect(() => { loadService() }, [loadService])
 
-  // ── Load feedback ─────────────────────────────────────────────────────────
-  const loadFeedback = useCallback(async () => {
-    if (!service?.id) return
-    setFeedbackLoading(true)
+  // ── Live call-permission state — the source of truth for "can we call?" ────
+  // Read from Meta via the TE API so the panel SHOWS whether the customer has
+  // allowed WhatsApp calls, instead of every dial guessing and failing.
+  const [perm, setPerm] = useState<{ checked: boolean; allowed: boolean | null; message?: string; can_request?: boolean } | null>(null)
+  const [permLoading, setPermLoading] = useState(false)
+  const permPhone = (service?.call_phone || intakeForm.phone || '').replace(/\D/g, '')
+  const loadPermission = useCallback(async (phone: string) => {
+    if (!phone) { setPerm(null); return }
+    setPermLoading(true)
     try {
-      const res = await teProxy('feedback', 'GET', undefined, { serviceId: String(service.id) })
-      setFeedbackList(res.feedback ?? res.data ?? [])
-    } catch { /* ignore */ } finally { setFeedbackLoading(false) }
-  }, [service?.id])
-
-  useEffect(() => { if (tab === 'history' && service?.id) loadFeedback() }, [tab, service?.id, loadFeedback])
-
-  // ── Load jobs + campaigns ─────────────────────────────────────────────────
-  const loadJobs = useCallback(async () => {
-    setJobsLoading(true)
-    try {
-      const res = await teProxy('jobs', 'GET', undefined, { limit: '200' })
-      const all: TEJob[] = res.jobs ?? res.data ?? []
-      setJobs(all.filter(j => j.booking_ref === bookingRef || (j.name ?? '').includes(bookingRef)))
-    } catch { /* ignore */ } finally { setJobsLoading(false) }
-  }, [bookingRef])
-
-  const loadCampaigns = useCallback(async () => {
-    setCampaignsLoading(true)
-    try {
-      const res = await teProxy('campaigns')
-      setCampaigns(res.campaigns ?? res.data ?? [])
-    } catch { /* ignore */ } finally { setCampaignsLoading(false) }
+      const res = await teProxy('approval', 'GET', undefined, { to: phone })
+      setPerm({ checked: Boolean(res.checked), allowed: res.allowed ?? null, message: res.message, can_request: res.can_request })
+    } catch { setPerm(null) } finally { setPermLoading(false) }
   }, [])
-
-  useEffect(() => { if (tab === 'jobs') { loadJobs(); loadCampaigns() } }, [tab, loadJobs, loadCampaigns])
+  useEffect(() => { if (permPhone) loadPermission(permPhone) }, [permPhone, loadPermission])
 
   // ── Register ──────────────────────────────────────────────────────────────
   async function registerBooking() {
@@ -865,6 +648,28 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       await loadService(true)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed') }
     finally { setPlanBusy(null) }
+  }
+
+  // Open the inline timing editor for a special call, seeded from current values.
+  function openPlanEdit(kind: 'reconfirm' | 'post_tour') {
+    if (kind === 'reconfirm') {
+      setPlanEditForm({ days: String(service?.reconfirm_days_before ?? 5), call_time: service?.reconfirm_call_time ?? '' })
+    } else {
+      setPlanEditForm({ days: String(service?.post_tour_days_after ?? 3), call_time: service?.post_tour_call_time ?? '' })
+    }
+    setPlanEdit(kind)
+  }
+
+  // Save the edited timing — re-lays the special call's schedule row on the API.
+  async function savePlanEdit(kind: 'reconfirm' | 'post_tour') {
+    const daysKey = kind === 'reconfirm' ? 'days_before' : 'days_after'
+    const patch: Record<string, unknown> = {
+      enabled: true,
+      [daysKey]: Number(planEditForm.days) || (kind === 'reconfirm' ? 5 : 3),
+    }
+    if (planEditForm.call_time) patch.call_time = planEditForm.call_time
+    await updatePlan(kind, patch)
+    setPlanEdit(null)
   }
 
   // ── Edit service ──────────────────────────────────────────────────────────
@@ -907,16 +712,40 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       const res = await teProxy('approval', 'POST', { to: phone, name: leadName || 'Valued Customer' })
       if (res.already_allowed) toast.success('Customer already allowed WhatsApp calls ✓')
       else toast.success(res.message ?? 'Approval request sent — awaiting customer confirmation')
+      await loadPermission(phone)
     } catch { toast.error('Failed to send approval request') }
     finally { setApprovalLoading(false) }
+  }
+
+  // The live "can we call them?" chip — one glance answers what used to be a
+  // guessing game. Reads Meta's real permission state via the TE API.
+  function permChip() {
+    if (!permPhone) return null
+    if (permLoading) {
+      return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border bg-slate-50 text-slate-500 border-slate-200"><Loader2 className="w-3 h-3 animate-spin" /> Checking call permission…</span>
+    }
+    if (perm?.allowed === true) {
+      return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-emerald-50 text-emerald-700 border-emerald-200"><CheckCircle2 className="w-3 h-3" /> Customer allows calls</span>
+    }
+    if (perm?.allowed === false) {
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full border bg-amber-50 text-amber-700 border-amber-200" title={perm?.message}>
+          <AlertCircle className="w-3 h-3" /> Not allowed yet — {perm?.can_request === false ? 'awaiting their Allow tap' : 'send the approval request'}
+        </span>
+      )
+    }
+    return <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border bg-slate-50 text-slate-400 border-slate-200" title={perm?.message}>Permission state unknown</span>
   }
 
   // ── Schedule actions ──────────────────────────────────────────────────────
   async function callNow(id: number) {
     const sortedSched = [...(service?.schedule ?? [])].sort((a, b) => a.day_no - b.day_no)
     const item        = sortedSched.find(s => s.id === id)
-    const firstPending = sortedSched.find(s => s.status === 'pending')
-    if (item && firstPending && firstPending.id !== item.id) {
+    const isSpecial   = item?.phase === 'reconfirm' || item?.phase === 'post_tour'
+    const firstPending = sortedSched.find(s => s.status === 'pending' && s.phase !== 'reconfirm' && s.phase !== 'post_tour')
+    // The out-of-order warning is about DAY check-ins — a reconfirmation or
+    // post-tour retry is never "out of sequence".
+    if (item && !isSpecial && firstPending && firstPending.id !== item.id) {
       const ok = confirm(
         `⚠️ Out-of-order call\n\nDay ${firstPending.day_no} (${firstPending.call_date}) is still pending.\nCall Day ${item.day_no} out of sequence anyway?`
       )
@@ -1024,87 +853,25 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     } catch { toast.error('Quick call failed') } finally { setQuickLoading(false) }
   }
 
-  // ── Jobs ──────────────────────────────────────────────────────────────────
-  async function createJob() {
-    if (!jobForm.name.trim()) { toast.error('Job name is required'); return }
-    if (!jobForm.phone.trim()) { toast.error('Phone number is required'); return }
-    setJobLoading(true)
-    try {
-      const body: Record<string, unknown> = {
-        name: jobForm.name.trim(), phone: jobForm.phone.replace(/\D/g, ''),
-        customer_name: jobForm.customer_name || leadName || 'Guest',
-        booking_ref: bookingRef, start_at: jobForm.start_at || 'now',
-        respect_window: jobForm.respect_window,
-      }
-      if (jobForm.campaign_id) body.campaign_id = Number(jobForm.campaign_id)
-      if (jobForm.interval_count && jobForm.interval_unit) { body.interval_count = Number(jobForm.interval_count); body.interval_unit = jobForm.interval_unit }
-      if (jobForm.max_runs) body.max_runs = Number(jobForm.max_runs)
-      if (jobForm.end_at) body.end_at = new Date(jobForm.end_at).toISOString()
-      const res = await teProxy('jobs', 'POST', body)
-      if (!res.job) throw new Error(res.message ?? 'Failed')
-      toast.success(`Job "${jobForm.name}" created`)
-      setNewJobOpen(false)
-      setJobForm({ name: '', phone: defaultPhone, customer_name: leadName, campaign_id: '', start_at: 'now', interval_count: '', interval_unit: '', max_runs: '', end_at: '', respect_window: false })
-      await loadJobs()
-    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to create job') }
-    finally { setJobLoading(false) }
-  }
-
-  async function jobAction(id: number, action: 'run' | 'pause' | 'resume' | 'cancel') {
-    setJobBusy(id)
-    try {
-      const res = await teProxy(`jobs/${id}/${action}`, 'POST')
-      toast.success(res.message ?? `Job ${action}`)
-      await loadJobs()
-    } catch { toast.error(`Failed to ${action} job`) } finally { setJobBusy(null) }
-  }
-
-  async function deleteJob(id: number) {
-    if (!confirm('Delete this job?')) return
-    setJobBusy(id)
-    try { await teProxy(`jobs/${id}`, 'DELETE'); toast.success('Job deleted'); await loadJobs() }
-    catch { toast.error('Failed to delete') } finally { setJobBusy(null) }
-  }
-
-  // ── Campaigns ─────────────────────────────────────────────────────────────
-  async function saveCampaign() {
-    if (!campaignForm.name.trim()) { toast.error('Campaign name is required'); return }
-    setCampaignLoading(true)
-    try {
-      const body = { name: campaignForm.name.trim(), approach: campaignForm.approach || undefined, collect: campaignForm.collect || undefined, first_message: campaignForm.first_message || undefined, is_active: campaignForm.is_active }
-      let res: Record<string, unknown>
-      if (editCampaign) {
-        res = await teProxy(`campaigns/${editCampaign.id}`, 'PATCH', body)
-        toast.success('Campaign updated')
-      } else {
-        res = await teProxy('campaigns', 'POST', body)
-        toast.success('Campaign created')
-      }
-      if (!res.campaign && res.ok === false) throw new Error(String(res.message ?? 'Failed'))
-      setCampaignOpen(false)
-      setEditCampaign(null)
-      setCampaignForm({ name: '', approach: '', collect: '', first_message: '', is_active: true })
-      await loadCampaigns()
-    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to save campaign') }
-    finally { setCampaignLoading(false) }
-  }
-
-  async function deleteCampaign(id: number) {
-    if (!confirm('Delete this campaign?')) return
-    try { await teProxy(`campaigns/${id}`, 'DELETE'); toast.success('Campaign deleted'); await loadCampaigns() }
-    catch { toast.error('Failed to delete campaign') }
-  }
-
-  function openEditCampaign(c: TECampaign) {
-    setEditCampaign(c)
-    setCampaignForm({ name: c.name, approach: c.approach ?? '', collect: c.collect ?? '', first_message: c.first_message ?? '', is_active: c.is_active })
-    setCampaignOpen(true)
+  // Place (or re-place) the booking's reconfirmation / post-tour call right now,
+  // from wherever the user is looking at its result — resolves the matching
+  // schedule row and dials it with force.
+  const [specialBusy, setSpecialBusy] = useState<'reconfirm' | 'post_tour' | null>(null)
+  async function retrySpecial(phase: 'reconfirm' | 'post_tour') {
+    const rows = (service?.schedule ?? []).filter(s => s.phase === phase)
+    const row = rows[rows.length - 1]
+    if (!row) {
+      toast.error(`No ${phase === 'reconfirm' ? 'reconfirmation' : 'post-tour'} call is scheduled — enable it in the plan settings first.`)
+      return
+    }
+    setSpecialBusy(phase)
+    try { await callNow(row.id) } finally { setSpecialBusy(null) }
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const schedule = [...(service?.schedule ?? [])].sort((a, b) => a.day_no - b.day_no)
   const registered     = service !== null
-  const allFeedback    = feedbackList.length > 0 ? feedbackList : (service?.feedback ?? [])
+  const allFeedback    = service?.feedback ?? []
   const pendingCalls   = schedule.filter(s => s.status === 'pending').length
   const completedCalls = schedule.filter(s => s.status === 'answered' || s.status === 'done').length
   const missedCalls    = schedule.filter(s => s.status === 'missed' || s.status === 'failed').length
@@ -1121,8 +888,8 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
             <Volume2 className="w-4 h-4 text-white" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-900">AI Auto-Call Bot</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">Traveller Experience · {bookingRef}</p>
+            <h3 className="text-sm font-bold text-slate-900">AI Voice Calls — Setup &amp; Control</h3>
+            <p className="text-[11px] text-slate-500 mt-0.5">Schedule, place and retry the AI calls for {bookingRef} · conversations &amp; recordings are in “AI Call Transcripts” below</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1137,7 +904,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
               ? <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${STATUS_STYLES[service!.status]}`}>{service!.status.toUpperCase()}</span>
               : <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-400 border border-slate-200">NOT REGISTERED</span>
           }
-          <button onClick={() => { loadService(true); if (tab === 'jobs') { loadJobs(); loadCampaigns() } if (tab === 'history') loadFeedback() }}
+          <button onClick={() => { loadService(true); if (permPhone) loadPermission(permPhone) }}
             className="p-1.5 rounded-lg hover:bg-violet-100 text-violet-400 transition-colors" title="Refresh">
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -1164,11 +931,9 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       {/* ── Tabs ── */}
       <div className="flex border-b border-slate-100 bg-white overflow-x-auto">
         {([
-          { key: 'overview',  label: 'Setup & Service' },
-          { key: 'schedule',  label: 'Schedule', count: schedule.length },
-          { key: 'jobs',      label: 'Custom Jobs', count: jobs.length > 0 ? jobs.length : undefined },
+          { key: 'overview',  label: 'Setup & Results' },
+          { key: 'schedule',  label: 'Call Schedule', count: schedule.length },
           { key: 'quickcall', label: 'Quick Call' },
-          { key: 'history',   label: 'Call History', count: allFeedback.length > 0 ? allFeedback.length : undefined },
         ] as { key: Tab; label: string; count?: number }[]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-3 py-2.5 text-xs font-semibold whitespace-nowrap transition-colors border-b-2 -mb-px ${tab === t.key ? 'border-violet-500 text-violet-700 bg-violet-50/30' : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'}`}>
@@ -1282,7 +1047,8 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+                  {permChip()}
                   <button onClick={registerBooking} disabled={intakeLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
                     {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> Register for AI Calls</>}
@@ -1328,7 +1094,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
             ) : (
               <>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Call Phone</p><p className="text-sm font-mono font-bold text-slate-800">{service!.call_phone || '—'}</p></div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Call Phone</p>
+                    <p className="text-sm font-mono font-bold text-slate-800">{service!.call_phone || '—'}</p>
+                    <div className="mt-1">{permChip()}</div>
+                  </div>
                   <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Mode</p><p className="text-sm font-semibold text-slate-800 capitalize">{service!.schedule_mode}</p></div>
                   {service!.schedule_mode === 'agenda' ? (
                     <>
@@ -1373,12 +1143,34 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                       {service!.reconfirm_enabled && service!.reconfirm_days_before != null && (
                         <span className="text-[10px] text-sky-600 font-semibold">−{service!.reconfirm_days_before}d{service!.reconfirm_call_time ? ` · ${service!.reconfirm_call_time}` : ''}</span>
                       )}
-                      <span className="ml-auto flex items-center">
+                      <span className="ml-auto flex items-center gap-1.5">
+                        {service!.reconfirm_enabled && planEdit !== 'reconfirm' && (
+                          <button type="button" onClick={() => openPlanEdit('reconfirm')} title="Edit when this call is placed"
+                            className="p-1 rounded-lg text-sky-500 hover:bg-sky-100 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                        )}
+                        {service!.reconfirm_enabled && schedule.some(s => s.phase === 'reconfirm') && (
+                          <button type="button" disabled={specialBusy === 'reconfirm'} onClick={() => retrySpecial('reconfirm')} title="Place the reconfirmation call now"
+                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-60 transition-colors">
+                            {specialBusy === 'reconfirm' ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />} Call now
+                          </button>
+                        )}
                         {planBusy === 'reconfirm'
                           ? <Loader2 className="w-4 h-4 animate-spin text-sky-500" />
                           : <ToggleSwitch on={!!service!.reconfirm_enabled} onChange={v => updatePlan('reconfirm', { enabled: v, days_before: service!.reconfirm_days_before ?? 5 })} />}
                       </span>
                     </div>
+                    {planEdit === 'reconfirm' && (
+                      <div className="mt-2.5 pt-2.5 border-t border-sky-100 grid grid-cols-2 gap-2 items-end">
+                        <div><label className="form-label !text-[10px]">Days before arrival</label><input type="number" min="0" max="30" className="form-input h-8 text-xs" value={planEditForm.days} onChange={e => setPlanEditForm(f => ({ ...f, days: e.target.value }))} /></div>
+                        <div><label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={planEditForm.call_time} onChange={e => setPlanEditForm(f => ({ ...f, call_time: e.target.value }))} /></div>
+                        <div className="col-span-2 flex gap-2">
+                          <button type="button" disabled={planBusy === 'reconfirm'} onClick={() => savePlanEdit('reconfirm')} className="flex items-center gap-1 px-3 py-1 rounded-lg bg-sky-600 text-white text-[11px] font-semibold hover:bg-sky-700 disabled:opacity-60 transition-colors">
+                            {planBusy === 'reconfirm' ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : 'Save timing'}
+                          </button>
+                          <button type="button" onClick={() => setPlanEdit(null)} className="px-3 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 text-[11px] font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className={`rounded-xl border p-3 ${service!.post_tour_enabled ? 'border-amber-200 bg-amber-50/60' : 'border-slate-200 bg-white'}`}>
                     <div className="flex items-center gap-2">
@@ -1387,12 +1179,34 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                       {service!.post_tour_enabled && service!.post_tour_days_after != null && (
                         <span className="text-[10px] text-amber-600 font-semibold">+{service!.post_tour_days_after}d{service!.post_tour_call_time ? ` · ${service!.post_tour_call_time}` : ''}</span>
                       )}
-                      <span className="ml-auto flex items-center">
+                      <span className="ml-auto flex items-center gap-1.5">
+                        {service!.post_tour_enabled && planEdit !== 'post_tour' && (
+                          <button type="button" onClick={() => openPlanEdit('post_tour')} title="Edit when this call is placed"
+                            className="p-1 rounded-lg text-amber-500 hover:bg-amber-100 transition-colors"><Edit2 className="w-3.5 h-3.5" /></button>
+                        )}
+                        {service!.post_tour_enabled && schedule.some(s => s.phase === 'post_tour') && (
+                          <button type="button" disabled={specialBusy === 'post_tour'} onClick={() => retrySpecial('post_tour')} title="Place the post-tour feedback call now"
+                            className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-60 transition-colors">
+                            {specialBusy === 'post_tour' ? <Loader2 className="w-3 h-3 animate-spin" /> : <PhoneCall className="w-3 h-3" />} Call now
+                          </button>
+                        )}
                         {planBusy === 'post_tour'
                           ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
                           : <ToggleSwitch on={!!service!.post_tour_enabled} onChange={v => updatePlan('post_tour', { enabled: v, days_after: service!.post_tour_days_after ?? 3 })} />}
                       </span>
                     </div>
+                    {planEdit === 'post_tour' && (
+                      <div className="mt-2.5 pt-2.5 border-t border-amber-100 grid grid-cols-2 gap-2 items-end">
+                        <div><label className="form-label !text-[10px]">Days after departure</label><input type="number" min="0" max="30" className="form-input h-8 text-xs" value={planEditForm.days} onChange={e => setPlanEditForm(f => ({ ...f, days: e.target.value }))} /></div>
+                        <div><label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={planEditForm.call_time} onChange={e => setPlanEditForm(f => ({ ...f, call_time: e.target.value }))} /></div>
+                        <div className="col-span-2 flex gap-2">
+                          <button type="button" disabled={planBusy === 'post_tour'} onClick={() => savePlanEdit('post_tour')} className="flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-600 text-white text-[11px] font-semibold hover:bg-amber-700 disabled:opacity-60 transition-colors">
+                            {planBusy === 'post_tour' ? <><Loader2 className="w-3 h-3 animate-spin" /> Saving…</> : 'Save timing'}
+                          </button>
+                          <button type="button" onClick={() => setPlanEdit(null)} className="px-3 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 text-[11px] font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1400,8 +1214,12 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                 {((service!.reconfirmations?.length ?? 0) > 0 || (service!.post_tour?.length ?? 0) > 0) && (
                   <div className="space-y-2.5 pt-1">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide flex items-center gap-1"><Star className="w-3 h-3 text-amber-400" /> Captured on calls</p>
-                    {(service!.reconfirmations ?? []).map(r => <ReconfirmCard key={`rc-${r.id}`} row={r} />)}
-                    {(service!.post_tour ?? []).map(p => <PostTourCard key={`pt-${p.id}`} row={p} />)}
+                    {(service!.reconfirmations ?? []).map(r => (
+                      <ReconfirmCard key={`rc-${r.id}`} row={r} retryBusy={specialBusy === 'reconfirm'} onRetry={() => retrySpecial('reconfirm')} />
+                    ))}
+                    {(service!.post_tour ?? []).map(p => (
+                      <PostTourCard key={`pt-${p.id}`} row={p} retryBusy={specialBusy === 'post_tour'} onRetry={() => retrySpecial('post_tour')} />
+                    ))}
                   </div>
                 )}
               </>
@@ -1483,122 +1301,9 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
           </div>
 
         // ══════════════════════════════════════════════════════════════════
-        // TAB 3 — CUSTOM JOBS + CAMPAIGNS
+        // TAB 3 — QUICK CALL
         // ══════════════════════════════════════════════════════════════════
-        ) : tab === 'jobs' ? (
-          <div className="space-y-5">
-            {/* ── Campaigns section ── */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Megaphone className="w-3.5 h-3.5 text-violet-500" /> Campaigns <span className="text-[10px] font-normal text-slate-400">(reusable call scripts)</span></p>
-                {!campaignOpen && <button onClick={() => { setEditCampaign(null); setCampaignForm({ name: '', approach: '', collect: '', first_message: '', is_active: true }); setCampaignOpen(true) }} className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-800 font-semibold"><Plus className="w-3 h-3" /> New</button>}
-              </div>
-
-              {campaignOpen && (
-                <div className="p-4 bg-violet-50 border border-violet-200 rounded-xl space-y-3 mb-3">
-                  <p className="text-xs font-bold text-violet-800">{editCampaign ? `Edit: ${editCampaign.name}` : 'New Campaign'}</p>
-                  <div><label className="form-label">Name *</label><input className="form-input" value={campaignForm.name} onChange={e => setCampaignForm(f => ({ ...f, name: e.target.value }))} /></div>
-                  <div><label className="form-label">Approach <span className="text-slate-400 font-normal">(how the agent should open + steer)</span></label><textarea className="form-input min-h-[60px] resize-none" value={campaignForm.approach} onChange={e => setCampaignForm(f => ({ ...f, approach: e.target.value }))} /></div>
-                  <div><label className="form-label">Collect <span className="text-slate-400 font-normal">(what data to gather)</span></label><textarea className="form-input min-h-[50px] resize-none" placeholder="Rating out of 10; best moment; anything to improve" value={campaignForm.collect} onChange={e => setCampaignForm(f => ({ ...f, collect: e.target.value }))} /></div>
-                  <div><label className="form-label">First Message <span className="text-slate-400 font-normal">(opening line)</span></label><input className="form-input" placeholder="Hi! This is Apple Holidays calling…" value={campaignForm.first_message} onChange={e => setCampaignForm(f => ({ ...f, first_message: e.target.value }))} /></div>
-                  <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="w-3.5 h-3.5 rounded accent-violet-600" checked={campaignForm.is_active} onChange={e => setCampaignForm(f => ({ ...f, is_active: e.target.checked }))} /><span className="text-xs text-slate-700">Active</span></label>
-                  <div className="flex gap-2">
-                    <button onClick={saveCampaign} disabled={campaignLoading} className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors">
-                      {campaignLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…</> : editCampaign ? 'Update Campaign' : 'Create Campaign'}
-                    </button>
-                    <button onClick={() => { setCampaignOpen(false); setEditCampaign(null) }} className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
-                  </div>
-                </div>
-              )}
-
-              {campaignsLoading ? (
-                <div className="flex items-center gap-2 py-4 text-xs text-slate-400"><Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400" /> Loading campaigns…</div>
-              ) : campaigns.length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-2">No campaigns yet — create one to guide the agent&apos;s approach on calls</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {campaigns.map(c => (
-                    <div key={c.id} className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100 group hover:border-slate-200">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-slate-700">{c.name}</span>
-                          {!c.is_active && <span className="text-[9px] text-slate-400 bg-slate-200 px-1.5 py-0.5 rounded-full">inactive</span>}
-                        </div>
-                        {c.approach && <p className="text-[10px] text-slate-400 truncate mt-0.5">{c.approach}</p>}
-                      </div>
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openEditCampaign(c)} className="p-1.5 rounded-lg hover:bg-slate-200 text-slate-300 hover:text-slate-600 transition-colors"><Edit2 className="w-3 h-3" /></button>
-                        <button onClick={() => deleteCampaign(c.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-200 hover:text-red-500 transition-colors"><Trash2 className="w-3 h-3" /></button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="border-t border-slate-100 pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><PhoneCall className="w-3.5 h-3.5 text-violet-500" /> Call Jobs</p>
-                {!newJobOpen && <button onClick={() => setNewJobOpen(true)} className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-800 font-semibold"><Plus className="w-3 h-3" /> New Job</button>}
-              </div>
-
-              {newJobOpen && (
-                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3 mb-3">
-                  <p className="text-xs font-bold text-slate-800">New Call Job</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="col-span-2"><label className="form-label">Job Name *</label><input className="form-input" placeholder="e.g. Post-arrival follow-up" value={jobForm.name} onChange={e => setJobForm(f => ({ ...f, name: e.target.value }))} /></div>
-                    <div><label className="form-label">Phone *</label><input className="form-input font-mono" placeholder="94771234567" value={jobForm.phone} onChange={e => setJobForm(f => ({ ...f, phone: e.target.value }))} /></div>
-                    <div><label className="form-label">Customer Name</label><input className="form-input" value={jobForm.customer_name} onChange={e => setJobForm(f => ({ ...f, customer_name: e.target.value }))} /></div>
-                    <div className="col-span-2">
-                      <label className="form-label">Campaign <span className="text-slate-400 font-normal">(optional — guides agent approach)</span></label>
-                      <select className="form-select" value={jobForm.campaign_id} onChange={e => setJobForm(f => ({ ...f, campaign_id: e.target.value }))}>
-                        <option value="">— no campaign (generic call) —</option>
-                        {campaigns.filter(c => c.is_active).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                      </select>
-                    </div>
-                    <div><label className="form-label">Start At</label><input className="form-input" placeholder="now  or  ISO datetime" value={jobForm.start_at} onChange={e => setJobForm(f => ({ ...f, start_at: e.target.value }))} /></div>
-                    <div><label className="form-label">Max Runs <span className="text-slate-400 font-normal">(blank = unlimited)</span></label><input type="number" className="form-input" placeholder="e.g. 3" min="1" value={jobForm.max_runs} onChange={e => setJobForm(f => ({ ...f, max_runs: e.target.value }))} /></div>
-                    <div><label className="form-label">End At <span className="text-slate-400 font-normal">(optional stop time)</span></label><input type="datetime-local" className="form-input" value={jobForm.end_at} onChange={e => setJobForm(f => ({ ...f, end_at: e.target.value }))} /></div>
-                    <div className="col-span-2"><label className="form-label">Repeat Interval <span className="text-slate-400 font-normal">(blank = one-off)</span></label>
-                      <div className="flex gap-2">
-                        <input type="number" className="form-input w-28" placeholder="5" min="1" value={jobForm.interval_count} onChange={e => setJobForm(f => ({ ...f, interval_count: e.target.value }))} />
-                        <select className="form-select flex-1" value={jobForm.interval_unit} onChange={e => setJobForm(f => ({ ...f, interval_unit: e.target.value as '' | 'minute' | 'hour' | 'day' }))}>
-                          <option value="">— one-off call —</option><option value="minute">Minutes</option><option value="hour">Hours</option><option value="day">Days</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div className="col-span-2"><label className="flex items-center gap-2.5 cursor-pointer"><input type="checkbox" className="w-3.5 h-3.5 rounded accent-violet-600" checked={jobForm.respect_window} onChange={e => setJobForm(f => ({ ...f, respect_window: e.target.checked }))} /><span className="text-xs text-slate-700">Respect call window (only dial within allowed hours)</span></label></div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={createJob} disabled={jobLoading} className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors">
-                      {jobLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Creating…</> : <><PhoneCall className="w-3.5 h-3.5" /> Create Job</>}
-                    </button>
-                    <button onClick={() => setNewJobOpen(false)} className="px-4 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Cancel</button>
-                  </div>
-                </div>
-              )}
-
-              {jobsLoading ? (
-                <div className="flex items-center justify-center py-8 gap-2"><Loader2 className="w-4 h-4 text-violet-400 animate-spin" /><span className="text-xs text-slate-400">Loading jobs…</span></div>
-              ) : jobs.length === 0 ? (
-                <div className="py-8 text-center"><PhoneCall className="w-9 h-9 text-slate-200 mx-auto mb-2" /><p className="text-sm text-slate-400 font-medium">No custom jobs for this booking</p><p className="text-xs text-slate-300 mt-1">Create targeted one-off or recurring calls outside the trip schedule</p></div>
-              ) : (
-                <div className="space-y-2">
-                  {jobs.map(job => (
-                    <JobRow key={job.id} job={job} campaigns={campaigns} busy={jobBusy === job.id}
-                      onRun={() => jobAction(job.id, 'run')} onPause={() => jobAction(job.id, 'pause')}
-                      onResume={() => jobAction(job.id, 'resume')} onCancel={() => jobAction(job.id, 'cancel')}
-                      onDelete={() => deleteJob(job.id)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-        // ══════════════════════════════════════════════════════════════════
-        // TAB 4 — QUICK CALL
-        // ══════════════════════════════════════════════════════════════════
-        ) : tab === 'quickcall' ? (
+        ) : (
           <div className="space-y-5">
 
             {/* ── Parameters being sent — always visible ── */}
@@ -1646,6 +1351,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   onChange={e => setQuickForm(f => ({ ...f, to: e.target.value }))}
                 />
                 <p className="text-[10px] text-slate-400 mt-1">International format without + (94 = Sri Lanka · 91 = India)</p>
+                {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}</div>}
               </div>
 
               <div>
@@ -1719,44 +1425,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
 
             <div className="pt-2 border-t border-slate-100">
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                <strong>Note:</strong> Quick calls are ephemeral — no feedback or transcript is saved. For AI-captured feedback and persistent call history, use the Call Schedule or Custom Jobs tabs.
+                <strong>Note:</strong> Quick calls are logged like every other call — the conversation, recording and any captured feedback appear in the &ldquo;AI Call Transcripts&rdquo; card below a few minutes after the call ends.
               </p>
             </div>
           </div>
 
-        // ══════════════════════════════════════════════════════════════════
-        // TAB 5 — CALL HISTORY
-        // ══════════════════════════════════════════════════════════════════
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-500 flex items-center gap-1.5"><Hash className="w-3 h-3" />{allFeedback.length} call{allFeedback.length !== 1 ? 's' : ''} recorded</p>
-              {service?.id && (
-                <button onClick={loadFeedback} disabled={feedbackLoading} className="flex items-center gap-1 text-xs text-violet-500 hover:text-violet-700 transition-colors">
-                  {feedbackLoading ? <><Loader2 className="w-3 h-3 animate-spin" /> Loading…</> : <><RefreshCw className="w-3 h-3" /> Refresh</>}
-                </button>
-              )}
-            </div>
-
-            {!registered ? (
-              <div className="py-10 text-center"><Mic className="w-10 h-10 text-slate-200 mx-auto mb-3" /><p className="text-sm text-slate-400 font-medium">No calls yet</p></div>
-            ) : feedbackLoading ? (
-              <div className="flex items-center justify-center py-10 gap-2"><Loader2 className="w-4 h-4 text-violet-400 animate-spin" /><span className="text-xs text-slate-400">Loading call history…</span></div>
-            ) : allFeedback.length === 0 ? (
-              <div className="py-10 text-center">
-                <Mic className="w-10 h-10 text-slate-200 mx-auto mb-3" />
-                <p className="text-sm text-slate-400 font-medium">No call history yet</p>
-                <p className="text-xs text-slate-300 mt-1">Transcripts and AI-captured feedback appear here after each completed call</p>
-                {pendingCalls > 0 && <div className="mt-4 flex items-center justify-center gap-1.5 text-xs text-violet-500"><ChevronRight className="w-3.5 h-3.5" />{pendingCalls} call{pendingCalls !== 1 ? 's' : ''} scheduled</div>}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {[...allFeedback].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map(fb => (
-                  <CallHistoryCard key={fb.id} fb={fb} scheduleItems={schedule} />
-                ))}
-              </div>
-            )}
-          </div>
         )
         )}
       </CardBody>

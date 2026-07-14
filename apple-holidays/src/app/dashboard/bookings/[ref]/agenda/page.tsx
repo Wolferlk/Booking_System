@@ -10,8 +10,9 @@ import {
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
-  ClipboardList, Bus, Ticket,
+  ClipboardList, Bus, Ticket, Hash, UserCheck,
 } from 'lucide-react'
+import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Button from '@/components/ui/button'
@@ -88,10 +89,23 @@ interface Driver {
   id: string
   name: string
   phone: string
+  email?: string | null
+  licenseNo?: string | null
+  photoUrl?: string | null
   isActive: boolean
   isBusyOnDate?: boolean
   busyBookings?: string[]
-  vehicle: { plateNo: string; type: string; brand?: string | null; model?: string | null } | null
+  vehicle: {
+    plateNo: string
+    type: string
+    brand?: string | null
+    model?: string | null
+    capacity?: number | null
+    description?: string | null
+    photoInside?: string | null
+    photoOutside?: string | null
+    vendor?: { name: string } | null
+  } | null
 }
 
 interface Vendor {
@@ -104,6 +118,11 @@ interface Vendor {
 interface BookingDetails {
   bookingRef: string
   agent: string
+  agentBookingId?: string | null
+  isNumber?: string | null
+  cntlNumber?: string | null
+  tourDestination?: string | null
+  operationCountry?: string | null
   paxAdults: number
   paxChildren: number
   paxInfants: number
@@ -134,6 +153,7 @@ export default function AgendaPage() {
   const [assignMode,     setAssignMode]     = useState<'driver' | 'vendor'>('driver')
   const [driverSearch,   setDriverSearch]   = useState('')
   const [loadingDrivers, setLoadingDrivers] = useState(false)
+  const [photoLightbox,  setPhotoLightbox]  = useState<{ url: string; label: string } | null>(null)
   const [selectedVendorId, setSelectedVendorId] = useState('')
   const [vendorDriverForm, setVendorDriverForm] = useState({ driverName: '', driverPhone: '', vehicleType: '', vehiclePlate: '' })
   const [vendorDrivers, setVendorDrivers]         = useState<Driver[]>([])
@@ -820,6 +840,50 @@ export default function AgendaPage() {
         {/* ── BOOKING INFO PANELS ── */}
         {booking && (
           <div className="space-y-2">
+            {/* Booking Details — key identifiers for the movement chart */}
+            <Card className="overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-brand-50 to-white border-b border-slate-100">
+                <FileText className="w-4 h-4 text-brand-500" />
+                <span className="text-sm font-semibold text-slate-800">Booking Details</span>
+                {booking.operationCountry && (
+                  <span className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                    <CountryFlag country={booking.operationCountry} className="w-4 h-3" />
+                    {booking.tourDestination || ''}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-3 px-4 py-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5 flex items-center gap-1"><Hash className="w-3 h-3" /> Tour Ref</p>
+                  <p className="text-sm font-mono font-bold text-slate-900">{booking.bookingRef}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">IS Number</p>
+                  {booking.isNumber
+                    ? <p className="text-sm font-mono font-semibold text-brand-600">{booking.isNumber}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">CNTL No.</p>
+                  {booking.cntlNumber
+                    ? <p className="text-sm font-mono font-semibold text-violet-600">{booking.cntlNumber}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5 flex items-center gap-1"><UserCheck className="w-3 h-3" /> Agent</p>
+                  {booking.agent
+                    ? <p className="text-sm font-semibold text-slate-800 truncate" title={booking.agent}>{booking.agent}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Agent ID</p>
+                  {booking.agentBookingId
+                    ? <p className="text-sm font-mono text-slate-700">{booking.agentBookingId}</p>
+                    : <p className="text-sm text-slate-300">—</p>}
+                </div>
+              </div>
+            </Card>
+
             {/* Passengers */}
             {booking.passengers.length > 0 && (
               <Card className="overflow-hidden">
@@ -1380,7 +1444,7 @@ export default function AgendaPage() {
           open
           onClose={() => setAssigningIdx(null)}
           title="Assign Driver"
-          size="lg"
+          size="2xl"
           footer={
             <div className="flex items-center justify-between w-full">
               <div>
@@ -1547,6 +1611,71 @@ export default function AgendaPage() {
                               </div>
                               {isSelected && <CheckCircle2 className="w-4 h-4 text-brand-500 flex-shrink-0" />}
                             </button>
+                            {isSelected && (
+                              <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-3 space-y-3">
+                                {/* Driver header with photo */}
+                                <div className="flex items-start gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => d.photoUrl && setPhotoLightbox({ url: d.photoUrl, label: `${d.name} — Driver` })}
+                                    className={`w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-blue-100 flex items-center justify-center ${d.photoUrl ? 'cursor-zoom-in hover:ring-2 hover:ring-brand-400' : ''}`}
+                                  >
+                                    {d.photoUrl
+                                      ? <img src={d.photoUrl} alt={d.name} className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none' }} />
+                                      : <span className="font-bold text-lg text-blue-700">{d.name.slice(0, 1)}</span>}
+                                  </button>
+                                  <div className="flex-1 min-w-0 text-xs space-y-0.5">
+                                    <p className="font-semibold text-sm text-slate-800">{d.name}</p>
+                                    <p className="text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" /> {d.phone}</p>
+                                    {d.email && <p className="text-slate-500 flex items-center gap-1"><Mail className="w-3 h-3" /> {d.email}</p>}
+                                    {d.licenseNo && <p className="text-slate-500">🪪 License: {d.licenseNo}</p>}
+                                  </div>
+                                </div>
+
+                                {/* Vehicle details */}
+                                {d.vehicle ? (
+                                  <div className="rounded-lg bg-white border border-slate-200 p-2.5 space-y-2">
+                                    <p className="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5"><Car className="w-3.5 h-3.5" /> Vehicle</p>
+                                    <div className="text-xs text-slate-700 space-y-0.5">
+                                      <p className="font-medium">{[d.vehicle.brand, d.vehicle.model].filter(Boolean).join(' ') || d.vehicle.type}</p>
+                                      <p className="text-slate-500">
+                                        {d.vehicle.type}
+                                        {d.vehicle.plateNo && ` · ${d.vehicle.plateNo}`}
+                                        {d.vehicle.capacity ? ` · ${d.vehicle.capacity} seats` : ''}
+                                      </p>
+                                      {d.vehicle.vendor?.name && <p className="text-slate-500">Fleet: {d.vehicle.vendor.name}</p>}
+                                      {d.vehicle.description && <p className="text-slate-400">{d.vehicle.description}</p>}
+                                    </div>
+                                    {(d.vehicle.photoOutside || d.vehicle.photoInside) && (
+                                      <div className="flex gap-2">
+                                        {d.vehicle.photoOutside && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setPhotoLightbox({ url: d.vehicle!.photoOutside!, label: `${d.name} — Vehicle (Outside)` })}
+                                            className="relative w-24 h-16 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 cursor-zoom-in hover:ring-2 hover:ring-brand-400"
+                                          >
+                                            <img src={d.vehicle.photoOutside} alt="Vehicle outside" className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none' }} />
+                                            <span className="absolute bottom-0 inset-x-0 text-[9px] text-white bg-black/50 text-center">Outside</span>
+                                          </button>
+                                        )}
+                                        {d.vehicle.photoInside && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setPhotoLightbox({ url: d.vehicle!.photoInside!, label: `${d.name} — Vehicle (Inside)` })}
+                                            className="relative w-24 h-16 rounded-lg overflow-hidden bg-slate-100 border border-slate-200 cursor-zoom-in hover:ring-2 hover:ring-brand-400"
+                                          >
+                                            <img src={d.vehicle.photoInside} alt="Vehicle inside" className="w-full h-full object-cover" onError={e => { e.currentTarget.style.display = 'none' }} />
+                                            <span className="absolute bottom-0 inset-x-0 text-[9px] text-white bg-black/50 text-center">Inside</span>
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-slate-400 italic">No vehicle assigned to this driver</p>
+                                )}
+                              </div>
+                            )}
                             {isSelected && items.length > 1 && (
                               <button onClick={() => setDriverForAllTours(d)}
                                 className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold transition-colors">
@@ -1692,6 +1821,25 @@ export default function AgendaPage() {
             )}
           </div>
         </Modal>
+      )}
+
+      {/* ── DRIVER / VEHICLE PHOTO LIGHTBOX ── */}
+      {photoLightbox && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setPhotoLightbox(null)}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+            onClick={() => setPhotoLightbox(null)}
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="max-w-3xl w-full" onClick={e => e.stopPropagation()}>
+            <img src={photoLightbox.url} alt={photoLightbox.label} className="w-full max-h-[80vh] object-contain rounded-xl" />
+            <p className="text-center text-white/80 text-sm mt-3">{photoLightbox.label}</p>
+          </div>
+        </div>
       )}
 
       {/* ── SEND AGENDA MODAL ── */}

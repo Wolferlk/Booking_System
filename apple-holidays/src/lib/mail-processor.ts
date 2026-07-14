@@ -1,4 +1,4 @@
-import openai from '@/lib/openai'
+import openai, { BOOKING_EXTRACTION_PROMPT } from '@/lib/openai'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
 import { extractTextFromXlsx } from '@/lib/parsers/xlsx-parser'
@@ -84,7 +84,7 @@ export interface ExtractedBooking {
   contactWhatsapp: string | null
   contactCountry: string | null
   contactAddress: string | null
-  passengers: { name: string; type: string; isLead: boolean; passport?: string | null; nationality?: string | null; contact?: string | null; age?: number | null }[]
+  passengers: { name: string; type: string; isLead: boolean; passport?: string | null; nationality?: string | null; contact?: string | null; age?: number | null; mealPreference?: string | null }[]
   flights: { flightNo: string; date: string; fromApt: string; depTime?: string; toApt: string; arrTime?: string; airline?: string; notes?: string }[]
   accommodations: { hotel: string; city: string; checkIn: string; checkOut: string; nights: number; roomType?: string; mealType?: string }[]
   itineraryItems: { dayNo: number; date: string; title: string; description?: string }[]
@@ -357,6 +357,23 @@ Category mapping:
 
 IMPORTANT: pnlLines must NOT be empty if the email contains a cost table.`
 
+async function runBookingCompletion(systemPrompt: string, userContent: string): Promise<Partial<ExtractedBooking>> {
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+  })
+
+  const content = response.choices[0]?.message?.content
+  if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
+
+  return JSON.parse(content) as Partial<ExtractedBooking>
+}
+
 export async function extractBookingFromEmail(emailBody: string, emailType: 'TOUR_CONFIRMATION' | 'PNL', emailSubject?: string): Promise<ExtractedBooking> {
   const prompt = emailType === 'TOUR_CONFIRMATION' ? TOUR_CONFIRMATION_PROMPT : PNL_PROMPT
 
@@ -370,20 +387,46 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     ? `Email Subject: ${emailSubject}\n\nExtract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
     : `Extract from this tour confirmation:\n\n${relevantBody.slice(0, 14000)}`
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: prompt },
-      { role: 'user', content: userContent },
-    ],
-    response_format: { type: 'json_object' },
-    temperature: 0.1,
+  const parsed = await runBookingCompletion(prompt, userContent)
+  return finalizeExtractedBooking(parsed, { emailBody, relevantBody, emailSubject, emailType })
+}
+
+/**
+ * Document-mode extraction for OneDrive booking files (.docx / .pdf / .txt).
+ *
+ * OneDrive TC files are CLEAN, single-booking documents — NOT email threads. So this path:
+ *   1. SKIPS the email-thread section isolation (extractTCSection), which can truncate long
+ *      itineraries/inclusions at the 12k boundary or on a stray "From: … Date:" match.
+ *   2. Uses the richer, document-tuned BOOKING_EXTRACTION_PROMPT — the same prompt the
+ *      "New Booking → upload" flow uses, which extracts noticeably more accurately.
+ *   3. Still runs every server-side regex override (IS/CNTL/agent-ref/guest-phone) on the
+ *      FULL document text, so booking IDs remain authoritative and can't be fabricated.
+ *
+ * This is why the New Booking upload extracted correctly while the OneDrive auto-scan did not —
+ * this function brings the scan path up to the same (or better) accuracy.
+ */
+export async function extractBookingFromDocument(documentText: string, sourceName?: string): Promise<ExtractedBooking> {
+  const userContent = `Extract booking data from this tour confirmation document${sourceName ? ` (${sourceName})` : ''}:\n\n${documentText.slice(0, 16000)}`
+  const parsed = await runBookingCompletion(BOOKING_EXTRACTION_PROMPT, userContent)
+  // Clean document → run the regex overrides on the full text (no thread noise to isolate).
+  return finalizeExtractedBooking(parsed, {
+    emailBody:    documentText,
+    relevantBody: documentText,
+    emailSubject: undefined,
+    emailType:    'TOUR_CONFIRMATION',
   })
+}
 
-  const content = response.choices[0]?.message?.content
-  if (!content) throw new Error('OpenAI returned empty response — check API key and quota at platform.openai.com/account/billing')
-
-  const parsed = JSON.parse(content) as Partial<ExtractedBooking>
+/**
+ * Shared post-processing for both email- and document-mode extraction: applies the
+ * authoritative server-side regex overrides (IS number, CNTL, tour ref, agent booking id,
+ * guest phone) on top of the AI output and normalises the result to ExtractedBooking.
+ */
+function finalizeExtractedBooking(
+  parsed: Partial<ExtractedBooking>,
+  ctx: { emailBody: string; relevantBody: string; emailSubject?: string; emailType: 'TOUR_CONFIRMATION' | 'PNL' },
+): ExtractedBooking {
+  const { emailBody, relevantBody, emailSubject, emailType } = ctx
 
   // Use the TC-isolated section for server-side regex too — prevents false matches from
   // quoted email thread replies above/below the actual TC block.
@@ -437,7 +480,9 @@ export async function extractBookingFromEmail(emailBody: string, emailType: 'TOU
     departureDate:    parsed.departureDate    ?? null,
     paxAdults:        Number(parsed.paxAdults  ?? 0),
     paxChildren:      Number(parsed.paxChildren ?? 0),
-    quotedTotal:      parsed.quotedTotal      ? Number(parsed.quotedTotal) : null,
+    quotedTotal:      (parsed.quotedTotal && Number(parsed.quotedTotal) > 0
+                        ? Number(parsed.quotedTotal)
+                        : extractQuotedTotalFromText(regexText) ?? extractQuotedTotalFromText(emailBody)),
     currency:         parsed.currency         ?? 'USD',
     terms:            parsed.terms            ?? null,
     exclusions:       parsed.exclusions       ?? null,
@@ -535,21 +580,27 @@ function extractIsNumberFromBody(text: string): string | null {
 // Extract CNTL number from email body.
 // Handles: "471416CNTL", "CNTL471416", "Tour Ref 471416 CNTL" (space between digits and CNTL).
 function extractCntlFromBody(text: string): string | null {
+  // Labelled patterns FIRST — the value next to an explicit "Tour Ref"/"NAV ID"/
+  // "Quotation No" label is authoritative and must win over any stray "…CNTL"
+  // token that may appear elsewhere in a quoted email thread.
   const patterns = [
-    // "471416CNTL" — digits immediately followed by CNTL
-    /\b(\d{4,}CNTL)\b/i,
-    // "CNTL471416" — CNTL followed by digits
-    /\bCNTL(\d{4,})\b/i,
     // "Tour Ref: 471416CNTL" or multiline "Tour Ref\n471416CNTL"
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
-    // "Tour Ref 471416 CNTL" — space between number and CNTL keyword
+    // "Tour Ref 471416 CNTL" — space/newline between number and CNTL keyword
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
+    // "Tour Ref: CNTL471416" — CNTL prefix form under the label
+    /\btour\s*ref(?:erence)?\s*[:=#-]?\s*CNTL\s*(\d{4,})\b/i,
     // "NAV ID: 471416CNTL" — alternate label used by some agents
     /\bnav\s*id\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
     /\bnav\s*id\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
     // Quotation number patterns
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,}CNTL)\b/i,
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,})\s+CNTL\b/i,
+    // Fallbacks — bare tokens anywhere in the body:
+    // "471416CNTL" — digits immediately followed by CNTL
+    /\b(\d{4,}CNTL)\b/i,
+    // "CNTL471416" — CNTL followed by digits
+    /\bCNTL(\d{4,})\b/i,
   ]
   for (const re of patterns) {
     const m = text.match(re)
@@ -558,6 +609,40 @@ function extractCntlFromBody(text: string): string | null {
       // Normalise: if captured group is just digits, append CNTL
       const cntl = /^\d+$/.test(v) ? `${v}CNTL` : v
       if (/^\d+CNTL$/.test(cntl) || /^CNTL\d+$/.test(cntl)) return cntl
+    }
+  }
+  return null
+}
+
+// Extract the overall package total from the TC body when the AI misses it.
+// Prefers the grand/overall total labels over per-person figures — e.g. given
+// "Cost Per Person $ 288.00 x 2" and "Total Tour Cost $ 576.80", returns 576.80.
+function extractQuotedTotalFromText(text: string): number | null {
+  // Currency prefix (optional) followed by the amount. Handles "$ 576.80",
+  // "USD 652.00", "Rs. 1,20,000", "₹576.80", "576.80 USD".
+  const money =
+    '(?:(?:USD|US\\$|INR|SGD|LKR|MYR|AUD|AED|THB|EUR|GBP|VND|Rs\\.?|\\$|₹|£|€)\\s*)?' +
+    '([0-9][0-9,]*(?:\\.[0-9]{1,2})?)' +
+    '(?:\\s*(?:USD|INR|SGD|LKR|MYR|AUD|AED|THB|EUR|GBP|VND))?'
+
+  // Ordered by preference — overall/package totals win over per-person amounts.
+  const labels = [
+    'total\\s+tour\\s+cost',
+    'total\\s+package\\s+(?:price|cost|rate|amount)',
+    'grand\\s+total',
+    'package\\s+(?:price|cost|total|rate)',
+    'net\\s+(?:rate|total|amount)',
+    'total\\s+amount',
+    'total\\s+cost',
+    'total\\s+price',
+  ]
+
+  for (const lb of labels) {
+    const re = new RegExp(lb + '\\s*[:=]?\\s*' + money, 'i')
+    const m = text.match(re)
+    if (m?.[1]) {
+      const n = parseFloat(m[1].replace(/,/g, ''))
+      if (Number.isFinite(n) && n > 0) return n
     }
   }
   return null

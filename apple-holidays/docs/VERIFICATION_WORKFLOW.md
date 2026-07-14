@@ -177,7 +177,7 @@ Each state transition is role-gated. The table below shows who can trigger each 
 | Transition | From → To | Allowed Roles |
 |---|---|---|
 | Confirm Booking | DRAFT → BT_CONFIRMED | BT_USER, SUPER_ADMIN, GT_TE_USER, ULTRA_SUPER_ADMIN |
-| Submit to TE | DRAFT/BT_CONFIRMED/CHANGE_REQUESTED → GT_REVIEW | BT_USER, TE_USER, SUPER_ADMIN, GT_TE_USER, ULTRA_SUPER_ADMIN |
+| Submit to TE | BT_CONFIRMED → GT_REVIEW | BT_USER, TE_USER, SUPER_ADMIN, GT_TE_USER, ULTRA_SUPER_ADMIN |
 | Request Changes | GT_REVIEW → CHANGE_REQUESTED | TE_USER, SUPER_ADMIN, GT_TE_USER, ULTRA_SUPER_ADMIN |
 | Resubmit after Correction | CHANGE_REQUESTED → BT_CONFIRMED | BT_USER, SUPER_ADMIN, GT_TE_USER, ULTRA_SUPER_ADMIN |
 | **Client Confirmed (Verify)** | **GT_REVIEW → GT_VERIFIED** | **BT_USER, GT_USER, TE_USER, GT_TE_USER, AC_USER, SUPER_ADMIN, ULTRA_SUPER_ADMIN** |
