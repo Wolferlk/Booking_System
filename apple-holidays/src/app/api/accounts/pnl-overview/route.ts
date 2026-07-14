@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { fetchAllPnlRecords, fetchPnlRecordsFiltered, type PnlRecord } from '@/lib/accounts-db'
+import { fetchAllPnlRecords, fetchPnlRecordsFiltered, fetchPnlCount, PNL_MAX_LIMIT, type PnlRecord } from '@/lib/accounts-db'
 import { amendmentBase, parseAmendment, sortLatestFirst } from '@/lib/pnl-amendment'
 import type { UserRole } from '@prisma/client'
 
@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic'
  *   bookingsOnly  – our bookings that have NO external PNL link
  *
  * Query params:
- *   limit   (default 300, max 500)
+ *   limit   (default 300, max PNL_MAX_LIMIT — enough to return every record)
  *   search  – optional filter applied to is_number / tour_ref / invoice_number / vendor_name / agent_name
  */
 export async function GET(req: NextRequest) {
@@ -31,36 +31,61 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = req.nextUrl
   const rawLimit = Number(searchParams.get('limit') ?? 300)
-  const limit = Math.min(Math.max(1, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 300), 500)
+  const limit = Math.min(Math.max(1, Number.isFinite(rawLimit) ? Math.floor(rawLimit) : 300), PNL_MAX_LIMIT)
   const search = searchParams.get('search')?.trim() ?? ''
 
-  // ── 1. Fetch external PNL records via query() (not execute()) ────────────
-  let extRows: Awaited<ReturnType<typeof fetchAllPnlRecords>> = []
+  // ── 1. Fetch external rows, external count, and our links IN PARALLEL ──────
+  // These three hit two independent databases and don't depend on each other,
+  // so running them concurrently roughly halves the endpoint's latency.
+  let extRows: PnlRecord[] = []
+  let totalInDb = 0
   let externalDbError: string | null = null
-  try {
-    extRows = search
-      ? await fetchPnlRecordsFiltered(search, limit)
-      : await fetchAllPnlRecords(limit)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Accounts DB unreachable'
-    console.error('[pnl-overview] external DB error:', err)
+
+  const extFetch: Promise<PnlRecord[]> = search
+    ? fetchPnlRecordsFiltered(search, limit)
+    : fetchAllPnlRecords(limit)
+
+  const bookingSelect = {
+    id: true, bookingRef: true, isNumber: true, agent: true,
+    status: true, arrivalDate: true, departureDate: true,
+    paxAdults: true, paxChildren: true, quotedTotal: true, currency: true,
+    operationCountry: true, dealName: true, agentBookingId: true,
+    passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
+  } as const
+
+  const [extResult, countResult, allLinks, bookingsOnly] = await Promise.all([
+    extFetch.then(
+      rows => ({ ok: true as const, rows }),
+      err  => ({ ok: false as const, err }),
+    ),
+    fetchPnlCount(search).then(
+      n   => ({ ok: true as const, n }),
+      ()  => ({ ok: false as const, n: 0 }),
+    ),
+    prisma.externalPnlLink.findMany({
+      include: { booking: { select: bookingSelect } },
+    }),
+    // Bookings with NO external PNL link — independent of the grouping below,
+    // so it runs in the same parallel batch.
+    prisma.booking.findMany({
+      where: {
+        externalPnlLink: null,
+        NOT: { status: { in: ['DRAFT', 'CANCELLED'] } },
+      },
+      select: bookingSelect,
+      orderBy: { createdAt: 'desc' },
+    }),
+  ])
+
+  if (extResult.ok) {
+    extRows = extResult.rows
+  } else {
+    const msg = extResult.err instanceof Error ? extResult.err.message : 'Accounts DB unreachable'
+    console.error('[pnl-overview] external DB error:', extResult.err)
     externalDbError = `Accounts database error: ${msg}`
   }
-
-  // ── 2. Load all ExternalPnlLinks with booking summary from our DB ─────────
-  const allLinks = await prisma.externalPnlLink.findMany({
-    include: {
-      booking: {
-        select: {
-          id: true, bookingRef: true, isNumber: true, agent: true,
-          status: true, arrivalDate: true, departureDate: true,
-          paxAdults: true, paxChildren: true, quotedTotal: true, currency: true,
-          operationCountry: true, dealName: true, agentBookingId: true,
-          passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
-        },
-      },
-    },
-  })
+  // Fall back to the returned row count when COUNT(*) failed but rows loaded.
+  totalInDb = countResult.ok ? countResult.n : extRows.length
 
   // Map externalPnlId → link (one-to-one)
   const linkByExtId = new Map(allLinks.map(l => [l.externalPnlId, l]))
@@ -135,28 +160,15 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // ── 4. Bookings with NO external PNL link ─────────────────────────────────
-  const bookingsOnly = await prisma.booking.findMany({
-    where: {
-      externalPnlLink: null,
-      NOT: { status: { in: ['DRAFT', 'CANCELLED'] } },
-    },
-    select: {
-      id: true, bookingRef: true, isNumber: true, agent: true,
-      status: true, arrivalDate: true, departureDate: true,
-      paxAdults: true, paxChildren: true, quotedTotal: true, currency: true,
-      operationCountry: true, dealName: true, agentBookingId: true,
-      passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
-    },
-    orderBy: { createdAt: 'desc' },
-  })
-
   return buildApiSuccess({
     summary: {
-      totalExtPnl:  extRows.length,
+      totalExtPnl:  extRows.length,       // rows actually returned in this response
+      totalInDb,                          // true count of active records in the Accounts DB
       linked:       linked.length,
       pnlOnly:      pnlOnly.length,
       bookingsOnly: bookingsOnly.length,
+      // true when the DB holds more records than we returned (client should keep loading)
+      truncated:    extRows.length < totalInDb,
     },
     linked,
     pnlOnly,
