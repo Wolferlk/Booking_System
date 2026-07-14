@@ -16,8 +16,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { htmlToPdf } from '@/lib/html-to-pdf'
 import { sendMailViaGraph } from '@/lib/send-mail'
-import { mkdir, writeFile } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 120
@@ -505,17 +504,16 @@ export async function POST(
     if (!to) return buildApiError('Phone number required', 400)
     const normPhone = to.replace(/\D/g, '')
 
-    // Save PDF to public dir for URL-based delivery
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'whatsapp')
-    await mkdir(uploadDir, { recursive: true })
-    await writeFile(path.join(uploadDir, `${driverTag}-${filename}`), pdfBuffer)
+    // Save PDF to storage (S3, with local-disk fallback) for URL-based delivery
+    const storedName = `${driverTag}-${filename}`
+    const storedPath = await putUpload(`whatsapp/${storedName}`, pdfBuffer, 'application/pdf')
 
     const baseUrl = (
       process.env.NEXT_PUBLIC_APP_URL?.trim() ||
       process.env.APP_URL?.trim() ||
       req.nextUrl.origin
     ).replace(/\/+$/, '')
-    const fileUrl = `${baseUrl}/uploads/whatsapp/${encodeURIComponent(`${driverTag}-${filename}`)}`
+    const fileUrl = `${baseUrl}${storedPath}`
 
     const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()

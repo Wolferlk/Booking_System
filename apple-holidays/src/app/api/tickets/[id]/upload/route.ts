@@ -4,8 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 export async function POST(
@@ -37,12 +36,7 @@ export async function POST(
 
   const ext = file.name.split('.').pop()?.toLowerCase() ?? 'bin'
   const safeName = `ticket-${params.id}-${Date.now()}.${ext}`
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'tickets')
-
-  await mkdir(uploadDir, { recursive: true })
-  await writeFile(path.join(uploadDir, safeName), buffer)
-
-  const fileUrl = `/api/uploads/tickets/${safeName}`
+  const fileUrl = await putUpload(`tickets/${safeName}`, buffer, file.type)
   const fileType = file.type.startsWith('image/') ? 'image' : 'pdf'
 
   const updated = await prisma.ticket.update({
