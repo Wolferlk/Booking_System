@@ -348,7 +348,7 @@ export default function NewBookingPage() {
           operationCountry:  selectedCountry,
           paxAdults:         Number(form.paxAdults),
           paxChildren:       Number(form.paxChildren),
-          quotedTotal:       Number(form.quotedTotal),
+          quotedTotal:       form.quotedTotal.trim() === '' ? null : Number(form.quotedTotal),
           passengers:        passengers.filter(p => p.name),
           flights:           flights.filter(f => f.flightNo),
           accommodations:    hotels.filter(h => h.hotel).map(h => ({ ...h, nights: Number(h.nights) })),
@@ -635,14 +635,14 @@ export default function NewBookingPage() {
                   }} />
               </div>
               <div>
-                <label className="form-label">Quoted Total *</label>
+                <label className="form-label">Quoted Total</label>
                 <div className="flex gap-2">
                   <select className="form-select w-24" value={form.currency}
                     onChange={e => setForm(p => ({ ...p, currency: e.target.value }))}>
                     <option>USD</option><option>INR</option><option>VND</option><option>SGD</option>
                     <option>LKR</option><option>MYR</option>
                   </select>
-                  <input type="number" step="0.01" min="0" className="form-input flex-1" required
+                  <input type="number" step="0.01" min="0" className="form-input flex-1"
                     value={form.quotedTotal}
                     onChange={e => setForm(p => ({ ...p, quotedTotal: e.target.value }))} />
                 </div>
