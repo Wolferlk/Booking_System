@@ -10,6 +10,7 @@ import {
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical, ScanLine, Upload, HardDrive, Globe, Sparkles, PlaneLanding,
+  History, ChevronDown, RotateCcw,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -144,6 +145,11 @@ export default function BookingDetailPage() {
   const [savingMealPrefs, setSavingMealPrefs] = useState(false)
   const [expandedMeal, setExpandedMeal] = useState<Set<string>>(new Set())
 
+  // Version switching (V1 / V2 …)
+  const [versionMenuOpen, setVersionMenuOpen] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<number | null>(null)
+  const [restoringVersion, setRestoringVersion] = useState(false)
+
   // AI Calls & Feedback modal
   const [aiCallsModal, setAiCallsModal] = useState(false)
 
@@ -250,6 +256,26 @@ export default function BookingDetailPage() {
   }
 
   useEffect(() => { load() }, [ref])
+
+  async function restoreVersion(versionNo: number) {
+    setRestoringVersion(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/versions/${versionNo}/restore`, { method: 'POST' })
+      const json = await res.json()
+      if (json.success) {
+        toast.success(`Switched to version V${versionNo}`)
+        setRestoreTarget(null)
+        setVersionMenuOpen(false)
+        await load()
+      } else {
+        toast.error(json.error || 'Failed to switch version')
+      }
+    } catch {
+      toast.error('Failed to switch version')
+    } finally {
+      setRestoringVersion(false)
+    }
+  }
 
   // Load any previously-detected customer origin from cache — and auto-detect
   // once if nothing has been detected yet, so the card fills in on open.
@@ -1053,6 +1079,52 @@ Wishing you a wonderful trip! ✈️
             <div>
               <div className="flex items-center gap-3 mb-2 flex-wrap">
                 <span className="text-2xl font-bold font-mono text-slate-900">{booking.bookingRef as string}</span>
+                {/* Version selector — shows the active version; admins can switch */}
+                {(() => {
+                  const versions = ((booking as any).versions ?? []) as { versionNo: number; source?: string | null; createdAt?: string; amendmentNote?: string | null }[]
+                  const active = Number((booking as any).version ?? 1)
+                  const isSA = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+                  const canSwitch = isSA && versions.length > 1
+                  return (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        disabled={!canSwitch}
+                        onClick={() => canSwitch && setVersionMenuOpen(o => !o)}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold border ${canSwitch ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100 cursor-pointer' : 'bg-slate-100 text-slate-600 border-slate-200'}`}
+                        title={canSwitch ? 'Switch active version' : `Version ${active}`}
+                      >
+                        <History className="w-3 h-3" /> V{active}
+                        {canSwitch && <ChevronDown className="w-3 h-3" />}
+                      </button>
+                      {versionMenuOpen && canSwitch && (
+                        <>
+                          <div className="fixed inset-0 z-10" onClick={() => setVersionMenuOpen(false)} />
+                          <div className="absolute left-0 mt-1 z-20 w-64 bg-white rounded-lg shadow-lg border border-slate-200 py-1 max-h-72 overflow-auto">
+                            <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-slate-400 font-semibold">Versions</div>
+                            {versions.map(v => (
+                              <button
+                                key={v.versionNo}
+                                type="button"
+                                disabled={v.versionNo === active}
+                                onClick={() => { setRestoreTarget(v.versionNo); setVersionMenuOpen(false) }}
+                                className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 ${v.versionNo === active ? 'bg-indigo-50 cursor-default' : 'hover:bg-slate-50 cursor-pointer'}`}
+                              >
+                                <span className="flex flex-col">
+                                  <span className="font-semibold text-slate-800">V{v.versionNo}{v.versionNo === active && <span className="ml-1.5 text-[10px] text-indigo-600 font-bold">ACTIVE</span>}</span>
+                                  <span className="text-[11px] text-slate-400">
+                                    {v.createdAt ? formatDate(v.createdAt) : ''}{v.source ? ` · ${v.source}` : ''}
+                                  </span>
+                                </span>
+                                {v.versionNo !== active && <RotateCcw className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
                 {(booking as any).cntlNumber && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono font-semibold bg-violet-50 text-violet-700 border border-violet-200">
                       <Ticket className="w-3 h-3" /> CNTL: {(booking as any).cntlNumber}
@@ -3168,6 +3240,37 @@ Wishing you a wonderful trip! ✈️
           testEmail2={testSettings.testEmail2}
         />
       )}
+
+      {/* ── Switch version confirm modal ──────────────────────────────── */}
+      <Modal
+        open={restoreTarget !== null}
+        onClose={() => !restoringVersion && setRestoreTarget(null)}
+        title={`Switch to version V${restoreTarget ?? ''}?`}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRestoreTarget(null)} disabled={restoringVersion}>Cancel</Button>
+            <Button
+              loading={restoringVersion}
+              icon={<RotateCcw className="w-4 h-4" />}
+              onClick={() => restoreTarget !== null && restoreVersion(restoreTarget)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-700"
+            >
+              {restoringVersion ? 'Switching…' : `Switch to V${restoreTarget ?? ''}`}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm text-slate-600">
+          <p>
+            This will make <span className="font-semibold">V{restoreTarget}</span> the active version. The booking details,
+            passengers, flights, hotels, itinerary and agenda will be rebuilt from that version.
+          </p>
+          <p className="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-3 py-2">
+            Any driver/vehicle assignments on the current agenda may be lost. P&amp;L, tickets and payments are not affected.
+            You can switch back to another version at any time.
+          </p>
+        </div>
+      </Modal>
 
       {/* ── Send Email modal ───────────────────────────────────────────── */}
       <Modal

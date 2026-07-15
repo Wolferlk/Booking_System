@@ -66,6 +66,15 @@ export async function GET(
   }
 
   let responseData: Record<string, unknown> = { ...booking }
+  // Strip the heavy docSnapshot from the versions list — only metadata is needed
+  // to render the version selector. Full snapshots are fetched on demand.
+  responseData.versions = (booking.versions ?? []).map(v => ({
+    versionNo:     v.versionNo,
+    source:        v.source,
+    amendmentNote: v.amendmentNote,
+    createdAt:     v.createdAt,
+    isActive:      v.versionNo === booking.version,
+  }))
   if (role === 'GT_USER' && !isClientPortalUnlocked(booking.arrivalDate)) {
     responseData.pnl = null
   }

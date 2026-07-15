@@ -452,12 +452,14 @@ model BookingVersion {
   id            String   @id @default(cuid())
   bookingId     String
   versionNo     Int
+  source        String?
   docSnapshot   String?  @db.LongText
   amendmentNote String?  @db.Text
   createdById   String
   createdAt     DateTime @default(now())
   booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
+  @@unique([bookingId, versionNo])
   @@index([bookingId], map: "booking_versions_bookingId_fkey")
   @@map("booking_versions")
 }
