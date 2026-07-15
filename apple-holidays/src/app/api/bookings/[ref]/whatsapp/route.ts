@@ -5,10 +5,9 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { putUpload } from '@/lib/storage'
+import { sendViaMetaApi, sendViaNotifyProxy } from '@/lib/whatsapp'
 
 export const dynamic = 'force-dynamic'
-const WHATSAPP_API    = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
-const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 
 function getPublicBaseUrl(req: NextRequest): string {
   return (
@@ -16,116 +15,6 @@ function getPublicBaseUrl(req: NextRequest): string {
     process.env.APP_URL?.trim() ||
     req.nextUrl.origin
   ).replace(/\/+$/, '')
-}
-
-function getMetaCredentials() {
-  const accessToken    = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
-  const phoneNumberId  = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
-  return { accessToken, phoneNumberId }
-}
-
-async function sendViaMetaApi(params: {
-  to: string
-  name?: string
-  message: string
-  attachPdf?: boolean
-  pdfBuffer?: Buffer
-  pdfFilename?: string
-}) {
-  const { accessToken, phoneNumberId } = getMetaCredentials()
-  if (!accessToken || !phoneNumberId) return null
-
-  const baseUrl = `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}`
-  const headers = { Authorization: `Bearer ${accessToken}` }
-
-  const textRes = await fetch(`${baseUrl}/messages`, {
-    method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messaging_product: 'whatsapp',
-      to: params.to,
-      type: 'text',
-      text: { body: params.message },
-    }),
-  })
-
-  const textBody = await textRes.text()
-  if (!textRes.ok) {
-    throw new Error(`Meta text send failed ${textRes.status}: ${textBody.slice(0, 300)}`)
-  }
-
-  let documentResult: unknown = null
-  if (params.attachPdf && params.pdfBuffer && params.pdfFilename) {
-    const mediaForm = new FormData()
-    mediaForm.append('messaging_product', 'whatsapp')
-    const pdfArrayBuffer = params.pdfBuffer.buffer.slice(
-      params.pdfBuffer.byteOffset,
-      params.pdfBuffer.byteOffset + params.pdfBuffer.byteLength,
-    ) as ArrayBuffer
-    mediaForm.append('file', new Blob([pdfArrayBuffer], { type: 'application/pdf' }), params.pdfFilename)
-
-    const uploadRes = await fetch(`${baseUrl}/media`, {
-      method: 'POST',
-      headers,
-      body: mediaForm,
-    })
-
-    const uploadBody = await uploadRes.text()
-    if (!uploadRes.ok) {
-      throw new Error(`Meta media upload failed ${uploadRes.status}: ${uploadBody.slice(0, 300)}`)
-    }
-
-    const uploadJson = JSON.parse(uploadBody) as { id?: string }
-    if (!uploadJson.id) throw new Error('Meta media upload returned no media id')
-
-    const docRes = await fetch(`${baseUrl}/messages`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: params.to,
-        type: 'document',
-        document: {
-          id:       uploadJson.id,
-          filename: params.pdfFilename,
-          caption:  params.pdfFilename?.includes('FullDetails')
-            ? 'Full tour details & vouchers PDF'
-            : 'Tour confirmation PDF',
-        },
-      }),
-    })
-
-    const docBody = await docRes.text()
-    if (!docRes.ok) {
-      throw new Error(`Meta document send failed ${docRes.status}: ${docBody.slice(0, 300)}`)
-    }
-    documentResult = JSON.parse(docBody)
-  }
-
-  return { channel: 'meta', text: JSON.parse(textBody), document: documentResult }
-}
-
-async function sendViaNotifyProxy(params: {
-  to: string
-  name?: string
-  message: string
-  files?: Array<{ url: string; filename: string; caption?: string }>
-}) {
-  const notifySecret = process.env.WHATSAPP_NOTIFY_SECRET?.trim()
-  if (!notifySecret) return null
-
-  const res = await fetch(WHATSAPP_API, {
-    method: 'POST',
-    headers: { 'x-notify-secret': notifySecret, 'Content-Type': 'application/json' },
-    body: JSON.stringify(params),
-  })
-
-  const text = await res.text()
-  let json: unknown
-  try { json = JSON.parse(text) } catch { json = { raw: text } }
-
-  if (!res.ok) throw new Error(`WhatsApp API ${res.status}: ${text.slice(0, 300)}`)
-  return { channel: 'proxy', response: json }
 }
 
 export async function POST(
@@ -216,7 +105,18 @@ export async function POST(
 
   try {
     const metaResult = await sendViaMetaApi({
-      to, name, message, attachPdf, pdfBuffer, pdfFilename,
+      to,
+      message,
+      ...(attachPdf && pdfBuffer && pdfFilename
+        ? {
+            media: {
+              buffer:   pdfBuffer,
+              filename: pdfFilename,
+              kind:     'document' as const,
+              caption:  isFullPdf ? 'Full tour details & vouchers PDF' : 'Tour confirmation PDF',
+            },
+          }
+        : {}),
     })
     if (metaResult) {
       await prisma.whatsAppMessage.create({

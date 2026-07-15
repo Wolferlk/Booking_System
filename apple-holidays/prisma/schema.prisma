@@ -685,18 +685,23 @@ model DriverLog {
 }
 
 model WhatsAppMessage {
-  id          String   @id @default(cuid())
-  bookingRef  String
-  phone       String
-  direction   String
-  body        String   @db.Text
-  waMessageId String?
-  status      String   @default("sent")
-  senderName  String?
-  createdAt   DateTime @default(now())
+  id            String   @id @default(cuid())
+  bookingRef    String
+  phone         String
+  direction     String
+  body          String?  @db.Text
+  waMessageId   String?
+  status        String   @default("sent")
+  senderName    String?
+  mediaUrl      String?
+  mediaType     String?
+  mediaMimeType String?
+  read          Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@index([bookingRef])
   @@index([phone])
+  @@index([phone, createdAt])
   @@index([waMessageId])
   @@map("whatsapp_messages")
 }

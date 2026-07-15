@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   MessageCircle, Send, Loader2, CheckCircle2, Calendar, Plane, Hotel,
-  ChevronDown, ChevronUp, Star, RefreshCw, Clock, Sparkles, MapPin,
+  ChevronDown, ChevronUp, Star, RefreshCw, Clock, Sparkles, MapPin, ExternalLink,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -147,9 +147,22 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                 {data.hasContact
                   ? <span>Messages go to <span className="font-mono font-semibold">{data.contact}</span>{data.leadName ? ` · ${data.leadName}` : ''}</span>
                   : <span>No WhatsApp/phone number on this booking — add a contact number before sending.</span>}
-                <button onClick={load} className="ml-auto text-slate-400 hover:text-slate-600" title="Refresh">
-                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                </button>
+                <span className="ml-auto flex items-center gap-2 text-slate-400">
+                  {data.hasContact && (
+                    <a
+                      href={`/dashboard/whatsapp?phone=${encodeURIComponent((data.contact ?? '').replace(/\D/g, ''))}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-slate-600"
+                      title="Open full conversation"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  <button onClick={load} className="hover:text-slate-600" title="Refresh">
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  </button>
+                </span>
               </div>
 
               {/* Day-by-day sender */}

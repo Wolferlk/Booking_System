@@ -61,7 +61,7 @@ export async function GET() {
       recipient:  m.senderName?.replace(TAG_DAILY_BRIEFING, '').replace(TAG_FEEDBACK_REQUEST, '').trim() ?? '',
       status:     m.status,
       createdAt:  m.createdAt,
-      preview:    m.body.slice(0, 140),
+      preview:    (m.body ?? '').slice(0, 140),
     })),
   })
 }

@@ -9,7 +9,7 @@ import {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
-  HardDrive, FolderOpen, X, Bot, Navigation2, Trash2, Cloud,
+  HardDrive, FolderOpen, X, Bot, Navigation2, Trash2, Cloud, MessageCircle,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -31,10 +31,14 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
-  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud,
+  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle,
 }
 
-const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
+// The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
+// it opens in a new tab rather than navigating the current dashboard view away.
+const WHATSAPP_NAV_ITEM = { label: 'WhatsApp', href: '/dashboard/whatsapp', icon: 'MessageCircle', external: true }
+
+const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean; external?: boolean }[]> = {
   BT_USER: [
     { label: 'Dashboard',      href: '/dashboard',                           icon: 'LayoutDashboard' },
     { label: 'All Bookings',   href: '/dashboard/bookings',                  icon: 'FileText' },
@@ -43,6 +47,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Change Requests',href: '/dashboard/change-requests',           icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl',             icon: 'BarChart2' },
     { label: 'Driver Logs',    href: '/dashboard/driver-log',                icon: 'Navigation2' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',     href: '/dashboard/admin/mail-inbox',          icon: 'Mail' },
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',            icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',   icon: 'FolderOpen' },
@@ -56,6 +61,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',        href: '/dashboard/ground/drivers',           icon: 'Car' },
     { label: 'Driver Logs',    href: '/dashboard/driver-log',               icon: 'Navigation2' },
     { label: 'Vendors',        href: '/dashboard/ground/vendors',           icon: 'Truck' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',     href: '/dashboard/admin/mail-inbox',         icon: 'Mail' },
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
@@ -75,6 +81,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Reminders',          href: '/dashboard/te/reminders',             icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',              icon: 'CreditCard' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',               icon: 'Navigation2' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',         icon: 'Mail' },
     { label: 'OneDrive',           href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings',     href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
@@ -89,6 +96,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Credit Agents',   href: '/dashboard/accounts/credit-agents',   icon: 'CreditCard' },
     { label: 'Reports',         href: '/dashboard/accounts/reports',         icon: 'Download' },
     { label: 'Driver Logs',     href: '/dashboard/driver-log',               icon: 'Navigation2' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',      href: '/dashboard/admin/mail-inbox',         icon: 'Mail' },
     { label: 'OneDrive',        href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings',  href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
@@ -113,6 +121,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',            icon: 'Download' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',            icon: 'Mail' },
     { label: 'OneDrive Access',    href: '/dashboard/admin/onedrive',              icon: 'HardDrive' },
     { label: 'Drive Bookings',     href: '/dashboard/admin/onedrive/bookings',     icon: 'FolderOpen' },
@@ -143,6 +152,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',                icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',                 icon: 'CreditCard' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',            icon: 'Mail' },
     { label: 'OneDrive',           href: '/dashboard/admin/onedrive',              icon: 'HardDrive' },
     { label: 'Drive Bookings',     href: '/dashboard/admin/onedrive/bookings',     icon: 'FolderOpen' },
@@ -164,6 +174,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',            icon: 'Download' },
+    { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',            icon: 'Mail' },
     { label: 'OneDrive Access',    href: '/dashboard/admin/onedrive',              icon: 'HardDrive' },
     { label: 'Drive Bookings',     href: '/dashboard/admin/onedrive/bookings',     icon: 'FolderOpen' },
@@ -373,6 +384,7 @@ export default function Sidebar() {
                     href={item.href}
                     onClick={closeMobile}
                     title={item.label}
+                    {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
                     className={cn(
                       'flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
                       isCollapsed && 'lg:justify-center lg:px-2',
