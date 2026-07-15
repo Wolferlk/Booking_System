@@ -200,6 +200,32 @@ function fmtTime(iso: string) {
   catch { return '' }
 }
 
+// ─── Date ⇄ offset math for the reconfirm / post-tour pickers ──────────────────
+// The API stores an OFFSET (days before arrival / days after departure), but staff
+// prefer to pick the actual call DATE. These convert both ways off the booking's
+// arrival/departure dates so the two inputs stay in lock-step. Pure yyyy-mm-dd
+// arithmetic in local time — no timezone drift (matches the backend's shiftDay).
+function toYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+function parseYmd(s?: string | null): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s ?? ''))
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null
+}
+// Shift a date by whole days; returns yyyy-mm-dd or '' when the base is unknown.
+function shiftDays(base?: string | null, delta = 0): string {
+  const d = parseYmd(base)
+  if (!d) return ''
+  d.setDate(d.getDate() + delta)
+  return toYmd(d)
+}
+// Whole days between two dates (to − from). null when either is unparseable.
+function daysBetween(from?: string | null, to?: string | null): number | null {
+  const a = parseYmd(from); const b = parseYmd(to)
+  if (!a || !b) return null
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000)
+}
+
 // ─── Transcript Viewer ────────────────────────────────────────────────────────
 
 interface NormLine { speaker: 'agent' | 'customer' | 'system'; text: string }
@@ -1024,6 +1050,14 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     </div>
                     {reconfirmPlan.enabled && (
                       <div className="grid grid-cols-2 gap-2 mt-2.5">
+                        {booking.arrivalDate && (
+                          <div className="col-span-2">
+                            <label className="form-label !text-[10px]">Call date <span className="text-slate-400 font-normal">— sets the days-before count</span></label>
+                            <input type="date" className="form-input h-8 text-xs" max={String(booking.arrivalDate).slice(0, 10)}
+                              value={shiftDays(booking.arrivalDate, -(Number(reconfirmPlan.days_before) || 0))}
+                              onChange={e => { const d = daysBetween(e.target.value, booking.arrivalDate); if (d != null) setReconfirmPlan(p => ({ ...p, days_before: String(Math.max(0, d)) })) }} />
+                          </div>
+                        )}
                         <div><label className="form-label !text-[10px]">Days before arrival</label><input type="number" min="1" max="30" className="form-input h-8 text-xs" value={reconfirmPlan.days_before} onChange={e => setReconfirmPlan(p => ({ ...p, days_before: e.target.value }))} /></div>
                         <div><label className="form-label !text-[10px]">Time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={reconfirmPlan.call_time} onChange={e => setReconfirmPlan(p => ({ ...p, call_time: e.target.value }))} /></div>
                       </div>
@@ -1040,6 +1074,14 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     </div>
                     {postTourPlan.enabled && (
                       <div className="grid grid-cols-2 gap-2 mt-2.5">
+                        {booking.departureDate && (
+                          <div className="col-span-2">
+                            <label className="form-label !text-[10px]">Call date <span className="text-slate-400 font-normal">— sets the days-after count</span></label>
+                            <input type="date" className="form-input h-8 text-xs" min={String(booking.departureDate).slice(0, 10)}
+                              value={shiftDays(booking.departureDate, Number(postTourPlan.days_after) || 0)}
+                              onChange={e => { const d = daysBetween(booking.departureDate, e.target.value); if (d != null) setPostTourPlan(p => ({ ...p, days_after: String(Math.max(0, d)) })) }} />
+                          </div>
+                        )}
                         <div><label className="form-label !text-[10px]">Days after departure</label><input type="number" min="1" max="30" className="form-input h-8 text-xs" value={postTourPlan.days_after} onChange={e => setPostTourPlan(p => ({ ...p, days_after: e.target.value }))} /></div>
                         <div><label className="form-label !text-[10px]">Time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={postTourPlan.call_time} onChange={e => setPostTourPlan(p => ({ ...p, call_time: e.target.value }))} /></div>
                       </div>
@@ -1161,6 +1203,15 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     </div>
                     {planEdit === 'reconfirm' && (
                       <div className="mt-2.5 pt-2.5 border-t border-sky-100 grid grid-cols-2 gap-2 items-end">
+                        <div className="col-span-2">
+                          <label className="form-label !text-[10px]">Call date {booking.arrivalDate
+                            ? <span className="text-slate-400 font-normal">— sets the days-before count</span>
+                            : <span className="text-amber-500 font-normal">— arrival date unknown, use days below</span>}</label>
+                          <input type="date" disabled={!booking.arrivalDate} className="form-input h-8 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                            max={booking.arrivalDate ? String(booking.arrivalDate).slice(0, 10) : undefined}
+                            value={booking.arrivalDate ? shiftDays(booking.arrivalDate, -(Number(planEditForm.days) || 0)) : ''}
+                            onChange={e => { const d = daysBetween(e.target.value, booking.arrivalDate); if (d != null) setPlanEditForm(f => ({ ...f, days: String(Math.max(0, d)) })) }} />
+                        </div>
                         <div><label className="form-label !text-[10px]">Days before arrival</label><input type="number" min="0" max="30" className="form-input h-8 text-xs" value={planEditForm.days} onChange={e => setPlanEditForm(f => ({ ...f, days: e.target.value }))} /></div>
                         <div><label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={planEditForm.call_time} onChange={e => setPlanEditForm(f => ({ ...f, call_time: e.target.value }))} /></div>
                         <div className="col-span-2 flex gap-2">
@@ -1197,6 +1248,15 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                     </div>
                     {planEdit === 'post_tour' && (
                       <div className="mt-2.5 pt-2.5 border-t border-amber-100 grid grid-cols-2 gap-2 items-end">
+                        <div className="col-span-2">
+                          <label className="form-label !text-[10px]">Call date {booking.departureDate
+                            ? <span className="text-slate-400 font-normal">— sets the days-after count</span>
+                            : <span className="text-amber-500 font-normal">— departure date unknown, use days below</span>}</label>
+                          <input type="date" disabled={!booking.departureDate} className="form-input h-8 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                            min={booking.departureDate ? String(booking.departureDate).slice(0, 10) : undefined}
+                            value={booking.departureDate ? shiftDays(booking.departureDate, Number(planEditForm.days) || 0) : ''}
+                            onChange={e => { const d = daysBetween(booking.departureDate, e.target.value); if (d != null) setPlanEditForm(f => ({ ...f, days: String(Math.max(0, d)) })) }} />
+                        </div>
                         <div><label className="form-label !text-[10px]">Days after departure</label><input type="number" min="0" max="30" className="form-input h-8 text-xs" value={planEditForm.days} onChange={e => setPlanEditForm(f => ({ ...f, days: e.target.value }))} /></div>
                         <div><label className="form-label !text-[10px]">Call time <span className="text-slate-400 font-normal">(opt)</span></label><input type="time" className="form-input h-8 text-xs" value={planEditForm.call_time} onChange={e => setPlanEditForm(f => ({ ...f, call_time: e.target.value }))} /></div>
                         <div className="col-span-2 flex gap-2">
