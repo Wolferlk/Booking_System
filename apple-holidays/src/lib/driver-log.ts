@@ -57,6 +57,37 @@ export interface PnlItemLike {
   item_details?: unknown
 }
 
+/**
+ * Structured, machine-readable breakdown parsed out of a PNL item's
+ * `item_details` JSON. Every field is optional because the accounts DB emits
+ * different shapes per line type (entrance ticket, KM travel, per-night, flat
+ * transfer, …). Persisted verbatim inside the saved snapshot so the UI can keep
+ * offering rich display + KM editing without re-reading the PNL.
+ */
+export interface LineDetailMeta {
+  remarks?: string
+  calculation_type?: string        // 'RATE' | 'TRANSFER' | 'PACKAGE' | …
+  unit_type?: string               // 'KM' | 'NIGHT' | …
+  // KM × rate (travel / fuel mileage)
+  km?: number                      // resolved distance (from distance_days when unit is KM)
+  rate?: number
+  distance_days?: number
+  // per-night (driver accommodation / hotels)
+  nights?: number
+  // adult/child ticket breakdown (entrance / lunch)
+  adult_count?: number
+  child_count?: number
+  adult_rate?: number
+  child_rate?: number
+  adult_entrance?: number
+  child_entrance?: number
+  pax?: number
+  day?: number
+  // flat transfer
+  transfer_amount?: number
+  package?: string
+}
+
 export interface DriverLogLine {
   /** Stable id — reused from the PNL item when available, else generated. */
   id: string
@@ -66,6 +97,8 @@ export interface DriverLogLine {
   amount: number
   /** 'pnl' = derived from a PNL line item, 'manual' = added/edited by a user. */
   source: 'pnl' | 'manual'
+  /** Parsed structured breakdown of `detail` — powers rich display + KM editing. */
+  meta?: LineDetailMeta
 }
 
 export interface DriverLogComputation {
@@ -102,28 +135,115 @@ export function pnlItemName(item: PnlItemLike): string {
   return (item.hotel_name ?? item.transport_name ?? item.service_name ?? '').trim()
 }
 
+/**
+ * Robustly unwrap an `item_details` value into a plain object. The accounts DB
+ * frequently double-encodes this field (a JSON string *inside* a JSON string),
+ * which is why the naïve parser used to leak raw `"{\"remarks\":…}"` blobs onto
+ * the sheet. Handles: already-object, single-encoded string, double-encoded
+ * string. Returns null when the value isn't a JSON object.
+ */
+export function parseDetailObject(d: unknown): Record<string, unknown> | null {
+  if (d == null) return null
+  if (typeof d === 'object' && !Array.isArray(d)) return d as Record<string, unknown>
+  if (typeof d !== 'string') return null
+  let parsed: unknown = d.trim()
+  if (!parsed) return null
+  for (let i = 0; i < 2 && typeof parsed === 'string'; i++) {
+    try { parsed = JSON.parse(parsed) } catch { return null }
+  }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null
+}
+
+function numOrUndef(v: unknown): number | undefined {
+  if (v == null || v === '') return undefined
+  const n = typeof v === 'number' ? v : parseFloat(String(v))
+  return Number.isFinite(n) ? n : undefined
+}
+
+/** Extract a structured {@link LineDetailMeta} from a PNL item's details field. */
+export function extractDetailMeta(d: unknown): LineDetailMeta {
+  const o = parseDetailObject(d)
+  if (!o) {
+    // Not JSON — keep any plain string as free-text remarks.
+    const raw = typeof d === 'string' ? d.trim() : ''
+    return raw ? { remarks: raw } : {}
+  }
+
+  const remarksRaw = o.remarks ?? o.remark ?? o.note ?? o.details
+  const unit_type  = typeof o.unit_type === 'string' ? o.unit_type : undefined
+  const distance_days = numOrUndef(o.distance_days)
+  const rate       = numOrUndef(o.rate)
+  const isKm       = (unit_type ?? '').toUpperCase() === 'KM'
+
+  const meta: LineDetailMeta = {
+    remarks:          typeof remarksRaw === 'string' && remarksRaw.trim() ? remarksRaw.trim() : undefined,
+    calculation_type: typeof o.calculation_type === 'string' ? o.calculation_type : undefined,
+    unit_type,
+    distance_days,
+    rate,
+    km:               isKm ? distance_days : undefined,
+    nights:           numOrUndef(o.nights),
+    adult_count:      numOrUndef(o.adult_count),
+    child_count:      numOrUndef(o.child_count),
+    adult_rate:       numOrUndef(o.adult_rate),
+    child_rate:       numOrUndef(o.child_rate),
+    adult_entrance:   numOrUndef(o.adult_entrance),
+    child_entrance:   numOrUndef(o.child_entrance),
+    pax:              numOrUndef(o.pax),
+    day:              numOrUndef(o.day),
+    transfer_amount:  numOrUndef(o.transfer_amount),
+    package:          typeof o.Package === 'string' ? o.Package
+                      : typeof o.package === 'string' ? o.package : undefined,
+  }
+
+  // Strip undefined keys so persisted snapshots stay lean.
+  ;(Object.keys(meta) as (keyof LineDetailMeta)[]).forEach(k => {
+    if (meta[k] === undefined) delete meta[k]
+  })
+  return meta
+}
+
+/** True when a line carries an editable KM × rate breakdown. */
+export function hasKmRate(meta: LineDetailMeta | undefined): meta is LineDetailMeta & { km: number; rate: number } {
+  return !!meta && meta.km != null && meta.rate != null
+}
+
+function fmtNum(n: number, max = 2): string {
+  return n.toLocaleString('en-US', { maximumFractionDigits: max })
+}
+
+/**
+ * Human-readable one-line summary of a structured detail. Prefers the explicit
+ * numeric breakdown (KM × rate, per-night, adult/child) over the free-text
+ * remarks so the sheet reads cleanly instead of dumping raw JSON.
+ */
+export function formatDetailMeta(meta: LineDetailMeta | undefined): string {
+  if (!meta) return ''
+
+  if (hasKmRate(meta)) {
+    return `${fmtNum(meta.km)} KM × ${fmtNum(meta.rate, 4)} / KM`
+  }
+  if (meta.nights != null && meta.nights > 0) {
+    return `${fmtNum(meta.nights)} night${meta.nights === 1 ? '' : 's'}`
+  }
+  if (meta.adult_count != null || meta.child_count != null) {
+    const parts: string[] = []
+    if (meta.adult_count) parts.push(`Adult ${fmtNum(meta.adult_count)}${meta.adult_rate != null ? ` × ${fmtNum(meta.adult_rate)}` : ''}`)
+    if (meta.child_count) parts.push(`Child ${fmtNum(meta.child_count)}${meta.child_rate != null ? ` × ${fmtNum(meta.child_rate)}` : ''}`)
+    if (parts.length) return parts.join(' + ')
+  }
+  if (meta.transfer_amount != null && meta.transfer_amount > 0) {
+    return `Transfer ${fmtNum(meta.transfer_amount)}`
+  }
+  return meta.remarks ?? ''
+}
+
 /** Best-effort readable detail string from the item_details JSON/string field. */
 export function pnlItemDetail(item: PnlItemLike): string {
-  const d = item.item_details
-  if (d == null) return ''
-  if (typeof d === 'string') {
-    const raw = d.trim()
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object') {
-        const o = parsed as Record<string, unknown>
-        const r = o.remarks ?? o.remark ?? o.note ?? o.details
-        if (typeof r === 'string' && r.trim()) return r.trim()
-      }
-    } catch { /* not JSON — fall through */ }
-    return raw
-  }
-  if (typeof d === 'object') {
-    const o = d as Record<string, unknown>
-    const r = o.remarks ?? o.remark ?? o.note ?? o.details
-    if (typeof r === 'string' && r.trim()) return r.trim()
-  }
-  return ''
+  const meta = extractDetailMeta(item.item_details)
+  return formatDetailMeta(meta) || meta.remarks || ''
 }
 
 // ── Classification ──────────────────────────────────────────────────────────
@@ -156,13 +276,44 @@ export function classifyPnlItem(item: PnlItemLike): DriverLogCategory {
 }
 
 /** Parse the KM and per-KM rate out of a Travel detail like
- *  "Travel - 800 KM (0.2364 per KM)". Returns nulls when not parseable. */
+ *  "Travel - 800 KM (0.2364 per KM)". Returns nulls when not parseable. Kept as
+ *  a fallback for legacy snapshot lines that predate structured `meta`. */
 export function parseTravelDetail(detail: string): { km: number | null; rate: number | null } {
   const kmMatch   = detail.match(/([\d,]+(?:\.\d+)?)\s*km/i)
   const rateMatch = detail.match(/([\d,]+(?:\.\d+)?)\s*per\s*km/i)
   const km   = kmMatch   ? num(kmMatch[1].replace(/,/g, ''))   : null
   const rate = rateMatch ? num(rateMatch[1].replace(/,/g, '')) : null
   return { km, rate }
+}
+
+/** Best-effort KM×rate meta for a line, preferring structured `meta`, else
+ *  parsing the legacy free-text detail. Returns null when not a KM line. */
+export function resolveKmRate(line: Pick<DriverLogLine, 'detail' | 'meta'>): { km: number; rate: number } | null {
+  if (hasKmRate(line.meta)) return { km: line.meta.km, rate: line.meta.rate }
+  const parsed = parseTravelDetail(line.detail ?? '')
+  if (parsed.km != null && parsed.rate != null) return { km: parsed.km, rate: parsed.rate }
+  return null
+}
+
+/**
+ * Apply an edited KM count (and optionally rate) to a travel line: recomputes
+ * the amount (km × rate) and refreshes both the structured meta and the
+ * human-readable detail string so display, PDF and totals all stay consistent.
+ */
+export function applyKmEdit(line: DriverLogLine, km: number, rate?: number): DriverLogLine {
+  const current = resolveKmRate(line)
+  const r = rate != null ? rate : (current?.rate ?? 0)
+  const k = Number.isFinite(km) ? km : 0
+  const amount = round2(k * r)
+  const meta: LineDetailMeta = {
+    ...(line.meta ?? {}),
+    unit_type: line.meta?.unit_type ?? 'KM',
+    km: k,
+    distance_days: k,
+    rate: r,
+    remarks: `Travel - ${fmtNum(k)} KM (${fmtNum(r, 4)} per KM)`,
+  }
+  return { ...line, amount, meta, detail: formatDetailMeta(meta) }
 }
 
 // ── Computation ─────────────────────────────────────────────────────────────
@@ -185,13 +336,15 @@ export function linesFromPnlItems(items: PnlItemLike[]): DriverLogLine[] {
   return items.filter(item => !isTotalTourPackage(item)).map((item, i) => {
     const category = classifyPnlItem(item)
     const name     = pnlItemName(item) || CATEGORY_LABEL[category]
+    const meta     = extractDetailMeta(item.item_details)
     return {
       id:       String(item.id ?? `pnl-${i}`),
       category,
       label:    name,
-      detail:   pnlItemDetail(item),
+      detail:   formatDetailMeta(meta) || meta.remarks || '',
       amount:   round2(num(item.amount_original)),
       source:   'pnl' as const,
+      meta:     Object.keys(meta).length ? meta : undefined,
     }
   })
 }
