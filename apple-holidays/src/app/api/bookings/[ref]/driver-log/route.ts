@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { buildDriverLogView, saveSnapshot } from '@/lib/driver-log-server'
-import { clampPct, type DriverLogLine, type DriverLogSnapshot } from '@/lib/driver-log'
+import { clampPct, type DriverLogLine, type DriverLogSnapshot, type LineDetailMeta } from '@/lib/driver-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,6 +26,26 @@ export async function GET(
   return buildApiSuccess(view)
 }
 
+/** Keep only known, finite/string fields of an incoming detail meta object. */
+function sanitizeMeta(raw: unknown): LineDetailMeta | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const o = raw as Record<string, unknown>
+  const numKeys: (keyof LineDetailMeta)[] = [
+    'km', 'rate', 'distance_days', 'nights', 'adult_count', 'child_count',
+    'adult_rate', 'child_rate', 'adult_entrance', 'child_entrance', 'pax', 'day', 'transfer_amount',
+  ]
+  const strKeys: (keyof LineDetailMeta)[] = ['remarks', 'calculation_type', 'unit_type', 'package']
+  const meta: LineDetailMeta = {}
+  for (const k of numKeys) {
+    const n = Number(o[k])
+    if (o[k] != null && o[k] !== '' && Number.isFinite(n)) (meta as Record<string, unknown>)[k] = n
+  }
+  for (const k of strKeys) {
+    if (typeof o[k] === 'string' && (o[k] as string).trim()) (meta as Record<string, unknown>)[k] = (o[k] as string).slice(0, 300)
+  }
+  return Object.keys(meta).length ? meta : undefined
+}
+
 /** Coerce an incoming line payload into a safe DriverLogLine. */
 function sanitizeLine(raw: unknown, i: number): DriverLogLine | null {
   if (!raw || typeof raw !== 'object') return null
@@ -38,6 +58,7 @@ function sanitizeLine(raw: unknown, i: number): DriverLogLine | null {
     detail:   String(o.detail ?? '').slice(0, 500),
     amount:   Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0,
     source:   o.source === 'pnl' ? 'pnl' : 'manual',
+    meta:     sanitizeMeta(o.meta),
   }
 }
 
