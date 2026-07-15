@@ -29,6 +29,7 @@ import { classifyPNLCategories, extractPNLFromText } from '@/lib/openai'
 import { detectCountryFromRef, detectCountryFromPath } from '@/lib/country-detection'
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
+import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import type { OperationCountry } from '@prisma/client'
 
 // ── Drive config ──────────────────────────────────────────────────────────────
@@ -706,6 +707,12 @@ async function processTCFile(
     status:             'GT_REVIEW' as const,
   }
 
+  // Amendment of an existing booking: snapshot the current state as its version
+  // before we overwrite it, so the previous version is preserved (V1 → V2 …).
+  if (!isNew && existing) {
+    await recordAmendmentVersion(existing.id, { createdById, source: 'onedrive' })
+  }
+
   let booking: { id: string }
   if (isNew) {
     booking = await prisma.booking.create({
@@ -723,6 +730,14 @@ async function processTCFile(
 
   // Generate agenda (skip if one already exists)
   const agendaItems = await upsertAgenda(booking.id, bookingRef, extracted, !isNew)
+
+  // Record the version: bump to the next version on amendment, or write the
+  // initial v1 snapshot for a brand-new booking.
+  if (isNew) {
+    await snapshotInitialVersion(booking.id, { createdById, source: 'onedrive' })
+  } else {
+    await bumpVersionAndSnapshot(booking.id, { createdById, source: 'onedrive' })
+  }
 
   await logActivity({
     userId: createdById,
