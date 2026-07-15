@@ -38,6 +38,11 @@ function normalizeMealPlan(raw: string | null | undefined): string {
   return MEAL_ABBREV[upper] ?? raw.trim()
 }
 
+/** Strip everything except digits so numbers are WhatsApp-ready: "+91 7715805191" → "917715805191". */
+function normalizeWhatsApp(raw: string | null | undefined): string {
+  return String(raw ?? '').replace(/\D/g, '')
+}
+
 const SERVICE_TYPES = [
   { value: 'PVT_TRANSFER',    label: 'Private Transfer',       color: 'blue'   as const, icon: Car },
   { value: 'SIC_TRANSFER',    label: 'SIC Transfer',           color: 'green'  as const, icon: Bus },
@@ -123,6 +128,9 @@ interface BookingDetails {
   cntlNumber?: string | null
   tourDestination?: string | null
   operationCountry?: string | null
+  contactEmail?: string | null
+  contactPhone?: string | null
+  contactWhatsapp?: string | null
   paxAdults: number
   paxChildren: number
   paxInfants: number
@@ -209,7 +217,15 @@ export default function AgendaPage() {
   const canAssign = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   async function sendAgenda() {
-    if (!sendTo.trim()) { toast.error('Enter a recipient'); return }
+    // WhatsApp numbers must be digits-only (no "+" / spaces); e-mail keeps its raw value.
+    const recipient = sendMode === 'whatsapp' ? normalizeWhatsApp(sendTo) : sendTo.trim()
+    if (!recipient) { toast.error(sendMode === 'whatsapp' ? 'Enter a WhatsApp number' : 'Enter an email address'); return }
+    if (sendMode === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { toast.error('Enter a valid email address'); return }
+
+    const subject = sendMode === 'email'
+      ? (sendSubject.trim() || `Movement Chart — ${ref}`)   // auto subject fallback
+      : undefined
+
     setSending(true)
     try {
       const res  = await fetch(`/api/bookings/${ref}/agenda/send`, {
@@ -218,13 +234,21 @@ export default function AgendaPage() {
         body: JSON.stringify({
           mode:        sendMode,
           showDrivers: sendDrivers,
-          to:          sendTo.trim(),
+          to:          recipient,
           message:     sendMessage || undefined,
-          subject:     sendSubject || undefined,
+          subject,
         }),
       })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
+
+      // The server may return an empty/non-JSON body on a hard failure (timeout, crash) —
+      // read the text first and only then attempt to parse, so we surface a real message.
+      const raw = await res.text()
+      let json: { success?: boolean; error?: string } = {}
+      if (raw) { try { json = JSON.parse(raw) } catch { /* non-JSON body */ } }
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || `Send failed (${res.status} ${res.statusText})`)
+      }
       toast.success(`Agenda sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
       setSendModal(false)
     } catch (err) {
@@ -763,7 +787,13 @@ export default function AgendaPage() {
               onClick={() => {
                 setSendMode('whatsapp')
                 setSendDrivers(true)
-                setSendTo((booking?.passengers.find(p => p.isLead) as { contact?: string | null } | undefined)?.contact ?? '')
+                // Prefer the booking's known WhatsApp/phone, then the lead passenger's contact.
+                setSendTo(normalizeWhatsApp(
+                  booking?.contactWhatsapp
+                  || booking?.contactPhone
+                  || booking?.passengers.find(p => p.isLead)?.contact
+                  || ''
+                ))
                 setSendMessage(`📋 Movement Chart for your booking ${ref}. Please find the agenda PDF attached.`)
                 setSendSubject('')
                 setSendModal(true)
@@ -778,7 +808,7 @@ export default function AgendaPage() {
               onClick={() => {
                 setSendMode('email')
                 setSendDrivers(false)
-                setSendTo('')
+                setSendTo(booking?.contactEmail?.trim() ?? '')
                 setSendMessage('')
                 setSendSubject(`Movement Chart — ${ref}`)
                 setSendModal(true)
@@ -1852,7 +1882,7 @@ export default function AgendaPage() {
           {/* Mode toggle */}
           <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
             <button
-              onClick={() => setSendMode('whatsapp')}
+              onClick={() => { setSendMode('whatsapp'); setSendTo(prev => normalizeWhatsApp(prev)) }}
               className={`flex-1 flex items-center justify-center gap-1.5 text-sm py-2 rounded-md font-medium transition-colors ${sendMode === 'whatsapp' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}
             >
               <MessageCircle className="w-4 h-4 text-green-500" /> WhatsApp
@@ -1897,7 +1927,7 @@ export default function AgendaPage() {
               type={sendMode === 'email' ? 'email' : 'tel'}
               placeholder={sendMode === 'whatsapp' ? '94771234567' : 'recipient@example.com'}
               value={sendTo}
-              onChange={e => setSendTo(sendMode === 'whatsapp' ? e.target.value.replace(/\+/g, '') : e.target.value)}
+              onChange={e => setSendTo(sendMode === 'whatsapp' ? normalizeWhatsApp(e.target.value) : e.target.value)}
             />
           </div>
 
