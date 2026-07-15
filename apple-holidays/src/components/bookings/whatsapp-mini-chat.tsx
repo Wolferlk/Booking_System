@@ -3,17 +3,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import {
   MessageCircle, X, Minus, Send, Phone, Edit2,
-  Check, Loader2, ChevronDown, RefreshCw,
+  Check, Loader2, ChevronDown, RefreshCw, ExternalLink,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 interface WaMessage {
   id: string
   direction: 'outbound' | 'inbound'
-  body: string
+  body: string | null
   senderName: string | null
   status: string
   createdAt: string
+  mediaUrl?: string | null
+  mediaType?: string | null
 }
 
 interface Props {
@@ -187,6 +189,17 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
               </div>
               <p className="text-[11px] text-green-100 truncate font-mono">{bookingRef}</p>
             </div>
+            {phone && (
+              <a
+                href={`/dashboard/whatsapp?phone=${encodeURIComponent(phone.replace(/\D/g, ''))}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+                title="Open full conversation"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
             <button
               onClick={() => fetchMessages()}
               className="p-1 hover:bg-white/20 rounded-lg transition-colors"
@@ -298,10 +311,24 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                         {msg.senderName}
                       </p>
                     )}
+                    {/* media */}
+                    {msg.mediaUrl && msg.mediaType === 'image' && (
+                      <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={msg.mediaUrl} alt="Attachment" className="mb-1 max-h-48 rounded-lg object-cover" />
+                      </a>
+                    )}
+                    {msg.mediaUrl && msg.mediaType !== 'image' && (
+                      <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="mb-1 block text-xs font-semibold text-blue-600 underline">
+                        📎 View attachment
+                      </a>
+                    )}
                     {/* body */}
-                    <p className="text-xs text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
-                      {msg.body}
-                    </p>
+                    {msg.body && (
+                      <p className="text-xs text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
+                        {msg.body}
+                      </p>
+                    )}
                     {/* timestamp */}
                     <p className={`text-[10px] mt-1 text-right ${isOut ? 'text-green-600' : 'text-slate-400'}`}>
                       {date} {time}

@@ -84,7 +84,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     const ds = new Date(t).toISOString().slice(0, 10)
     const ci = booking.accommodations.find(a => dateStr(a.checkIn) === ds)
     const co = booking.accommodations.find(a => dateStr(a.checkOut) === ds)
-    const sentForThisDay = briefingSends.find(s => s.body.includes(longDate(ds)))
+    const sentForThisDay = briefingSends.find(s => s.body?.includes(longDate(ds)))
     days.push({
       dayNo,
       date: ds,
@@ -115,7 +115,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
       type: s.senderName?.startsWith(TAG_FEEDBACK_REQUEST) ? 'feedback' : 'briefing',
       status: s.status,
       createdAt: s.createdAt.toISOString(),
-      preview: s.body.slice(0, 160),
+      preview: (s.body ?? '').slice(0, 160),
     })),
   })
 }

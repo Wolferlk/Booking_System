@@ -3,6 +3,9 @@
  * Uses Meta Graph API or the internal notify proxy, whichever is configured.
  */
 
+import { prisma } from '@/lib/prisma'
+import { contentTypeFor } from '@/lib/storage'
+
 const WHATSAPP_API     = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 
@@ -16,6 +19,136 @@ function getMetaCreds() {
 /** Normalise a phone number to E.164 (strip leading + and spaces). */
 export function normalisePhone(raw: string): string {
   return raw.replace(/\s+/g, '').replace(/^\+/, '').replace(/[^0-9]/g, '')
+}
+
+/** Every staff role allowed to read/send WhatsApp — used by the global inbox routes. */
+export const WHATSAPP_STAFF_ROLES = [
+  'BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
+] as const
+
+/**
+ * Find the booking whose contact/agent phone matches. Shared by the inbound
+ * webhook and the global inbox, so "which booking does this number belong to"
+ * is resolved the same way everywhere — live, by phone, not by trusting
+ * whatever bookingRef a message happened to be filed under at receipt time.
+ */
+export async function findBookingByPhone(phone: string) {
+  const normalized = normalisePhone(phone)
+  if (!normalized) return null
+  const variants = [normalized, `+${normalized}`]
+
+  return prisma.booking.findFirst({
+    where: {
+      OR: [
+        { contactWhatsapp: { in: variants } },
+        { contactPhone:    { in: variants } },
+        { agentWhatsapp:   { in: variants } },
+        { agentPhone:      { in: variants } },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+  })
+}
+
+/**
+ * Send a text message and/or a media attachment via the Meta Graph API in one
+ * call. Shared by the booking-scoped composer and the global inbox so there's
+ * one implementation of the Meta send flow instead of two.
+ */
+export async function sendViaMetaApi(params: {
+  to: string
+  message?: string
+  media?: {
+    buffer:   Buffer
+    filename: string
+    kind:     'document' | 'image'
+    caption?: string
+  }
+}): Promise<{ channel: 'meta'; text: unknown; media: unknown } | null> {
+  const { accessToken, phoneNumberId } = getMetaCreds()
+  if (!accessToken || !phoneNumberId) return null
+
+  const baseUrl = `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}`
+  const headers = { Authorization: `Bearer ${accessToken}` }
+
+  let textResult: unknown = null
+  if (params.message) {
+    const textRes = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to:   params.to,
+        type: 'text',
+        text: { body: params.message },
+      }),
+    })
+    const textBody = await textRes.text()
+    if (!textRes.ok) throw new Error(`Meta text send failed ${textRes.status}: ${textBody.slice(0, 300)}`)
+    textResult = JSON.parse(textBody)
+  }
+
+  let mediaResult: unknown = null
+  if (params.media) {
+    const { buffer, filename, kind, caption } = params.media
+    const mediaForm = new FormData()
+    mediaForm.append('messaging_product', 'whatsapp')
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+    mediaForm.append('file', new Blob([arrayBuffer], { type: contentTypeFor(filename) }), filename)
+
+    const uploadRes = await fetch(`${baseUrl}/media`, { method: 'POST', headers, body: mediaForm })
+    const uploadBody = await uploadRes.text()
+    if (!uploadRes.ok) throw new Error(`Meta media upload failed ${uploadRes.status}: ${uploadBody.slice(0, 300)}`)
+    const uploadJson = JSON.parse(uploadBody) as { id?: string }
+    if (!uploadJson.id) throw new Error('Meta media upload returned no media id')
+
+    const mediaPayload: Record<string, unknown> = kind === 'document'
+      ? { id: uploadJson.id, filename, ...(caption ? { caption } : {}) }
+      : { id: uploadJson.id, ...(caption ? { caption } : {}) }
+
+    const sendRes = await fetch(`${baseUrl}/messages`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to:   params.to,
+        type: kind,
+        [kind]: mediaPayload,
+      }),
+    })
+    const sendBody = await sendRes.text()
+    if (!sendRes.ok) throw new Error(`Meta ${kind} send failed ${sendRes.status}: ${sendBody.slice(0, 300)}`)
+    mediaResult = JSON.parse(sendBody)
+  }
+
+  return { channel: 'meta', text: textResult, media: mediaResult }
+}
+
+/**
+ * Fall back to the internal notify proxy (text + link-based files only) when
+ * Meta credentials aren't configured.
+ */
+export async function sendViaNotifyProxy(params: {
+  to: string
+  name?: string
+  message: string
+  files?: Array<{ url: string; filename: string; caption?: string }>
+}): Promise<{ channel: 'proxy'; response: unknown } | null> {
+  const notifySecret = process.env.WHATSAPP_NOTIFY_SECRET?.trim()
+  if (!notifySecret) return null
+
+  const res = await fetch(WHATSAPP_API, {
+    method: 'POST',
+    headers: { 'x-notify-secret': notifySecret, 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+
+  const text = await res.text()
+  let json: unknown
+  try { json = JSON.parse(text) } catch { json = { raw: text } }
+
+  if (!res.ok) throw new Error(`WhatsApp API ${res.status}: ${text.slice(0, 300)}`)
+  return { channel: 'proxy', response: json }
 }
 
 /**
