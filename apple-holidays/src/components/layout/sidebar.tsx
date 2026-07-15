@@ -9,7 +9,7 @@ import {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
-  HardDrive, FolderOpen, X, Bot, Navigation2,
+  HardDrive, FolderOpen, X, Bot, Navigation2, Trash2, Cloud,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -31,13 +31,14 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
-  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2,
+  ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud,
 }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean }[]> = {
   BT_USER: [
     { label: 'Dashboard',      href: '/dashboard',                           icon: 'LayoutDashboard' },
     { label: 'All Bookings',   href: '/dashboard/bookings',                  icon: 'FileText' },
+    { label: 'AS Bookings',    href: '/dashboard/as-bookings',               icon: 'Cloud' },
     { label: 'New Booking',    href: '/dashboard/bookings/new',              icon: 'PlusCircle' },
     { label: 'Change Requests',href: '/dashboard/change-requests',           icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl',             icon: 'BarChart2' },
@@ -67,6 +68,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Review Queue',       href: '/dashboard/te/review',                icon: 'ClipboardCheck' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',               icon: 'Ticket' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                 icon: 'FileText' },
+    { label: 'AS Bookings',        href: '/dashboard/as-bookings',              icon: 'Cloud' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
@@ -81,6 +83,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Dashboard',       href: '/dashboard',                          icon: 'LayoutDashboard' },
     { label: 'New Booking',     href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'All Bookings',    href: '/dashboard/bookings',                 icon: 'FileText' },
+    { label: 'AS Bookings',     href: '/dashboard/as-bookings',              icon: 'Cloud' },
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
     { label: 'Credit Agents',   href: '/dashboard/accounts/credit-agents',   icon: 'CreditCard' },
@@ -98,6 +101,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
+    { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
@@ -117,12 +121,14 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
   ],
   GT_TE_USER: [
     { label: 'Dashboard',          href: '/dashboard',                             icon: 'LayoutDashboard' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
+    { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
@@ -144,6 +150,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   ULTRA_SUPER_ADMIN: [
     { label: 'Dashboard',          href: '/dashboard',                             icon: 'LayoutDashboard' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
+    { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
@@ -165,6 +172,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
   ],
 }

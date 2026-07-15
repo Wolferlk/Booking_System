@@ -1,0 +1,1589 @@
+{
+  "info": {
+    "_postman_id": "9227a901-83c3-49e9-8ca8-a04caa209c52",
+    "name": "Apple Holidays APIs Live",
+    "description": "# Apple Holidays APIs\n\n## Overview\nThe **Apple Holidays APIs** collection provides a set of endpoints for managing user authentication and handling holiday quotation workflows. This collection is organized into folders for Authentication and Quotation management, making it easy to explore and test the API's capabilities. \n\n### Authentication\nAll endpoints (except for login and registration) require an **Authentication Bearer Token** to be included in the `Authorization` header of each request. Please ensure you authenticate first and use the received token for subsequent requests.\n\n---\n\n## Folder Structure & Descriptions\n\n### 1. Authentication\n**Description:** Folder containing authentication-related requests such as login, logout, register, refresh, and user info.\n\n#### Requests:\n- **Me**: Retrieve information about the currently authenticated user. \n  - _Note: Remember to add authentication bearer in every other request._\n- **Login**: Authenticate a user and receive a bearer token for subsequent requests.\n  - _Note: Remember to add authentication bearer in every other request._\n- **Refresh**: Refresh the authentication token to maintain session validity.\n  - _Note: Remember to add authentication bearer in every other request._\n- **Logout**: Invalidate the current authentication session.\n  - _Note: Remember to add authentication bearer in every other request._\n- **Register**: Register a new user account.\n  - _Note: Remember to add authentication bearer in every other request._\n\n### 2. Quotation\n**Description:** Folder containing quotation-related requests including listing quotations and viewing details.\n\n#### Requests:\n- **List**: Retrieve a list of quotations filtered by date, status, and user IDs.\n  - _Note: Remember to add authentication bearer in every other request._\n\n#### Subfolder: View\n- **Description:** Subfolder for viewing specific quotation details.\n  - **PNL**: View Profit and Loss (PNL) details for a specific quotation.\n    - _Note: Remember to add authentication bearer in every other request._\n\n---\n\n## Important Notes\n- **Authentication:** Most endpoints require a valid bearer token. Always authenticate first using the Login or Register endpoints.\n- **Base URL:** Set the `{{api_url}}` variable in your environment to point to the correct API server.\n- **Usage:** Use the folder structure to navigate and test endpoints as needed.\n\nFor further details or support, refer to the API documentation or contact the API provider.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "42382828",
+    "_collection_link": "https://go.postman.co/collection/42382828-9227a901-83c3-49e9-8ca8-a04caa209c52?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "Booking Copy",
+      "item": [
+        {
+          "name": "Booking Retrive",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"quotation_no\": \"370442\",\n\t\"reference_id\": \"370443\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/booking/retrieve",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "booking",
+                "retrieve"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Book",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"config\": {\n        \"status\": 1,\n        \"tour_session\": 1213564785,\n        \"tour_type\": 3,\n        \"quotation_no\": 370442\n    },\n    \"country_data\": {\n        \"country\": 62\n    },\n    \"genaral_data\": {\n        \"arrival_date\": \"30/12/2025\",\n        \"pax\": {\n            \"adult\": 2,\n            \"cwb\": 0,\n            \"cnb\": 0\n        },\n        \"market\": 1\n    },\n    \"destination_data\": {\n        \"place\": [\n            1,\n            10,\n            13,\n            2,\n            1\n        ],\n        \"place_pretend_type\": [\n            2,\n            1,\n            1,\n            1,\n            3\n        ],\n        \"transport_availability\": [\n            1,\n            0,\n            1,\n            1\n        ]\n    },\n    \"accommodation_data\": {\n        \"accommodation\": [\n            1,\n            2,\n            1\n        ],\n        \"hotel\": [\n            {\n                \"hotel\": 551,\n                \"place\": 10,\n                \"check_in\": \"30/12/2019\",\n                \"check_out\": \"31/12/2019\",\n                \"nights\": 1,\n                \"provider\": \"local\",\n                \"room_category\": 9,\n                \"meal_type\": 1,\n                \"room_type\": [\n                    {\n                        \"id\": 2,\n                        \"count\": 1\n                    }\n                ],\n                \"extrabed\": 0,\n                \"driver_accommodation\":0\n            },\n            {\n                \"hotel\": 0,\n                \"place\": 13,\n                \"check_in\": \"31/12/2019\",\n                \"check_out\": \"01/01/2020\",\n                \"nights\": 1,\n                \"provider\": \"local\",\n                \"extrabed\": 0,\n                \"transportation\": 1,\n                \"driver_accommodation\":0\n            },\n            {\n                \"hotel\": 1535,\n                \"place\": 2,\n                \"check_in\": \"01/01/2020\",\n                \"check_out\": \"02/01/2020\",\n                \"nights\": 1,\n                \"provider\": \"local\",\n                \"room_category\": 10,\n                \"meal_type\": 1,\n                \"room_type\": [\n                    {\n                        \"id\": 2,\n                        \"count\": 1\n                    }\n                ],\n                \"extrabed\": 0,\n                \"driver_accommodation\":0\n            }\n        ]\n    },\n    \"tours_data\": [\n        {\n            \"id\": 288,\n            \"day\": 2,\n            \"time_id\": 50,\n            \"pax\": {\n                \"adult\": 1,\n                \"cwb\": 1,\n                \"cnb\": 0\n            },\n            \"type\": \"attraction\"\n        },\n        {\n            \"id\": 279,\n            \"day\": 3,\n            \"time_id\": 51,\n            \"pax\": {\n                \"adult\": 2,\n                \"cwb\": 1,\n                \"cnb\": 0\n            },\n            \"type\": \"attraction\"\n        },\n        {\n            \"id\": 56,\n            \"day\": 3,\n            \"pax\": {\n                \"adult\": 3,\n                \"cwb\": 1,\n                \"cnb\": 0\n            },\n            \"type\": \"city_tour\"\n        },\n        {\n            \"id\": 103,\n            \"day\": 1,\n            \"pax\": {\n                \"adult\": 4,\n                \"cwb\": 1,\n                \"cnb\": 0\n            },\n            \"type\": \"excursion\"\n        }\n    ],\n    \"markup_data\": {\n        \"markup_amount\": \"10\",\n        \"markup_type\": \"1\",\n        \"markup_amount_child\": \"10\",\n        \"markup_type_child\": \"1\",\n        \"save_type\": \"save\"\n    }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/api/booking/save",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "booking",
+                "save"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-JWT-Claims",
+                "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "email",
+                  "value": "tpwsinghe@gmail.com",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "secret1",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{api_url}}/api/auth/login",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Remembert to add authentication berier in ever other request\n\n"
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-JWT-Claims",
+                "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{api_url}}/api/auth/refresh",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "refresh"
+              ]
+            },
+            "description": "Remembert to add authentication berier in ever other request\n\n"
+          },
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-JWT-Claims",
+                "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{api_url}}/api/auth/logout",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Remembert to add authentication berier in ever other request\n\n"
+          },
+          "response": []
+        },
+        {
+          "name": "Register",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-JWT-Claims",
+                "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "email",
+                  "value": "tpwsinghe@gmail.com",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "secret1",
+                  "type": "text"
+                },
+                {
+                  "key": "name",
+                  "value": "Priya",
+                  "type": "text"
+                },
+                {
+                  "key": "password_confirmation",
+                  "value": "secret1",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{api_url}}/api/auth/register",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Remembert to add authentication berier in ever other request\n\n"
+          },
+          "response": []
+        },
+        {
+          "name": "Me",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-JWT-Claims",
+                "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{api_url}}/api/auth/me",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Remembert to add authentication berier in ever other request\n\n"
+          },
+          "response": []
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Quotation",
+      "item": [
+        {
+          "name": "View",
+          "item": [
+            {
+              "name": "PNL",
+              "protocolProfileBehavior": {
+                "disableBodyPruning": true
+              },
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/x-www-form-urlencoded"
+                  },
+                  {
+                    "key": "X-JWT-Claims",
+                    "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                    "type": "text",
+                    "disabled": true
+                  }
+                ],
+                "body": {
+                  "mode": "formdata",
+                  "formdata": []
+                },
+                "url": {
+                  "raw": "{{api_url}}/api/quotation/view/pnl?reference_id=123&quotation_no=12345&currency=USD",
+                  "host": [
+                    "{{api_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "quotation",
+                    "view",
+                    "pnl"
+                  ],
+                  "query": [
+                    {
+                      "key": "reference_id",
+                      "value": "123"
+                    },
+                    {
+                      "key": "quotation_no",
+                      "value": "12345"
+                    },
+                    {
+                      "key": "currency",
+                      "value": "USD"
+                    }
+                  ]
+                },
+                "description": "Remembert to add authentication berier in ever other request\n\n"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-JWT-Claims",
+                "value": "{\"sub\":1,\"scopes\":[\"*\"]}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": []
+            },
+            "url": {
+              "raw": "{{api_url}}/api/quotation/list?from_arrival_date=2024-10-10&to_arrival_date=2024-10-10&status[]=1&status[]=2&user_ids[]=1&user_ids[]=2",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "quotation",
+                "list"
+              ],
+              "query": [
+                {
+                  "key": "from_arrival_date",
+                  "value": "2024-10-10"
+                },
+                {
+                  "key": "to_arrival_date",
+                  "value": "2024-10-10"
+                },
+                {
+                  "key": "status[]",
+                  "value": "1"
+                },
+                {
+                  "key": "status[]",
+                  "value": "2"
+                },
+                {
+                  "key": "user_ids[]",
+                  "value": "1"
+                },
+                {
+                  "key": "user_ids[]",
+                  "value": "2"
+                },
+                {
+                  "key": "id",
+                  "value": "301",
+                  "disabled": true
+                },
+                {
+                  "key": "arrival_date",
+                  "value": "2024-10-10",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Remembert to add authentication berier in ever other request\n\n"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Content",
+      "item": [
+        {
+          "name": "Agent",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/agent?name=Thailand",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "agent"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "Thailand"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Market",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/market",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "market"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Place",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/place/",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "place",
+                ""
+              ],
+              "query": [
+                {
+                  "key": "id",
+                  "value": "3",
+                  "description": "Place ID",
+                  "disabled": true
+                },
+                {
+                  "key": "name",
+                  "value": "Lanka",
+                  "description": "Place Name",
+                  "disabled": true
+                },
+                {
+                  "key": "country",
+                  "value": "62",
+                  "description": "Country Id",
+                  "disabled": true
+                },
+                {
+                  "key": "type",
+                  "value": "1",
+                  "description": "Place Type ",
+                  "disabled": true
+                },
+                {
+                  "key": "only_id",
+                  "value": "1",
+                  "description": "return id and name only",
+                  "disabled": true
+                },
+                {
+                  "key": "available",
+                  "value": "1",
+                  "description": "available places",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Place Type",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/place_type",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "place_type"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Vehicles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/vehicle?country=62",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "vehicle"
+              ],
+              "query": [
+                {
+                  "key": "country",
+                  "value": "62"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Meal Plane",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/meal_plan",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "meal_plan"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Hotel Class",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "name",
+                  "value": "vi",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{api_url}}/api/content/hotel_class",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "hotel_class"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Hotel Room Category",
+          "protocolProfileBehavior": {
+            "disableBodyPruning": true
+          },
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "name",
+                  "value": "Deluxe",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{api_url}}/api/content/hotel_room_category",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "hotel_room_category"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Hotel Availability",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/hotel_availability",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "hotel_availability"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Hotel List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/hotel?name=Colo&city=10&class=1",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "hotel"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "Colo",
+                  "description": "Hotel Name"
+                },
+                {
+                  "key": "city",
+                  "value": "10",
+                  "description": "City ID"
+                },
+                {
+                  "key": "class",
+                  "value": "1",
+                  "description": "Hotel Class"
+                }
+              ]
+            },
+            "description": "List all the hotels."
+          },
+          "response": []
+        },
+        {
+          "name": "Attraction",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/attraction?place=10&name=Temple",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "attraction"
+              ],
+              "query": [
+                {
+                  "key": "place",
+                  "value": "10",
+                  "description": "Place ID"
+                },
+                {
+                  "key": "name",
+                  "value": "Temple"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "City Tour",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/city_tour?name=Colombo&place=10",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "city_tour"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "Colombo"
+                },
+                {
+                  "key": "place",
+                  "value": "10"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Excursion",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/excursion?name=Nego&from=9&to=9",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "excursion"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "Nego"
+                },
+                {
+                  "key": "from",
+                  "value": "9"
+                },
+                {
+                  "key": "to",
+                  "value": "9"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Meal Preference",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/meal_preference?country=62",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "meal_preference"
+              ],
+              "query": [
+                {
+                  "key": "country",
+                  "value": "62",
+                  "description": "Country ID"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Meal Where",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/meal_where",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "meal_where"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Meal Time",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/meal_time",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "meal_time"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Restaurant",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": "",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/restaurant?name=Rock",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "restaurant"
+              ],
+              "query": [
+                {
+                  "key": "id",
+                  "value": "50",
+                  "description": "Resturent ID",
+                  "disabled": true
+                },
+                {
+                  "key": "name",
+                  "value": "Rock",
+                  "description": "Resturent Name"
+                },
+                {
+                  "key": "from",
+                  "value": "10",
+                  "description": "From City",
+                  "disabled": true
+                },
+                {
+                  "key": "to",
+                  "value": "10",
+                  "description": "Destnation City",
+                  "disabled": true
+                },
+                {
+                  "key": "expensive",
+                  "value": "1",
+                  "description": "Expensives only",
+                  "disabled": true
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Includes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/include",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "include"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Excludes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "",
+                "value": ""
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/exclude",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "exclude"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Cruise List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/hotel?name=Colo&city=10&class=1",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "hotel"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "Colo",
+                  "description": "Hotel Name"
+                },
+                {
+                  "key": "city",
+                  "value": "10",
+                  "description": "City ID"
+                },
+                {
+                  "key": "class",
+                  "value": "1",
+                  "description": "Hotel Class"
+                }
+              ]
+            },
+            "description": "List all the hotels."
+          },
+          "response": []
+        },
+        {
+          "name": "Cruise Cabin Type",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/cruise_meal",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "cruise_meal"
+              ]
+            },
+            "description": "List all the hotels."
+          },
+          "response": []
+        },
+        {
+          "name": "Cruise Meal",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/cruise_cabin_type",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "cruise_cabin_type"
+              ]
+            },
+            "description": "List all the hotels."
+          },
+          "response": []
+        },
+        {
+          "name": "Cruise Occupancy Type",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/cruise_cabin_type",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "cruise_cabin_type"
+              ]
+            },
+            "description": "List all the hotels."
+          },
+          "response": []
+        },
+        {
+          "name": "Cruise Package",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "url": {
+              "raw": "{{api_url}}/api/content/cruise_cabin_type",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "content",
+                "cruise_cabin_type"
+              ]
+            },
+            "description": "List all the hotels."
+          },
+          "response": []
+        }
+      ],
+      "description": "Gett all the contents/details",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Booking",
+      "item": [
+        {
+          "name": "Booking Retrive",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n\t\"quotation_no\": \"370442\",\n\t\"reference_id\": \"370443\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/api/booking/retrieve",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "booking",
+                "retrieve"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Book",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"config\": {\n      \"status\": 1,\n      \"tour_session\": 1767763943,\n      \"tour_type\": 3\n    },\n    \"country_data\": {\n      \"country\": 63\n    },\n    \"genaral_data\": {\n      \"arrival_date\": \"22/01/2026\",\n      \"pax\": {\n        \"adult\": 2,\n        \"cwb\": 0,\n        \"cnb\": 0\n      },\n      \"nationality\": 149,\n      \"show_itinerary\" : true\n    },\n    \"destination_data\": {\n      \"place\": [\n        283,\n        263,\n        272,\n        276,\n        292\n      ],\n      \"place_pretend_type\": [\n        2,\n        1,\n        1,\n        1,\n        3\n      ],\n      \"transport_availability\": [\n        1,\n        1,\n        1,\n        1\n      ]\n    },\n    \"accommodation_data\": {\n      \"accommodation\": [\n        1,\n        1,\n        1\n      ],\n      \"hotel\": [\n        {\n          \"hotel\": 1186,\n          \"place\": 263,\n          \"check_in\": \"22/01/2026\",\n          \"check_out\": \"23/01/2026\",\n          \"nights\": 1,\n          \"provider\": \"local\",\n          \"extrabed\": 0,\n          \"driver_accommodation\": 0,\n          \"room_category\": 10,\n          \"meal_type\": 1,\n          \"room_type\": [\n            {\n              \"id\": 2,\n              \"count\": 1\n            }\n          ]\n        },\n        {\n          \"hotel\": 3227,\n          \"place\": 272,\n          \"check_in\": \"23/01/2026\",\n          \"check_out\": \"24/01/2026\",\n          \"nights\": 1,\n          \"provider\": \"local\",\n          \"extrabed\": 0,\n          \"driver_accommodation\": 0,\n          \"room_category\": 14,\n          \"meal_type\": 1,\n          \"room_type\": [\n            {\n              \"id\": 2,\n              \"count\": 1\n            }\n          ]\n        },\n        {\n          \"hotel\": 1189,\n          \"place\": 276,\n          \"check_in\": \"24/01/2026\",\n          \"check_out\": \"25/01/2026\",\n          \"nights\": 1,\n          \"provider\": \"local\",\n          \"extrabed\": 0,\n          \"driver_accommodation\": 0,\n          \"room_category\": 14,\n          \"meal_type\": 1,\n          \"room_type\": [\n            {\n              \"id\": 2,\n              \"count\": 1\n            }\n          ]\n        }\n      ]\n    },\n    \"tours_data\": [\n      {\n        \"id\": 67,\n        \"day\": 1,\n        \"pax\": {\n          \"adult\": 2,\n          \"cwb\": 0,\n          \"cnb\": 0\n        },\n        \"type\": \"city_tour\"\n      },\n      {\n        \"id\": 1128,\n        \"day\": 2,\n        \"pax\": {\n          \"adult\": 2,\n          \"cwb\": 0,\n          \"cnb\": 0\n        },\n        \"type\": \"city_tour\"\n      },\n      {\n        \"id\": 137,\n        \"day\": 3,\n        \"pax\": {\n          \"adult\": 2,\n          \"cwb\": 0,\n          \"cnb\": 0\n        },\n        \"type\": \"city_tour\"\n      }\n    ],\n    \"markup_data\": {\n      \"markup_amount\": \"10\",\n      \"markup_type\": \"1\",\n      \"markup_amount_child\": \"10\",\n      \"markup_type_child\": \"1\",\n      \"save_type\": \"save\"\n    }\n  }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{api_url}}/api/booking/save",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "api",
+                "booking",
+                "save"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOlwvXC9hcHBsZXYyLmFwcGxldGVjaGxhYnMuY29tXC9cL2FwaVwvYXV0aFwvbG9naW4iLCJpYXQiOjE3Nzg2NTA5ODQsImV4cCI6MTc3ODY1NDU4NCwibmJmIjoxNzc4NjUwOTg0LCJqdGkiOiJFanoybnZxeDg1bk9idW5lIiwic3ViIjoyMjE0LCJwcnYiOiI4N2UwYWYxZWY5ZmQxNTgxMmZkZWM5NzE1M2ExNGUwYjA0NzU0NmFhIn0.wvuLu5KMAVXbtBueE8jQsN8E2pz2e8GJnrcjWkH9pOI",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "requests": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "api_url",
+      "value": "https://applev2.appletechlabs.com/"
+    }
+  ]
+}

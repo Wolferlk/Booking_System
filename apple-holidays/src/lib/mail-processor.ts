@@ -480,7 +480,9 @@ function finalizeExtractedBooking(
     departureDate:    parsed.departureDate    ?? null,
     paxAdults:        Number(parsed.paxAdults  ?? 0),
     paxChildren:      Number(parsed.paxChildren ?? 0),
-    quotedTotal:      parsed.quotedTotal      ? Number(parsed.quotedTotal) : null,
+    quotedTotal:      (parsed.quotedTotal && Number(parsed.quotedTotal) > 0
+                        ? Number(parsed.quotedTotal)
+                        : extractQuotedTotalFromText(regexText) ?? extractQuotedTotalFromText(emailBody)),
     currency:         parsed.currency         ?? 'USD',
     terms:            parsed.terms            ?? null,
     exclusions:       parsed.exclusions       ?? null,
@@ -578,21 +580,27 @@ function extractIsNumberFromBody(text: string): string | null {
 // Extract CNTL number from email body.
 // Handles: "471416CNTL", "CNTL471416", "Tour Ref 471416 CNTL" (space between digits and CNTL).
 function extractCntlFromBody(text: string): string | null {
+  // Labelled patterns FIRST — the value next to an explicit "Tour Ref"/"NAV ID"/
+  // "Quotation No" label is authoritative and must win over any stray "…CNTL"
+  // token that may appear elsewhere in a quoted email thread.
   const patterns = [
-    // "471416CNTL" — digits immediately followed by CNTL
-    /\b(\d{4,}CNTL)\b/i,
-    // "CNTL471416" — CNTL followed by digits
-    /\bCNTL(\d{4,})\b/i,
     // "Tour Ref: 471416CNTL" or multiline "Tour Ref\n471416CNTL"
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
-    // "Tour Ref 471416 CNTL" — space between number and CNTL keyword
+    // "Tour Ref 471416 CNTL" — space/newline between number and CNTL keyword
     /\btour\s*ref(?:erence)?\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
+    // "Tour Ref: CNTL471416" — CNTL prefix form under the label
+    /\btour\s*ref(?:erence)?\s*[:=#-]?\s*CNTL\s*(\d{4,})\b/i,
     // "NAV ID: 471416CNTL" — alternate label used by some agents
     /\bnav\s*id\s*[:=#-]?\s*(\d{4,}CNTL)\b/i,
     /\bnav\s*id\s*[:=#-]?\s*(\d{4,})\s+CNTL\b/i,
     // Quotation number patterns
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,}CNTL)\b/i,
     /\bquot(?:ation)?\s*(?:no\.?|numb(?:er?)?)\s*[:\s=]*(\d{4,})\s+CNTL\b/i,
+    // Fallbacks — bare tokens anywhere in the body:
+    // "471416CNTL" — digits immediately followed by CNTL
+    /\b(\d{4,}CNTL)\b/i,
+    // "CNTL471416" — CNTL followed by digits
+    /\bCNTL(\d{4,})\b/i,
   ]
   for (const re of patterns) {
     const m = text.match(re)
@@ -601,6 +609,40 @@ function extractCntlFromBody(text: string): string | null {
       // Normalise: if captured group is just digits, append CNTL
       const cntl = /^\d+$/.test(v) ? `${v}CNTL` : v
       if (/^\d+CNTL$/.test(cntl) || /^CNTL\d+$/.test(cntl)) return cntl
+    }
+  }
+  return null
+}
+
+// Extract the overall package total from the TC body when the AI misses it.
+// Prefers the grand/overall total labels over per-person figures — e.g. given
+// "Cost Per Person $ 288.00 x 2" and "Total Tour Cost $ 576.80", returns 576.80.
+function extractQuotedTotalFromText(text: string): number | null {
+  // Currency prefix (optional) followed by the amount. Handles "$ 576.80",
+  // "USD 652.00", "Rs. 1,20,000", "₹576.80", "576.80 USD".
+  const money =
+    '(?:(?:USD|US\\$|INR|SGD|LKR|MYR|AUD|AED|THB|EUR|GBP|VND|Rs\\.?|\\$|₹|£|€)\\s*)?' +
+    '([0-9][0-9,]*(?:\\.[0-9]{1,2})?)' +
+    '(?:\\s*(?:USD|INR|SGD|LKR|MYR|AUD|AED|THB|EUR|GBP|VND))?'
+
+  // Ordered by preference — overall/package totals win over per-person amounts.
+  const labels = [
+    'total\\s+tour\\s+cost',
+    'total\\s+package\\s+(?:price|cost|rate|amount)',
+    'grand\\s+total',
+    'package\\s+(?:price|cost|total|rate)',
+    'net\\s+(?:rate|total|amount)',
+    'total\\s+amount',
+    'total\\s+cost',
+    'total\\s+price',
+  ]
+
+  for (const lb of labels) {
+    const re = new RegExp(lb + '\\s*[:=]?\\s*' + money, 'i')
+    const m = text.match(re)
+    if (m?.[1]) {
+      const n = parseFloat(m[1].replace(/,/g, ''))
+      if (Number.isFinite(n) && n > 0) return n
     }
   }
   return null

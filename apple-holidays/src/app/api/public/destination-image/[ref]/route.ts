@@ -8,12 +8,11 @@
  * shared across every booking to that destination.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { readFile, writeFile, mkdir } from 'fs/promises'
-import path from 'path'
 import { prisma } from '@/lib/prisma'
 import { buildApiError } from '@/lib/utils'
 import { verifyPortalLinkToken } from '@/lib/portal-link'
 import { generateDestinationImage, fetchDestinationImageFromWeb } from '@/lib/openai'
+import { getUpload, putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,14 +51,11 @@ export async function GET(
   // Cache key: prefer the specific tour destination, else the country.
   const slug = slugify(booking.tourDestination?.trim() || booking.operationCountry || 'trip')
 
-  const dir = path.join(process.cwd(), 'public', 'uploads', 'destinations')
-  const filePath = path.join(dir, `${slug}.png`)
+  const cacheKey = `destinations/${slug}.png`
 
-  // 1) Serve from cache if present.
-  try {
-    const cached = await readFile(filePath)
-    return imageResponse(cached)
-  } catch { /* not cached yet */ }
+  // 1) Serve from cache if present (S3, with local-disk fallback).
+  const cached = await getUpload(cacheKey)
+  if (cached) return imageResponse(cached.buffer)
 
   // 2) Generate (deduped), cache to disk, then serve.
   try {
@@ -78,8 +74,7 @@ export async function GET(
     }
     const buffer = await job
 
-    await mkdir(dir, { recursive: true })
-    await writeFile(filePath, buffer).catch(() => { /* disk may be read-only; still serve */ })
+    await putUpload(cacheKey, buffer, 'image/png').catch(() => { /* still serve even if caching fails */ })
 
     return imageResponse(buffer)
   } catch (err) {

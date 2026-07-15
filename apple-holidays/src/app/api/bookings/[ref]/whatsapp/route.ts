@@ -4,8 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
-import { mkdir, writeFile } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 const WHATSAPP_API    = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
@@ -197,9 +196,7 @@ export async function POST(
 
       const typeTag   = isFullPdf ? 'FullDetails' : 'TourConfirmation'
       pdfFilename     = `AppleHolidays-${params.ref}-${typeTag}-${Date.now()}.pdf`
-      const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'whatsapp')
-      await mkdir(uploadDir, { recursive: true })
-      await writeFile(path.join(uploadDir, pdfFilename), pdfBuffer)
+      await putUpload(`whatsapp/${pdfFilename}`, pdfBuffer, 'application/pdf')
 
       console.log('[WhatsApp] PDF generated, size:', pdfBuffer.length, '| file:', pdfFilename)
     } catch (err) {
@@ -211,7 +208,7 @@ export async function POST(
 
   const baseUrl  = getPublicBaseUrl(req)
   const fileUrl  = pdfFilename
-    ? `${baseUrl}/uploads/whatsapp/${encodeURIComponent(pdfFilename)}`
+    ? `${baseUrl}/api/uploads/whatsapp/${encodeURIComponent(pdfFilename)}`
     : undefined
 
   const senderName = session.user.name ?? session.user.email ?? 'Staff'

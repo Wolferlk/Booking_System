@@ -17,8 +17,7 @@ import { extractTicketDetails, classifyPNLCategories, extractPNLFromText, extrac
 import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 export async function POST(
@@ -52,15 +51,11 @@ export async function POST(
 
   // ── TICKET mode ─────────────────────────────────────────────────────────────
   if (mode === 'ticket') {
-    // Save locally
+    // Save to storage (S3, with local-disk fallback)
     const ext      = itemName.split('.').pop()?.toLowerCase() ?? 'bin'
     const safeName = `ticket-cloud-${Date.now()}.${ext}`
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'tickets')
-    await mkdir(uploadDir, { recursive: true })
-    await writeFile(path.join(uploadDir, safeName), buffer)
-
-    const fileUrl  = `/api/uploads/tickets/${safeName}`
     const isImage  = /\.(jpe?g|png|webp|gif)$/i.test(itemName)
+    const fileUrl  = await putUpload(`tickets/${safeName}`, buffer, isImage ? undefined : 'application/pdf')
     const fileType = isImage ? 'image' : 'pdf'
 
     // AI extraction

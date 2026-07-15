@@ -2,8 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg']
@@ -26,13 +25,9 @@ export async function POST(req: NextRequest) {
 
   const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg'
   const filename = `${category}-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-  const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'photos')
-
-  await mkdir(uploadDir, { recursive: true })
 
   const buffer = Buffer.from(await file.arrayBuffer())
-  await writeFile(path.join(uploadDir, filename), buffer)
+  const url = await putUpload(`photos/${filename}`, buffer, file.type)
 
-  const url = `/api/uploads/photos/${filename}`
   return buildApiSuccess({ url, filename }, 'Photo uploaded')
 }
