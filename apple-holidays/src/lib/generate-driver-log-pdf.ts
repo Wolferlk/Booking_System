@@ -6,7 +6,7 @@
  * The same HTML is reused as the receipt body sent over WhatsApp.
  */
 import { htmlToPdf } from '@/lib/html-to-pdf'
-import { CATEGORY_LABEL, type DriverLogCategory } from '@/lib/driver-log'
+import { CATEGORY_LABEL, formatDetailMeta, type DriverLogCategory, type LineDetailMeta } from '@/lib/driver-log'
 import type { DriverLogView } from '@/lib/driver-log-server'
 
 function money(n: number, currency: string): string {
@@ -46,22 +46,25 @@ function fmtDate(d: Date | null): string {
 }
 
 function lineRows(
-  lines: { label: string; detail: string; amount: number; category: DriverLogCategory }[],
+  lines: { label: string; detail: string; amount: number; category: DriverLogCategory; meta?: LineDetailMeta }[],
   currency: string,
 ): string {
   if (lines.length === 0) {
     return `<tr><td colspan="3" style="text-align:center;color:#94a3b8;padding:10px;">No items</td></tr>`
   }
-  return lines.map(l => `
+  return lines.map(l => {
+    const detail = formatDetailMeta(l.meta) || l.detail
+    return `
     <tr>
       <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;">
         <div style="font-weight:600;color:#1e293b;">${esc(l.label)}</div>
-        <div style="font-size:10px;color:#94a3b8;">${esc(CATEGORY_LABEL[l.category])}${l.detail ? ' · ' + esc(l.detail) : ''}</div>
+        <div style="font-size:10px;color:#94a3b8;">${esc(CATEGORY_LABEL[l.category])}${detail ? ' · ' + esc(detail) : ''}</div>
       </td>
       <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-family:monospace;font-weight:600;color:#334155;white-space:nowrap;">
         ${money(l.amount, currency)}
       </td>
-    </tr>`).join('')
+    </tr>`
+  }).join('')
 }
 
 export function renderDriverLogHtml(view: DriverLogView): string {
