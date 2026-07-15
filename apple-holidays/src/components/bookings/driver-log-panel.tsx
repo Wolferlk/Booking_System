@@ -103,9 +103,12 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
   const [sending, setSending]         = useState(false)
 
   // Display-currency conversion (view-only; stored amounts stay in base currency)
+  const DEFAULT_DISPLAY_CUR = 'LKR'
   const [displayCur, setDisplayCur] = useState<string>('')     // '' = show base currency
   const [fxRate, setFxRate]         = useState(1)
   const [fxLoading, setFxLoading]   = useState(false)
+  const [fxManual, setFxManual]     = useState(false)          // user hand-edited the rate
+  const [fxInit, setFxInit]         = useState(false)          // default LKR applied once
 
   // ── Load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -173,7 +176,8 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
   // ── Display-currency conversion ─────────────────────────────────────────────
   const baseCur = view?.computation.currency ?? 'USD'
 
-  async function changeDisplayCurrency(target: string) {
+  async function changeDisplayCurrency(target: string, opts?: { silent?: boolean }) {
+    setFxManual(false)
     // Empty or same-as-base → show raw stored amounts, no API call.
     if (!target || target.toUpperCase() === baseCur.toUpperCase()) {
       setDisplayCur(''); setFxRate(1); return
@@ -186,12 +190,29 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
       setFxRate(Number(json.data.rate) || 1)
       setDisplayCur(target)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Currency conversion failed')
-      setDisplayCur(''); setFxRate(1)
+      if (opts?.silent) {
+        // Automatic default failed (e.g. key not configured) — fall back to base.
+        setDisplayCur(''); setFxRate(1)
+      } else {
+        // User explicitly picked this currency — keep it and let them type the
+        // rate in by hand rather than snapping back to base.
+        toast.error(`${err instanceof Error ? err.message : 'Live rate unavailable'} — enter the rate manually`)
+        setDisplayCur(target); setFxRate(1); setFxManual(true)
+      }
     } finally {
       setFxLoading(false)
     }
   }
+
+  // Default the display currency to LKR once the view has loaded (Sri Lanka
+  // operations hand LKR to the driver). The user can switch it or override the rate.
+  useEffect(() => {
+    if (view && !fxInit && !editing) {
+      setFxInit(true)
+      changeDisplayCurrency(DEFAULT_DISPLAY_CUR, { silent: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, fxInit, editing])
 
   // Effective display currency + a money formatter that applies the live rate.
   // Conversion is display-only and disabled while editing (edits stay in base).
@@ -439,7 +460,20 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
                 </select>
                 {fxLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
                 {displayCur && !fxLoading && (
-                  <span className="text-[10px] text-slate-400 font-mono">1 {baseCur} = {fxRate.toLocaleString('en-US', { maximumFractionDigits: 4 })} {displayCur}</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 font-mono">
+                    1 {baseCur} =
+                    <input
+                      type="number" step="0.0001" min={0}
+                      value={fxRate}
+                      onChange={e => { setFxRate(Number(e.target.value) || 0); setFxManual(true) }}
+                      title="Exchange rate — edit to override the live rate"
+                      className="form-input py-0.5 w-24 text-[10px] font-mono text-right"
+                    />
+                    {displayCur}
+                    {fxManual
+                      ? <span className="text-[9px] text-amber-500 not-italic">manual</span>
+                      : <span className="text-[9px] text-slate-300">live</span>}
+                  </span>
                 )}
               </div>
             )}
