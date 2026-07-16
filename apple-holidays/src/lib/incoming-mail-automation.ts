@@ -6,6 +6,7 @@ import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
+import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import fs from 'fs'
 import path from 'path'
 
@@ -650,6 +651,12 @@ async function syncTourConfirmation(
     ...(isNew ? { createdById } : {}),
   }
 
+  // Amendment of an existing booking: snapshot the current state as its version
+  // before we overwrite it, so the previous version is preserved (V1 → V2 …).
+  if (!isNew && existing) {
+    await recordAmendmentVersion(existing.id, { createdById, source: 'mail' })
+  }
+
   const booking = isNew
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ? await (prisma.booking.create as any)({ data: { ...bookingData, createdById } })
@@ -701,6 +708,14 @@ async function syncTourConfirmation(
   await replaceBookingChildren(booking.id, extracted)
 
   const agendaItems = await upsertAgenda(booking.id, bookingRef, extracted)
+
+  // Record the version: bump to the next version on amendment, or write the
+  // initial v1 snapshot for a brand-new booking.
+  if (isNew) {
+    await snapshotInitialVersion(booking.id, { createdById, source: 'mail' })
+  } else {
+    await bumpVersionAndSnapshot(booking.id, { createdById, source: 'mail' })
+  }
 
   // ── Terminal output ───────────────────────────────────────────────────────
   console.log(`[Mail]  Booking ref  : ${bookingRef}  (${isNew ? 'CREATED NEW' : 'UPDATED existing'})`)
