@@ -114,6 +114,7 @@ export default function BookingDetailPage() {
   const [waMessage, setWaMessage] = useState('')
   const [waAttachPdf, setWaAttachPdf] = useState(true)
   const [waSending, setWaSending] = useState(false)
+  const [waOpenerSending, setWaOpenerSending] = useState(false)
   const [waPdfType, setWaPdfType] = useState<'confirmation' | 'full'>('confirmation')
 
   // Email send modal
@@ -1057,6 +1058,31 @@ Wishing you a wonderful trip! ✈️
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
     } finally { setWaSending(false) }
+  }
+
+  // Cold-customer opener: WhatsApp won't deliver the free-form confirmation + PDF
+  // unless the customer has messaged us in the last 24h. This sends the approved
+  // "please reply to us" template (delivers outside the window); once the customer
+  // replies, the 24h window opens and the Tour Confirmation can be sent normally.
+  async function sendWhatsAppOpener() {
+    if (!waPhone.trim()) { toast.error('Enter the client phone number'); return }
+    setWaOpenerSending(true)
+    try {
+      const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
+      const res = await fetch(`/api/bookings/${ref}/whatsapp-opener`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to:   waPhone.replace(/\D/g, ''),
+          name: lead?.name ?? 'Guest',
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Reply request sent. Once the customer replies, send the confirmation.')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally { setWaOpenerSending(false) }
   }
 
   return (
@@ -3160,6 +3186,27 @@ Wishing you a wonderful trip! ✈️
               value={waPhone}
               onChange={e => setWaPhone(e.target.value)}
             />
+          </div>
+
+          {/* Cold-customer handling. If the customer hasn't messaged in 24h,
+              "Send Tour Confirmation" now AUTO-sends a reply request and queues
+              the confirmation (it delivers the moment they reply). The button
+              below is an optional way to send just the reply request now. */}
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 space-y-2">
+            <p className="text-xs text-blue-800 leading-relaxed">
+              <strong>Outside the 24h window?</strong> No problem — sending the confirmation will
+              automatically send the customer a reply request and <strong>queue</strong> your message;
+              it delivers the moment they reply. Or send just a reply request now:
+            </p>
+            <Button
+              variant="secondary"
+              loading={waOpenerSending}
+              icon={<Send className="w-4 h-4" />}
+              onClick={sendWhatsAppOpener}
+              className="border-blue-300 text-blue-700"
+            >
+              {waOpenerSending ? 'Sending…' : 'Send reply request'}
+            </Button>
           </div>
 
           {/* Message */}

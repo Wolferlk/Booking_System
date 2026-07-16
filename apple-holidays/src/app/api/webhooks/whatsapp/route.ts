@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone } from '@/lib/whatsapp'
+import { flushPendingConfirmations } from '@/lib/booking-whatsapp-delivery'
 import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
@@ -132,6 +133,12 @@ async function processIncoming(payload: MetaWebhookPayload) {
 
         if (!booking) console.warn('[WA Webhook] no booking found for phone', phone)
         else console.log(`[WA Webhook] ✓ inbound from ${phone} → booking ${booking.bookingRef}`)
+
+        // This inbound reopened the customer's 24h window — flush any Tour
+        // Confirmations that were queued while it was closed (send now).
+        const flushBase = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || '').trim()
+        flushPendingConfirmations(phone, flushBase).catch(err =>
+          console.error('[WA Webhook] flush pending confirmations failed', err))
       }
     }
   }

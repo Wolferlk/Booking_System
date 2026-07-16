@@ -125,6 +125,55 @@ export async function sendViaMetaApi(params: {
 }
 
 /**
+ * Send an approved WhatsApp TEMPLATE via the Meta Graph API. Unlike free-form
+ * text/media, a template delivers OUTSIDE the 24h customer-service window — so
+ * this is the only way to reach a customer who hasn't messaged us in >24h (or
+ * ever). Used for the booking-update "opener": it asks the customer to reply,
+ * their reply reopens the window, and only THEN can the full Tour Confirmation
+ * (dynamic text + PDF, which can't be a template) be sent free-form.
+ *
+ * `bodyParams` fills the template body's {{1}}, {{2}}… placeholders in order.
+ * Returns null when Meta creds aren't configured; throws on a Meta API error.
+ */
+export async function sendViaMetaTemplate(params: {
+  to:            string
+  templateName:  string
+  lang?:         string
+  bodyParams?:   string[]
+}): Promise<{ channel: 'meta'; template: unknown } | null> {
+  const { accessToken, phoneNumberId } = getMetaCreds()
+  if (!accessToken || !phoneNumberId) return null
+
+  const to = normalisePhone(params.to)
+  if (!to) return null
+
+  const components = params.bodyParams && params.bodyParams.length
+    ? [{ type: 'body', parameters: params.bodyParams.map(text => ({ type: 'text', text })) }]
+    : []
+
+  const res = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/messages`,
+    {
+      method:  'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to,
+        type: 'template',
+        template: {
+          name:     params.templateName,
+          language: { code: params.lang || 'en' },
+          ...(components.length ? { components } : {}),
+        },
+      }),
+    },
+  )
+  const body = await res.text()
+  if (!res.ok) throw new Error(`Meta template send failed ${res.status}: ${body.slice(0, 300)}`)
+  return { channel: 'meta', template: JSON.parse(body) }
+}
+
+/**
  * Fall back to the internal notify proxy (text + link-based files only) when
  * Meta credentials aren't configured.
  */
