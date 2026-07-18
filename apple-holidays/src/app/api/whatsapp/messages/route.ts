@@ -11,6 +11,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { syncInboundForPhone } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +25,11 @@ export async function GET(req: NextRequest) {
 
   const phone = normalisePhone(req.nextUrl.searchParams.get('phone') ?? '')
   if (!phone) return buildApiError('phone is required')
+
+  // Pull any replies n8n's webhook stored that we haven't imported yet — this
+  // is what makes customer replies appear in the thread (n8n owns the Meta
+  // webhook; we read its shared table directly).
+  await syncInboundForPhone(phone)
 
   const messages = await prisma.whatsAppMessage.findMany({
     where:   { phone },
