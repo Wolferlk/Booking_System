@@ -152,7 +152,7 @@ function buildFullAgendaHtml(
   // Group items by date
   const grouped: Record<string, typeof items> = {}
   items.forEach(item => {
-    const key = (item.date ?? 'unknown').slice(0, 10)
+    const key = item.date ? String(item.date instanceof Date ? item.date.toISOString() : item.date).slice(0, 10) : 'unknown'
     if (!grouped[key]) grouped[key] = []
     grouped[key].push(item)
   })
