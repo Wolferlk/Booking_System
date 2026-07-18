@@ -7,6 +7,7 @@ import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detec
 import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
+import { statusAfterAmendment } from '@/lib/state-machine'
 import fs from 'fs'
 import path from 'path'
 
@@ -701,7 +702,9 @@ async function syncTourConfirmation(
         specialOccasions:   bookingData.specialOccasions,
         checkedBy:          bookingData.checkedBy,
         reconfirmBy:        bookingData.reconfirmBy,
-        status: 'GT_REVIEW',
+        // Forward-only lifecycle: an amendment must never drag a booking that
+        // has already advanced past review back to GT_REVIEW.
+        status: statusAfterAmendment(existing!.status),
       },
     })
 

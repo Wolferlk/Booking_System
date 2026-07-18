@@ -213,3 +213,18 @@ export const LIFECYCLE_STEPS: { status: BookingStatus; label: string; step: numb
 export function getCurrentStep(status: BookingStatus): number {
   return LIFECYCLE_STEPS.find(s => s.status === status)?.step ?? 0
 }
+
+// Statuses an incoming amendment must never overwrite — terminal or out-of-band.
+const AMENDMENT_LOCKED_STATES: BookingStatus[] = ['CANCELLED', 'COMPLETED', 'AMENDED']
+
+// The booking lifecycle is forward-only: once a booking has advanced past
+// review, an amended TC document must NOT drag it back to GT_REVIEW.
+// This returns the status a booking should hold after an amendment:
+//   - locked/terminal states are left untouched
+//   - bookings still at/behind review are (re)set to GT_REVIEW for re-review
+//   - bookings already past review keep their current status (never move back)
+export function statusAfterAmendment(current: BookingStatus): BookingStatus {
+  if (AMENDMENT_LOCKED_STATES.includes(current)) return current
+  const reviewStep = getCurrentStep('GT_REVIEW')
+  return getCurrentStep(current) < reviewStep ? 'GT_REVIEW' : current
+}
