@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Search, Send, Paperclip, Loader2, MessageCircle,
-  ExternalLink, X, RefreshCw, FileText,
+  ExternalLink, X, RefreshCw, FileText, MessageSquarePlus,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/state-machine'
@@ -102,6 +102,9 @@ function WhatsAppInboxInner() {
   const [attachment, setAttachment] = useState<File | null>(null)
   const [sending, setSending] = useState(false)
 
+  const [newChatOpen, setNewChatOpen] = useState(false)
+  const [newChatPhone, setNewChatPhone] = useState('')
+
   const boxRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const selectedRef = useRef<string | null>(null)
@@ -155,6 +158,17 @@ function WhatsAppInboxInner() {
     setAttachment(null)
     loadMessages(phone, { showLoader: true })
     setConversations(cs => cs.map(c => (c.phone === phone ? { ...c, unreadCount: 0 } : c)))
+  }
+
+  // New contact: no message row exists for this phone yet, so it won't be in
+  // `conversations` (that list is just a group-by over existing messages) —
+  // opening it is enough; it appears in the list once the first message sends.
+  function startNewChat() {
+    const phone = newChatPhone.replace(/\D/g, '')
+    if (phone.length < 7) { toast.error('Enter a valid WhatsApp number with country code'); return }
+    setNewChatOpen(false)
+    setNewChatPhone('')
+    openConversation(phone)
   }
 
   // Auto-open a conversation passed in via ?phone= (e.g. from a booking's mini-chat)
@@ -255,6 +269,9 @@ function WhatsAppInboxInner() {
               <p className="truncate text-sm font-bold leading-tight text-slate-900">WhatsApp</p>
               <p className="text-[11px] text-slate-400">AppleHolidays</p>
             </div>
+            <button onClick={() => setNewChatOpen(true)} title="New chat" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700">
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
             <button onClick={() => loadConversations({ showLoader: true })} title="Refresh" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
               <RefreshCw className={`h-4 w-4 ${convLoading ? 'animate-spin' : ''}`} />
             </button>
@@ -472,6 +489,41 @@ function WhatsAppInboxInner() {
           </>
         )}
       </section>
+
+      {/* ============ New chat ============ */}
+      {newChatOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={() => setNewChatOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <p className="text-[15px] font-bold text-slate-900">New chat</p>
+              <button onClick={() => setNewChatOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-1 text-[12.5px] text-slate-500">Enter the customer&apos;s WhatsApp number, with country code.</p>
+            <input
+              autoFocus
+              value={newChatPhone}
+              onChange={e => setNewChatPhone(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') startNewChat() }}
+              placeholder="e.g. 94771234567"
+              inputMode="tel"
+              className="mt-3 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/15"
+            />
+            <p className="mt-2 text-[11.5px] text-slate-400">
+              If this number hasn&apos;t messaged us before, WhatsApp requires an approved template for the first message — a free-form text may be rejected.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setNewChatOpen(false)} className="rounded-lg border border-slate-200 px-3.5 py-2 text-[13px] font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={startNewChat} className="rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-105">
+                Start chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
