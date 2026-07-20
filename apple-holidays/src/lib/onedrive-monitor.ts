@@ -30,6 +30,7 @@ import { detectCountryFromRef, detectCountryFromPath } from '@/lib/country-detec
 import { logActivity, ACTION } from '@/lib/activity'
 import { upsertAgenda } from '@/lib/incoming-mail-automation'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
+import { statusAfterAmendment } from '@/lib/state-machine'
 import type { OperationCountry } from '@prisma/client'
 
 // ── Drive config ──────────────────────────────────────────────────────────────
@@ -719,9 +720,11 @@ async function processTCFile(
       data: { ...commonData, bookingRef, createdById },
     })
   } else {
+    // Forward-only lifecycle: an amendment must never drag a booking that has
+    // already advanced past review back to GT_REVIEW.
     booking = await prisma.booking.update({
       where: { bookingRef },
-      data:  commonData,
+      data:  { ...commonData, status: statusAfterAmendment(existing!.status) },
     })
   }
 
