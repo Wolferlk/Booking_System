@@ -45,6 +45,12 @@ function getPool(): mysql.Pool | null {
     password,
     database: process.env.WA_SHARED_DB_DATABASE?.trim() || 'production_live1',
     connectionLimit: 3,
+    // n8n stores every DATETIME in this table as a UTC wall-clock string (see
+    // its mysql-pool.js). Without this, mysql2 defaults to interpreting them in
+    // the Node process's local timezone, silently shifting created_at by the
+    // local offset — which is why inbound message times were showing as raw
+    // UTC instead of +5:30. 'Z' makes the round-trip correct on any server.
+    timezone: 'Z',
   })
   return pool
 }
