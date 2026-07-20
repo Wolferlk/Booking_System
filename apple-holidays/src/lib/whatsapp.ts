@@ -140,6 +140,7 @@ export async function sendViaMetaTemplate(params: {
   templateName:  string
   lang?:         string
   bodyParams?:   string[]
+  headerParams?: string[]
 }): Promise<{ channel: 'meta'; template: unknown } | null> {
   const { accessToken, phoneNumberId } = getMetaCreds()
   if (!accessToken || !phoneNumberId) return null
@@ -147,9 +148,13 @@ export async function sendViaMetaTemplate(params: {
   const to = normalisePhone(params.to)
   if (!to) return null
 
-  const components = params.bodyParams && params.bodyParams.length
-    ? [{ type: 'body', parameters: params.bodyParams.map(text => ({ type: 'text', text })) }]
-    : []
+  const components: Record<string, unknown>[] = []
+  if (params.headerParams && params.headerParams.length) {
+    components.push({ type: 'header', parameters: params.headerParams.map(text => ({ type: 'text', text })) })
+  }
+  if (params.bodyParams && params.bodyParams.length) {
+    components.push({ type: 'body', parameters: params.bodyParams.map(text => ({ type: 'text', text })) })
+  }
 
   const res = await fetch(
     `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/messages`,
@@ -171,6 +176,181 @@ export async function sendViaMetaTemplate(params: {
   const body = await res.text()
   if (!res.ok) throw new Error(`Meta template send failed ${res.status}: ${body.slice(0, 300)}`)
   return { channel: 'meta', template: JSON.parse(body) }
+}
+
+function getWabaCreds() {
+  return {
+    accessToken:       process.env.WHATSAPP_ACCESS_TOKEN?.trim(),
+    businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID?.trim(),
+  }
+}
+
+/** Count distinct {{n}} placeholders in a template header/body string. */
+function countPlaceholders(s: string | null | undefined): number {
+  const matches = String(s ?? '').match(/\{\{\s*\d+\s*\}\}/g)
+  return matches ? new Set(matches).size : 0
+}
+
+export interface WaTemplateSummary {
+  name: string
+  language: string
+  status: string
+  category: string | null
+  headerFormat: string | null
+  headerText: string
+  bodyText: string
+  bodyVariableCount: number
+  headerVariableCount: number
+}
+
+/** Flatten a Meta message-template object into the shape the send picker needs. */
+function summarizeTemplate(t: {
+  name?: string
+  language?: string
+  status?: string
+  category?: string
+  components?: Array<{ type?: string; format?: string; text?: string }>
+}): WaTemplateSummary {
+  const components = Array.isArray(t?.components) ? t.components : []
+  const byType = (name: string) => components.find(c => String(c?.type).toUpperCase() === name) ?? null
+  const header = byType('HEADER')
+  const bodyComp = byType('BODY')
+  const headerFormat = header ? String(header.format || 'TEXT').toUpperCase() : null
+  const headerText = headerFormat === 'TEXT' ? (header?.text || '') : ''
+  const bodyText = bodyComp?.text || ''
+  return {
+    name: t?.name || '',
+    language: t?.language || 'en',
+    status: String(t?.status || '').toUpperCase(),
+    category: t?.category || null,
+    headerFormat,
+    headerText,
+    bodyText,
+    bodyVariableCount: countPlaceholders(bodyText),
+    headerVariableCount: countPlaceholders(headerText),
+  }
+}
+
+/**
+ * List the WhatsApp message templates configured on the business account.
+ * Same WABA (2077665446131914) n8n-project's WhatsApp dashboard talks to —
+ * called directly against Meta here rather than proxying through n8n, since
+ * this is a WABA-level resource, not data unique to n8n's own store.
+ */
+export async function listMetaTemplates(status = 'APPROVED'): Promise<WaTemplateSummary[]> {
+  const { accessToken, businessAccountId } = getWabaCreds()
+  if (!accessToken || !businessAccountId) {
+    throw new Error('Templates unavailable: WHATSAPP_ACCESS_TOKEN / WHATSAPP_BUSINESS_ACCOUNT_ID not configured')
+  }
+  const fields = 'name,language,status,category,components'
+  const out: WaTemplateSummary[] = []
+  let url: string | null =
+    `https://graph.facebook.com/${META_API_VERSION}/${businessAccountId}/message_templates?fields=${encodeURIComponent(fields)}&limit=200`
+  let page = 0
+  while (url && page < 10) {
+    const currentUrl: string = url
+    const res: Response = await fetch(currentUrl, { headers: { Authorization: `Bearer ${accessToken}` } })
+    const raw: string = await res.text()
+    let json: { data?: unknown[]; paging?: { next?: string }; error?: { message?: string } } | null = null
+    try { json = raw ? JSON.parse(raw) : null } catch { json = null }
+    if (!res.ok) throw new Error(json?.error?.message || `Graph API ${res.status}`)
+    for (const t of (Array.isArray(json?.data) ? json.data : [])) out.push(summarizeTemplate(t as Parameters<typeof summarizeTemplate>[0]))
+    url = json?.paging?.next || null
+    page += 1
+  }
+  const wanted = status.toUpperCase()
+  const filtered = wanted && wanted !== 'ALL' ? out.filter(t => t.status === wanted) : out
+  filtered.sort((a, b) => a.name.localeCompare(b.name))
+  return filtered
+}
+
+/**
+ * Register a NEW template with Meta for review (Business Manager approval,
+ * typically minutes to ~24h). Mirrors n8n-project's whatsapp.service.js
+ * createMessageTemplate() — same Graph API shape, same WABA. Throws on any
+ * validation failure or Graph API error.
+ */
+export async function createMetaTemplate(params: {
+  name: string
+  category?: string
+  language?: string
+  bodyText: string
+  bodyExamples?: string[]
+  headerText?: string | null
+  headerExamples?: string[]
+  footerText?: string | null
+}): Promise<{ id: string | null; status: string; category: string; name: string }> {
+  const { accessToken, businessAccountId } = getWabaCreds()
+  if (!accessToken || !businessAccountId) {
+    throw new Error('Templates unavailable: WHATSAPP_ACCESS_TOKEN / WHATSAPP_BUSINESS_ACCOUNT_ID not configured')
+  }
+  const templateName = params.name.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '')
+  if (!templateName) throw new Error('name is required')
+  const bodyText = params.bodyText.trim()
+  if (!bodyText) throw new Error('bodyText is required')
+
+  const components: Record<string, unknown>[] = []
+  const headerText = (params.headerText || '').trim()
+  if (headerText) {
+    const hVars = countPlaceholders(headerText)
+    const headerComp: Record<string, unknown> = { type: 'HEADER', format: 'TEXT', text: headerText }
+    if (hVars > 0) {
+      const examples = (params.headerExamples || []).map(e => String(e ?? '').trim())
+      if (examples.length < hVars || examples.slice(0, hVars).some(e => !e)) {
+        throw new Error(`Header text has ${hVars} placeholder(s) — an example value is required for each`)
+      }
+      headerComp.example = { header_text: examples.slice(0, hVars) }
+    }
+    components.push(headerComp)
+  }
+
+  const bodyComp: Record<string, unknown> = { type: 'BODY', text: bodyText }
+  const bVars = countPlaceholders(bodyText)
+  if (bVars > 0) {
+    const examples = (params.bodyExamples || []).map(e => String(e ?? '').trim())
+    if (examples.length < bVars || examples.slice(0, bVars).some(e => !e)) {
+      throw new Error(`Body text has ${bVars} placeholder(s) — an example value is required for each, for Meta to review the template`)
+    }
+    bodyComp.example = { body_text: [examples.slice(0, bVars)] }
+  }
+  components.push(bodyComp)
+
+  const footerText = (params.footerText || '').trim()
+  if (footerText) components.push({ type: 'FOOTER', text: footerText })
+
+  const payload = {
+    name: templateName,
+    category: (params.category || 'UTILITY').toUpperCase(),
+    language: (params.language || 'en').trim() || 'en',
+    components,
+  }
+  const res = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${businessAccountId}/message_templates`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  const text = await res.text()
+  let json: { id?: string; status?: string; category?: string; error?: { message?: string } } | null = null
+  try { json = text ? JSON.parse(text) : null } catch { json = null }
+  if (!res.ok) throw new Error(json?.error?.message || `Graph API ${res.status}`)
+  return { id: json?.id ?? null, status: json?.status ?? 'PENDING', category: json?.category ?? payload.category, name: templateName }
+}
+
+/**
+ * Is this phone inside WhatsApp's 24h customer-service window (free-form text
+ * allowed) or not (only an approved template will deliver)? Computed LOCALLY
+ * from our own whatsapp_messages table — no Meta/n8n call needed, since inbound
+ * rows are already kept in sync (see whatsapp-shared-inbox-sync.ts) and carry
+ * correct UTC timestamps. Caller should sync the phone first for a fresh read.
+ */
+export async function isWithin24hWindow(phone: string): Promise<boolean> {
+  const last = await prisma.whatsAppMessage.findFirst({
+    where: { phone: normalisePhone(phone), direction: 'inbound' },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
+  })
+  if (!last) return false
+  return Date.now() - last.createdAt.getTime() < 24 * 60 * 60 * 1000
 }
 
 /**
