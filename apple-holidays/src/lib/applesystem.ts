@@ -326,3 +326,85 @@ export function resolveCountryName(item: ASBookingListItem): string | null {
   }
   return item.country ? `#${item.country}` : null
 }
+
+// ── Quote / Confirmation template (AS Bookings V2) ───────────────────────────
+// Additive: powers the new "AS Bookings V2" confirmation view. Uses the
+// /api/quotation/template/quote endpoint, which returns a fully-composed booking
+// confirmation (reference numbers, parties, accommodation, package inclusions /
+// exclusions, terms, a day-by-day itinerary with activities, and the P&L).
+
+export interface ASQuoteActivity {
+  type?: string
+  name?: string
+  description?: string
+}
+
+export interface ASQuoteItineraryDay {
+  day: number
+  date?: string
+  date_formatted?: string
+  route?: string
+  description?: string
+  activities?: ASQuoteActivity[]
+}
+
+export interface ASQuoteAccommodation {
+  city?: string
+  check_in?: string
+  check_out?: string
+  nights?: number
+  type?: string
+}
+
+export interface ASQuoteTemplate {
+  quotation_no: string
+  reference_id: number | string
+  revision?: number
+  reference_numbers?: {
+    quotation_no?: string
+    formatted?: string
+    control?: string
+    temp_po?: string
+  }
+  relevant_parties?: { agent?: string; sales_person?: string }
+  accommodation?: ASQuoteAccommodation[]
+  value_added_services?: unknown[]
+  package_includes?: string[]
+  package_excludes?: string[]
+  terms_and_conditions?: string[]
+  itinerary?: ASQuoteItineraryDay[]
+  /** Raw P&L / cost breakdown (same structure as getBookingPnl). */
+  pnl?: Record<string, unknown>
+  [k: string]: unknown
+}
+
+/**
+ * Fetch the composed booking-confirmation template for one quotation.
+ *
+ * Per the AppleSystem contract the POST body maps:
+ *   quotation_no  → the booking's `quotation_no`
+ *   reference_id  → the booking's `id`
+ */
+export async function getQuoteTemplate(
+  quotationNo: string,
+  referenceId: string,
+): Promise<ASQuoteTemplate> {
+  const res = await asFetch('/api/quotation/template/quote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quotation_no: quotationNo, reference_id: referenceId }),
+  })
+  if (!res.ok) throw new Error(`AppleSystem quote template fetch failed (${res.status})`)
+  const json = (await res.json()) as { success?: boolean; data?: ASQuoteTemplate }
+  if (!json.data) throw new Error('AppleSystem quote template returned no data')
+  return json.data
+}
+
+/** Parse an AppleSystem timestamp node ({date:"YYYY-MM-DD HH:mm:ss…"} | string) → Date | null. */
+export function parseAsDate(node: unknown): Date | null {
+  const raw = typeof node === 'string' ? node : (node as { date?: string } | null)?.date
+  if (!raw) return null
+  // "2026-07-20 13:17:04.000000" → ISO-ish; take the "YYYY-MM-DD HH:mm:ss" slice.
+  const d = new Date(raw.replace(' ', 'T').slice(0, 19))
+  return isNaN(d.getTime()) ? null : d
+}
