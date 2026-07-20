@@ -296,19 +296,32 @@ export async function extractBookingFromText(documentText: string, bookingRef?: 
   // Regex pre-extraction as ground truth for IS Number (AI may miss it)
   const regexISNumber = extractISNumberFromText(documentText)
 
+  // gpt-4o has a 128k context window — keep the whole TC so long itineraries
+  // (13+ days) are not silently cut off mid-document.
+  const MAX_DOC_CHARS = 200_000
+  const truncated = documentText.length > MAX_DOC_CHARS
+  if (truncated) {
+    console.warn(`[AI] booking_extraction: document truncated from ${documentText.length} to ${MAX_DOC_CHARS} chars`)
+  }
+
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',
     messages: [
       { role: 'system', content: BOOKING_EXTRACTION_PROMPT },
       {
         role: 'user',
-        content: `Extract booking data from this document:\n\n${documentText.slice(0, 14000)}`,
+        content: `Extract booking data from this document. The itinerary runs to the very end of the text — extract EVERY day, including the final ones. Do not stop early.\n\n${documentText.slice(0, MAX_DOC_CHARS)}`,
       },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
+    max_tokens: 16384,
   })
   await logAiUsage({ callType: 'booking_extraction', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'onedrive' })
+
+  if (response.choices[0]?.finish_reason === 'length') {
+    throw new Error('Extraction output was cut off before the itinerary finished. The document is too long to extract in one pass.')
+  }
 
   const content = response.choices[0]?.message?.content
   if (!content) throw new Error('OpenAI returned empty response')
