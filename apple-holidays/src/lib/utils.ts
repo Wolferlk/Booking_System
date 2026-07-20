@@ -157,6 +157,32 @@ export function parseJsonSafe<T>(str: string | null | undefined, fallback: T): T
   }
 }
 
+/**
+ * Read an API response that is *expected* to be our `{ success, error }` JSON.
+ *
+ * When a request dies at the proxy — gateway timeout, origin restart — Cloudflare
+ * answers with its own HTML error page. `res.json()` on that throws
+ * `Unexpected token '<'`, which tells the user nothing about what actually broke.
+ * Fall back to reporting the HTTP status instead.
+ */
+export async function readApiResponse<T = unknown>(
+  res: Response,
+): Promise<{ success: boolean; error?: string; data?: T; message?: string }> {
+  const body = await res.text()
+
+  try {
+    return JSON.parse(body)
+  } catch {
+    if (res.ok) {
+      return { success: false, error: 'Server returned a malformed response.' }
+    }
+    const hint = res.status === 502 || res.status === 504
+      ? ' The request most likely timed out while generating the PDF — check the server logs.'
+      : ''
+    return { success: false, error: `Server error ${res.status} (${res.statusText}).${hint}` }
+  }
+}
+
 export function buildApiError(message: string, status = 400) {
   return Response.json({ success: false, error: message }, { status })
 }

@@ -268,9 +268,9 @@ model AgendaItem {
   id          String      @id @default(cuid())
   agendaId    String
   date        DateTime
-  location    String
-  fromPoint   String?
-  toPoint     String?
+  location    String      @db.Text
+  fromPoint   String?     @db.Text
+  toPoint     String?     @db.Text
   details     String?     @db.Text
   mealPlan    String?
   meetingTime String?

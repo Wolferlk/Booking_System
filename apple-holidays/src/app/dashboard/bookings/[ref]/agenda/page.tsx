@@ -22,6 +22,38 @@ import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import { formatDate } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
 
+/**
+ * Textarea that grows with its content instead of scrolling. Used for the
+ * Activity field, where multi-attraction package names run to several lines and
+ * a single-line input hides everything past the first few words.
+ */
+function AutoGrowTextarea({
+  value, onChange, className = '', minRows = 1, ...rest
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { minRows?: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  const resize = useCallback(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [])
+
+  // Re-measure on external value changes (AI fill, itinerary import, load).
+  useEffect(resize, [value, resize])
+
+  return (
+    <textarea
+      ref={ref}
+      rows={minRows}
+      value={value}
+      onChange={e => { onChange?.(e); resize() }}
+      className={`resize-none overflow-hidden ${className}`}
+      {...rest}
+    />
+  )
+}
+
 const MEAL_ABBREV: Record<string, string> = {
   'B':   'Breakfast',
   'L':   'Lunch',
@@ -362,8 +394,16 @@ export default function AgendaPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: itemsToSave }),
     })
-    const json = await res.json()
-    if (!json.success) throw new Error(json.error)
+    // A server crash returns an empty or HTML body; parsing it blindly surfaces
+    // the useless "Unexpected end of JSON input" instead of the real failure.
+    const raw  = await res.text()
+    let json: { success?: boolean; error?: string }
+    try {
+      json = raw ? JSON.parse(raw) : {}
+    } catch {
+      throw new Error(`Save failed (${res.status}). The server returned an unexpected response.`)
+    }
+    if (!res.ok || !json.success) throw new Error(json.error || `Save failed (${res.status})`)
     if (!silent) toast.success('Movement chart saved!')
     await loadAgenda()
   }
@@ -1185,21 +1225,6 @@ export default function AgendaPage() {
                             onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, date: e.target.value } : x))} />
                         </div>
                         <div>
-                          <label className="form-label text-xs">Location</label>
-                          <input className="form-input text-sm py-1.5" value={item.location}
-                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, location: e.target.value } : x))} />
-                        </div>
-                        <div>
-                          <label className="form-label text-xs">From</label>
-                          <input className="form-input text-sm py-1.5" value={item.fromPoint}
-                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, fromPoint: e.target.value } : x))} />
-                        </div>
-                        <div>
-                          <label className="form-label text-xs">To / Activity</label>
-                          <input className="form-input text-sm py-1.5" value={item.toPoint}
-                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, toPoint: e.target.value } : x))} />
-                        </div>
-                        <div>
                           <label className="form-label text-xs">Meeting Time</label>
                           <input type="time" className="form-input text-sm py-1.5" value={item.meetingTime}
                             onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, meetingTime: e.target.value } : x))} />
@@ -1233,6 +1258,36 @@ export default function AgendaPage() {
                             onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, mealPlan: e.target.value } : x))}
                             placeholder="B / L / D / BL / BD / LD"
                           />
+                        </div>
+
+                        {/* Route & activity — given their own full-width band because
+                            activity names for multi-attraction packages run long. */}
+                        <div className="col-span-full grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 mt-1 border-t border-slate-100">
+                          <div>
+                            <label className="form-label text-xs">Location</label>
+                            <input className="form-input text-sm py-1.5" value={item.location}
+                              onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, location: e.target.value } : x))} />
+                          </div>
+                          <div>
+                            <label className="form-label text-xs">From</label>
+                            <input className="form-input text-sm py-1.5" value={item.fromPoint}
+                              onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, fromPoint: e.target.value } : x))} />
+                          </div>
+
+                          <div className="sm:col-span-2">
+                            <div className="flex items-baseline justify-between mb-1">
+                              <label className="form-label text-xs mb-0">To / Activity</label>
+                              <span className={`text-[11px] tabular-nums ${item.toPoint.length > 400 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                {item.toPoint.length} chars
+                              </span>
+                            </div>
+                            <AutoGrowTextarea
+                              className="form-textarea text-sm py-1.5 leading-relaxed"
+                              value={item.toPoint}
+                              onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, toPoint: e.target.value } : x))}
+                              placeholder="Destination, or the full activity / package name — e.g. 4 Island Tour (…) + Hon Thom Cable Car (One-way) + Aquatopia Water Park | Shared Transfer"
+                            />
+                          </div>
                         </div>
 
                         {/* Details / Timings — expandable with AI button */}

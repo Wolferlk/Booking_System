@@ -14,10 +14,27 @@
 
 const AS_BASE = (process.env.AS_API_URL || 'https://applev2.appletechlabs.com').replace(/\/+$/, '')
 
+/** Upstream can be slow; cap every call so a hung socket can't stall the whole request. */
+const AS_TIMEOUT_MS = Number(process.env.AS_TIMEOUT_MS || 25_000)
+const AS_LOGIN_TIMEOUT_MS = 15_000
+
 // ── Token cache (module-level, survives across requests on a warm server) ────
 let cachedToken: { token: string; expiresAt: number } | null = null
+// In-flight login, so N concurrent calls trigger ONE login instead of N.
+let loginInFlight: Promise<string> | null = null
 
-async function login(): Promise<string> {
+function withTimeout(ms: number): { signal: AbortSignal; done: () => void } {
+  const ac = new AbortController()
+  const t = setTimeout(() => ac.abort(), ms)
+  return { signal: ac.signal, done: () => clearTimeout(t) }
+}
+
+/** Network-level failure (DNS, reset socket, timeout) rather than an HTTP error response. */
+function isTransport(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'AbortError' || err.name === 'TypeError' || 'cause' in err)
+}
+
+async function doLogin(): Promise<string> {
   const email = process.env.AS_Username
   const password = process.env.AS_password
   if (!email || !password) {
@@ -25,25 +42,58 @@ async function login(): Promise<string> {
   }
 
   const body = new URLSearchParams({ email, password })
-  const res = await fetch(`${AS_BASE}/api/auth/login`, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    cache: 'no-store',
-  })
 
-  if (!res.ok) {
-    throw new Error(`AppleSystem login failed (${res.status})`)
-  }
-  const json = (await res.json()) as { access_token?: string; expires_in?: number }
-  if (!json.access_token) {
-    throw new Error('AppleSystem login returned no access token')
+  // Two attempts: a login is the one call we cannot afford to lose to a blip.
+  let lastErr: unknown = null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 750))
+    const { signal, done } = withTimeout(AS_LOGIN_TIMEOUT_MS)
+    try {
+      const res = await fetch(`${AS_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        cache: 'no-store',
+        signal,
+      })
+
+      if (!res.ok) {
+        // Bad credentials are permanent — retrying just burns time.
+        if (res.status === 401 || res.status === 403 || res.status === 422) {
+          throw new Error(`AppleSystem login rejected the credentials (${res.status}) — check AS_Username / AS_password`)
+        }
+        lastErr = new Error(`AppleSystem login failed (${res.status})`)
+        continue
+      }
+
+      const json = (await res.json()) as { access_token?: string; expires_in?: number }
+      if (!json.access_token) throw new Error('AppleSystem login returned no access token')
+
+      const ttlMs = (json.expires_in ?? 3600) * 1000
+      // Refresh 60s before actual expiry to avoid edge-of-expiry failures.
+      cachedToken = { token: json.access_token, expiresAt: Date.now() + ttlMs - 60_000 }
+      return json.access_token
+    } catch (err) {
+      if (!isTransport(err)) throw err
+      lastErr = err
+    } finally {
+      done()
+    }
   }
 
-  const ttlMs = (json.expires_in ?? 3600) * 1000
-  // Refresh 60s before actual expiry to avoid edge-of-expiry failures.
-  cachedToken = { token: json.access_token, expiresAt: Date.now() + ttlMs - 60_000 }
-  return json.access_token
+  throw new Error(
+    lastErr instanceof Error && lastErr.message.startsWith('AppleSystem')
+      ? lastErr.message
+      : 'Could not reach AppleSystem to sign in — the service may be down',
+  )
+}
+
+/** Log in, collapsing concurrent callers onto a single request. */
+function login(): Promise<string> {
+  if (!loginInFlight) {
+    loginInFlight = doLogin().finally(() => { loginInFlight = null })
+  }
+  return loginInFlight
 }
 
 async function getToken(forceRefresh = false): Promise<string> {
@@ -53,23 +103,73 @@ async function getToken(forceRefresh = false): Promise<string> {
   return login()
 }
 
-/** Authenticated fetch that retries once with a fresh token on a 401. */
-async function asFetch(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
-  const token = await getToken()
-  const res = await fetch(`${AS_BASE}${path}`, {
-    ...init,
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...(init.headers || {}),
-    },
-    cache: 'no-store',
-  })
-  if (res.status === 401 && retry) {
-    cachedToken = null
-    await getToken(true)
-    return asFetch(path, init, false)
+/** Drop the cached token so the next call re-authenticates. */
+function invalidateToken() {
+  cachedToken = null
+}
+
+/**
+ * True when the response means "your session/token is no longer valid".
+ *
+ * AppleSystem is not consistent here: an expired JWT can come back as a 401, as
+ * a 403, or — most awkwardly — as a **200** carrying `{"message":"Unauthenticated."}`
+ * or `{"error":"token_expired"}`. All three must trigger a re-login, so the body
+ * is sniffed on a clone (leaving the original readable by the caller).
+ */
+async function isExpiredSession(res: Response): Promise<boolean> {
+  if (res.status === 401 || res.status === 403) return true
+  if (!res.ok) return false
+  const ct = res.headers.get('content-type') || ''
+  if (!ct.includes('json')) return false
+  try {
+    const text = await res.clone().text()
+    if (text.length > 4000) return false // real payloads are large; auth errors are tiny
+    return /unauthenticated|token[_ -]?(expired|invalid|not[_ ]provided)|invalid token|token has expired|jwt/i.test(text)
+  } catch {
+    return false
   }
+}
+
+/**
+ * Authenticated fetch against AppleSystem.
+ *
+ * Transparently re-logs-in and replays the call when the token has expired, and
+ * retries once on a transport error, so a dropped socket or an overnight token
+ * expiry never surfaces to the user.
+ */
+async function asFetch(path: string, init: RequestInit = {}, attempt = 0): Promise<Response> {
+  const token = await getToken()
+  const { signal, done } = withTimeout(AS_TIMEOUT_MS)
+
+  let res: Response
+  try {
+    res = await fetch(`${AS_BASE}${path}`, {
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...(init.headers || {}),
+      },
+      cache: 'no-store',
+      signal,
+    })
+  } catch (err) {
+    if (attempt < 1 && isTransport(err)) return asFetch(path, init, attempt + 1)
+    throw new Error(
+      err instanceof Error && err.name === 'AbortError'
+        ? `AppleSystem timed out after ${Math.round(AS_TIMEOUT_MS / 1000)}s (${path})`
+        : `Could not reach AppleSystem (${path})`,
+    )
+  } finally {
+    done()
+  }
+
+  if (attempt < 1 && (await isExpiredSession(res))) {
+    invalidateToken()
+    await getToken(true)
+    return asFetch(path, init, attempt + 1)
+  }
+
   return res
 }
 
@@ -325,4 +425,86 @@ export function resolveCountryName(item: ASBookingListItem): string | null {
     }
   }
   return item.country ? `#${item.country}` : null
+}
+
+// ── Quote / Confirmation template (AS Bookings V2) ───────────────────────────
+// Additive: powers the new "AS Bookings V2" confirmation view. Uses the
+// /api/quotation/template/quote endpoint, which returns a fully-composed booking
+// confirmation (reference numbers, parties, accommodation, package inclusions /
+// exclusions, terms, a day-by-day itinerary with activities, and the P&L).
+
+export interface ASQuoteActivity {
+  type?: string
+  name?: string
+  description?: string
+}
+
+export interface ASQuoteItineraryDay {
+  day: number
+  date?: string
+  date_formatted?: string
+  route?: string
+  description?: string
+  activities?: ASQuoteActivity[]
+}
+
+export interface ASQuoteAccommodation {
+  city?: string
+  check_in?: string
+  check_out?: string
+  nights?: number
+  type?: string
+}
+
+export interface ASQuoteTemplate {
+  quotation_no: string
+  reference_id: number | string
+  revision?: number
+  reference_numbers?: {
+    quotation_no?: string
+    formatted?: string
+    control?: string
+    temp_po?: string
+  }
+  relevant_parties?: { agent?: string; sales_person?: string }
+  accommodation?: ASQuoteAccommodation[]
+  value_added_services?: unknown[]
+  package_includes?: string[]
+  package_excludes?: string[]
+  terms_and_conditions?: string[]
+  itinerary?: ASQuoteItineraryDay[]
+  /** Raw P&L / cost breakdown (same structure as getBookingPnl). */
+  pnl?: Record<string, unknown>
+  [k: string]: unknown
+}
+
+/**
+ * Fetch the composed booking-confirmation template for one quotation.
+ *
+ * Per the AppleSystem contract the POST body maps:
+ *   quotation_no  → the booking's `quotation_no`
+ *   reference_id  → the booking's `id`
+ */
+export async function getQuoteTemplate(
+  quotationNo: string,
+  referenceId: string,
+): Promise<ASQuoteTemplate> {
+  const res = await asFetch('/api/quotation/template/quote', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quotation_no: quotationNo, reference_id: referenceId }),
+  })
+  if (!res.ok) throw new Error(`AppleSystem quote template fetch failed (${res.status})`)
+  const json = (await res.json()) as { success?: boolean; data?: ASQuoteTemplate }
+  if (!json.data) throw new Error('AppleSystem quote template returned no data')
+  return json.data
+}
+
+/** Parse an AppleSystem timestamp node ({date:"YYYY-MM-DD HH:mm:ss…"} | string) → Date | null. */
+export function parseAsDate(node: unknown): Date | null {
+  const raw = typeof node === 'string' ? node : (node as { date?: string } | null)?.date
+  if (!raw) return null
+  // "2026-07-20 13:17:04.000000" → ISO-ish; take the "YYYY-MM-DD HH:mm:ss" slice.
+  const d = new Date(raw.replace(' ', 'T').slice(0, 19))
+  return isNaN(d.getTime()) ? null : d
 }

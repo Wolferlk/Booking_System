@@ -90,27 +90,43 @@ export async function POST(
     })
   }
 
-  const createdItems = await Promise.all(
-    items.map((item: Record<string, unknown>, index: number) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (prisma.agendaItem as any).create({
-        data: {
-          agendaId: agenda!.id,
-          date: new Date(item.date as string),
-          location: item.location as string,
-          fromPoint: item.fromPoint as string | undefined,
-          toPoint: item.toPoint as string | undefined,
-          details: item.details as string | undefined,
-          mealPlan: item.mealPlan as string | undefined,
-          meetingTime: item.meetingTime as string | undefined,
-          timeFrom: item.timeFrom as string | undefined,
-          timeTo: item.timeTo as string | undefined,
-          serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
-          sortOrder: index,
-        },
-      }),
-    ),
-  )
+  let createdItems: { id: string }[]
+  try {
+    createdItems = await Promise.all(
+      items.map((item: Record<string, unknown>, index: number) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (prisma.agendaItem as any).create({
+          data: {
+            agendaId: agenda!.id,
+            date: new Date(item.date as string),
+            location: item.location as string,
+            fromPoint: item.fromPoint as string | undefined,
+            toPoint: item.toPoint as string | undefined,
+            details: item.details as string | undefined,
+            mealPlan: item.mealPlan as string | undefined,
+            meetingTime: item.meetingTime as string | undefined,
+            timeFrom: item.timeFrom as string | undefined,
+            timeTo: item.timeTo as string | undefined,
+            serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
+            sortOrder: index,
+          },
+        }),
+      ),
+    )
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[agenda POST] item create failed:', msg)
+    // Surface a JSON error rather than throwing — an unhandled throw returns an
+    // empty body, which the client's res.json() reports as "Unexpected end of
+    // JSON input" and hides the real cause.
+    if (/too long|1406/i.test(msg)) {
+      return buildApiError(
+        'One of the movement fields is too long for the database. Run the pending agenda_items TEXT migration, then save again.',
+        400,
+      )
+    }
+    return buildApiError(`Failed to save movements: ${msg}`, 500)
+  }
 
   await Promise.all(
     items.map((item: Record<string, unknown>, index: number) => {

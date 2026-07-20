@@ -250,7 +250,7 @@ function BookingsPageInner() {
     if (contentSearch)                                  params.set('contentSearch', contentSearch)
     if (status)                                         params.set('status',        status)
     if (dateFilter)                                     params.set('dateFilter',    dateFilter)
-    if (dateFilter)                                     params.set('dateField',     dateBasis)
+    if (dateFilter || dateFrom || dateTo)               params.set('dateField',     dateBasis)
     if (dateFrom)                                       params.set('dateFrom',      dateFrom)
     if (dateTo)                                         params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
@@ -457,7 +457,7 @@ function BookingsPageInner() {
     if (contentSearch)                            params.set('contentSearch', contentSearch)
     if (status)                                   params.set('status',        status)
     if (dateFilter)                               params.set('dateFilter',    dateFilter)
-    if (dateFilter)                               params.set('dateField',     dateBasis)
+    if (dateFilter || dateFrom || dateTo)         params.set('dateField',     dateBasis)
     if (dateFrom)                                 params.set('dateFrom',      dateFrom)
     if (dateTo)                                   params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
@@ -476,7 +476,7 @@ function BookingsPageInner() {
       if (contentSearch)                            params.set('contentSearch', contentSearch)
       if (status)                                   params.set('status',        status)
       if (dateFilter)                               params.set('dateFilter',    dateFilter)
-      if (dateFilter)                               params.set('dateField',     dateBasis)
+      if (dateFilter || dateFrom || dateTo)         params.set('dateField',     dateBasis)
       if (dateFrom)                                 params.set('dateFrom',      dateFrom)
       if (dateTo)                                   params.set('dateTo',        dateTo)
       if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
@@ -662,9 +662,11 @@ function BookingsPageInner() {
               )}
             </div>
 
-            {/* Created date range */}
+            {/* Date range — applies to whichever column `dateBasis` selects */}
             <div className="flex items-center gap-2 flex-shrink-0">
-              <span className="text-xs text-slate-400 whitespace-nowrap">Created</span>
+              <span className="text-xs text-slate-400 whitespace-nowrap">
+                {dateBasis === 'createdAt' ? 'Created' : 'Arrival'}
+              </span>
               <input
                 type="date"
                 value={dateFrom}
@@ -713,7 +715,7 @@ function BookingsPageInner() {
                 value={dateBasis}
                 onChange={e => { setDateBasis(e.target.value as 'arrivalDate' | 'createdAt'); setPage(1) }}
                 className="form-select text-xs py-1 pr-7"
-                title="Choose whether the period filter applies to the trip arrival date or the date the booking was added"
+                title="Choose whether the period pills and the date range apply to the trip arrival date or the date the booking was added"
               >
                 <option value="arrivalDate">Arrival date</option>
                 <option value="createdAt">Created date</option>
