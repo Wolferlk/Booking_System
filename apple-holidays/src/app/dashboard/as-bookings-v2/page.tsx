@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
+import { readApiResponse } from '@/lib/utils'
 
 type StatusFilter = '2' | '1' | 'all'
 type ViewMode = 'grid' | 'table'
@@ -33,6 +34,13 @@ interface ASBooking {
 }
 
 interface Counts { all: number; confirmed: number; unconfirmed: number }
+
+interface BookingsPayload {
+  bookings: ASBooking[]
+  total: number
+  counts: Counts
+  pageCount: number
+}
 
 const DATE_FILTER_OPTIONS: { value: DateFilter; label: string }[] = [
   { value: 'today',      label: 'Today' },
@@ -162,8 +170,8 @@ function ASBookingsV2Inner() {
       params.set('page_size', String(pageSize))
       if (debouncedSearch) params.set('search', debouncedSearch)
       const res = await fetch(`/api/as-bookings-v2?${params.toString()}`)
-      const json = await res.json()
-      if (!json.success) {
+      const json = await readApiResponse<BookingsPayload>(res)
+      if (!json.success || !json.data) {
         setError(json.error ?? 'Failed to load bookings')
         setBookings([]); setTotal(0); setCounts({ all: 0, confirmed: 0, unconfirmed: 0 }); setPageCount(1)
         return

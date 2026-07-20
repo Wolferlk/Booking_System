@@ -18,12 +18,12 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get('search')
   const refSearch = searchParams.get('refSearch')           // IS number / VN ref / agent ID
   const contentSearch = searchParams.get('contentSearch')   // deep search in agenda/booking details
-  const dateFrom = searchParams.get('dateFrom')     // createdAt range start
-  const dateTo   = searchParams.get('dateTo')       // createdAt range end
+  const dateFrom = searchParams.get('dateFrom')     // range start (column chosen by dateField)
+  const dateTo   = searchParams.get('dateTo')       // range end   (column chosen by dateField)
   const page  = parseInt(searchParams.get('page')  ?? '1')
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200)
   const dateFilter = searchParams.get('dateFilter') ?? ''
-  // Which date column the quick period pills apply to (arrival vs created)
+  // Which date column the period pills AND the explicit range apply to (arrival vs created)
   const dateField = searchParams.get('dateField') === 'createdAt' ? 'createdAt' : 'arrivalDate'
   const rawSortBy = searchParams.get('sortBy') ?? 'arrivalDate'
   const sortDir = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
@@ -119,16 +119,16 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // Created-at date range
+  // Explicit date range on the chosen date column (arrivalDate or createdAt)
   if (dateFrom || dateTo) {
-    const createdRange: Record<string, Date> = {}
-    if (dateFrom) createdRange.gte = new Date(dateFrom)
+    const range: Record<string, Date> = {}
+    if (dateFrom) range.gte = new Date(dateFrom)
     if (dateTo) {
       const end = new Date(dateTo)
       end.setHours(23, 59, 59, 999)
-      createdRange.lte = end
+      range.lte = end
     }
-    andClauses.push({ createdAt: createdRange })
+    andClauses.push({ [dateField]: range })
   }
 
   // Date period filter applied to the chosen date column (arrivalDate or createdAt)

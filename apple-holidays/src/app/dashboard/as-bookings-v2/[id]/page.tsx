@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
+import { readApiResponse } from '@/lib/utils'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Activity { type?: string; name?: string; description?: string }
@@ -249,8 +250,8 @@ function ASBookingV2DetailInner() {
     try {
       const q = new URLSearchParams({ quotation_no: quotationNo, reference_id: referenceId })
       const res = await fetch(`/api/as-bookings-v2/quote?${q.toString()}`)
-      const json = await res.json()
-      if (!json.success) { setError(json.error ?? 'Failed to load confirmation'); return }
+      const json = await readApiResponse<{ quote: Quote }>(res)
+      if (!json.success || !json.data) { setError(json.error ?? 'Failed to load confirmation'); return }
       setQuote(json.data.quote)
     } catch {
       setError('Network error — could not reach AppleSystem')
