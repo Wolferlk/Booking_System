@@ -4,6 +4,9 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { listBookings, resolveCountryName, parseAsDate, type ASBookingListItem } from '@/lib/applesystem'
 
 export const dynamic = 'force-dynamic'
+// The upstream list call spans a multi-year arrival window and can be slow;
+// without this the platform's default cuts the function off with a raw 502.
+export const maxDuration = 60
 
 /**
  * GET /api/as-bookings-v2  — list quotations for the "AS Bookings V2" view.
