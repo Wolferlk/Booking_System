@@ -114,7 +114,9 @@ export default function BookingDetailPage() {
   const [waMessage, setWaMessage] = useState('')
   const [waAttachPdf, setWaAttachPdf] = useState(true)
   const [waSending, setWaSending] = useState(false)
+  const [waOpenerSending, setWaOpenerSending] = useState(false)
   const [waPdfType, setWaPdfType] = useState<'confirmation' | 'full'>('confirmation')
+  const [waQueue, setWaQueue] = useState<Array<{ id: string; phone: string; preview: string; pdfType: string | null; queuedBy: string | null; queuedAt: string }>>([])
 
   // Email send modal
   const [emailModal, setEmailModal] = useState(false)
@@ -255,7 +257,7 @@ export default function BookingDetailPage() {
     }
   }
 
-  useEffect(() => { load() }, [ref])
+  useEffect(() => { load(); loadWaQueue() }, [ref])
 
   async function restoreVersion(versionNo: number) {
     setRestoringVersion(true)
@@ -955,6 +957,7 @@ Wishing you a wonderful trip! ✈️
     setWaPdfType('confirmation')
     setWaMessage(buildConfirmationMessage(firstName))
     setWaAttachPdf(true)
+    void loadWaQueue()
     setWaModal(true)
   }
 
@@ -1052,11 +1055,62 @@ Wishing you a wonderful trip! ✈️
       })
       const json = await readApiResponse(res)
       if (!json.success) throw new Error(json.error)
-      toast.success(`WhatsApp ${waPdfType === 'full' ? 'Full Details' : 'Confirmation'} sent!`)
-      setWaModal(false)
+      const queued = json.data?.queued === true
+      toast.success(json.message || (queued ? 'Queued — will send when the customer replies.' : 'Sent!'))
+      await loadWaQueue()
+      // On a queued send keep the modal open so the queue indicator is visible;
+      // on an immediate delivery, close it.
+      if (!queued) setWaModal(false)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
     } finally { setWaSending(false) }
+  }
+
+  // Cold-customer opener: WhatsApp won't deliver the free-form confirmation + PDF
+  // unless the customer has messaged us in the last 24h. This sends the approved
+  // "please reply to us" template (delivers outside the window); once the customer
+  // replies, the 24h window opens and the Tour Confirmation can be sent normally.
+  async function sendWhatsAppOpener() {
+    if (!waPhone.trim()) { toast.error('Enter the client phone number'); return }
+    setWaOpenerSending(true)
+    try {
+      const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
+      const res = await fetch(`/api/bookings/${ref}/whatsapp-opener`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to:   waPhone.replace(/\D/g, ''),
+          name: lead?.name ?? 'Guest',
+        }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Reply request sent. Once the customer replies, send the confirmation.')
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally { setWaOpenerSending(false) }
+  }
+
+  // Tour Confirmations queued (waiting for the customer to reply) for this booking.
+  async function loadWaQueue() {
+    try {
+      const res = await fetch(`/api/bookings/${ref}/whatsapp-queue`)
+      const json = await res.json()
+      if (json.success) setWaQueue(json.data?.queued ?? [])
+    } catch { /* non-fatal — indicator just won't show */ }
+  }
+
+  // Cancel a queued confirmation so it won't send when the customer replies.
+  async function cancelWaQueued(id: string) {
+    try {
+      const res = await fetch(`/api/bookings/${ref}/whatsapp-queue?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success('Queued message cancelled')
+      await loadWaQueue()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Could not cancel')
+    }
   }
 
   return (
@@ -1364,8 +1418,14 @@ Wishing you a wonderful trip! ✈️
                 <button
                   onClick={openWhatsApp}
                   className="btn btn-sm bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5"
+                  title={waQueue.length > 0 ? `${waQueue.length} message(s) queued — waiting for the customer to reply` : undefined}
                 >
                   <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
+                  {waQueue.length > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 text-amber-900 text-[10px] font-bold px-1.5 py-0.5 leading-none">
+                      <Clock className="w-3 h-3" /> {waQueue.length}
+                    </span>
+                  )}
                 </button>
               )}
               {['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
@@ -3076,6 +3136,41 @@ Wishing you a wonderful trip! ✈️
       >
         <div className="space-y-4">
 
+          {/* Queued-confirmation indicator — messages waiting for the customer
+              to reply so their 24h window opens. */}
+          {waQueue.length > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 space-y-2">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                <p className="text-xs font-semibold text-amber-800">
+                  {waQueue.length} {waQueue.length === 1 ? 'message is' : 'messages are'} in the queue — waiting for the customer to reply
+                </p>
+              </div>
+              {waQueue.map(q => (
+                <div key={q.id} className="flex items-center justify-between gap-2 rounded bg-white/70 border border-amber-200 px-2 py-1.5">
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium text-amber-900 truncate">
+                      {q.pdfType === 'full' ? 'Full Details + Vouchers' : q.pdfType === 'confirmation' ? 'Tour Confirmation' : 'Message'} · {q.phone}
+                    </p>
+                    <p className="text-[10px] text-amber-600">
+                      Queued {new Date(q.queuedAt).toLocaleString()}{q.queuedBy ? ` · by ${q.queuedBy}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => cancelWaQueued(q.id)}
+                    className="text-[11px] font-semibold text-red-600 hover:text-red-700 flex-shrink-0"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ))}
+              <p className="text-[10px] text-amber-600 leading-relaxed">
+                These send automatically the moment the customer messages back. You can cancel any that are no longer needed.
+              </p>
+            </div>
+          )}
+
           {/* PDF Type Selector */}
           <div>
             <label className="form-label mb-1">Select Message Type</label>
@@ -3160,6 +3255,27 @@ Wishing you a wonderful trip! ✈️
               value={waPhone}
               onChange={e => setWaPhone(e.target.value)}
             />
+          </div>
+
+          {/* Cold-customer handling. If the customer hasn't messaged in 24h,
+              "Send Tour Confirmation" now AUTO-sends a reply request and queues
+              the confirmation (it delivers the moment they reply). The button
+              below is an optional way to send just the reply request now. */}
+          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 space-y-2">
+            <p className="text-xs text-blue-800 leading-relaxed">
+              <strong>Outside the 24h window?</strong> No problem — sending the confirmation will
+              automatically send the customer a reply request and <strong>queue</strong> your message;
+              it delivers the moment they reply. Or send just a reply request now:
+            </p>
+            <Button
+              variant="secondary"
+              loading={waOpenerSending}
+              icon={<Send className="w-4 h-4" />}
+              onClick={sendWhatsAppOpener}
+              className="border-blue-300 text-blue-700"
+            >
+              {waOpenerSending ? 'Sending…' : 'Send reply request'}
+            </Button>
           </div>
 
           {/* Message */}

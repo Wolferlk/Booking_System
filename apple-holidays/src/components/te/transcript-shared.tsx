@@ -8,7 +8,8 @@
  * Fed by GET /api/te/transcripts. Keeps normalisation, kind/sentiment styling
  * and the chat-bubble renderer in one place so both surfaces stay identical.
  */
-import { Phone, ClipboardCheck, Award, Bot, User } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { Phone, ClipboardCheck, Award, Bot, User, Volume2, Loader2, AlertCircle } from 'lucide-react'
 import type { ElementType } from 'react'
 
 export type Kind = 'on_tour' | 'reconfirm' | 'post_tour'
@@ -106,10 +107,45 @@ export function normaliseTranscript(raw: TranscriptTurn[] | string | null | unde
     })
 }
 
-/** Chat-style transcript renderer. `dark` swaps to the AI Call Bot palette. */
-export function TranscriptChat({ transcript, dark = false }: { transcript: TranscriptRecord['transcript']; dark?: boolean }) {
-  const lines = normaliseTranscript(transcript)
+/**
+ * Chat-style transcript renderer. `dark` swaps to the AI Call Bot palette.
+ * When the stored transcript is empty but a `conversationId` is given, it fetches
+ * the full conversation on demand from the voice service (which pulls it from
+ * ElevenLabs and caches it back) — so older calls whose transcript was stored
+ * empty still show their conversation here.
+ */
+export function TranscriptChat({ transcript, conversationId, dark = false }: { transcript: TranscriptRecord['transcript']; conversationId?: string | null; dark?: boolean }) {
+  const stored = useMemo(() => normaliseTranscript(transcript), [transcript])
+  const [fetched, setFetched] = useState<NormLine[] | null>(null)
+  const [fetchState, setFetchState] = useState<'idle' | 'loading' | 'error'>('idle')
+
+  useEffect(() => {
+    if (stored.length || !conversationId) return
+    let cancelled = false
+    setFetchState('loading')
+    fetch(`/api/te/proxy?path=${encodeURIComponent(`conversations/${conversationId}/transcript`)}`)
+      .then(r => r.json())
+      .then(j => {
+        if (cancelled) return
+        const l = normaliseTranscript(j?.transcript)
+        setFetched(l)
+        setFetchState(l.length ? 'idle' : 'error')
+      })
+      .catch(() => { if (!cancelled) setFetchState('error') })
+    return () => { cancelled = true }
+  }, [conversationId, stored.length])
+
+  const lines = stored.length ? stored : (fetched ?? [])
+
   if (!lines.length) {
+    if (fetchState === 'loading') {
+      return (
+        <div className={`flex flex-col items-center justify-center gap-2 py-8 text-center ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
+          <Loader2 className="w-6 h-6 animate-spin opacity-60" />
+          <p className="text-xs italic">Loading the conversation…</p>
+        </div>
+      )
+    }
     return (
       <div className={`flex flex-col items-center justify-center gap-2 py-8 text-center ${dark ? 'text-slate-500' : 'text-slate-400'}`}>
         <Bot className="w-7 h-7 opacity-40" />
@@ -141,6 +177,56 @@ export function TranscriptChat({ transcript, dark = false }: { transcript: Trans
           </div>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * Call RECORDING player — lazy: nothing is downloaded until the user presses
+ * "Play recording", then it swaps to a native audio player streaming from
+ * /api/te/recordings/:conversationId/audio. Handles the "still processing"
+ * window right after a call with a friendly retryable message.
+ */
+export function CallRecordingPlayer({ conversationId, dark = false }: { conversationId: string | null | undefined; dark?: boolean }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  if (!conversationId) return null
+  const src = `/api/te/recordings/${encodeURIComponent(conversationId)}/audio`
+
+  if (state === 'idle' || state === 'error') {
+    return (
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setState('loading')}
+          className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border transition-colors ${
+            dark
+              ? 'bg-violet-500/10 text-violet-300 border-violet-500/30 hover:bg-violet-500/20'
+              : 'bg-violet-50 text-violet-600 border-violet-200 hover:bg-violet-100'
+          }`}
+        >
+          <Volume2 className="w-3.5 h-3.5" /> {state === 'error' ? 'Try recording again' : 'Play call recording'}
+        </button>
+        {state === 'error' && (
+          <span className={`inline-flex items-center gap-1 text-[10px] ${dark ? 'text-amber-300' : 'text-amber-600'}`}>
+            <AlertCircle className="w-3 h-3" /> Recording not ready yet — it appears a few minutes after the call ends.
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 w-full">
+      {state === 'loading' && <Loader2 className={`w-3.5 h-3.5 animate-spin flex-shrink-0 ${dark ? 'text-violet-300' : 'text-violet-400'}`} />}
+      <audio
+        controls
+        autoPlay
+        preload="auto"
+        src={src}
+        className="w-full h-9"
+        onCanPlay={() => setState('ready')}
+        onError={() => setState('error')}
+      />
     </div>
   )
 }
