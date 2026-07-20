@@ -17,7 +17,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
-import { formatDate, formatCurrency, getDaysUntilTrip } from '@/lib/utils'
+import { formatDate, formatCurrency, getDaysUntilTrip, readApiResponse } from '@/lib/utils'
 import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
 import { getAvailableTransitions } from '@/lib/state-machine'
@@ -1050,7 +1050,7 @@ Wishing you a wonderful trip! ✈️
           pdfType:   waPdfType,
         }),
       })
-      const json = await res.json()
+      const json = await readApiResponse(res)
       if (!json.success) throw new Error(json.error)
       toast.success(`WhatsApp ${waPdfType === 'full' ? 'Full Details' : 'Confirmation'} sent!`)
       setWaModal(false)

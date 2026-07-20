@@ -7,6 +7,11 @@ import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-
 import { putUpload } from '@/lib/storage'
 
 export const dynamic = 'force-dynamic'
+// Rendering the PDF (Chromium) then uploading it to Meta takes far longer than the
+// platform's default function timeout. Without this the request is killed mid-flight
+// and the gateway serves its own HTML 502 in place of our JSON. Matches agenda/send.
+export const maxDuration = 120
+
 const WHATSAPP_API    = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 
