@@ -68,13 +68,9 @@ function countPlaceholders(s: string): number {
   return matches ? new Set(matches).size : 0
 }
 
-// Singapore & Malaysia are one shared ops team (see lib/country-detection.ts) —
-// collapse both (and the legacy combined value) into one group here too, so
-// the country tabs match how the rest of the app already scopes by country.
 const UNASSIGNED = 'UNASSIGNED'
 function countryGroupKey(oc: OperationCountry | null | undefined): string {
   if (!oc || oc === 'ALL') return UNASSIGNED
-  if (oc === 'SINGAPORE' || oc === 'MALAYSIA' || oc === 'SINGAPORE_MALAYSIA') return 'SINGAPORE_MALAYSIA'
   return oc
 }
 
