@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/state-machine'
+import { countryLabel, countryFlag } from '@/lib/country-detection'
 import type { BookingStatus, OperationCountry } from '@prisma/client'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -67,6 +68,16 @@ function countPlaceholders(s: string): number {
   return matches ? new Set(matches).size : 0
 }
 
+// Singapore & Malaysia are one shared ops team (see lib/country-detection.ts) —
+// collapse both (and the legacy combined value) into one group here too, so
+// the country tabs match how the rest of the app already scopes by country.
+const UNASSIGNED = 'UNASSIGNED'
+function countryGroupKey(oc: OperationCountry | null | undefined): string {
+  if (!oc || oc === 'ALL') return UNASSIGNED
+  if (oc === 'SINGAPORE' || oc === 'MALAYSIA' || oc === 'SINGAPORE_MALAYSIA') return 'SINGAPORE_MALAYSIA'
+  return oc
+}
+
 function avatarColor(seed: string) {
   let h = 0
   for (let i = 0; i < seed.length; i += 1) h = (h * 31 + seed.charCodeAt(i)) >>> 0
@@ -110,6 +121,9 @@ function WhatsAppInboxInner() {
   const [convLoading, setConvLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
+
+  const [viewMode, setViewMode] = useState<'all' | 'country'>('all')
+  const [countryFilter, setCountryFilter] = useState<string | null>(null)
 
   const [messages, setMessages] = useState<WaMessage[]>([])
   const [threadBooking, setThreadBooking] = useState<ThreadBooking | null>(null)
@@ -363,6 +377,9 @@ function WhatsAppInboxInner() {
         body: JSON.stringify({ phone: selected, message: text }),
       }).then(r => r.json())
       if (!res.success) throw new Error(res.error)
+      // Outside the 24h window the API silently redirects this through the
+      // approved re-engagement template — flag it so staff know it still went out.
+      if (res.message?.includes('re-engagement template')) toast.info('Sent via approved template (outside 24h window)')
       setDraft('')
       await loadMessages(selected)
       loadConversations()
@@ -400,6 +417,36 @@ function WhatsAppInboxInner() {
   }
 
   const selectedConv = conversations.find(c => c.phone === selected)
+
+  // Country buckets, derived from each conversation's linked booking — no
+  // extra API call, the country already rides along on `booking.operationCountry`.
+  const countryBuckets = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of conversations) {
+      const key = countryGroupKey(c.booking?.operationCountry)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .map(([key, count]) => ({
+        key,
+        count,
+        label: key === UNASSIGNED ? 'Unassigned' : countryLabel(key as OperationCountry),
+        flag: key === UNASSIGNED ? '❔' : countryFlag(key as OperationCountry),
+      }))
+      .sort((a, b) => b.count - a.count)
+  }, [conversations])
+
+  // Default to the busiest country the first time "Country Wise" is opened
+  // (or if the previously selected one no longer has any chats).
+  useEffect(() => {
+    if (viewMode !== 'country') return
+    if (countryFilter && countryBuckets.some(b => b.key === countryFilter)) return
+    setCountryFilter(countryBuckets[0]?.key ?? null)
+  }, [viewMode, countryBuckets, countryFilter])
+
+  const visibleConversations = viewMode === 'country' && countryFilter
+    ? conversations.filter(c => countryGroupKey(c.booking?.operationCountry) === countryFilter)
+    : conversations
 
   // Insert "Today / Yesterday / date" separators between message groups.
   const messageGroups = useMemo(() => {
@@ -449,19 +496,50 @@ function WhatsAppInboxInner() {
               className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/15"
             />
           </div>
+
+          <div className="mt-3 flex gap-1 rounded-lg bg-slate-100 p-1">
+            <button
+              onClick={() => setViewMode('all')}
+              className={`flex-1 rounded-md py-1.5 text-[12.5px] font-bold transition ${viewMode === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              All Chats
+            </button>
+            <button
+              onClick={() => setViewMode('country')}
+              className={`flex-1 rounded-md py-1.5 text-[12.5px] font-bold transition ${viewMode === 'country' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Country Wise
+            </button>
+          </div>
+
+          {viewMode === 'country' && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {countryBuckets.map(b => (
+                <button
+                  key={b.key}
+                  onClick={() => setCountryFilter(b.key)}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${
+                    countryFilter === b.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>{b.flag}</span> {b.label} <span className="opacity-70">({b.count})</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           {convLoading && conversations.length === 0 ? (
             <div className="flex items-center justify-center py-14"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></div>
-          ) : conversations.length === 0 ? (
+          ) : visibleConversations.length === 0 ? (
             <div className="mt-6 rounded-xl border border-dashed border-slate-200 px-5 py-10 text-center">
               <MessageCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-500">{search ? 'No matches' : 'No conversations yet'}</p>
+              <p className="text-sm font-semibold text-slate-500">{search ? 'No matches' : viewMode === 'country' ? 'No chats for this country' : 'No conversations yet'}</p>
               <p className="mt-1 text-xs text-slate-400">{search ? 'Try a different name or number.' : 'Incoming WhatsApp messages will appear here.'}</p>
             </div>
           ) : (
-            conversations.map(c => {
+            visibleConversations.map(c => {
               const active = c.phone === selected
               const hasUnread = c.unreadCount > 0 && !active
               return (
@@ -501,7 +579,8 @@ function WhatsAppInboxInner() {
                     </span>
                     {c.booking && (
                       <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">
-                        Linked · {c.booking.bookingRef}
+                        {c.booking.operationCountry && <span>{countryFlag(c.booking.operationCountry)}</span>}
+                        {c.booking.bookingRef}
                       </span>
                     )}
                   </span>
@@ -650,7 +729,13 @@ function WhatsAppInboxInner() {
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={onKeyDown}
-                  placeholder={attachment ? 'Add a caption (optional) — Enter to send' : 'Type a message — Enter to send, Shift+Enter for a new line'}
+                  placeholder={
+                    attachment
+                      ? 'Add a caption (optional) — Enter to send'
+                      : windowOpen === false
+                        ? 'Outside 24h window — this will send via the approved re-engagement template'
+                        : 'Type a message — Enter to send, Shift+Enter for a new line'
+                  }
                   className="max-h-[120px] min-h-[42px] flex-1 resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/15"
                 />
                 <button
