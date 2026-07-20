@@ -1,7 +1,8 @@
-import { mkdir, copyFile, readdir, readFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import path from 'path'
 import { readLocalUploadAsBuffer } from './local-upload'
 import { localUploadRelativePath } from './upload-path'
+import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -19,40 +20,7 @@ function fmt(d: string | Date | null | undefined): string {
   return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-// ── PDFKit boot ──────────────────────────────────────────────────────────────
-let pdfkitDataReady: Promise<void> | null = null
-
-async function ensurePdfkitDataFiles() {
-  if (pdfkitDataReady) return pdfkitDataReady
-  pdfkitDataReady = (async () => {
-    const sourceDir = path.join(process.cwd(), 'node_modules', 'pdfkit', 'js', 'data')
-    const targetDir = path.join(process.cwd(), '.next', 'server', 'vendor-chunks', 'data')
-    await mkdir(targetDir, { recursive: true })
-    const files = await readdir(sourceDir)
-    await Promise.all(
-      files
-        .filter(file => file.toLowerCase().endsWith('.afm'))
-        .map(file => copyFile(path.join(sourceDir, file), path.join(targetDir, file)).catch(() => {})),
-    )
-  })()
-  return pdfkitDataReady
-}
-
-async function loadPdfDocumentCtor() {
-  const mod = await import('pdfkit')
-  return (mod as typeof mod & { default?: unknown }).default ?? mod
-}
-
 // ── Asset loaders ────────────────────────────────────────────────────────────
-async function loadLogo(): Promise<Buffer | null> {
-  for (const name of ['aahaslogo.png', 'aahaas.png', 'chat-logo.png']) {
-    try {
-      return await readFile(path.join(process.cwd(), 'public', 'png', name))
-    } catch { continue }
-  }
-  return null
-}
-
 async function resolveTicketImage(fileUrl: string | null | undefined): Promise<Buffer | null> {
   const rel = localUploadRelativePath(fileUrl)
   if (!rel) return null
