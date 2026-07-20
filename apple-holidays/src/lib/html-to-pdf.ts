@@ -1,7 +1,42 @@
 import path from 'path'
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, open, rm } from 'fs/promises'
 
 const PDF_DIR = path.join(process.cwd(), 'public', 'uploads', 'booking-pdfs')
+
+/**
+ * A truncated or mis-bundled @sparticuz/chromium extract leaves a non-executable
+ * file at the target path. Launching it produces shell noise ("ELF : not found")
+ * that says nothing about the real cause, so verify the ELF magic first and drop
+ * the bad file — the next call re-extracts from scratch.
+ */
+async function assertUsableElf(executablePath: string): Promise<void> {
+  let magic: Buffer
+  try {
+    const handle = await open(executablePath, 'r')
+    try {
+      magic = Buffer.alloc(4)
+      await handle.read(magic, 0, 4, 0)
+    } finally {
+      await handle.close()
+    }
+  } catch (err) {
+    throw new Error(
+      `Chromium binary missing at ${executablePath}. ` +
+        `The @sparticuz/chromium payload was not deployed with the server bundle. ` +
+        `Original error: ${(err as Error).message}`
+    )
+  }
+
+  if (!magic.equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))) {
+    await rm(executablePath, { force: true }).catch(() => {})
+    throw new Error(
+      `Chromium at ${executablePath} is not an ELF executable — the extract was ` +
+        `corrupt or incomplete (check that @sparticuz/chromium is listed in ` +
+        `serverComponentsExternalPackages, and that the runtime has enough free /tmp space). ` +
+        `The bad file has been removed; retry to force a clean extract.`
+    )
+  }
+}
 
 async function launchBrowser() {
   // 1. Explicit Chrome path via env var (admin override — takes priority everywhere)
@@ -21,6 +56,7 @@ async function launchBrowser() {
     const { default: chromium } = await import('@sparticuz/chromium')
     const { default: puppeteerCore } = await import('puppeteer-core')
     const executablePath = await chromium.executablePath()
+    await assertUsableElf(executablePath)
     return puppeteerCore.launch({
       args: chromium.args,
       defaultViewport: null,
@@ -84,8 +120,16 @@ export async function htmlToPdf(html: string, filename: string, meta?: PdfMeta):
     })
 
     const pdfBuffer = Buffer.from(raw)
-    await mkdir(PDF_DIR, { recursive: true })
-    await writeFile(path.join(PDF_DIR, filename), pdfBuffer)
+
+    // Local archive copy only — every caller uses the returned buffer, so a failure
+    // here must not fail the send. Serverless runtimes mount everything outside /tmp
+    // read-only, which would otherwise throw EROFS after the PDF rendered fine.
+    try {
+      await mkdir(PDF_DIR, { recursive: true })
+      await writeFile(path.join(PDF_DIR, filename), pdfBuffer)
+    } catch (err) {
+      console.warn(`[html-to-pdf] could not archive ${filename} to disk:`, (err as Error).message)
+    }
 
     return pdfBuffer
   } finally {
