@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Search, Send, Paperclip, Loader2, MessageCircle,
-  ExternalLink, X, RefreshCw, FileText, MessageSquarePlus,
+  ExternalLink, X, RefreshCw, FileText, MessageSquarePlus, LayoutTemplate,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/state-machine'
@@ -46,9 +46,26 @@ interface ThreadBooking extends ConversationBooking {
   departureDate: string
 }
 
+interface WaTemplate {
+  name: string
+  language: string
+  status: string
+  category: string | null
+  headerFormat: string | null
+  headerText: string
+  bodyText: string
+  bodyVariableCount: number
+  headerVariableCount: number
+}
+
 const CONV_POLL_MS = 8000
 const THREAD_POLL_MS = 6000
 const AVATAR_COLORS = ['#0a7d4d', '#2563eb', '#7c3aed', '#c8102e', '#b45309', '#0891b2', '#be185d', '#4f46e5']
+
+function countPlaceholders(s: string): number {
+  const matches = s.match(/\{\{\s*\d+\s*\}\}/g)
+  return matches ? new Set(matches).size : 0
+}
 
 function avatarColor(seed: string) {
   let h = 0
@@ -97,6 +114,7 @@ function WhatsAppInboxInner() {
   const [messages, setMessages] = useState<WaMessage[]>([])
   const [threadBooking, setThreadBooking] = useState<ThreadBooking | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
+  const [windowOpen, setWindowOpen] = useState<boolean | null>(null)
 
   const [draft, setDraft] = useState('')
   const [attachment, setAttachment] = useState<File | null>(null)
@@ -104,6 +122,25 @@ function WhatsAppInboxInner() {
 
   const [newChatOpen, setNewChatOpen] = useState(false)
   const [newChatPhone, setNewChatPhone] = useState('')
+
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [templatesTab, setTemplatesTab] = useState<'send' | 'new'>('send')
+  const [approvedTemplates, setApprovedTemplates] = useState<WaTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [selectedTplName, setSelectedTplName] = useState('')
+  const [tplHeaderVals, setTplHeaderVals] = useState<string[]>([])
+  const [tplBodyVals, setTplBodyVals] = useState<string[]>([])
+  const [tplSending, setTplSending] = useState(false)
+
+  const [newTplName, setNewTplName] = useState('')
+  const [newTplCategory, setNewTplCategory] = useState('UTILITY')
+  const [newTplLanguage, setNewTplLanguage] = useState('en')
+  const [newTplHeader, setNewTplHeader] = useState('')
+  const [newTplHeaderVals, setNewTplHeaderVals] = useState<string[]>([])
+  const [newTplBody, setNewTplBody] = useState('')
+  const [newTplBodyVals, setNewTplBodyVals] = useState<string[]>([])
+  const [newTplFooter, setNewTplFooter] = useState('')
+  const [newTplSubmitting, setNewTplSubmitting] = useState(false)
 
   const boxRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -142,6 +179,7 @@ function WhatsAppInboxInner() {
       if (res.success && selectedRef.current === phone) {
         setMessages(res.data.messages)
         setThreadBooking(res.data.booking)
+        setWindowOpen(res.data.windowOpen)
       }
     } catch {
       if (opts.showLoader) toast.error("Couldn't load this conversation")
@@ -154,6 +192,7 @@ function WhatsAppInboxInner() {
     setSelected(phone)
     setMessages([])
     setThreadBooking(null)
+    setWindowOpen(null)
     setDraft('')
     setAttachment(null)
     loadMessages(phone, { showLoader: true })
@@ -169,6 +208,127 @@ function WhatsAppInboxInner() {
     setNewChatOpen(false)
     setNewChatPhone('')
     openConversation(phone)
+  }
+
+  // ── message templates ────────────────────────────────────────────────────
+  async function openTemplatesModal() {
+    setTemplatesOpen(true)
+    setTemplatesTab('send')
+    setTemplatesLoading(true)
+    try {
+      const res = await fetch('/api/whatsapp/templates?status=APPROVED').then(r => r.json())
+      if (res.success) {
+        setApprovedTemplates(res.data)
+        if (res.data[0]) selectTemplate(res.data[0])
+      } else {
+        toast.error(res.error || "Couldn't load templates")
+      }
+    } catch {
+      toast.error("Couldn't load templates")
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }
+
+  function selectTemplate(t: WaTemplate) {
+    setSelectedTplName(t.name)
+    setTplHeaderVals(Array(t.headerVariableCount).fill(''))
+    setTplBodyVals(Array(t.bodyVariableCount).fill(''))
+  }
+
+  const selectedTpl = approvedTemplates.find(t => t.name === selectedTplName) ?? null
+
+  const tplPreview = useMemo(() => {
+    if (!selectedTpl) return ''
+    const fill = (s: string, vals: string[]) =>
+      vals.reduce((acc, v, i) => acc.replaceAll(`{{${i + 1}}}`, v || `{{${i + 1}}}`), s)
+    const parts = [selectedTpl.headerText ? fill(selectedTpl.headerText, tplHeaderVals) : null, fill(selectedTpl.bodyText, tplBodyVals)]
+    return parts.filter(Boolean).join('\n\n')
+  }, [selectedTpl, tplHeaderVals, tplBodyVals])
+
+  async function sendChosenTemplate() {
+    if (!selected || !selectedTpl) return
+    if (tplHeaderVals.some(v => !v.trim()) || tplBodyVals.some(v => !v.trim())) {
+      toast.error('Fill in every placeholder before sending')
+      return
+    }
+    setTplSending(true)
+    try {
+      const res = await fetch('/api/whatsapp/send-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: selected,
+          template: selectedTpl.name,
+          lang: selectedTpl.language,
+          headerParams: tplHeaderVals,
+          bodyParams: tplBodyVals,
+          previewText: tplPreview,
+        }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.error)
+      toast.success('Template sent.')
+      setTemplatesOpen(false)
+      await loadMessages(selected)
+      loadConversations()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setTplSending(false)
+    }
+  }
+
+  // New-template form: keep the example-value fields in sync with however many
+  // {{n}} placeholders are currently typed into the header/body text.
+  function onNewTplHeaderChange(v: string) {
+    setNewTplHeader(v)
+    const n = countPlaceholders(v)
+    setNewTplHeaderVals(prev => Array.from({ length: n }, (_, i) => prev[i] ?? ''))
+  }
+  function onNewTplBodyChange(v: string) {
+    setNewTplBody(v)
+    const n = countPlaceholders(v)
+    setNewTplBodyVals(prev => Array.from({ length: n }, (_, i) => prev[i] ?? ''))
+  }
+
+  function resetNewTplForm() {
+    setNewTplName(''); setNewTplHeader(''); setNewTplHeaderVals([])
+    setNewTplBody(''); setNewTplBodyVals([]); setNewTplFooter('')
+  }
+
+  async function submitNewTemplate() {
+    const name = newTplName.trim()
+    const bodyText = newTplBody.trim()
+    if (!name) { toast.error('Name is required'); return }
+    if (!bodyText) { toast.error('Body text is required'); return }
+    if (newTplHeaderVals.some(v => !v.trim()) || newTplBodyVals.some(v => !v.trim())) {
+      toast.error('Every {{n}} placeholder needs an example value')
+      return
+    }
+    setNewTplSubmitting(true)
+    try {
+      const res = await fetch('/api/whatsapp/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          category: newTplCategory,
+          language: newTplLanguage.trim() || 'en',
+          bodyText,
+          bodyExamples: newTplBodyVals,
+          headerText: newTplHeader.trim() || null,
+          headerExamples: newTplHeaderVals,
+          footerText: newTplFooter.trim() || null,
+        }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.error)
+      toast.success(`Submitted — status: ${res.data?.status || 'PENDING'}. Meta review can take minutes to ~24h.`)
+      resetNewTplForm()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Submit failed')
+    } finally {
+      setNewTplSubmitting(false)
+    }
   }
 
   // Auto-open a conversation passed in via ?phone= (e.g. from a booking's mini-chat)
@@ -269,6 +429,9 @@ function WhatsAppInboxInner() {
               <p className="truncate text-sm font-bold leading-tight text-slate-900">WhatsApp</p>
               <p className="text-[11px] text-slate-400">AppleHolidays</p>
             </div>
+            <button onClick={openTemplatesModal} title="Message templates" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700">
+              <LayoutTemplate className="h-4 w-4" />
+            </button>
             <button onClick={() => setNewChatOpen(true)} title="New chat" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700">
               <MessageSquarePlus className="h-4 w-4" />
             </button>
@@ -377,6 +540,20 @@ function WhatsAppInboxInner() {
                   <p className="text-xs text-slate-400">+{selected}</p>
                 </div>
               </div>
+
+              {windowOpen !== null && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {windowOpen ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Within 24h window — free-form messages deliver
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Outside 24h window — only an approved template will deliver
+                    </span>
+                  )}
+                </div>
+              )}
 
               {threadBooking ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-xl border border-blue-100 bg-blue-50/60 px-3.5 py-2.5">
@@ -520,6 +697,210 @@ function WhatsAppInboxInner() {
               <button onClick={startNewChat} className="rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-105">
                 Start chat
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ Message templates ============ */}
+      {templatesOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={() => setTemplatesOpen(false)}>
+          <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2">
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setTemplatesTab('send')}
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-bold transition ${templatesTab === 'send' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                  Send template
+                </button>
+                <button
+                  onClick={() => setTemplatesTab('new')}
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-bold transition ${templatesTab === 'new' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                  New template
+                </button>
+              </div>
+              <button onClick={() => setTemplatesOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4">
+              {templatesTab === 'send' ? (
+                <div className="flex flex-col gap-3">
+                  <p className="text-[12.5px] text-slate-500">
+                    {selected ? <>Sending to <span className="font-semibold text-slate-700">{selectedConv?.displayName || `+${selected}`}</span></> : 'Open a conversation first, then come back here to send a template.'}
+                  </p>
+
+                  {templatesLoading ? (
+                    <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></div>
+                  ) : approvedTemplates.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-[12.5px] text-slate-400">
+                      No approved templates yet — register one in the &quot;New template&quot; tab.
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[12px] font-semibold text-slate-500">Template</span>
+                        <select
+                          value={selectedTplName}
+                          onChange={e => {
+                            const t = approvedTemplates.find(x => x.name === e.target.value)
+                            if (t) selectTemplate(t)
+                          }}
+                          className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                        >
+                          {approvedTemplates.map(t => (
+                            <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {selectedTpl && selectedTpl.headerVariableCount > 0 && (
+                        <div className="flex flex-col gap-2">
+                          {tplHeaderVals.map((v, i) => (
+                            <label key={i} className="flex flex-col gap-1">
+                              <span className="text-[12px] font-semibold text-slate-500">Header {`{{${i + 1}}}`}</span>
+                              <input
+                                value={v}
+                                onChange={e => setTplHeaderVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                                className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {selectedTpl && selectedTpl.bodyVariableCount > 0 && (
+                        <div className="flex flex-col gap-2">
+                          {tplBodyVals.map((v, i) => (
+                            <label key={i} className="flex flex-col gap-1">
+                              <span className="text-[12px] font-semibold text-slate-500">Body {`{{${i + 1}}}`}</span>
+                              <input
+                                value={v}
+                                onChange={e => setTplBodyVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                                className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {tplPreview && (
+                        <div className="whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-[12.5px] leading-relaxed text-slate-700">
+                          {tplPreview}
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={sendChosenTemplate}
+                          disabled={!selected || tplSending}
+                          className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-4 py-2 text-[13px] font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+                        >
+                          {tplSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                          Send
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Name</span>
+                    <input
+                      value={newTplName}
+                      onChange={e => setNewTplName(e.target.value)}
+                      placeholder="e.g. singapore_offer — lowercase, underscores only"
+                      className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Category</span>
+                      <select
+                        value={newTplCategory}
+                        onChange={e => setNewTplCategory(e.target.value)}
+                        className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      >
+                        <option value="UTILITY">Utility</option>
+                        <option value="MARKETING">Marketing</option>
+                        <option value="AUTHENTICATION">Authentication</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Language</span>
+                      <input
+                        value={newTplLanguage}
+                        onChange={e => setNewTplLanguage(e.target.value)}
+                        className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      />
+                    </label>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Header (optional, plain text)</span>
+                    <input
+                      value={newTplHeader}
+                      onChange={e => onNewTplHeaderChange(e.target.value)}
+                      placeholder="e.g. Your itinerary is ready"
+                      className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  {newTplHeaderVals.map((v, i) => (
+                    <label key={i} className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Header {`{{${i + 1}}}`} example</span>
+                      <input
+                        value={v}
+                        onChange={e => setNewTplHeaderVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                        placeholder="value Meta will show reviewers"
+                        className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      />
+                    </label>
+                  ))}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Body</span>
+                    <textarea
+                      value={newTplBody}
+                      onChange={e => onNewTplBodyChange(e.target.value)}
+                      rows={4}
+                      placeholder="Hi {{1}}, your booking {{2}} is confirmed…"
+                      className="resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  <p className="text-[11.5px] text-slate-400">
+                    Use {'{{1}}'}, {'{{2}}'}… for placeholders — Meta requires an example value for each before it will review the template.
+                  </p>
+                  {newTplBodyVals.map((v, i) => (
+                    <label key={i} className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Body {`{{${i + 1}}}`} example</span>
+                      <input
+                        value={v}
+                        onChange={e => setNewTplBodyVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                        placeholder="value Meta will show reviewers"
+                        className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      />
+                    </label>
+                  ))}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Footer (optional, plain text, no placeholders)</span>
+                    <input
+                      value={newTplFooter}
+                      onChange={e => setNewTplFooter(e.target.value)}
+                      placeholder="e.g. — AppleHolidays"
+                      className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={submitNewTemplate}
+                      disabled={newTplSubmitting}
+                      className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-4 py-2 text-[13px] font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+                    >
+                      {newTplSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LayoutTemplate className="h-4 w-4" />}
+                      Submit for review
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
