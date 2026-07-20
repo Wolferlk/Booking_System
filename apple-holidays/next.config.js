@@ -13,7 +13,18 @@ const nextConfig = {
       bodySizeLimit: '10mb',
     },
     instrumentationHook: true,
-    serverComponentsExternalPackages: ['pdf-parse', 'pdfkit', 'puppeteer', 'mysql2'],
+    // @sparticuz/chromium and puppeteer-core MUST stay external: the chromium
+    // package resolves bin/*.br relative to __dirname, which webpack rewrites when
+    // it bundles them — the extract then writes a JS chunk to /tmp/chromium and the
+    // launch fails with "ELF : not found".
+    serverComponentsExternalPackages: [
+      'pdf-parse',
+      'pdfkit',
+      'puppeteer',
+      'puppeteer-core',
+      '@sparticuz/chromium',
+      'mysql2',
+    ],
   },
   images: {
     domains: ['localhost'],
