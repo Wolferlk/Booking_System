@@ -146,6 +146,11 @@ model Booking {
   tips                   String?            @db.Text
   valueAddedServices     String?            @db.Text
   paxInfants             Int                @default(0)
+  cancelledAt            DateTime?
+  cancelledById          String?
+  cancelledByName        String?
+  cancelledByEmail       String?
+  cancellationReason     String?            @db.Text
   accommodations         Accommodation[]
   versions               BookingVersion[]
   clientUser             User?              @relation("ClientUser", fields: [clientUserId], references: [id])

@@ -17,7 +17,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
-import { formatDate, formatCurrency, getDaysUntilTrip, readApiResponse } from '@/lib/utils'
+import { formatDate, formatDateTime, formatCurrency, getDaysUntilTrip, readApiResponse, cn } from '@/lib/utils'
 import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
 import { getAvailableTransitions } from '@/lib/state-machine'
@@ -50,6 +50,9 @@ function isOwnArrangement(a: Record<string, unknown>): boolean {
   if (!hotel || ['tba', 'tbc', 'n/a', 'na', 'to be advised', 'to be confirmed', '-'].includes(hotel)) return true
   return false
 }
+
+/** Pre-filled reason when the file handler cancels without typing their own. */
+const DEFAULT_CANCEL_REASON = 'File handler cancelled this booking'
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -377,6 +380,7 @@ export default function BookingDetailPage() {
   )
 
   const status = booking.status as BookingStatus
+  const isCancelled = status === 'CANCELLED'
   const transitions = getAvailableTransitions(status, role)
   const daysUntil = getDaysUntilTrip(booking.arrivalDate as string)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1125,7 +1129,40 @@ Wishing you a wonderful trip! ✈️
         }
       />
 
-      <div className="p-8 space-y-6 ">
+      {/* Cancelled bookings stay fully readable, but the whole page is visually
+          shaded and red-marked so nobody mistakes them for live work. */}
+      <div className={cn(
+        'p-8 space-y-6',
+        isCancelled && 'bg-slate-100/70 [&>*:not(:first-child)]:opacity-75 [&>*:not(:first-child)]:grayscale-[45%]',
+      )}>
+
+        {isCancelled && (
+          <div className="relative overflow-hidden rounded-xl border-2 border-red-300 bg-gradient-to-r from-red-50 via-rose-50 to-red-50 p-5 shadow-sm">
+            <div
+              className="pointer-events-none absolute inset-0 opacity-[0.07]"
+              style={{ backgroundImage: 'repeating-linear-gradient(45deg,#dc2626 0 12px,transparent 12px 24px)' }}
+            />
+            <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-red-600 text-white shadow">
+                <XCircle className="h-6 w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-extrabold uppercase tracking-[0.18em] text-red-700">
+                  Booking Cancelled
+                </p>
+                <p className="mt-1 text-sm text-red-800/90">
+                  {(booking as any).cancellationReason || 'No reason recorded.'}
+                </p>
+                <p className="mt-1.5 text-xs text-red-600/80">
+                  Cancelled by <strong>{(booking as any).cancelledByName ?? 'Unknown'}</strong>
+                  {(booking as any).cancelledByEmail ? ` (${(booking as any).cancelledByEmail})` : ''}
+                  {(booking as any).cancelledAt ? ` on ${formatDateTime((booking as any).cancelledAt)}` : ''}
+                  {' '}· This booking is view-only and hidden from active operations lists.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Lifecycle + status */}
         <Card className="p-6">
@@ -1316,8 +1353,9 @@ Wishing you a wonderful trip! ✈️
 
               {/* Cancel */}
               {!['COMPLETED', 'CANCELLED'].includes(status) && ['BT_USER', 'SUPER_ADMIN', 'TE_USER'].includes(role) && (
-                <Button variant="danger" size="sm" onClick={() => setCancelModal(true)}>
-                  Cancel Booking
+                <Button variant="danger" size="sm"
+                  onClick={() => { setCancelReason(DEFAULT_CANCEL_REASON); setCancelModal(true) }}>
+                  <XCircle className="w-4 h-4 mr-1" /> Cancel Booking
                 </Button>
               )}
 
@@ -2847,8 +2885,9 @@ Wishing you a wonderful trip! ✈️
               variant="danger"
               loading={actionLoading === 'cancel'}
               onClick={() => {
-                if (!cancelReason) { toast.error('Please provide a reason'); return }
-                doTransition('cancel', { reason: cancelReason }).then(() => { setCancelModal(false); setCancelReason('') })
+                const reason = (cancelReason || DEFAULT_CANCEL_REASON).trim()
+                if (!reason) { toast.error('Please provide a reason'); return }
+                doTransition('cancel', { reason }).then(() => { setCancelModal(false); setCancelReason('') })
               }}
             >
               Confirm Cancellation
@@ -2857,21 +2896,63 @@ Wishing you a wonderful trip! ✈️
         }
       >
         <div className="space-y-4">
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+            <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
+              You are cancelling {ref}
+            </p>
+            <p className="mt-1 text-xs text-red-600 leading-relaxed">
+              The booking stays in the system for reference — it is marked cancelled, hidden from
+              active operations lists, and the operations team is emailed straight away.
+            </p>
+          </div>
+
           {daysUntil <= 21 && daysUntil > 0 && (
-            <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
-              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-red-700 font-medium">
+            <div className="flex items-start gap-2 p-3 bg-orange-50 border border-orange-200 rounded-lg">
+              <AlertCircle className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-orange-700 font-medium">
                 Warning: 100% cancellation penalty applies (within 21-day window)
               </p>
             </div>
           )}
+
+          {/* Auto-filled from the signed-in account — read only */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="form-label">Cancelled By</label>
+              <input className="form-input bg-slate-50 text-slate-600 cursor-not-allowed"
+                value={session?.user?.name ?? '—'} readOnly disabled />
+            </div>
+            <div>
+              <label className="form-label">Account Email</label>
+              <input className="form-input bg-slate-50 text-slate-600 cursor-not-allowed"
+                value={session?.user?.email ?? '—'} readOnly disabled />
+            </div>
+          </div>
+
           <div>
-            <label className="form-label">Cancellation Reason *</label>
+            <label className="form-label">Reason to Cancel Booking *</label>
             <textarea className="form-textarea" rows={3}
               value={cancelReason}
               onChange={e => setCancelReason(e.target.value)}
-              placeholder="Reason for cancellation..." />
+              placeholder={DEFAULT_CANCEL_REASON} />
+            <div className="mt-1.5 flex items-center justify-between gap-2">
+              <p className="text-[11px] text-slate-400">
+                Leave blank to use the default reason.
+              </p>
+              {cancelReason !== DEFAULT_CANCEL_REASON && (
+                <button type="button"
+                  onClick={() => setCancelReason(DEFAULT_CANCEL_REASON)}
+                  className="text-[11px] font-medium text-brand-600 hover:underline">
+                  Use default reason
+                </button>
+              )}
+            </div>
           </div>
+
+          <p className="text-[11px] text-slate-500 leading-relaxed border-t border-slate-100 pt-3">
+            A cancellation notice will be emailed to you and to the operations desk
+            (Senthoor, Venkadesh, Amala, Mahamood, Shahila, Shafiya).
+          </p>
         </div>
       </Modal>
 

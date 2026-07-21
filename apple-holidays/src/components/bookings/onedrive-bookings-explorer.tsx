@@ -44,6 +44,8 @@ interface BookingNode {
   webUrl?: string | null
   processedAt?: string | null
   monthIdx: number
+  /** Folder is marked cancelled in OneDrive, or the booking is CANCELLED in the system. */
+  cancelled: boolean
 }
 
 interface MonthNode {
@@ -167,7 +169,22 @@ function extractFolderName(events: DriveEvent[], bookingRef: string): string {
   return bookingRef
 }
 
-function buildTree(events: DriveEvent[]): DriveNode[] {
+/**
+ * The team marks cancellations straight on OneDrive — the folder gets renamed
+ * ("IS48028 - Sajid (CANCELLED)") and/or a cancellation document is dropped in
+ * ("Cancelled IS48165.docx", "IS48044 Tour Cancellation.docx"). We read those
+ * same signals so the explorer flags the folder red exactly like OneDrive does.
+ */
+const CANCEL_RE = /cancell?ed|cancellation/i
+
+function isCancelledFolder(events: DriveEvent[], folderName: string): boolean {
+  if (CANCEL_RE.test(folderName)) return true
+  return events.some(e =>
+    CANCEL_RE.test(e.itemName ?? '') || CANCEL_RE.test(e.itemPath ?? ''),
+  )
+}
+
+function buildTree(events: DriveEvent[], cancelledRefs: Set<string>): DriveNode[] {
   // Group by driveType → bookingRef using plain objects to avoid Map iteration issues
   const driveRefMap: Record<string, Record<string, DriveEvent[]>> = {}
 
@@ -212,9 +229,12 @@ function buildTree(events: DriveEvent[]): DriveNode[] {
         )
       const processedAt = sortedByDate[0]?.processedAt
 
+      const folderName = extractFolderName(evts, ref)
+
       yearMap[year][month].push({
         ref,
-        folderName: extractFolderName(evts, ref),
+        folderName,
+        cancelled: cancelledRefs.has(ref.toUpperCase()) || isCancelledFolder(evts, folderName),
         driveType: driveKey,
         status,
         hasTC,
@@ -309,21 +329,23 @@ function BookingRow({
 }) {
   const [confirmDelete, setConfirmDelete] = React.useState(false)
 
-  const borderColor = {
+  const cancelled = booking.cancelled
+
+  const borderColor = cancelled ? 'border-l-red-500' : {
     processed: 'border-l-emerald-400',
     pending:   'border-l-amber-400',
     error:     'border-l-red-400',
     partial:   'border-l-orange-400',
   }[booking.status]
 
-  const iconBg = {
+  const iconBg = cancelled ? 'bg-red-100' : {
     processed: 'bg-emerald-100',
     pending:   'bg-amber-100',
     error:     'bg-red-100',
     partial:   'bg-orange-100',
   }[booking.status]
 
-  const iconColor = {
+  const iconColor = cancelled ? 'text-red-600' : {
     processed: 'text-emerald-600',
     pending:   'text-amber-600',
     error:     'text-red-600',
@@ -337,7 +359,7 @@ function BookingRow({
   return (
     <div className={cn(
       'flex items-center gap-3 px-4 py-2.5 group transition-colors border-l-2 ml-12',
-      'hover:bg-slate-50/80',
+      cancelled ? 'bg-red-50/70 hover:bg-red-50' : 'hover:bg-slate-50/80',
       borderColor,
     )}>
       {/* Folder icon */}
@@ -348,9 +370,20 @@ function BookingRow({
       {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-bold text-slate-800">{booking.ref}</span>
+          <span className={cn(
+            'text-sm font-bold',
+            cancelled ? 'text-red-700 line-through decoration-red-400' : 'text-slate-800',
+          )}>{booking.ref}</span>
           {displayName && (
-            <span className="text-xs text-slate-400 truncate max-w-[200px]">{displayName}</span>
+            <span className={cn(
+              'text-xs truncate max-w-[200px]',
+              cancelled ? 'text-red-400' : 'text-slate-400',
+            )}>{displayName}</span>
+          )}
+          {cancelled && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
+              Cancelled
+            </span>
           )}
           <StatusPill status={booking.status} />
         </div>
@@ -819,6 +852,10 @@ export default function OneDriveBookingsExplorer() {
   const [openYears,  setOpenYears]  = useState<Set<string>>(new Set<string>())
   const [openMonths, setOpenMonths] = useState<Set<string>>(new Set<string>())
 
+  // Refs cancelled inside the system — merged with the folder-name markers so
+  // both kinds of cancellation show up red here.
+  const [cancelledRefs, setCancelledRefs] = useState<Set<string>>(new Set<string>())
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -826,6 +863,14 @@ export default function OneDriveBookingsExplorer() {
       const json = await res.json() as { success: boolean; error?: string; data?: { events: DriveEvent[] } }
       if (!json.success) throw new Error(json.error ?? 'Failed to load events')
       setEvents(json.data?.events ?? [])
+
+      try {
+        const cRes  = await fetch('/api/bookings?status=CANCELLED&limit=200')
+        const cJson = await cRes.json() as { success: boolean; data?: { bookings: { bookingRef: string }[] } }
+        if (cJson.success) {
+          setCancelledRefs(new Set((cJson.data?.bookings ?? []).map(b => b.bookingRef.toUpperCase())))
+        }
+      } catch { /* non-fatal — folder-name markers still flag cancellations */ }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to load OneDrive events')
     } finally {
@@ -846,7 +891,7 @@ export default function OneDriveBookingsExplorer() {
     })
   }, [events])
 
-  const tree = useMemo(() => buildTree(events), [events])
+  const tree = useMemo(() => buildTree(events, cancelledRefs), [events, cancelledRefs])
 
   const filteredTree = useMemo<DriveNode[]>(() => {
     const byDrive = tree.filter(d => visibleDrives.has(d.key))

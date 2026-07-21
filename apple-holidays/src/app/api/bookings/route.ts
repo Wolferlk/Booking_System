@@ -57,9 +57,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  if (status) {
-    const statuses = status.split(',').filter(Boolean)
+  const statuses = status ? status.split(',').filter(Boolean) : []
+  if (statuses.length > 0) {
     andClauses.push(statuses.length === 1 ? { status: statuses[0] } : { status: { in: statuses } })
+  }
+
+  // Cancelled bookings are kept out of every list by default. Only the full
+  // bookings list (which asks for them explicitly, and shades them red) and an
+  // explicit status=CANCELLED filter bring them back.
+  const includeCancelled = searchParams.get('includeCancelled') === '1'
+  if (!includeCancelled && !statuses.includes('CANCELLED')) {
+    andClauses.push({ status: { not: 'CANCELLED' } })
   }
 
   if (search) {
