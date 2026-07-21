@@ -2,10 +2,22 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getVendorSession } from '@/lib/vendor-auth'
+import { detectCountryFromRef } from '@/lib/country-detection'
 
 export const dynamic = 'force-dynamic'
 
-// Vendor assigns a driver + vehicle — applied to ALL movements of the same booking
+// Sri Lanka works one-tour-one-driver: assigning on any movement applies to the whole
+// booking. Every other country (SG / MY / VN) allocates per movement.
+function isWholeBookingCountry(
+  operationCountry: string | null,
+  bookingRef: string,
+): boolean {
+  const country = operationCountry ?? detectCountryFromRef(bookingRef)
+  return country === 'SRILANKA'
+}
+
+// Vendor assigns a driver + vehicle — to this movement only, or to every movement of
+// the booking when the booking is a Sri Lanka tour.
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getVendorSession()
   if (!session) return buildApiError('Unauthorized', 401)
@@ -13,7 +25,9 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   // Find the target assignment (verify vendor owns it)
   const assignment = await prisma.assignment.findFirst({
     where: { id: params.id, vendorId: session.id },
-    include: { agendaItem: { include: { agenda: true } } },
+    include: { agendaItem: { include: { agenda: { include: { booking: {
+      select: { bookingRef: true, operationCountry: true },
+    } } } } } },
   })
   if (!assignment) return buildApiError('Not found', 404)
 
@@ -49,13 +63,15 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 
   const bookingId = assignment.agendaItem.agenda.bookingId
+  const booking   = assignment.agendaItem.agenda.booking
+  const wholeBooking = isWholeBookingCountry(booking.operationCountry, booking.bookingRef)
 
-  // Update ALL assignments for this booking that belong to this vendor
   await prisma.assignment.updateMany({
-    where: {
-      vendorId: session.id,
-      agendaItem: { agenda: { bookingId } },
-    },
+    where: wholeBooking
+      // Sri Lanka — every movement of this booking owned by this vendor
+      ? { vendorId: session.id, agendaItem: { agenda: { bookingId } } }
+      // SG / MY / VN — this movement only
+      : { id: assignment.id, vendorId: session.id },
     data: {
       driverId:    driverId  !== undefined ? (driverId  || null) : assignment.driverId,
       driverName:  driverName  ?? (driverId  === null ? null : assignment.driverName),
@@ -66,9 +82,11 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     },
   })
 
-  // Return one updated record with full relations for the UI
-  const updated = await prisma.assignment.findFirst({
-    where: { vendorId: session.id, agendaItem: { agenda: { bookingId } } },
+  // Return the updated record(s) with full relations for the UI
+  const updated = await prisma.assignment.findMany({
+    where: wholeBooking
+      ? { vendorId: session.id, agendaItem: { agenda: { bookingId } } }
+      : { id: assignment.id },
     orderBy: { agendaItem: { date: 'asc' } },
     include: {
       agendaItem: {
@@ -89,5 +107,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     },
   })
 
-  return buildApiSuccess({ ...updated, bookingId }, 'All movements updated')
+  return buildApiSuccess(
+    { assignments: updated, bookingId, wholeBooking },
+    wholeBooking ? 'All movements updated' : 'Movement updated',
+  )
 }

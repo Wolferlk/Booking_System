@@ -255,7 +255,7 @@ export default function AgendaPage() {
     if (sendMode === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) { toast.error('Enter a valid email address'); return }
 
     const subject = sendMode === 'email'
-      ? (sendSubject.trim() || `Movement Chart — ${ref}`)   // auto subject fallback
+      ? (sendSubject.trim() || `Tour Confirmation — ${ref}`)   // auto subject fallback
       : undefined
 
     setSending(true)
@@ -850,7 +850,7 @@ export default function AgendaPage() {
                 setSendDrivers(false)
                 setSendTo(booking?.contactEmail?.trim() ?? '')
                 setSendMessage('')
-                setSendSubject(`Movement Chart — ${ref}`)
+                setSendSubject(`Tour Confirmation — ${ref}`)
                 setSendModal(true)
               }}
               className="btn btn-sm bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 flex items-center gap-1.5"
@@ -1992,7 +1992,7 @@ export default function AgendaPage() {
               <label className="form-label text-xs">Subject</label>
               <input
                 className="form-input"
-                placeholder={`Movement Chart — ${ref}`}
+                placeholder={`Tour Confirmation — ${ref}`}
                 value={sendSubject}
                 onChange={e => setSendSubject(e.target.value)}
               />
@@ -2001,13 +2001,17 @@ export default function AgendaPage() {
 
           {/* Message */}
           <div>
-            <label className="form-label text-xs">Message (optional)</label>
+            <label className="form-label text-xs">
+              {sendMode === 'email' ? 'Extra note (optional)' : 'Message (optional)'}
+            </label>
             <textarea
               className="form-textarea resize-none text-sm"
               rows={3}
               value={sendMessage}
               onChange={e => setSendMessage(e.target.value)}
-              placeholder="Add a custom message to include with the agenda PDF…"
+              placeholder={sendMode === 'email'
+                ? 'Added on top of the standard tour confirmation message…'
+                : 'Add a custom message to include with the agenda PDF…'}
             />
           </div>
 

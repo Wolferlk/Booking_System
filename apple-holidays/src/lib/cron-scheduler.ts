@@ -254,6 +254,19 @@ async function startDriverLogAutoSendScheduler() {
   }
 }
 
+async function startAgendaAutoEmailScheduler() {
+  try {
+    // node-cron scheduler: emails the tour confirmation (agenda PDF) to customers
+    // arriving in 3 days, at AGENDA_AUTO_EMAIL_HOUR (default 09:00) in
+    // AGENDA_AUTO_EMAIL_TZ. Timezone-aware with boot catch-up; gated by the
+    // auto_agenda_email_enabled switch inside the run function.
+    const { startAgendaAutoSendScheduler } = await import('./agenda-auto-send-scheduler')
+    await startAgendaAutoSendScheduler()
+  } catch (err) {
+    console.error('[Scheduler] agenda auto-email scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Master switch ─────────────────────────────────────────────────────────────
 const CRON_ENABLED = true
@@ -297,6 +310,10 @@ export function startCronJobs() {
   // Driver Log auto-send: node-cron daily job at 6pm Sri Lanka (day before tour),
   // timezone-aware with boot catch-up. Backend-only, gated by a global switch.
   void startDriverLogAutoSendScheduler()
+
+  // Tour-confirmation auto-email: node-cron daily job, sends the agenda PDF to
+  // customers arriving in 3 days. Timezone-aware with boot catch-up.
+  void startAgendaAutoEmailScheduler()
 
   setInterval(() => { jobProcessMailboxes() },    FIVE_MIN)
   setInterval(() => { jobOneDrivePoll() },         THREE_MIN)

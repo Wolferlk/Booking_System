@@ -15,7 +15,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { generateAgendaPdf } from '@/lib/generate-agenda-pdf'
-import { PURCHASED_TICKET_STATUSES } from '@/lib/ticket-notes'
+import { AGENDA_INCLUDE, buildAgendaEmailHtml, buildAgendaFileName } from '@/lib/agenda-mailer'
 import { sendMailViaGraph } from '@/lib/send-mail'
 import { putUpload } from '@/lib/storage'
 
@@ -24,31 +24,6 @@ export const maxDuration = 120
 
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
 const WHATSAPP_PROXY   = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
-
-function safeFilePart(value: string | null | undefined): string {
-  return String(value ?? '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '')
-    .replace(/\s+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-}
-
-function buildAgendaFileName(booking: {
-  bookingRef?: string
-  isNumber?: string | null
-  passengers?: { name: string; isLead?: boolean }[]
-}): string {
-  const leadPassenger = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
-  const parts = [
-    booking.isNumber?.trim() || null,
-    booking.bookingRef?.trim() || null,
-    leadPassenger?.name ?? null,
-  ].map(safeFilePart).filter(Boolean)
-
-  return `${parts.join('_') || 'agenda'}.pdf`
-}
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
@@ -88,46 +63,7 @@ async function handleSend(
   // ── Load agenda data ──────────────────────────────────────────────────────
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: params.ref },
-    include: {
-      flights: { orderBy: { date: 'asc' } },
-      accommodations: { orderBy: { checkIn: 'asc' } },
-      passengers: { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
-      emergencyContacts: true,
-      // Purchased/paid only — draft tickets stay internal and never get sent out.
-      tickets: {
-        where: { activated: true, status: { in: [...PURCHASED_TICKET_STATUSES] } },
-        include: {
-          pnlLine: { select: { activity: true, paymentRefNumber: true, category: true } },
-          agendaItem: { select: { date: true, location: true, toPoint: true } },
-        },
-        orderBy: { createdAt: 'asc' },
-      },
-      tourAgenda: {
-        include: {
-          items: {
-            orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
-            include: {
-              assignment: {
-                include: {
-                  driver: {
-                    include: {
-                      vehicle: true,
-                    },
-                  },
-                  vendor: {
-                    select: {
-                      id: true,
-                      name: true,
-                      phone: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
+    include: AGENDA_INCLUDE,
   })
 
   if (!booking) return buildApiError('Booking not found', 404)
@@ -252,20 +188,10 @@ async function handleSend(
   if (mode === 'email') {
     if (!to) return buildApiError('Email address required', 400)
 
-    const emailSubject = subject ?? `Movement Chart — ${params.ref}`
-    const bodyHtml = `
-      <div style="font-family:Arial,sans-serif;color:#1e293b;max-width:600px">
-        <div style="background:#0f172a;padding:16px 20px;border-radius:8px 8px 0 0">
-          <h2 style="color:#f1f5f9;margin:0;font-size:16px">Movement Chart</h2>
-          <p style="color:#d97706;margin:4px 0 0;font-family:monospace;font-size:14px">${params.ref}</p>
-        </div>
-        <div style="border:1px solid #e2e8f0;border-top:none;padding:20px;border-radius:0 0 8px 8px">
-          <p style="margin:0 0 12px">${message ?? 'Please find the movement chart (agenda) for this booking in the attached PDF.'}</p>
-          <p style="color:#64748b;font-size:12px;margin:0">
-            ${showDrivers ? 'This PDF includes driver allocation details.' : 'This PDF does not include driver information.'}
-          </p>
-        </div>
-      </div>`
+    const emailSubject = subject ?? `Tour Confirmation — ${params.ref}`
+    // Standard customer tour-confirmation body; anything typed in the modal is
+    // appended as a highlighted note rather than replacing the template.
+    const bodyHtml = buildAgendaEmailHtml(booking as never, message)
 
     try {
       await sendMailViaGraph({

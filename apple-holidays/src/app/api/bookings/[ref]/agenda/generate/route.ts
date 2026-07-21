@@ -8,6 +8,7 @@ import openai from '@/lib/openai'
 import fs from 'fs'
 import path from 'path'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
+import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -254,6 +255,15 @@ FIRST AND LAST ITEM RULE (CRITICAL):
   - If the TQ does not mention the service type for arrival/departure transfers,
     DEFAULT to PVT_TRANSFER (Private Transfer).
 
+NO DUPLICATE MOVEMENTS (CRITICAL):
+  - The same physical movement must appear ONCE only. The TQ frequently describes the
+    arrival transfer twice — once as flight/hotel data and once as an itinerary line such as
+    "City Tour Phu Quoc Airport to Hotel city center | Private Transfers". Emit ONE item for it.
+  - A date can have at most ONE airport→hotel arrival transfer and ONE hotel→airport
+    departure transfer. Merge the details of both sources into that single item.
+  - Never put a whole route inside toPoint ("X Airport to Hotel city center"). Split it:
+    fromPoint = "PQC Airport", toPoint = "Night Sea Hotel".
+
 MULTI-TRANSFER DAYS:
   - A single day can have MULTIPLE agenda items (e.g., airport arrival transfer + hotel check-in,
     or a morning tour + evening dinner transfer).
@@ -335,7 +345,7 @@ ${tqDocumentText
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
   }
 
-  const items = rawItems.map(item => {
+  const mapped = rawItems.map(item => {
     const from = String(item.fromPoint ?? '')
     const to   = String(item.toPoint   ?? '')
     const loc  = String(item.location  ?? '')
@@ -405,6 +415,9 @@ ${tqDocumentText
       toPoint:     normTo,
     }
   })
+
+  // ── Drop movements the AI listed twice (structured transfer + TQ line) ────
+  const items = dedupeAgendaItems(mapped)
 
   // ── Enforce first & last items are PVT_TRANSFER ───────────────────────────
   const NON_TRANSFER_TYPES = new Set(['OWN_ARRANGEMENT', 'INTERNAL_TOUR'])
