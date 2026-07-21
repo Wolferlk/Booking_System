@@ -54,6 +54,9 @@ function isOwnArrangement(a: Record<string, unknown>): boolean {
 /** Pre-filled reason when the file handler cancels without typing their own. */
 const DEFAULT_CANCEL_REASON = 'File handler cancelled this booking'
 
+/** Roles allowed to cancel — kept in step with the cancel API route. */
+const CAN_CANCEL_ROLES: string[] = ['BT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
   const router = useRouter()
@@ -1352,7 +1355,7 @@ Wishing you a wonderful trip! ✈️
               )}
 
               {/* Cancel */}
-              {!['COMPLETED', 'CANCELLED'].includes(status) && ['BT_USER', 'SUPER_ADMIN', 'TE_USER'].includes(role) && (
+              {!['COMPLETED', 'CANCELLED'].includes(status) && CAN_CANCEL_ROLES.includes(role) && (
                 <Button variant="danger" size="sm"
                   onClick={() => { setCancelReason(DEFAULT_CANCEL_REASON); setCancelModal(true) }}>
                   <XCircle className="w-4 h-4 mr-1" /> Cancel Booking
