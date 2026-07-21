@@ -6,6 +6,7 @@ import { parsePNLXlsx } from '@/lib/parsers/xlsx-parser'
 import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detection'
 import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
+import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import { statusAfterAmendment } from '@/lib/state-machine'
 import fs from 'fs'
@@ -506,6 +507,13 @@ export async function upsertAgenda(
     }
 
     if (!agendaItems.length) return 0
+
+    // Same movement often arrives twice (structured transfer + TQ itinerary line)
+    const beforeDedupe = agendaItems.length
+    agendaItems = dedupeAgendaItems(agendaItems)
+    if (agendaItems.length < beforeDedupe) {
+      console.log(`[Automation] Removed ${beforeDedupe - agendaItems.length} duplicate agenda item(s) for ${bookingRef}`)
+    }
 
     if (detectCountryFromRef(bookingRef) === 'SRILANKA') {
       agendaItems = applySriLankaMovementDefaults(agendaItems)
