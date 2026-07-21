@@ -48,23 +48,11 @@ interface BookingGroup {
   paxAdults: number
   paxChildren: number
   operationCountry: string | null
-  firstAssignmentId: string
-  driverId: string | null
-  driverName: string | null
-  vehiclePlate: string | null
-  vehicleType: string | null
-  driver: TripAssignment['driver']
+  /** Sri Lanka = one driver + vehicle for the whole tour. Others = per movement. */
+  wholeBooking: boolean
   firstDate: string
   lastDate: string
-  movementCount: number
-  movements: {
-    date: string
-    location: string
-    fromPoint: string | null
-    toPoint: string | null
-    serviceType: string | null
-    meetingTime: string | null
-  }[]
+  movements: TripAssignment[]
 }
 
 interface DriverOption  { id: string; name: string; phone: string }
@@ -77,9 +65,6 @@ const FLAG: Record<string, string> = {
   MALAYSIA: '🇲🇾', SINGAPORE_MALAYSIA: '🇸🇬',
 }
 
-function fmtDate(d: string) {
-  return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 function fmtShort(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
@@ -94,55 +79,48 @@ function svcLabel(t: string | null) {
   return null
 }
 
+/** Mirrors the server rule in /api/vendor/trips/[id] — only Sri Lanka is booking-wide. */
+function isWholeBookingCountry(operationCountry: string | null, bookingRef: string) {
+  const country = operationCountry ?? (bookingRef.toUpperCase().startsWith('IS') ? 'SRILANKA' : null)
+  return country === 'SRILANKA'
+}
+
 function groupByBooking(assignments: TripAssignment[]): BookingGroup[] {
   const map = new Map<string, BookingGroup>()
   for (const a of assignments) {
-    const ref = a.agendaItem.agenda.booking.bookingRef
-    if (!map.has(ref)) {
-      map.set(ref, {
-        bookingRef:        ref,
-        isNumber:          a.agendaItem.agenda.booking.isNumber,
-        dealName:          a.agendaItem.agenda.booking.dealName,
-        paxAdults:         a.agendaItem.agenda.booking.paxAdults,
-        paxChildren:       a.agendaItem.agenda.booking.paxChildren,
-        operationCountry:  a.agendaItem.agenda.booking.operationCountry,
-        firstAssignmentId: a.id,
-        driverId:          a.driverId,
-        driverName:        a.driverName,
-        vehiclePlate:      a.vehiclePlate,
-        vehicleType:       a.vehicleType,
-        driver:            a.driver,
-        firstDate:         a.agendaItem.date,
-        lastDate:          a.agendaItem.date,
-        movementCount:     1,
-        movements: [{
-          date:        a.agendaItem.date,
-          location:    a.agendaItem.location,
-          fromPoint:   a.agendaItem.fromPoint,
-          toPoint:     a.agendaItem.toPoint,
-          serviceType: a.agendaItem.serviceType,
-          meetingTime: a.agendaItem.meetingTime,
-        }],
-      })
-    } else {
-      const g = map.get(ref)!
-      g.movementCount++
-      if (new Date(a.agendaItem.date) < new Date(g.firstDate)) g.firstDate = a.agendaItem.date
-      if (new Date(a.agendaItem.date) > new Date(g.lastDate))  g.lastDate  = a.agendaItem.date
-      g.movements.push({
-        date:        a.agendaItem.date,
-        location:    a.agendaItem.location,
-        fromPoint:   a.agendaItem.fromPoint,
-        toPoint:     a.agendaItem.toPoint,
-        serviceType: a.agendaItem.serviceType,
-        meetingTime: a.agendaItem.meetingTime,
-      })
+    const b   = a.agendaItem.agenda.booking
+    const ref = b.bookingRef
+    let g = map.get(ref)
+    if (!g) {
+      g = {
+        bookingRef:       ref,
+        isNumber:         b.isNumber,
+        dealName:         b.dealName,
+        paxAdults:        b.paxAdults,
+        paxChildren:      b.paxChildren,
+        operationCountry: b.operationCountry,
+        wholeBooking:     isWholeBookingCountry(b.operationCountry, ref),
+        firstDate:        a.agendaItem.date,
+        lastDate:         a.agendaItem.date,
+        movements:        [],
+      }
+      map.set(ref, g)
     }
+    if (new Date(a.agendaItem.date) < new Date(g.firstDate)) g.firstDate = a.agendaItem.date
+    if (new Date(a.agendaItem.date) > new Date(g.lastDate))  g.lastDate  = a.agendaItem.date
+    g.movements.push(a)
   }
-  return [...map.values()].sort((a, b) =>
+  const groups = Array.from(map.values())
+  groups.forEach(g => g.movements.sort((a, b) =>
+    new Date(a.agendaItem.date).getTime() - new Date(b.agendaItem.date).getTime()
+  ))
+  return groups.sort((a, b) =>
     new Date(a.firstDate).getTime() - new Date(b.firstDate).getTime()
   )
 }
+
+// SELECT base class — solid dark bg so text is always readable
+const SEL = 'w-full bg-[#0d1628] border border-white/15 rounded-xl py-3 px-3.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500/60 appearance-none cursor-pointer'
 
 // ── Stat Card ─────────────────────────────────────────────────────────────────
 
@@ -155,28 +133,211 @@ function StatCard({ label, value, accent }: { label: string; value: number; acce
   )
 }
 
+// ── Driver / Vehicle pickers ──────────────────────────────────────────────────
+
+function DriverSelect({
+  value, onChange, drivers, loading, compact,
+}: {
+  value: string
+  onChange: (v: string) => void
+  drivers: DriverOption[]
+  loading: boolean
+  compact?: boolean
+}) {
+  if (loading) return (
+    <div className="flex items-center gap-2 px-3.5 py-3 bg-[#0d1628] border border-white/15 rounded-xl">
+      <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
+      <span className="text-slate-500 text-sm">Loading…</span>
+    </div>
+  )
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={compact ? SEL.replace('py-3', 'py-2.5') : SEL}
+        style={{ colorScheme: 'dark', WebkitAppearance: 'none' }}
+      >
+        <option value="" style={{ background: '#0d1628', color: '#94a3b8' }}>— No driver —</option>
+        {drivers.map(d => (
+          <option key={d.id} value={d.id} style={{ background: '#0d1628', color: '#fff' }}>
+            {d.name} · {d.phone}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+    </div>
+  )
+}
+
+function VehicleSelect({
+  value, onChange, vehicles, loading, compact,
+}: {
+  value: string
+  onChange: (v: string) => void
+  vehicles: VehicleOption[]
+  loading: boolean
+  compact?: boolean
+}) {
+  if (loading) return (
+    <div className="flex items-center gap-2 px-3.5 py-3 bg-[#0d1628] border border-white/15 rounded-xl">
+      <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
+      <span className="text-slate-500 text-sm">Loading…</span>
+    </div>
+  )
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={compact ? SEL.replace('py-3', 'py-2.5') : SEL}
+        style={{ colorScheme: 'dark', WebkitAppearance: 'none' }}
+      >
+        <option value="" style={{ background: '#0d1628', color: '#94a3b8' }}>— No vehicle —</option>
+        {vehicles.map(v => (
+          <option key={v.id} value={v.id} style={{ background: '#0d1628', color: '#fff' }}>
+            {v.plateNo}{v.brand ? ` · ${v.brand}${v.model ? ' ' + v.model : ''}` : ` · ${v.type}`}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+    </div>
+  )
+}
+
+// ── Movement row (per-movement allocation — SG / MY / VN) ─────────────────────
+
+function MovementRow({
+  assignment, index, drivers, vehicles, loadingOpts, onSaved,
+}: {
+  assignment: TripAssignment
+  index: number
+  drivers: DriverOption[]
+  vehicles: VehicleOption[]
+  loadingOpts: boolean
+  onSaved: (updated: TripAssignment[]) => void
+}) {
+  const [selDriver,  setSelDriver]  = useState(assignment.driverId ?? '')
+  const [selVehicle, setSelVehicle] = useState('')
+  const [saving,     setSaving]     = useState(false)
+  const m   = assignment.agendaItem
+  const svc = svcLabel(m.serviceType)
+
+  // Vehicles arrive after the first render — match the saved plate back to its id
+  useEffect(() => {
+    if (!assignment.vehiclePlate || selVehicle) return
+    const match = vehicles.find(v => v.plateNo === assignment.vehiclePlate)
+    if (match) setSelVehicle(match.id)
+  }, [vehicles, assignment.vehiclePlate, selVehicle])
+
+  // Until the fleet list arrives selVehicle can't be resolved, so ignore it for dirtiness
+  const vehicleDirty = vehicles.length > 0 &&
+    (vehicles.find(v => v.id === selVehicle)?.plateNo ?? null) !== assignment.vehiclePlate
+  const dirty = selDriver !== (assignment.driverId ?? '') || vehicleDirty
+
+  async function save() {
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/vendor/trips/${assignment.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId: selDriver || null, vehicleId: selVehicle || null }),
+      })
+      const data = await res.json()
+      if (!data.success) { toast.error(data.error ?? 'Failed to save'); return }
+      onSaved(data.data.assignments)
+      toast.success(`Movement ${index + 1} updated`)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="rounded-xl border border-white/8 bg-white/3 p-3 space-y-3">
+      {/* Movement header */}
+      <div className="flex items-start gap-2.5">
+        <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <span className="text-[10px] font-bold text-slate-400">{index + 1}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-slate-200 text-xs font-semibold truncate">{m.location}</p>
+          {(m.fromPoint || m.toPoint) && (
+            <p className="text-slate-500 text-[10px] truncate">{m.fromPoint ?? '—'} → {m.toPoint ?? '—'}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {svc && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${svc.cls}`}>{svc.label}</span>}
+          <span className="text-slate-500 text-[10px]">{fmtShort(m.date)}</span>
+        </div>
+      </div>
+
+      {/* Per-movement driver + vehicle */}
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        <div className="space-y-1">
+          <label className="text-[10px] text-slate-500 flex items-center gap-1.5 font-semibold uppercase tracking-wider">
+            <User2 className="w-3 h-3" /> Driver
+          </label>
+          <DriverSelect value={selDriver} onChange={setSelDriver} drivers={drivers} loading={loadingOpts} compact />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] text-slate-500 flex items-center gap-1.5 font-semibold uppercase tracking-wider">
+            <Car className="w-3 h-3" /> Vehicle
+          </label>
+          <VehicleSelect value={selVehicle} onChange={setSelVehicle} vehicles={vehicles} loading={loadingOpts} compact />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          onClick={save}
+          disabled={saving || loadingOpts || !dirty}
+          className="bg-brand-500 hover:bg-brand-600 text-white rounded-lg px-4 py-2 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-40"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+          {dirty ? 'Save this movement' : 'Saved'}
+        </button>
+        {assignment.driver && (
+          <span className="text-[11px] text-emerald-300 font-semibold flex items-center gap-1">
+            <User2 className="w-3 h-3" />{assignment.driver.name}
+          </span>
+        )}
+        {assignment.vehiclePlate && (
+          <span className="text-[11px] text-blue-300 font-mono flex items-center gap-1">
+            <Car className="w-3 h-3" />{assignment.vehiclePlate}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Booking Card ──────────────────────────────────────────────────────────────
 
 function BookingCard({
   group,
-  onUpdate,
+  onAssignmentsUpdated,
 }: {
   group: BookingGroup
-  onUpdate: (ref: string, patch: Partial<BookingGroup>) => void
+  onAssignmentsUpdated: (updated: TripAssignment[]) => void
 }) {
-  const [open,      setOpen]      = useState(false)
-  const [drivers,   setDrivers]   = useState<DriverOption[]>([])
-  const [vehicles,  setVehicles]  = useState<VehicleOption[]>([])
-  const [selDriver, setSelDriver] = useState(group.driverId ?? '')
-  const [selVehicle,setSelVehicle]= useState('')
-  const [saving,    setSaving]    = useState(false)
+  const [open,        setOpen]        = useState(false)
+  const [drivers,     setDrivers]     = useState<DriverOption[]>([])
+  const [vehicles,    setVehicles]    = useState<VehicleOption[]>([])
   const [loadingOpts, setLoadingOpts] = useState(false)
+  const [loaded,      setLoaded]      = useState(false)
 
+  // Booking-wide form state (Sri Lanka only)
+  const first = group.movements[0]
+  const [selDriver,  setSelDriver]  = useState(first?.driverId ?? '')
+  const [selVehicle, setSelVehicle] = useState('')
+  const [saving,     setSaving]     = useState(false)
+
+  const movementCount = group.movements.length
   const today   = new Date(new Date().toDateString())
   const isPast  = new Date(group.lastDate) < today
 
+  const assignedCount = group.movements.filter(m => m.driverId || m.vehiclePlate).length
+
   async function loadOptions() {
-    if (drivers.length) return
+    if (loaded) return
     setLoadingOpts(true)
     try {
       const [dr, vh] = await Promise.all([
@@ -186,11 +347,12 @@ function BookingCard({
       if (dr.success) setDrivers(dr.data)
       if (vh.success) {
         setVehicles(vh.data)
-        if (group.vehiclePlate) {
-          const match = (vh.data as VehicleOption[]).find(v => v.plateNo === group.vehiclePlate)
+        if (group.wholeBooking && first?.vehiclePlate) {
+          const match = (vh.data as VehicleOption[]).find(v => v.plateNo === first.vehiclePlate)
           if (match) setSelVehicle(match.id)
         }
       }
+      setLoaded(true)
     } finally { setLoadingOpts(false) }
   }
 
@@ -199,42 +361,31 @@ function BookingCard({
     setOpen(o => !o)
   }
 
-  async function save() {
+  async function saveWholeBooking() {
+    if (!first) return
     setSaving(true)
     try {
-      const res  = await fetch(`/api/vendor/trips/${group.firstAssignmentId}`, {
+      const res = await fetch(`/api/vendor/trips/${first.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          driverId:  selDriver  || null,
-          vehicleId: selVehicle || null,
-        }),
+        body: JSON.stringify({ driverId: selDriver || null, vehicleId: selVehicle || null }),
       })
       const data = await res.json()
       if (!data.success) { toast.error(data.error ?? 'Failed to save'); return }
-      const d = data.data
-      onUpdate(group.bookingRef, {
-        driverId:    d.driverId,
-        driverName:  d.driverName,
-        vehiclePlate:d.vehiclePlate,
-        vehicleType: d.vehicleType,
-        driver:      d.driver,
-      })
-      toast.success(`Driver assigned to all ${group.movementCount} movement${group.movementCount !== 1 ? 's' : ''}`)
+      onAssignmentsUpdated(data.data.assignments)
+      toast.success(`Driver assigned to all ${movementCount} movement${movementCount !== 1 ? 's' : ''}`)
       setOpen(false)
     } finally { setSaving(false) }
   }
 
   const selDriverLabel  = drivers.find(d => d.id === selDriver)?.name
-  const selVehicleLabel = vehicles.find(v => v.id === selVehicle)?.plateNo ?? group.vehiclePlate
-  const hasAssignment   = !!(group.driverId || group.vehiclePlate)
-
-  // SELECT base class — solid dark bg so text is always readable
-  const SEL = 'w-full bg-[#0d1628] border border-white/15 rounded-xl py-3 px-3.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-brand-500/40 focus:border-brand-500/60 appearance-none cursor-pointer'
+  const selVehicleLabel = vehicles.find(v => v.id === selVehicle)?.plateNo ?? first?.vehiclePlate
+  const hasAssignment   = assignedCount > 0
+  const fullyAssigned   = assignedCount === movementCount
 
   return (
     <div className={`rounded-2xl border overflow-hidden transition-all ${
-      isPast ? 'border-white/6 bg-white/2' : hasAssignment ? 'border-emerald-500/20 bg-white/4' : 'border-white/10 bg-white/4'
+      isPast ? 'border-white/6 bg-white/2' : fullyAssigned ? 'border-emerald-500/20 bg-white/4' : 'border-white/10 bg-white/4'
     }`}>
       <button onClick={toggle} className="w-full text-left p-4">
         <div className="flex items-start gap-3">
@@ -268,7 +419,7 @@ function BookingCard({
               </div>
               <div className="flex items-center gap-1 text-xs text-slate-500">
                 <Route className="w-3 h-3" />
-                {group.movementCount} movement{group.movementCount !== 1 ? 's' : ''}
+                {movementCount} movement{movementCount !== 1 ? 's' : ''}
               </div>
             </div>
           </div>
@@ -283,161 +434,160 @@ function BookingCard({
 
         {/* Assignment status */}
         <div className="flex items-center gap-2 mt-3 flex-wrap">
-          {group.driver ? (
-            <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2.5 py-1">
-              <User2 className="w-3 h-3 text-emerald-400" />
-              <span className="text-xs text-emerald-300 font-semibold">{group.driver.name}</span>
-            </div>
+          {group.wholeBooking ? (
+            <>
+              {first?.driver ? (
+                <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-2.5 py-1">
+                  <User2 className="w-3 h-3 text-emerald-400" />
+                  <span className="text-xs text-emerald-300 font-semibold">{first.driver.name}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1">
+                  <Clock className="w-3 h-3 text-amber-400" />
+                  <span className="text-xs text-amber-300 font-semibold">No driver</span>
+                </div>
+              )}
+              {first?.vehiclePlate ? (
+                <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1">
+                  <Car className="w-3 h-3 text-blue-400" />
+                  <span className="text-xs text-blue-300 font-mono">{first.vehiclePlate}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-white/5 border border-white/8 rounded-lg px-2.5 py-1">
+                  <Car className="w-3 h-3 text-slate-500" />
+                  <span className="text-xs text-slate-500">No vehicle</span>
+                </div>
+              )}
+            </>
           ) : (
-            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2.5 py-1">
-              <Clock className="w-3 h-3 text-amber-400" />
-              <span className="text-xs text-amber-300 font-semibold">No driver</span>
-            </div>
-          )}
-          {group.vehiclePlate ? (
-            <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1">
-              <Car className="w-3 h-3 text-blue-400" />
-              <span className="text-xs text-blue-300 font-mono">{group.vehiclePlate}</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 bg-white/5 border border-white/8 rounded-lg px-2.5 py-1">
-              <Car className="w-3 h-3 text-slate-500" />
-              <span className="text-xs text-slate-500">No vehicle</span>
+            <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 border ${
+              fullyAssigned
+                ? 'bg-emerald-500/10 border-emerald-500/20'
+                : hasAssignment
+                  ? 'bg-blue-500/10 border-blue-500/20'
+                  : 'bg-amber-500/10 border-amber-500/20'
+            }`}>
+              {fullyAssigned
+                ? <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                : <Clock className={`w-3 h-3 ${hasAssignment ? 'text-blue-400' : 'text-amber-400'}`} />}
+              <span className={`text-xs font-semibold ${
+                fullyAssigned ? 'text-emerald-300' : hasAssignment ? 'text-blue-300' : 'text-amber-300'
+              }`}>
+                {assignedCount} of {movementCount} movement{movementCount !== 1 ? 's' : ''} allocated
+              </span>
             </div>
           )}
         </div>
       </button>
 
-      {/* Movements summary (collapsed list inside the card) */}
       {open && (
         <div className="border-t border-white/8 bg-black/20">
-          {/* Movements preview */}
-          <div className="px-4 pt-3 pb-2 space-y-1.5">
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Route className="w-3 h-3" />Movements ({group.movementCount})
-            </p>
-            {group.movements.slice(0, 5).map((m, i) => {
-              const svc = svcLabel(m.serviceType)
-              return (
-                <div key={i} className="flex items-center gap-2.5 py-1.5">
-                  <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center flex-shrink-0">
-                    <MapPin className="w-3 h-3 text-slate-500" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-slate-300 text-xs font-semibold truncate">{m.location}</p>
-                    {(m.fromPoint || m.toPoint) && (
-                      <p className="text-slate-500 text-[10px] truncate">{m.fromPoint ?? '—'} → {m.toPoint ?? '—'}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-shrink-0">
-                    {svc && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${svc.cls}`}>{svc.label}</span>}
-                    <span className="text-slate-600 text-[10px]">{fmtShort(m.date)}</span>
-                  </div>
-                </div>
-              )
-            })}
-            {group.movementCount > 5 && (
-              <p className="text-slate-600 text-[11px] pl-8">+{group.movementCount - 5} more movements</p>
-            )}
-          </div>
-
-          {/* Assignment form */}
-          <div className="px-4 pb-4 pt-2 space-y-3 border-t border-white/6 mt-2">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Navigation2 className="w-3 h-3" />
-              Assign Driver &amp; Vehicle
-              <span className="text-slate-600 font-normal normal-case tracking-normal">
-                — applies to all {group.movementCount} movements
-              </span>
-            </p>
-
-            {/* Driver */}
-            <div className="space-y-1.5">
-              <label className="text-xs text-slate-500 flex items-center gap-1.5 font-semibold">
-                <User2 className="w-3 h-3" /> Driver
-              </label>
-              {loadingOpts ? (
-                <div className="flex items-center gap-2 px-3.5 py-3 bg-[#0d1628] border border-white/15 rounded-xl">
-                  <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
-                  <span className="text-slate-500 text-sm">Loading…</span>
-                </div>
-              ) : (
-                <div className="relative">
-                  <select
-                    value={selDriver}
-                    onChange={e => setSelDriver(e.target.value)}
-                    className={SEL}
-                    style={{ colorScheme: 'dark', WebkitAppearance: 'none' }}
-                  >
-                    <option value="" style={{ background: '#0d1628', color: '#94a3b8' }}>— No driver —</option>
-                    {drivers.map(d => (
-                      <option key={d.id} value={d.id} style={{ background: '#0d1628', color: '#fff' }}>
-                        {d.name} · {d.phone}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-                </div>
-              )}
-            </div>
-
-            {/* Vehicle */}
-            <div className="space-y-1.5">
-              <label className="text-xs text-slate-500 flex items-center gap-1.5 font-semibold">
-                <Car className="w-3 h-3" /> Vehicle
-              </label>
-              {loadingOpts ? (
-                <div className="flex items-center gap-2 px-3.5 py-3 bg-[#0d1628] border border-white/15 rounded-xl">
-                  <Loader2 className="w-3.5 h-3.5 text-slate-500 animate-spin" />
-                  <span className="text-slate-500 text-sm">Loading…</span>
-                </div>
-              ) : (
-                <div className="relative">
-                  <select
-                    value={selVehicle}
-                    onChange={e => setSelVehicle(e.target.value)}
-                    className={SEL}
-                    style={{ colorScheme: 'dark', WebkitAppearance: 'none' }}
-                  >
-                    <option value="" style={{ background: '#0d1628', color: '#94a3b8' }}>— No vehicle —</option>
-                    {vehicles.map(v => (
-                      <option key={v.id} value={v.id} style={{ background: '#0d1628', color: '#fff' }}>
-                        {v.plateNo}{v.brand ? ` · ${v.brand}${v.model ? ' ' + v.model : ''}` : ` · ${v.type}`}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-                </div>
-              )}
-            </div>
-
-            {/* Preview */}
-            {(selDriverLabel || selVehicleLabel) && (
-              <div className="bg-white/4 border border-white/8 rounded-xl px-3.5 py-3 flex items-center gap-3 flex-wrap">
-                {selDriverLabel && (
-                  <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span className="text-xs text-emerald-300 font-semibold">{selDriverLabel}</span>
-                  </div>
-                )}
-                {selVehicleLabel && (
-                  <div className="flex items-center gap-1.5">
-                    <Car className="w-3.5 h-3.5 text-blue-400" />
-                    <span className="text-xs text-blue-300 font-mono">{selVehicleLabel}</span>
-                  </div>
+          {group.wholeBooking ? (
+            <>
+              {/* ── Sri Lanka: one driver + vehicle for the whole tour ── */}
+              <div className="px-4 pt-3 pb-2 space-y-1.5">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                  <Route className="w-3 h-3" />Movements ({movementCount})
+                </p>
+                {group.movements.slice(0, 5).map(a => {
+                  const m   = a.agendaItem
+                  const svc = svcLabel(m.serviceType)
+                  return (
+                    <div key={a.id} className="flex items-center gap-2.5 py-1.5">
+                      <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center flex-shrink-0">
+                        <MapPin className="w-3 h-3 text-slate-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-slate-300 text-xs font-semibold truncate">{m.location}</p>
+                        {(m.fromPoint || m.toPoint) && (
+                          <p className="text-slate-500 text-[10px] truncate">{m.fromPoint ?? '—'} → {m.toPoint ?? '—'}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                        {svc && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${svc.cls}`}>{svc.label}</span>}
+                        <span className="text-slate-600 text-[10px]">{fmtShort(m.date)}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+                {movementCount > 5 && (
+                  <p className="text-slate-600 text-[11px] pl-8">+{movementCount - 5} more movements</p>
                 )}
               </div>
-            )}
 
-            <button
-              onClick={save}
-              disabled={saving || loadingOpts}
-              className="w-full bg-brand-500 hover:bg-brand-600 text-white rounded-xl py-3.5 text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Confirm Assignment
-            </button>
-          </div>
+              <div className="px-4 pb-4 pt-2 space-y-3 border-t border-white/6 mt-2">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Navigation2 className="w-3 h-3" />
+                  Assign Driver &amp; Vehicle
+                  <span className="text-slate-600 font-normal normal-case tracking-normal">
+                    — applies to all {movementCount} movements
+                  </span>
+                </p>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-500 flex items-center gap-1.5 font-semibold">
+                    <User2 className="w-3 h-3" /> Driver
+                  </label>
+                  <DriverSelect value={selDriver} onChange={setSelDriver} drivers={drivers} loading={loadingOpts} />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs text-slate-500 flex items-center gap-1.5 font-semibold">
+                    <Car className="w-3 h-3" /> Vehicle
+                  </label>
+                  <VehicleSelect value={selVehicle} onChange={setSelVehicle} vehicles={vehicles} loading={loadingOpts} />
+                </div>
+
+                {(selDriverLabel || selVehicleLabel) && (
+                  <div className="bg-white/4 border border-white/8 rounded-xl px-3.5 py-3 flex items-center gap-3 flex-wrap">
+                    {selDriverLabel && (
+                      <div className="flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-xs text-emerald-300 font-semibold">{selDriverLabel}</span>
+                      </div>
+                    )}
+                    {selVehicleLabel && (
+                      <div className="flex items-center gap-1.5">
+                        <Car className="w-3.5 h-3.5 text-blue-400" />
+                        <span className="text-xs text-blue-300 font-mono">{selVehicleLabel}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  onClick={saveWholeBooking}
+                  disabled={saving || loadingOpts}
+                  className="w-full bg-brand-500 hover:bg-brand-600 text-white rounded-xl py-3.5 text-sm font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Confirm Assignment
+                </button>
+              </div>
+            </>
+          ) : (
+            /* ── SG / MY / VN: a driver + vehicle per movement ── */
+            <div className="px-4 py-4 space-y-3">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Navigation2 className="w-3 h-3" />
+                Allocate per movement
+                <span className="text-slate-600 font-normal normal-case tracking-normal">
+                  — each movement can have its own driver &amp; vehicle
+                </span>
+              </p>
+              {group.movements.map((a, i) => (
+                <MovementRow
+                  key={a.id}
+                  assignment={a}
+                  index={i}
+                  drivers={drivers}
+                  vehicles={vehicles}
+                  loadingOpts={loadingOpts}
+                  onSaved={onAssignmentsUpdated}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -463,13 +613,19 @@ export default function VendorDashboardPage() {
   const upcoming  = groups.filter(g => new Date(g.lastDate) >= today)
   const past      = groups.filter(g => new Date(g.lastDate) <  today)
 
-  function handleUpdate(ref: string, patch: Partial<BookingGroup>) {
+  /** Merge the assignment rows the API echoed back into local state. */
+  function handleAssignmentsUpdated(updated: TripAssignment[]) {
+    if (!updated?.length) return
+    const byId = new Map(updated.map(u => [u.id, u]))
     setAssignments(prev =>
-      prev.map(a =>
-        a.agendaItem.agenda.booking.bookingRef === ref
-          ? { ...a, ...patch }
+      prev.map(a => {
+        const u = byId.get(a.id)
+        return u
+          ? { ...a, driverId: u.driverId, driverName: u.driverName,
+              vehiclePlate: u.vehiclePlate, vehicleType: u.vehicleType,
+              notes: u.notes, driver: u.driver }
           : a
-      )
+      })
     )
   }
 
@@ -485,7 +641,8 @@ export default function VendorDashboardPage() {
         <div>
           <h1 className="text-white font-black text-2xl sm:text-3xl">Assigned Bookings</h1>
           <p className="text-slate-500 text-sm mt-1">
-            Each card is one booking. Assign a driver and vehicle — it applies to all movements in that booking.
+            Each card is one booking. Sri Lanka tours take one driver and vehicle for the whole tour —
+            every other country is allocated movement by movement.
           </p>
         </div>
         <div className="grid grid-cols-3 gap-3 sm:min-w-[280px]">
@@ -512,7 +669,7 @@ export default function VendorDashboardPage() {
               </p>
               <div className="space-y-3">
                 {upcoming.map(g => (
-                  <BookingCard key={g.bookingRef} group={g} onUpdate={handleUpdate} />
+                  <BookingCard key={g.bookingRef} group={g} onAssignmentsUpdated={handleAssignmentsUpdated} />
                 ))}
               </div>
             </section>
@@ -524,7 +681,7 @@ export default function VendorDashboardPage() {
               </p>
               <div className="space-y-3 opacity-60">
                 {past.slice(0, 10).map(g => (
-                  <BookingCard key={g.bookingRef} group={g} onUpdate={handleUpdate} />
+                  <BookingCard key={g.bookingRef} group={g} onAssignmentsUpdated={handleAssignmentsUpdated} />
                 ))}
               </div>
             </section>
