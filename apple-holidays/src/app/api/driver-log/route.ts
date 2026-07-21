@@ -40,6 +40,8 @@ export async function GET(_req: NextRequest) {
   const bookings = await prisma.booking.findMany({
     where: {
       operationCountry: 'SRILANKA',
+      // Cancelled bookings drop out of every operational list.
+      status: { not: 'CANCELLED' },
       OR: [
         { driverLog: { isNot: null } },
         { externalPnlLink: { isNot: null } },

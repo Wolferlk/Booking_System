@@ -258,6 +258,8 @@ function BookingsPageInner() {
     params.set('sortDir', sortDir)
     params.set('page',    String(page))
     params.set('limit',   String(limit))
+    // This is the one place cancelled bookings are still listed (shaded + red).
+    params.set('includeCancelled', '1')
     try {
       const res  = await fetch(`/api/bookings?${params}`)
       const json = await res.json()
@@ -989,10 +991,17 @@ function BookingsPageInner() {
                     const lead       = b.passengers.find(p => p.isLead) ?? b.passengers[0]
                     const isSelected = selected.has(b.bookingRef)
                     const snippets   = getMatchSnippets(b, contentSearch)
+                    // Cancelled bookings stay in this list only — shaded, struck through
+                    // and red-marked so they read as dead at a glance.
+                    const isCancelled = b.status === 'CANCELLED'
                     return (
                       <tr
                         key={b.id}
-                        className={`cursor-pointer hover:bg-slate-50 transition-colors ${isSelected ? 'bg-red-50/60' : ''}`}
+                        className={`cursor-pointer transition-colors ${
+                          isCancelled
+                            ? 'bg-slate-100/80 text-slate-400 opacity-80 grayscale hover:grayscale-0 hover:bg-red-50/70 border-l-4 border-l-red-500'
+                            : `hover:bg-slate-50 ${isSelected ? 'bg-red-50/60' : ''}`
+                        }`}
                         onClick={() => router.push(`/dashboard/bookings/${b.bookingRef}`)}
                       >
                         {/* Per-row checkbox */}
@@ -1009,10 +1018,20 @@ function BookingsPageInner() {
 
                         {/* Booking ref + all numbers */}
                         <td onClick={e => e.stopPropagation()}>
-                          <Link href={`/dashboard/bookings/${b.bookingRef}`} className="font-semibold text-slate-900 font-mono hover:text-brand-600">
+                          <Link
+                            href={`/dashboard/bookings/${b.bookingRef}`}
+                            className={`font-semibold font-mono hover:text-brand-600 ${
+                              isCancelled ? 'text-slate-500 line-through decoration-red-400 decoration-2' : 'text-slate-900'
+                            }`}
+                          >
                             {b.bookingRef}
                           </Link>
                           <div className="flex flex-wrap gap-1 mt-1">
+                            {isCancelled && (
+                              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
+                                Cancelled
+                              </span>
+                            )}
                             {b.isNumber && (
                               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-50 text-blue-600 border border-blue-100">
                                 IS: {b.isNumber}
