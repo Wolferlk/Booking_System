@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { sendAgentConfirmationEmail } from '@/lib/send-agent-email'
 import { generateConfirmationPdf } from '@/lib/generate-booking-pdf'
 import { putUpload } from '@/lib/storage'
+import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 
 export const dynamic = 'force-dynamic'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
@@ -194,10 +195,7 @@ We kindly request the following information:
 1️⃣ Meal preference — Vegetarian or Non-Vegetarian?
 2️⃣ Any special assistance required for seniors or infants?
 
-*Emergency Contacts:*
-📞 Helen: +84 94 959 15 36
-📞 Senthoor Pandian: +91 95852 22335
-📞 Tina: +84 94 516 95 95
+${buildEmergencyContactsBlock((booking as unknown as { operationCountry?: string | null }).operationCountry)}
 
 Please reply with your confirmation at the earliest.
 Thank you! 🙏

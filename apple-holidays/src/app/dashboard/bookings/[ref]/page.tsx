@@ -34,6 +34,7 @@ import TravellerExperiencePanel from '@/components/bookings/traveller-experience
 import BookingCallTranscripts from '@/components/bookings/booking-call-transcripts'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
+import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 
 /**
  * Detects whether an accommodation is the customer's OWN arrangement (booked by
@@ -848,10 +849,7 @@ We kindly request the following information:
 1️⃣ Meal preference — Vegetarian or Non-Vegetarian?
 2️⃣ Any special assistance required for seniors or infants?
 
-*Emergency Contacts:*
-📞 Helen: +84 94 959 15 36
-📞 Senthoor Pandian: +91 95852 22335
-📞 Tina: +84 94 516 95 95
+${buildEmergencyContactsBlock(booking.operationCountry as string | null)}
 
 Please reply with your confirmation at the earliest.
 Thank you! 🙏
@@ -875,10 +873,7 @@ This document includes:
 
 Please keep this document handy throughout your travel.
 
-*Emergency Contacts:*
-📞 Helen: +84 94 959 15 36
-📞 Senthoor Pandian: +91 95852 22335
-📞 Tina: +84 94 516 95 95
+${buildEmergencyContactsBlock(booking.operationCountry as string | null)}
 
 Wishing you a wonderful trip! ✈️
 *${team}*`
