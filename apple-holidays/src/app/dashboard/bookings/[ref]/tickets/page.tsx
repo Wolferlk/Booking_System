@@ -732,9 +732,14 @@ export default function TicketsPage() {
                 </button>
               </>
             )}
-            {active.length > 0 && (
-              <Link href={`/print/tickets/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
-                <Printer className="w-4 h-4" /> Print Tickets
+            {purchased > 0 && (
+              <Link
+                href={`/print/tickets/${ref}`}
+                target="_blank"
+                className="btn btn-secondary btn-sm"
+                title="Prints purchased tickets only — drafts are excluded"
+              >
+                <Printer className="w-4 h-4" /> Print Tickets ({purchased})
               </Link>
             )}
             {canCreate && (

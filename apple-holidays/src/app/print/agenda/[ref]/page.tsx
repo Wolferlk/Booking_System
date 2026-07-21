@@ -5,6 +5,8 @@ import { useParams, useSearchParams } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
 import { countryLabel } from '@/lib/country-detection'
 import Image from 'next/image'
+import { TicketStub, type StubTicket } from '@/components/tickets/ticket-stub'
+import { isPurchasedTicket, ticketFileKind } from '@/lib/ticket-notes'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -252,13 +254,16 @@ export default function PrintAgendaPage() {
 
   const [items,   setItems]   = useState<AgendaItem[]>([])
   const [booking, setBooking] = useState<BookingInfo | null>(null)
+  const [tickets, setTickets] = useState<StubTicket[]>([])
   const [ready,   setReady]   = useState(false)
 
   useEffect(() => {
     Promise.all([
       fetch(`/api/bookings/${ref}/agenda`).then(r => r.json()),
       fetch(`/api/bookings/${ref}`).then(r => r.json()),
-    ]).then(([agendaJson, bookingJson]) => {
+      // Tickets are a best-effort extra: a failure here must not block the agenda.
+      fetch(`/api/tickets?bookingRef=${ref}`).then(r => r.json()).catch(() => ({ success: false })),
+    ]).then(([agendaJson, bookingJson, ticketJson]) => {
       if (agendaJson.success) {
         setItems((agendaJson.data?.items ?? []).map((i: AgendaItem) => ({
           ...i,
@@ -266,6 +271,12 @@ export default function PrintAgendaPage() {
         })))
       }
       if (bookingJson.success) setBooking(bookingJson.data)
+      if (ticketJson.success) {
+        // Drafts are internal — only tickets actually bought go on the agenda.
+        setTickets((ticketJson.data as StubTicket[])
+          .filter(t => (t as { activated?: boolean }).activated !== false)
+          .filter(t => isPurchasedTicket(t.status)))
+      }
       setReady(true)
     })
   }, [ref])
@@ -289,9 +300,33 @@ export default function PrintAgendaPage() {
     document.title = title
   }, [booking])
 
+  // Print only once ticket scans have decoded, otherwise they come out blank.
   useEffect(() => {
-    if (ready) setTimeout(() => window.print(), 600)
-  }, [ready])
+    if (!ready) return
+    const images = tickets.filter(t => ticketFileKind(t) === 'image')
+    if (images.length === 0) {
+      const t = setTimeout(() => window.print(), 600)
+      return () => clearTimeout(t)
+    }
+
+    let printed = false
+    let loaded  = 0
+    const fire = () => {
+      if (!printed) { printed = true; window.print() }
+    }
+    const onSettled = () => {
+      loaded++
+      if (loaded >= images.length) setTimeout(fire, 250)
+    }
+    images.forEach(t => {
+      const img = new window.Image()
+      img.onload = onSettled
+      img.onerror = onSettled
+      img.src = t.fileUrl!
+    })
+    const fallback = setTimeout(fire, 6000)
+    return () => clearTimeout(fallback)
+  }, [ready, tickets])
 
   if (!ready || !booking) {
     return (
@@ -1058,6 +1093,35 @@ export default function PrintAgendaPage() {
               />
             </div>
           )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════
+          PURCHASED TICKETS & VOUCHERS
+          Drafts are deliberately excluded — only tickets that were
+          actually bought are handed to the guest.
+      ══════════════════════════════════════════════════════ */}
+      {tickets.length > 0 && (
+        <div style={{ marginTop: 16, pageBreakBefore: 'always' as const }}>
+          <div style={S.sectionTitle}>
+            🎟️ Purchased Tickets &amp; Vouchers
+            <span style={{ marginLeft: 'auto', fontSize: 7.5, color: '#64748b', fontWeight: 600, textTransform: 'none', letterSpacing: 0 }}>
+              {tickets.length} confirmed
+            </span>
+          </div>
+          <div style={{ border: '1px solid #e2e8f0', borderTop: 'none', borderRadius: '0 0 5px 5px', padding: 10 }}>
+            {tickets.map(ticket => (
+              <TicketStub
+                key={ticket.id}
+                ticket={ticket}
+                bookingRef={booking.bookingRef ?? ref}
+                compact
+              />
+            ))}
+            <p style={{ fontSize: 7.5, color: '#94a3b8', marginTop: 2 }}>
+              Please present the confirmation reference above at the counter. Tickets not yet purchased are not listed.
+            </p>
+          </div>
         </div>
       )}
 
