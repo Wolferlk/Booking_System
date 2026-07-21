@@ -8,7 +8,14 @@ import {
   TextRun, HeadingLevel, AlignmentType, WidthType, BorderStyle,
   ShadingType, TableLayoutType, VerticalAlign, ImageRun,
 } from 'docx'
-import { readLocalUploadAsBuffer, getDocxImageType } from '@/lib/local-upload'
+import {
+  readLocalUploadAsBuffer, readUploadAsBuffer, getDocxImageType,
+  imageDimensions, fitImage,
+} from '@/lib/local-upload'
+import {
+  PURCHASED_TICKET_STATUSES, parseTicketNotes, ticketFacts, ticketCode,
+  ticketFileKind, categoryIcon, categoryLabel, paxLabel,
+} from '@/lib/ticket-notes'
 
 export const dynamic = 'force-dynamic'
 
@@ -173,6 +180,15 @@ export async function GET(
       flights:         { orderBy: { date: 'asc' } },
       accommodations:  { orderBy: { checkIn: 'asc' } },
       emergencyContacts: true,
+      // Drafts never reach a customer document — only tickets actually bought.
+      tickets: {
+        where: { activated: true, status: { in: [...PURCHASED_TICKET_STATUSES] } },
+        include: {
+          pnlLine: { select: { activity: true, paymentRefNumber: true, category: true } },
+          agendaItem: { select: { date: true, location: true, toPoint: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      },
       tourAgenda: {
         include: {
           items: {
@@ -520,6 +536,134 @@ export async function GET(
         ],
       }))
       children.push(new Paragraph({ text: '', spacing: { after: 80 } }))
+    }
+  }
+
+  // ── PURCHASED TICKETS & VOUCHERS ──────────────────────────────────────────
+  const purchasedTickets = booking.tickets ?? []
+  if (purchasedTickets.length > 0) {
+    children.push(sectionHeading('🎟️', `Purchased Tickets & Vouchers — ${purchasedTickets.length} confirmed`))
+
+    // docx can't embed an image mid-build, so resolve every scan up front.
+    const ticketImages = new Map<string, { buffer: Buffer; type: 'jpg' | 'png' | 'gif' | 'bmp'; size: { width: number; height: number } }>()
+    await Promise.all(purchasedTickets.map(async t => {
+      if (!t.fileUrl || ticketFileKind(t) !== 'image') return
+      const type = getDocxImageType(t.fileUrl)
+      if (!type) return
+      const buffer = await readUploadAsBuffer(t.fileUrl)
+      if (!buffer) return
+      ticketImages.set(t.id, {
+        buffer, type,
+        size: fitImage(imageDimensions(buffer), { width: 430, height: 320 }),
+      })
+    }))
+
+    for (const ticket of purchasedTickets) {
+      const category = ticket.category ?? ticket.pnlLine?.category ?? 'OTHER'
+      const meta = parseTicketNotes(ticket.notes)
+      const facts = ticketFacts(
+        { ...ticket, totalCost: ticket.totalCost?.toString() ?? null, costPerUnit: ticket.costPerUnit?.toString() ?? null },
+        meta,
+        formatDate,
+      )
+      const image = ticketImages.get(ticket.id)
+
+      const rows: TableRow[] = [
+        // Title bar
+        new TableRow({
+          children: [new TableCell({
+            columnSpan: 4,
+            shading: { type: ShadingType.CLEAR, color: 'auto', fill: CLR.sectionBg },
+            margins: { top: 80, bottom: 80, left: 100, right: 100 },
+            children: [new Paragraph({
+              children: [
+                new TextRun({ text: `${categoryIcon(category)}  ${ticket.type}`, bold: true, size: 21, color: CLR.dark, font: 'Arial' }),
+                new TextRun({ text: `    ${categoryLabel(category)}`, size: 16, color: CLR.amber, font: 'Arial', bold: true }),
+                new TextRun({ text: `    ✓ ${ticket.status === 'PAID' ? 'PAID' : 'PURCHASED'}`, size: 15, color: CLR.green, font: 'Arial', bold: true }),
+                new TextRun({ text: `    ${ticketCode(ticket.id)}`, size: 14, color: CLR.muted, font: 'Courier New' }),
+              ],
+            })],
+          })],
+        }),
+      ]
+
+      if (ticket.reference) {
+        rows.push(new TableRow({
+          children: [new TableCell({
+            columnSpan: 4,
+            margins: { top: 70, bottom: 70, left: 100, right: 100 },
+            children: [new Paragraph({
+              children: [
+                new TextRun({ text: 'CONFIRMATION / REFERENCE   ', bold: true, size: 13, color: CLR.muted, font: 'Arial' }),
+                new TextRun({ text: ticket.reference, bold: true, size: 26, color: CLR.amber, font: 'Courier New' }),
+                new TextRun({
+                  text: `    Admits ${paxLabel(meta.pax ?? ticket.qty, meta.paxType) ?? `${ticket.qty} Pax`}`,
+                  size: 16, color: CLR.mid, font: 'Arial', bold: true,
+                }),
+              ],
+            })],
+          })],
+        }))
+      }
+
+      // Facts, two label/value pairs per row
+      for (let i = 0; i < facts.length; i += 2) {
+        const pair = [facts[i], facts[i + 1]]
+        rows.push(new TableRow({
+          children: pair.flatMap((fact, idx) => fact
+            ? [
+                dCell(fact.label.toUpperCase(), { bold: true, color: CLR.muted, shade: idx === 0 ? CLR.rowAlt : CLR.white }),
+                dCell(fact.value, { bold: true, shade: idx === 0 ? CLR.rowAlt : CLR.white }),
+              ]
+            : [dCell('', { shade: CLR.white }), dCell('', { shade: CLR.white })]),
+        }))
+      }
+
+      const remark = [meta.remarks, ...meta.details].filter(Boolean).join(' · ')
+      if (remark) {
+        rows.push(new TableRow({
+          children: [new TableCell({
+            columnSpan: 4,
+            margins: { top: 60, bottom: 60, left: 100, right: 100 },
+            children: [new Paragraph({
+              children: [new TextRun({ text: remark, size: 16, color: CLR.mid, font: 'Arial', italics: true })],
+            })],
+          })],
+        }))
+      }
+
+      rows.push(new TableRow({
+        children: [new TableCell({
+          columnSpan: 4,
+          margins: { top: 80, bottom: 80, left: 100, right: 100 },
+          children: image
+            ? [
+                new Paragraph({
+                  children: [new TextRun({ text: 'SUPPLIER TICKET / RECEIPT', bold: true, size: 13, color: CLR.muted, font: 'Arial' })],
+                  spacing: { after: 60 },
+                }),
+                new Paragraph({
+                  children: [new ImageRun({ data: image.buffer, transformation: image.size, type: image.type })],
+                  alignment: AlignmentType.CENTER,
+                }),
+              ]
+            : [new Paragraph({
+                children: [new TextRun({
+                  text: ticketFileKind(ticket) === 'pdf'
+                    ? `📄 Supplier ticket attached as PDF${ticket.fileName ? ` — ${ticket.fileName}` : ''}. Present the reference above at the counter.`
+                    : '🎫 No supplier scan on file — this voucher, with the reference above, is the ticket. Present it at the counter.',
+                  size: 15, color: CLR.muted, font: 'Arial', italics: true,
+                })],
+              })],
+        })],
+      }))
+
+      children.push(new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        layout: TableLayoutType.FIXED,
+        rows,
+      }))
+      children.push(new Paragraph({ text: '', spacing: { after: 120 } }))
     }
   }
 

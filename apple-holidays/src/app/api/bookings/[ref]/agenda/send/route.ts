@@ -15,6 +15,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { generateAgendaPdf } from '@/lib/generate-agenda-pdf'
+import { PURCHASED_TICKET_STATUSES } from '@/lib/ticket-notes'
 import { sendMailViaGraph } from '@/lib/send-mail'
 import { putUpload } from '@/lib/storage'
 
@@ -92,6 +93,15 @@ async function handleSend(
       accommodations: { orderBy: { checkIn: 'asc' } },
       passengers: { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
       emergencyContacts: true,
+      // Purchased/paid only — draft tickets stay internal and never get sent out.
+      tickets: {
+        where: { activated: true, status: { in: [...PURCHASED_TICKET_STATUSES] } },
+        include: {
+          pnlLine: { select: { activity: true, paymentRefNumber: true, category: true } },
+          agendaItem: { select: { date: true, location: true, toPoint: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      },
       tourAgenda: {
         include: {
           items: {

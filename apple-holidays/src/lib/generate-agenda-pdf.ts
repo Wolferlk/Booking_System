@@ -7,6 +7,11 @@
  * booking-confirmation PDF already uses (see generate-booking-pdf.ts).
  */
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
+import { readUploadAsBuffer, imageDimensions, fitImage } from './local-upload'
+import {
+  parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
+  categoryLabel, paxLabel, isPurchasedTicket,
+} from './ticket-notes'
 
 // ── Palette (matches generate-booking-pdf.ts) ────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -123,6 +128,31 @@ export interface AgendaPdfBooking {
   flights?: { flightNo: string; date: string | Date; fromApt: string; depTime?: string | null; toApt: string; arrTime?: string | null }[]
   accommodations?: { hotel: string; city: string; checkIn: string | Date; checkOut: string | Date; nights: number; roomType?: string | null; mealType?: string | null }[]
   emergencyContacts?: { name: string; phone?: string | null; role?: string | null }[]
+  tickets?: AgendaPdfTicket[]
+}
+
+export interface AgendaPdfTicket {
+  id: string
+  type: string
+  qty: number
+  status: string
+  category?: string | null
+  supplier?: string | null
+  reference?: string | null
+  notes?: string | null
+  currency?: string | null
+  totalCost?: string | number | null
+  costPerUnit?: string | number | null
+  purchasedAt?: string | Date | null
+  fileUrl?: string | null
+  fileName?: string | null
+  fileType?: string | null
+  driverName?: string | null
+  driverPhone?: string | null
+  vehicleType?: string | null
+  vehicleNumber?: string | null
+  pnlLine?: { activity?: string | null; paymentRefNumber?: string | null; category?: string | null } | null
+  agendaItem?: { date?: string | Date | null; location?: string | null; toPoint?: string | null } | null
 }
 
 interface Column {
@@ -142,6 +172,21 @@ export async function generateAgendaPdf(
   await ensurePdfkitDataFiles()
   const PDFDocument = await loadPdfDocumentCtor()
   const logo = await loadLogo()
+
+  // Only tickets actually bought go on a customer document; drafts stay internal.
+  const purchasedTickets = (booking.tickets ?? []).filter(t => isPurchasedTicket(t.status))
+
+  // PDFKit can't fetch mid-render, so resolve every ticket scan first. It also
+  // decodes PNG and JPEG only — other formats fall back to the drawn ticket.
+  const ticketImages = new Map<string, { buffer: Buffer; width: number; height: number }>()
+  await Promise.all(purchasedTickets.map(async ticket => {
+    if (ticketFileKind(ticket) !== 'image') return
+    if (!/\.(jpe?g|png)(\?|$)/i.test(ticket.fileUrl ?? '')) return
+    const buffer = await readUploadAsBuffer(ticket.fileUrl)
+    if (!buffer) return
+    const size = fitImage(imageDimensions(buffer), { width: CONTENT_W - 30, height: 300 })
+    ticketImages.set(ticket.id, { buffer, ...size })
+  }))
 
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -531,6 +576,112 @@ export async function generateAgendaPdf(
         })
 
         doc.moveDown(0.5)
+      })
+    }
+
+    // ── Purchased tickets & vouchers ───────────────────────────────────────
+    if (purchasedTickets.length > 0) {
+      sectionTitle(`Purchased Tickets & Vouchers — ${purchasedTickets.length} confirmed`)
+
+      const CAT_COLOR: Record<string, string> = {
+        HOTEL: BLUE, TICKETS: PURPLE, CRUISE: '#0891B2', WATER: '#0284C7',
+        GUIDES: '#16A34A', FLIGHT_TICKETS: RED, TRANSPORT: '#EA580C',
+        MEALS: BRAND, OTHER: MUTED,
+      }
+
+      purchasedTickets.forEach(ticket => {
+        const category = ticket.category ?? ticket.pnlLine?.category ?? 'OTHER'
+        const clr      = CAT_COLOR[category] ?? MUTED
+        const meta     = parseTicketNotes(ticket.notes)
+        const facts    = ticketFacts(ticket, meta, d => fmtDate(d))
+        const image    = ticketImages.get(ticket.id)
+        const remark   = sanitizeText([meta.remarks, ...meta.details].filter(Boolean).join('  ·  '))
+
+        const COLS     = 3
+        const colW     = (CONTENT_W - 20) / COLS
+        const factRows = Math.ceil(facts.length / COLS)
+
+        const refH     = ticket.reference ? 28 : 0
+        const factsH   = factRows * 22
+        const remarkH  = remark
+          ? doc.font('Helvetica-Oblique').fontSize(7.5).heightOfString(remark, { width: CONTENT_W - 20 }) + 6
+          : 0
+        const mediaH   = image ? image.height + 20 : 22
+        const cardH    = 24 + refH + factsH + remarkH + mediaH + 8
+
+        ensureSpace(cardH + 8)
+        const cy = doc.y
+
+        // Card shell
+        doc.rect(MARGIN, cy, CONTENT_W, cardH).fill('#FFFFFF')
+        doc.rect(MARGIN, cy, CONTENT_W, cardH).strokeColor(LINE).lineWidth(0.6).stroke()
+        doc.rect(MARGIN, cy, 3, cardH).fill(clr)
+
+        // Header band
+        doc.fillOpacity(0.08).rect(MARGIN + 3, cy, CONTENT_W - 3, 24).fill(clr).fillOpacity(1)
+        doc.fillColor(DARK).font('Helvetica-Bold').fontSize(10)
+          .text(txt(ticket.type), MARGIN + 10, cy + 5, { width: CONTENT_W - 200, lineBreak: false, ellipsis: true })
+        doc.fillColor(clr).font('Helvetica-Bold').fontSize(6.5)
+          .text(categoryLabel(category).toUpperCase(), MARGIN + 10, cy + 16, { width: 200, lineBreak: false })
+        doc.fillColor(GREEN).font('Helvetica-Bold').fontSize(7)
+          .text(`${ticket.status === 'PAID' ? 'PAID' : 'PURCHASED'}`, MARGIN, cy + 6,
+            { width: CONTENT_W - 10, align: 'right', lineBreak: false })
+        doc.fillColor('#94A3B8').font('Helvetica').fontSize(6.5)
+          .text(ticketCode(ticket.id), MARGIN, cy + 16, { width: CONTENT_W - 10, align: 'right', lineBreak: false })
+
+        let cursor = cy + 24
+
+        // Reference — the part a guest actually needs at the counter
+        if (ticket.reference) {
+          doc.fillOpacity(0.06).rect(MARGIN + 10, cursor + 3, CONTENT_W - 20, 22).fill(clr).fillOpacity(1)
+          doc.fillColor('#94A3B8').font('Helvetica-Bold').fontSize(6)
+            .text('CONFIRMATION / REFERENCE', MARGIN + 16, cursor + 6, { width: 160, lineBreak: false })
+          doc.fillColor(clr).font('Helvetica-Bold').fontSize(12)
+            .text(txt(ticket.reference), MARGIN + 16, cursor + 13, { width: CONTENT_W - 160, lineBreak: false })
+          const admits = paxLabel(meta.pax ?? ticket.qty, meta.paxType)
+          if (admits) {
+            doc.fillColor(DARK).font('Helvetica-Bold').fontSize(8)
+              .text(`Admits ${admits}`, MARGIN, cursor + 11, { width: CONTENT_W - 16, align: 'right', lineBreak: false })
+          }
+          cursor += refH
+        }
+
+        // Fact grid
+        facts.forEach((fact, i) => {
+          const fx = MARGIN + 10 + (i % COLS) * colW
+          const fy = cursor + Math.floor(i / COLS) * 22 + 2
+          doc.fillColor('#94A3B8').font('Helvetica-Bold').fontSize(6)
+            .text(fact.label.toUpperCase(), fx, fy, { width: colW - 8, lineBreak: false })
+          doc.fillColor(DARK).font('Helvetica-Bold').fontSize(8.5)
+            .text(sanitizeText(fact.value), fx, fy + 8, { width: colW - 8, lineBreak: false, ellipsis: true })
+        })
+        cursor += factsH
+
+        if (remarkH > 0) {
+          doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(7.5)
+            .text(remark, MARGIN + 10, cursor + 2, { width: CONTENT_W - 20 })
+          cursor += remarkH
+        }
+
+        // Supplier scan, or a line explaining that this card *is* the ticket
+        if (image) {
+          const ix = MARGIN + (CONTENT_W - image.width) / 2
+          try {
+            doc.image(image.buffer, ix, cursor + 8, { width: image.width, height: image.height })
+            doc.rect(ix, cursor + 8, image.width, image.height).strokeColor(LINE).lineWidth(0.5).stroke()
+          } catch { /* undecodable scan — the drawn card still stands alone */ }
+        } else {
+          const isPdfFile = ticketFileKind(ticket) === 'pdf'
+          doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(7.5)
+            .text(
+              isPdfFile
+                ? `Supplier ticket attached as PDF${ticket.fileName ? ` (${sanitizeText(ticket.fileName)})` : ''} — present the reference above at the counter.`
+                : 'No supplier scan on file — this voucher, with the reference above, is your ticket.',
+              MARGIN + 10, cursor + 6, { width: CONTENT_W - 20, lineBreak: false, ellipsis: true },
+            )
+        }
+
+        doc.y = cy + cardH + 8
       })
     }
 

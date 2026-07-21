@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
 
   const andClauses: Record<string, unknown>[] = [
     { operationCountry: 'SRILANKA' },
+    // Cancelled bookings drop out of every operational list.
+    { status: { not: 'CANCELLED' } },
   ]
 
   if (search) {

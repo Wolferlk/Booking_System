@@ -28,6 +28,8 @@ export async function GET(
   // Find bookings where agent field matches any term
   const bookings = await prisma.booking.findMany({
     where: {
+      // Cancelled bookings no longer count towards an agent's credit exposure.
+      status: { not: 'CANCELLED' },
       OR: terms.map(term => ({
         agent: { contains: term },
       })),
