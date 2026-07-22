@@ -14,7 +14,7 @@ export const CANCELLATION_NOTIFY_LIST = [
 ]
 
 /** Fallback approver mailbox when no active AC_USER account has an email. */
-export const CANCELLATION_APPROVAL_FALLBACK = 'accounts.payable@aahaas.com'
+export const CANCELLATION_APPROVAL_FALLBACK = 'accounts.receivable@aahaas.com'
 
 interface CancellationMailInput {
   bookingRef: string

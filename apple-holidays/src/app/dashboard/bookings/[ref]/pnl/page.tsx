@@ -67,6 +67,103 @@ interface PNLRecord {
   lineItems?: Line[]
 }
 
+// The isPnlData JSON blob is produced by AI extraction, so numeric fields can come
+// back as strings ("1250.00") or be missing entirely. Coerce once on load so every
+// downstream .toFixed() call is safe.
+function num(v: unknown): number {
+  const n = typeof v === 'string' ? Number(v.replace(/[^0-9.eE+-]/g, '')) : Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null
+  return num(v)
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function arr(v: unknown): any[] {
+  return Array.isArray(v) ? v : []
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeIsPnlData(raw: any): IsPnlData | null {
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    tourNo:   raw.tourNo   ?? null,
+    isNumber: raw.isNumber ?? null,
+    agent:    raw.agent    ?? null,
+    pax:          num(raw.pax),
+    nights:       num(raw.nights),
+    currency:     String(raw.currency ?? ''),
+    exchangeRate: num(raw.exchangeRate),
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    hotels: arr(raw.hotels).map((h: any) => ({
+      name: String(h?.name ?? ''),
+      sgl: num(h?.sgl), dbl: num(h?.dbl), tpl: num(h?.tpl),
+      cwb: num(h?.cwb), cnb: num(h?.cnb),
+      nights: num(h?.nights),
+      roomNightRate: num(h?.roomNightRate),
+      total: num(h?.total),
+    })),
+    hotelTotal: num(raw.hotelTotal),
+
+    transport: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      items: arr(raw.transport?.items).map((t: any) => ({
+        expense: String(t?.expense ?? ''),
+        distanceDays: numOrNull(t?.distanceDays),
+        rate: numOrNull(t?.rate),
+        total: num(t?.total),
+      })),
+      total: num(raw.transport?.total),
+    },
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    attractions: arr(raw.attractions).map((a: any) => ({
+      name: String(a?.name ?? ''),
+      adultAttractionRate: num(a?.adultAttractionRate),
+      adultVehicleRate:    num(a?.adultVehicleRate),
+      childAttractionRate: num(a?.childAttractionRate),
+      childVehicleRate:    num(a?.childVehicleRate),
+      total: num(a?.total),
+    })),
+    attractionTotal: num(raw.attractionTotal),
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    tourTransfers: arr(raw.tourTransfers).map((t: any) => ({
+      name: String(t?.name ?? ''),
+      adultRate: num(t?.adultRate),
+      childRate: num(t?.childRate),
+      total: num(t?.total),
+    })),
+    tourTransferTotal: num(raw.tourTransferTotal),
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    otherRates: arr(raw.otherRates).map((o: any) => ({
+      name: String(o?.name ?? ''),
+      pax: numOrNull(o?.pax),
+      rate: numOrNull(o?.rate),
+      total: num(o?.total),
+    })),
+    otherRatesTotal: num(raw.otherRatesTotal),
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    meals: arr(raw.meals).map((m: any) => ({
+      day: m?.day ?? '',
+      breakfast: num(m?.breakfast),
+      lunch: num(m?.lunch),
+      dinner: num(m?.dinner),
+      total: num(m?.total),
+    })),
+    mealsTotal: num(raw.mealsTotal),
+
+    costPerPersonSingle: numOrNull(raw.costPerPersonSingle),
+    costPerPersonDouble: numOrNull(raw.costPerPersonDouble),
+    totalTourCost: num(raw.totalTourCost),
+    totalTourCostWithoutMarkup: num(raw.totalTourCostWithoutMarkup),
+    profitLoss: num(raw.profitLoss),
+  }
+}
+
 function IsPnlSection({ title, total, currency, open, onToggle, children }: {
   title: string; total: number; currency: string
   open: boolean; onToggle: () => void; children: React.ReactNode
@@ -78,7 +175,7 @@ function IsPnlSection({ title, total, currency, open, onToggle, children }: {
           {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
           <span className="text-sm font-semibold text-slate-800">{title}</span>
         </div>
-        <span className="text-sm font-bold text-slate-700">{currency} {total.toFixed(2)}</span>
+        <span className="text-sm font-bold text-slate-700">{currency} {num(total).toFixed(2)}</span>
       </button>
       {open && <div className="overflow-x-auto">{children}</div>}
     </div>
@@ -142,7 +239,7 @@ export default function PNLPage() {
         setBookingAgent(data.bookingAgent ?? null)
         setIsNumber(data.isNumber ?? null)
         setCntlNumber(data.cntlNumber ?? null)
-        setIsPnlData((data.isPnlData as IsPnlData | null) ?? null)
+        setIsPnlData(normalizeIsPnlData(data.isPnlData))
         setPaxAdults(String(data.paxAdults ?? 2))
         setPaxChildren(String(data.paxChildren ?? 0))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -380,7 +477,7 @@ export default function PNLPage() {
   function handleAIParsed(data: any) {
     // IS PNL — structured Sri Lanka costing sheet
     if (data?.isPnlData) {
-      setIsPnlData(data.isPnlData as IsPnlData)
+      setIsPnlData(normalizeIsPnlData(data.isPnlData))
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const items: any[] = data?.lineItems ?? []
