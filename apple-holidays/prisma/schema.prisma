@@ -158,6 +158,7 @@ model Booking {
   cancelDecidedByName    String?
   cancelDecidedByEmail   String?
   cancelDecisionNote     String?            @db.Text
+  cancelMailSentAt       DateTime?
   accommodations         Accommodation[]
   versions               BookingVersion[]
   clientUser             User?              @relation("ClientUser", fields: [clientUserId], references: [id])

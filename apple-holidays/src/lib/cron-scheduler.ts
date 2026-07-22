@@ -217,6 +217,18 @@ async function jobFeedbackSummary() {
   }
 }
 
+async function jobCancellationMailWatch() {
+  try {
+    const { runCancellationMailWatch } = await import('./cancellation-mail-watcher')
+    const r = await runCancellationMailWatch()
+    if (r.sent || r.failed) {
+      console.log(`[Scheduler] cancellation-mail — sent: ${r.sent}, failed: ${r.failed}, skipped: ${r.skipped}`)
+    }
+  } catch (err) {
+    console.error('[Scheduler] cancellation-mail error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startAutoBookingCreateScheduler() {
   try {
     // node-cron scheduler: fires once daily at the configured time (default 04:00
@@ -285,6 +297,7 @@ export function startCronJobs() {
   if (started) return
   started = true
 
+  const TWO_MIN    = 2  * 60  * 1000
   const THREE_MIN  = 3  * 60  * 1000
   const FIVE_MIN   = 5  * 60  * 1000
   const SIX_HRS    = 6  * 3600 * 1000
@@ -298,6 +311,7 @@ export function startCronJobs() {
   setTimeout(() => { jobRenewWebhook() },     15_000)   // 15 s after boot
   setTimeout(() => { jobProcessMailboxes() }, 30_000)   // 30 s after boot
   setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
+  setTimeout(() => { jobCancellationMailWatch() }, 45_000)   // 45 s after boot
 
   // Auto-booking-create: node-cron daily job (timezone-aware, boot catch-up).
   // Started once at boot instead of a per-minute interval.
@@ -319,6 +333,9 @@ export function startCronJobs() {
   setInterval(() => { jobOneDrivePoll() },         THREE_MIN)
   setInterval(() => { jobRenewWebhook() },         TWELVE_HRS)
   setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
+  // Cancellations approved in the Apple Accounts system land straight in the DB —
+  // this picks the transition up and sends the cancellation notice.
+  setInterval(() => { jobCancellationMailWatch() }, TWO_MIN)
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging via node-cron daily at 6pm (timezone-aware, boot catch-up)')
+  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, cancellation mail watch every 2 min, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging via node-cron daily at 6pm (timezone-aware, boot catch-up)')
 }
