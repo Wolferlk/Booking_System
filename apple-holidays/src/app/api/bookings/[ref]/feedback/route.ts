@@ -21,7 +21,8 @@ export async function POST(
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
   // Accept from MSG_SENT_CUSTOMER (skips FEEDBACK_DONE), FEEDBACK_DONE, or QC2_PASS
-  const FEEDBACK_ELIGIBLE = ['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS']
+  // COMPLETED is allowed too, so recorded feedback can be corrected afterwards.
+  const FEEDBACK_ELIGIBLE = ['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS', 'COMPLETED']
   if (!FEEDBACK_ELIGIBLE.includes(booking.status)) {
     return buildApiError('Booking must be at or past Message Sent status to record feedback')
   }
@@ -34,6 +35,8 @@ export async function POST(
   if (rating !== null && (rating < 1 || rating > 5)) {
     return buildApiError('Rating must be between 1 and 5')
   }
+
+  const alreadyCompleted = fromState === 'COMPLETED'
 
   await prisma.$transaction([
     prisma.customerFeedback.upsert({
@@ -50,22 +53,25 @@ export async function POST(
         savedById: session.user.id,
       },
     }),
-    prisma.booking.update({
-      where: { bookingRef: params.ref },
-      data: { status: 'COMPLETED' },
-    }),
-    prisma.statusEvent.create({
-      data: {
-        bookingId: booking.id,
-        fromState: fromState as never,
-        toState: 'COMPLETED',
-        actorId: session.user.id,
-        note: 'Trip completed with customer feedback',
-      },
-    }),
+    // Already completed → this is an edit of the recorded feedback, no transition.
+    ...(alreadyCompleted ? [] : [
+      prisma.booking.update({
+        where: { bookingRef: params.ref },
+        data: { status: 'COMPLETED' as const },
+      }),
+      prisma.statusEvent.create({
+        data: {
+          bookingId: booking.id,
+          fromState: fromState as never,
+          toState: 'COMPLETED' as never,
+          actorId: session.user.id,
+          note: 'Trip completed with customer feedback',
+        },
+      }),
+    ]),
   ])
 
-  return buildApiSuccess(null, 'Trip completed and feedback saved')
+  return buildApiSuccess(null, alreadyCompleted ? 'Customer feedback updated' : 'Trip completed and feedback saved')
 }
 
 export async function GET(

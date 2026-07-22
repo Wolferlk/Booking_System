@@ -46,6 +46,7 @@ export async function GET(
         orderBy: { createdAt: 'desc' },
       },
       tickets: { orderBy: { createdAt: 'desc' } },
+      customerFeedback: { include: { savedBy: { select: { id: true, name: true, role: true } } } },
       versions: { orderBy: { versionNo: 'desc' } },
       createdBy: { select: { id: true, name: true, role: true } },
     },

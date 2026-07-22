@@ -401,6 +401,9 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const statusEvents: any[] = booking.statusEvents ?? []
   const pnl = booking.pnl ?? null
+  // Manual customer feedback recorded by the TE team on Complete Trip / Get Feedback
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const customerFeedback: any = booking.customerFeedback ?? null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const emergencyContacts: any[] = booking.emergencyContacts ?? []
   // Client numbers come first (WhatsApp target = customer only)
@@ -979,6 +982,14 @@ Wishing you a wonderful trip! ✈️
     }
   }
 
+  /** Opens the feedback modal pre-filled with whatever was already recorded. */
+  function openFeedbackModal() {
+    const existing = booking?.customerFeedback ?? null
+    setFeedbackRating(existing?.rating ?? 0)
+    setFeedbackComment(existing?.comment ?? '')
+    setFeedbackModal(true)
+  }
+
   async function saveFeedbackAndComplete() {
     setFeedbackSaving(true)
     try {
@@ -989,7 +1000,7 @@ Wishing you a wonderful trip! ✈️
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('Trip completed and feedback saved')
+      toast.success(json.message ?? 'Trip completed and feedback saved')
       setFeedbackModal(false)
       setFeedbackRating(0)
       setFeedbackComment('')
@@ -1361,13 +1372,11 @@ Wishing you a wonderful trip! ✈️
                         setPendingAction(key); setNote(''); setChangeModal(true)
                       } else if (isAdvanceStep && t.to === 'FEEDBACK_DONE') {
                         // Feedback Done → open feedback modal so user can write + complete
-                        setFeedbackRating(0); setFeedbackComment(''); setFeedbackModal(true)
+                        openFeedbackModal()
                       } else if (isAdvanceStep) {
                         doTransition('advance-status', { to: t.to })
                       } else if (isComplete) {
-                        setFeedbackRating(0)
-                        setFeedbackComment('')
-                        setFeedbackModal(true)
+                        openFeedbackModal()
                       } else {
                         doTransition(key)
                       }
@@ -1384,7 +1393,7 @@ Wishing you a wonderful trip! ✈️
                   variant="secondary"
                   size="sm"
                   className="!bg-yellow-50 !border-yellow-300 !text-yellow-800 hover:!bg-yellow-100"
-                  onClick={() => { setFeedbackRating(0); setFeedbackComment(''); setFeedbackModal(true) }}
+                  onClick={openFeedbackModal}
                 >
                   ⭐ Get Feedback
                 </Button>
@@ -1791,6 +1800,57 @@ Wishing you a wonderful trip! ✈️
             </div>
           </div>
         </Card>
+
+        {/* Customer Feedback — manual rating/comment saved by the TE team */}
+        {customerFeedback && (
+          <Card>
+            <CardHeader
+              action={
+                (['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS', 'COMPLETED'] as string[]).includes(status) && (
+                  <button
+                    onClick={openFeedbackModal}
+                    className="text-xs font-semibold text-brand-600 hover:underline"
+                  >
+                    Edit feedback
+                  </button>
+                )
+              }
+            >
+              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <span className="text-yellow-400">★</span> Customer Feedback
+                <span className="text-xs text-slate-400 font-normal">— recorded manually</span>
+              </h3>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              <div className="flex items-center gap-2">
+                {customerFeedback.rating ? (
+                  <>
+                    <span className="text-lg tracking-wide">
+                      {[1, 2, 3, 4, 5].map(star => (
+                        <span key={star} className={star <= customerFeedback.rating ? 'text-yellow-400' : 'text-slate-200'}>★</span>
+                      ))}
+                    </span>
+                    <span className="text-sm font-semibold text-slate-700">{customerFeedback.rating} / 5</span>
+                  </>
+                ) : (
+                  <span className="text-sm text-slate-400 italic">No rating given</span>
+                )}
+              </div>
+
+              {customerFeedback.comment ? (
+                <p className="text-sm text-slate-700 whitespace-pre-wrap bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                  {customerFeedback.comment}
+                </p>
+              ) : (
+                <p className="text-sm text-slate-400 italic">No comment recorded</p>
+              )}
+
+              <p className="text-[11px] text-slate-400">
+                Saved by {customerFeedback.savedBy?.name ?? 'TE team'} · {formatDateTime(customerFeedback.updatedAt as string)}
+              </p>
+            </CardBody>
+          </Card>
+        )}
 
         {/* QC Panel — visible to operations/TE/admin */}
         {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
@@ -3002,7 +3062,7 @@ Wishing you a wonderful trip! ✈️
       <Modal
         open={feedbackModal}
         onClose={() => setFeedbackModal(false)}
-        title="Customer Feedback — Complete Trip"
+        title={status === 'COMPLETED' ? 'Customer Feedback' : 'Customer Feedback — Complete Trip'}
         footer={
           <>
             <Button variant="secondary" onClick={() => setFeedbackModal(false)}>Cancel</Button>
@@ -3011,7 +3071,7 @@ Wishing you a wonderful trip! ✈️
               loading={feedbackSaving}
               onClick={saveFeedbackAndComplete}
             >
-              Save &amp; Complete Trip
+              {status === 'COMPLETED' ? 'Save Feedback' : <>Save &amp; Complete Trip</>}
             </Button>
           </>
         }
@@ -3020,7 +3080,9 @@ Wishing you a wonderful trip! ✈️
           <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <AlertCircle className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
             <p className="text-xs text-blue-700">
-              Record the customer&apos;s feedback before completing the trip. This will be saved by the TE team.
+              {status === 'COMPLETED'
+                ? 'Update the customer feedback recorded for this trip. It stays visible on the booking details page.'
+                : "Record the customer's feedback before completing the trip. This will be saved by the TE team."}
             </p>
           </div>
 
