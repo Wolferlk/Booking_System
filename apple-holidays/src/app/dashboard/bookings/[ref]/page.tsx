@@ -20,7 +20,7 @@ import Modal from '@/components/ui/modal'
 import { formatDate, formatDateTime, formatCurrency, getDaysUntilTrip, readApiResponse, cn } from '@/lib/utils'
 import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
-import { getAvailableTransitions } from '@/lib/state-machine'
+import { getAvailableTransitions, STATUS_LABELS } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
@@ -58,6 +58,9 @@ const DEFAULT_CANCEL_REASON = 'File handler cancelled this booking'
 /** Roles allowed to cancel — kept in step with the cancel API route. */
 const CAN_CANCEL_ROLES: string[] = ['BT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
+/** Roles that sign off a cancellation — kept in step with the decision API route. */
+const CAN_APPROVE_CANCEL_ROLES: string[] = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
   const router = useRouter()
@@ -72,6 +75,7 @@ export default function BookingDetailPage() {
   const [cancelModal, setCancelModal] = useState(false)
   const [note, setNote] = useState('')
   const [cancelReason, setCancelReason] = useState('')
+  const [cancelDecisionNote, setCancelDecisionNote] = useState('')
   const [pendingAction, setPendingAction] = useState<string>('')
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -370,6 +374,31 @@ export default function BookingDetailPage() {
     }
   }
 
+  /** Accounts sign-off on a cancellation request (approve = cancel for real). */
+  async function decideCancellation(decision: 'APPROVE' | 'REJECT') {
+    if (decision === 'REJECT' && !cancelDecisionNote.trim()) {
+      toast.error('Add a note explaining why the cancellation is rejected')
+      return
+    }
+    setActionLoading(`decision-${decision}`)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/cancel/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, note: cancelDecisionNote.trim() }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(json.message ?? 'Decision saved')
+      setCancelDecisionNote('')
+      await load()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Could not save the decision')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   if (loading) return (
     <div className="flex items-center justify-center h-screen">
       <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
@@ -385,6 +414,8 @@ export default function BookingDetailPage() {
 
   const status = booking.status as BookingStatus
   const isCancelled = status === 'CANCELLED'
+  const isPendingCancel = status === 'PENDING_CANCELLATION'
+  const canApproveCancel = CAN_APPROVE_CANCEL_ROLES.includes(role)
   const transitions = getAvailableTransitions(status, role)
   const daysUntil = getDaysUntilTrip(booking.arrivalDate as string)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1162,6 +1193,72 @@ Wishing you a wonderful trip! ✈️
           </div>
         )}
 
+        {/* Cancellation requested — held until the accounts team signs off. */}
+        {isPendingCancel && (
+          <div className="relative overflow-hidden rounded-xl border-2 border-orange-300 bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50 p-5 shadow-sm">
+            <div
+              className="pointer-events-none absolute inset-0 opacity-[0.07]"
+              style={{ backgroundImage: 'repeating-linear-gradient(45deg,#ea580c 0 12px,transparent 12px 24px)' }}
+            />
+            <div className="relative flex flex-col sm:flex-row sm:items-start gap-4">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-orange-500 text-white shadow">
+                <XCircle className="h-6 w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-base font-extrabold uppercase tracking-[0.18em] text-orange-700">
+                  Pending Approval — Accounts Team (Cancelling)
+                </p>
+                <p className="mt-1 text-sm text-orange-900/90">
+                  {(booking as any).cancellationReason || 'No reason recorded.'}
+                </p>
+                <p className="mt-1.5 text-xs text-orange-700/80">
+                  Requested by <strong>{(booking as any).cancelledByName ?? 'Unknown'}</strong>
+                  {(booking as any).cancelledByEmail ? ` (${(booking as any).cancelledByEmail})` : ''}
+                  {(booking as any).cancelRequestedAt ? ` on ${formatDateTime((booking as any).cancelRequestedAt)}` : ''}
+                  {' '}· The booking is <strong>not cancelled yet</strong>. It stays at{' '}
+                  {STATUS_LABELS[((booking as any).cancelPrevStatus ?? 'BT_CONFIRMED') as BookingStatus]}{' '}
+                  until the accounts team approves or rejects.
+                </p>
+
+                {canApproveCancel && (
+                  <div className="mt-4 rounded-lg border border-orange-200 bg-white/80 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      Accounts decision
+                    </p>
+                    <textarea
+                      className="form-input mt-2 w-full text-sm"
+                      rows={2}
+                      placeholder="Note (optional to approve, required to reject) — e.g. supplier charges settled, 50% penalty applies"
+                      value={cancelDecisionNote}
+                      onChange={e => setCancelDecisionNote(e.target.value)}
+                    />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="danger" size="sm"
+                        loading={actionLoading === 'decision-APPROVE'}
+                        onClick={() => decideCancellation('APPROVE')}
+                      >
+                        Approve — Confirm Cancellation
+                      </Button>
+                      <Button
+                        variant="secondary" size="sm"
+                        loading={actionLoading === 'decision-REJECT'}
+                        onClick={() => decideCancellation('REJECT')}
+                      >
+                        Reject — Keep Booking Active
+                      </Button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      Approving marks the booking Confirmed Cancellation and automatically emails the
+                      cancellation notice to the requester and the operations desk.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Lifecycle + status */}
         <Card className="p-6">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
@@ -1350,7 +1447,7 @@ Wishing you a wonderful trip! ✈️
               )}
 
               {/* Cancel */}
-              {!['COMPLETED', 'CANCELLED'].includes(status) && CAN_CANCEL_ROLES.includes(role) && (
+              {!['COMPLETED', 'CANCELLED', 'PENDING_CANCELLATION'].includes(status) && CAN_CANCEL_ROLES.includes(role) && (
                 <Button variant="danger" size="sm"
                   onClick={() => { setCancelReason(DEFAULT_CANCEL_REASON); setCancelModal(true) }}>
                   <XCircle className="w-4 h-4 mr-1" /> Cancel Booking
@@ -2875,7 +2972,7 @@ Wishing you a wonderful trip! ✈️
       <Modal
         open={cancelModal}
         onClose={() => setCancelModal(false)}
-        title="Cancel Booking"
+        title="Request Booking Cancellation"
         footer={
           <>
             <Button variant="secondary" onClick={() => setCancelModal(false)}>Keep Booking</Button>
@@ -2888,7 +2985,7 @@ Wishing you a wonderful trip! ✈️
                 doTransition('cancel', { reason }).then(() => { setCancelModal(false); setCancelReason('') })
               }}
             >
-              Confirm Cancellation
+              Send for Accounts Approval
             </Button>
           </>
         }
@@ -2896,11 +2993,13 @@ Wishing you a wonderful trip! ✈️
         <div className="space-y-4">
           <div className="rounded-lg border border-red-200 bg-red-50 p-3">
             <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">
-              You are cancelling {ref}
+              You are requesting cancellation of {ref}
             </p>
             <p className="mt-1 text-xs text-red-600 leading-relaxed">
-              The booking stays in the system for reference — it is marked cancelled, hidden from
-              active operations lists, and the operations team is emailed straight away.
+              The booking is not cancelled straight away. It moves to <strong>Pending Approval —
+              Accounts Team</strong> and the accounts desk is emailed. Once they approve, the booking
+              becomes <strong>Confirmed Cancellation</strong> and the cancellation notice is sent
+              automatically.
             </p>
           </div>
 
@@ -2916,7 +3015,7 @@ Wishing you a wonderful trip! ✈️
           {/* Auto-filled from the signed-in account — read only */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="form-label">Cancelled By</label>
+              <label className="form-label">Requested By</label>
               <input className="form-input bg-slate-50 text-slate-600 cursor-not-allowed"
                 value={session?.user?.name ?? '—'} readOnly disabled />
             </div>
@@ -2948,8 +3047,9 @@ Wishing you a wonderful trip! ✈️
           </div>
 
           <p className="text-[11px] text-slate-500 leading-relaxed border-t border-slate-100 pt-3">
-            A cancellation notice will be emailed to you and to the operations desk
-            (Senthoor, Venkadesh, Amala, Mahamood, Shahila, Shafiya).
+            An approval request goes to the accounts team now. The full cancellation notice
+            (you + the operations desk — Senthoor, Venkadesh, Amala, Mahamood, Shahila, Shafiya)
+            is sent automatically once accounts approve.
           </p>
         </div>
       </Modal>

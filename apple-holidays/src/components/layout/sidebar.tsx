@@ -9,7 +9,7 @@ import {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
-  HardDrive, FolderOpen, X, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
+  HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -32,6 +32,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
+  XCircle,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -97,6 +98,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
     { label: 'Credit Agents',   href: '/dashboard/accounts/credit-agents',   icon: 'CreditCard' },
+    { label: 'Cancellations',   href: '/dashboard/accounts/cancellations',   icon: 'XCircle' },
     { label: 'Reports',         href: '/dashboard/accounts/reports',         icon: 'Download' },
     { label: 'Driver Logs',     href: '/dashboard/driver-log',               icon: 'Navigation2' },
     { ...WHATSAPP_NAV_ITEM },
@@ -124,6 +126,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
+    { label: 'Cancellations',      href: '/dashboard/accounts/cancellations',      icon: 'XCircle' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',            icon: 'Download' },
     { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',            icon: 'Mail' },
@@ -179,6 +182,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
+    { label: 'Cancellations',      href: '/dashboard/accounts/cancellations',      icon: 'XCircle' },
     { label: 'Reports',            href: '/dashboard/accounts/reports',            icon: 'Download' },
     { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',         href: '/dashboard/admin/mail-inbox',            icon: 'Mail' },

@@ -245,6 +245,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'P&L',            href: '/dashboard/accounts/pnl',       icon: 'BarChart2' },
     { label: 'Profit',         href: '/dashboard/accounts/profit',    icon: 'TrendingUp' },
     { label: 'Credit Agents',  href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
+    { label: 'Cancellations',  href: '/dashboard/accounts/cancellations', icon: 'XCircle' },
     { label: 'Reports',        href: '/dashboard/accounts/reports',   icon: 'Download' },
   ],
   CLIENT: [
@@ -253,6 +254,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
   SUPER_ADMIN: [
     { label: 'Dashboard',  href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings', href: '/dashboard/bookings',       icon: 'FileText' },
+    { label: 'Cancellations', href: '/dashboard/accounts/cancellations', icon: 'XCircle' },
     { label: 'Reports',    href: '/dashboard/accounts/reports', icon: 'Download' },
     { label: 'Users',      href: '/dashboard/admin/users',      icon: 'Users' },
     { label: 'Audit Log',  href: '/dashboard/admin/audit',      icon: 'Shield' },
@@ -264,6 +266,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Dashboard',    href: '/dashboard',                    icon: 'LayoutDashboard' },
     { label: 'All Bookings', href: '/dashboard/bookings',           icon: 'FileText' },
     { label: 'Mail Inbox',   href: '/dashboard/admin/mail-inbox',   icon: 'Mail' },
+    { label: 'Cancellations',href: '/dashboard/accounts/cancellations', icon: 'XCircle' },
     { label: 'Reports',      href: '/dashboard/accounts/reports',   icon: 'Download' },
     { label: 'Users',        href: '/dashboard/admin/users',        icon: 'Users' },
     { label: 'Audit Log',    href: '/dashboard/admin/audit',        icon: 'Shield' },

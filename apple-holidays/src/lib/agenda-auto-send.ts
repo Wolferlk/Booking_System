@@ -50,7 +50,7 @@ export async function runAgendaAutoSend(opts: { dryRun?: boolean } = {}): Promis
         gte: new Date(`${targetDate}T00:00:00.000Z`),
         lte: new Date(`${targetDate}T23:59:59.999Z`),
       },
-      status:      { notIn: ['CANCELLED', 'DRAFT'] },
+      status:      { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] },
       cancelledAt: null,
     },
     include: AGENDA_INCLUDE,
