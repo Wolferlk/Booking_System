@@ -138,7 +138,8 @@ export const STATUS_LABELS: Record<BookingStatus, string> = {
   MSG_SENT_CUSTOMER: 'Message Sent to Customer',
   FEEDBACK_DONE: 'Feedback Done',
   COMPLETED: 'Completed',
-  CANCELLED: 'Cancelled',
+  PENDING_CANCELLATION: 'Pending Approval — Accounts Team (Cancelling)',
+  CANCELLED: 'Confirmed Cancellation',
   AMENDED: 'Amended',
 }
 
@@ -160,6 +161,7 @@ export const STATUS_COLORS: Record<BookingStatus, string> = {
   MSG_SENT_CUSTOMER: 'bg-rose-100 text-rose-700',
   FEEDBACK_DONE: 'bg-lime-100 text-lime-700',
   COMPLETED: 'bg-gray-100 text-gray-500',
+  PENDING_CANCELLATION: 'bg-orange-100 text-orange-700',
   CANCELLED: 'bg-red-100 text-red-700',
   AMENDED: 'bg-amber-100 text-amber-700',
 }
@@ -215,7 +217,7 @@ export function getCurrentStep(status: BookingStatus): number {
 }
 
 // Statuses an incoming amendment must never overwrite — terminal or out-of-band.
-const AMENDMENT_LOCKED_STATES: BookingStatus[] = ['CANCELLED', 'COMPLETED', 'AMENDED']
+const AMENDMENT_LOCKED_STATES: BookingStatus[] = ['CANCELLED', 'PENDING_CANCELLATION', 'COMPLETED', 'AMENDED']
 
 // The booking lifecycle is forward-only: once a booking has advanced past
 // review, an amended TC document must NOT drag it back to GT_REVIEW.

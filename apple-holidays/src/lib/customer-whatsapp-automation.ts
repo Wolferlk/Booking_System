@@ -269,7 +269,7 @@ export async function runCustomerDailyBriefing(): Promise<AutomationRunResult> {
   // Bookings whose trip covers tomorrow, with a reachable WhatsApp/phone contact
   const candidates = await prisma.booking.findMany({
     where: {
-      status: { notIn: ['CANCELLED', 'DRAFT'] },
+      status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] },
       arrivalDate:   { lte: dayEnd },
       departureDate: { gte: dayStart },
       OR: [
@@ -365,7 +365,7 @@ export async function runCustomerFeedbackRequest(): Promise<AutomationRunResult>
 
   const candidates = await prisma.booking.findMany({
     where: {
-      status: { notIn: ['CANCELLED', 'DRAFT'] },
+      status: { notIn: ['CANCELLED', 'PENDING_CANCELLATION', 'DRAFT'] },
       departureDate: { gte: dayStart, lte: dayEnd },
       guestFeedback: null,
       OR: [

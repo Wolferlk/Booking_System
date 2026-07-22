@@ -15,7 +15,16 @@ export default function BookingLifecycle({ status, className }: BookingLifecycle
     return (
       <div className={cn('flex items-center gap-2 text-red-600', className)}>
         <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-        <span className="text-sm font-medium">Booking Cancelled</span>
+        <span className="text-sm font-medium">Confirmed Cancellation</span>
+      </div>
+    )
+  }
+
+  if (status === 'PENDING_CANCELLATION') {
+    return (
+      <div className={cn('flex items-center gap-2 text-orange-600', className)}>
+        <div className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse" />
+        <span className="text-sm font-medium">Pending Approval — Accounts Team (Cancelling)</span>
       </div>
     )
   }

@@ -151,6 +151,13 @@ model Booking {
   cancelledByName        String?
   cancelledByEmail       String?
   cancellationReason     String?            @db.Text
+  // Accounts-team approval trail for a cancellation request.
+  cancelRequestedAt      DateTime?
+  cancelPrevStatus       BookingStatus?
+  cancelDecidedAt        DateTime?
+  cancelDecidedByName    String?
+  cancelDecidedByEmail   String?
+  cancelDecisionNote     String?            @db.Text
   accommodations         Accommodation[]
   versions               BookingVersion[]
   clientUser             User?              @relation("ClientUser", fields: [clientUserId], references: [id])
@@ -1100,6 +1107,7 @@ enum BookingStatus {
   MSG_SENT_CUSTOMER
   FEEDBACK_DONE
   COMPLETED
+  PENDING_CANCELLATION
   CANCELLED
   AMENDED
 }
