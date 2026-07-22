@@ -121,6 +121,11 @@ export async function POST(
   try {
     if (decision === 'APPROVE') {
       await sendCancellationEmail({ ...mailInput, cancelledAt: decidedAt })
+      // Stamped so the backend watcher does not send the same notice again.
+      await prisma.booking.update({
+        where: { id: booking.id },
+        data:  { cancelMailSentAt: new Date() },
+      })
     } else {
       await sendCancellationRejectedEmail(mailInput, restoredStatus)
     }

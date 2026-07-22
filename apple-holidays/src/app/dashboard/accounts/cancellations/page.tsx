@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, XCircle, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
-import Button from '@/components/ui/button'
 import { formatDate, formatDateTime, formatCurrency, cn } from '@/lib/utils'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import type { BookingStatus } from '@prisma/client'
@@ -46,8 +45,6 @@ export default function AccountsCancellationsPage() {
   const [view, setView] = useState<'pending' | 'decided'>('pending')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
-  const [notes, setNotes] = useState<Record<string, string>>({})
-  const [busy, setBusy] = useState<string | null>(null)
 
   const load = useCallback(async (v: 'pending' | 'decided') => {
     setLoading(true)
@@ -65,36 +62,11 @@ export default function AccountsCancellationsPage() {
 
   useEffect(() => { load(view) }, [view, load])
 
-  async function decide(row: Row, decision: 'APPROVE' | 'REJECT') {
-    const note = (notes[row.id] ?? '').trim()
-    if (decision === 'REJECT' && !note) {
-      toast.error('Add a note explaining why the cancellation is rejected')
-      return
-    }
-    setBusy(`${row.id}-${decision}`)
-    try {
-      const res = await fetch(`/api/bookings/${row.bookingRef}/cancel/decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, note }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      toast.success(json.message ?? 'Decision saved')
-      setNotes(n => ({ ...n, [row.id]: '' }))
-      await load(view)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not save the decision')
-    } finally {
-      setBusy(null)
-    }
-  }
-
   return (
     <>
       <Header
         title="Cancellation Approvals"
-        subtitle="Bookings held at Pending Approval — Accounts Team until you approve or reject"
+        subtitle="View-only — cancellation requests are approved or rejected in the Apple Accounts system"
       />
 
       <div className="p-8 space-y-6">
@@ -194,33 +166,13 @@ export default function AccountsCancellationsPage() {
                     </div>
 
                     {isPending && (
-                      <div className="w-full shrink-0 lg:w-80">
-                        <textarea
-                          className="form-input w-full text-sm"
-                          rows={3}
-                          placeholder="Note (optional to approve, required to reject)"
-                          value={notes[row.id] ?? ''}
-                          onChange={e => setNotes(n => ({ ...n, [row.id]: e.target.value }))}
-                        />
-                        <div className="mt-2 flex gap-2">
-                          <Button
-                            variant="danger" size="sm" className="flex-1"
-                            loading={busy === `${row.id}-APPROVE`}
-                            onClick={() => decide(row, 'APPROVE')}
-                          >
-                            <XCircle className="mr-1 h-4 w-4" /> Approve Cancellation
-                          </Button>
-                          <Button
-                            variant="secondary" size="sm" className="flex-1"
-                            loading={busy === `${row.id}-REJECT`}
-                            onClick={() => decide(row, 'REJECT')}
-                          >
-                            Reject
-                          </Button>
-                        </div>
-                        <p className="mt-2 text-[11px] text-slate-500">
-                          Approving marks the booking Confirmed Cancellation and emails the cancellation
-                          notice automatically.
+                      <div className="w-full shrink-0 rounded-lg border border-orange-200 bg-orange-50 p-3 lg:w-72">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700">
+                          Awaiting accounts decision
+                        </p>
+                        <p className="mt-1 text-[11px] leading-relaxed text-orange-800/80">
+                          Approve or reject this request in the Apple Accounts system under
+                          Cancellation Management. This list is view-only.
                         </p>
                       </div>
                     )}

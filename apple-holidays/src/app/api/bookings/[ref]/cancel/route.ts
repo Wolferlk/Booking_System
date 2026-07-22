@@ -63,6 +63,7 @@ export async function POST(
         cancelDecidedByName: null,
         cancelDecidedByEmail: null,
         cancelDecisionNote: null,
+        cancelMailSentAt: null,
         cancelledById: session.user.id,
         cancelledByName,
         cancelledByEmail,

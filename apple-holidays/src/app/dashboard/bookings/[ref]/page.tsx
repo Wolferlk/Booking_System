@@ -58,9 +58,6 @@ const DEFAULT_CANCEL_REASON = 'File handler cancelled this booking'
 /** Roles allowed to cancel — kept in step with the cancel API route. */
 const CAN_CANCEL_ROLES: string[] = ['BT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
-/** Roles that sign off a cancellation — kept in step with the decision API route. */
-const CAN_APPROVE_CANCEL_ROLES: string[] = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
-
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
   const router = useRouter()
@@ -75,7 +72,6 @@ export default function BookingDetailPage() {
   const [cancelModal, setCancelModal] = useState(false)
   const [note, setNote] = useState('')
   const [cancelReason, setCancelReason] = useState('')
-  const [cancelDecisionNote, setCancelDecisionNote] = useState('')
   const [pendingAction, setPendingAction] = useState<string>('')
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -374,31 +370,6 @@ export default function BookingDetailPage() {
     }
   }
 
-  /** Accounts sign-off on a cancellation request (approve = cancel for real). */
-  async function decideCancellation(decision: 'APPROVE' | 'REJECT') {
-    if (decision === 'REJECT' && !cancelDecisionNote.trim()) {
-      toast.error('Add a note explaining why the cancellation is rejected')
-      return
-    }
-    setActionLoading(`decision-${decision}`)
-    try {
-      const res = await fetch(`/api/bookings/${ref}/cancel/decision`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, note: cancelDecisionNote.trim() }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      toast.success(json.message ?? 'Decision saved')
-      setCancelDecisionNote('')
-      await load()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Could not save the decision')
-    } finally {
-      setActionLoading(null)
-    }
-  }
-
   if (loading) return (
     <div className="flex items-center justify-center h-screen">
       <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
@@ -415,7 +386,6 @@ export default function BookingDetailPage() {
   const status = booking.status as BookingStatus
   const isCancelled = status === 'CANCELLED'
   const isPendingCancel = status === 'PENDING_CANCELLATION'
-  const canApproveCancel = CAN_APPROVE_CANCEL_ROLES.includes(role)
   const transitions = getAvailableTransitions(status, role)
   const daysUntil = getDaysUntilTrip(booking.arrivalDate as string)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1220,40 +1190,14 @@ Wishing you a wonderful trip! ✈️
                   until the accounts team approves or rejects.
                 </p>
 
-                {canApproveCancel && (
-                  <div className="mt-4 rounded-lg border border-orange-200 bg-white/80 p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Accounts decision
-                    </p>
-                    <textarea
-                      className="form-input mt-2 w-full text-sm"
-                      rows={2}
-                      placeholder="Note (optional to approve, required to reject) — e.g. supplier charges settled, 50% penalty applies"
-                      value={cancelDecisionNote}
-                      onChange={e => setCancelDecisionNote(e.target.value)}
-                    />
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        variant="danger" size="sm"
-                        loading={actionLoading === 'decision-APPROVE'}
-                        onClick={() => decideCancellation('APPROVE')}
-                      >
-                        Approve — Confirm Cancellation
-                      </Button>
-                      <Button
-                        variant="secondary" size="sm"
-                        loading={actionLoading === 'decision-REJECT'}
-                        onClick={() => decideCancellation('REJECT')}
-                      >
-                        Reject — Keep Booking Active
-                      </Button>
-                    </div>
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      Approving marks the booking Confirmed Cancellation and automatically emails the
-                      cancellation notice to the requester and the operations desk.
-                    </p>
-                  </div>
-                )}
+                <div className="mt-4 rounded-lg border border-orange-200 bg-white/80 px-4 py-3">
+                  <p className="text-xs leading-relaxed text-slate-600">
+                    The decision is made by the accounts team in the <strong>Apple Accounts</strong>
+                    {' '}system (Cancellation Management). Once they approve, this booking moves to
+                    {' '}<strong>Confirmed Cancellation</strong> and the cancellation notice is emailed
+                    {' '}automatically. If they reject it, the booking returns to its previous status.
+                  </p>
+                </div>
               </div>
             </div>
           </div>

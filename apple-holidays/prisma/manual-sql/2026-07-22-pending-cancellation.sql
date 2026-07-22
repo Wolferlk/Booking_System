@@ -24,4 +24,7 @@ ALTER TABLE `Booking`
   ADD COLUMN `cancelDecidedAt`      DATETIME(3) NULL,
   ADD COLUMN `cancelDecidedByName`  VARCHAR(191) NULL,
   ADD COLUMN `cancelDecidedByEmail` VARCHAR(191) NULL,
-  ADD COLUMN `cancelDecisionNote`   TEXT NULL;
+  ADD COLUMN `cancelDecisionNote`   TEXT NULL,
+  -- Claimed by the backend watcher before it sends, so the cancellation mail
+  -- goes out exactly once no matter who flipped the status.
+  ADD COLUMN `cancelMailSentAt`     DATETIME(3) NULL;
