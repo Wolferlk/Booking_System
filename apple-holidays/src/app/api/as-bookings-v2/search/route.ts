@@ -41,8 +41,13 @@ export async function GET(req: Request) {
     })
 
     // Which of these already exist locally? One indexed query over the refs.
+    // The row's own `is_number` ("MY 40060") is the reliable source; only some
+    // rows repeat it inside `reference_id_full`, so that is just a fallback.
     const refOf = (it: ASBookingListItem): string | null => {
-      const raw = it.reference_id_full?.find((r) => /^(IS|VN|SG|MY)/i.test(r))
+      const own = (it.is_number ?? '').trim()
+      const raw = own && own.toUpperCase() !== 'NA'
+        ? own
+        : it.reference_id_full?.find((r) => /^(IS|VN|SG|MY)/i.test(r))
       return raw ? normalizeIsNumber(raw) : null
     }
     const refs = Array.from(new Set(items.map(refOf).filter((r): r is string => !!r)))

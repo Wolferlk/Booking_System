@@ -110,6 +110,11 @@ export async function GET(req: Request) {
 }
 
 function matchesSearch(it: ASBookingListItem, q: string): boolean {
-  const haystack: string[] = [it.quotation_no, it.reference_id, ...(it.reference_id_full ?? [])]
+  const haystack: string[] = [
+    it.quotation_no,
+    it.reference_id,
+    ...(it.is_number ? [it.is_number, it.is_number.replace(/\s+/g, '')] : []),
+    ...(it.reference_id_full ?? []),
+  ]
   return haystack.filter(Boolean).some((v) => String(v).toLowerCase().includes(q))
 }

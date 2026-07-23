@@ -14,7 +14,10 @@ export const maxDuration = 60
 
 /**
  * POST /api/as-bookings-v2/create
- * Body: { quotation_no: string, reference_id: string }
+ * Body: { quotation_no: string, reference_id: string, is_number?: string }
+ *
+ * `reference_id` is the AppleSystem list row's **`id`**; `is_number` is that
+ * row's IS number, used only as a fallback when the template payload omits it.
  *
  * Fetches the AppleSystem quote template, maps it to a local Booking, and
  * persists it (with passengers, accommodations, itinerary and emergency
@@ -30,7 +33,7 @@ export async function POST(req: NextRequest) {
     return buildApiError('Forbidden', 403)
   }
 
-  let body: { quotation_no?: string; reference_id?: string }
+  let body: { quotation_no?: string; reference_id?: string; is_number?: string | null }
   try {
     body = await req.json()
   } catch {
@@ -55,7 +58,7 @@ export async function POST(req: NextRequest) {
   // 2. Map to our booking shape.
   let mapped
   try {
-    mapped = mapQuoteToBooking(quote)
+    mapped = mapQuoteToBooking(quote, { fallbackIsNumber: body.is_number ?? null })
   } catch (err) {
     if (err instanceof ASMappingError) return buildApiError(err.message, 422)
     const msg = err instanceof Error ? err.message : 'Could not map the AppleSystem quotation'

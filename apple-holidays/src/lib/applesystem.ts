@@ -246,6 +246,8 @@ export interface ASBookingListItem {
   updated_at?: { date: string } | string | null
   reference_id: string
   reference_id_full?: string[]
+  /** IS/VN/SG/MY reference as stored upstream ("MY 40060"), or "NA" when unassigned. */
+  is_number?: string | null
   main?: { user?: string; arrival_year?: string; arrival_month?: string; arrival_day?: string }
   pax?: { adult?: string; cwb?: string; cnb?: string; total_children?: number }
   map_image_url?: string
@@ -257,6 +259,52 @@ export interface ASBookingListItem {
 export interface ASListResult {
   items: ASBookingListItem[]
   total: number
+}
+
+/**
+ * Raw list envelope. `/api/quotation/list` is **paginated** (16 rows per page by
+ * default) — `data` is only the current page while `pagination.total` is the real
+ * match count. Ignoring this silently truncated every list to its first page.
+ */
+interface ASListEnvelope {
+  success?: boolean
+  data?: ASBookingListItem[]
+  total?: number
+  pagination?: { current_page?: number; per_page?: number; total?: number; last_page?: number }
+}
+
+/** Page size we ask upstream for (it honours `per_page`; 16 is its default). */
+const AS_PAGE_SIZE = Number(process.env.AS_PAGE_SIZE || 100)
+/** Hard stop so a runaway `last_page` can never loop forever. */
+const AS_MAX_PAGES = 50
+
+/**
+ * Fetch **every** page of a `/api/quotation/list` query and return the combined
+ * rows. Callers get the complete result set, not just the first 16 rows.
+ */
+async function listAllPages(qs: URLSearchParams, label: string): Promise<ASListResult> {
+  const items: ASBookingListItem[] = []
+  let upstreamTotal = 0
+  let lastPage = 1
+
+  for (let page = 1; page <= AS_MAX_PAGES; page++) {
+    const q = new URLSearchParams(qs)
+    q.set('per_page', String(AS_PAGE_SIZE))
+    q.set('page', String(page))
+
+    const res = await asFetch(`/api/quotation/list?${q.toString()}`)
+    if (!res.ok) throw new Error(`AppleSystem ${label} failed (${res.status})`)
+    const json = (await res.json()) as ASListEnvelope
+
+    const rows = Array.isArray(json.data) ? json.data : []
+    items.push(...rows)
+
+    upstreamTotal = json.pagination?.total ?? json.total ?? items.length
+    lastPage = json.pagination?.last_page ?? 1
+    if (rows.length === 0 || page >= lastPage) break
+  }
+
+  return { items, total: Math.max(upstreamTotal, items.length) }
 }
 
 export interface ASListParams {
@@ -272,11 +320,7 @@ export async function listBookings(params: ASListParams): Promise<ASListResult> 
   qs.set('to_arrival_date', params.toArrivalDate)
   for (const s of params.statuses ?? []) qs.append('status[]', s)
 
-  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
-  if (!res.ok) throw new Error(`AppleSystem list failed (${res.status})`)
-  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
-  const items = Array.isArray(json.data) ? json.data : []
-  return { items, total: json.total ?? items.length }
+  return listAllPages(qs, 'list')
 }
 
 export interface ASCreateDateParams {
@@ -292,6 +336,9 @@ export interface ASCreateDateParams {
  * filters on arrival date), this uses AppleSystem's `from_create_date` /
  * `to_create_date` params so we pull exactly the confirmations *created* in a
  * given window — e.g. "everything confirmed yesterday".
+ *
+ * All pages are fetched: a busy day easily exceeds the upstream 16-row page and
+ * the importer must see every confirmation, not the first screen of them.
  */
 export async function listByCreateDate(params: ASCreateDateParams): Promise<ASListResult> {
   const qs = new URLSearchParams()
@@ -299,11 +346,7 @@ export async function listByCreateDate(params: ASCreateDateParams): Promise<ASLi
   qs.set('to_create_date', params.toCreateDate)
   for (const s of params.statuses ?? []) qs.append('status[]', s)
 
-  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
-  if (!res.ok) throw new Error(`AppleSystem create-date list failed (${res.status})`)
-  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
-  const items = Array.isArray(json.data) ? json.data : []
-  return { items, total: json.total ?? items.length }
+  return listAllPages(qs, 'create-date list')
 }
 
 export interface ASSearchParams {
@@ -328,11 +371,7 @@ export async function searchBookings(params: ASSearchParams): Promise<ASListResu
   if (quo) qs.set('quotation_no', quo)
   for (const s of params.statuses ?? []) qs.append('status[]', s)
 
-  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
-  if (!res.ok) throw new Error(`AppleSystem search failed (${res.status})`)
-  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
-  const items = Array.isArray(json.data) ? json.data : []
-  return { items, total: json.total ?? items.length }
+  return listAllPages(qs, 'search')
 }
 
 /** Fetch the full P&L / cost breakdown for one booking. Returns the raw `data` object. */
@@ -597,8 +636,11 @@ export interface ASQuoteTemplate {
  * Fetch the composed booking-confirmation template for one quotation.
  *
  * Per the AppleSystem contract the POST body maps:
- *   quotation_no  → the booking's `quotation_no`
- *   reference_id  → the booking's `id`
+ *   quotation_no  → the list row's `quotation_no`
+ *   reference_id  → the list row's **`id`** (NOT its `reference_id` field, which
+ *                   mirrors the quotation number). Passing the wrong one still
+ *                   returns 200 with a stub payload whose `is_number` is "NA",
+ *                   which is why every mismatched row used to fail the import.
  */
 export async function getQuoteTemplate(
   quotationNo: string,
