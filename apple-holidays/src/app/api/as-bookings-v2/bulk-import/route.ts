@@ -3,20 +3,25 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
-import { startAsImport } from '@/lib/as-import'
+import { startAsImport, type ImportDateField } from '@/lib/as-import'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
-const MAX_SPAN_DAYS = 92
+/** Create-date windows are for catching up on confirmations, so they stay tight. */
+const MAX_SPAN_DAYS_CREATE = 92
+/** Arrival windows cover whole seasons ahead, so they get a wider cap. */
+const MAX_SPAN_DAYS_ARRIVAL = 366
 
 /**
  * POST /api/as-bookings-v2/bulk-import
- * Body: { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
+ * Body: { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', dateField?: 'create' | 'arrival' }
  *
- * Kicks a manual range import of status-2 confirmations by *create date* in the
- * background and returns a jobId to poll via /api/as-bookings-v2/import-jobs/:id.
+ * Kicks a manual range import of status-2 confirmations in the background and
+ * returns a jobId to poll via /api/as-bookings-v2/import-jobs/:id. The window
+ * filters on the quotation create date by default, or on the tour arrival date
+ * when `dateField` is `'arrival'`.
  */
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -26,7 +31,7 @@ export async function POST(req: NextRequest) {
     return buildApiError('Forbidden', 403)
   }
 
-  let body: { from?: string; to?: string }
+  let body: { from?: string; to?: string; dateField?: string }
   try {
     body = await req.json()
   } catch {
@@ -35,6 +40,7 @@ export async function POST(req: NextRequest) {
 
   const from = String(body.from ?? '').trim()
   const to = String(body.to ?? '').trim()
+  const dateField: ImportDateField = body.dateField === 'arrival' ? 'arrival' : 'create'
   if (!ISO_DATE.test(from) || !ISO_DATE.test(to)) {
     return buildApiError('from and to must be YYYY-MM-DD dates', 400)
   }
@@ -42,15 +48,17 @@ export async function POST(req: NextRequest) {
     return buildApiError('"from" date must be on or before "to" date', 400)
   }
 
+  const maxSpan = dateField === 'arrival' ? MAX_SPAN_DAYS_ARRIVAL : MAX_SPAN_DAYS_CREATE
   const spanDays = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000)
-  if (spanDays > MAX_SPAN_DAYS) {
-    return buildApiError(`Date range too large — keep it within ${MAX_SPAN_DAYS} days.`, 400)
+  if (spanDays > maxSpan) {
+    return buildApiError(`Date range too large — keep it within ${maxSpan} days.`, 400)
   }
 
   try {
     const jobId = await startAsImport({
-      fromCreateDate: from,
-      toCreateDate: to,
+      fromDate: from,
+      toDate: to,
+      dateField,
       mode: 'manual',
       triggeredById: session.user.id,
     })

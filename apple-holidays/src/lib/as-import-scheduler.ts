@@ -92,7 +92,7 @@ async function fireOnce(reason: string): Promise<boolean> {
   console.log(`[AsImportScheduler] ${reason} — importing confirmations created ${yesterday} (tz ${TZ})`)
 
   // Fire in background so the cron tick returns immediately.
-  void runAsImport({ fromCreateDate: yesterday, toCreateDate: yesterday, mode: 'auto' }).catch((err) => {
+  void runAsImport({ fromDate: yesterday, toDate: yesterday, mode: 'auto' }).catch((err) => {
     console.error('[AsImportScheduler] background job error:', err instanceof Error ? err.message : err)
   })
   return true

@@ -15,9 +15,12 @@ export interface ImportEvent {
 
 export interface CountryTally { created: number; skipped: number; errors: number }
 
+export type ImportDateField = 'create' | 'arrival'
+
 export interface ImportJob {
   id: string
   mode: 'auto' | 'manual'
+  dateField?: ImportDateField   // absent on older jobs => 'create'
   dateFrom: string
   dateTo: string
   status: 'running' | 'done' | 'error'
@@ -131,9 +134,13 @@ export function JobResultCard({ job, showEvents = true }: { job: ImportJob; show
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-slate-800">
-            {job.mode === 'auto' ? 'Daily import' : 'Range import'}
+            {job.mode === 'auto'
+              ? 'Daily import'
+              : job.dateField === 'arrival' ? 'Arrival import' : 'Range import'}
           </span>
-          <span className="text-xs text-slate-400 font-mono">{fmtRange(job.dateFrom, job.dateTo)}</span>
+          <span className="text-xs text-slate-400 font-mono">
+            {job.dateField === 'arrival' ? 'arrival ' : ''}{fmtRange(job.dateFrom, job.dateTo)}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <StatusPill status={job.status} />

@@ -62,7 +62,7 @@ export async function GET(req: NextRequest) {
   })
 
   const yesterday = yesterdayInTz()
-  const jobId = await startAsImport({ fromCreateDate: yesterday, toCreateDate: yesterday, mode: 'auto' })
+  const jobId = await startAsImport({ fromDate: yesterday, toDate: yesterday, mode: 'auto' })
 
   console.log(`[AsImportCron] started — create_date ${yesterday}, jobId ${jobId}`)
   return NextResponse.json({ ok: true, started: true, jobId, createDate: yesterday })
