@@ -241,6 +241,18 @@ async function startAutoBookingCreateScheduler() {
   }
 }
 
+async function startAsImportCreateScheduler() {
+  try {
+    // node-cron scheduler: fires once daily at the configured time (default 06:00
+    // AUTO_BOOKING_TZ) and imports yesterday's status-2 AppleSystem confirmations.
+    // Started once at boot — timezone-aware, with boot catch-up.
+    const { startAsImportScheduler } = await import('./as-import-scheduler')
+    await startAsImportScheduler()
+  } catch (err) {
+    console.error('[Scheduler] as-import scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startCustomerWhatsAppMessagingScheduler() {
   try {
     // node-cron scheduler: fires once daily at CUSTOMER_MSG_SEND_HOUR (default 18:00
@@ -316,6 +328,10 @@ export function startCronJobs() {
   // Auto-booking-create: node-cron daily job (timezone-aware, boot catch-up).
   // Started once at boot instead of a per-minute interval.
   void startAutoBookingCreateScheduler()
+
+  // AppleSystem confirmations auto-import: node-cron daily job at 06:00
+  // (timezone-aware, boot catch-up). Imports yesterday's status-2 confirmations.
+  void startAsImportCreateScheduler()
 
   // Customer WhatsApp messaging: node-cron daily job at 6pm (timezone-aware, boot
   // catch-up). Started once at boot instead of a per-minute interval.
