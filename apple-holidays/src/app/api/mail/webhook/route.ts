@@ -8,6 +8,7 @@ import {
 } from '@/lib/mail-processor'
 import { processMailboxEmail } from '@/lib/incoming-mail-automation'
 import { upsertCachedMailMessage } from '@/lib/mail-cache'
+import { isAutoMailProcessingEnabled } from '@/lib/mail-mode'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,6 +48,11 @@ export async function POST(req: NextRequest) {
 }
 
 async function processNotifications(notifications: GraphNotification[], secret: string) {
+  // Manual-only guard: when auto mail processing is OFF, we still fetch + cache
+  // the incoming message (so it's visible in Mail Inbox for manual processing),
+  // but skip the automatic extraction/booking-creation step. Computed once.
+  const autoMailEnabled = await isAutoMailProcessingEnabled()
+
   for (const notif of notifications) {
     if (notif.clientState !== secret) {
       console.warn('[Webhook] invalid clientState, skipping')
@@ -99,6 +105,13 @@ async function processNotifications(notifications: GraphNotification[], secret: 
       mailboxKind,
       status: 'RECEIVED',
     }).catch(() => {})
+
+    // Auto mail processing OFF → leave the message RECEIVED (manual only) and do
+    // not write the dedup key, so it can be processed later via the Process button.
+    if (!autoMailEnabled) {
+      console.log(`[MailWebhook] auto-mail OFF — skipping ${graphId} (manual only)`)
+      continue
+    }
 
     try {
       const { rawText, attachments } = await extractEmailSourceTextForUser(mailboxUser, email)
