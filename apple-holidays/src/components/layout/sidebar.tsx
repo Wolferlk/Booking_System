@@ -9,7 +9,7 @@ import {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
-  HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
+  HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -32,7 +32,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
-  XCircle,
+  XCircle, PackagePlus,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -45,6 +45,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',   href: '/dashboard/bookings',                  icon: 'FileText' },
     { label: 'AS Bookings',    href: '/dashboard/as-bookings',               icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
+    { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'New Booking',    href: '/dashboard/bookings/new',              icon: 'PlusCircle' },
     { label: 'Change Requests',href: '/dashboard/change-requests',           icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl',             icon: 'BarChart2' },
@@ -78,6 +79,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',       href: '/dashboard/bookings',                 icon: 'FileText' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',              icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
+    { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
@@ -95,6 +97,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',    href: '/dashboard/bookings',                 icon: 'FileText' },
     { label: 'AS Bookings',     href: '/dashboard/as-bookings',              icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
+    { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
     { label: 'Credit Agents',   href: '/dashboard/accounts/credit-agents',   icon: 'CreditCard' },
@@ -116,6 +119,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
+    { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
@@ -146,6 +150,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
+    { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
@@ -170,6 +175,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
+    { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
