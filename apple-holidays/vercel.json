@@ -29,6 +29,10 @@
       "schedule": "0 4 * * *"
     },
     {
+      "path": "/api/cron/as-auto-import",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/cron/customer-daily-briefing",
       "schedule": "0 11 * * *"
     },

@@ -279,6 +279,33 @@ export async function listBookings(params: ASListParams): Promise<ASListResult> 
   return { items, total: json.total ?? items.length }
 }
 
+export interface ASCreateDateParams {
+  fromCreateDate: string   // YYYY-MM-DD (inclusive)
+  toCreateDate: string     // YYYY-MM-DD (inclusive)
+  statuses?: string[]      // e.g. ['2']; empty/omitted => all
+}
+
+/**
+ * List quotations/bookings filtered by their **creation date** window and status.
+ *
+ * This drives the confirmations auto-import: unlike {@link listBookings} (which
+ * filters on arrival date), this uses AppleSystem's `from_create_date` /
+ * `to_create_date` params so we pull exactly the confirmations *created* in a
+ * given window — e.g. "everything confirmed yesterday".
+ */
+export async function listByCreateDate(params: ASCreateDateParams): Promise<ASListResult> {
+  const qs = new URLSearchParams()
+  qs.set('from_create_date', params.fromCreateDate)
+  qs.set('to_create_date', params.toCreateDate)
+  for (const s of params.statuses ?? []) qs.append('status[]', s)
+
+  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
+  if (!res.ok) throw new Error(`AppleSystem create-date list failed (${res.status})`)
+  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
+  const items = Array.isArray(json.data) ? json.data : []
+  return { items, total: json.total ?? items.length }
+}
+
 export interface ASSearchParams {
   isNumber?: string
   quotationNo?: string
