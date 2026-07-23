@@ -37,6 +37,13 @@ import {
 import { detectCountryFromRef } from './country-detection'
 import type { OperationCountry } from './country-detection'
 
+// ── Permanent kill switch ─────────────────────────────────────────────────────
+// The TQ-Auto scheduler is HARD-DISABLED in code. It will not start at boot, the
+// 5-minute tick and the Vercel HTTP cron route are no-ops, and the DB toggle
+// (`tq_auto_scheduler_enabled`) / Mail Inbox switch have no effect. The ONLY way
+// to bring it back is to set this to `false` and redeploy.
+export const TQ_AUTO_HARD_DISABLED: boolean = true
+
 // ── SystemSetting keys ────────────────────────────────────────────────────────
 export const TQ_AUTO_ENABLED_KEY = 'tq_auto_scheduler_enabled'
 export const TQ_AUTO_ALERTS_KEY  = 'tq_auto_process_alerts'
@@ -89,6 +96,8 @@ function getTqMailbox() {
 }
 
 export async function isTqAutoEnabled(): Promise<boolean> {
+  // Hard-disabled in code — always report OFF regardless of the DB toggle.
+  if (TQ_AUTO_HARD_DISABLED) return false
   const row = await prisma.systemSetting.findUnique({ where: { key: TQ_AUTO_ENABLED_KEY } })
   // Default ON: only treat an explicit 'false' as disabled.
   return row?.value !== 'false'
@@ -172,6 +181,11 @@ export interface TqAutoRunResult {
  * @param trigger  where the run came from (scheduler | vercel-cron | manual) — for logs only
  */
 export async function runTqAutoProcess(trigger: string = 'scheduler'): Promise<TqAutoRunResult> {
+  if (TQ_AUTO_HARD_DISABLED) {
+    console.log(`[TQ-Auto] permanently disabled in code — ignoring ${trigger} trigger`)
+    return { ok: true, skipped: 'hard-disabled' }
+  }
+
   if (running) {
     console.log('[TQ-Auto] already running — skipping overlapping tick')
     return { ok: true, skipped: 'already-running' }
@@ -352,6 +366,10 @@ export async function runTqAutoProcess(trigger: string = 'scheduler'): Promise<T
 let task: ScheduledTask | null = null
 
 export function startTqAutoScheduler(): void {
+  if (TQ_AUTO_HARD_DISABLED) {
+    console.log('[TQ-Auto] permanently disabled in code — scheduler NOT started')
+    return
+  }
   if (task) return   // already started in this process
 
   task = cron.schedule(EVERY_5_MIN, () => {
