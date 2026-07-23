@@ -24,6 +24,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const search = searchParams.get('search')
+  const arrivalFrom = searchParams.get('arrivalFrom')
+  const arrivalTo = searchParams.get('arrivalTo')
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '500'), 1000)
 
   const andClauses: Record<string, unknown>[] = []
@@ -41,6 +43,16 @@ export async function GET(req: NextRequest) {
   }
 
   if (status) andClauses.push({ status })
+
+  // Arrival date range (inclusive) — filtered on the DB so it works
+  // regardless of the row limit and without an agent/search term.
+  if (arrivalFrom || arrivalTo) {
+    const arrivalDate: Record<string, Date> = {}
+    if (arrivalFrom) arrivalDate.gte = new Date(`${arrivalFrom}T00:00:00.000`)
+    if (arrivalTo) arrivalDate.lte = new Date(`${arrivalTo}T23:59:59.999`)
+    andClauses.push({ arrivalDate })
+  }
+
   if (search) {
     andClauses.push({
       OR: [
