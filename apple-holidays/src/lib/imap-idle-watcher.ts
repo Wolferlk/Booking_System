@@ -26,7 +26,7 @@ import { fetchImapPayableEmails, fetchImapAttachments, IMAP_PNL_USER } from './i
 import { processMailboxEmail } from './incoming-mail-automation'
 import { upsertCachedMailMessage } from './mail-cache'
 import { getConfiguredMailboxes } from './mail-processor'
-import { isAutoMailProcessingEnabled } from './mail-mode'
+import { isAutoMailProcessingEnabled, AUTO_MAIL_HARD_DISABLED } from './mail-mode'
 
 const HOST = process.env.IMAP_HOST   ?? 'outlook.office365.com'
 const PORT = Number(process.env.IMAP_PORT ?? '993')
@@ -192,6 +192,10 @@ async function runIdleLoop() {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export function startImapIdleWatcher() {
+  if (AUTO_MAIL_HARD_DISABLED) {
+    console.log('[IDLE] auto mail reading permanently disabled in code — watcher NOT started')
+    return
+  }
   if (watcherRunning) return
 
   if (!IMAP_PNL_USER || !PASS) {

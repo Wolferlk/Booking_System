@@ -8,6 +8,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { scanAllDrives, scanTodayAllDrives } from '@/lib/onedrive-monitor'
+import { ONEDRIVE_AUTO_POLL_HARD_DISABLED } from '@/lib/automation-switches'
 import { prisma } from '@/lib/prisma'
 
 export const dynamic   = 'force-dynamic'
@@ -28,6 +29,10 @@ function isAuthorized(req: NextRequest): boolean {
 
 export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) return unauthorized()
+
+  if (ONEDRIVE_AUTO_POLL_HARD_DISABLED) {
+    return NextResponse.json({ ok: true, skipped: true, message: 'OneDrive auto-poll is permanently disabled in code (automation-switches.ts)' })
+  }
 
   try {
     const setting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })

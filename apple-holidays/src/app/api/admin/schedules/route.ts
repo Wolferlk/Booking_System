@@ -5,6 +5,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getTqAutoStatus } from '@/lib/tq-auto-scheduler'
 import { getAsImportSettings, getLastJob } from '@/lib/as-import'
 import { getAutoCreateSettings } from '@/lib/auto-booking-create'
+import { AUTO_MAIL_HARD_DISABLED, ONEDRIVE_AUTO_POLL_HARD_DISABLED } from '@/lib/automation-switches'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,8 +70,10 @@ export async function GET() {
   const s: Record<string, string> = {}
   rows.forEach((r) => { s[r.key] = r.value })
 
-  const autoMailOn = s['auto_mail_enabled'] === 'true'
-  const onedriveOn = s['auto_onedrive_enabled'] === 'true'
+  // Both are hard-disabled in code — the DB toggles below are powerless, so the
+  // UI must report OFF regardless of what the SystemSetting rows say.
+  const autoMailOn = !AUTO_MAIL_HARD_DISABLED          && s['auto_mail_enabled'] === 'true'
+  const onedriveOn = !ONEDRIVE_AUTO_POLL_HARD_DISABLED && s['auto_onedrive_enabled'] === 'true'
   const schedulerErr = parseErrorLog(s['scheduler_last_error'])
   const tqErr = parseErrorLog(s['tq_auto_last_error'])
 
@@ -86,11 +89,12 @@ export async function GET() {
     {
       id: 'auto-mail',
       label: 'Auto Mail Processing',
-      description: 'Extracts TC / P&L emails and creates bookings automatically. OFF = manual only (use the Process button in Mail Inbox).',
+      description: 'Extracts TC / P&L emails and creates bookings automatically. Permanently disabled in code — mail is still received and cached, process it manually with the Process button in Mail Inbox.',
       category: 'Mail',
       cadence: 'Every 5 min + real-time (IMAP IDLE / webhook)',
       enabled: autoMailOn,
-      controllable: true,
+      controllable: !AUTO_MAIL_HARD_DISABLED,
+      stateBadge: AUTO_MAIL_HARD_DISABLED ? 'Disabled in code' : undefined,
       toggle: {
         endpoint: '/api/admin/settings',
         protected: true,
@@ -109,6 +113,7 @@ export async function GET() {
       cadence: 'Real-time',
       enabled: autoMailOn,
       controllable: false,
+      stateBadge: AUTO_MAIL_HARD_DISABLED ? 'Disabled in code' : undefined,
       lastRunAt: null,
       lastResult: autoMailOn ? 'Active' : 'Idle (manual only)',
       lastError: null,
@@ -168,11 +173,12 @@ export async function GET() {
     {
       id: 'onedrive-poll',
       label: 'Auto OneDrive Poll',
-      description: 'Polls SharePoint/OneDrive drives for new TC / P&L files and processes them.',
+      description: 'Polls SharePoint/OneDrive drives for new TC / P&L files and processes them. Permanently disabled in code — manual scans from the admin OneDrive page still work.',
       category: 'Bookings',
       cadence: 'Every 3–5 min',
       enabled: onedriveOn,
-      controllable: true,
+      controllable: !ONEDRIVE_AUTO_POLL_HARD_DISABLED,
+      stateBadge: ONEDRIVE_AUTO_POLL_HARD_DISABLED ? 'Disabled in code' : undefined,
       toggle: {
         endpoint: '/api/admin/settings',
         protected: true,

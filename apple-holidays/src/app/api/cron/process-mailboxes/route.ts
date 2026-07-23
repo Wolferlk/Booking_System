@@ -6,7 +6,7 @@ import {
 } from '@/lib/mail-processor'
 import { processMailboxEmail } from '@/lib/incoming-mail-automation'
 import type { ProcessedEmail } from '@/lib/mail-processor'
-import { getLessCreditModeEnabled, RECENT_MAIL_WINDOW_MINUTES } from '@/lib/mail-mode'
+import { getLessCreditModeEnabled, RECENT_MAIL_WINDOW_MINUTES, AUTO_MAIL_HARD_DISABLED } from '@/lib/mail-mode'
 import { upsertCachedMailMessage, syncMailboxEmailsToDb, listUnprocessedDbEmails } from '@/lib/mail-cache'
 import { fetchImapPayableEmails, fetchImapAttachments, IMAP_PNL_USER } from '@/lib/imap-pnl'
 
@@ -163,6 +163,10 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET ?? process.env.WEBHOOK_SECRET}`) {
     return unauthorized()
+  }
+
+  if (AUTO_MAIL_HARD_DISABLED) {
+    return NextResponse.json({ ok: true, skipped: true, message: 'Auto mail processing is permanently disabled in code (automation-switches.ts)' })
   }
 
   const autoMailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })

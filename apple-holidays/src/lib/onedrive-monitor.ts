@@ -11,6 +11,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { ONEDRIVE_AUTO_POLL_HARD_DISABLED } from '@/lib/automation-switches'
 import {
   getUserDriveId,
   getSharePointDriveId,
@@ -49,6 +50,10 @@ export interface DriveConfig {
   library?:  string
   rootFolder_sp?: string
 }
+
+// Permanent code-level kill switch — see automation-switches.ts. Re-exported
+// here so OneDrive callers can reach it from the module they already import.
+export { ONEDRIVE_AUTO_POLL_HARD_DISABLED }
 
 export const DRIVE_CONFIGS: DriveConfig[] = [
   {
@@ -503,6 +508,10 @@ export function getOneDrivePollStatus() {
  * Called by cron-scheduler.ts every few minutes on self-hosted servers.
  */
 export async function runOneDrivePoll(): Promise<void> {
+  if (ONEDRIVE_AUTO_POLL_HARD_DISABLED) {
+    console.log('[OneDrive][AUTO-POLL] permanently disabled in code — ignoring trigger')
+    return
+  }
   if (pollRunning) {
     console.log('[OneDrive] Poll skipped — previous run still in progress')
     return
