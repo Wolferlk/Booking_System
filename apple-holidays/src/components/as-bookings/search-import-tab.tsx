@@ -17,6 +17,7 @@ interface ASResult {
   quotation_no: string
   reference_id: string
   reference_id_full?: string[]
+  is_number?: string | null
   status: string
   status_class: string
   country_name: string | null
@@ -93,7 +94,12 @@ export default function SearchImportTab() {
       const res = await fetch('/api/as-bookings-v2/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quotation_no: b.quotation_no, reference_id: String(b.reference_id ?? b.id) }),
+        // `id` — not `reference_id` — is what the quote-template endpoint keys on.
+        body: JSON.stringify({
+          quotation_no: b.quotation_no,
+          reference_id: String(b.id ?? b.reference_id),
+          is_number: b.is_number ?? b.is_ref ?? null,
+        }),
       })
       const json = await readApiResponse<{ bookingRef: string; alreadyExists: boolean }>(res)
       if (!json.success || !json.data) {

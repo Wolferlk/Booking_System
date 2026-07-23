@@ -211,7 +211,9 @@ async function executeJob(job: ImportJob, triggeredById: string): Promise<void> 
 
     for (const it of items) {
       const quotationNo = String(it.quotation_no ?? '').trim()
-      const referenceId = String(it.reference_id ?? it.id ?? '').trim()
+      // The template endpoint keys on the row's `id`; its `reference_id` field is
+      // just the quotation number and returns an empty "NA" stub when sent here.
+      const referenceId = String(it.id ?? it.reference_id ?? '').trim()
       if (!quotationNo || !referenceId) {
         job.totalErrors++
         pushEvent(job, { ref: null, quotationNo, country: null, result: 'error', message: 'Missing quotation/reference id' })
@@ -220,7 +222,7 @@ async function executeJob(job: ImportJob, triggeredById: string): Promise<void> 
 
       try {
         const quote = (await getQuoteTemplate(quotationNo, referenceId)) as unknown as Record<string, unknown>
-        const mapped = mapQuoteToBooking(quote)
+        const mapped = mapQuoteToBooking(quote, { fallbackIsNumber: it.is_number })
         const country = mapped.operationCountry ?? detectCountryFromRef(mapped.bookingRef)
         if (!country) {
           job.totalErrors++
