@@ -60,16 +60,14 @@ export default function ReportsPage() {
       const params = new URLSearchParams({ limit: '500' })
       if (status) params.set('status', status)
       if (agent) params.set('search', agent)
+      if (from) params.set('arrivalFrom', from)
+      if (to) params.set('arrivalTo', to)
       if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
 
       const res = await fetch(`/api/accounts/report?${params}`)
       const json = await res.json()
       if (json.success) {
-        let data: ReportRow[] = json.data
-        // client-side date filter
-        if (from) data = data.filter(r => r.arrivalDate >= from)
-        if (to) data = data.filter(r => r.arrivalDate <= to)
-        setRows(data)
+        setRows(json.data)
       } else {
         toast.error(json.error ?? 'Failed to load report')
       }
