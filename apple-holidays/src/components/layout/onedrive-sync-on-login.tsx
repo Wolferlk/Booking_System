@@ -10,6 +10,7 @@
  */
 import { useEffect } from 'react'
 import { useSession } from 'next-auth/react'
+import { ONEDRIVE_AUTO_POLL_HARD_DISABLED } from '@/lib/automation-switches'
 
 const STORAGE_KEY = 'od_poll_on_login_done'
 
@@ -17,6 +18,8 @@ export default function OneDriveSyncOnLogin() {
   const { status } = useSession()
 
   useEffect(() => {
+    // Auto-poll is hard-disabled in code — never fire the login trigger.
+    if (ONEDRIVE_AUTO_POLL_HARD_DISABLED) return
     if (status !== 'authenticated') return
 
     // Only fire once per browser session

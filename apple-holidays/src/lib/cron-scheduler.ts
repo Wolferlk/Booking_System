@@ -6,6 +6,7 @@ import {
 } from './mail-processor'
 import { processMailboxEmail } from './incoming-mail-automation'
 import { getLessCreditModeEnabled, RECENT_MAIL_WINDOW_MINUTES } from './mail-mode'
+import { AUTO_MAIL_HARD_DISABLED, ONEDRIVE_AUTO_POLL_HARD_DISABLED } from './automation-switches'
 import {
   upsertCachedMailMessage,
   syncMailboxEmailsToDb,
@@ -166,6 +167,10 @@ async function runImapMailbox(lessCreditMode: boolean, cutoffMs: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function jobProcessMailboxes() {
+  if (AUTO_MAIL_HARD_DISABLED) {
+    console.log('[Scheduler] auto mail reading permanently disabled in code — tick ignored')
+    return
+  }
   try {
     const mailSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_mail_enabled' } })
     if (mailSetting?.value !== 'true') {
@@ -194,6 +199,10 @@ async function jobRenewWebhook() {
 }
 
 async function jobOneDrivePoll() {
+  if (ONEDRIVE_AUTO_POLL_HARD_DISABLED) {
+    console.log('[Scheduler] OneDrive auto-poll permanently disabled in code — tick ignored')
+    return
+  }
   try {
     const driveSetting = await prisma.systemSetting.findUnique({ where: { key: 'auto_onedrive_enabled' } })
     if (driveSetting?.value !== 'true') {
@@ -321,8 +330,8 @@ export function startCronJobs() {
 
   // Delayed first runs so the server is fully ready before processing starts
   setTimeout(() => { jobRenewWebhook() },     15_000)   // 15 s after boot
-  setTimeout(() => { jobProcessMailboxes() }, 30_000)   // 30 s after boot
-  setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
+  if (!AUTO_MAIL_HARD_DISABLED)          setTimeout(() => { jobProcessMailboxes() }, 30_000)   // 30 s after boot
+  if (!ONEDRIVE_AUTO_POLL_HARD_DISABLED) setTimeout(() => { jobOneDrivePoll() },     60_000)   // 60 s after boot — OneDrive first run
   setTimeout(() => { jobCancellationMailWatch() }, 45_000)   // 45 s after boot
 
   // Auto-booking-create: node-cron daily job (timezone-aware, boot catch-up).
@@ -345,13 +354,16 @@ export function startCronJobs() {
   // customers arriving in 3 days. Timezone-aware with boot catch-up.
   void startAgendaAutoEmailScheduler()
 
-  setInterval(() => { jobProcessMailboxes() },    FIVE_MIN)
-  setInterval(() => { jobOneDrivePoll() },         THREE_MIN)
+  // Auto mail reading and the OneDrive auto-poll are hard-disabled in code
+  // (see automation-switches.ts) — don't even schedule their ticks, so no
+  // repeating "disabled" noise ends up in the logs.
+  if (!AUTO_MAIL_HARD_DISABLED)              setInterval(() => { jobProcessMailboxes() }, FIVE_MIN)
+  if (!ONEDRIVE_AUTO_POLL_HARD_DISABLED)     setInterval(() => { jobOneDrivePoll() },     THREE_MIN)
   setInterval(() => { jobRenewWebhook() },         TWELVE_HRS)
   setInterval(() => { jobFeedbackSummary() },      SIX_HRS)
   // Cancellations approved in the Apple Accounts system land straight in the DB —
   // this picks the transition up and sends the cancellation notice.
   setInterval(() => { jobCancellationMailWatch() }, TWO_MIN)
 
-  console.log('[Scheduler] Started — IDLE watcher (instant), email every 5 min, OneDrive every 3 min, webhook every 12 h, feedback summary every 6 h, cancellation mail watch every 2 min, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging via node-cron daily at 6pm (timezone-aware, boot catch-up)')
+  console.log('[Scheduler] Started — auto mail reading and OneDrive auto-poll are HARD-DISABLED in code (automation-switches.ts); webhook every 12 h, feedback summary every 6 h, cancellation mail watch every 2 min, auto-booking-create via node-cron daily (timezone-aware, boot catch-up), customer WhatsApp messaging via node-cron daily at 6pm (timezone-aware, boot catch-up)')
 }

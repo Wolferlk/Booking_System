@@ -9,7 +9,8 @@
  * database access.
  *
  * Field mapping is defined by the AppleSystem integration spec:
- *   bookingRef        ← pnl.quotation_info.is_number   (spaces stripped, upper-cased)
+ *   bookingRef        ← pnl.quotation_info.is_number   (spaces stripped, upper-cased;
+ *                       falls back to the list row's is_number when the template says "NA")
  *   cntlNumber        ← quotation_no
  *   operationCountry  ← detected from the is_number prefix (VN/IS/SG/MY)
  *   agent             ← pnl.quotation_info.agent_name  (or relevant_parties.agent)
@@ -135,18 +136,33 @@ export interface MappedBookingInput {
 
 export class ASMappingError extends Error {}
 
+export interface MapQuoteOptions {
+  /**
+   * IS number from the `/api/quotation/list` row, used when the quote template
+   * itself carries none (some payloads return "NA"). The list is the same
+   * source of truth, so this only fills a gap — it never overrides.
+   */
+  fallbackIsNumber?: string | null
+}
+
 /**
  * Map a raw AppleSystem quote-template object into a `MappedBookingInput`.
  * Throws `ASMappingError` when the payload is missing the identifiers we cannot
  * synthesise (is_number, and at least one dated itinerary day).
  */
-export function mapQuoteToBooking(quote: Record<string, unknown>): MappedBookingInput {
+export function mapQuoteToBooking(
+  quote: Record<string, unknown>,
+  options: MapQuoteOptions = {},
+): MappedBookingInput {
   const info = (get(quote, 'pnl', 'quotation_info') ?? {}) as Record<string, unknown>
   const voucher = (get(quote, 'confirmation_voucher') ?? {}) as Record<string, unknown>
   const parties = (get(quote, 'relevant_parties') ?? {}) as Record<string, unknown>
 
-  const rawIsNumber = str(info.is_number).trim()
-  if (!rawIsNumber || rawIsNumber.toUpperCase() === 'NA') {
+  const usable = (v: string) => !!v && v.toUpperCase() !== 'NA'
+  const templateIsNumber = str(info.is_number).trim()
+  const fallback = str(options.fallbackIsNumber).trim()
+  const rawIsNumber = usable(templateIsNumber) ? templateIsNumber : fallback
+  if (!usable(rawIsNumber)) {
     throw new ASMappingError('This AppleSystem quotation has no IS number, so it cannot be imported.')
   }
   const bookingRef = normalizeIsNumber(rawIsNumber)

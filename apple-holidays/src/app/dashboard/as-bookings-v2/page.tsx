@@ -20,6 +20,7 @@ interface ASBooking {
   quotation_no: string
   reference_id: string
   reference_id_full?: string[]
+  is_number?: string | null
   status: string
   status_class: string
   country: string | null
@@ -90,6 +91,8 @@ function cntlNumber(b: ASBooking): string | null {
 
 /** An IS-style operational number if the list carries one (SL/VN/SG/MY prefixed). */
 function isNumber(b: ASBooking): string | null {
+  const own = (b.is_number ?? '').trim()
+  if (own && own.toUpperCase() !== 'NA') return own
   return b.reference_id_full?.find((r) => /^(IS|VN|SG|MY)/i.test(r)) ?? null
 }
 

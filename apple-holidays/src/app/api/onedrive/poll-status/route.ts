@@ -12,6 +12,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getOneDrivePollStatus } from '@/lib/onedrive-monitor'
+import { ONEDRIVE_AUTO_POLL_HARD_DISABLED } from '@/lib/automation-switches'
 import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
@@ -46,6 +47,10 @@ export async function GET() {
 export async function POST() {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
+
+  if (ONEDRIVE_AUTO_POLL_HARD_DISABLED) {
+    return buildApiSuccess({ queued: false, message: 'OneDrive auto-poll is permanently disabled in code (automation-switches.ts)' })
+  }
 
   const { pollRunning } = getOneDrivePollStatus()
   if (pollRunning) {
