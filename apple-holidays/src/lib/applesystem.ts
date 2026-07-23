@@ -220,6 +220,35 @@ export async function listBookings(params: ASListParams): Promise<ASListResult> 
   return { items, total: json.total ?? items.length }
 }
 
+export interface ASSearchParams {
+  isNumber?: string
+  quotationNo?: string
+  statuses?: string[]   // e.g. ['2']; empty/omitted => all
+}
+
+/**
+ * Search quotations by IS number and/or quotation number — the fast, scoped path.
+ *
+ * Unlike {@link listBookings}, this passes AppleSystem's own `is_number` /
+ * `quotation_no` filters straight through, so the upstream returns only the few
+ * matching rows instead of a multi-year window. This is what the "New Booking
+ * from AppleSystem" flow uses, and it avoids the timeouts the wide list can hit.
+ */
+export async function searchBookings(params: ASSearchParams): Promise<ASListResult> {
+  const qs = new URLSearchParams()
+  const isNum = params.isNumber?.trim()
+  const quo = params.quotationNo?.trim()
+  if (isNum) qs.set('is_number', isNum)
+  if (quo) qs.set('quotation_no', quo)
+  for (const s of params.statuses ?? []) qs.append('status[]', s)
+
+  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
+  if (!res.ok) throw new Error(`AppleSystem search failed (${res.status})`)
+  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
+  const items = Array.isArray(json.data) ? json.data : []
+  return { items, total: json.total ?? items.length }
+}
+
 /** Fetch the full P&L / cost breakdown for one booking. Returns the raw `data` object. */
 export async function getBookingPnl(
   referenceId: string,
