@@ -39,3 +39,6 @@ next-env.d.ts
 # uploads
 /public/uploads/*
 !/public/uploads/.gitkeep
+
+# Generated pdf.js worker (see scripts/copy-pdf-worker.mjs)
+/public/pdf.worker.min.js

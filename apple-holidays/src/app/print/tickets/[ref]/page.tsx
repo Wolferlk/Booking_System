@@ -67,8 +67,8 @@ export default function PrintTicketsPage() {
     ;(async () => {
       try {
         const pdfjs = await import('pdfjs-dist')
-        pdfjs.GlobalWorkerOptions.workerSrc =
-          new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
+        // Served as a static module worker from /public (see scripts/copy-pdf-worker.mjs).
+        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
 
         const result: Record<string, string[]> = {}
         for (const t of pdfTickets) {
