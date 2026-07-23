@@ -6,11 +6,16 @@
  * Only PURCHASED / PAID tickets are printed — drafts are internal work-in-progress
  * and must never reach a customer document. Each ticket gets its own page: the
  * supplier's scan when one was uploaded, otherwise a ticket we draw ourselves.
+ *
+ * When a ticket's receipt is a PDF, every page of that PDF is rendered (client-side
+ * with pdf.js) and appended right after the ticket's own page, so the supplier
+ * document is merged into the same printout instead of living in a separate file.
  */
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, Fragment } from 'react'
 import { useParams } from 'next/navigation'
 import { formatDate } from '@/lib/utils'
+import { normalizeUploadUrl } from '@/lib/upload-path'
 import { TicketStub, type StubTicket } from '@/components/tickets/ticket-stub'
 import { isPurchasedTicket, ticketFileKind } from '@/lib/ticket-notes'
 
@@ -33,6 +38,9 @@ export default function PrintTicketsPage() {
   const [tickets, setTickets] = useState<StubTicket[]>([])
   const [booking, setBooking] = useState<BookingInfo | null>(null)
   const [loading, setLoading] = useState(true)
+  // Rendered pages for each PDF receipt, keyed by ticket id (data-URL images).
+  const [pdfPages, setPdfPages] = useState<Record<string, string[]>>({})
+  const [pdfDone, setPdfDone] = useState(false)
   const printTriggered = useRef(false)
 
   useEffect(() => {
@@ -49,8 +57,51 @@ export default function PrintTicketsPage() {
     }).finally(() => setLoading(false))
   }, [ref])
 
+  // Rasterise every PDF receipt into per-page images so they merge into the print.
   useEffect(() => {
-    if (loading || printTriggered.current || tickets.length === 0) return
+    if (loading) return
+    const pdfTickets = tickets.filter(t => ticketFileKind(t) === 'pdf' && t.fileUrl)
+    if (pdfTickets.length === 0) { setPdfDone(true); return }
+
+    let cancelled = false
+    ;(async () => {
+      try {
+        const pdfjs = await import('pdfjs-dist')
+        // Served as a static module worker from /public (see scripts/copy-pdf-worker.mjs).
+        pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js'
+
+        const result: Record<string, string[]> = {}
+        for (const t of pdfTickets) {
+          try {
+            const url = normalizeUploadUrl(t.fileUrl) ?? t.fileUrl!
+            const data = await fetch(url).then(r => r.arrayBuffer())
+            const doc = await pdfjs.getDocument({ data }).promise
+            const pages: string[] = []
+            for (let n = 1; n <= doc.numPages; n++) {
+              const page = await doc.getPage(n)
+              const viewport = page.getViewport({ scale: 2 })
+              const canvas = document.createElement('canvas')
+              canvas.width = viewport.width
+              canvas.height = viewport.height
+              await page.render({ canvas, viewport }).promise
+              pages.push(canvas.toDataURL('image/jpeg', 0.85))
+            }
+            result[t.id] = pages
+          } catch {
+            // A PDF that won't render just falls back to the stub's note — skip it.
+          }
+        }
+        if (!cancelled) setPdfPages(result)
+      } finally {
+        if (!cancelled) setPdfDone(true)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [loading, tickets])
+
+  useEffect(() => {
+    if (loading || !pdfDone || printTriggered.current || tickets.length === 0) return
 
     const imageTickets = tickets.filter(t => ticketFileKind(t) === 'image')
 
@@ -88,7 +139,7 @@ export default function PrintTicketsPage() {
     }, 5000)
 
     return () => clearTimeout(fallback)
-  }, [loading, tickets])
+  }, [loading, pdfDone, tickets])
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: 'Arial, sans-serif', flexDirection: 'column', gap: 12 }}>
@@ -133,6 +184,13 @@ export default function PrintTicketsPage() {
           break-after: avoid;
         }
 
+        /* A merged supplier-PDF page: keep each source page on one printed sheet. */
+        .pdf-page { justify-content: flex-start; }
+        .pdf-page img {
+          max-height: 255mm;
+          object-fit: contain;
+        }
+
         @media print {
           @page { margin: 0; size: A4 portrait; }
           html, body { width: 210mm; }
@@ -154,8 +212,11 @@ export default function PrintTicketsPage() {
         }
       `}</style>
 
-      {tickets.map((ticket, idx) => (
-        <div key={ticket.id} className="ticket-page">
+      {tickets.map((ticket, idx) => {
+        const supplierPages = pdfPages[ticket.id] ?? []
+        return (
+        <Fragment key={ticket.id}>
+        <div className="ticket-page">
 
           {/* ── HEADER ── */}
           <div style={{
@@ -242,7 +303,33 @@ export default function PrintTicketsPage() {
           </div>
 
         </div>
-      ))}
+
+        {/* ── Merged supplier PDF pages ── */}
+        {supplierPages.map((src, p) => (
+          <div key={`${ticket.id}-pdf-${p}`} className="ticket-page pdf-page">
+            <div style={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              paddingBottom: 6, borderBottom: '1px solid #e2e8f0', marginBottom: 10,
+            }}>
+              <div style={{ fontSize: 9, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Supplier Document — {ticket.type}
+                {supplierPages.length > 1 ? ` (page ${p + 1} of ${supplierPages.length})` : ''}
+              </div>
+              <div style={{ fontSize: 8, color: '#94a3b8', fontFamily: 'monospace' }}>
+                {booking?.bookingRef ?? ref} · Ticket {idx + 1}/{tickets.length}
+              </div>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={src}
+              alt={`${ticket.type} supplier document page ${p + 1}`}
+              style={{ display: 'block', width: '100%', height: 'auto', margin: '0 auto', objectFit: 'contain' }}
+            />
+          </div>
+        ))}
+        </Fragment>
+        )
+      })}
     </>
   )
 }

@@ -12,16 +12,63 @@
  * quotations coming from AppleSystem without touching our own records.
  */
 
+import { prisma } from './prisma'
+
 const AS_BASE = (process.env.AS_API_URL || 'https://applev2.appletechlabs.com').replace(/\/+$/, '')
 
 /** Upstream can be slow; cap every call so a hung socket can't stall the whole request. */
 const AS_TIMEOUT_MS = Number(process.env.AS_TIMEOUT_MS || 25_000)
-const AS_LOGIN_TIMEOUT_MS = 15_000
+const AS_LOGIN_TIMEOUT_MS = Number(process.env.AS_LOGIN_TIMEOUT_MS || 12_000)
 
-// ── Token cache (module-level, survives across requests on a warm server) ────
+// ── Token cache ──────────────────────────────────────────────────────────────
+// Two tiers:
+//   L1 — module-level, survives across requests on a warm server / Lambda.
+//   L2 — a row in `system_settings`, shared across ALL server instances and
+//        surviving cold starts. This is what keeps the integration "alive" on
+//        serverless (AWS Amplify/Lambda): a cold container reuses a still-valid
+//        token from the DB instead of doing a slow fresh login on every request
+//        (which was overrunning the platform timeout and returning a raw 502).
 let cachedToken: { token: string; expiresAt: number } | null = null
 // In-flight login, so N concurrent calls trigger ONE login instead of N.
 let loginInFlight: Promise<string> | null = null
+
+const TOKEN_STORE_KEY = 'as_api_token'
+
+/** Read the shared token from the DB. Never throws — a DB hiccup just misses the cache. */
+async function readTokenStore(): Promise<{ token: string; expiresAt: number } | null> {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key: TOKEN_STORE_KEY } })
+    if (!row?.value) return null
+    const parsed = JSON.parse(row.value) as { token?: string; expiresAt?: number }
+    if (!parsed.token || !parsed.expiresAt) return null
+    return { token: parsed.token, expiresAt: parsed.expiresAt }
+  } catch {
+    return null
+  }
+}
+
+/** Persist the shared token to the DB. Never throws. */
+async function writeTokenStore(token: string, expiresAt: number): Promise<void> {
+  try {
+    const value = JSON.stringify({ token, expiresAt })
+    await prisma.systemSetting.upsert({
+      where: { key: TOKEN_STORE_KEY },
+      update: { value },
+      create: { key: TOKEN_STORE_KEY, value },
+    })
+  } catch {
+    /* best-effort — in-process cache still works */
+  }
+}
+
+/** Drop the shared token from the DB so the next call re-authenticates. Never throws. */
+async function clearTokenStore(): Promise<void> {
+  try {
+    await prisma.systemSetting.deleteMany({ where: { key: TOKEN_STORE_KEY } })
+  } catch {
+    /* ignore */
+  }
+}
 
 function withTimeout(ms: number): { signal: AbortSignal; done: () => void } {
   const ac = new AbortController()
@@ -72,6 +119,8 @@ async function doLogin(): Promise<string> {
       const ttlMs = (json.expires_in ?? 3600) * 1000
       // Refresh 60s before actual expiry to avoid edge-of-expiry failures.
       cachedToken = { token: json.access_token, expiresAt: Date.now() + ttlMs - 60_000 }
+      // Share the fresh token with every other server instance (survives cold starts).
+      await writeTokenStore(cachedToken.token, cachedToken.expiresAt)
       return json.access_token
     } catch (err) {
       if (!isTransport(err)) throw err
@@ -100,12 +149,22 @@ async function getToken(forceRefresh = false): Promise<string> {
   if (!forceRefresh && cachedToken && cachedToken.expiresAt > Date.now()) {
     return cachedToken.token
   }
+  // L2: reuse a still-valid token another instance persisted, before paying for
+  // a fresh (slow) login. This is what keeps cold-start requests fast on Lambda.
+  if (!forceRefresh) {
+    const stored = await readTokenStore()
+    if (stored && stored.expiresAt > Date.now()) {
+      cachedToken = stored
+      return stored.token
+    }
+  }
   return login()
 }
 
-/** Drop the cached token so the next call re-authenticates. */
-function invalidateToken() {
+/** Drop the cached token (both tiers) so the next call re-authenticates. */
+async function invalidateToken() {
   cachedToken = null
+  await clearTokenStore()
 }
 
 /**
@@ -165,7 +224,7 @@ async function asFetch(path: string, init: RequestInit = {}, attempt = 0): Promi
   }
 
   if (attempt < 1 && (await isExpiredSession(res))) {
-    invalidateToken()
+    await invalidateToken()
     await getToken(true)
     return asFetch(path, init, attempt + 1)
   }
@@ -215,6 +274,62 @@ export async function listBookings(params: ASListParams): Promise<ASListResult> 
 
   const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
   if (!res.ok) throw new Error(`AppleSystem list failed (${res.status})`)
+  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
+  const items = Array.isArray(json.data) ? json.data : []
+  return { items, total: json.total ?? items.length }
+}
+
+export interface ASCreateDateParams {
+  fromCreateDate: string   // YYYY-MM-DD (inclusive)
+  toCreateDate: string     // YYYY-MM-DD (inclusive)
+  statuses?: string[]      // e.g. ['2']; empty/omitted => all
+}
+
+/**
+ * List quotations/bookings filtered by their **creation date** window and status.
+ *
+ * This drives the confirmations auto-import: unlike {@link listBookings} (which
+ * filters on arrival date), this uses AppleSystem's `from_create_date` /
+ * `to_create_date` params so we pull exactly the confirmations *created* in a
+ * given window — e.g. "everything confirmed yesterday".
+ */
+export async function listByCreateDate(params: ASCreateDateParams): Promise<ASListResult> {
+  const qs = new URLSearchParams()
+  qs.set('from_create_date', params.fromCreateDate)
+  qs.set('to_create_date', params.toCreateDate)
+  for (const s of params.statuses ?? []) qs.append('status[]', s)
+
+  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
+  if (!res.ok) throw new Error(`AppleSystem create-date list failed (${res.status})`)
+  const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
+  const items = Array.isArray(json.data) ? json.data : []
+  return { items, total: json.total ?? items.length }
+}
+
+export interface ASSearchParams {
+  isNumber?: string
+  quotationNo?: string
+  statuses?: string[]   // e.g. ['2']; empty/omitted => all
+}
+
+/**
+ * Search quotations by IS number and/or quotation number — the fast, scoped path.
+ *
+ * Unlike {@link listBookings}, this passes AppleSystem's own `is_number` /
+ * `quotation_no` filters straight through, so the upstream returns only the few
+ * matching rows instead of a multi-year window. This is what the "New Booking
+ * from AppleSystem" flow uses, and it avoids the timeouts the wide list can hit.
+ */
+export async function searchBookings(params: ASSearchParams): Promise<ASListResult> {
+  const qs = new URLSearchParams()
+  const isNum = params.isNumber?.trim()
+  const quo = params.quotationNo?.trim()
+  if (isNum) qs.set('is_number', isNum)
+  if (quo) qs.set('quotation_no', quo)
+  for (const s of params.statuses ?? []) qs.append('status[]', s)
+
+  const res = await asFetch(`/api/quotation/list?${qs.toString()}`)
+  if (!res.ok) throw new Error(`AppleSystem search failed (${res.status})`)
   const json = (await res.json()) as { success?: boolean; data?: ASBookingListItem[]; total?: number }
   const items = Array.isArray(json.data) ? json.data : []
   return { items, total: json.total ?? items.length }

@@ -21,6 +21,7 @@ import { normalizeUploadUrl } from '@/lib/upload-path'
 import type { UserRole } from '@prisma/client'
 import Link from 'next/link'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
+import PasteDropzone from '@/components/shared/paste-dropzone'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -219,9 +220,9 @@ export default function TicketsPage() {
   const [purchaseModal,    setPurchaseModal]    = useState<string | null>(null)
   const [purchaseRef,   setPurchaseRef]   = useState('')
   const [uploadingId,   setUploadingId]   = useState<string | null>(null)
+  const [receiptModal,  setReceiptModal]  = useState<Ticket | null>(null)
   const [viewFile,      setViewFile]      = useState<Ticket | null>(null)
   const [previewError, setPreviewError] = useState(false)
-  const fileInputRef    = useRef<HTMLInputElement>(null)
   const extractFileRef  = useRef<HTMLInputElement>(null)
 
   const [form, setForm] = useState({
@@ -322,6 +323,32 @@ export default function TicketsPage() {
 
   useEffect(() => { load() }, [ref])
   useEffect(() => { setPreviewError(false) }, [viewFile])
+
+  // Paste a screenshot straight into the open Activate modal → AI extract
+  useEffect(() => {
+    if (!activateModal || activateForm.fileUrl || extracting) return
+    function onPaste(e: ClipboardEvent) {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file') {
+          const file = item.getAsFile()
+          if (file) {
+            e.preventDefault()
+            const named = file.name && file.name.includes('.')
+              ? file
+              : new File([file], `pasted-${Date.now()}.png`, { type: file.type || 'image/png' })
+            handleExtractFile(named)
+            return
+          }
+        }
+      }
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activateModal, activateForm.fileUrl, extracting])
 
   // ── Activate ────────────────────────────────────────────────────────────────
 
@@ -523,6 +550,7 @@ export default function TicketsPage() {
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       toast.success('Receipt uploaded')
+      setReceiptModal(null)
       load()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Upload failed')
@@ -530,9 +558,8 @@ export default function TicketsPage() {
   }
 
   function triggerUpload(ticketId: string) {
-    if (!fileInputRef.current) return
-    fileInputRef.current.dataset.ticketId = ticketId
-    fileInputRef.current.click()
+    const t = tickets.find(tk => tk.id === ticketId)
+    if (t) setReceiptModal(t)
   }
 
   // ── Edit ───────────────────────────────────────────────────────────────────
@@ -752,18 +779,6 @@ export default function TicketsPage() {
       />
 
       {/* Hidden file inputs */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,.jpg,.jpeg,.png,.webp"
-        className="hidden"
-        onChange={e => {
-          const file = e.target.files?.[0]
-          const id   = e.target.dataset.ticketId
-          if (file && id) uploadFile(id, file)
-          e.target.value = ''
-        }}
-      />
       <input
         ref={extractFileRef}
         type="file"
@@ -1310,6 +1325,11 @@ export default function TicketsPage() {
                 </button>
               </div>
             )}
+            {!activateForm.fileUrl && !extracting && (
+              <p className="text-[11px] text-slate-400 mt-2 text-center">
+                …or paste a screenshot with <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px] font-mono">Ctrl/⌘ + V</kbd>
+              </p>
+            )}
           </div>
 
           <div>
@@ -1554,6 +1574,25 @@ export default function TicketsPage() {
         title={`Drive Files — ${ref}`}
         selectLabel="Extract Details"
       />
+
+      {/* ── Receipt Upload Modal (browse / drag / paste) ─────────────────────── */}
+      {receiptModal && (
+        <Modal
+          open
+          onClose={() => uploadingId ? null : setReceiptModal(null)}
+          title={`${isCruise(receiptModal) ? 'Upload Cruise Docs' : 'Upload Receipt'} — ${receiptModal.type}`}
+        >
+          <div className="space-y-3">
+            <PasteDropzone
+              busy={uploadingId === receiptModal.id}
+              busyLabel="Uploading receipt…"
+              accept=".pdf,.jpg,.jpeg,.png,.webp,.gif"
+              onFile={file => uploadFile(receiptModal.id, file)}
+              hint="PDF, JPG, PNG, WebP or GIF — max 10MB"
+            />
+          </div>
+        </Modal>
+      )}
 
       {/* ── View File Modal ───────────────────────────────────────────────────── */}
       {viewFile && (

@@ -226,7 +226,7 @@ export function TicketStub({
             <p style={{ fontSize: px(8.5), fontWeight: 700, color: '#334155' }}>
               {ticket.fileName ?? 'Supplier ticket (PDF)'}
             </p>
-            <p style={{ fontSize: px(7), color: '#94a3b8' }}>Attached as a separate PDF — see the digital copy.</p>
+            <p style={{ fontSize: px(7), color: '#94a3b8' }}>Full supplier document follows on the next page(s).</p>
           </div>
         </div>
       )}
