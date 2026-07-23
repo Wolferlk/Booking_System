@@ -8,7 +8,7 @@ import {
   Sparkles, TrendingUp, TrendingDown, Eye, EyeOff, FileDown, ListChecks, XCircle,
   ScrollText, PlusCircle, Bed, Bus, Gauge, Coins, Copy, Download, Code2, ChevronDown,
   ArrowRightLeft, Landmark, Utensils, Droplet, Percent, Ticket, Check, Gift,
-  CircleDollarSign, Scissors, Timer,
+  CircleDollarSign, Scissors, Timer, PackagePlus, ExternalLink,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -244,6 +244,9 @@ function ASBookingV2DetailInner() {
   const [tab, setTab] = useState<Tab>('confirmation')
   const [showAmounts, setShowAmounts] = useState(true)
   const [pdfBusy, setPdfBusy] = useState<null | 'with' | 'without'>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importResult, setImportResult] = useState<{ bookingRef: string; alreadyExists: boolean } | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
 
   const fetchQuote = useCallback(async () => {
     setLoading(true); setError(null)
@@ -287,6 +290,24 @@ function ASBookingV2DetailInner() {
     }
   }
 
+  async function importToSystem() {
+    setImportBusy(true); setImportError(null)
+    try {
+      const res = await fetch('/api/as-bookings-v2/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quotation_no: quotationNo, reference_id: referenceId }),
+      })
+      const json = await readApiResponse<{ bookingRef: string; alreadyExists: boolean }>(res)
+      if (!json.success || !json.data) { setImportError(json.error ?? 'Import failed'); return }
+      setImportResult({ bookingRef: json.data.bookingRef, alreadyExists: json.data.alreadyExists })
+    } catch {
+      setImportError('Network error — could not import the booking')
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   const pnl = (quote?.pnl ?? {}) as Record<string, unknown>
   const info = (pnl.quotation_info ?? {}) as Record<string, unknown>
   const ref = quote?.reference_numbers ?? {}
@@ -314,6 +335,25 @@ function ASBookingV2DetailInner() {
         subtitle="AppleSystem booking confirmation"
         actions={
           <div className="flex items-center gap-2">
+            {importResult ? (
+              <button
+                onClick={() => router.push(`/dashboard/bookings/${encodeURIComponent(importResult.bookingRef)}`)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-colors"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open {importResult.bookingRef}
+              </button>
+            ) : (
+              <button
+                onClick={importToSystem}
+                disabled={loading || importBusy || !quote}
+                title="Create a booking in the system from this AppleSystem quotation"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-colors disabled:opacity-60"
+              >
+                {importBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <PackagePlus className="w-4 h-4" />}
+                Import to System
+              </button>
+            )}
             <button
               onClick={() => downloadPdf(true)}
               disabled={loading || !!pdfBusy}
@@ -341,6 +381,28 @@ function ASBookingV2DetailInner() {
       />
 
       <div className="p-4 sm:p-8 space-y-5">
+        {importResult && (
+          <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-600" />
+            <span>
+              {importResult.alreadyExists
+                ? <>Booking <b>{importResult.bookingRef}</b> was already in the system.</>
+                : <>Imported as booking <b>{importResult.bookingRef}</b> (status <b>Draft</b>).</>}
+            </span>
+            <button
+              onClick={() => router.push(`/dashboard/bookings/${encodeURIComponent(importResult.bookingRef)}`)}
+              className="ml-auto inline-flex items-center gap-1.5 font-medium text-emerald-700 hover:text-emerald-900"
+            >
+              Open booking <ExternalLink className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+        {importError && (
+          <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
+            <span>{importError}</span>
+          </div>
+        )}
         {loading ? (
           <Card className="flex items-center justify-center h-56">
             <div className="flex flex-col items-center gap-3 text-slate-400">
