@@ -177,7 +177,7 @@ export async function readApiResponse<T = unknown>(
       return { success: false, error: 'Server returned a malformed response.' }
     }
     const hint = res.status === 502 || res.status === 504
-      ? ' The request most likely timed out while generating the PDF — check the server logs.'
+      ? ' The request timed out or the upstream service was unavailable — please try again.'
       : ''
     return { success: false, error: `Server error ${res.status} (${res.statusText}).${hint}` }
   }
