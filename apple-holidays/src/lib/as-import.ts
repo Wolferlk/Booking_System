@@ -18,7 +18,7 @@
 
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { listByCreateDate, getQuoteTemplate } from '@/lib/applesystem'
+import { listByCreateDate, listBookings, getQuoteTemplate } from '@/lib/applesystem'
 import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
 import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-import'
 import { detectCountryFromRef, type OperationCountry } from '@/lib/country-detection'
@@ -81,10 +81,17 @@ export interface ImportEvent {
 
 export interface CountryTally { created: number; skipped: number; errors: number }
 
+/**
+ * Which AppleSystem date the import window filters on: the quotation's creation
+ * date (the default, used by the daily job) or the tour's arrival date.
+ */
+export type ImportDateField = 'create' | 'arrival'
+
 export interface ImportJob {
   id: string
   mode: 'auto' | 'manual'
-  dateFrom: string           // YYYY-MM-DD (create-date window)
+  dateField?: ImportDateField  // absent on jobs logged before arrival import existed => 'create'
+  dateFrom: string           // YYYY-MM-DD (window bounds, interpreted per `dateField`)
   dateTo: string
   status: 'running' | 'done' | 'error'
   startedAt: string          // ISO
@@ -153,8 +160,10 @@ export async function getLastJob(mode?: 'auto' | 'manual'): Promise<ImportJob | 
 // ── The importer ───────────────────────────────────────────────────────────────
 
 export interface RunAsImportParams {
-  fromCreateDate: string   // YYYY-MM-DD
-  toCreateDate: string     // YYYY-MM-DD
+  fromDate: string         // YYYY-MM-DD
+  toDate: string           // YYYY-MM-DD
+  /** Which upstream date the window filters on. Defaults to 'create'. */
+  dateField?: ImportDateField
   mode: 'auto' | 'manual'
   triggeredById?: string   // defaults to the automation user
 }
@@ -177,8 +186,9 @@ function newJob(params: RunAsImportParams): ImportJob {
   return {
     id: randomUUID(),
     mode: params.mode,
-    dateFrom: params.fromCreateDate,
-    dateTo: params.toCreateDate,
+    dateField: params.dateField ?? 'create',
+    dateFrom: params.fromDate,
+    dateTo: params.toDate,
     status: 'running',
     startedAt: new Date().toISOString(),
     completedAt: null,
@@ -194,18 +204,25 @@ function newJob(params: RunAsImportParams): ImportJob {
 
 /**
  * The single import loop. Mutates + periodically persists the given (already
- * appended) job record: lists status-2 confirmations in the create-date window
- * and runs each through the idempotent import pipeline, tallying per country.
+ * appended) job record: lists status-2 confirmations in the job's date window
+ * (create date or arrival date, per `job.dateField`) and runs each through the
+ * idempotent import pipeline, tallying per country.
  * Per-item failures are recorded and never abort the run.
  */
 async function executeJob(job: ImportJob, triggeredById: string): Promise<void> {
   const start = Date.now()
   try {
-    const { items } = await listByCreateDate({
-      fromCreateDate: job.dateFrom,
-      toCreateDate: job.dateTo,
-      statuses: ['2'],
-    })
+    const { items } = job.dateField === 'arrival'
+      ? await listBookings({
+          fromArrivalDate: job.dateFrom,
+          toArrivalDate: job.dateTo,
+          statuses: ['2'],
+        })
+      : await listByCreateDate({
+          fromCreateDate: job.dateFrom,
+          toCreateDate: job.dateTo,
+          statuses: ['2'],
+        })
     job.totalFound = items.length
     await patchJob(job.id, { totalFound: job.totalFound }).catch(() => {})
 
@@ -266,7 +283,7 @@ async function executeJob(job: ImportJob, triggeredById: string): Promise<void> 
     job.completedAt = new Date().toISOString()
     job.durationMs = Date.now() - start
     await patchJob(job.id, { ...job }).catch(() => {})
-    console.log(`[AsImport] ${job.mode} ${job.dateFrom}→${job.dateTo}: found=${job.totalFound} created=${job.totalCreated} skipped=${job.totalSkipped} errors=${job.totalErrors} (${job.durationMs}ms)`)
+    console.log(`[AsImport] ${job.mode} ${job.dateField ?? 'create'} ${job.dateFrom}→${job.dateTo}: found=${job.totalFound} created=${job.totalCreated} skipped=${job.totalSkipped} errors=${job.totalErrors} (${job.durationMs}ms)`)
   }
 }
 

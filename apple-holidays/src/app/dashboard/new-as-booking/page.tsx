@@ -1,18 +1,19 @@
 'use client'
 
 import { Suspense, useState } from 'react'
-import { PlusCircle, Search, CalendarRange, Zap } from 'lucide-react'
+import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding } from 'lucide-react'
 import Header from '@/components/layout/header'
 import SearchImportTab from '@/components/as-bookings/search-import-tab'
 import RangeImportTab from '@/components/as-bookings/range-import-tab'
 import AutoImportTab from '@/components/as-bookings/auto-import-tab'
 
-type TabKey = 'search' | 'range' | 'auto'
+type TabKey = 'search' | 'range' | 'arrival' | 'auto'
 
 const TABS: { key: TabKey; label: string; icon: typeof Search; hint: string }[] = [
-  { key: 'search', label: 'Search & Import',  icon: Search,        hint: 'Find one confirmation by IS / quotation number' },
-  { key: 'range',  label: 'Range Import',      icon: CalendarRange, hint: 'Bulk import confirmations by create date' },
-  { key: 'auto',   label: 'Daily Auto-Import', icon: Zap,           hint: 'Automatic 6 AM import + run history' },
+  { key: 'search',  label: 'Search & Import',   icon: Search,        hint: 'Find one confirmation by IS / quotation number' },
+  { key: 'range',   label: 'Range Import',      icon: CalendarRange, hint: 'Bulk import confirmations by create date' },
+  { key: 'arrival', label: 'Arrival Import',    icon: PlaneLanding,  hint: 'Bulk import confirmations by arrival date' },
+  { key: 'auto',    label: 'Daily Auto-Import', icon: Zap,           hint: 'Automatic 6 AM import + run history' },
 ]
 
 function NewASBookingInner() {
@@ -48,7 +49,8 @@ function NewASBookingInner() {
         </div>
 
         {tab === 'search' && <SearchImportTab />}
-        {tab === 'range' && <RangeImportTab />}
+        {tab === 'range' && <RangeImportTab key="range" dateField="create" />}
+        {tab === 'arrival' && <RangeImportTab key="arrival" dateField="arrival" />}
         {tab === 'auto' && <AutoImportTab />}
       </div>
     </div>

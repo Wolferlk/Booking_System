@@ -36,8 +36,8 @@ export async function POST() {
   const yesterday = yesterdayInTz()
   try {
     const jobId = await startAsImport({
-      fromCreateDate: yesterday,
-      toCreateDate: yesterday,
+      fromDate: yesterday,
+      toDate: yesterday,
       mode: 'auto',
       triggeredById: session.user.id,
     })
