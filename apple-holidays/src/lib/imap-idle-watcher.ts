@@ -26,6 +26,7 @@ import { fetchImapPayableEmails, fetchImapAttachments, IMAP_PNL_USER } from './i
 import { processMailboxEmail } from './incoming-mail-automation'
 import { upsertCachedMailMessage } from './mail-cache'
 import { getConfiguredMailboxes } from './mail-processor'
+import { isAutoMailProcessingEnabled } from './mail-mode'
 
 const HOST = process.env.IMAP_HOST   ?? 'outlook.office365.com'
 const PORT = Number(process.env.IMAP_PORT ?? '993')
@@ -37,6 +38,14 @@ let watcherRunning = false
 
 async function processNewImapEmails() {
   if (!IMAP_PNL_USER || !PASS) return
+
+  // Manual-only guard: when auto mail processing is OFF, the real-time watcher
+  // must not extract/create bookings. Mail is then processed solely via the
+  // manual "Process" action (POST /api/mail/process).
+  if (!(await isAutoMailProcessingEnabled())) {
+    console.log('[IMAP-IDLE] auto-mail OFF — skipping (manual only)')
+    return
+  }
 
   let processed = 0
   try {
