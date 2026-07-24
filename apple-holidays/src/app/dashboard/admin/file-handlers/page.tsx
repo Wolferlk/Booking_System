@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import {
   Loader2, Link2, Users, Clock, Activity, CheckCircle2, Ban, Pencil, Trash2,
-  Plane, PlaneTakeoff, ScrollText, Plus, ShieldCheck, X, RefreshCw, Copy,
+  Plane, PlaneTakeoff, ScrollText, Plus, ShieldCheck,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import Modal from '@/components/ui/modal'

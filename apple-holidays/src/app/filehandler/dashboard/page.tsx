@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import {
   Search, Loader2, PlaneTakeoff, Plus, Pencil, Trash2, X, Users, CalendarDays,
-  Ban, CheckCircle2, AlertTriangle, MapPin, Clock, Plane,
+  Ban, CheckCircle2, AlertTriangle, Clock, Plane,
 } from 'lucide-react'
 
 interface Flight {
