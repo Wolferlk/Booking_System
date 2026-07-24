@@ -782,6 +782,76 @@ Rules:
   }
 }
 
+/**
+ * Extract flight segments from free-form pasted text (a copied email, itinerary
+ * snippet, WhatsApp message, etc.). Beyond parsing, it CORRECTS the data:
+ * normalises dates to YYYY-MM-DD and times to 24h HH:MM, maps obvious city
+ * names to IATA codes, and fixes common airline/typo mistakes. Returns the same
+ * shape as extractFlightsFromImage so both feed the identical flight form.
+ */
+export async function extractFlightsFromText(
+  text: string,
+): Promise<Array<{
+  flightNo: string
+  date: string
+  fromApt: string
+  depTime: string
+  toApt: string
+  arrTime: string
+  airline: string
+  notes: string
+}>> {
+  const clean = (text ?? '').trim().slice(0, 6000)
+  if (!clean) return []
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      temperature: 0,
+      max_tokens: 900,
+      messages: [
+        {
+          role: 'user',
+          content: `The text below contains flight details pasted by a file handler. It may be messy,
+partial, or contain typos. Extract every UNIQUE flight segment and CORRECT the data.
+
+TEXT:
+"""
+${clean}
+"""
+
+Return ONLY a JSON array of flight objects:
+[
+  {
+    "flightNo": "airline+number e.g. 6E344, AI101, EK654 — empty string if unknown",
+    "date": "YYYY-MM-DD (infer the year from context; if truly unknown use the current year)",
+    "fromApt": "3-letter IATA code (map obvious city names: Colombo→CMB, Chennai→MAA, Kolkata→CCU, Dubai→DXB, Singapore→SIN, Kuala Lumpur→KUL, Hanoi→HAN, Ho Chi Minh→SGN)",
+    "depTime": "HH:MM 24-hour",
+    "toApt": "3-letter IATA code (same mapping rules)",
+    "arrTime": "HH:MM 24-hour",
+    "airline": "airline name if derivable from the flight number/text, else empty string",
+    "notes": "any extra info (terminal, transit, baggage) — empty string if none"
+  }
+]
+Rules:
+- Deduplicate identical segments.
+- Fix obvious typos in airport/airline names and normalise all dates & times.
+- Convert 12-hour times (e.g. "2:35 PM") to 24-hour ("14:35").
+- Return [] if there is no flight data. Return ONLY the JSON array.`,
+        },
+      ],
+    })
+    await logAiUsage({ callType: 'extract_flights_text', model: 'gpt-4o', usage: response.usage, source: 'manual' })
+    const content = response.choices[0]?.message?.content ?? '[]'
+    const trimmed = content.trim()
+    const jsonStr = trimmed.startsWith('[') ? trimmed : (trimmed.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
+    const parsed = JSON.parse(jsonStr)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
 export async function extractConfirmationTickets(
   fileBase64: string,
   mimeType: string,

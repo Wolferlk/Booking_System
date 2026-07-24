@@ -5,22 +5,36 @@ import { toast } from 'sonner'
 import {
   Search, Loader2, PlaneTakeoff, Plus, Pencil, Trash2, X, Users, CalendarDays,
   Ban, CheckCircle2, AlertTriangle, Clock, Plane, Radar, DownloadCloud, Sparkles,
+  Building2, User2, Mail, Phone, MessageCircle, StickyNote, Wand2, Upload,
+  Hotel, BedDouble, Utensils, MapPin, FileText,
 } from 'lucide-react'
 
 interface Flight {
   id: string; flightNo: string; date: string; fromApt: string; depTime: string
   toApt: string; arrTime: string; airline: string | null; notes: string | null
 }
+interface Accommodation {
+  id: string; city: string; hotel: string; checkIn: string; checkOut: string
+  address: string | null; contact: string | null; nights: number; roomType: string | null; mealType: string | null
+}
 interface Booking {
   id: string; bookingRef: string; isNumber: string | null; cntlNumber: string | null
   agent: string | null; fileHandler: string | null; status: string; operationCountry: string | null
   arrivalDate: string; departureDate: string; paxAdults: number; paxChildren: number; paxInfants: number
   cancelRequestedAt: string | null; cancelledByName: string | null; cancellationReason: string | null
-  passengers: { name: string }[]; flights: Flight[]
+  agentEmail: string | null; agentPhone: string | null; agentWhatsapp: string | null
+  contactEmail: string | null; contactPhone: string | null; contactWhatsapp: string | null
+  importantNotes: string | null
+  passengers: { name: string }[]; flights: Flight[]; accommodations: Accommodation[]
 }
 
 const FLAG: Record<string, string> = { SRILANKA: '🇱🇰', VIETNAM: '🇻🇳', SINGAPORE: '🇸🇬', MALAYSIA: '🇲🇾', SINGAPORE_MALAYSIA: '🇸🇬🇲🇾', ALL: '🌐' }
 const EMPTY_FLIGHT = { flightNo: '', date: '', fromApt: '', depTime: '', toApt: '', arrTime: '', airline: '', notes: '' }
+const EMPTY_HOTEL = { city: '', hotel: '', checkIn: '', checkOut: '', address: '', contact: '', roomType: '', mealType: '' }
+type DetailsForm = {
+  agentEmail: string; agentPhone: string; agentWhatsapp: string
+  contactEmail: string; contactPhone: string; contactWhatsapp: string; importantNotes: string
+}
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 const INPUT = 'w-full bg-[#0c1a24] border border-white/12 rounded-lg py-2.5 px-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-400/15'
 
@@ -44,6 +58,23 @@ export default function FileHandlerDashboard() {
 
   // AppleSystem auto-import (fires when a booking isn't found locally)
   const [importing, setImporting] = useState(false)
+
+  // details editor (agent + guest contact + important notes)
+  const [detailsForm, setDetailsForm] = useState<DetailsForm | null>(null)
+  const [savingDetails, setSavingDetails] = useState(false)
+
+  // hotel editor
+  const [hotelEdit, setHotelEdit] = useState<{ mode: 'add' | 'edit'; hotel: typeof EMPTY_HOTEL; id?: string } | null>(null)
+  const [savingHotel, setSavingHotel] = useState(false)
+
+  // AI flight import (upload image/pdf OR paste text → extract → review → add)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiTab, setAiTab] = useState<'upload' | 'paste'>('upload')
+  const [aiText, setAiText] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiFlights, setAiFlights] = useState<typeof EMPTY_FLIGHT[] | null>(null)
+  const [aiSource, setAiSource] = useState('')
+  const [aiAdding, setAiAdding] = useState(false)
 
   async function runSearch(e?: React.FormEvent) {
     e?.preventDefault()
@@ -140,6 +171,99 @@ export default function FileHandlerDashboard() {
       await refreshActive(active.bookingRef)
       setCelebrate('cancel'); setTimeout(() => setCelebrate(null), 2600)
     } finally { setCancelling(false) }
+  }
+
+  async function saveDetails() {
+    if (!active || !detailsForm) return
+    setSavingDetails(true)
+    try {
+      const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/details`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(detailsForm),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      setDetailsForm(null)
+      toast.success('Details updated')
+      await refreshActive(active.bookingRef)
+    } finally { setSavingDetails(false) }
+  }
+
+  async function saveHotel() {
+    if (!active || !hotelEdit) return
+    const h = hotelEdit.hotel
+    if (!h.hotel.trim() || !h.city.trim() || !h.checkIn || !h.checkOut) {
+      toast.error('Hotel, city, check-in and check-out are required'); return
+    }
+    setSavingHotel(true)
+    try {
+      const isEdit = hotelEdit.mode === 'edit'
+      const url = `/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/accommodations${isEdit ? `?accId=${hotelEdit.id}` : ''}`
+      const res = await fetch(url, { method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(h) })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      setHotelEdit(null)
+      toast.success(isEdit ? 'Hotel updated' : 'Hotel added')
+      await refreshActive(active.bookingRef)
+    } finally { setSavingHotel(false) }
+  }
+
+  async function deleteHotel(id: string) {
+    if (!active || !confirm('Remove this hotel?')) return
+    const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/accommodations?accId=${id}`, { method: 'DELETE' })
+    const d = await res.json()
+    if (!d.success) { toast.error(d.error); return }
+    toast.success('Hotel removed')
+    await refreshActive(active.bookingRef)
+  }
+
+  // ── AI flight extraction ──────────────────────────────────────────────────
+  function openAi() { setAiOpen(true); setAiTab('upload'); setAiText(''); setAiFlights(null); setAiSource('') }
+
+  async function extractFromFile(file: File) {
+    if (!active) return
+    setAiBusy(true); setAiFlights(null)
+    try {
+      const fd = new FormData(); fd.append('file', file)
+      const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/flights/extract`, { method: 'POST', body: fd })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      setAiFlights(d.data.flights); setAiSource(d.data.source ?? file.name)
+      if (!d.data.flights.length) toast.error(d.message ?? 'No flights found')
+    } finally { setAiBusy(false) }
+  }
+
+  async function extractFromText() {
+    if (!active || !aiText.trim()) { toast.error('Paste some flight text first'); return }
+    setAiBusy(true); setAiFlights(null)
+    try {
+      const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/flights/extract`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: aiText }),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      setAiFlights(d.data.flights); setAiSource('pasted text')
+      if (!d.data.flights.length) toast.error(d.message ?? 'No flights found in the text')
+    } finally { setAiBusy(false) }
+  }
+
+  async function addExtractedFlights() {
+    if (!active || !aiFlights?.length) return
+    setAiAdding(true)
+    try {
+      let ok = 0
+      for (const f of aiFlights) {
+        if (!f.flightNo?.trim() && !f.fromApt?.trim()) continue
+        const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/flights`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...f, date: (f.date || '').slice(0, 10) }),
+        })
+        if ((await res.json()).success) ok++
+      }
+      setAiOpen(false); setAiFlights(null)
+      await refreshActive(active.bookingRef)
+      if (ok) { toast.success(`${ok} flight${ok === 1 ? '' : 's'} added`); setCelebrate('flight'); setTimeout(() => setCelebrate(null), 2600) }
+      else toast.error('No valid flights to add')
+    } finally { setAiAdding(false) }
   }
 
   const isPendingCancel = active?.status === 'PENDING_CANCELLATION'
@@ -253,14 +377,88 @@ export default function FileHandlerDashboard() {
             </div>
           )}
 
+          {/* Agent & Guest contact + Important notes */}
+          <div className="rounded-2xl bg-white/[0.03] border border-white/8 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-white font-bold text-sm flex items-center gap-2"><User2 className="w-4 h-4 text-emerald-400" /> Contacts &amp; Notes</h3>
+              <button onClick={() => setDetailsForm({
+                agentEmail: active.agentEmail ?? '', agentPhone: active.agentPhone ?? '', agentWhatsapp: active.agentWhatsapp ?? '',
+                contactEmail: active.contactEmail ?? '', contactPhone: active.contactPhone ?? '', contactWhatsapp: active.contactWhatsapp ?? '',
+                importantNotes: active.importantNotes ?? '',
+              })}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/20 flex items-center gap-1.5">
+                <Pencil className="w-3.5 h-3.5" /> Edit
+              </button>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <ContactBlock title="Agent" icon={<Building2 className="w-3.5 h-3.5" />}
+                email={active.agentEmail} phone={active.agentPhone} whatsapp={active.agentWhatsapp} />
+              <ContactBlock title="Guest / Tourist" icon={<User2 className="w-3.5 h-3.5" />}
+                email={active.contactEmail} phone={active.contactPhone} whatsapp={active.contactWhatsapp} />
+            </div>
+
+            <div className="mt-4 pt-4 border-t border-white/6">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1 mb-1"><StickyNote className="w-3.5 h-3.5" /> Important Notes</p>
+              <p className={`text-sm whitespace-pre-wrap ${active.importantNotes ? 'text-amber-100/90' : 'text-slate-600'}`}>{active.importantNotes || 'No notes yet.'}</p>
+            </div>
+          </div>
+
+          {/* Hotel details */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-white font-bold text-sm flex items-center gap-2"><Hotel className="w-4 h-4 text-emerald-400" /> Hotel Details</h3>
+              <button onClick={() => setHotelEdit({ mode: 'add', hotel: { ...EMPTY_HOTEL } })}
+                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/20 flex items-center gap-1.5">
+                <Plus className="w-3.5 h-3.5" /> Add Hotel
+              </button>
+            </div>
+            {active.accommodations.length === 0 ? (
+              <div className="text-center py-8 rounded-2xl border border-dashed border-white/10 text-slate-500">
+                <Hotel className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                <p className="text-sm">No hotels yet. Add the first one.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {active.accommodations.map(a => (
+                  <div key={a.id} className="rounded-2xl bg-white/[0.03] border border-white/8 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-white font-bold text-sm">{a.hotel}</p>
+                        <p className="text-slate-500 text-xs flex items-center gap-1"><MapPin className="w-3 h-3" /> {a.city}</p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button onClick={() => setHotelEdit({ mode: 'edit', id: a.id, hotel: { city: a.city, hotel: a.hotel, checkIn: a.checkIn.slice(0, 10), checkOut: a.checkOut.slice(0, 10), address: a.address ?? '', contact: a.contact ?? '', roomType: a.roomType ?? '', mealType: a.mealType ?? '' } })}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-300 hover:bg-white/5"><Pencil className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => deleteHotel(a.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
+                      <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" /> {fmtDate(a.checkIn)} → {fmtDate(a.checkOut)} · {a.nights} night{a.nights === 1 ? '' : 's'}</span>
+                      {a.roomType && <span className="flex items-center gap-1"><BedDouble className="w-3 h-3" /> {a.roomType}</span>}
+                      {a.mealType && <span className="flex items-center gap-1"><Utensils className="w-3 h-3" /> {a.mealType}</span>}
+                    </div>
+                    {(a.address || a.contact) && <p className="text-slate-500 text-xs mt-1.5">{[a.address, a.contact].filter(Boolean).join(' · ')}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Flights */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-white font-bold text-sm flex items-center gap-2"><PlaneTakeoff className="w-4 h-4 text-emerald-400" /> Flight Details</h3>
-              <button onClick={() => setEditing({ mode: 'add', flight: { ...EMPTY_FLIGHT } })}
-                className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/20 flex items-center gap-1.5">
-                <Plus className="w-3.5 h-3.5" /> Add Flight
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={openAi}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 border border-cyan-500/20 flex items-center gap-1.5">
+                  <Wand2 className="w-3.5 h-3.5" /> AI Auto-fill
+                </button>
+                <button onClick={() => setEditing({ mode: 'add', flight: { ...EMPTY_FLIGHT } })}
+                  className="text-xs font-bold px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/20 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" /> Add Flight
+                </button>
+              </div>
             </div>
 
             {active.flights.length === 0 ? (
@@ -342,6 +540,137 @@ export default function FileHandlerDashboard() {
             {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}
             Send to Accounts Team
           </button>
+        </Modal>
+      )}
+
+      {/* Contacts & notes editor */}
+      {detailsForm && active && (
+        <Modal onClose={() => setDetailsForm(null)}>
+          <h3 className="text-white font-black text-base mb-4 flex items-center gap-2"><User2 className="w-5 h-5 text-emerald-400" /> Edit Contacts &amp; Notes</h3>
+          <div className="space-y-4 max-h-[65vh] overflow-y-auto -mx-1 px-1">
+            <p className="text-[11px] font-black uppercase tracking-wider text-emerald-300/80 flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Agent</p>
+            <div className="grid grid-cols-1 gap-3">
+              <L label="Agent Email"><input className={INPUT} value={detailsForm.agentEmail} onChange={e => setDetailsForm(s => s && ({ ...s, agentEmail: e.target.value }))} placeholder="agent@example.com" /></L>
+              <div className="grid grid-cols-2 gap-3">
+                <L label="Contact Phone"><input className={INPUT} value={detailsForm.agentPhone} onChange={e => setDetailsForm(s => s && ({ ...s, agentPhone: e.target.value }))} placeholder="+94 ..." /></L>
+                <L label="WhatsApp"><input className={INPUT} value={detailsForm.agentWhatsapp} onChange={e => setDetailsForm(s => s && ({ ...s, agentWhatsapp: e.target.value }))} placeholder="+94 ..." /></L>
+              </div>
+            </div>
+            <p className="text-[11px] font-black uppercase tracking-wider text-emerald-300/80 flex items-center gap-1.5 pt-1"><User2 className="w-3.5 h-3.5" /> Guest / Tourist</p>
+            <div className="grid grid-cols-1 gap-3">
+              <L label="Guest Email"><input className={INPUT} value={detailsForm.contactEmail} onChange={e => setDetailsForm(s => s && ({ ...s, contactEmail: e.target.value }))} placeholder="guest@example.com" /></L>
+              <div className="grid grid-cols-2 gap-3">
+                <L label="Contact Phone"><input className={INPUT} value={detailsForm.contactPhone} onChange={e => setDetailsForm(s => s && ({ ...s, contactPhone: e.target.value }))} placeholder="+..." /></L>
+                <L label="WhatsApp"><input className={INPUT} value={detailsForm.contactWhatsapp} onChange={e => setDetailsForm(s => s && ({ ...s, contactWhatsapp: e.target.value }))} placeholder="+..." /></L>
+              </div>
+            </div>
+            <L label="Important Notes"><textarea className={`${INPUT} min-h-[90px] resize-none`} value={detailsForm.importantNotes} onChange={e => setDetailsForm(s => s && ({ ...s, importantNotes: e.target.value }))} placeholder="Anything the ops team must know…" /></L>
+          </div>
+          <button onClick={saveDetails} disabled={savingDetails}
+            className="w-full mt-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+            {savingDetails ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Save Details
+          </button>
+        </Modal>
+      )}
+
+      {/* Hotel editor */}
+      {hotelEdit && active && (
+        <Modal onClose={() => setHotelEdit(null)}>
+          <h3 className="text-white font-black text-base mb-4 flex items-center gap-2"><Hotel className="w-5 h-5 text-emerald-400" /> {hotelEdit.mode === 'add' ? 'Add Hotel' : 'Edit Hotel'}</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <L label="Hotel *"><input className={INPUT} value={hotelEdit.hotel.hotel} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, hotel: e.target.value } }))} placeholder="Shangri-La" /></L>
+            <L label="City *"><input className={INPUT} value={hotelEdit.hotel.city} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, city: e.target.value } }))} placeholder="Colombo" /></L>
+            <L label="Check-in *"><input type="date" className={INPUT} value={hotelEdit.hotel.checkIn} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, checkIn: e.target.value } }))} style={{ colorScheme: 'dark' }} /></L>
+            <L label="Check-out *"><input type="date" className={INPUT} value={hotelEdit.hotel.checkOut} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, checkOut: e.target.value } }))} style={{ colorScheme: 'dark' }} /></L>
+            <L label="Room Type"><input className={INPUT} value={hotelEdit.hotel.roomType} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, roomType: e.target.value } }))} placeholder="Deluxe Double" /></L>
+            <L label="Meal Plan"><input className={INPUT} value={hotelEdit.hotel.mealType} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, mealType: e.target.value } }))} placeholder="Half Board" /></L>
+            <L label="Contact"><input className={INPUT} value={hotelEdit.hotel.contact} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, contact: e.target.value } }))} placeholder="+94 ..." /></L>
+            <L label="Address"><input className={INPUT} value={hotelEdit.hotel.address} onChange={e => setHotelEdit(s => s && ({ ...s, hotel: { ...s.hotel, address: e.target.value } }))} placeholder="Street, area" /></L>
+          </div>
+          <button onClick={saveHotel} disabled={savingHotel}
+            className="w-full mt-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+            {savingHotel ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} {hotelEdit.mode === 'add' ? 'Add Hotel' : 'Save Changes'}
+          </button>
+        </Modal>
+      )}
+
+      {/* AI flight import */}
+      {aiOpen && active && (
+        <Modal onClose={() => setAiOpen(false)}>
+          <h3 className="text-white font-black text-base mb-1 flex items-center gap-2"><Wand2 className="w-5 h-5 text-cyan-300" /> AI Flight Auto-fill</h3>
+          <p className="text-slate-400 text-sm mb-4">Upload a ticket/itinerary image or PDF, or paste flight text — AI reads it, corrects it, and fills the flights for you.</p>
+
+          <div className="inline-flex rounded-xl bg-white/5 p-1 mb-4">
+            {([['upload', 'Upload', Upload], ['paste', 'Paste text', FileText]] as const).map(([k, label, Icon]) => (
+              <button key={k} onClick={() => { setAiTab(k); setAiFlights(null) }}
+                className={`px-3.5 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 transition-all ${aiTab === k ? 'bg-cyan-500/20 text-cyan-200' : 'text-slate-400 hover:text-slate-200'}`}>
+                <Icon className="w-3.5 h-3.5" /> {label}
+              </button>
+            ))}
+          </div>
+
+          {aiBusy ? (
+            <div className="py-10 flex flex-col items-center gap-3 text-cyan-200">
+              <div className="relative w-14 h-14">
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-400/20" />
+                <div className="absolute inset-0 rounded-full border-2 border-transparent border-t-cyan-300 animate-spin" />
+                <Wand2 className="absolute inset-0 m-auto w-6 h-6" />
+              </div>
+              <p className="text-sm font-semibold">Reading &amp; correcting flight details…</p>
+            </div>
+          ) : aiFlights ? (
+            <div>
+              {aiFlights.length === 0 ? (
+                <p className="text-slate-400 text-sm py-6 text-center">No flights detected. Try a clearer image or paste the text.</p>
+              ) : (
+                <>
+                  <p className="text-emerald-300 text-xs font-bold mb-2 flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5" /> {aiFlights.length} flight{aiFlights.length === 1 ? '' : 's'} found in {aiSource}</p>
+                  <div className="space-y-2 max-h-[40vh] overflow-y-auto -mx-1 px-1">
+                    {aiFlights.map((f, i) => (
+                      <div key={i} className="rounded-xl bg-white/[0.04] border border-white/8 p-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="text-cyan-200 font-bold">{f.flightNo || 'Flight'}</span>
+                          <span className="text-slate-500 text-xs">{f.date}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-white">
+                          <span className="font-bold">{f.fromApt || '—'}</span>
+                          <span className="text-slate-500 text-xs">{f.depTime}</span>
+                          <Plane className="w-3.5 h-3.5 text-cyan-400/60" />
+                          <span className="text-slate-500 text-xs">{f.arrTime}</span>
+                          <span className="font-bold">{f.toApt || '—'}</span>
+                          {f.airline && <span className="ml-auto text-slate-500 text-xs">{f.airline}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={addExtractedFlights} disabled={aiAdding}
+                    className="w-full mt-4 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                    {aiAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />} Add {aiFlights.length} Flight{aiFlights.length === 1 ? '' : 's'} to Booking
+                  </button>
+                  <button onClick={() => setAiFlights(null)} className="w-full mt-2 text-slate-500 text-xs font-semibold hover:text-slate-300">← Try a different source</button>
+                </>
+              )}
+            </div>
+          ) : aiTab === 'upload' ? (
+            <label className="block cursor-pointer">
+              <div className="rounded-2xl border-2 border-dashed border-cyan-400/30 bg-cyan-500/5 hover:bg-cyan-500/10 transition-all py-10 text-center">
+                <Upload className="w-8 h-8 mx-auto text-cyan-300 mb-2" />
+                <p className="text-white font-semibold text-sm">Tap to upload image or PDF</p>
+                <p className="text-slate-500 text-xs mt-1">JPG · PNG · WebP · PDF</p>
+              </div>
+              <input type="file" accept="image/*,.pdf" className="hidden"
+                onChange={e => { const file = e.target.files?.[0]; if (file) extractFromFile(file); e.currentTarget.value = '' }} />
+            </label>
+          ) : (
+            <div>
+              <textarea className={`${INPUT} min-h-[140px] resize-none font-mono text-xs`} value={aiText} onChange={e => setAiText(e.target.value)}
+                placeholder={'Paste flight details, e.g.\nEK 655  25 Dec  CMB 04:15 → DXB 07:20\nEmirates, Terminal 3'} />
+              <button onClick={extractFromText} disabled={!aiText.trim()}
+                className="w-full mt-3 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 hover:from-cyan-400 hover:to-emerald-400 text-white font-bold text-sm disabled:opacity-40 flex items-center justify-center gap-2">
+                <Wand2 className="w-4 h-4" /> Extract &amp; Correct
+              </button>
+            </div>
+          )}
         </Modal>
       )}
 
@@ -439,6 +768,26 @@ function Meta({ label, value, icon, highlight }: { label: string; value: string;
     <div>
       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1">{icon}{label}</p>
       <p className={`text-sm font-semibold mt-0.5 truncate ${highlight ? 'text-emerald-300' : 'text-white'}`}>{value}</p>
+    </div>
+  )
+}
+
+function ContactBlock({ title, icon, email, phone, whatsapp }: {
+  title: string; icon: React.ReactNode; email: string | null; phone: string | null; whatsapp: string | null
+}) {
+  const empty = !email && !phone && !whatsapp
+  return (
+    <div className="rounded-xl bg-white/[0.02] border border-white/6 p-3">
+      <p className="text-[10px] font-black uppercase tracking-wider text-emerald-300/70 flex items-center gap-1.5 mb-2">{icon}{title}</p>
+      {empty ? (
+        <p className="text-slate-600 text-xs">No contact info yet.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {email && <p className="text-xs text-slate-300 flex items-center gap-2 truncate"><Mail className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" /> {email}</p>}
+          {phone && <p className="text-xs text-slate-300 flex items-center gap-2"><Phone className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" /> {phone}</p>}
+          {whatsapp && <p className="text-xs text-slate-300 flex items-center gap-2"><MessageCircle className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" /> {whatsapp}</p>}
+        </div>
+      )}
     </div>
   )
 }
