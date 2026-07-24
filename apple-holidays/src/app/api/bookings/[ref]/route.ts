@@ -344,6 +344,7 @@ export async function PUT(
         checkOut: a.checkOut ? new Date(a.checkOut as string) : new Date(),
         nights:   typeof a.nights === 'number' ? a.nights : Number(a.nights ?? 1),
         roomType: (a.roomType as string) || null,
+        mealType: (a.mealType as string) || null,
         address:  (a.address  as string) || null,
         contact:  (a.contact  as string) || null,
       })),

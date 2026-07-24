@@ -6,17 +6,19 @@
  * ready to be merged into the booking's flight edit form.
  *
  * Also accepts JSON body { itemId, itemName } to process a cloud file
- * from the booking's linked OneDrive folder.
+ * from the booking's linked OneDrive folder, or JSON { text } for flight
+ * details pasted into the AI Auto-fill popup.
  */
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { extractFlightsFromImage } from '@/lib/openai'
+import { extractFlightsFromImage, extractFlightsFromText } from '@/lib/openai'
 import { resolveBookingDriveFolder } from '@/lib/onedrive-monitor'
 import { downloadDriveItem } from '@/lib/graph-client'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function POST(
   req: NextRequest,
@@ -30,11 +32,22 @@ export async function POST(
 
   const { ref } = await params
 
-  // ── Cloud file mode ──────────────────────────────────────────────────────────
+  // ── Cloud file / pasted text mode ────────────────────────────────────────────
   const contentType = req.headers.get('content-type') ?? ''
   if (contentType.includes('application/json')) {
-    const body = await req.json() as { itemId?: string; itemName?: string }
-    const { itemId, itemName } = body
+    const body = await req.json() as { itemId?: string; itemName?: string; text?: string }
+    const { itemId, itemName, text } = body
+
+    // Pasted free-form flight text (AI auto-fill popup)
+    if (text !== undefined) {
+      if (!String(text).trim()) return buildApiError('Paste some flight text first')
+      const flights = await extractFlightsFromText(String(text))
+      return buildApiSuccess(
+        { flights, source: 'pasted text' },
+        flights.length ? undefined : 'No flight details found in the text',
+      )
+    }
+
     if (!itemId || !itemName) return buildApiError('itemId and itemName are required')
 
     const folder = await resolveBookingDriveFolder(ref)

@@ -852,6 +852,152 @@ Rules:
   }
 }
 
+// ─── Generic AI auto-fill extraction (passengers / accommodation) ────────
+//
+// The booking detail page offers an "AI Auto-fill" popup on each card. Both the
+// upload (image/PDF) and paste-text modes funnel into these two helpers, which
+// take a card-specific instruction block and always return a JSON array.
+
+/** Runs a JSON-array extraction against an image/PDF, returning [] on any failure. */
+async function extractArrayFromDocument(
+  fileBase64: string,
+  mimeType: string,
+  instruction: string,
+  callType: string,
+): Promise<Record<string, unknown>[]> {
+  const isImage = mimeType.startsWith('image/')
+  const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
+    ? [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${fileBase64}`, detail: 'high' } },
+            { type: 'text', text: instruction },
+          ],
+        },
+      ]
+    : [
+        {
+          role: 'user',
+          content: `${instruction}\n\nDOCUMENT TEXT:\n"""\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 6000)}\n"""`,
+        },
+      ]
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages,
+      temperature: 0,
+      max_tokens: 1200,
+    })
+    await logAiUsage({ callType, model: 'gpt-4o', usage: response.usage, source: 'manual' })
+    return parseJsonArray(response.choices[0]?.message?.content)
+  } catch {
+    return []
+  }
+}
+
+/** Runs a JSON-array extraction against pasted free-form text, returning [] on any failure. */
+async function extractArrayFromText(
+  text: string,
+  instruction: string,
+  callType: string,
+): Promise<Record<string, unknown>[]> {
+  const clean = (text ?? '').trim().slice(0, 6000)
+  if (!clean) return []
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      temperature: 0,
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: `${instruction}\n\nTEXT:\n"""\n${clean}\n"""` }],
+    })
+    await logAiUsage({ callType, model: 'gpt-4o', usage: response.usage, source: 'manual' })
+    return parseJsonArray(response.choices[0]?.message?.content)
+  } catch {
+    return []
+  }
+}
+
+/** Pulls the first JSON array out of a model response; [] when there is none. */
+function parseJsonArray(content: string | null | undefined): Record<string, unknown>[] {
+  const trimmed = (content ?? '[]').trim()
+  const jsonStr = trimmed.startsWith('[') ? trimmed : (trimmed.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
+  try {
+    const parsed = JSON.parse(jsonStr)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const PASSENGER_INSTRUCTION = `The source below is a passenger list / ticket / passport scan / tour confirmation.
+Extract every UNIQUE traveller and CORRECT the data.
+
+Return ONLY a JSON array of passenger objects:
+[
+  {
+    "name": "full name as printed, title-cased, without Mr/Mrs/Ms prefix",
+    "type": "ADULT | CHILD | INFANT — infer from age or labels (under 2 → INFANT, 2-11 → CHILD, else ADULT)",
+    "age": "age in years as a number, or null if unknown",
+    "passport": "passport number if visible, else empty string",
+    "nationality": "nationality/country if visible, else empty string",
+    "contact": "phone or email for this traveller if visible, else empty string"
+  }
+]
+Rules:
+- Deduplicate the same person appearing more than once.
+- Keep the order they appear in; the lead/primary passenger first if identifiable.
+- Fix obvious OCR typos in names, but never invent a passenger.
+- Return [] if there is no passenger data. Return ONLY the JSON array.`
+
+const ACCOMMODATION_INSTRUCTION = `The source below contains hotel / accommodation details (a voucher, hotel list, or itinerary).
+Extract every UNIQUE hotel stay and CORRECT the data.
+
+Return ONLY a JSON array of accommodation objects:
+[
+  {
+    "hotel": "hotel name",
+    "city": "city the hotel is in",
+    "checkIn": "YYYY-MM-DD (infer the year from context; if truly unknown use the current year)",
+    "checkOut": "YYYY-MM-DD",
+    "roomType": "room type e.g. Deluxe Twin — empty string if unknown",
+    "mealType": "meal plan e.g. Bed & Breakfast, Half Board — empty string if unknown",
+    "contact": "hotel phone number if visible, else empty string",
+    "address": "street address if visible, else empty string"
+  }
+]
+Rules:
+- Deduplicate the same stay appearing more than once.
+- Normalise all dates to YYYY-MM-DD; if only a check-in date plus a night count is given, compute the check-out date.
+- Fix obvious typos in hotel/city names, but never invent a stay.
+- Return [] if there is no accommodation data. Return ONLY the JSON array.`
+
+export type ExtractedPassenger = {
+  name: string; type: string; age: number | null
+  passport: string; nationality: string; contact: string
+}
+export type ExtractedAccommodation = {
+  hotel: string; city: string; checkIn: string; checkOut: string
+  roomType: string; mealType: string; contact: string; address: string
+}
+
+export async function extractPassengersFromDocument(fileBase64: string, mimeType: string): Promise<ExtractedPassenger[]> {
+  return await extractArrayFromDocument(fileBase64, mimeType, PASSENGER_INSTRUCTION, 'extract_passengers_file') as ExtractedPassenger[]
+}
+
+export async function extractPassengersFromText(text: string): Promise<ExtractedPassenger[]> {
+  return await extractArrayFromText(text, PASSENGER_INSTRUCTION, 'extract_passengers_text') as ExtractedPassenger[]
+}
+
+export async function extractAccommodationsFromDocument(fileBase64: string, mimeType: string): Promise<ExtractedAccommodation[]> {
+  return await extractArrayFromDocument(fileBase64, mimeType, ACCOMMODATION_INSTRUCTION, 'extract_accommodations_file') as ExtractedAccommodation[]
+}
+
+export async function extractAccommodationsFromText(text: string): Promise<ExtractedAccommodation[]> {
+  return await extractArrayFromText(text, ACCOMMODATION_INSTRUCTION, 'extract_accommodations_text') as ExtractedAccommodation[]
+}
+
 export async function extractConfirmationTickets(
   fileBase64: string,
   mimeType: string,
