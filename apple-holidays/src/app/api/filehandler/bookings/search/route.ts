@@ -13,12 +13,23 @@ export const FH_BOOKING_SELECT = {
   arrivalDate: true, departureDate: true,
   paxAdults: true, paxChildren: true, paxInfants: true,
   cancelRequestedAt: true, cancelledByName: true, cancellationReason: true,
+  // Agent + guest contact and notes — editable from the portal.
+  agentEmail: true, agentPhone: true, agentWhatsapp: true,
+  contactEmail: true, contactPhone: true, contactWhatsapp: true,
+  importantNotes: true,
   passengers: { where: { isLead: true }, take: 1, select: { name: true } },
   flights: {
     orderBy: { date: 'asc' as const },
     select: {
       id: true, flightNo: true, date: true, fromApt: true, depTime: true,
       toApt: true, arrTime: true, airline: true, notes: true,
+    },
+  },
+  accommodations: {
+    orderBy: { checkIn: 'asc' as const },
+    select: {
+      id: true, city: true, hotel: true, checkIn: true, checkOut: true,
+      address: true, contact: true, nights: true, roomType: true, mealType: true,
     },
   },
 } as const

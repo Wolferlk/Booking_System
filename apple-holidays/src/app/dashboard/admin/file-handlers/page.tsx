@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import {
   Loader2, Link2, Users, Clock, Activity, CheckCircle2, Ban, Pencil, Trash2,
-  Plane, PlaneTakeoff, ScrollText, Plus, ShieldCheck, DownloadCloud,
+  Plane, PlaneTakeoff, ScrollText, Plus, ShieldCheck, DownloadCloud, Hotel, StickyNote,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import Modal from '@/components/ui/modal'
@@ -30,6 +30,8 @@ const ACTION_META: Record<string, { label: string; cls: string; icon: React.Reac
   FLIGHT_UPDATED:   { label: 'Flight edited',    cls: 'bg-sky-100 text-sky-700',       icon: <Plane className="w-3.5 h-3.5" /> },
   CANCEL_REQUESTED: { label: 'Cancel requested', cls: 'bg-amber-100 text-amber-700',   icon: <Ban className="w-3.5 h-3.5" /> },
   AS_IMPORTED:      { label: 'AS import',        cls: 'bg-cyan-100 text-cyan-700',     icon: <DownloadCloud className="w-3.5 h-3.5" /> },
+  DETAILS_UPDATED:  { label: 'Details edited',   cls: 'bg-violet-100 text-violet-700', icon: <StickyNote className="w-3.5 h-3.5" /> },
+  HOTEL_UPDATED:    { label: 'Hotel edited',     cls: 'bg-indigo-100 text-indigo-700', icon: <Hotel className="w-3.5 h-3.5" /> },
 }
 
 export default function FileHandlersAdminPage() {
