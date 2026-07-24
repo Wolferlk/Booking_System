@@ -1070,6 +1070,57 @@ model tbl_te_service {
   @@index([status, updated_at], map: "idx_status")
 }
 
+/// A File Handler is an external partner who logs into the standalone File Handler
+/// Portal (/filehandler) to add flight details and request cancellations on
+/// bookings. Modelled on VehicleVendor: self-registers, then an ultra/super admin
+/// approves (isActive) before login is allowed. Kept entirely separate from staff
+/// `User` rows and authenticated by its own signed cookie (see lib/filehandler-auth.ts).
+model FileHandler {
+  id            String           @id @default(cuid())
+  name          String
+  email         String           @unique
+  phone         String?
+  whatsappPhone String?
+  password      String           @db.Text
+  country       OperationCountry @default(ALL)
+  isRegistered  Boolean          @default(true)
+  isActive      Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  approvedAt    DateTime?
+  approvedBy    String?
+  lastLoginAt   DateTime?
+  logs          FileHandlerLog[]
+
+  @@map("file_handlers")
+}
+
+/// Append-only audit trail of every File Handler action. Also the source feed for
+/// the office Live Screen (/view) animations — recent FLIGHT_ADDED / FLIGHT_UPDATED
+/// / CANCEL_REQUESTED rows drive the celebratory / alert popups there. Booking data
+/// is denormalised (ref, isNumber, etc.) so the public /view feed needs no joins and
+/// rows survive even if a handler is later deleted.
+model FileHandlerLog {
+  id               String            @id @default(cuid())
+  fileHandlerId    String?
+  fileHandlerName  String
+  action           String // LOGIN | FLIGHT_ADDED | FLIGHT_UPDATED | CANCEL_REQUESTED
+  bookingId        String?
+  bookingRef       String?
+  isNumber         String?
+  cntlNumber       String?
+  operationCountry OperationCountry?
+  details          String?           @db.Text
+  createdAt        DateTime          @default(now())
+  fileHandler      FileHandler?      @relation(fields: [fileHandlerId], references: [id], onDelete: SetNull)
+
+  @@index([fileHandlerId])
+  @@index([action])
+  @@index([bookingRef])
+  @@index([createdAt])
+  @@map("file_handler_logs")
+}
+
 enum UserRole {
   BT_USER
   GT_USER
