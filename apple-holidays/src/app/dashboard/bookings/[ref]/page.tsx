@@ -284,6 +284,14 @@ export default function BookingDetailPage() {
 
   useEffect(() => { load(); loadWaQueue() }, [ref])
 
+  // OPS_AI applies changes through its own endpoint, outside this page's data
+  // flow, so it announces a write and we re-pull the booking to show it.
+  useEffect(() => {
+    const onMutated = () => load()
+    window.addEventListener('ops-ai:mutated', onMutated)
+    return () => window.removeEventListener('ops-ai:mutated', onMutated)
+  }, [ref])
+
   async function restoreVersion(versionNo: number) {
     setRestoringVersion(true)
     try {
