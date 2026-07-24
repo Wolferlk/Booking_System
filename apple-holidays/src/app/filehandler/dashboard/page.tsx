@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import {
   Search, Loader2, PlaneTakeoff, Plus, Pencil, Trash2, X, Users, CalendarDays,
-  Ban, CheckCircle2, AlertTriangle, MapPin, Clock, Plane,
+  Ban, CheckCircle2, AlertTriangle, Clock, Plane, Radar, DownloadCloud, Sparkles,
 } from 'lucide-react'
 
 interface Flight {
@@ -40,19 +40,47 @@ export default function FileHandlerDashboard() {
   const [cancelling, setCancelling] = useState(false)
 
   // celebratory overlay after a successful action
-  const [celebrate, setCelebrate] = useState<null | 'flight' | 'cancel'>(null)
+  const [celebrate, setCelebrate] = useState<null | 'flight' | 'cancel' | 'import'>(null)
+
+  // AppleSystem auto-import (fires when a booking isn't found locally)
+  const [importing, setImporting] = useState(false)
 
   async function runSearch(e?: React.FormEvent) {
     e?.preventDefault()
-    if (!q.trim()) return
-    setSearching(true); setActive(null)
+    const query = q.trim()
+    if (!query) return
+    setSearching(true); setActive(null); setResults(null)
     try {
-      const res = await fetch(`/api/filehandler/bookings/search?q=${encodeURIComponent(q.trim())}`)
+      const res = await fetch(`/api/filehandler/bookings/search?q=${encodeURIComponent(query)}`)
       const d = await res.json()
       if (!d.success) { toast.error(d.error); setResults([]); return }
-      setResults(d.data.results)
-      if (d.data.results.length === 1) setActive(d.data.results[0])
+      const found: Booking[] = d.data.results
+      if (found.length === 0) { await autoImport(query); return }
+      setResults(found)
+      if (found.length === 1) setActive(found[0])
     } finally { setSearching(false) }
+  }
+
+  // Not in our system → pull it from AppleSystem and import it live.
+  async function autoImport(query: string) {
+    setImporting(true)
+    try {
+      const res = await fetch('/api/filehandler/bookings/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: query }),
+      })
+      const d = await res.json()
+      if (!d.success || !d.data?.booking) {
+        // 404 "not_found_anywhere" (or any failure) → fall back to the empty state.
+        setResults([])
+        return
+      }
+      const b: Booking = d.data.booking
+      setResults([b]); setActive(b)
+      setCelebrate('import'); setTimeout(() => setCelebrate(null), 3000)
+    } catch {
+      setResults([])
+    } finally { setImporting(false) }
   }
 
   async function refreshActive(ref: string) {
@@ -124,6 +152,10 @@ export default function FileHandlerDashboard() {
         @keyframes fhBurst  { 0%{transform:scale(.4);opacity:0} 50%{opacity:1} 100%{transform:scale(1.15);opacity:1} }
         @keyframes fhConf   { 0%{transform:translateY(-10vh) rotate(0)} 100%{transform:translateY(110vh) rotate(680deg)} }
         @keyframes fhPulse  { 0%,100%{opacity:.5} 50%{opacity:1} }
+        @keyframes fhSweep  { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+        @keyframes fhPing   { 0%{transform:scale(.4);opacity:.9} 100%{transform:scale(1.6);opacity:0} }
+        @keyframes fhBar    { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
+        @keyframes fhFloat  { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         .fh-card{animation:fhCardIn .35s ease-out both}
       `}</style>
 
@@ -313,6 +345,40 @@ export default function FileHandlerDashboard() {
         </Modal>
       )}
 
+      {/* AppleSystem import scanner overlay */}
+      {importing && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 bg-[#05121a]/85 backdrop-blur-sm" />
+          <div className="relative text-center px-6" style={{ animation: 'fhCardIn .3s ease-out both' }}>
+            {/* radar */}
+            <div className="relative w-40 h-40 mx-auto mb-6">
+              {[0, 1, 2].map(i => (
+                <span key={i} className="absolute inset-0 rounded-full border border-cyan-400/40" style={{ animation: `fhPing 2s ease-out ${i * 0.6}s infinite` }} />
+              ))}
+              <div className="absolute inset-0 rounded-full border-2 border-cyan-400/25" />
+              <div className="absolute inset-0 origin-center" style={{ animation: 'fhSweep 1.6s linear infinite' }}>
+                <div className="absolute left-1/2 top-1/2 h-1/2 w-1/2 origin-top-left"
+                  style={{ background: 'conic-gradient(from 0deg, rgba(34,211,238,.45), transparent 60%)', borderTopLeftRadius: '100%' }} />
+              </div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-16 h-16 rounded-2xl bg-cyan-500/15 flex items-center justify-center" style={{ animation: 'fhFloat 2.4s ease-in-out infinite' }}>
+                  <DownloadCloud className="w-8 h-8 text-cyan-200" />
+                </div>
+              </div>
+              <Plane className="absolute -right-2 top-3 w-6 h-6 text-emerald-300" style={{ animation: 'fhFloat 2s ease-in-out infinite' }} />
+            </div>
+            <p className="text-white font-black text-xl flex items-center justify-center gap-2">
+              <Radar className="w-5 h-5 text-cyan-300 animate-pulse" /> Not in the system yet…
+            </p>
+            <p className="text-cyan-200/80 text-sm mt-1">Fetching &amp; importing this booking from <span className="font-semibold text-cyan-100">AppleSystem</span></p>
+            {/* progress shimmer */}
+            <div className="mt-5 w-64 h-1.5 mx-auto rounded-full bg-white/10 overflow-hidden">
+              <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-transparent via-cyan-400 to-transparent" style={{ animation: 'fhBar 1.1s ease-in-out infinite' }} />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Celebratory overlay */}
       {celebrate && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center pointer-events-none">
@@ -333,6 +399,15 @@ export default function FileHandlerDashboard() {
                 </div>
                 <p className="text-white font-black text-xl">Flight Added! ✈️</p>
                 <p className="text-emerald-300 text-sm mt-1">Live on the ops screen now.</p>
+              </>
+            ) : celebrate === 'import' ? (
+              <>
+                <div className="relative w-24 h-24 mx-auto mb-3 flex items-center justify-center">
+                  <div className="absolute inset-0 rounded-full bg-cyan-500/20" />
+                  <Sparkles className="w-12 h-12 text-cyan-200" style={{ animation: 'fhBurst .6s ease-out both' }} />
+                </div>
+                <p className="text-white font-black text-xl">Imported from AppleSystem ✨</p>
+                <p className="text-cyan-200 text-sm mt-1">New booking pulled in and ready to edit.</p>
               </>
             ) : (
               <>
