@@ -4,10 +4,10 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useMotionValue } from 'framer-motion'
 import {
   X, CornerDownLeft, Loader2, Sparkles, ShieldCheck, Trash2,
-  ChevronUp, FileText, Command,
+  ChevronUp, ChevronDown, FileText, Command,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ActionCard from './action-card'
@@ -17,6 +17,11 @@ import type { OpsAction, OpsMessage } from './types'
 
 const REF_IN_PATH = /\/(?:bookings|driver-log|portal|trip)\/([A-Z]{2}[A-Z0-9-]{2,})/i
 const SUGGEST_DEBOUNCE_MS = 380
+
+// Both preferences are per-browser, not per-user: they describe where this
+// person likes the chrome to sit, not anything worth a round trip.
+const SUGGEST_COLLAPSED_KEY = 'ops-ai:suggest-collapsed'
+const LAUNCHER_POS_KEY      = 'ops-ai:launcher-offset'
 
 let seq = 0
 const nextId = () => `m${Date.now()}-${seq++}`
@@ -40,6 +45,7 @@ export default function OpsAI() {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [suggestLoading, setSuggestLoading] = useState(false)
   const [highlighted, setHighlighted] = useState(-1)
+  const [suggestCollapsed, setSuggestCollapsed] = useState(false)
 
   const threadRef  = useRef<HTMLDivElement>(null)
   const inputRef   = useRef<HTMLTextAreaElement>(null)
@@ -70,6 +76,22 @@ export default function OpsAI() {
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120)
   }, [open])
+
+  // Restore the collapsed/expanded choice for the quick-actions list.
+  useEffect(() => {
+    try {
+      setSuggestCollapsed(localStorage.getItem(SUGGEST_COLLAPSED_KEY) === '1')
+    } catch { /* private mode — fall back to expanded */ }
+  }, [])
+
+  const toggleSuggestCollapsed = useCallback(() => {
+    setSuggestCollapsed(prev => {
+      const next = !prev
+      if (next) setHighlighted(-1)
+      try { localStorage.setItem(SUGGEST_COLLAPSED_KEY, next ? '1' : '0') } catch { /* ignore */ }
+      return next
+    })
+  }, [])
 
   // ── Programmatic open ───────────────────────────────────────────────────
   // The launch tour ends by opening the panel with a starter prompt already
@@ -198,7 +220,9 @@ export default function OpsAI() {
   }, [router])
 
   function onComposerKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (suggestions.length) {
+    // A collapsed list is out of sight, so it must also be out of the way of
+    // the arrow keys — those belong to the textarea again.
+    if (suggestions.length && !suggestCollapsed) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setHighlighted(h => (h + 1) % suggestions.length)
@@ -217,7 +241,8 @@ export default function OpsAI() {
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      send(highlighted >= 0 && suggestions[highlighted] ? suggestions[highlighted] : input)
+      const picked = !suggestCollapsed && highlighted >= 0 ? suggestions[highlighted] : null
+      send(picked ?? input)
     }
   }
 
@@ -332,6 +357,8 @@ export default function OpsAI() {
                 onPick={s => { setInput(s); send(s) }}
                 suggestions={suggestions}
                 suggestLoading={suggestLoading}
+                collapsed={suggestCollapsed}
+                onToggleCollapsed={toggleSuggestCollapsed}
                 highlighted={highlighted}
                 setHighlighted={setHighlighted}
                 thinking={thinking}
@@ -347,19 +374,78 @@ export default function OpsAI() {
 
 // ── Launcher ──────────────────────────────────────────────────────────────
 
+const FAB_SIZE   = 56  // h-14 / w-14
+const FAB_INSET  = 24  // bottom-6 / right-6
+
+/** Keep the launcher fully on screen whatever the viewport does. */
+function clampOffset(x: number, y: number) {
+  if (typeof window === 'undefined') return { x, y }
+  const minX = Math.min(0, -(window.innerWidth  - FAB_SIZE - FAB_INSET * 2))
+  const minY = Math.min(0, -(window.innerHeight - FAB_SIZE - FAB_INSET * 2))
+  return {
+    x: Math.min(0, Math.max(minX, x)),
+    y: Math.min(0, Math.max(minY, y)),
+  }
+}
+
 function Launcher({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  // Offsets from the resting bottom-right corner, so a fresh browser still
+  // gets the familiar position and only a deliberate drag moves it.
+  const x = useMotionValue(0)
+  const y = useMotionValue(0)
+  const draggedRef = useRef(false)
+
+  useEffect(() => {
+    let saved: { x?: number; y?: number } | null = null
+    try {
+      const raw = localStorage.getItem(LAUNCHER_POS_KEY)
+      saved = raw ? JSON.parse(raw) : null
+    } catch { /* ignore unreadable/parked value */ }
+    if (!saved) return
+    const next = clampOffset(Number(saved.x) || 0, Number(saved.y) || 0)
+    x.set(next.x)
+    y.set(next.y)
+  }, [x, y])
+
+  useEffect(() => {
+    function onResize() {
+      const next = clampOffset(x.get(), y.get())
+      x.set(next.x)
+      y.set(next.y)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [x, y])
+
   return (
     <motion.button
-      onClick={onToggle}
+      onClick={() => {
+        // A drag ends with a click event on the same element; ignore that one.
+        if (draggedRef.current) return
+        onToggle()
+      }}
       aria-label="Open OPS_AI"
+      drag
+      dragMomentum={false}
+      dragElastic={0.03}
+      onDragStart={() => { draggedRef.current = true }}
+      onDragEnd={() => {
+        const next = clampOffset(x.get(), y.get())
+        x.set(next.x)
+        y.set(next.y)
+        try { localStorage.setItem(LAUNCHER_POS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+        setTimeout(() => { draggedRef.current = false }, 150)
+      }}
+      style={{ x, y }}
       initial={{ scale: 0, rotate: -90 }}
       animate={{ scale: 1, rotate: 0 }}
       transition={{ type: 'spring', stiffness: 260, damping: 18, delay: 0.4 }}
       whileHover={{ scale: 1.06 }}
       whileTap={{ scale: 0.94 }}
+      whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
       className={cn(
-        'group fixed bottom-6 right-6 z-[75] flex h-14 w-14 items-center justify-center rounded-full',
-        'bg-gradient-to-br from-slate-800 to-slate-950 ring-1 ring-white/15',
+        'group fixed bottom-6 right-6 z-[75] flex h-14 w-14 cursor-grab items-center justify-center rounded-full',
+        'bg-gradient-to-br from-slate-800 to-slate-950 ring-1 ring-white/15 touch-none select-none',
         'shadow-[0_8px_30px_-6px_rgba(234,179,8,0.45)] transition-shadow hover:shadow-[0_10px_40px_-6px_rgba(234,179,8,0.7)]',
         open && 'opacity-0 pointer-events-none',
       )}
@@ -387,6 +473,7 @@ function Launcher({ open, onToggle }: { open: boolean; onToggle: () => void }) {
       >
         Ask OPS_AI
         <kbd className="ml-1.5 rounded bg-slate-800 px-1 py-px text-[9px] text-slate-400">⌘J</kbd>
+        <span className="ml-1.5 text-[9px] text-slate-500">drag to move</span>
       </span>
     </motion.button>
   )
@@ -518,6 +605,8 @@ interface ComposerProps {
   onPick: (s: string) => void
   suggestions: string[]
   suggestLoading: boolean
+  collapsed: boolean
+  onToggleCollapsed: () => void
   highlighted: number
   setHighlighted: (n: number) => void
   thinking: boolean
@@ -526,8 +615,11 @@ interface ComposerProps {
 
 function Composer({
   input, setInput, onKeyDown, onSend, onPick,
-  suggestions, suggestLoading, highlighted, setHighlighted, thinking, inputRef,
+  suggestions, suggestLoading, collapsed, onToggleCollapsed,
+  highlighted, setHighlighted, thinking, inputRef,
 }: ComposerProps) {
+  const title = input.trim().length < 2 ? 'Quick actions' : 'Did you mean'
+
   return (
     <div className="relative shrink-0 border-t border-slate-700/60 p-3">
       <AnimatePresence>
@@ -538,26 +630,58 @@ function Composer({
             exit={{ opacity: 0, y: 6 }}
             className="absolute bottom-full left-3 right-3 mb-2 overflow-hidden rounded-xl border border-slate-700 bg-slate-900/95 shadow-2xl backdrop-blur-xl"
           >
-            <div className="flex items-center gap-1.5 border-b border-slate-800 px-3 py-1.5 text-[9.5px] font-semibold uppercase tracking-wider text-slate-500">
-              <ChevronUp className="h-3 w-3" />
-              {input.trim().length < 2 ? 'Quick actions' : 'Did you mean'}
+            {/* The list can eat most of the panel, so the header doubles as a
+                minimise handle — collapsed it keeps a one-line reminder that
+                suggestions are waiting. */}
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              title={collapsed ? 'Show suggestions' : 'Minimise suggestions'}
+              className={cn(
+                'flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[9.5px] font-semibold',
+                'uppercase tracking-wider text-slate-500 transition-colors hover:bg-slate-800/60 hover:text-slate-300',
+                !collapsed && 'border-b border-slate-800',
+              )}
+            >
+              {collapsed ? <ChevronDown className="h-3 w-3" /> : <ChevronUp className="h-3 w-3" />}
+              {title}
+              {collapsed && (
+                <span className="rounded bg-slate-800 px-1 py-px text-[9px] tabular-nums text-slate-400">
+                  {suggestions.length}
+                </span>
+              )}
               {suggestLoading && <Loader2 className="ml-auto h-3 w-3 animate-spin text-brand-400" />}
-            </div>
-            {suggestions.map((s, i) => (
-              <button
-                key={s}
-                onMouseEnter={() => setHighlighted(i)}
-                onClick={() => onPick(s)}
-                className={cn(
-                  'flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors',
-                  i === highlighted ? 'bg-brand-400/15 text-brand-100' : 'text-slate-300 hover:bg-slate-800/70',
-                )}
-              >
-                <Command className="h-3 w-3 shrink-0 text-slate-600" />
-                <span className="min-w-0 flex-1 truncate">{s}</span>
-                {i === highlighted && <CornerDownLeft className="h-3 w-3 shrink-0 text-brand-400" />}
-              </button>
-            ))}
+            </button>
+
+            <AnimatePresence initial={false}>
+              {!collapsed && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.16, ease: 'easeOut' }}
+                  className="overflow-hidden"
+                >
+                  <div className="max-h-[40vh] overflow-y-auto">
+                    {suggestions.map((s, i) => (
+                      <button
+                        key={s}
+                        onMouseEnter={() => setHighlighted(i)}
+                        onClick={() => onPick(s)}
+                        className={cn(
+                          'flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] transition-colors',
+                          i === highlighted ? 'bg-brand-400/15 text-brand-100' : 'text-slate-300 hover:bg-slate-800/70',
+                        )}
+                      >
+                        <Command className="h-3 w-3 shrink-0 text-slate-600" />
+                        <span className="min-w-0 flex-1 truncate">{s}</span>
+                        {i === highlighted && <CornerDownLeft className="h-3 w-3 shrink-0 text-brand-400" />}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         )}
       </AnimatePresence>
