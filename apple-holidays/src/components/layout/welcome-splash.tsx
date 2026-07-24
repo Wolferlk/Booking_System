@@ -45,7 +45,12 @@ export default function WelcomeSplash() {
   }, [])
 
   const dismiss = () => {
-    if (typeof window !== 'undefined') localStorage.setItem(STORAGE_KEY, '1')
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, '1')
+      // Lets the OPS_AI feature guide queue itself behind this splash instead
+      // of stacking two modals on top of each other.
+      window.dispatchEvent(new CustomEvent('welcome-splash:dismissed'))
+    }
     setOpen(false)
   }
 

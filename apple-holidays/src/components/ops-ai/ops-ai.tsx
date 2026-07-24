@@ -12,6 +12,7 @@ import {
 import { cn } from '@/lib/utils'
 import ActionCard from './action-card'
 import LookupResult from './lookup-result'
+import { openOpsAiTour } from './ops-ai-tour'
 import type { OpsAction, OpsMessage } from './types'
 
 const REF_IN_PATH = /\/(?:bookings|driver-log|portal|trip)\/([A-Z]{2}[A-Z0-9-]{2,})/i
@@ -69,6 +70,20 @@ export default function OpsAI() {
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120)
   }, [open])
+
+  // ── Programmatic open ───────────────────────────────────────────────────
+  // The launch tour ends by opening the panel with a starter prompt already
+  // typed, so the first thing a new user sees is a command they can just send.
+  useEffect(() => {
+    if (!enabled) return
+    function onOpen(e: Event) {
+      const prefill = (e as CustomEvent<{ prefill?: string }>).detail?.prefill
+      if (prefill) setInput(prefill)
+      setOpen(true)
+    }
+    window.addEventListener('ops-ai:open', onOpen)
+    return () => window.removeEventListener('ops-ai:open', onOpen)
+  }, [enabled])
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
@@ -481,6 +496,14 @@ function EmptyState({ bookingRef }: { bookingRef: string | null }) {
           </div>
         ))}
       </div>
+
+      <button
+        onClick={openOpsAiTour}
+        className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 transition-colors hover:text-brand-300"
+      >
+        <Sparkles className="h-3 w-3" />
+        How it works — 1-minute guide
+      </button>
     </div>
   )
 }
