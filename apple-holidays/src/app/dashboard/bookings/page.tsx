@@ -205,9 +205,13 @@ function BookingsPageInner() {
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
-  const [dateBasis, setDateBasis]     = useState<'arrivalDate' | 'createdAt'>('arrivalDate')
-  const [dateFrom, setDateFrom]       = useState('')
-  const [dateTo, setDateTo]           = useState('')
+  // Date range and basis are seeded from the URL so a deep link — e.g. the one
+  // OPS_AI builds for "arrivals on 1 July" — lands on an already-filtered list.
+  const [dateBasis, setDateBasis]     = useState<'arrivalDate' | 'createdAt'>(
+    searchParams.get('dateField') === 'createdAt' ? 'createdAt' : 'arrivalDate',
+  )
+  const [dateFrom, setDateFrom]       = useState(searchParams.get('dateFrom') ?? '')
+  const [dateTo, setDateTo]           = useState(searchParams.get('dateTo') ?? '')
   const [sortBy, setSortBy]           = useState<SortField>((searchParams.get('sortBy') ?? 'createdAt') as SortField)
   const [sortDir, setSortDir]         = useState<SortDir>((searchParams.get('sortDir') ?? 'desc') as SortDir)
   const [page, setPage]               = useState(1)
