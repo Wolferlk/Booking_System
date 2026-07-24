@@ -65,6 +65,8 @@ const ALERT_POLL_MS   = 30_000  // traveller-alert refresh — every 30 seconds
 const SPOTLIGHT_MS    = 5_000   // country spotlight rotation
 const ALERT_DURATION  = 30      // seconds each new-booking alert stays
 const CRITICAL_DURATION = 45    // seconds each new traveller-alert popup stays
+const FH_POLL_MS      = 20_000  // file-handler event refresh — every 20 seconds
+const FH_DURATION     = 22      // seconds each file-handler popup stays
 
 interface Booking {
   id: string; bookingRef: string; agent: string | null; operationCountry: string | null
@@ -88,6 +90,11 @@ interface ViewData {
   totals: { totalBookings: number; ongoingToday: number; upcoming: number; paxOnTour: number; arrivalFlightsToday: number; flightsToday: number }
   byCountry: { ongoing: Record<string, number>; upcoming: Record<string, number>; lifetime: Record<string, number> }
   recentBookings: Booking[]
+}
+interface FHEvent {
+  id: string; action: 'FLIGHT_ADDED' | 'FLIGHT_UPDATED' | 'CANCEL_REQUESTED'
+  fileHandlerName: string; bookingRef: string | null; isNumber: string | null
+  operationCountry: string | null; details: string | null; createdAt: string
 }
 
 // ── Animated counter ─────────────────────────────────────────────────────────
@@ -187,6 +194,92 @@ function Field({ label, value }: { label: string; value: string }) {
     <div>
       <p className="text-[10px] uppercase tracking-[.25em] text-slate-500 mb-1">{label}</p>
       <p className="text-xl font-bold text-white truncate">{value}</p>
+    </div>
+  )
+}
+
+// ── File-handler event alert (flight added / cancellation requested) ──────────
+// A boarding-pass styled popup for flights (emerald, a plane races across the
+// runway) and a red alert for cancellations — deliberately distinct from the
+// cheerful new-booking confetti and the traveller-alert siren.
+function FileHandlerAlert({ event, onDismiss }: { event: FHEvent; onDismiss: () => void }) {
+  const [left, setLeft] = useState(FH_DURATION)
+  useEffect(() => {
+    const id = setInterval(() => setLeft(c => { if (c <= 1) { onDismiss(); return 0 } return c - 1 }), 1000)
+    return () => clearInterval(id)
+  }, [onDismiss])
+
+  const m = metaOf(event.operationCountry ?? 'ALL')
+  const isCancel = event.action === 'CANCEL_REQUESTED'
+  const accent   = isCancel ? '#ef4444' : '#10b981'
+  const ring     = isCancel ? 'rgba(239,68,68,.55)' : 'rgba(16,185,129,.5)'
+  const title    = isCancel ? 'Cancellation Requested' : event.action === 'FLIGHT_UPDATED' ? 'Flight Details Updated' : 'Flight Details Added'
+  const eyebrow  = isCancel ? 'File Handler · Action Needed' : 'File Handler · Boarding Pass'
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center" onClick={onDismiss}
+      style={{ background: 'rgba(2,6,16,.86)', backdropFilter: 'blur(14px)', animation: 'vPop .35s ease-out both' }}>
+      <style>{`
+        @keyframes fhFly    { 0%{transform:translateX(-46vw) translateY(6px) rotate(-4deg)} 100%{transform:translateX(46vw) translateY(-14px) rotate(-4deg)} }
+        @keyframes fhTrail  { 0%,100%{opacity:.25} 50%{opacity:.7} }
+        @keyframes fhStamp  { 0%{opacity:0;transform:scale(2) rotate(-18deg)} 55%{opacity:1;transform:scale(.9) rotate(-12deg)} 100%{opacity:1;transform:scale(1) rotate(-12deg)} }
+      `}</style>
+
+      {/* runway plane sweeping across for flight events, siren pulses for cancel */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {isCancel
+          ? [280, 440, 600, 760].map((s, i) => (
+              <div key={i} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2"
+                style={{ width: s, height: s, borderColor: ring, animation: `vRing ${1.6 + i * .3}s ease-in-out infinite`, animationDelay: `${i * .2}s` }} />
+            ))
+          : (
+            <div className="absolute top-1/2 left-1/2" style={{ animation: 'fhFly 3.4s ease-in-out infinite alternate' }}>
+              <Plane className="w-16 h-16" style={{ color: accent, filter: `drop-shadow(0 0 18px ${ring})` }} />
+              <div className="absolute top-1/2 right-full w-40 h-1 rounded-full" style={{ background: `linear-gradient(90deg,transparent,${accent})`, animation: 'fhTrail 1.4s ease-in-out infinite' }} />
+            </div>
+          )}
+      </div>
+
+      <div className="relative w-full max-w-2xl mx-6" onClick={e => e.stopPropagation()} style={{ animation: 'vBounceIn .6s cubic-bezier(.34,1.56,.64,1) both' }}>
+        <div className="relative rounded-[2rem] border-2 overflow-hidden v-glow" style={{ borderColor: ring, background: 'linear-gradient(150deg,rgba(6,10,22,.98),rgba(14,20,38,.98))' }}>
+          <div className="v-shine absolute inset-0 pointer-events-none" />
+
+          {/* header */}
+          <div className="px-8 py-5 flex items-center gap-4 border-b" style={{ borderColor: ring, background: `${accent}14` }}>
+            {isCancel ? <ShieldAlert className="w-8 h-8 v-wiggle" style={{ color: accent }} /> : <Plane className="w-8 h-8 v-wiggle" style={{ color: accent }} />}
+            <div className="min-w-0">
+              <p className="text-[11px] font-black uppercase tracking-[.35em]" style={{ color: accent }}>{eyebrow}</p>
+              <p className="text-2xl font-black text-white leading-tight truncate">{title}</p>
+            </div>
+            <span className="ml-auto text-6xl v-float select-none">{isCancel ? '🛑' : '✈️'}</span>
+          </div>
+
+          {/* boarding-pass body */}
+          <div className="relative px-8 py-7 grid grid-cols-2 gap-6">
+            <Field label="Booking Ref" value={event.bookingRef || '—'} />
+            <Field label="Destination" value={m.label} />
+            <Field label="File Handler" value={event.fileHandlerName} />
+            <Field label={event.isNumber ? 'IS Number' : 'When'} value={event.isNumber || new Date(event.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} />
+            {event.details && (
+              <div className="col-span-2">
+                <p className="text-[10px] uppercase tracking-[.25em] text-slate-500 mb-1">Details</p>
+                <p className="text-base font-semibold text-white/90">{event.details}</p>
+              </div>
+            )}
+            {/* diagonal stamp */}
+            <div className="absolute right-6 bottom-4 px-3 py-1 rounded-md border-2 font-black uppercase tracking-widest text-sm select-none"
+              style={{ color: accent, borderColor: accent, animation: 'fhStamp .7s ease-out both', opacity: .9 }}>
+              {isCancel ? 'To Accounts' : 'Confirmed'}
+            </div>
+          </div>
+
+          {/* countdown */}
+          <div className="h-1.5 w-full bg-white/5">
+            <div className="h-full" style={{ background: accent, animation: `vProgress ${FH_DURATION}s linear forwards` }} />
+          </div>
+          <p className="text-center text-[10px] text-slate-500 py-2 tracking-widest uppercase">Auto-closes in {left}s · tap to dismiss</p>
+        </div>
+      </div>
     </div>
   )
 }
@@ -462,6 +555,11 @@ function ViewDashboard() {
   const critQueueRef = useRef<TEAlert[]>([])
   const seenAlertsRef = useRef<Set<number> | null>(null)
 
+  // file-handler event state (flight added / cancellation requested popups)
+  const [fhEvent, setFhEvent] = useState<FHEvent | null>(null)
+  const fhQueueRef = useRef<FHEvent[]>([])
+  const seenFhRef  = useRef<Set<string> | null>(null)
+
   const chime = useCallback(() => {
     if (!soundOnRef.current) return
     try {
@@ -515,6 +613,16 @@ function ViewDashboard() {
     setCritical(cur => { if (cur) return cur; const next = critQueueRef.current.shift() ?? null; if (next) alarm(); return next })
   }, [alarm])
 
+  // File-handler popups: a cheerful chime for flights, the harsh siren for cancels.
+  const pumpFh = useCallback(() => {
+    setFhEvent(cur => {
+      if (cur) return cur
+      const next = fhQueueRef.current.shift() ?? null
+      if (next) { next.action === 'CANCEL_REQUESTED' ? alarm() : chime() }
+      return next
+    })
+  }, [alarm, chime])
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/public/view-dashboard', { cache: 'no-store' })
@@ -557,8 +665,25 @@ function ViewDashboard() {
     } catch { /* keep last known alerts — never break the screen */ }
   }, [pumpCritical])
 
+  const loadFhEvents = useCallback(async () => {
+    try {
+      const res = await fetch('/api/public/filehandler-events', { cache: 'no-store' })
+      const j = await res.json()
+      const rows: FHEvent[] = j?.data?.events ?? []
+      // Skip the first load so a freshly-opened screen doesn't replay the backlog.
+      if (seenFhRef.current === null) {
+        seenFhRef.current = new Set(rows.map(e => e.id))
+      } else {
+        const fresh = rows.filter(e => !seenFhRef.current!.has(e.id))
+        fresh.reverse().forEach(e => { seenFhRef.current!.add(e.id); fhQueueRef.current.push(e) })
+        if (fresh.length) pumpFh()
+      }
+    } catch { /* never break the screen */ }
+  }, [pumpFh])
+
   useEffect(() => { load(); const id = setInterval(load, POLL_MS); return () => clearInterval(id) }, [load])
   useEffect(() => { loadAlerts(); const id = setInterval(loadAlerts, ALERT_POLL_MS); return () => clearInterval(id) }, [loadAlerts])
+  useEffect(() => { loadFhEvents(); const id = setInterval(loadFhEvents, FH_POLL_MS); return () => clearInterval(id) }, [loadFhEvents])
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id) }, [])
 
   // Which countries actually have data (any bucket) — keeps the screen relevant.
@@ -575,6 +700,7 @@ function ViewDashboard() {
 
   const dismissAlert = useCallback(() => { setAlert(null); setTimeout(pump, 400) }, [pump])
   const dismissCritical = useCallback(() => { setCritical(null); setTimeout(pumpCritical, 400) }, [pumpCritical])
+  const dismissFh = useCallback(() => { setFhEvent(null); setTimeout(pumpFh, 400) }, [pumpFh])
 
   const activeMeta = metaOf(spotCountry)
 
@@ -596,6 +722,7 @@ function ViewDashboard() {
 
       {alert && <BookingAlert booking={alert} onDismiss={dismissAlert} />}
       {critical && <CriticalAlert alert={critical} onDismiss={dismissCritical} />}
+      {fhEvent && <FileHandlerAlert event={fhEvent} onDismiss={dismissFh} />}
 
       <div className="relative h-full flex flex-col p-6 gap-5">
         {/* Header */}

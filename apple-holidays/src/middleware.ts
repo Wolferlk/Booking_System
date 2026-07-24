@@ -75,8 +75,9 @@ export const config = {
     //   cron     — Vercel cron jobs (protected by CRON_SECRET, not session)
     //   webhooks — inbound webhooks from external services
     //   vendor   — vendor portal uses its own JWT, not NextAuth
+    //   filehandler — file handler portal uses its own signed cookie, not NextAuth
     //   uploads  — static file serving
     //   pnl-by-isnumber — intentionally public IS-number lookup
-    '/api/((?!auth|public|cron|webhooks|vendor|uploads|pnl-by-isnumber|bookings/full).*)',
+    '/api/((?!auth|public|cron|webhooks|vendor|filehandler|uploads|pnl-by-isnumber|bookings/full).*)',
   ],
 }
