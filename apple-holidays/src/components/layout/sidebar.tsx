@@ -2,15 +2,16 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
-  PlaneTakeoff,
+  PlaneTakeoff, Search, CornerDownLeft, SearchX,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -217,13 +218,147 @@ const COUNTRY_META: Record<string, { name: string; code: string; color: string }
             MALAYSIA:           { name: 'Malaysia',             code: 'MMT_MY',    color: 'border-emerald-500/25 bg-emerald-500/8' },
           }
 
+type NavItem = (typeof NAV_ITEMS)[UserRole][number]
+
+/**
+ * Subsequence match — "asb" finds "AS Bookings", "pnl" finds "P&L Management".
+ * Returns the matched character positions (for highlighting) or null if no match.
+ */
+function fuzzyMatch(label: string, query: string): number[] | null {
+  const haystack = label.toLowerCase()
+  const needle = query.toLowerCase().replace(/\s+/g, '')
+  const positions: number[] = []
+  let cursor = 0
+
+  for (let i = 0; i < needle.length; i++) {
+    const found = haystack.indexOf(needle[i], cursor)
+    if (found === -1) return null
+    positions.push(found)
+    cursor = found + 1
+  }
+  return positions
+}
+
+/** Lower is better: reward early matches and runs of adjacent characters. */
+function matchScore(positions: number[]): number {
+  if (!positions.length) return 0
+  let score = positions[0] * 2
+  for (let i = 1; i < positions.length; i++) {
+    score += (positions[i] - positions[i - 1] - 1) * 3
+  }
+  return score
+}
+
+function HighlightedLabel({
+  label,
+  positions,
+  hitClassName = 'text-brand-300 font-bold',
+}: { label: string; positions: number[]; hitClassName?: string }) {
+  if (!positions.length) return <>{label}</>
+  const hits = new Set(positions)
+  return (
+    <>
+      {label.split('').map((char, i) =>
+        hits.has(i)
+          ? <span key={i} className={hitClassName}>{char}</span>
+          : <span key={i}>{char}</span>,
+      )}
+    </>
+  )
+}
+
 export default function Sidebar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
-  const navItems = role ? NAV_ITEMS[role] ?? [] : []
+  const navItems = useMemo(() => (role ? NAV_ITEMS[role] ?? [] : []), [role])
   const { countryFilter, setCountryFilter, canFilter } = useCountryFilter()
   const { isCollapsed, isMobileOpen, toggleCollapse, closeMobile } = useSidebar()
+
+  const [query, setQuery] = useState('')
+  const [isSearchFocused, setIsSearchFocused] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const wantsFocusRef = useRef(false)
+
+  const matches = useMemo(() => {
+    if (!query.trim()) return null
+    return navItems
+      .map(item => {
+        const positions = fuzzyMatch(item.label, query)
+        return positions ? { item, positions, score: matchScore(positions) } : null
+      })
+      .filter((m): m is { item: NavItem; positions: number[]; score: number } => m !== null)
+      .sort((a, b) => a.score - b.score)
+  }, [query, navItems])
+
+  const visibleItems: { item: NavItem; positions: number[] }[] = matches
+    ?? navItems.map(item => ({ item, positions: [] as number[] }))
+
+  useEffect(() => { setActiveIndex(0) }, [query])
+
+  // ⌘K / Ctrl+K jumps to the search box from anywhere in the dashboard.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        if (isCollapsed) {
+          wantsFocusRef.current = true
+          toggleCollapse()
+        } else {
+          searchRef.current?.focus()
+          searchRef.current?.select()
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isCollapsed, toggleCollapse])
+
+  // Focus once the sidebar has finished expanding (from ⌘K or the collapsed icon).
+  useEffect(() => {
+    if (isCollapsed || !wantsFocusRef.current) return
+    wantsFocusRef.current = false
+    const timer = setTimeout(() => searchRef.current?.focus(), 320)
+    return () => clearTimeout(timer)
+  }, [isCollapsed])
+
+  const goToItem = useCallback((item: NavItem) => {
+    setQuery('')
+    searchRef.current?.blur()
+    if (item.external) {
+      window.open(item.href, '_blank', 'noopener,noreferrer')
+      return
+    }
+    closeMobile()
+    router.push(item.href)
+  }, [closeMobile, router])
+
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      if (query) { e.preventDefault(); setQuery('') }
+      else searchRef.current?.blur()
+      return
+    }
+    if (!visibleItems.length) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex(i => (i + 1) % visibleItems.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex(i => (i - 1 + visibleItems.length) % visibleItems.length)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const target = visibleItems[activeIndex]
+      if (target) goToItem(target.item)
+    }
+  }
+
+  const expandAndSearch = () => {
+    wantsFocusRef.current = true
+    toggleCollapse()
+  }
 
   const lockedMeta = !canFilter && countryFilter && countryFilter !== 'ALL'
     ? COUNTRY_META[countryFilter]
@@ -348,19 +483,105 @@ export default function Sidebar() {
           )}
         </div>
 
+        <div className={cn('flex-shrink-0 px-3 pt-3', isCollapsed && 'lg:px-2')}>
+          <button
+            onClick={expandAndSearch}
+            title="Search menu (⌘K)"
+            aria-label="Search menu"
+            className={cn(
+              'hidden w-full items-center justify-center rounded-xl py-2',
+              'bg-slate-800/60 border border-slate-700/50 text-slate-500',
+              'hover:text-brand-400 hover:border-brand-500/40 transition-colors',
+              isCollapsed && 'lg:flex',
+            )}
+          >
+            <Search className="w-4 h-4" />
+          </button>
+
+          <div className={cn('relative', isCollapsed && 'lg:hidden')}>
+            {/* Soft gradient halo that lights up while the field is focused */}
+            <div
+              aria-hidden="true"
+              className={cn(
+                'pointer-events-none absolute -inset-[2px] rounded-xl blur-[3px] transition-opacity duration-300',
+                'bg-gradient-to-r from-brand-500/50 via-brand-400/25 to-transparent',
+                isSearchFocused ? 'opacity-100' : 'opacity-0',
+              )}
+            />
+            <div className={cn(
+              'relative flex items-center gap-2 rounded-xl px-2.5 py-2 transition-colors',
+              'bg-slate-800/70 border',
+              isSearchFocused ? 'border-brand-500/50' : 'border-slate-700/50',
+            )}>
+              <Search className={cn(
+                'w-3.5 h-3.5 flex-shrink-0 transition-colors',
+                isSearchFocused || query ? 'text-brand-400' : 'text-slate-500',
+              )} />
+              <input
+                ref={searchRef}
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={onSearchKeyDown}
+                onFocus={() => setIsSearchFocused(true)}
+                onBlur={() => setIsSearchFocused(false)}
+                placeholder="Quick jump…"
+                aria-label="Search menu"
+                className="flex-1 min-w-0 bg-transparent text-[12px] text-white placeholder:text-slate-500 outline-none"
+              />
+              {query ? (
+                <button
+                  onClick={() => { setQuery(''); searchRef.current?.focus() }}
+                  aria-label="Clear search"
+                  className="p-0.5 rounded text-slate-500 hover:text-white hover:bg-slate-700/70 transition-colors"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              ) : (
+                <kbd className="hidden lg:block px-1.5 py-0.5 rounded border border-slate-700 bg-slate-900/70 text-slate-500 text-[9px] font-sans font-semibold">
+                  ⌘K
+                </kbd>
+              )}
+            </div>
+
+            {query && (
+              <div className="flex items-center justify-between px-1.5 mt-1.5">
+                <span className="text-slate-500 text-[9px] uppercase tracking-widest font-semibold">
+                  {visibleItems.length} {visibleItems.length === 1 ? 'match' : 'matches'}
+                </span>
+                {visibleItems.length > 0 && (
+                  <span className="flex items-center gap-1 text-slate-600 text-[9px] font-semibold">
+                    <CornerDownLeft className="w-2.5 h-2.5" /> open
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         <nav className="flex-1 py-4 overflow-y-auto scrollbar-hide">
           <div className={cn('mb-2 px-3', isCollapsed && 'lg:px-1')}>
             <p className={cn(
               'text-slate-500 text-[10px] uppercase tracking-wider font-semibold px-2 mb-1',
               isCollapsed && 'lg:hidden',
             )}>
-              {role ? ROLE_LABELS[role] : 'Navigation'}
+              {query ? 'Search Results' : role ? ROLE_LABELS[role] : 'Navigation'}
             </p>
           </div>
 
+          {query && visibleItems.length === 0 && (
+            <div className={cn('px-5 py-6 flex flex-col items-center gap-2 text-center', isCollapsed && 'lg:hidden')}>
+              <SearchX className="w-6 h-6 text-slate-700" />
+              <p className="text-slate-500 text-xs">
+                No menu item matches <span className="text-slate-300 font-medium">“{query}”</span>
+              </p>
+            </div>
+          )}
+
           <ul className={cn('space-y-0.5 px-2', isCollapsed && 'lg:px-1')}>
-            {navItems.map(item => {
+            {visibleItems.map(({ item, positions }, index) => {
               const Icon = ICON_MAP[item.icon]
+              const isHighlighted = Boolean(query) && index === activeIndex
               const isActive = (() => {
               if (item.href === '/dashboard') return pathname === '/dashboard'
               if (pathname === item.href) return true
@@ -376,10 +597,10 @@ export default function Sidebar() {
 
               if (item.danger) {
                 return (
-                  <li key={item.href} className="mt-2 pt-2 border-t border-slate-800">
+                  <li key={item.href} className={cn(!query && 'mt-2 pt-2 border-t border-slate-800')}>
                     <Link
                       href={item.href}
-                      onClick={closeMobile}
+                      onClick={() => { setQuery(''); closeMobile() }}
                       title={item.label}
                       className={cn(
                         'flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
@@ -387,10 +608,13 @@ export default function Sidebar() {
                         isActive
                           ? 'bg-red-500/15 text-red-400 border border-red-500/30'
                           : 'text-red-500/70 hover:text-red-400 hover:bg-red-500/10',
+                        isHighlighted && 'ring-1 ring-red-500/50 bg-red-500/10',
                       )}
                     >
                       {Icon && <Icon className="w-4 h-4 flex-shrink-0 text-red-500/70 group-hover:text-red-400 transition-colors" />}
-                      <span className={cn(isCollapsed && 'lg:hidden')}>{item.label}</span>
+                      <span className={cn(isCollapsed && 'lg:hidden')}>
+                        <HighlightedLabel label={item.label} positions={positions} hitClassName="text-red-300 font-bold" />
+                      </span>
                       {isActive && (
                         <ChevronRight className={cn('w-3 h-3 ml-auto text-red-400', isCollapsed && 'lg:hidden')} />
                       )}
@@ -403,7 +627,7 @@ export default function Sidebar() {
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    onClick={closeMobile}
+                    onClick={() => { setQuery(''); closeMobile() }}
                     title={item.label}
                     {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
                     className={cn(
@@ -412,6 +636,7 @@ export default function Sidebar() {
                       isActive
                         ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
                         : 'text-slate-400 hover:text-white hover:bg-slate-800',
+                      isHighlighted && 'ring-1 ring-brand-500/50 bg-slate-800 text-white',
                     )}
                   >
                     {Icon && (
@@ -420,7 +645,9 @@ export default function Sidebar() {
                         isActive ? 'text-brand-400' : 'text-slate-500 group-hover:text-slate-300',
                       )} />
                     )}
-                    <span className={cn(isCollapsed && 'lg:hidden')}>{item.label}</span>
+                    <span className={cn(isCollapsed && 'lg:hidden')}>
+                      <HighlightedLabel label={item.label} positions={positions} />
+                    </span>
                     {isActive && (
                       <ChevronRight className={cn('w-3 h-3 ml-auto text-brand-400', isCollapsed && 'lg:hidden')} />
                     )}
