@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
@@ -9,8 +9,8 @@ import {
   AlertCircle, Clock, Loader2, Save,
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
-  FlaskConical, ScanLine, Upload, HardDrive, Globe, Sparkles, PlaneLanding,
-  History, ChevronDown, RotateCcw,
+  FlaskConical, Globe, Sparkles, PlaneLanding,
+  History, ChevronDown, RotateCcw, Wand2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -34,6 +34,7 @@ import TravellerExperiencePanel from '@/components/bookings/traveller-experience
 import BookingCallTranscripts from '@/components/bookings/booking-call-transcripts'
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
+import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 
 /**
@@ -50,6 +51,20 @@ function isOwnArrangement(a: Record<string, unknown>): boolean {
   const hotel = String(a.hotel ?? '').trim().toLowerCase()
   if (!hotel || ['tba', 'tbc', 'n/a', 'na', 'to be advised', 'to be confirmed', '-'].includes(hotel)) return true
   return false
+}
+
+/** Shapes returned by the three `/extract` endpoints behind the AI Auto-fill popups. */
+type ExtractedFlight = {
+  flightNo: string; date: string; fromApt: string; depTime: string
+  toApt: string; arrTime: string; airline: string; notes: string
+}
+type ExtractedPassenger = {
+  name: string; type: string; age: number | string | null
+  passport: string; nationality: string; contact: string
+}
+type ExtractedAccommodation = {
+  hotel: string; city: string; checkIn: string; checkOut: string
+  roomType: string; mealType: string; contact: string; address: string
 }
 
 /** Pre-filled reason when the file handler cancels without typing their own. */
@@ -77,7 +92,7 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
   const [deletedAccomIds, setDeletedAccomIds] = useState<string[]>([])
-  const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; contact: string; address: string }[]>([])
+  const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; mealType: string; contact: string; address: string }[]>([])
   const [savingAccom, setSavingAccom] = useState(false)
   const [editPassengerModal, setEditPassengerModal] = useState(false)
   const [passengerEditList, setPassengerEditList] = useState<PassengerEditRow[]>([])
@@ -111,10 +126,13 @@ export default function BookingDetailPage() {
   const [savingFlights, setSavingFlights] = useState(false)
 
   // Flight extraction from image/PDF
-  const [flightScanModal, setFlightScanModal] = useState(false)
   const [flightScanLoading, setFlightScanLoading] = useState(false)
   const [flightDrivePickerOpen, setFlightDrivePickerOpen] = useState(false)
-  const flightScanFileRef = useRef<HTMLInputElement>(null)
+
+  // AI Auto-fill popups — one per detail card (passengers / flights / hotels)
+  const [aiPassengerOpen, setAiPassengerOpen] = useState(false)
+  const [aiFlightOpen, setAiFlightOpen] = useState(false)
+  const [aiAccomOpen, setAiAccomOpen] = useState(false)
 
   const [waModal, setWaModal] = useState(false)
   const [waPhone, setWaPhone] = useState('')
@@ -501,54 +519,112 @@ export default function BookingDetailPage() {
     } finally { setSavingFlights(false) }
   }
 
-  async function handleFlightScanFile(file: File) {
-    setFlightScanModal(false)
-    setFlightScanLoading(true)
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const res = await fetch(`/api/bookings/${ref}/flights/extract`, { method: 'POST', body: formData })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error ?? 'Extraction failed')
-      const extracted: Array<{ flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string; notes: string }> = json.data.flights ?? []
-      if (extracted.length === 0) { toast.info('No flight segments found in the file'); return }
-      const newEntries = extracted.map(f => ({
-        _key: `scan-${Date.now()}-${Math.random()}`,
+  /**
+   * Merges AI-extracted flight segments into the flight edit form as new rows
+   * and opens it, so nothing is written until the handler reviews and saves.
+   */
+  function applyExtractedFlights(extracted: ExtractedFlight[]) {
+    if (extracted.length === 0) { toast.info('No flight segments found'); return }
+    const newEntries: FlightEntry[] = extracted.map(f => ({
+      _key: `scan-${Date.now()}-${Math.random()}`,
+      _isNew: true,
+      _deleted: false,
+      id: '',
+      flightNo: f.flightNo ?? '',
+      date: (f.date ?? '').slice(0, 10),
+      fromApt: f.fromApt ?? '',
+      depTime: f.depTime ?? '',
+      toApt: f.toApt ?? '',
+      arrTime: f.arrTime ?? '',
+      airline: f.airline ?? '',
+      notes: f.notes ?? '',
+    }))
+    const existing: FlightEntry[] = (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
+      _key: String(f.id ?? i),
+      _isNew: false,
+      _deleted: false,
+      id: String(f.id ?? ''),
+      flightNo: String(f.flightNo ?? ''),
+      date: f.date ? String(f.date).slice(0, 10) : '',
+      fromApt: String(f.fromApt ?? ''),
+      depTime: String(f.depTime ?? ''),
+      toApt: String(f.toApt ?? ''),
+      arrTime: String(f.arrTime ?? ''),
+      airline: String(f.airline ?? ''),
+      notes: String(f.notes ?? ''),
+    }))
+    setFlightEditList([...existing, ...newEntries])
+    setFlightChangeReason('')
+    setEditFlightModal(true)
+    toast.success(`${extracted.length} flight segment${extracted.length > 1 ? 's' : ''} extracted — review and save`)
+  }
+
+  /** Same idea for passengers: extracted travellers become new rows to review. */
+  function applyExtractedPassengers(extracted: ExtractedPassenger[]) {
+    if (extracted.length === 0) { toast.info('No passengers found'); return }
+    const existing: PassengerEditRow[] = (booking.passengers ?? []).map((p: Record<string, unknown>, i: number) => ({
+      _key: String(p.id ?? i),
+      _isNew: false,
+      _deleted: false,
+      id: String(p.id ?? ''),
+      name: String(p.name ?? ''),
+      type: String(p.type ?? 'ADULT'),
+      age: p.age != null ? String(p.age) : '',
+      passport: String(p.passport ?? ''),
+      nationality: String(p.nationality ?? ''),
+      contact: String(p.contact ?? ''),
+      isLead: !!p.isLead,
+    }))
+    // Skip anyone already on the booking (same name) so re-scanning is safe.
+    const knownNames = new Set(existing.map(p => p.name.trim().toLowerCase()).filter(Boolean))
+    const additions: PassengerEditRow[] = extracted
+      .filter(p => (p.name ?? '').trim() && !knownNames.has(String(p.name).trim().toLowerCase()))
+      .map(p => ({
+        _key: `ai-${Date.now()}-${Math.random()}`,
         _isNew: true,
         _deleted: false,
         id: '',
-        flightNo: f.flightNo,
-        date: f.date,
-        fromApt: f.fromApt,
-        depTime: f.depTime,
-        toApt: f.toApt,
-        arrTime: f.arrTime,
-        airline: f.airline,
-        notes: f.notes,
+        name: String(p.name ?? '').trim(),
+        type: ['ADULT', 'CHILD', 'INFANT'].includes(String(p.type ?? '').toUpperCase()) ? String(p.type).toUpperCase() : 'ADULT',
+        age: p.age != null && p.age !== '' ? String(p.age) : '',
+        passport: String(p.passport ?? ''),
+        nationality: String(p.nationality ?? ''),
+        contact: String(p.contact ?? ''),
+        isLead: false,
       }))
-      const existing = (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
-        _key: String(f.id ?? i),
-        _isNew: false,
-        _deleted: false,
-        id: String(f.id ?? ''),
-        flightNo: String(f.flightNo ?? ''),
-        date: f.date ? String(f.date).slice(0, 10) : '',
-        fromApt: String(f.fromApt ?? ''),
-        depTime: String(f.depTime ?? ''),
-        toApt: String(f.toApt ?? ''),
-        arrTime: String(f.arrTime ?? ''),
-        airline: String(f.airline ?? ''),
-        notes: String(f.notes ?? ''),
-      }))
-      setFlightEditList([...existing, ...newEntries])
-      setFlightChangeReason('')
-      setEditFlightModal(true)
-      toast.success(`${extracted.length} flight segment${extracted.length > 1 ? 's' : ''} extracted — review and save`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Flight extraction failed')
-    } finally {
-      setFlightScanLoading(false)
+
+    if (additions.length === 0) {
+      toast.info('Every extracted passenger is already on this booking')
+      return
     }
+    const rows = [...existing, ...additions]
+    if (!rows.some(r => r.isLead)) rows[0] = { ...rows[0], isLead: true }
+    setPassengerEditList(rows)
+    setEditPassengerModal(true)
+    toast.success(`${additions.length} passenger${additions.length > 1 ? 's' : ''} extracted — review and save`)
+  }
+
+  /** And for hotels: extracted stays become new-hotel rows in the accom form. */
+  function applyExtractedAccommodations(extracted: ExtractedAccommodation[]) {
+    if (extracted.length === 0) { toast.info('No hotels found'); return }
+    const edits: Record<string, unknown> = {}
+    accommodations.forEach((a) => {
+      edits[a.id as string] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' }
+    })
+    setAccomEdits(edits)
+    setDeletedAccomIds([])
+    setNewAccoms(extracted.map(a => ({
+      city: String(a.city ?? ''),
+      hotel: String(a.hotel ?? ''),
+      checkIn: String(a.checkIn ?? '').slice(0, 10),
+      checkOut: String(a.checkOut ?? '').slice(0, 10),
+      roomType: String(a.roomType ?? ''),
+      mealType: String(a.mealType ?? ''),
+      contact: String(a.contact ?? ''),
+      address: String(a.address ?? ''),
+    })))
+    setEditAccomModal(true)
+    toast.success(`${extracted.length} hotel${extracted.length > 1 ? 's' : ''} extracted — review and save`)
   }
 
   async function handleFlightDriveFileSelected(file: CloudFile) {
@@ -562,40 +638,7 @@ export default function BookingDetailPage() {
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error ?? 'Extraction failed')
-      const extracted: Array<{ flightNo: string; date: string; fromApt: string; depTime: string; toApt: string; arrTime: string; airline: string; notes: string }> = json.data.flights ?? []
-      if (extracted.length === 0) { toast.info('No flight segments found in the file'); return }
-      const newEntries = extracted.map(f => ({
-        _key: `scan-${Date.now()}-${Math.random()}`,
-        _isNew: true,
-        _deleted: false,
-        id: '',
-        flightNo: f.flightNo,
-        date: f.date,
-        fromApt: f.fromApt,
-        depTime: f.depTime,
-        toApt: f.toApt,
-        arrTime: f.arrTime,
-        airline: f.airline,
-        notes: f.notes,
-      }))
-      const existing = (booking.flights ?? []).map((f: Record<string, unknown>, i: number) => ({
-        _key: String(f.id ?? i),
-        _isNew: false,
-        _deleted: false,
-        id: String(f.id ?? ''),
-        flightNo: String(f.flightNo ?? ''),
-        date: f.date ? String(f.date).slice(0, 10) : '',
-        fromApt: String(f.fromApt ?? ''),
-        depTime: String(f.depTime ?? ''),
-        toApt: String(f.toApt ?? ''),
-        arrTime: String(f.arrTime ?? ''),
-        airline: String(f.airline ?? ''),
-        notes: String(f.notes ?? ''),
-      }))
-      setFlightEditList([...existing, ...newEntries])
-      setFlightChangeReason('')
-      setEditFlightModal(true)
-      toast.success(`${extracted.length} flight segment${extracted.length > 1 ? 's' : ''} extracted — review and save`)
+      applyExtractedFlights(json.data.flights ?? [])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Flight extraction failed')
     } finally {
@@ -1906,6 +1949,12 @@ Wishing you a wonderful trip! ✈️
                 canEditBooking ? (
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => setAiPassengerOpen(true)}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-violet-700 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors border border-violet-200"
+                    >
+                      <Wand2 className="w-3 h-3" /> AI Auto-fill
+                    </button>
+                    <button
                       onClick={openEditPassengers}
                       className="flex items-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 px-3 py-1.5 rounded-lg transition-colors border border-brand-200"
                     >
@@ -2061,13 +2110,13 @@ Wishing you a wonderful trip! ✈️
               action={canEditFlights ? (
                 <div className="flex items-center gap-3">
                   <button
-                    onClick={() => setFlightScanModal(true)}
+                    onClick={() => setAiFlightOpen(true)}
                     disabled={flightScanLoading}
-                    className="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1 disabled:opacity-50"
+                    className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1 disabled:opacity-50"
                   >
                     {flightScanLoading
-                      ? <><span className="w-3 h-3 border border-purple-400 border-t-transparent rounded-full animate-spin inline-block" /> Scanning…</>
-                      : <><ScanLine className="w-3 h-3" /> Scan</>}
+                      ? <><span className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin inline-block" /> Scanning…</>
+                      : <><Wand2 className="w-3 h-3" /> AI Auto-fill</>}
                   </button>
                   <button onClick={openEditFlight} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
                     <Edit2 className="w-3 h-3" /> Edit
@@ -2107,16 +2156,21 @@ Wishing you a wonderful trip! ✈️
           <Card>
             <CardHeader
               action={canEditBooking ? (
-                <button onClick={() => {
-                  const edits: Record<string, unknown> = {}
-                  accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' } })
-                  setAccomEdits(edits)
-                  setDeletedAccomIds([])
-                  setNewAccoms([])
-                  setEditAccomModal(true)
-                }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
-                  <Edit2 className="w-3 h-3" /> Edit
-                </button>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setAiAccomOpen(true)} className="text-xs text-violet-600 hover:text-violet-700 flex items-center gap-1">
+                    <Wand2 className="w-3 h-3" /> AI Auto-fill
+                  </button>
+                  <button onClick={() => {
+                    const edits: Record<string, unknown> = {}
+                    accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' } })
+                    setAccomEdits(edits)
+                    setDeletedAccomIds([])
+                    setNewAccoms([])
+                    setEditAccomModal(true)
+                  }} className="text-xs text-brand-600 hover:text-brand-700 flex items-center gap-1">
+                    <Edit2 className="w-3 h-3" /> Edit
+                  </button>
+                </div>
               ) : undefined}
             >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -2828,6 +2882,12 @@ Wishing you a wonderful trip! ✈️
                     onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, checkOut: e.target.value } : a))} />
                 </div>
                 <div>
+                  <label className="form-label">Meal Plan</label>
+                  <input className="form-input" placeholder="e.g. Bed & Breakfast"
+                    value={newA.mealType}
+                    onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, mealType: e.target.value } : a))} />
+                </div>
+                <div>
                   <label className="form-label">Contact Number</label>
                   <input className="form-input" placeholder="+60 ..."
                     value={newA.contact}
@@ -2846,7 +2906,7 @@ Wishing you a wonderful trip! ✈️
           {/* Add hotel button */}
           <button
             type="button"
-            onClick={() => setNewAccoms(prev => [...prev, { city: '', hotel: '', checkIn: '', checkOut: '', roomType: '', contact: '', address: '' }])}
+            onClick={() => setNewAccoms(prev => [...prev, { city: '', hotel: '', checkIn: '', checkOut: '', roomType: '', mealType: '', contact: '', address: '' }])}
             className="flex items-center justify-center gap-2 w-full p-3 border-2 border-dashed border-slate-200 rounded-xl text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
           >
             <Plus className="w-4 h-4" /> Add Another Hotel
@@ -3234,55 +3294,81 @@ Wishing you a wonderful trip! ✈️
         </div>
       </Modal>
 
-      {/* ── Flight Scan Modal ─────────────────────────────────────────── */}
-      <Modal
-        open={flightScanModal}
-        onClose={() => setFlightScanModal(false)}
-        title="Extract Flights from File"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-slate-500">
-            Upload an image or PDF containing flight details, or pick a file from the booking's OneDrive folder. The AI will extract the flight segments automatically.
-          </p>
-
-          {/* Device upload */}
-          <button
-            onClick={() => flightScanFileRef.current?.click()}
-            className="w-full flex items-center gap-3 px-4 py-3 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-600 hover:border-brand-400 hover:text-brand-600 transition-colors"
-          >
-            <Upload className="w-5 h-5 flex-shrink-0" />
-            <div className="text-left">
-              <p className="font-medium">Upload from device</p>
-              <p className="text-xs text-slate-400 mt-0.5">JPG, PNG, WebP, PDF</p>
+      {/* ── AI Auto-fill popups (Passengers · Flights · Accommodation) ─── */}
+      <AiAutofillModal<ExtractedPassenger>
+        open={aiPassengerOpen}
+        onClose={() => setAiPassengerOpen(false)}
+        title="AI Passenger Auto-fill"
+        description="Upload a passenger list, passport or ticket image/PDF, or paste passenger text — AI reads it, corrects it, and fills the passengers for you."
+        endpoint={`/api/bookings/${ref}/passengers/extract`}
+        resultKey="passengers"
+        itemNoun="passenger"
+        pastePlaceholder={'Paste passenger details, e.g.\n1. Mr Chandilya Gogoi — Adult, IND, P1234567\n2. Ms Rhea Gogoi — Child, age 9'}
+        onApply={applyExtractedPassengers}
+        renderItem={(p) => (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-cyan-200 font-bold">{p.name || 'Passenger'}</span>
+              <span className="text-slate-500 text-xs">{p.type || 'ADULT'}{p.age ? ` · ${p.age}y` : ''}</span>
             </div>
-          </button>
+            <p className="text-slate-400 text-xs mt-1">
+              {[p.passport, p.nationality, p.contact].filter(Boolean).join(' · ') || 'No passport / nationality read'}
+            </p>
+          </>
+        )}
+      />
 
-          {/* OneDrive pick */}
-          <button
-            onClick={() => { setFlightScanModal(false); setFlightDrivePickerOpen(true) }}
-            className="w-full flex items-center gap-3 px-4 py-3 border-2 border-dashed border-slate-300 rounded-xl text-sm text-slate-600 hover:border-brand-400 hover:text-brand-600 transition-colors"
-          >
-            <HardDrive className="w-5 h-5 flex-shrink-0" />
-            <div className="text-left">
-              <p className="font-medium">Pick from OneDrive</p>
-              <p className="text-xs text-slate-400 mt-0.5">Browse the booking's linked folder</p>
+      <AiAutofillModal<ExtractedFlight>
+        open={aiFlightOpen}
+        onClose={() => setAiFlightOpen(false)}
+        title="AI Flight Auto-fill"
+        description="Upload a ticket/itinerary image or PDF, or paste flight text — AI reads it, corrects it, and fills the flights for you."
+        endpoint={`/api/bookings/${ref}/flights/extract`}
+        resultKey="flights"
+        itemNoun="flight"
+        pastePlaceholder={'Paste flight details, e.g.\n6E 1631  02 Sep  CCU 14:10 → HAN 18:35\nIndiGo, Terminal 2'}
+        onApply={applyExtractedFlights}
+        onPickFromDrive={() => setFlightDrivePickerOpen(true)}
+        renderItem={(f) => (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-cyan-200 font-bold">{f.flightNo || 'Flight'}</span>
+              <span className="text-slate-500 text-xs">{f.date}</span>
             </div>
-          </button>
-        </div>
-      </Modal>
+            <div className="flex items-center gap-2 mt-1 text-white">
+              <span className="font-bold">{f.fromApt || '—'}</span>
+              <span className="text-slate-500 text-xs">{f.depTime}</span>
+              <Plane className="w-3.5 h-3.5 text-cyan-400/60" />
+              <span className="text-slate-500 text-xs">{f.arrTime}</span>
+              <span className="font-bold">{f.toApt || '—'}</span>
+              {f.airline && <span className="ml-auto text-slate-500 text-xs">{f.airline}</span>}
+            </div>
+          </>
+        )}
+      />
 
-      {/* Hidden file input for flight scan */}
-      <input
-        ref={flightScanFileRef}
-        type="file"
-        accept=".jpg,.jpeg,.png,.webp,.pdf"
-        className="hidden"
-        onChange={e => {
-          const file = e.target.files?.[0]
-          if (file) handleFlightScanFile(file)
-          e.target.value = ''
-        }}
+      <AiAutofillModal<ExtractedAccommodation>
+        open={aiAccomOpen}
+        onClose={() => setAiAccomOpen(false)}
+        title="AI Hotel Auto-fill"
+        description="Upload a hotel voucher or itinerary image/PDF, or paste hotel text — AI reads it, corrects it, and fills the accommodation for you."
+        endpoint={`/api/bookings/${ref}/accommodations/extract`}
+        resultKey="accommodations"
+        itemNoun="hotel"
+        pastePlaceholder={'Paste hotel details, e.g.\nThe Lapis Hotel, Hanoi\n02 Sep 2026 → 03 Sep 2026 · Deluxe Twin · BB'}
+        onApply={applyExtractedAccommodations}
+        renderItem={(a) => (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-cyan-200 font-bold">{a.hotel || 'Hotel'}</span>
+              <span className="text-slate-500 text-xs">{a.city}</span>
+            </div>
+            <p className="text-white text-xs mt-1">{a.checkIn || '—'} → {a.checkOut || '—'}</p>
+            {(a.roomType || a.mealType) && (
+              <p className="text-slate-400 text-xs mt-0.5">{[a.roomType, a.mealType].filter(Boolean).join(' · ')}</p>
+            )}
+          </>
+        )}
       />
 
       {/* CloudFilePicker for flight scan from OneDrive */}
