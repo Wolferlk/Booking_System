@@ -1,0 +1,56 @@
+Subject: Introducing OPS-AI — the operations copilot now live in our booking system
+
+Dear [Boss's name],
+
+I would like to introduce a capability we have built into the AppleHolidays 
+OPS-AI, an operations copilot that works alongside our team inside the
+system they already use every day.
+
+What it is
+OPS-AI is not a separate app or a generic chatbot. It is an assistant embedded
+directly in the platform that understands our bookings, our workflow and our
+rules across all four countries. Staff open it with a single keystroke on any
+screen and ask for what they need in plain English — by typing or by voice — and
+it responds with the answer, opens the right page, or drafts the exact change to
+a booking for one-click approval.
+
+What it can do
+It has 11 built-in actions, in three groups:
+  • Look up  — search bookings and read full booking detail, instantly.
+  • Navigate — open a booking or jump to a filtered list (e.g. all arrivals on a
+    given date).
+  • Change   — draft edits to booking fields, tour agenda items, accommodation
+    and driver assignments, and create reminders or log customer contacts.
+
+A few real examples of what a staff member can simply say:
+  • "Add a full-day Sigiriya sightseeing tour on day 3 of IS23492."
+  • "Which bookings arrive on 1 July?"
+  • "Assign driver Nuwan, van CAB-4471, to the airport pickup on this booking."
+  • "Remind me to chase the balance payment on this file next Monday." (by voice)
+
+In each case OPS-AI does the heavy lifting and presents a clear preview card;
+the staff member confirms with one click.
+
+Why it is safe
+Because this is a live system with real booking and financial records, safety was
+the starting point. Every action passes five mandatory checks, and — most
+importantly — OPS-AI never acts on its own. It proposes; a person confirms, and
+every change is written to the audit trail. It has no ability to delete or cancel
+a booking, change a booking's status, confirm payments, or manage users. Each
+person only ever reaches bookings for their own country and role, and OPS-AI
+inherits exactly those limits.
+
+Why it matters
+The everyday win is time and consistency. Routine jobs that today mean moving
+across several screens and forms become a single instruction, with the same
+guardrails applied to everyone, every time.
+
+I have attached a short briefing (PDF) that lays this out visually, with examples
+and diagrams. OPS-AI is already live in the platform, and I would suggest a brief
+walkthrough for each country team so we can gather feedback and confirm the
+time savings across the Booking, Ground and Travel Experience teams.
+
+Happy to give you a live demonstration at your convenience.
+
+Best regards,
+Sasindu Diluranga
