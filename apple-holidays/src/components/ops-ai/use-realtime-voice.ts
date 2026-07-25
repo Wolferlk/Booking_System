@@ -209,7 +209,23 @@ export function useRealtimeVoice(getContext: () => VoiceContext, callbacks: Voic
           'Content-Type': 'application/sdp',
         },
       })
-      if (!sdpRes.ok) throw new Error('Voice handshake was rejected.')
+      if (!sdpRes.ok) {
+        const detail = await sdpRes.text().catch(() => '')
+        let message = ''
+        try {
+          const parsed = JSON.parse(detail) as { error?: { message?: string } | string; message?: string }
+          message = typeof parsed.error === 'string'
+            ? parsed.error
+            : parsed.error?.message ?? parsed.message ?? ''
+        } catch {
+          message = detail.trim()
+        }
+        throw new Error(
+          message
+            ? `Voice handshake failed (${sdpRes.status}): ${message}`
+            : `Voice handshake failed (${sdpRes.status}).`,
+        )
+      }
 
       const answer = { type: 'answer' as const, sdp: await sdpRes.text() }
       await pc.setRemoteDescription(answer)
