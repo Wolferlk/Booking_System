@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { readApi } from './read-api'
 import type { OpsAction, OpsLookup } from './types'
 
 export type VoiceStatus = 'idle' | 'connecting' | 'live' | 'error'
@@ -84,7 +85,7 @@ export function useRealtimeVoice(getContext: () => VoiceContext, callbacks: Voic
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: name, args, pathname: ctx.pathname, bookingRef: ctx.bookingRef }),
       })
-      const json = await res.json()
+      const json = await readApi<{ kind: string; output: string; lookup?: OpsLookup; action?: OpsAction }>(res)
       if (json?.success) {
         const data = json.data as { kind: string; output: string; lookup?: OpsLookup; action?: OpsAction }
         output = data.output ?? 'Done.'
@@ -161,7 +162,7 @@ export function useRealtimeVoice(getContext: () => VoiceContext, callbacks: Voic
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pathname: ctx.pathname, bookingRef: ctx.bookingRef }),
       })
-      const sjson = await sres.json()
+      const sjson = await readApi<{ clientSecret: string; model: string }>(sres)
       if (!sjson?.success || !sjson.data?.clientSecret) {
         throw new Error(sjson?.error ?? 'Could not start a voice session.')
       }

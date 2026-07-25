@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { readApi } from './read-api'
 
 export type DictationStatus = 'idle' | 'recording' | 'transcribing' | 'error'
 
@@ -78,7 +79,7 @@ export function useDictation(onText: (text: string) => void) {
         form.append('audio', blob, `dictation.${ext}`)
 
         const res  = await fetch('/api/ops-ai/transcribe', { method: 'POST', body: form })
-        const json = await res.json()
+        const json = await readApi<{ text?: string }>(res)
 
         if (!json?.success) {
           setStatus('error')
