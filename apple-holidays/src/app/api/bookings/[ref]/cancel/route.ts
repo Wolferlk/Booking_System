@@ -5,7 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { CANCELLABLE_STATES } from '@/lib/state-machine'
 import { sendCancellationApprovalEmail } from '@/lib/send-cancellation-email'
-import type { UserRole, BookingStatus } from '@prisma/client'
+import { sanitizeCancellationFees, totalCancellationFee } from '@/lib/cancellation-fees'
+import type { UserRole, BookingStatus, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,8 +42,12 @@ export async function POST(
     return buildApiError(`Cannot cancel booking in ${booking.status} state`)
   }
 
-  const { reason } = await req.json()
+  const { reason, fees } = await req.json()
   if (!reason || !String(reason).trim()) return buildApiError('Cancellation reason is required')
+
+  // Fees are optional. The total is always recomputed here — never trusted from the client.
+  const feeLines = sanitizeCancellationFees(fees)
+  const feeTotal = totalCancellationFee(feeLines)
 
   // Who requested it is always taken from the session, never from the request body.
   const cancelReason     = String(reason).trim()
@@ -68,6 +73,8 @@ export async function POST(
         cancelledByName,
         cancelledByEmail,
         cancellationReason: cancelReason,
+        cancellationFees: feeLines as unknown as Prisma.InputJsonValue,
+        cancellationFeeTotal: feeTotal,
       },
     }),
     prisma.statusEvent.create({

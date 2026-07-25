@@ -4,7 +4,8 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getFileHandlerSession } from '@/lib/filehandler-auth'
 import { CANCELLABLE_STATES } from '@/lib/state-machine'
 import { sendCancellationApprovalEmail } from '@/lib/send-cancellation-email'
-import type { BookingStatus } from '@prisma/client'
+import { sanitizeCancellationFees, totalCancellationFee } from '@/lib/cancellation-fees'
+import type { BookingStatus, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,8 +33,12 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
     return buildApiError(`Cannot cancel booking in ${booking.status} state`)
   }
 
-  const { reason } = await req.json().catch(() => ({}))
+  const { reason, fees } = await req.json().catch(() => ({}))
   if (!reason || !String(reason).trim()) return buildApiError('Cancellation reason is required')
+
+  // Fees are optional; the total is recomputed here, never trusted from the client.
+  const feeLines = sanitizeCancellationFees(fees)
+  const feeTotal = totalCancellationFee(feeLines)
 
   const cancelReason   = String(reason).trim()
   const requestedAt    = new Date()
@@ -56,6 +61,8 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
       cancelledByName: requesterName,
       cancelledByEmail: handler.email,
       cancellationReason: cancelReason,
+      cancellationFees: feeLines as unknown as Prisma.InputJsonValue,
+      cancellationFeeTotal: feeTotal,
       // Stamp handler onto the booking if not already set.
       ...((!booking.fileHandler) ? { fileHandler: handler.name } : {}),
     },

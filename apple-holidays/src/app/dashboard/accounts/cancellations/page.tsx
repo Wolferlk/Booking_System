@@ -30,6 +30,8 @@ type Row = {
   cancelledByName: string | null
   cancelledByEmail: string | null
   cancellationReason: string | null
+  cancellationFees: { note: string; amount: number }[] | null
+  cancellationFeeTotal: string | null
   cancelDecidedAt: string | null
   cancelDecidedByName: string | null
   cancelDecisionNote: string | null
@@ -155,6 +157,24 @@ export default function AccountsCancellationsPage() {
                           {row.cancellationReason || 'No reason recorded.'}
                         </p>
                       </div>
+
+                      {Array.isArray(row.cancellationFees) && row.cancellationFees.length > 0 && (
+                        <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cancellation Fees</p>
+                          <ul className="mt-1.5 space-y-1">
+                            {row.cancellationFees.map((fee, i) => (
+                              <li key={i} className="flex items-center justify-between gap-3 text-sm text-slate-700">
+                                <span className="min-w-0 truncate">{fee.note || '—'}</span>
+                                <span className="shrink-0 font-medium">{formatCurrency(fee.amount, row.currency ?? 'USD')}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <div className="mt-2 flex items-center justify-between border-t border-slate-200 pt-1.5 text-sm font-bold text-slate-900">
+                            <span>Total Cancellation Fee</span>
+                            <span>{formatCurrency(row.cancellationFeeTotal, row.currency ?? 'USD')}</span>
+                          </div>
+                        </div>
+                      )}
 
                       {!isPending && (
                         <p className="mt-2 text-xs text-slate-500">

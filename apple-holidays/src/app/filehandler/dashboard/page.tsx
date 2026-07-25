@@ -51,6 +51,7 @@ export default function FileHandlerDashboard() {
   // cancel modal
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
+  const [cancelFees, setCancelFees] = useState<{ note: string; amount: string }[]>([{ note: '', amount: '' }])
   const [cancelling, setCancelling] = useState(false)
 
   // celebratory overlay after a successful action
@@ -161,13 +162,16 @@ export default function FileHandlerDashboard() {
     if (!active || !cancelReason.trim()) { toast.error('A reason is required'); return }
     setCancelling(true)
     try {
+      const fees = cancelFees
+        .map(f => ({ note: f.note.trim(), amount: Number(f.amount) || 0 }))
+        .filter(f => f.note || f.amount > 0)
       const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/cancel`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: cancelReason.trim() }),
+        body: JSON.stringify({ reason: cancelReason.trim(), fees }),
       })
       const d = await res.json()
       if (!d.success) { toast.error(d.error); return }
-      setCancelOpen(false); setCancelReason('')
+      setCancelOpen(false); setCancelReason(''); setCancelFees([{ note: '', amount: '' }])
       await refreshActive(active.bookingRef)
       setCelebrate('cancel'); setTimeout(() => setCelebrate(null), 2600)
     } finally { setCancelling(false) }
@@ -535,6 +539,49 @@ export default function FileHandlerDashboard() {
           <L label="Reason *">
             <textarea className={`${INPUT} min-h-[90px] resize-none`} value={cancelReason} onChange={e => setCancelReason(e.target.value)} placeholder="Why should this booking be cancelled?" />
           </L>
+
+          {/* Cancellation fees — optional list of note + amount with a live total. */}
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-slate-300 uppercase tracking-wide">Cancellation Fees</span>
+              <span className="text-[11px] text-slate-500">Optional</span>
+            </div>
+            <div className="space-y-2">
+              {cancelFees.map((fee, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    className={`${INPUT} flex-1`}
+                    placeholder="Fee note (e.g. Hotel non-refundable)"
+                    value={fee.note}
+                    onChange={e => setCancelFees(prev => prev.map((f, idx) => idx === i ? { ...f, note: e.target.value } : f))}
+                  />
+                  <input
+                    type="number" min="0" step="0.01"
+                    className={`${INPUT} w-24 text-right`}
+                    placeholder="0.00"
+                    value={fee.amount}
+                    onChange={e => setCancelFees(prev => prev.map((f, idx) => idx === i ? { ...f, amount: e.target.value } : f))}
+                  />
+                  <button type="button"
+                    onClick={() => setCancelFees(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : [{ note: '', amount: '' }])}
+                    className="shrink-0 p-2 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/10" aria-label="Remove fee line">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <button type="button"
+                onClick={() => setCancelFees(prev => [...prev, { note: '', amount: '' }])}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-400 hover:text-emerald-300">
+                <Plus className="w-3.5 h-3.5" /> Add fee line
+              </button>
+              <span className="text-sm font-bold text-white">
+                Total: {cancelFees.reduce((s, f) => s + (Number(f.amount) || 0), 0).toFixed(2)}
+              </span>
+            </div>
+          </div>
+
           <button onClick={requestCancel} disabled={cancelling || !cancelReason.trim()}
             className="w-full mt-4 py-3.5 rounded-xl bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-400 hover:to-rose-500 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
             {cancelling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />}

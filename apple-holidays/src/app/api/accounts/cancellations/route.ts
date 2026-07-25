@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
       paxInfants: true, quotedTotal: true, currency: true, operationCountry: true,
       status: true, cancelPrevStatus: true, cancelRequestedAt: true,
       cancelledByName: true, cancelledByEmail: true, cancellationReason: true,
+      cancellationFees: true, cancellationFeeTotal: true,
       cancelDecidedAt: true, cancelDecidedByName: true, cancelDecisionNote: true,
       passengers: { where: { isLead: true }, take: 1, select: { name: true } },
     },
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
     bookings.map(b => ({
       ...b,
       quotedTotal: b.quotedTotal ? b.quotedTotal.toString() : null,
+      cancellationFeeTotal: b.cancellationFeeTotal ? b.cancellationFeeTotal.toString() : null,
       leadPassenger: b.passengers[0]?.name ?? null,
     })),
   )
