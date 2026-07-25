@@ -11,7 +11,14 @@ import type { UserRole } from '@prisma/client'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-4o-realtime-preview'
+// `gpt-4o-realtime-preview` is no longer available to every project. Treat an
+// old environment value as the current GA model too, so an existing deployment
+// does not keep failing until its environment variables are refreshed.
+const configuredRealtimeModel = process.env.OPENAI_REALTIME_MODEL?.trim()
+const REALTIME_MODEL =
+  !configuredRealtimeModel || configuredRealtimeModel === 'gpt-4o-realtime-preview'
+    ? 'gpt-realtime'
+    : configuredRealtimeModel
 const VOICE = process.env.OPENAI_REALTIME_VOICE || 'alloy'
 
 // How the spoken agent should differ from the typed one. The security posture is
@@ -77,20 +84,29 @@ export async function POST(req: NextRequest) {
   const instructions = `${buildSystemPrompt(actor, snapshot, pathname)}\n\n---\n\n${VOICE_ADDENDUM}`
 
   try {
-    const res = await fetch('https://api.openai.com/v1/realtime/sessions', {
+    // GA Realtime uses client_secrets. The old /realtime/sessions endpoint
+    // belongs to the retired preview protocol and returns "Invalid URL".
+    const res = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${key}`,
         'Content-Type': 'application/json',
-        'OpenAI-Beta': 'realtime=v1',
       },
       body: JSON.stringify({
-        model: REALTIME_MODEL,
-        voice: VOICE,
-        instructions,
-        tools: realtimeTools(),
-        tool_choice: 'auto',
-        input_audio_transcription: { model: 'whisper-1' },
+        session: {
+          type: 'realtime',
+          model: REALTIME_MODEL,
+          instructions,
+          tools: realtimeTools(),
+          tool_choice: 'auto',
+          output_modalities: ['audio'],
+          audio: {
+            input: {
+              transcription: { model: 'whisper-1' },
+            },
+            output: { voice: VOICE },
+          },
+        },
       }),
     })
 
@@ -114,8 +130,9 @@ export async function POST(req: NextRequest) {
     const data = await res.json()
     // Return only what the browser needs: the ephemeral secret and the model.
     return buildApiSuccess({
-      clientSecret: data?.client_secret?.value ?? null,
-      expiresAt:    data?.client_secret?.expires_at ?? null,
+      // GA client_secrets returns value/expires_at at the top level.
+      clientSecret: data?.value ?? data?.client_secret?.value ?? null,
+      expiresAt:    data?.expires_at ?? data?.client_secret?.expires_at ?? null,
       model:        REALTIME_MODEL,
       bookingRef:   snapshot?.bookingRef ?? bookingRef ?? null,
     })
