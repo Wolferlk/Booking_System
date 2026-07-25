@@ -22,7 +22,7 @@ interface VoiceCallbacks {
   onAction?:          (action: OpsAction) => void
 }
 
-const REALTIME_BASE = 'https://api.openai.com/v1/realtime'
+const REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls'
 
 /**
  * Voice-to-voice for OPS_AI over the OpenAI Realtime API.
@@ -166,7 +166,7 @@ export function useRealtimeVoice(getContext: () => VoiceContext, callbacks: Voic
       if (!sjson?.success || !sjson.data?.clientSecret) {
         throw new Error(sjson?.error ?? 'Could not start a voice session.')
       }
-      const { clientSecret, model } = sjson.data as { clientSecret: string; model: string }
+      const { clientSecret } = sjson.data as { clientSecret: string }
 
       // 2. Peer connection + remote audio sink.
       const pc = new RTCPeerConnection()
@@ -201,13 +201,12 @@ export function useRealtimeVoice(getContext: () => VoiceContext, callbacks: Voic
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
 
-      const sdpRes = await fetch(`${REALTIME_BASE}?model=${encodeURIComponent(model)}`, {
+      const sdpRes = await fetch(REALTIME_CALLS_URL, {
         method: 'POST',
         body: offer.sdp,
         headers: {
           Authorization: `Bearer ${clientSecret}`,
           'Content-Type': 'application/sdp',
-          'OpenAI-Beta': 'realtime=v1',
         },
       })
       if (!sdpRes.ok) throw new Error('Voice handshake was rejected.')
