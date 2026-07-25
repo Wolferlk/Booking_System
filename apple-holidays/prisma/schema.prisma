@@ -151,6 +151,10 @@ model Booking {
   cancelledByName        String?
   cancelledByEmail       String?
   cancellationReason     String?            @db.Text
+  // Cancellation fees captured on the request form. `cancellationFees` is a JSON
+  // array of { note, amount } lines; `cancellationFeeTotal` is the server-computed sum.
+  cancellationFees       Json?
+  cancellationFeeTotal   Decimal?           @db.Decimal(12, 2)
   // Accounts-team approval trail for a cancellation request.
   cancelRequestedAt      DateTime?
   cancelPrevStatus       BookingStatus?

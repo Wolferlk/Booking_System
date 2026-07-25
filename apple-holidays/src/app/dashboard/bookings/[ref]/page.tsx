@@ -87,6 +87,8 @@ export default function BookingDetailPage() {
   const [cancelModal, setCancelModal] = useState(false)
   const [note, setNote] = useState('')
   const [cancelReason, setCancelReason] = useState('')
+  // Cancellation fee lines entered on the request form — { note, amount } as strings for the inputs.
+  const [cancelFees, setCancelFees] = useState<{ note: string; amount: string }[]>([{ note: '', amount: '' }])
   const [pendingAction, setPendingAction] = useState<string>('')
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1251,6 +1253,24 @@ Wishing you a wonderful trip! ✈️
                   {STATUS_LABELS[((booking as any).cancelPrevStatus ?? 'BT_CONFIRMED') as BookingStatus]}{' '}
                   until the accounts team approves or rejects.
                 </p>
+
+                {Array.isArray((booking as any).cancellationFees) && (booking as any).cancellationFees.length > 0 && (
+                  <div className="mt-4 rounded-lg border border-orange-200 bg-white/80 px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-orange-700">Cancellation Fees</p>
+                    <ul className="mt-1.5 space-y-1">
+                      {((booking as any).cancellationFees as { note: string; amount: number }[]).map((fee, i) => (
+                        <li key={i} className="flex items-center justify-between gap-3 text-sm text-slate-700">
+                          <span className="min-w-0 truncate">{fee.note || '—'}</span>
+                          <span className="shrink-0 font-medium">{formatCurrency(fee.amount, (booking as any).currency ?? 'USD')}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="mt-2 flex items-center justify-between border-t border-orange-200 pt-1.5 text-sm font-bold text-slate-900">
+                      <span>Total Cancellation Fee</span>
+                      <span>{formatCurrency((booking as any).cancellationFeeTotal, (booking as any).currency ?? 'USD')}</span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-4 rounded-lg border border-orange-200 bg-white/80 px-4 py-3">
                   <p className="text-xs leading-relaxed text-slate-600">
@@ -3054,7 +3074,13 @@ Wishing you a wonderful trip! ✈️
               onClick={() => {
                 const reason = (cancelReason || DEFAULT_CANCEL_REASON).trim()
                 if (!reason) { toast.error('Please provide a reason'); return }
-                doTransition('cancel', { reason }).then(() => { setCancelModal(false); setCancelReason('') })
+                const fees = cancelFees
+                  .map(f => ({ note: f.note.trim(), amount: Number(f.amount) || 0 }))
+                  .filter(f => f.note || f.amount > 0)
+                doTransition('cancel', { reason, fees }).then(() => {
+                  setCancelModal(false); setCancelReason('')
+                  setCancelFees([{ note: '', amount: '' }])
+                })
               }}
             >
               Send for Accounts Approval
@@ -3115,6 +3141,56 @@ Wishing you a wonderful trip! ✈️
                   Use default reason
                 </button>
               )}
+            </div>
+          </div>
+
+          {/* Cancellation fees — optional list of { note, amount } lines with a live total. */}
+          <div className="border-t border-slate-100 pt-3">
+            <div className="flex items-center justify-between">
+              <label className="form-label mb-0">Cancellation Fees</label>
+              <span className="text-[11px] text-slate-400">Optional</span>
+            </div>
+            <div className="mt-2 space-y-2">
+              {cancelFees.map((fee, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    className="form-input flex-1"
+                    placeholder="Fee note (e.g. Hotel non-refundable)"
+                    value={fee.note}
+                    onChange={e => setCancelFees(prev => prev.map((f, idx) => idx === i ? { ...f, note: e.target.value } : f))}
+                  />
+                  <input
+                    type="number" min="0" step="0.01"
+                    className="form-input w-28 text-right"
+                    placeholder="0.00"
+                    value={fee.amount}
+                    onChange={e => setCancelFees(prev => prev.map((f, idx) => idx === i ? { ...f, amount: e.target.value } : f))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setCancelFees(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : [{ note: '', amount: '' }])}
+                    className="shrink-0 rounded-md p-2 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    aria-label="Remove fee line"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => setCancelFees(prev => [...prev, { note: '', amount: '' }])}
+                className="inline-flex items-center gap-1 text-[12px] font-medium text-brand-600 hover:underline"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add fee line
+              </button>
+              <p className="text-sm font-semibold text-slate-700">
+                Total: {formatCurrency(
+                  cancelFees.reduce((s, f) => s + (Number(f.amount) || 0), 0),
+                  (booking as any).currency ?? 'USD',
+                )}
+              </p>
             </div>
           </div>
 

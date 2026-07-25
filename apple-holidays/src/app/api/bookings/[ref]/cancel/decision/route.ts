@@ -4,7 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { sendCancellationEmail, sendCancellationRejectedEmail } from '@/lib/send-cancellation-email'
-import type { UserRole, BookingStatus } from '@prisma/client'
+import { Prisma, type UserRole, type BookingStatus } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,6 +74,8 @@ export async function POST(
           cancelledByName: null,
           cancelledByEmail: null,
           cancellationReason: null,
+          cancellationFees: Prisma.JsonNull,
+          cancellationFeeTotal: null,
         }),
       },
     }),
