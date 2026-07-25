@@ -9,6 +9,28 @@ import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Space-insensitive lookup for ref-type columns (isNumber, bookingRef, agentBookingId).
+ * "IS 48638" and "IS48638" are treated as identical — spaces are stripped from both the
+ * stored value and the search term before matching, so it works regardless of which side
+ * happens to carry the space. Returns the bookingRefs of any matches.
+ */
+async function refsMatchingSpaceInsensitive(term: string): Promise<string[]> {
+  const norm = term.replace(/\s+/g, '')
+  if (!norm) return []
+  // Escape LIKE wildcards so a literal % or _ in the term isn't treated as a pattern.
+  const like = `%${norm.replace(/[\\%_]/g, c => `\\${c}`)}%`
+  const rows = await prisma.$queryRaw<{ bookingRef: string }[]>`
+    SELECT bookingRef FROM bookings
+    WHERE REPLACE(isNumber, ' ', '')       LIKE ${like}
+       OR REPLACE(bookingRef, ' ', '')     LIKE ${like}
+       OR REPLACE(agentBookingId, ' ', '') LIKE ${like}
+    LIMIT 500
+  `
+  return rows.map(r => r.bookingRef)
+}
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
@@ -71,6 +93,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (search) {
+    const refMatches = await refsMatchingSpaceInsensitive(search)
     andClauses.push({
       OR: [
         { bookingRef:     { contains: search } },
@@ -79,14 +102,17 @@ export async function GET(req: NextRequest) {
         { isNumber:       { contains: search } },
         { agentBookingId: { contains: search } },
         { passengers: { some: { name: { contains: search } } } },
+        ...(refMatches.length ? [{ bookingRef: { in: refMatches } }] : []),
       ],
     })
   }
 
   // Deep content search — searches inside flights, hotels, itinerary, agenda items
   if (contentSearch) {
+    const refMatches = await refsMatchingSpaceInsensitive(contentSearch)
     andClauses.push({
       OR: [
+        ...(refMatches.length ? [{ bookingRef: { in: refMatches } }] : []),
         { bookingRef:     { contains: contentSearch } },
         { agent:          { contains: contentSearch } },
         { isNumber:       { contains: contentSearch } },
@@ -118,11 +144,13 @@ export async function GET(req: NextRequest) {
 
   // Ref / IS number / agent ID dedicated search
   if (refSearch) {
+    const refMatches = await refsMatchingSpaceInsensitive(refSearch)
     andClauses.push({
       OR: [
         { bookingRef:     { contains: refSearch } },
         { isNumber:       { contains: refSearch } },
         { agentBookingId: { contains: refSearch } },
+        ...(refMatches.length ? [{ bookingRef: { in: refMatches } }] : []),
       ],
     })
   }
