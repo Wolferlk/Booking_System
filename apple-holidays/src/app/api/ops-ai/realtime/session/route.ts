@@ -11,12 +11,12 @@ import type { UserRole } from '@prisma/client'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-// `gpt-4o-realtime-preview` is no longer available to every project. Treat an
-// old environment value as the current GA model too, so an existing deployment
-// does not keep failing until its environment variables are refreshed.
+// Older deployments may still have a GPT-4o Realtime value configured. Those
+// model IDs are not supported by the current GA call endpoint, so normalize
+// them here as well as in the environment file.
 const configuredRealtimeModel = process.env.OPENAI_REALTIME_MODEL?.trim()
 const REALTIME_MODEL =
-  !configuredRealtimeModel || configuredRealtimeModel === 'gpt-4o-realtime-preview'
+  !configuredRealtimeModel || configuredRealtimeModel.startsWith('gpt-4o-realtime')
     ? 'gpt-realtime'
     : configuredRealtimeModel
 const VOICE = process.env.OPENAI_REALTIME_VOICE || 'alloy'
