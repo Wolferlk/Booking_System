@@ -149,11 +149,13 @@ type MatchField = 'is_number' | 'tour_ref' | 'invoice_number'
 async function fetchVersionsByField(field: MatchField, value: string): Promise<PnlRecord[]> {
   const base = amendmentBase(value)
   if (!base) return []
+  // `base` has all spaces stripped (see amendmentBase). Strip spaces from the
+  // column too so "IS 48541" in the Accounts DB still matches booking "IS48541".
   // LIKE 'BASE%' over-fetches (e.g. VN400351); the JS filter below keeps only
   // rows whose own amendment base equals ours.
   const rows = await q<mysql.RowDataPacket>(
     `SELECT * FROM pnl_records
-     WHERE deleted_at IS NULL AND UPPER(\`${field}\`) LIKE ?
+     WHERE deleted_at IS NULL AND REPLACE(UPPER(\`${field}\`), ' ', '') LIKE ?
      ORDER BY id DESC`,
     [`${base}%`],
   )
