@@ -8,11 +8,14 @@ import { AnimatePresence, motion, useMotionValue } from 'framer-motion'
 import {
   X, CornerDownLeft, Loader2, Sparkles, ShieldCheck, Trash2,
   ChevronUp, ChevronDown, FileText, Command,
+  Mic, Square, AudioLines, PhoneOff, MicOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import ActionCard from './action-card'
 import LookupResult from './lookup-result'
 import { openOpsAiTour } from './ops-ai-tour'
+import { useDictation } from './use-dictation'
+import { useRealtimeVoice } from './use-realtime-voice'
 import type { OpsAction, OpsMessage } from './types'
 
 const REF_IN_PATH = /\/(?:bookings|driver-log|portal|trip)\/([A-Z]{2}[A-Z0-9-]{2,})/i
@@ -219,6 +222,25 @@ export default function OpsAI() {
     }
   }, [router])
 
+  // ── Voice-to-voice ────────────────────────────────────────────────────────
+  // Spoken turns and anything the voice agent looks up or proposes are dropped
+  // into the same thread as typed turns. Crucially, a proposed write arrives here
+  // as a signed action card (via onAction) — never as an executed change — so the
+  // "every change needs your approval" guarantee holds for voice too.
+  const pushAssistant = useCallback((patch: Partial<OpsMessage>) => {
+    setMessages(prev => [...prev, { id: nextId(), role: 'assistant', content: '', ...patch }])
+  }, [])
+
+  const voice = useRealtimeVoice(
+    () => ({ pathname: pathname ?? undefined, bookingRef }),
+    {
+      onUserSpeech:      text => setMessages(prev => [...prev, { id: nextId(), role: 'user', content: text }]),
+      onAssistantSpeech: text => pushAssistant({ content: text }),
+      onLookup:          lookup => pushAssistant({ lookups: [lookup] }),
+      onAction:          action => pushAssistant({ actions: [action] }),
+    },
+  )
+
   function onComposerKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     // A collapsed list is out of sight, so it must also be out of the way of
     // the arrow keys — those belong to the textarea again.
@@ -298,19 +320,21 @@ export default function OpsAI() {
                       </div>
                     ) : (
                       <>
-                        <div className="flex gap-2.5">
-                          <Avatar />
-                          <div
-                            className={cn(
-                              'max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-tl-md px-3.5 py-2 text-[13px] leading-relaxed',
-                              msg.error
-                                ? 'bg-red-950/50 text-red-200 ring-1 ring-red-500/30'
-                                : 'bg-slate-800/70 text-slate-200',
-                            )}
-                          >
-                            {msg.content}
+                        {msg.content && (
+                          <div className="flex gap-2.5">
+                            <Avatar />
+                            <div
+                              className={cn(
+                                'max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-tl-md px-3.5 py-2 text-[13px] leading-relaxed',
+                                msg.error
+                                  ? 'bg-red-950/50 text-red-200 ring-1 ring-red-500/30'
+                                  : 'bg-slate-800/70 text-slate-200',
+                              )}
+                            >
+                              {msg.content}
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {msg.lookups?.length ? (
                           <div className="ml-9 space-y-2">
@@ -363,6 +387,12 @@ export default function OpsAI() {
                 setHighlighted={setHighlighted}
                 thinking={thinking}
                 inputRef={inputRef}
+                voiceStatus={voice.status}
+                voiceError={voice.error}
+                agentSpeaking={voice.agentSpeaking}
+                muted={voice.muted}
+                onToggleVoice={voice.toggle}
+                onToggleMute={voice.toggleMute}
               />
             </motion.aside>
           </>
@@ -611,14 +641,33 @@ interface ComposerProps {
   setHighlighted: (n: number) => void
   thinking: boolean
   inputRef: React.RefObject<HTMLTextAreaElement>
+  voiceStatus: 'idle' | 'connecting' | 'live' | 'error'
+  voiceError: string | null
+  agentSpeaking: boolean
+  muted: boolean
+  onToggleVoice: () => void
+  onToggleMute: () => void
 }
 
 function Composer({
   input, setInput, onKeyDown, onSend, onPick,
   suggestions, suggestLoading, collapsed, onToggleCollapsed,
   highlighted, setHighlighted, thinking, inputRef,
+  voiceStatus, voiceError, agentSpeaking, muted, onToggleVoice, onToggleMute,
 }: ComposerProps) {
   const title = input.trim().length < 2 ? 'Quick actions' : 'Did you mean'
+
+  // Dictation appends its transcript to whatever is already typed. Kept in a ref
+  // so the append reads the freshest value even though the callback is memoised.
+  const inputValRef = useRef(input)
+  inputValRef.current = input
+  const dictation = useDictation(useCallback((text: string) => {
+    const cur = inputValRef.current.trim()
+    setInput(cur ? `${cur} ${text}` : text)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }, [setInput, inputRef]))
+
+  const voiceLive = voiceStatus === 'live' || voiceStatus === 'connecting'
 
   return (
     <div className="relative shrink-0 border-t border-slate-700/60 p-3">
@@ -686,6 +735,15 @@ function Composer({
         )}
       </AnimatePresence>
 
+      <VoiceBar
+        status={voiceStatus}
+        error={voiceError}
+        agentSpeaking={agentSpeaking}
+        muted={muted}
+        onToggleMute={onToggleMute}
+        onEnd={onToggleVoice}
+      />
+
       <div className="flex items-end gap-2 rounded-xl border border-slate-700 bg-slate-900/80 p-2 transition-colors focus-within:border-brand-400/60">
         <textarea
           ref={inputRef}
@@ -693,7 +751,7 @@ function Composer({
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}
           rows={1}
-          placeholder="Change the agent name, add a day-3 tour, find July arrivals…"
+          placeholder={dictation.status === 'recording' ? 'Listening — speak now…' : 'Change the agent name, add a day-3 tour, find July arrivals…'}
           className={cn(
             'max-h-32 min-h-[36px] flex-1 resize-none border-0 bg-transparent p-1.5 text-[13px] leading-snug',
             'text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-0',
@@ -704,6 +762,51 @@ function Composer({
             el.style.height = `${Math.min(el.scrollHeight, 128)}px`
           }}
         />
+
+        {/* Dictation — fills the composer, then follows the normal approve flow. */}
+        <button
+          type="button"
+          onClick={dictation.toggle}
+          disabled={thinking || dictation.status === 'transcribing' || voiceLive}
+          title={
+            dictation.status === 'recording'   ? 'Stop dictation'
+            : dictation.status === 'transcribing' ? 'Transcribing…'
+            : dictation.error ?? 'Dictate (voice to text)'
+          }
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all',
+            dictation.status === 'recording'
+              ? 'bg-red-500/90 text-white animate-pulse'
+              : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-brand-200',
+            'disabled:cursor-not-allowed disabled:opacity-50',
+          )}
+        >
+          {dictation.status === 'transcribing'
+            ? <Loader2 className="h-4 w-4 animate-spin" />
+            : dictation.status === 'recording'
+              ? <Square className="h-3.5 w-3.5" />
+              : <Mic className="h-4 w-4" />}
+        </button>
+
+        {/* Voice-to-voice — a spoken conversation; writes still surface as cards. */}
+        <button
+          type="button"
+          onClick={onToggleVoice}
+          disabled={dictation.status === 'recording'}
+          title={voiceLive ? 'End voice conversation' : 'Talk to OPS_AI'}
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all',
+            voiceLive
+              ? 'bg-emerald-500/90 text-white'
+              : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-emerald-200',
+            'disabled:cursor-not-allowed disabled:opacity-50',
+          )}
+        >
+          {voiceStatus === 'connecting'
+            ? <Loader2 className="h-4 w-4 animate-spin" />
+            : <AudioLines className={cn('h-4 w-4', voiceStatus === 'live' && 'animate-pulse')} />}
+        </button>
+
         <button
           onClick={onSend}
           disabled={!input.trim() || thinking}
@@ -720,6 +823,73 @@ function Composer({
       <p className="mt-1.5 px-1 text-[10px] text-slate-600">
         OPS_AI cannot delete, cancel, or change booking status.
       </p>
+    </div>
+  )
+}
+
+// ── Voice status bar ────────────────────────────────────────────────────────
+
+function VoiceBar({
+  status, error, agentSpeaking, muted, onToggleMute, onEnd,
+}: {
+  status: 'idle' | 'connecting' | 'live' | 'error'
+  error: string | null
+  agentSpeaking: boolean
+  muted: boolean
+  onToggleMute: () => void
+  onEnd: () => void
+}) {
+  if (status === 'idle') return null
+
+  if (status === 'error') {
+    return (
+      <div className="mb-2 flex items-center gap-2 rounded-lg bg-red-950/50 px-3 py-2 text-[11px] text-red-200 ring-1 ring-red-500/30">
+        <PhoneOff className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{error ?? 'Voice mode failed.'}</span>
+      </div>
+    )
+  }
+
+  const label =
+    status === 'connecting' ? 'Connecting…'
+    : agentSpeaking         ? 'OPS_AI speaking…'
+    : muted                 ? 'Muted'
+    : 'Listening…'
+
+  return (
+    <div className="mb-2 flex items-center gap-2.5 rounded-lg bg-emerald-500/10 px-3 py-2 ring-1 ring-emerald-400/30">
+      <span className="relative flex h-2 w-2 shrink-0">
+        <span className={cn(
+          'absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75',
+          status === 'live' && !muted && 'animate-ping',
+        )} />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+      </span>
+
+      <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-emerald-100">{label}</span>
+
+      {status === 'live' && (
+        <button
+          type="button"
+          onClick={onToggleMute}
+          title={muted ? 'Unmute microphone' : 'Mute microphone'}
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors',
+            muted ? 'bg-slate-700 text-slate-300' : 'text-emerald-200 hover:bg-emerald-500/20',
+          )}
+        >
+          {muted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={onEnd}
+        title="End voice conversation"
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-red-300 transition-colors hover:bg-red-500/20"
+      >
+        <PhoneOff className="h-3.5 w-3.5" />
+      </button>
     </div>
   )
 }
