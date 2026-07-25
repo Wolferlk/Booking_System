@@ -96,12 +96,19 @@ export async function POST(req: NextRequest) {
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
+      let apiMsg = ''
+      try { apiMsg = JSON.parse(detail)?.error?.message ?? '' } catch { /* non-JSON body */ }
       console.error('[OPS_AI] realtime session mint failed:', res.status, detail.slice(0, 500))
-      // 403/404 here almost always means the account lacks Realtime access.
-      const hint = res.status === 403 || res.status === 404
-        ? 'Voice mode is not enabled on this OpenAI account.'
-        : 'Could not start a voice session.'
-      return buildApiError(hint, 502)
+
+      // Surface OpenAI's real reason — it distinguishes "no Realtime access on this
+      // project" from "that model name isn't available" from "bad key", which the
+      // old catch-all message hid.
+      const base =
+        res.status === 401 ? 'OpenAI rejected the API key'
+        : res.status === 403 ? 'This OpenAI project does not have Realtime API access'
+        : res.status === 404 ? `The Realtime model "${REALTIME_MODEL}" is not available to this project`
+        : 'Could not start a voice session'
+      return buildApiError(apiMsg ? `${base}: ${apiMsg}` : `${base}.`, 502)
     }
 
     const data = await res.json()
