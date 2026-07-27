@@ -210,6 +210,10 @@ export default function OpsAI() {
       if (effect?.type === 'navigate' && effect.href) {
         router.push(effect.href)
         setTimeout(() => setOpen(false), 350)
+      } else if (effect?.type === 'download' && effect.href) {
+        // Streamed file (e.g. a generated PDF) — open in a new tab so the
+        // current chat/page state is preserved.
+        window.open(effect.href, '_blank', 'noopener')
       } else if (effect?.type === 'refresh') {
         // Server components come back via refresh(); client-side pages that hold
         // their own fetched state listen for this event and re-pull.

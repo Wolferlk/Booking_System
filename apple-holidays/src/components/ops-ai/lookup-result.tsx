@@ -52,6 +52,51 @@ export default function LookupResult({ lookup, onNavigate }: { lookup: OpsLookup
     )
   }
 
+  if (lookup.tool === 'run_sql_query') {
+    const data = lookup.result as { columns?: string[]; rows?: Record<string, unknown>[]; truncated?: boolean } | null
+    const columns = data?.columns ?? []
+    const rows = data?.rows ?? []
+    if (!rows.length) {
+      return <p className="px-1 text-[11.5px] text-slate-500">{lookup.message}</p>
+    }
+    const shown = rows.slice(0, 20)
+    return (
+      <div className="overflow-hidden rounded-xl border border-slate-700/60 bg-slate-900/50">
+        <div className="flex items-center gap-1.5 border-b border-slate-700/60 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+          <Table2 className="h-3 w-3" />
+          {rows.length} row{rows.length === 1 ? '' : 's'}{data?.truncated ? ' (capped)' : ''}
+        </div>
+        <div className="max-h-64 overflow-auto">
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-slate-900/90">
+              <tr>
+                {columns.map(c => (
+                  <th key={c} className="whitespace-nowrap px-2.5 py-1.5 text-left font-semibold text-slate-400">{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80">
+              {shown.map((row, i) => (
+                <tr key={i} className="hover:bg-slate-800/40">
+                  {columns.map(c => (
+                    <td key={c} className="max-w-[220px] truncate px-2.5 py-1.5 text-slate-300">
+                      {row[c] === null || row[c] === undefined ? '—' : String(row[c])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {rows.length > shown.length && (
+          <p className="border-t border-slate-700/60 px-3 py-1.5 text-[10px] text-slate-500">
+            Showing first {shown.length} of {rows.length}.
+          </p>
+        )}
+      </div>
+    )
+  }
+
   if (lookup.tool === 'read_booking') {
     const ref = (lookup.result as { bookingRef?: string } | null)?.bookingRef
     return (
