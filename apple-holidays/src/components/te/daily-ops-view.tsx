@@ -6,7 +6,7 @@ import {
   Plane, Hotel, Users, Calendar, ChevronLeft, ChevronRight,
   Loader2, MapPin, ArrowRight, RefreshCw, Car,
   LogIn, LogOut, Utensils, Navigation, Phone, Compass,
-  CheckCircle2, Sun, Bed, Printer, X, Search,
+  CheckCircle2, Sun, Bed, Printer, X, Search, FileSpreadsheet,
 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
@@ -66,6 +66,7 @@ interface EmergencyContact {
 interface DailyBooking {
   id: string
   bookingRef: string
+  agentBookingId: string | null
   agent: string | null
   fileHandler: string | null
   status: string
@@ -144,6 +145,82 @@ const SERVICE_CONFIG: Record<string, { icon: React.ComponentType<{ className?: s
   PVT_TRANSFER:    { icon: Car,       chip: 'bg-blue-100 text-blue-700',   label: 'PVT' },
   SIC_TRANSFER:    { icon: Users,     chip: 'bg-orange-100 text-orange-700', label: 'SIC' },
   OWN_ARRANGEMENT: { icon: Compass,   chip: 'bg-slate-100 text-slate-600',  label: 'OWN' },
+}
+
+const SERVICE_LABELS_FULL: Record<string, string> = {
+  PVT_TRANSFER:    'Private Transfer',
+  SIC_TRANSFER:    'SIC Transfer',
+  OWN_ARRANGEMENT: 'Own Arrangement',
+}
+
+// Derive the arrival movement (location / details / service type) for a booking on
+// the selected day: prefer the first scheduled agenda item, fall back to the arrival flight.
+function arrivalInfo(b: DailyBooking): { location: string; details: string; serviceType: string } {
+  const ag = b.agendaItems[0]
+  if (ag) {
+    const location = ag.toPoint || ag.location || ''
+    const route    = [ag.fromPoint, ag.toPoint].filter(Boolean).join(' → ')
+    const details  = [ag.meetingTime ? `@${ag.meetingTime}` : '', route, ag.details ?? '']
+      .filter(Boolean).join(' — ')
+    return { location, details, serviceType: SERVICE_LABELS_FULL[ag.serviceType] ?? ag.serviceType }
+  }
+  const fl = b.flights[0]
+  if (fl) {
+    const details = [fl.flightNo, `${fl.fromApt} → ${fl.toApt}`, fl.arrTime ? `arr ${fl.arrTime}` : '']
+      .filter(Boolean).join(' — ')
+    return { location: fl.toApt, details, serviceType: '' }
+  }
+  return { location: '', details: '', serviceType: '' }
+}
+
+function fmtExcelDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+async function exportBookingsToExcel(bookings: DailyBooking[], filename: string) {
+  const XLSX = await import('xlsx')
+
+  const headers = [
+    'Arrival Date', 'Tour Code', 'Agent Tour Code', 'Agent Name', 'Guest Name',
+    'Pax Count', 'Arrival Location', 'Arrival Details', 'Service Type',
+  ]
+
+  const rows = bookings.map(b => {
+    const lead = b.passengers.find(p => p.isLead) ?? b.passengers[0]
+    const pax  = b.paxAdults + b.paxChildren
+    const info = arrivalInfo(b)
+    return [
+      fmtExcelDate(b.arrivalDate),
+      b.bookingRef,
+      b.agentBookingId ?? '',
+      b.agent ?? '',
+      lead?.name ?? '',
+      pax,
+      info.location,
+      info.details,
+      info.serviceType,
+    ]
+  })
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  ws['!cols'] = [
+    { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 22 }, { wch: 26 },
+    { wch: 9 }, { wch: 22 }, { wch: 46 }, { wch: 18 },
+  ]
+
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Arrivals')
+
+  const buf  = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
+  const blob = new Blob([new Uint8Array(buf)], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const url = URL.createObjectURL(blob)
+  const a   = document.createElement('a')
+  a.href     = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function AgendaRow({ item }: { item: AgendaItem }) {
@@ -492,6 +569,9 @@ export default function DailyOpsView() {
   // ── Search ──────────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('')
 
+  // ── Excel export ──────────────────────────────────────────────────────────────
+  const [exporting, setExporting] = useState(false)
+
   // ── Single-day load ─────────────────────────────────────────────────────────
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
@@ -568,6 +648,19 @@ export default function DailyOpsView() {
   const active   = filteredBookings.filter(b => b.hasActivity)
   const inactive = filteredBookings.filter(b => !b.hasActivity)
   const isToday  = date === todayYMD
+
+  const handleExportExcel = useCallback(async () => {
+    if (filteredBookings.length === 0) { toast.error('No bookings to export'); return }
+    setExporting(true)
+    try {
+      await exportBookingsToExcel(filteredBookings, `daily-arrivals-${date}.xlsx`)
+      toast.success(`Exported ${filteredBookings.length} booking${filteredBookings.length !== 1 ? 's' : ''}`)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to export Excel')
+    } finally {
+      setExporting(false)
+    }
+  }, [filteredBookings, date])
 
   const quickDays: { label: string; offset: number }[] = [
     { label: '-7 Days',   offset: -7 },
@@ -798,10 +891,19 @@ export default function DailyOpsView() {
                     </button>
                   </div>
                 )}
+                <button
+                  onClick={handleExportExcel}
+                  disabled={exporting}
+                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 disabled:opacity-60 transition-colors"
+                >
+                  {exporting
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <FileSpreadsheet className="w-3.5 h-3.5" />} Export Excel
+                </button>
                 <Link
                   href={`/print/te/daily?date=${date}`}
                   target="_blank"
-                  className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-900 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-900 transition-colors"
                 >
                   <Printer className="w-3.5 h-3.5" /> Print / Export PDF
                 </Link>
