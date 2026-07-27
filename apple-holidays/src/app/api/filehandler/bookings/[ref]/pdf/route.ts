@@ -3,18 +3,15 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getFileHandlerSession } from '@/lib/filehandler-auth'
 import { FH_BOOKING_SELECT } from '../../search/route'
-import { htmlToPdf } from '@/lib/html-to-pdf'
 import { sendMailViaGraph } from '@/lib/send-mail'
-import {
-  buildFhBookingHtml, buildFhPdfFileName, type FhPdfBooking,
-} from '@/lib/filehandler-booking-html'
+import { buildFhPdfFileName, type FhPdfBooking } from '@/lib/filehandler-booking-html'
+import { generateFhBookingPdf } from '@/lib/filehandler-booking-pdf'
 
 export const dynamic = 'force-dynamic'
-// PDF rendering (puppeteer/chromium) needs the Node runtime and time to spin up.
-// 120s matches the agenda mailer route — a cold-start Chromium extract to /tmp
-// plus the Graph email upload can exceed a 60s budget and 502 at the gateway.
+// PDFKit renders in-process (no headless browser), so it needs the Node runtime
+// but only a small time budget — no Chromium cold-start or /tmp extract.
 export const runtime = 'nodejs'
-export const maxDuration = 120
+export const maxDuration = 30
 
 async function loadBooking(ref: string) {
   const booking = await prisma.booking.findUnique({
@@ -38,8 +35,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
 
   const filename = buildFhPdfFileName(booking)
   try {
-    const html = buildFhBookingHtml(booking, { generatedBy: handler.name })
-    const pdf = await htmlToPdf(html, filename, { bookingRef: booking.bookingRef })
+    const pdf = await generateFhBookingPdf(booking, { generatedBy: handler.name })
     return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: {
@@ -82,8 +78,7 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   const subject = body.subject?.trim() || `Booking Update — ${booking.bookingRef}`
 
   try {
-    const html = buildFhBookingHtml(booking, { generatedBy: handler.name })
-    const pdf = await htmlToPdf(html, filename, { bookingRef: booking.bookingRef })
+    const pdf = await generateFhBookingPdf(booking, { generatedBy: handler.name })
 
     const note = body.message?.trim()
     const bodyHtml = `
