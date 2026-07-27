@@ -6,7 +6,7 @@ import {
   Search, Loader2, PlaneTakeoff, Plus, Pencil, Trash2, X, Users, CalendarDays,
   Ban, CheckCircle2, AlertTriangle, Clock, Plane, Radar, DownloadCloud, Sparkles,
   Building2, User2, Mail, Phone, MessageCircle, StickyNote, Wand2, Upload,
-  Hotel, BedDouble, Utensils, MapPin, FileText,
+  Hotel, BedDouble, Utensils, MapPin, FileText, Download, Send,
 } from 'lucide-react'
 
 interface Flight {
@@ -67,6 +67,14 @@ export default function FileHandlerDashboard() {
   // hotel editor
   const [hotelEdit, setHotelEdit] = useState<{ mode: 'add' | 'edit'; hotel: typeof EMPTY_HOTEL; id?: string } | null>(null)
   const [savingHotel, setSavingHotel] = useState(false)
+
+  // PDF download + email
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const [confirmBusy, setConfirmBusy] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [emailMsg, setEmailMsg] = useState('')
+  const [emailSending, setEmailSending] = useState(false)
 
   // AI flight import (upload image/pdf OR paste text → extract → review → add)
   const [aiOpen, setAiOpen] = useState(false)
@@ -220,6 +228,69 @@ export default function FileHandlerDashboard() {
     await refreshActive(active.bookingRef)
   }
 
+  // ── PDF download + email ───────────────────────────────────────────────────
+  async function downloadPdf() {
+    if (!active) return
+    setPdfBusy(true)
+    try {
+      const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/pdf`)
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        toast.error(d.error || 'Could not generate the PDF'); return
+      }
+      // Filename comes from the Content-Disposition header set by the API.
+      const disp = res.headers.get('Content-Disposition') || ''
+      const match = disp.match(/filename="?([^"]+)"?/)
+      const filename = match?.[1] || `${active.isNumber || active.bookingRef}_Updates.PDF`
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename
+      document.body.appendChild(a); a.click(); a.remove()
+      URL.revokeObjectURL(url)
+      toast.success('PDF downloaded')
+    } catch {
+      toast.error('Could not generate the PDF')
+    } finally { setPdfBusy(false) }
+  }
+
+  // "Save & Confirm" — mails the updated booking PDF to the file handler's own inbox.
+  async function confirmAndEmail() {
+    if (!active) return
+    setConfirmBusy(true)
+    try {
+      const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/pdf`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ self: true }),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error || 'Could not send the confirmation email'); return }
+      toast.success(`Confirmation emailed to ${d.data?.to ?? 'your inbox'}`)
+    } finally { setConfirmBusy(false) }
+  }
+
+  function openEmail() {
+    if (!active) return
+    setEmailTo(active.agentEmail || active.contactEmail || '')
+    setEmailMsg('')
+    setEmailOpen(true)
+  }
+
+  async function sendPdfEmail() {
+    if (!active || !emailTo.trim()) { toast.error('Enter a recipient email'); return }
+    setEmailSending(true)
+    try {
+      const res = await fetch(`/api/filehandler/bookings/${encodeURIComponent(active.bookingRef)}/pdf`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: emailTo.trim(), message: emailMsg.trim() }),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error || 'Email failed'); return }
+      setEmailOpen(false)
+      toast.success(`Sent to ${emailTo.trim()}`)
+    } finally { setEmailSending(false) }
+  }
+
   // ── AI flight extraction ──────────────────────────────────────────────────
   function openAi() { setAiOpen(true); setAiTab('upload'); setAiText(''); setAiFlights(null); setAiSource('') }
 
@@ -367,6 +438,25 @@ export default function FileHandlerDashboard() {
             </div>
             <div className="mt-3">
               <Meta icon={<Users className="w-3.5 h-3.5" />} label="Passengers" value={`${active.paxAdults} adult${active.paxAdults === 1 ? '' : 's'}${active.paxChildren ? ` · ${active.paxChildren} child` : ''}${active.paxInfants ? ` · ${active.paxInfants} infant` : ''}`} />
+            </div>
+
+            {/* Export actions — confirm (email the handler), download, or email to someone */}
+            <div className="mt-4 pt-4 border-t border-white/8 space-y-2">
+              <button onClick={confirmAndEmail} disabled={confirmBusy}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                {confirmBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                Save &amp; Confirm — email me a copy
+              </button>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={downloadPdf} disabled={pdfBusy}
+                  className="flex-1 min-w-[140px] py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/12 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                  {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-emerald-400" />} Download PDF
+                </button>
+                <button onClick={openEmail}
+                  className="flex-1 min-w-[140px] py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/12 text-white font-bold text-sm flex items-center justify-center gap-2">
+                  <Mail className="w-4 h-4 text-emerald-400" /> Email to…
+                </button>
+              </div>
             </div>
           </div>
 
@@ -718,6 +808,22 @@ export default function FileHandlerDashboard() {
               </button>
             </div>
           )}
+        </Modal>
+      )}
+
+      {/* Email PDF modal */}
+      {emailOpen && active && (
+        <Modal onClose={() => setEmailOpen(false)}>
+          <h3 className="text-white font-black text-base mb-1 flex items-center gap-2"><Mail className="w-5 h-5 text-emerald-400" /> Email Booking Update</h3>
+          <p className="text-slate-400 text-sm mb-4">Send the <span className="text-white font-semibold">{active.bookingRef}</span> update PDF as an attachment.</p>
+          <div className="space-y-4">
+            <L label="Recipient Email *"><input type="email" className={INPUT} value={emailTo} onChange={e => setEmailTo(e.target.value)} placeholder="agent@example.com" /></L>
+            <L label="Message (optional)"><textarea className={`${INPUT} min-h-[90px] resize-none`} value={emailMsg} onChange={e => setEmailMsg(e.target.value)} placeholder="Add a short note for the recipient…" /></L>
+          </div>
+          <button onClick={sendPdfEmail} disabled={emailSending || !emailTo.trim()}
+            className="w-full mt-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-600 hover:from-emerald-400 hover:to-cyan-500 text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+            {emailSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send Email
+          </button>
         </Modal>
       )}
 

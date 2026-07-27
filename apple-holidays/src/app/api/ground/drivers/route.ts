@@ -20,7 +20,11 @@ export async function GET(req: NextRequest) {
   const userCountry = session.user.country as OperationCountry | undefined
   const countryOverride = searchParams.get('country') as OperationCountry | null
   const effectiveCountry = (!userCountry || userCountry === 'ALL') ? countryOverride : userCountry
-  const countryWhere = effectiveCountry ? { country: { in: countryScope(effectiveCountry)! } } : {}
+  // Match drivers for the target country, plus drivers with no specific country
+  // (null / ALL) — those are available for every country's bookings.
+  const countryWhere = effectiveCountry
+    ? { OR: [{ country: { in: countryScope(effectiveCountry)! } }, { country: null }, { country: 'ALL' as OperationCountry }] }
+    : {}
   const vendorId = searchParams.get('vendorId')
 
   let drivers

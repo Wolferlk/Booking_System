@@ -337,9 +337,16 @@ export default function AgendaPage() {
     }
   }, [ref])
 
+  // Restrict driver/vendor lists to the booking's operation country.
+  // Drivers/vendors without a specific country are shown for every country's bookings.
+  function bookingCountry() {
+    return booking?.operationCountry || ''
+  }
+
   async function loadVendors() {
     try {
-      const res  = await fetch('/api/ground/vendors')
+      const c    = bookingCountry()
+      const res  = await fetch(`/api/ground/vendors${c ? `?country=${encodeURIComponent(c)}` : ''}`)
       const json = await res.json()
       if (json.success) setVendors(json.data)
     } catch { /* non-critical */ }
@@ -359,7 +366,12 @@ export default function AgendaPage() {
   async function loadDriversForDate(date: string) {
     setLoadingDrivers(true)
     try {
-      const url  = date ? `/api/ground/drivers?date=${date}&excludeRef=${ref}` : '/api/ground/drivers'
+      const params = new URLSearchParams()
+      if (date) { params.set('date', date); params.set('excludeRef', ref) }
+      const c = bookingCountry()
+      if (c) params.set('country', c)
+      const qs   = params.toString()
+      const url  = qs ? `/api/ground/drivers?${qs}` : '/api/ground/drivers'
       const res  = await fetch(url)
       const json = await res.json()
       if (json.success) setDrivers(json.data)

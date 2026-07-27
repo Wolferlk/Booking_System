@@ -28,9 +28,14 @@ export interface AmendmentInfo {
   isAmendment: boolean
 }
 
-/** Strip a trailing separator and normalize casing/whitespace. */
+/**
+ * Normalize a base ref: upper-case, strip ALL whitespace (internal too), then
+ * drop any trailing separator. Spaces are treated as insignificant so that
+ * "IS 48541" and "IS48541" collapse to the same base — the Accounts DB and our
+ * bookings are inconsistent about the space after the country prefix.
+ */
 function normalizeBase(s: string): string {
-  return s.trim().toUpperCase().replace(/[_\s-]+$/, '')
+  return s.trim().toUpperCase().replace(/\s+/g, '').replace(/[_-]+$/, '')
 }
 
 /**
