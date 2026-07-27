@@ -243,7 +243,7 @@ export function buildFhBookingHtml(b: FhPdfBooking, opts?: { generatedBy?: strin
       ${logo ? `<img class="logo" src="${logo}" alt="Apple Holidays" />` : ''}
       <div>
         <div class="brand-name">Apple Holidays</div>
-        <div class="brand-sub">MMT Operations</div>
+        <div class="brand-sub"> Operations</div>
       </div>
     </div>
     <div class="doc-tag">
@@ -298,6 +298,161 @@ export function buildFhBookingHtml(b: FhPdfBooking, opts?: { generatedBy?: strin
     <span>Apple Holidays MMT · Booking Update Document</span>
     <span>${esc(b.bookingRef)}${b.cntlNumber ? ` · CNTL ${esc(b.cntlNumber)}` : ''} · Downloaded ${esc(fmtDateTime(now))}</span>
   </div>
+</body>
+</html>`
+}
+
+// ── Email builder (table layout, inline styles) ─────────────────────────────
+// Email clients strip <style> blocks and don't support flexbox, so the mail
+// body is built with <table>s and inline styles. All booking details are laid
+// out in tables so the recipient sees everything without opening the PDF.
+export function buildFhBookingEmailHtml(b: FhPdfBooking, opts?: { generatedBy?: string; note?: string }): string {
+  const now = new Date()
+  const st = statusMeta(b.status)
+  const logo = logoDataUri()
+  const tone = {
+    danger: { bg: '#fef2f2', bd: '#fecaca', fg: '#b91c1c' },
+    warn: { bg: '#fffbeb', bd: '#fde68a', fg: '#b45309' },
+    ok: { bg: '#ecfdf5', bd: '#a7f3d0', fg: '#047857' },
+  }[st.tone]
+
+  const pax = [
+    `${b.paxAdults} adult${b.paxAdults === 1 ? '' : 's'}`,
+    b.paxChildren ? `${b.paxChildren} child${b.paxChildren === 1 ? '' : 'ren'}` : '',
+    b.paxInfants ? `${b.paxInfants} infant${b.paxInfants === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
+
+  // Section heading bar
+  const heading = (t: string) =>
+    `<tr><td style="padding:22px 0 8px"><div style="font:700 13px Arial,Helvetica,sans-serif;color:${INK};border-left:4px solid ${BRAND};padding-left:9px;text-transform:uppercase;letter-spacing:0.04em">${esc(t)}</div></td></tr>`
+
+  // Two-column key/value row inside a summary table
+  const kv = (k: string, v: string, brand = false) =>
+    `<tr>
+       <td style="padding:7px 10px;border:1px solid #e2e8f0;background:#f8fafc;font:700 11px Arial;color:#64748b;text-transform:uppercase;letter-spacing:0.03em;width:150px;white-space:nowrap">${esc(k)}</td>
+       <td style="padding:7px 12px;border:1px solid #e2e8f0;font:${brand ? 700 : 400} 13px Arial;color:${brand ? BRAND : INK}">${esc(v)}</td>
+     </tr>`
+
+  const summary =
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
+       ${kv('IS Number', b.isNumber ?? '—')}
+       ${kv('CNTL', b.cntlNumber ?? '—')}
+       ${kv('Agent', b.agent ?? '—')}
+       ${kv('File Handler', b.fileHandler ?? '—', true)}
+       ${kv('Arrival', fmtDate(b.arrivalDate))}
+       ${kv('Departure', fmtDate(b.departureDate))}
+       ${kv('Passengers', pax || '—')}
+       ${kv('Country', (b.operationCountry ?? '—').replace(/_/g, ' / '))}
+       ${kv('Status', st.label)}
+     </table>`
+
+  // Contacts table
+  const contactRow = (who: string, email: string | null, phone: string | null, wa: string | null) =>
+    `<tr>
+       <td style="padding:7px 10px;border:1px solid #e2e8f0;background:#f8fafc;font:700 11px Arial;color:#64748b;white-space:nowrap">${esc(who)}</td>
+       <td style="padding:7px 12px;border:1px solid #e2e8f0;font:400 12px Arial;color:${INK}">${esc(email || '—')}</td>
+       <td style="padding:7px 12px;border:1px solid #e2e8f0;font:400 12px Arial;color:${INK}">${esc(phone || '—')}</td>
+       <td style="padding:7px 12px;border:1px solid #e2e8f0;font:400 12px Arial;color:${INK}">${esc(wa || '—')}</td>
+     </tr>`
+  const contacts =
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
+       <tr>
+         <td style="padding:7px 10px;border:1px solid #e2e8f0;background:#eef2f7;font:700 10px Arial;color:#475569;text-transform:uppercase">Party</td>
+         <td style="padding:7px 12px;border:1px solid #e2e8f0;background:#eef2f7;font:700 10px Arial;color:#475569;text-transform:uppercase">Email</td>
+         <td style="padding:7px 12px;border:1px solid #e2e8f0;background:#eef2f7;font:700 10px Arial;color:#475569;text-transform:uppercase">Phone</td>
+         <td style="padding:7px 12px;border:1px solid #e2e8f0;background:#eef2f7;font:700 10px Arial;color:#475569;text-transform:uppercase">WhatsApp</td>
+       </tr>
+       ${contactRow('Agent', b.agentEmail, b.agentPhone, b.agentWhatsapp)}
+       ${contactRow('Guest / Tourist', b.contactEmail, b.contactPhone, b.contactWhatsapp)}
+     </table>`
+
+  const th = (t: string, w?: string) =>
+    `<td style="padding:7px 10px;border:1px solid #e2e8f0;background:#eef2f7;font:700 10px Arial;color:#475569;text-transform:uppercase${w ? `;width:${w}` : ''}">${esc(t)}</td>`
+  const td = (t: string, bold = false) =>
+    `<td style="padding:7px 10px;border:1px solid #e2e8f0;font:${bold ? 700 : 400} 12px Arial;color:${INK}">${esc(t)}</td>`
+
+  const hotels = b.accommodations.length
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
+         <tr>${th('Hotel')}${th('City')}${th('Check-in')}${th('Check-out')}${th('Nights')}${th('Room')}${th('Meal')}</tr>
+         ${b.accommodations.map(h => `<tr>${td(h.hotel, true)}${td(h.city)}${td(fmtDate(h.checkIn))}${td(fmtDate(h.checkOut))}${td(String(h.nights))}${td(h.roomType || '—')}${td(h.mealType || '—')}</tr>`).join('')}
+       </table>`
+    : `<div style="border:1px dashed #cbd5e1;border-radius:8px;padding:12px;text-align:center;font:italic 12px Arial;color:#94a3b8">No hotels recorded.</div>`
+
+  const flights = b.flights.length
+    ? `<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse">
+         <tr>${th('Flight')}${th('Airline')}${th('Date')}${th('From')}${th('Dep')}${th('To')}${th('Arr')}${th('Notes')}</tr>
+         ${b.flights.map(f => `<tr>${td(f.flightNo || '—', true)}${td(f.airline || '—')}${td(fmtDate(f.date))}${td(f.fromApt || '—')}${td(f.depTime || '—')}${td(f.toApt || '—')}${td(f.arrTime || '—')}${td(f.notes || '—')}</tr>`).join('')}
+       </table>`
+    : `<div style="border:1px dashed #cbd5e1;border-radius:8px;padding:12px;text-align:center;font:italic 12px Arial;color:#94a3b8">No flights recorded.</div>`
+
+  const isCancel = b.status === 'PENDING_CANCELLATION' || b.status === 'CANCELLED'
+  const reason = isCancel
+    ? `Requested by ${esc(b.cancelledByName ?? '—')}${b.cancellationReason ? ` · Reason: ${esc(b.cancellationReason)}` : ''}`
+    : ''
+
+  return `<!doctype html>
+<html>
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /></head>
+<body style="margin:0;padding:0;background:#f1f5f9">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f1f5f9">
+    <tr><td align="center" style="padding:24px 12px">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="640" style="max-width:640px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+        <!-- Header -->
+        <tr><td style="padding:18px 24px;border-bottom:3px solid ${BRAND}">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+            <td style="vertical-align:middle">
+              ${logo ? `<img src="${logo}" alt="Apple Holidays" height="40" style="height:40px;vertical-align:middle" /> ` : ''}
+              <span style="font:800 18px Arial;color:${INK};vertical-align:middle">Apple Holidays</span>
+            </td>
+            <td align="right" style="vertical-align:middle">
+              <div style="font:700 9px Arial;color:${BRAND};letter-spacing:1.5px">BOOKING UPDATE</div>
+              <div style="font:800 20px 'Courier New',monospace;color:${INK}">${esc(b.bookingRef)}</div>
+            </td>
+          </tr></table>
+        </td></tr>
+
+        <tr><td style="padding:18px 24px 0">
+          <!-- Status banner -->
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:separate">
+            <tr><td style="background:${tone.bg};border:1px solid ${tone.bd};border-radius:10px;padding:11px 14px">
+              <span style="font:800 13px Arial;color:${tone.fg}">${esc(st.label)}</span>
+              ${reason ? `<div style="font:400 11px Arial;color:${tone.fg};opacity:0.85;margin-top:2px">${reason}</div>` : ''}
+            </td></tr>
+          </table>
+
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <tr><td style="padding:14px 0 0;font:400 12px Arial;color:#475569">
+              Dear ${esc(b.fileHandler || 'Team')}, please find the latest details for booking
+              <strong>${esc(b.bookingRef)}</strong>${b.isNumber ? ` (IS ${esc(b.isNumber)})` : ''} below. The same is attached as a PDF.
+            </td></tr>
+            ${opts?.note ? `<tr><td style="padding:12px 0 0"><div style="background:#f1f5f9;border-radius:8px;padding:10px 12px;font:400 12px Arial;color:${INK}">${esc(opts.note)}</div></td></tr>` : ''}
+
+            ${heading('Booking Summary')}
+            <tr><td>${summary}</td></tr>
+
+            ${heading('Contacts')}
+            <tr><td>${contacts}</td></tr>
+
+            ${heading('Important Notes')}
+            <tr><td><div style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:11px 13px;font:400 12px Arial;color:#78350f;white-space:pre-wrap">${b.importantNotes ? esc(b.importantNotes) : 'No notes recorded.'}</div></td></tr>
+
+            ${heading('Hotel Details')}
+            <tr><td>${hotels}</td></tr>
+
+            ${heading('Flight Details')}
+            <tr><td>${flights}</td></tr>
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:20px 24px;border-top:1px solid #e2e8f0">
+          <div style="font:400 10px Arial;color:#94a3b8">
+            Apple Holidays MMT · Booking Update · Generated ${esc(fmtDateTime(now))}${opts?.generatedBy ? ` by ${esc(opts.generatedBy)}` : ''}
+          </div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
 </body>
 </html>`
 }
