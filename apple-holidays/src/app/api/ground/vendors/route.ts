@@ -22,7 +22,11 @@ export async function GET(req: NextRequest) {
     : (userCountry || null)
 
   const vendors = await prisma.vehicleVendor.findMany({
-    where: effectiveCountry ? { country: { in: countryScope(effectiveCountry)! } } : {},
+    // Match vendors for the target country, plus vendors with no specific country
+    // (null / ALL) — those are available for every country's bookings.
+    where: effectiveCountry
+      ? { OR: [{ country: { in: countryScope(effectiveCountry)! } }, { country: null }, { country: 'ALL' as OperationCountry }] }
+      : {},
     include: {
       vehicles: {
         include: {
