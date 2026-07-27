@@ -4,9 +4,10 @@ import Providers from '@/components/shared/providers'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'AppleHolidays — Travel Booking System',
+  title: 'Apple System Operations',
   description: 'Multi-Destination Travel Booking & Operations Management for Vietnam, Sri Lanka, Malaysia and Singapore',
-  icons: { icon: '/favicon.ico' },
+  // Favicon / tab icon and Apple touch icon are served automatically from
+  // src/app/icon.png and src/app/apple-icon.png (Next.js file-based metadata).
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
