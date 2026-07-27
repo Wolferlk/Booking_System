@@ -36,6 +36,23 @@ type DetailsForm = {
   contactEmail: string; contactPhone: string; contactWhatsapp: string; importantNotes: string
 }
 const fmtDate = (s: string) => new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+
+/**
+ * Parse a JSON response defensively. A gateway 502/504 (Amplify, timeout) returns
+ * an HTML error page, so res.json() would throw "Unexpected token '<'". Return a
+ * normalised { success, error } object instead of crashing the promise.
+ */
+async function safeJson(res: Response): Promise<{ success?: boolean; error?: string; message?: string; data?: any }> {
+  const text = await res.text().catch(() => '')
+  try {
+    return JSON.parse(text)
+  } catch {
+    if (res.status === 502 || res.status === 504) {
+      return { success: false, error: 'The server took too long to generate the PDF. Please try again in a moment.' }
+    }
+    return { success: false, error: `Request failed (${res.status}). Please try again.` }
+  }
+}
 const INPUT = 'w-full bg-[#0c1a24] border border-white/12 rounded-lg py-2.5 px-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-400/15'
 
 export default function FileHandlerDashboard() {
@@ -263,9 +280,11 @@ export default function FileHandlerDashboard() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ self: true }),
       })
-      const d = await res.json()
+      const d = await safeJson(res)
       if (!d.success) { toast.error(d.error || 'Could not send the confirmation email'); return }
       toast.success(`Confirmation emailed to ${d.data?.to ?? 'your inbox'}`)
+    } catch {
+      toast.error('Could not send the confirmation email')
     } finally { setConfirmBusy(false) }
   }
 
@@ -284,10 +303,12 @@ export default function FileHandlerDashboard() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: emailTo.trim(), message: emailMsg.trim() }),
       })
-      const d = await res.json()
+      const d = await safeJson(res)
       if (!d.success) { toast.error(d.error || 'Email failed'); return }
       setEmailOpen(false)
       toast.success(`Sent to ${emailTo.trim()}`)
+    } catch {
+      toast.error('Email failed')
     } finally { setEmailSending(false) }
   }
 

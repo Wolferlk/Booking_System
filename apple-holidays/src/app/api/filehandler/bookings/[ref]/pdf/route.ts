@@ -11,8 +11,10 @@ import {
 
 export const dynamic = 'force-dynamic'
 // PDF rendering (puppeteer/chromium) needs the Node runtime and time to spin up.
+// 120s matches the agenda mailer route — a cold-start Chromium extract to /tmp
+// plus the Graph email upload can exceed a 60s budget and 502 at the gateway.
 export const runtime = 'nodejs'
-export const maxDuration = 60
+export const maxDuration = 120
 
 async function loadBooking(ref: string) {
   const booking = await prisma.booking.findUnique({
