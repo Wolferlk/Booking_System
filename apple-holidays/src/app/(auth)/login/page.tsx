@@ -4,6 +4,7 @@ import { useState, Suspense } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import Image from 'next/image'
 import { toast } from 'sonner'
 import {
   Eye, EyeOff, Loader2, ChevronLeft,
@@ -168,12 +169,17 @@ function LoginForm() {
 
         <div className="text-center mb-7">
           <div className="inline-flex items-center gap-3 mb-5">
-            <div className="w-12 h-12 rounded-2xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30">
-              <span className="text-white font-black text-base">AH</span>
-            </div>
+            <Image
+              src="/apple-system-operations.png"
+              alt="Apple System Operations"
+              width={64}
+              height={85}
+              priority
+              className="w-14 h-auto object-contain drop-shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+            />
             <div className="text-left">
-              <p className="text-white font-bold text-xl leading-tight">AppleHolidays</p>
-              <p className="text-slate-500 text-xs tracking-wider">Multi-Destination Platform</p>
+              <p className="text-white font-bold text-xl leading-tight">Apple System</p>
+              <p className="text-brand-500 font-bold text-lg leading-tight -mt-0.5">Operations</p>
             </div>
           </div>
 

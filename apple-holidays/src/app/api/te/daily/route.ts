@@ -97,6 +97,7 @@ export async function GET(req: NextRequest) {
     return {
       id:               b.id,
       bookingRef:       b.bookingRef,
+      agentBookingId:   b.agentBookingId,
       agent:            b.agent,
       fileHandler:      b.fileHandler,
       status:           b.status,
