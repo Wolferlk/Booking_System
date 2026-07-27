@@ -4,7 +4,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { getFileHandlerSession } from '@/lib/filehandler-auth'
 import { FH_BOOKING_SELECT } from '../../search/route'
 import { sendMailViaGraph } from '@/lib/send-mail'
-import { buildFhPdfFileName, type FhPdfBooking } from '@/lib/filehandler-booking-html'
+import { buildFhPdfFileName, buildFhBookingEmailHtml, type FhPdfBooking } from '@/lib/filehandler-booking-html'
 import { generateFhBookingPdf } from '@/lib/filehandler-booking-pdf'
 
 export const dynamic = 'force-dynamic'
@@ -80,15 +80,10 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   try {
     const pdf = await generateFhBookingPdf(booking, { generatedBy: handler.name })
 
-    const note = body.message?.trim()
-    const bodyHtml = `
-      <div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;font-size:14px;line-height:1.6">
-        <p>Hi,</p>
-        <p>Please find attached the latest booking update for
-          <strong>${booking.bookingRef}</strong>${booking.isNumber ? ` (IS ${booking.isNumber})` : ''}.</p>
-        ${note ? `<p style="padding:10px 12px;background:#f1f5f9;border-radius:8px">${note.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!))}</p>` : ''}
-        <p style="color:#64748b;font-size:12px;margin-top:18px">Sent from the Apple Holidays File-Handler portal by ${handler.name}.</p>
-      </div>`
+    const bodyHtml = buildFhBookingEmailHtml(booking, {
+      generatedBy: handler.name,
+      note: body.message?.trim() || undefined,
+    })
 
     await sendMailViaGraph({
       to,

@@ -83,7 +83,7 @@ export async function generateFhBookingPdf(b: FhPdfBooking, opts?: { generatedBy
     try { doc.image(lg, M, y, { fit: [46, 46] }); brandX = M + 58 } catch { /* bad image → skip */ }
   }
   doc.fillColor(INK).font('Helvetica-Bold').fontSize(17).text('Apple Holidays', brandX, y + 4)
-  doc.fillColor(MUTED).font('Helvetica').fontSize(8).text('MMT OPERATIONS', brandX, y + 26, { characterSpacing: 1.2 })
+  doc.fillColor(MUTED).font('Helvetica').fontSize(8).text('OPERATIONS', brandX, y + 26, { characterSpacing: 1.2 })
 
   doc.fillColor(BRAND).font('Helvetica-Bold').fontSize(9)
     .text('BOOKING UPDATE', M, y + 4, { width: CW, align: 'right', characterSpacing: 1.5 })
