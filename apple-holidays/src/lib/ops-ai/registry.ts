@@ -413,6 +413,196 @@ export const OPS_TOOLS: Record<string, OpsTool> = {
       additionalProperties: false,
     },
   },
+
+  // ── WRITE · paste-and-set child records ───────────────────────────────────
+  // When the operator pastes flight / passenger / accommodation blocks, the
+  // model parses each row into ONE of these calls. Emit one call per record.
+  add_passenger: {
+    name: 'add_passenger',
+    kind: 'WRITE',
+    label: 'Add passenger',
+    icon: 'UserPlus',
+    permission: ['booking:edit', 'booking:create', 'admin:override'],
+    description:
+      'Add one passenger to a booking from pasted passenger details. Emit one call per passenger. ' +
+      'Set isLead:true for the lead/primary passenger only.',
+    parameters: {
+      type: 'object',
+      properties: {
+        bookingRef:     { type: 'string', description: 'Booking reference.' },
+        name:           { type: 'string', description: 'Full passenger name.' },
+        type:           { type: 'string', enum: ['ADULT', 'CHILD'], description: 'ADULT or CHILD. Infants count as CHILD.' },
+        age:            { type: 'number', description: 'Age in years, if given.' },
+        isLead:         { type: 'boolean', description: 'True only for the lead passenger.' },
+        passport:       { type: 'string', description: 'Passport number.' },
+        nationality:    { type: 'string', description: 'Nationality.' },
+        contact:        { type: 'string', description: 'Phone / email contact.' },
+        mealPreference: { type: 'string', description: 'Meal preference, e.g. Veg, Halal.' },
+      },
+      required: ['bookingRef', 'name'],
+      additionalProperties: false,
+    },
+  },
+
+  add_flight: {
+    name: 'add_flight',
+    kind: 'WRITE',
+    label: 'Add flight',
+    icon: 'Plane',
+    permission: ['booking:edit', 'booking:create', 'admin:override'],
+    description:
+      'Add one flight segment to a booking from pasted flight details. Emit one call per flight leg. ' +
+      'Times are local, HH:mm.',
+    parameters: {
+      type: 'object',
+      properties: {
+        bookingRef: { type: 'string', description: 'Booking reference.' },
+        flightNo:   { type: 'string', description: 'Flight number, e.g. VJ815.' },
+        date:       { type: 'string', description: 'Flight date YYYY-MM-DD.' },
+        fromApt:    { type: 'string', description: 'Departure airport code or name, e.g. SGN.' },
+        depTime:    { type: 'string', description: 'Departure time HH:mm.' },
+        toApt:      { type: 'string', description: 'Arrival airport code or name, e.g. HAN.' },
+        arrTime:    { type: 'string', description: 'Arrival time HH:mm.' },
+        airline:    { type: 'string', description: 'Airline name, e.g. VietJet.' },
+        notes:      { type: 'string', description: 'Any note, e.g. baggage / terminal.' },
+      },
+      required: ['bookingRef', 'flightNo', 'date'],
+      additionalProperties: false,
+    },
+  },
+
+  add_accommodation: {
+    name: 'add_accommodation',
+    kind: 'WRITE',
+    label: 'Add accommodation',
+    icon: 'BedDouble',
+    permission: ['booking:edit', 'booking:create', 'admin:override'],
+    description:
+      'Add one hotel stay to a booking from pasted accommodation details. Emit one call per hotel row. ' +
+      'If nights is omitted it is derived from check-in/check-out.',
+    parameters: {
+      type: 'object',
+      properties: {
+        bookingRef: { type: 'string', description: 'Booking reference.' },
+        city:       { type: 'string', description: 'City / area.' },
+        hotel:      { type: 'string', description: 'Hotel name.' },
+        checkIn:    { type: 'string', description: 'Check-in date YYYY-MM-DD.' },
+        checkOut:   { type: 'string', description: 'Check-out date YYYY-MM-DD.' },
+        nights:     { type: 'number', description: 'Number of nights. Optional — derived from dates when omitted.' },
+        roomType:   { type: 'string', description: 'Room type, e.g. Deluxe Double.' },
+        mealType:   { type: 'string', description: 'Meal plan, e.g. BB, HB, FB.' },
+        address:    { type: 'string', description: 'Hotel address.' },
+        contact:    { type: 'string', description: 'Hotel phone / contact.' },
+      },
+      required: ['bookingRef', 'city', 'hotel', 'checkIn', 'checkOut'],
+      additionalProperties: false,
+    },
+  },
+
+  // ── NAV · agenda (movement chart / MC) ────────────────────────────────────
+  open_agenda: {
+    name: 'open_agenda',
+    kind: 'NAV',
+    label: 'Open agenda (MC)',
+    icon: 'CalendarRange',
+    permission: ['booking:read'],
+    description:
+      'Open the tour agenda / movement chart (MC) for a booking. If the booking has no agenda yet, ' +
+      'this opens the agenda page and auto-generates it first. Use when the user says "open agenda", ' +
+      '"show the MC", "movement chart" for a booking.',
+    parameters: {
+      type: 'object',
+      properties: {
+        bookingRef: { type: 'string', description: 'Booking reference.' },
+      },
+      required: ['bookingRef'],
+      additionalProperties: false,
+    },
+  },
+
+  // ── READ / WRITE · AppleSystem (AS) availability + import ──────────────────
+  as_check_availability: {
+    name: 'as_check_availability',
+    kind: 'READ',
+    label: 'Check AS availability',
+    icon: 'ServerCog',
+    permission: ['booking:read'],
+    description:
+      'Check whether a booking exists and is CONFIRMED in AppleSystem (AS) by its IS number. ' +
+      'Use when the user asks "is this booking available in AS?" / "check IS12345 in AppleSystem". ' +
+      'Returns the AS status without importing anything.',
+    parameters: {
+      type: 'object',
+      properties: {
+        isNumber: { type: 'string', description: 'IS number to look up in AppleSystem, e.g. IS23492.' },
+      },
+      required: ['isNumber'],
+      additionalProperties: false,
+    },
+  },
+
+  as_import_booking: {
+    name: 'as_import_booking',
+    kind: 'WRITE',
+    label: 'Import from AS',
+    icon: 'DownloadCloud',
+    permission: ['booking:create'],
+    description:
+      'Create a local booking from a CONFIRMED AppleSystem quotation, looked up by IS number. ' +
+      'Idempotent — if the booking already exists it is returned as-is, never duplicated. ' +
+      'Only propose this after as_check_availability shows the AS booking is confirmed/available.',
+    parameters: {
+      type: 'object',
+      properties: {
+        isNumber: { type: 'string', description: 'IS number of the confirmed AppleSystem booking to import.' },
+      },
+      required: ['isNumber'],
+      additionalProperties: false,
+    },
+  },
+
+  // ── READ · read-only SQL ──────────────────────────────────────────────────
+  run_sql_query: {
+    name: 'run_sql_query',
+    kind: 'READ',
+    label: 'Run read-only query',
+    icon: 'Database',
+    permission: ['booking:read'],
+    description:
+      'Run ONE read-only SQL SELECT against the operations database and return rows, to answer a data ' +
+      'question or feed a PDF. STRICTLY read-only: a single SELECT statement only — no INSERT/UPDATE/DELETE/DDL. ' +
+      'Prefer search_bookings/read_booking for ordinary lookups; use SQL for aggregates and cross-table reports. ' +
+      'Always add your own WHERE/LIMIT to keep results small.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sql:     { type: 'string', description: 'A single SELECT statement. No trailing semicolon needed. No comments.' },
+        purpose: { type: 'string', description: 'One short line on what this query answers (shown to the user).' },
+      },
+      required: ['sql'],
+      additionalProperties: false,
+    },
+  },
+
+  // ── NAV · generate + download a booking PDF ───────────────────────────────
+  generate_pdf: {
+    name: 'generate_pdf',
+    kind: 'NAV',
+    label: 'Generate booking PDF',
+    icon: 'FileText',
+    permission: ['booking:read'],
+    description:
+      'Generate and download the full booking-details PDF (passengers, flights, hotels, agenda, drivers, notes) ' +
+      'for one booking. Use when the user asks to "generate a PDF" / "make the PDF" for a booking.',
+    parameters: {
+      type: 'object',
+      properties: {
+        bookingRef: { type: 'string', description: 'Booking reference.' },
+      },
+      required: ['bookingRef'],
+      additionalProperties: false,
+    },
+  },
 }
 
 export const OPS_TOOL_NAMES = Object.keys(OPS_TOOLS)

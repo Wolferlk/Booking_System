@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import {
   Search, FileSearch, ExternalLink, Navigation, PenLine, CalendarPlus, CalendarCog,
   BedDouble, Car, BellPlus, PhoneCall, ArrowRight, Check, Loader2, AlertTriangle, Sparkles,
+  UserPlus, Plane, CalendarRange, ServerCog, DownloadCloud, Database, FileText,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { OpsAction } from './types'
@@ -12,6 +13,7 @@ import type { OpsAction } from './types'
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   Search, FileSearch, ExternalLink, Navigation, PenLine, CalendarPlus,
   CalendarCog, BedDouble, Car, BellPlus, PhoneCall,
+  UserPlus, Plane, CalendarRange, ServerCog, DownloadCloud, Database, FileText,
 }
 
 type RunState = 'idle' | 'running' | 'done' | 'failed'

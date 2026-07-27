@@ -7,7 +7,13 @@ import {
   type OpsTool,
 } from './registry'
 import { actorMaySee, countryWhere, loadBookingSnapshot, type OpsActor } from './context'
-import type { ServiceType } from '@prisma/client'
+import { searchBookings, getQuoteTemplate } from '@/lib/applesystem'
+import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
+import { importMappedBooking, AlreadyImportedError } from '@/lib/as-booking-import'
+import { getCancellationDeadline } from '@/lib/utils'
+import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
+import { runReadonlySql } from './sql'
+import type { ServiceType, PassengerType } from '@prisma/client'
 
 /**
  * The single choke point where an agent-proposed action becomes a real change.
@@ -27,8 +33,8 @@ import type { ServiceType } from '@prisma/client'
 export interface ExecResult {
   ok:       boolean
   message:  string
-  /** Client-side follow-up, e.g. navigate somewhere or refresh the page. */
-  effect?:  { type: 'navigate'; href: string } | { type: 'refresh' }
+  /** Client-side follow-up, e.g. navigate somewhere, download a file, or refresh. */
+  effect?:  { type: 'navigate'; href: string } | { type: 'download'; href: string } | { type: 'refresh' }
   data?:    unknown
 }
 
@@ -130,6 +136,14 @@ export async function executeTool(
       case 'assign_driver':        return await runAssignDriver(args, actor)
       case 'create_reminder':      return await runCreateReminder(args, actor)
       case 'log_contact':          return await runLogContact(args, actor)
+      case 'add_passenger':        return await runAddPassenger(args, actor)
+      case 'add_flight':           return await runAddFlight(args, actor)
+      case 'add_accommodation':    return await runAddAccommodation(args, actor)
+      case 'open_agenda':          return await runOpenAgenda(args, actor)
+      case 'as_check_availability':return await runAsCheckAvailability(args)
+      case 'as_import_booking':    return await runAsImportBooking(args, actor)
+      case 'run_sql_query':        return await runSqlQuery(args, actor)
+      case 'generate_pdf':         return await runGeneratePdf(args, actor)
       default:                     return fail(`Capability "${toolName}" has no implementation.`)
     }
   } catch (err) {
@@ -541,6 +555,285 @@ async function runLogContact(args: Record<string, unknown>, actor: OpsActor): Pr
   return { ok: true, message: `Contact logged against ${ref}.`, effect: { type: 'refresh' } }
 }
 
+// ── WRITE · paste-and-set child records ─────────────────────────────────────
+
+async function runAddPassenger(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const ref  = str(args, 'bookingRef')?.toUpperCase()
+  const name = str(args, 'name')
+  if (!ref)  throw new OpsError('bookingRef is required.')
+  if (!name) throw new OpsError('A passenger name is required.')
+
+  const booking = await loadBookingForWrite(ref, actor)
+
+  const typeRaw = (str(args, 'type') ?? 'ADULT').toUpperCase()
+  const type: PassengerType = typeRaw === 'CHILD' ? 'CHILD' : 'ADULT'
+  const age = args.age === undefined || args.age === null ? undefined : Number(coerce('int', args.age, 'age'))
+  const isLead = args.isLead === true || String(args.isLead).toLowerCase() === 'true'
+
+  // Only one lead passenger — demote any existing lead when a new one is set.
+  if (isLead) {
+    await prisma.passenger.updateMany({ where: { bookingId: booking.id, isLead: true }, data: { isLead: false } })
+  }
+
+  const p = await prisma.passenger.create({
+    data: {
+      bookingId:      booking.id,
+      name:           name.slice(0, 300),
+      type,
+      age:            Number.isFinite(age) ? (age as number) : null,
+      isLead,
+      passport:       str(args, 'passport') ?? null,
+      nationality:    str(args, 'nationality') ?? null,
+      contact:        str(args, 'contact') ?? null,
+      mealPreference: str(args, 'mealPreference') ?? null,
+    },
+  })
+
+  await logActivity({
+    userId: actor.userId, action: 'BOOKING_UPDATED', entityType: 'Passenger', entityId: p.id,
+    details: { via: 'OPS_AI', op: 'passenger_added', bookingRef: ref, name, type, isLead },
+  })
+
+  return { ok: true, message: `Added passenger "${name}"${isLead ? ' (lead)' : ''} to ${ref}.`, effect: { type: 'refresh' } }
+}
+
+async function runAddFlight(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const ref      = str(args, 'bookingRef')?.toUpperCase()
+  const flightNo = str(args, 'flightNo')
+  if (!ref)      throw new OpsError('bookingRef is required.')
+  if (!flightNo) throw new OpsError('A flight number is required.')
+
+  const booking = await loadBookingForWrite(ref, actor)
+  const date = coerce('date', args.date, 'flight date') as Date
+
+  // Flight times are free-form strings on the record; normalise to HH:mm when the
+  // value is clearly a time, but never reject a loosely-formatted paste.
+  const looseTime = (v: string | undefined): string => {
+    if (!v) return ''
+    return /^([01]?\d|2[0-3]):[0-5]\d$/.test(v) ? v.padStart(5, '0') : v
+  }
+
+  const f = await prisma.flight.create({
+    data: {
+      bookingId: booking.id,
+      flightNo:  flightNo.slice(0, 50),
+      date,
+      fromApt:   str(args, 'fromApt') ?? '',
+      depTime:   looseTime(str(args, 'depTime')),
+      toApt:     str(args, 'toApt') ?? '',
+      arrTime:   looseTime(str(args, 'arrTime')),
+      airline:   str(args, 'airline') ?? null,
+      notes:     str(args, 'notes') ?? null,
+    },
+  })
+
+  await logActivity({
+    userId: actor.userId, action: 'BOOKING_UPDATED', entityType: 'Flight', entityId: f.id,
+    details: { via: 'OPS_AI', op: 'flight_added', bookingRef: ref, flightNo, date: date.toISOString().slice(0, 10) },
+  })
+
+  return {
+    ok: true,
+    message: `Added flight ${flightNo} on ${date.toISOString().slice(0, 10)} to ${ref}.`,
+    effect: { type: 'refresh' },
+  }
+}
+
+async function runAddAccommodation(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const ref   = str(args, 'bookingRef')?.toUpperCase()
+  const city  = str(args, 'city')
+  const hotel = str(args, 'hotel')
+  if (!ref)   throw new OpsError('bookingRef is required.')
+  if (!city)  throw new OpsError('A city is required.')
+  if (!hotel) throw new OpsError('A hotel name is required.')
+
+  const booking  = await loadBookingForWrite(ref, actor)
+  const checkIn  = coerce('date', args.checkIn, 'check-in') as Date
+  const checkOut = coerce('date', args.checkOut, 'check-out') as Date
+  if (checkOut < checkIn) throw new OpsError('Check-out cannot be before check-in.')
+
+  const derivedNights = Math.max(0, Math.round((checkOut.getTime() - checkIn.getTime()) / 86400000))
+  const nights = args.nights === undefined || args.nights === null
+    ? derivedNights
+    : Number(coerce('int', args.nights, 'nights'))
+
+  const a = await prisma.accommodation.create({
+    data: {
+      bookingId: booking.id,
+      city:      city.slice(0, 200),
+      hotel:     hotel.slice(0, 300),
+      checkIn,
+      checkOut,
+      nights,
+      roomType:  str(args, 'roomType') ?? null,
+      mealType:  str(args, 'mealType') ?? null,
+      address:   str(args, 'address') ?? null,
+      contact:   str(args, 'contact') ?? null,
+    },
+  })
+
+  await logActivity({
+    userId: actor.userId, action: 'BOOKING_UPDATED', entityType: 'Accommodation', entityId: a.id,
+    details: { via: 'OPS_AI', op: 'accommodation_added', bookingRef: ref, hotel, city, nights },
+  })
+
+  return {
+    ok: true,
+    message: `Added ${hotel} (${city}, ${nights} night${nights === 1 ? '' : 's'}) to ${ref}.`,
+    effect: { type: 'refresh' },
+  }
+}
+
+// ── NAV · agenda (movement chart / MC) ──────────────────────────────────────
+
+async function runOpenAgenda(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const ref = str(args, 'bookingRef')?.toUpperCase()
+  if (!ref) throw new OpsError('bookingRef is required.')
+  const booking = await loadBookingForWrite(ref, actor)   // existence + scope check
+
+  const agenda = await prisma.tourAgenda.findUnique({
+    where:  { bookingId: booking.id },
+    select: { _count: { select: { items: true } } },
+  })
+  const hasItems = (agenda?._count.items ?? 0) > 0
+
+  const base = `/dashboard/bookings/${encodeURIComponent(ref)}/agenda`
+  const href = hasItems ? base : `${base}?generate=1`
+  return {
+    ok: true,
+    message: hasItems ? `Opening the agenda for ${ref}.` : `No agenda yet — opening ${ref} and generating the movement chart.`,
+    effect: { type: 'navigate', href },
+  }
+}
+
+// ── READ / WRITE · AppleSystem availability + import ─────────────────────────
+
+/** Finds the best AppleSystem list row for an IS number, preferring a confirmed one. */
+async function findAsBooking(isNumber: string) {
+  const result = await searchBookings({ isNumber })
+  if (!result.items.length) return { found: false as const, confirmed: null, any: null }
+  const confirmed = result.items.find(i => String(i.status) === '2') ?? null
+  return { found: true as const, confirmed, any: result.items[0] }
+}
+
+async function runAsCheckAvailability(args: Record<string, unknown>): Promise<ExecResult> {
+  const isNumber = str(args, 'isNumber')
+  if (!isNumber) throw new OpsError('isNumber is required.')
+
+  const { found, confirmed, any } = await findAsBooking(isNumber)
+  if (!found) {
+    return { ok: true, message: `No AppleSystem booking found for IS number ${isNumber}.`, data: { isNumber, available: false } }
+  }
+  const row = confirmed ?? any!
+  const available = Boolean(confirmed)
+  return {
+    ok: true,
+    message: available
+      ? `${isNumber} is CONFIRMED in AppleSystem — it can be imported.`
+      : `${isNumber} exists in AppleSystem but is not confirmed (status "${row.status_class || row.status}").`,
+    data: {
+      isNumber,
+      available,
+      status:       row.status,
+      statusClass:  row.status_class,
+      quotationNo:  row.quotation_no,
+      referenceId:  row.reference_id,
+      country:      row.country,
+      leadName:     row.main?.user ?? null,
+    },
+  }
+}
+
+async function runAsImportBooking(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const isNumber = str(args, 'isNumber')
+  if (!isNumber) throw new OpsError('isNumber is required.')
+
+  const { found, confirmed } = await findAsBooking(isNumber)
+  if (!found)     throw new OpsError(`No AppleSystem booking found for IS number ${isNumber}.`)
+  if (!confirmed) throw new OpsError(`${isNumber} is not confirmed in AppleSystem, so it cannot be imported yet.`)
+
+  let mapped
+  try {
+    const quote = (await getQuoteTemplate(confirmed.quotation_no, confirmed.reference_id)) as unknown as Record<string, unknown>
+    mapped = mapQuoteToBooking(quote, { fallbackIsNumber: confirmed.is_number ?? isNumber })
+  } catch (err) {
+    if (err instanceof ASMappingError) throw new OpsError(err.message)
+    throw err
+  }
+
+  const sessionCountry = actor.country as OperationCountry | undefined
+  const operationCountry =
+    mapped.operationCountry ??
+    (sessionCountry && sessionCountry !== 'ALL' ? sessionCountry : null)
+  if (!operationCountry) throw new OpsError('Could not determine the destination country from the IS number.')
+  if (sessionCountry && sessionCountry !== 'ALL' && !isInCountryScope(operationCountry, sessionCountry)) {
+    throw new OpsError('That AppleSystem booking belongs to another country and is outside your scope.')
+  }
+
+  try {
+    const { booking, alreadyExists } = await importMappedBooking(mapped, operationCountry, {
+      createdById:          actor.userId,
+      cancellationDeadline: getCancellationDeadline(mapped.arrivalDate),
+    })
+    await logActivity({
+      userId: actor.userId, action: 'BOOKING_CREATED', entityType: 'Booking', entityId: booking.id,
+      details: { via: 'OPS_AI', op: 'as_import', isNumber, bookingRef: booking.bookingRef, alreadyExists },
+    })
+    return {
+      ok: true,
+      message: alreadyExists
+        ? `${booking.bookingRef} is already in the system — opening it.`
+        : `Imported ${booking.bookingRef} from AppleSystem.`,
+      effect: { type: 'navigate', href: `/dashboard/bookings/${encodeURIComponent(booking.bookingRef)}` },
+    }
+  } catch (err) {
+    if (err instanceof AlreadyImportedError) {
+      return {
+        ok: true,
+        message: `${err.bookingRef} is already in the system — opening it.`,
+        effect: { type: 'navigate', href: `/dashboard/bookings/${encodeURIComponent(err.bookingRef)}` },
+      }
+    }
+    throw err
+  }
+}
+
+// ── READ · read-only SQL ────────────────────────────────────────────────────
+
+async function runSqlQuery(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const sql = str(args, 'sql')
+  if (!sql) throw new OpsError('A SQL SELECT statement is required.')
+
+  const out = await runReadonlySql(sql)
+  if (!out.ok) throw new OpsError(out.error)
+
+  await logActivity({
+    userId: actor.userId, action: 'BOOKING_UPDATED', entityType: 'System', entityId: 'ops-ai-sql',
+    details: { via: 'OPS_AI', op: 'readonly_sql', purpose: str(args, 'purpose') ?? null, sql: out.sql.slice(0, 1000), rows: out.rows.length },
+  })
+
+  const note = out.truncated ? ` (showing first ${out.rows.length})` : ''
+  return {
+    ok: true,
+    message: `Query returned ${out.rows.length} row${out.rows.length === 1 ? '' : 's'}${note}.`,
+    data: { columns: out.columns, rows: out.rows, truncated: out.truncated, sql: out.sql },
+  }
+}
+
+// ── NAV · generate + download a booking PDF ─────────────────────────────────
+
+async function runGeneratePdf(args: Record<string, unknown>, actor: OpsActor): Promise<ExecResult> {
+  const ref = str(args, 'bookingRef')?.toUpperCase()
+  if (!ref) throw new OpsError('bookingRef is required.')
+  await loadBookingForWrite(ref, actor)   // existence + scope check
+
+  return {
+    ok: true,
+    message: `Generating the full details PDF for ${ref}.`,
+    effect: { type: 'download', href: `/api/ops-ai/pdf/${encodeURIComponent(ref)}` },
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function fmt(v: unknown): string {
@@ -658,6 +951,52 @@ export async function previewAction(
           { label: 'Channel', after: str(args, 'type') ?? 'OTHER' },
           { label: 'Subject', after: str(args, 'subject') ?? '—' },
           ...(str(args, 'notes') ? [{ label: 'Notes', after: str(args, 'notes')! }] : []),
+        ],
+      }
+    }
+
+    if (toolName === 'add_passenger') {
+      const lines = [
+        { label: 'Name', after: str(args, 'name') ?? '—' },
+        { label: 'Type', after: (str(args, 'type') ?? 'ADULT').toUpperCase() === 'CHILD' ? 'Child' : 'Adult' },
+      ]
+      if (args.isLead === true) lines.push({ label: 'Lead', after: 'Yes' })
+      const age = str(args, 'age');         if (age) lines.push({ label: 'Age', after: age })
+      const pp  = str(args, 'passport');    if (pp)  lines.push({ label: 'Passport', after: pp })
+      const nat = str(args, 'nationality'); if (nat) lines.push({ label: 'Nationality', after: nat })
+      return { title: `${str(args, 'bookingRef') ?? ''} · new passenger`, lines }
+    }
+
+    if (toolName === 'add_flight') {
+      const lines = [
+        { label: 'Flight', after: str(args, 'flightNo') ?? '—' },
+        { label: 'Date',   after: str(args, 'date') ?? '—' },
+        { label: 'Route',  after: `${str(args, 'fromApt') ?? '?'} → ${str(args, 'toApt') ?? '?'}` },
+      ]
+      const dep = str(args, 'depTime'); const arr = str(args, 'arrTime')
+      if (dep || arr) lines.push({ label: 'Times', after: `Dep ${dep ?? '?'} · Arr ${arr ?? '?'}` })
+      const air = str(args, 'airline'); if (air) lines.push({ label: 'Airline', after: air })
+      return { title: `${str(args, 'bookingRef') ?? ''} · new flight`, lines }
+    }
+
+    if (toolName === 'add_accommodation') {
+      const lines = [
+        { label: 'Hotel',  after: str(args, 'hotel') ?? '—' },
+        { label: 'City',   after: str(args, 'city') ?? '—' },
+        { label: 'Stay',   after: `${str(args, 'checkIn') ?? '?'} → ${str(args, 'checkOut') ?? '?'}` },
+      ]
+      const nights = str(args, 'nights'); if (nights) lines.push({ label: 'Nights', after: nights })
+      const room   = str(args, 'roomType'); if (room) lines.push({ label: 'Room', after: room })
+      const meal   = str(args, 'mealType'); if (meal) lines.push({ label: 'Meals', after: meal })
+      return { title: `${str(args, 'bookingRef') ?? ''} · new hotel`, lines }
+    }
+
+    if (toolName === 'as_import_booking') {
+      return {
+        title: `AppleSystem · import ${str(args, 'isNumber') ?? ''}`,
+        lines: [
+          { label: 'IS number', after: str(args, 'isNumber') ?? '—' },
+          { label: 'Action', after: 'Create a local DRAFT booking from the confirmed AS quotation' },
         ],
       }
     }

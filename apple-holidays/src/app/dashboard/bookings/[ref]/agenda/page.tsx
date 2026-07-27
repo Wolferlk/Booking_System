@@ -382,6 +382,33 @@ export default function AgendaPage() {
 
   useEffect(() => { loadAgenda() }, [loadAgenda])
 
+  // OPS_AI "open agenda, generating if needed": when opened with ?generate=1 and
+  // the booking has no movement items yet, auto-run the standard generate+save
+  // once, then strip the flag so a refresh doesn't re-trigger it.
+  const [wantsGenerate, setWantsGenerate] = useState(false)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setWantsGenerate(new URLSearchParams(window.location.search).get('generate') === '1')
+    }
+  }, [])
+  const autoGenRef     = useRef(false)
+  useEffect(() => {
+    if (!wantsGenerate || autoGenRef.current) return
+    if (loading || generating || !booking) return
+    if (items.length > 0) {
+      // Already has an agenda — nothing to generate; just clean the URL.
+      autoGenRef.current = true
+      router.replace(`/dashboard/bookings/${ref}/agenda`)
+      return
+    }
+    if (!canEdit) return
+    autoGenRef.current = true
+    void generateFromBooking().finally(() => {
+      router.replace(`/dashboard/bookings/${ref}/agenda`)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantsGenerate, loading, generating, booking, items.length, canEdit, ref])
+
   useEffect(() => {
     if (!loading && items.length === 0 && canEdit && !autoGenFired.current) {
       autoGenFired.current = true
