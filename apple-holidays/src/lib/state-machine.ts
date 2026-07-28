@@ -178,9 +178,11 @@ export const STATUS_COLORS: Record<BookingStatus, string> = {
 export const POST_TRAVEL_PENDING_REVIEW_LABEL = 'Trip Completed & Pending Customer Review'
 export const POST_TRAVEL_COMPLETED_LABEL = 'Trip Completed'
 
-// Statuses whose meaning must survive the trip window — a draft or a
-// cancellation is never re-labelled as a completed trip.
-const POST_TRAVEL_LOCKED_STATES: BookingStatus[] = ['DRAFT', 'CANCELLED', 'PENDING_CANCELLATION']
+// Once the departure day is past, the workflow status no longer matters —
+// DRAFT, IN_PROGRESS, half-finished checklists all read as a completed trip.
+// The only exception is a cancellation: that trip never ran, so calling it
+// "Trip Completed" would be factually wrong (and misleading for billing).
+const POST_TRAVEL_LOCKED_STATES: BookingStatus[] = ['CANCELLED', 'PENDING_CANCELLATION']
 
 /**
  * True once the whole departure day has passed in the viewer's local calendar.
