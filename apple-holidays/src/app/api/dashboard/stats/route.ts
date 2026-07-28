@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
+import { tripStateWhere, TRIP_COMPLETED, TRIP_PENDING_REVIEW } from '@/lib/trip-state'
 import { addDays } from 'date-fns'
 import type { UserRole } from '@prisma/client'
 
@@ -55,6 +56,8 @@ export async function GET(req: NextRequest) {
     todayFlightsCount,
     todayArrivalsBookings,
     todayFlightsList,
+    tripPendingReview,
+    tripCompleted,
   ] = await Promise.all([
     prisma.booking.count({ where: countryWhere }),
     prisma.booking.count({
@@ -108,10 +111,17 @@ export async function GET(req: NextRequest) {
       orderBy: { depTime: 'asc' },
       take: 10,
     }),
+    // Derived post-travel buckets — see src/lib/trip-state.ts
+    prisma.booking.count({ where: { ...countryWhere, ...tripStateWhere(TRIP_PENDING_REVIEW, now) } }),
+    prisma.booking.count({ where: { ...countryWhere, ...tripStateWhere(TRIP_COMPLETED, now) } }),
   ])
 
   const byStatus: Record<string, number> = {}
   byStatusRaw.forEach(s => { byStatus[s.status] = s._count._all })
+  // Derived trip states live alongside the real statuses so the dashboard
+  // pipeline widget can read them from the same map.
+  byStatus[TRIP_PENDING_REVIEW] = tripPendingReview
+  byStatus[TRIP_COMPLETED] = tripCompleted
 
   // Profit calculation scoped to filtered bookings
   const filteredBookings = await prisma.booking.findMany({
