@@ -25,6 +25,7 @@ import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
+import SectionNav from '@/components/bookings/section-nav'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import DriverLogPanel from '@/components/bookings/driver-log-panel'
@@ -1287,7 +1288,10 @@ Wishing you a wonderful trip! ✈️
           </div>
         )}
 
+        <SectionNav />
+
         {/* Lifecycle + status */}
+        <section data-nav="Overview & Status" data-nav-icon="overview">
         <Card className="p-6">
           <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
             <div>
@@ -1633,8 +1637,10 @@ Wishing you a wonderful trip! ✈️
             agendaItems={(booking.tourAgenda as any)?.items ?? []}
           />
         </Card>
+        </section>
 
         {/* TC Confirmation Details — always shown */}
+        <section data-nav="Tour Confirmation" data-nav-icon="shield">
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-4">
             <Shield className="w-4 h-4 text-brand-400" />
@@ -1877,9 +1883,11 @@ Wishing you a wonderful trip! ✈️
             </div>
           </div>
         </Card>
+        </section>
 
         {/* Customer Feedback — manual rating/comment saved by the TE team */}
         {customerFeedback && (
+          <section data-nav="Customer Feedback" data-nav-icon="star">
           <Card>
             <CardHeader
               action={
@@ -1927,34 +1935,43 @@ Wishing you a wonderful trip! ✈️
               </p>
             </CardBody>
           </Card>
+          </section>
         )}
 
         {/* QC Panel — visible to operations/TE/admin */}
         {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="Quality Control" data-nav-icon="checklist">
           <BookingQCPanel
             booking={booking}
             onAutoSend={handleQCAutoSend}
             autoSending={qcAutoSending}
             daysUntilTrip={daysUntil}
           />
+          </section>
         )}
 
         {/* AI Voice Calls — Traveller Experience panel */}
         {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="AI Voice Calls" data-nav-icon="phone">
           <TravellerExperiencePanel
             bookingRef={ref}
             booking={booking}
           />
+          </section>
         )}
 
         {/* AI Call Transcripts — DB-backed reconfirmation / on-tour / post-tour */}
         {['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="Call Transcripts" data-nav-icon="transcript">
           <BookingCallTranscripts bookingRef={ref} />
+          </section>
         )}
 
         {/* Customer WhatsApp — manual daily briefings + feedback form */}
         {['TE_USER', 'GT_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="Customer WhatsApp" data-nav-icon="whatsapp">
           <CustomerWhatsappPanel bookingRef={ref} />
+          </section>
         )}
 
 
@@ -1974,7 +1991,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* Three-column detail grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div data-nav="Passengers · Flights · Hotels" data-nav-icon="plane" className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
           {/* Passengers + Meal Preferences */}
           <Card>
@@ -2237,7 +2254,7 @@ Wishing you a wonderful trip! ✈️
 
         {/* Contact Information — Agent & Tourist */}
         {canViewClientDetails && (
-          <div className="space-y-3">
+          <div data-nav="Contact Information" data-nav-icon="contact" className="space-y-3">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
 
               {/* Agent Contact */}
@@ -2456,6 +2473,7 @@ Wishing you a wonderful trip! ✈️
 
         {/* Emergency Contacts (visible to staff, not clients) */}
         {canViewClientDetails && emergencyContacts.length > 0 && (
+          <section data-nav="Emergency Contacts" data-nav-icon="emergency">
           <Card>
             <CardHeader>
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -2481,10 +2499,12 @@ Wishing you a wonderful trip! ✈️
               </div>
             </CardBody>
           </Card>
+          </section>
         )}
 
         {/* Itinerary */}
         {itinerary.length > 0 && (
+          <section data-nav="Itinerary" data-nav-icon="itinerary">
           <Card>
             <CardHeader><h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
               <FileText className="w-4 h-4 text-slate-400" /> Itinerary ({itinerary.length} days)
@@ -2510,12 +2530,14 @@ Wishing you a wonderful trip! ✈️
               </div>
             </CardBody>
           </Card>
+          </section>
         )}
 
         {/* Package & Notes sections — show if any are populated */}
         {(booking.valueAddedServices || booking.packageIncludes || booking.packageExcludes ||
           booking.importantNotes || booking.tips || booking.otherNote || booking.clientRequest ||
           booking.terms || booking.exclusions || booking.policyNotes) && (
+          <section data-nav="Package & Notes" data-nav-icon="notes">
           <Card>
             <CardHeader>
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -2542,10 +2564,12 @@ Wishing you a wonderful trip! ✈️
               ))}
             </CardBody>
           </Card>
+          </section>
         )}
 
         {/* P&L Summary (if available + permitted) */}
         {pnl && (
+          <section data-nav="P&L Summary" data-nav-icon="pnl">
           <Card>
             <CardHeader
               action={
@@ -2577,20 +2601,26 @@ Wishing you a wonderful trip! ✈️
               </div>
             </CardBody>
           </Card>
+          </section>
         )}
 
         {/* Accounts PNL (Reetha) — auto-linked or manually linked external record */}
         {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="Accounts PNL" data-nav-icon="accounts">
           <ExternalPnlPanel bookingRef={ref} role={role} />
+          </section>
         )}
 
         {/* Driver Advance Sheet (Sri Lanka) — tour & fuel advances derived from the Accounts PNL */}
         {booking.operationCountry === 'SRILANKA'
           && ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="Driver Advances" data-nav-icon="driver">
           <DriverLogPanel bookingRef={ref} role={role} />
+          </section>
         )}
 
         {/* Status history */}
+        <section data-nav="Activity Log" data-nav-icon="history">
         <Card>
           <CardHeader><h3 className="text-sm font-semibold text-slate-900">Activity Log</h3></CardHeader>
           <CardBody className="p-0">
@@ -2611,6 +2641,7 @@ Wishing you a wonderful trip! ✈️
             </div>
           </CardBody>
         </Card>
+        </section>
       </div>
 
       {/* OneDrive folder picker */}
