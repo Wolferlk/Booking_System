@@ -166,6 +166,72 @@ export const STATUS_COLORS: Record<BookingStatus, string> = {
   AMENDED: 'bg-amber-100 text-amber-700',
 }
 
+// ─── Post-travel derived status (display only) ────────────────────────────
+// Once the departure date has passed the trip itself is over, even if the
+// operational checklist was never walked through. From that point the badge
+// reflects reality: the trip is complete and the only thing still outstanding
+// is the guest's feedback form.
+//
+// This is a DISPLAY layer only — the stored BookingStatus is never changed, so
+// every transition, RBAC gate and report keeps working off the real status.
+
+export const POST_TRAVEL_PENDING_REVIEW_LABEL = 'Trip Completed & Pending Customer Review'
+export const POST_TRAVEL_COMPLETED_LABEL = 'Trip Completed'
+
+// Statuses whose meaning must survive the trip window — a draft or a
+// cancellation is never re-labelled as a completed trip.
+const POST_TRAVEL_LOCKED_STATES: BookingStatus[] = ['DRAFT', 'CANCELLED', 'PENDING_CANCELLATION']
+
+/**
+ * True once the whole departure day has passed in the viewer's local calendar.
+ * A booking departing 06 Aug only flips on 07 Aug — never during the last day.
+ */
+export function hasTravelEnded(
+  departureDate: Date | string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (!departureDate) return false
+  const d = departureDate instanceof Date ? departureDate : new Date(departureDate)
+  if (Number.isNaN(d.getTime())) return false
+  const endOfTravelDay = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)
+  return now.getTime() > endOfTravelDay.getTime()
+}
+
+export type DisplayStatus = {
+  label: string
+  color: string
+  /** true when the label came from the post-travel rule rather than the stored status */
+  derived: boolean
+}
+
+/**
+ * The label + colour a booking's status badge should show.
+ *
+ * After the travel dates are over:
+ *   - guest feedback filled (or already COMPLETED) → "Trip Completed"
+ *   - otherwise                                    → "Trip Completed & Pending Customer Review"
+ *
+ * Before the trip ends — or when no departure date is supplied — the stored
+ * status is shown unchanged.
+ */
+export function getDisplayStatus(
+  status: BookingStatus,
+  departureDate?: Date | string | null,
+  hasCustomerReview = false,
+  now: Date = new Date(),
+): DisplayStatus {
+  if (!POST_TRAVEL_LOCKED_STATES.includes(status) && hasTravelEnded(departureDate, now)) {
+    return hasCustomerReview || status === 'COMPLETED'
+      ? { label: POST_TRAVEL_COMPLETED_LABEL, color: 'bg-gray-100 text-gray-600', derived: true }
+      : { label: POST_TRAVEL_PENDING_REVIEW_LABEL, color: 'bg-amber-100 text-amber-700', derived: true }
+  }
+  return {
+    label: STATUS_LABELS[status] ?? String(status),
+    color: STATUS_COLORS[status] ?? 'bg-gray-100 text-gray-600',
+    derived: false,
+  }
+}
+
 export function getAvailableTransitions(
   currentStatus: BookingStatus,
   role: UserRole,
