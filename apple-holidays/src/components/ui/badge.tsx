@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { STATUS_COLORS, STATUS_LABELS } from '@/lib/state-machine'
+import { STATUS_LABELS, getDisplayStatus } from '@/lib/state-machine'
 import type { BookingStatus } from '@prisma/client'
 
 type Color = 'green' | 'blue' | 'yellow' | 'red' | 'purple' | 'gray' | 'orange' | 'teal' | 'indigo' | 'amber'
@@ -41,17 +41,36 @@ export function Badge({ children, color = 'gray', className, dot }: BadgeProps) 
   )
 }
 
-export function StatusBadge({ status, className }: { status: BookingStatus, className?: string }) {
+/**
+ * Status pill. Pass `departureDate` (and `hasCustomerReview` when known) to opt
+ * the badge into the post-travel rule: once the trip is over it reads
+ * "Trip Completed & Pending Customer Review", and "Trip Completed" after the
+ * guest feedback form is filled. Without `departureDate` the stored status is
+ * rendered exactly as before.
+ */
+export function StatusBadge({
+  status,
+  className,
+  departureDate,
+  hasCustomerReview,
+}: {
+  status: BookingStatus
+  className?: string
+  departureDate?: Date | string | null
+  hasCustomerReview?: boolean
+}) {
+  const view = getDisplayStatus(status, departureDate, hasCustomerReview ?? false)
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold',
-        STATUS_COLORS[status],
-        className 
+        view.color,
+        className
       )}
+      title={view.derived ? `Workflow status: ${STATUS_LABELS[status] ?? status}` : undefined}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {STATUS_LABELS[status]}
+      {view.label}
     </span>
   )
 }

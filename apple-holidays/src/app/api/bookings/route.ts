@@ -200,6 +200,8 @@ export async function GET(req: NextRequest) {
     createdBy: { select: { id: true, name: true, role: true } },
     _count: { select: { changeRequests: true } },
     pnl: { select: { id: true } },
+    // Drives the post-travel status badge ("Trip Completed" vs "…Pending Customer Review")
+    guestFeedback: { select: { submittedAt: true } },
   }
 
   // When deep-searching, pull back extra context fields so the UI can show snippets

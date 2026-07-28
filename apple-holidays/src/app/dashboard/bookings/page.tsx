@@ -72,6 +72,7 @@ interface Booking {
   createdBy: { name: string; role: string }
   _count: { changeRequests: number }
   pnl: { id: string } | null
+  guestFeedback: { submittedAt: string } | null
   tourAgenda: {
     id: string
     items?: { location: string; fromPoint: string | null; toPoint: string | null; details: string | null }[]
@@ -1097,7 +1098,14 @@ function BookingsPageInner() {
 
                         {/* Status — hidden during deep search */}
                         {!contentSearch && (
-                          <td><StatusBadge className="rounded-none" status={b.status} /></td>
+                          <td>
+                            <StatusBadge
+                              className="rounded-none"
+                              status={b.status}
+                              departureDate={b.departureDate}
+                              hasCustomerReview={Boolean(b.guestFeedback)}
+                            />
+                          </td>
                         )}
 
                         {/* Created */}

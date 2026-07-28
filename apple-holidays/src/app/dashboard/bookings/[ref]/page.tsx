@@ -416,6 +416,8 @@ export default function BookingDetailPage() {
   const isPendingCancel = status === 'PENDING_CANCELLATION'
   const transitions = getAvailableTransitions(status, role)
   const daysUntil = getDaysUntilTrip(booking.arrivalDate as string)
+  // Guest filled the digital feedback form → the trip counts as fully reviewed
+  const hasGuestFeedback = Boolean(booking.guestFeedback)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const passengers: any[] = booking.passengers ?? []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1352,7 +1354,11 @@ Wishing you a wonderful trip! ✈️
                     <UserCheck className="w-3 h-3" /> Agent: {booking.agentBookingId as string}
                   </span>
                 )}
-                <StatusBadge status={status} />
+                <StatusBadge
+                  status={status}
+                  departureDate={booking.departureDate as string}
+                  hasCustomerReview={hasGuestFeedback}
+                />
                 {booking.operationCountry && (
                   <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
                     booking.operationCountry === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-200' :
