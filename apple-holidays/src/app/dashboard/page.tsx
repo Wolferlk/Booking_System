@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import {
   FileText, AlertCircle, CreditCard, TrendingUp,
   Globe, Loader2, ArrowRight, Lock,
-  Car, Ticket, ShieldCheck, Star, MessageSquare,
+  Car, ShieldCheck, Star, MessageSquare,
   Plane, MapPin, CalendarCheck, Phone, Bot, Building2,
   PhoneCall, Activity, Smile, Frown, Meh,
   ChevronRight, UserCheck, BarChart2,
@@ -18,6 +18,7 @@ import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import { CountryFlag } from '@/components/ui/country-flag'
+import { TRIP_COMPLETED, TRIP_PENDING_REVIEW, type TripState } from '@/lib/trip-state'
 
 // ─── Country Meta ──────────────────────────────────────────────────────────────
 const COUNTRY_META: Record<string, {
@@ -496,8 +497,11 @@ function RecentBookingsCard({
 }
 
 // ─── Bookings by Status ────────────────────────────────────────────────────────
+// Rows are keyed by either a real BookingStatus or one of the derived
+// post-travel trip states — both are counted into `byStatus` by the stats API
+// and both are accepted by /dashboard/bookings?status=…
 const PIPELINE_STATUSES: {
-  status: BookingStatus
+  status: BookingStatus | TripState
   label: string
   icon: React.ReactNode
   bar: string
@@ -513,22 +517,6 @@ const PIPELINE_STATUSES: {
     dot:     'bg-amber-400',
   },
   {
-    status:  'DRIVER_ALLOCATED',
-    label:   'Driver Allocated',
-    icon:    <Car className="w-3.5 h-3.5" />,
-    bar:     'bg-sky-500',
-    badge:   'bg-sky-100 text-sky-800 border border-sky-200',
-    dot:     'bg-sky-500',
-  },
-  {
-    status:  'TICKETS_ISSUED',
-    label:   'Tickets Activated',
-    icon:    <Ticket className="w-3.5 h-3.5" />,
-    bar:     'bg-fuchsia-500',
-    badge:   'bg-fuchsia-100 text-fuchsia-800 border border-fuchsia-200',
-    dot:     'bg-fuchsia-500',
-  },
-  {
     status:  'QC1_PASS',
     label:   'QC1 Pass',
     icon:    <ShieldCheck className="w-3.5 h-3.5" />,
@@ -537,16 +525,24 @@ const PIPELINE_STATUSES: {
     dot:     'bg-violet-500',
   },
   {
-    status:  'FEEDBACK_DONE',
-    label:   'Feedback',
-    icon:    <MessageSquare className="w-3.5 h-3.5" />,
-    bar:     'bg-lime-500',
-    badge:   'bg-lime-100 text-lime-800 border border-lime-200',
-    dot:     'bg-lime-500',
+    status:  'QC2_PASS',
+    label:   'QC2 Pass',
+    icon:    <ShieldCheck className="w-3.5 h-3.5" />,
+    bar:     'bg-pink-500',
+    badge:   'bg-pink-100 text-pink-800 border border-pink-200',
+    dot:     'bg-pink-500',
   },
   {
-    status:  'COMPLETED',
-    label:   'Completed',
+    status:  TRIP_PENDING_REVIEW,
+    label:   'Trip Completed & Pending Customer Review',
+    icon:    <MessageSquare className="w-3.5 h-3.5" />,
+    bar:     'bg-amber-500',
+    badge:   'bg-amber-100 text-amber-800 border border-amber-200',
+    dot:     'bg-amber-500',
+  },
+  {
+    status:  TRIP_COMPLETED,
+    label:   'Trip Completed',
     icon:    <Star className="w-3.5 h-3.5" />,
     bar:     'bg-emerald-500',
     badge:   'bg-emerald-100 text-emerald-800 border border-emerald-200',
@@ -582,11 +578,11 @@ function BookingsByStatus({ byStatus, totalBookings }: { byStatus: Record<string
               }`}
             >
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${p.dot}`} />
-              <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ${p.badge} flex-shrink-0`}>
+              <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full ${p.badge} flex-shrink-0 whitespace-nowrap`}>
                 {p.icon}{p.label}
               </span>
 
-              <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+              <div className="flex-1 min-w-0 bg-slate-100 rounded-full h-1.5 overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${count > 0 ? p.bar : 'bg-slate-200'}`}
                   style={{ width: count > 0 ? `${Math.max(pct, 2)}%` : '0%' }}

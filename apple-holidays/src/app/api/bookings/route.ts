@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope } from '@/lib/country-detection'
+import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -79,7 +80,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const statuses = status ? status.split(',').filter(Boolean) : []
+  // The status param accepts the two derived post-travel states alongside real
+  // BookingStatus values — they are split out and translated into date/feedback
+  // conditions, since they exist nowhere in the status column.
+  const requestedStates = status ? status.split(',').filter(Boolean) : []
+  const tripStates = requestedStates.filter(isTripState)
+  const statuses = requestedStates.filter(s => !isTripState(s))
+
+  if (tripStates.length > 0) {
+    const now = new Date()
+    const fragments = tripStates.map(s => tripStateWhere(s, now))
+    andClauses.push(fragments.length === 1 ? fragments[0] : { OR: fragments })
+  }
+
   if (statuses.length > 0) {
     andClauses.push(statuses.length === 1 ? { status: statuses[0] } : { status: { in: statuses } })
   }

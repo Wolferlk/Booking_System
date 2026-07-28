@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
+import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@prisma/client'
 
@@ -52,8 +53,20 @@ export async function GET(req: NextRequest) {
   }
 
   if (status) {
-    const statuses = status.split(',').filter(Boolean)
-    andClauses.push(statuses.length === 1 ? { status: statuses[0] } : { status: { in: statuses } })
+    // Derived post-travel states are not stored in the status column — they are
+    // translated to date/feedback conditions (see src/lib/trip-state.ts).
+    const requestedStates = status.split(',').filter(Boolean)
+    const tripStates = requestedStates.filter(isTripState)
+    const statuses = requestedStates.filter(s => !isTripState(s))
+
+    if (tripStates.length > 0) {
+      const now = new Date()
+      const fragments = tripStates.map(s => tripStateWhere(s, now))
+      andClauses.push(fragments.length === 1 ? fragments[0] : { OR: fragments })
+    }
+    if (statuses.length > 0) {
+      andClauses.push(statuses.length === 1 ? { status: statuses[0] } : { status: { in: statuses } })
+    }
   }
 
   if (search) {

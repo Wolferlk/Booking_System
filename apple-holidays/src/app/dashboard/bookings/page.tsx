@@ -18,11 +18,17 @@ import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Modal from '@/components/ui/modal'
 import { STATUS_LABELS } from '@/lib/state-machine'
+import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
 import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { BookingStatus } from '@prisma/client'
 
-const STATUSES = Object.keys(STATUS_LABELS) as BookingStatus[]
+// Real statuses plus the two derived post-travel states, which the bookings API
+// translates into departure-date / feedback conditions.
+const STATUSES: { value: string; label: string }[] = [
+  ...TRIP_STATES.map(s => ({ value: s as string, label: TRIP_STATE_LABELS[s] })),
+  ...(Object.keys(STATUS_LABELS) as BookingStatus[]).map(s => ({ value: s as string, label: STATUS_LABELS[s] })),
+]
 
 type SortField = 'arrivalDate' | 'departureDate' | 'createdAt' | 'updatedAt'
 type SortDir   = 'asc' | 'desc'
@@ -642,7 +648,7 @@ function BookingsPageInner() {
             >
               <option value="">All statuses</option>
               {STATUSES.map(s => (
-                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                <option key={s.value} value={s.value}>{s.label}</option>
               ))}
             </select>
           </div>
