@@ -432,6 +432,28 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const statusEvents: any[] = booking.statusEvents ?? []
   const pnl = booking.pnl ?? null
+  // Who clicked "Confirm Booking" / "Mark Operations Ready" — read off the status
+  // trail (ordered newest first, so .find() returns the latest transition).
+  const confirmedByEvent  = statusEvents.find(ev => ev.toState === 'BT_CONFIRMED')
+  const opsReadyByEvent   = statusEvents.find(ev => ev.toState === 'OPERATIONS_READY')
+  const bookingConfirmedBy = (confirmedByEvent?.actor?.name as string | undefined) || (booking.checkedBy as string | undefined) || null
+  const operationReadyBy   = (opsReadyByEvent?.actor?.name as string | undefined) || (booking.reconfirmBy as string | undefined) || null
+  // Allocated drivers — unique names across all agenda assignments
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allocatedDrivers: string[] = Array.from(new Set(
+    (((booking.tourAgenda as any)?.items ?? []) as any[])
+      .map(item => item?.assignment?.driverName as string | undefined)
+      .filter((n): n is string => !!n && n.trim().length > 0)
+      .map(n => n.trim()),
+  ))
+  // Guest contact number — customer phone first, then WhatsApp, then any passenger contact
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const guestContactNumber: string | null =
+    (booking.contactPhone as string | undefined) ||
+    (booking.contactWhatsapp as string | undefined) ||
+    (passengers.find((p: any) => p.contact)?.contact as string | undefined) ||
+    null
+  const hasPnlData = !!(pnl && ((pnl as any).lineItems?.length ?? 0) > 0) || extPnlLinked
   // Manual customer feedback recorded by the TE team on Complete Trip / Get Feedback
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const customerFeedback: any = booking.customerFeedback ?? null
@@ -1812,34 +1834,36 @@ Wishing you a wonderful trip! ✈️
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Checked By</p>
-              {booking.checkedBy
-                ? <p className="text-sm text-slate-700">{booking.checkedBy as string}</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Booking Confirmed By</p>
+              {bookingConfirmedBy
+                ? <p className="text-sm text-slate-700">{bookingConfirmedBy}</p>
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Reconfirm By</p>
-              {booking.reconfirmBy
-                ? <p className="text-sm text-slate-700">{booking.reconfirmBy as string}</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Operation Ready By</p>
+              {operationReadyBy
+                ? <p className="text-sm text-slate-700">{operationReadyBy}</p>
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Guests&apos; Language Preference</p>
-              {booking.languagePreference
-                ? <p className="text-sm text-slate-700">{booking.languagePreference as string}</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Guest Contact Number</p>
+              {guestContactNumber
+                ? <a href={`tel:${guestContactNumber}`} className="text-sm font-mono text-brand-600 hover:underline">{guestContactNumber}</a>
                 : <p className="text-sm text-slate-300">—</p>}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Special Occasions</p>
-              {booking.specialOccasions
-                ? <p className="text-sm text-slate-700">{booking.specialOccasions as string}</p>
-                : <p className="text-sm text-slate-300">—</p>}
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">PNL</p>
+              {hasPnlData
+                ? <p className="text-sm font-semibold text-green-600">Available</p>
+                : <p className="text-sm font-semibold text-slate-400">Not available</p>}
             </div>
             <div className="col-span-2 md:col-span-3">
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Chauffeur / Tour Guide Contact</p>
-              {booking.chauffeurContact
-                ? <p className="text-sm text-slate-700 whitespace-pre-line">{booking.chauffeurContact as string}</p>
-                : <p className="text-sm text-slate-300">—</p>}
+              {allocatedDrivers.length > 0
+                ? <p className="text-sm text-slate-700">{allocatedDrivers.join(', ')}</p>
+                : booking.chauffeurContact
+                  ? <p className="text-sm text-slate-700 whitespace-pre-line">{booking.chauffeurContact as string}</p>
+                  : <p className="text-sm text-slate-300">—</p>}
             </div>
           </div>
 
