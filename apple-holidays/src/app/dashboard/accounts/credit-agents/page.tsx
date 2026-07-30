@@ -284,7 +284,7 @@ export default function CreditAgentsPage() {
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center gap-1 flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
+                    {/* <div className="flex items-center gap-1 flex-shrink-0 ml-2" onClick={e => e.stopPropagation()}>
                       {canEdit && (
                         <div className="relative">
                           <button
@@ -308,7 +308,7 @@ export default function CreditAgentsPage() {
                         </div>
                       )}
                       <ChevronRight className="w-4 h-4 text-slate-300" />
-                    </div>
+                    </div> */}
                   </div>
 
                   {/* Mobile stats */}
