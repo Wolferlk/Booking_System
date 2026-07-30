@@ -10,7 +10,7 @@ import {
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
-  ClipboardList, Bus, Ticket, Hash, UserCheck,
+  ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import Modal from '@/components/ui/modal'
 import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import { formatDate } from '@/lib/utils'
+import { resolveIsLeisure } from '@/lib/leisure-day'
 import type { UserRole } from '@prisma/client'
 
 /**
@@ -103,6 +104,8 @@ interface AgendaItem {
   timeFrom: string
   timeTo: string
   serviceType: string
+  /** Free day — no driver is allocated and the allocation controls are hidden. */
+  isLeisure: boolean
   assignment?: {
     driverId?: string | null
     vendorId?: string | null
@@ -319,14 +322,22 @@ export default function AgendaPage() {
             id: string; date: string; location: string; fromPoint: string
             toPoint: string; details: string; mealPlan: string
             meetingTime: string; timeFrom: string; timeTo: string
-            serviceType: string; assignment: AgendaItem['assignment']
+            serviceType: string; isLeisure: boolean | null
+            assignment: AgendaItem['assignment']
           }>
+          const serviceType = i.serviceType ?? 'PVT_TRANSFER'
           return {
             id: i.id, date: i.date?.slice(0, 10) ?? '', location: i.location ?? '',
             fromPoint: i.fromPoint ?? '', toPoint: i.toPoint ?? '',
             details: i.details ?? '', mealPlan: normalizeMealPlan(i.mealPlan),
             meetingTime: i.meetingTime ?? '', timeFrom: i.timeFrom ?? '',
-            timeTo: i.timeTo ?? '', serviceType: i.serviceType ?? 'PVT_TRANSFER',
+            timeTo: i.timeTo ?? '', serviceType,
+            // Agendas saved before the isLeisure column existed come back null —
+            // fall back to text detection so they still read as leisure days.
+            isLeisure: resolveIsLeisure({
+              isLeisure: i.isLeisure, serviceType,
+              location: i.location, toPoint: i.toPoint, details: i.details,
+            }),
             assignment: i.assignment,
           }
         }))
@@ -418,14 +429,18 @@ export default function AgendaPage() {
   }, [loading])
 
   function normaliseItems(raw: AgendaItem[]): AgendaItem[] {
-    return raw.map(item => ({
-      ...item,
-      date: (item.date as string)?.slice(0, 10) ?? '',
-      fromPoint: item.fromPoint ?? '', toPoint: item.toPoint ?? '',
-      details: item.details ?? '', mealPlan: normalizeMealPlan(item.mealPlan),
-      meetingTime: item.meetingTime ?? '', timeFrom: (item as any).timeFrom ?? '',
-      timeTo: (item as any).timeTo ?? '', serviceType: item.serviceType ?? 'PVT_TRANSFER',
-    }))
+    return raw.map(item => {
+      const serviceType = item.serviceType ?? 'PVT_TRANSFER'
+      return {
+        ...item,
+        date: (item.date as string)?.slice(0, 10) ?? '',
+        fromPoint: item.fromPoint ?? '', toPoint: item.toPoint ?? '',
+        details: item.details ?? '', mealPlan: normalizeMealPlan(item.mealPlan),
+        meetingTime: item.meetingTime ?? '', timeFrom: (item as any).timeFrom ?? '',
+        timeTo: (item as any).timeTo ?? '', serviceType,
+        isLeisure: resolveIsLeisure({ ...item, serviceType }),
+      }
+    })
   }
 
   async function persistItems(itemsToSave: AgendaItem[], silent = false) {
@@ -568,8 +583,15 @@ export default function AgendaPage() {
       driverName: driver.name, driverPhone: driver.phone,
       vehicleType: driver.vehicle?.type ?? '', vehiclePlate: driver.vehicle?.plateNo ?? '',
     }
-    setItems(is => is.map(x => ({ ...x, assignment })))
-    toast.success(`${driver.name} set as driver for all ${items.length} items — save to confirm`)
+    // Leisure days are skipped — they carry no driver by definition.
+    const target = items.filter(x => !x.isLeisure).length
+    setItems(is => is.map(x => x.isLeisure ? x : { ...x, assignment }))
+    const skipped = items.length - target
+    toast.success(
+      `${driver.name} set as driver for ${target} item${target !== 1 ? 's' : ''}`
+      + (skipped > 0 ? ` (${skipped} leisure day${skipped !== 1 ? 's' : ''} skipped)` : '')
+      + ' — save to confirm',
+    )
     setAssigningIdx(null)
   }
 
@@ -729,6 +751,46 @@ export default function AgendaPage() {
     setDriverModalTarget(assignment ?? {})
   }
 
+  /**
+   * Flip a movement between "leisure day" (free day — no driver needed) and a
+   * normal serviced movement. Turning it on releases any driver already
+   * allocated; turning it off puts the allocation controls back.
+   */
+  async function toggleLeisureDay(idx: number) {
+    const item = items[idx]
+    if (!item) return
+    const next     = !item.isLeisure
+    const previous = { isLeisure: item.isLeisure, assignment: item.assignment }
+
+    setItems(is => is.map((x, j) => j === idx
+      ? { ...x, isLeisure: next, assignment: next ? null : x.assignment }
+      : x))
+    if (next && assigningIdx === idx) setAssigningIdx(null)
+
+    // Rows that have never been saved have no server id yet — the flag rides
+    // along with the next full Save instead.
+    if (!item.id) {
+      toast.success(next ? 'Marked as leisure day — save to confirm' : 'Leisure day removed — save to confirm')
+      return
+    }
+
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/agenda`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId: item.id, isLeisure: next }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(next
+        ? 'Marked as leisure day — no driver required'
+        : 'Leisure day removed — a driver can now be assigned')
+      if (!next && item.date) loadDriversForDate(item.date)
+    } catch (err: unknown) {
+      setItems(is => is.map((x, j) => j === idx ? { ...x, ...previous } : x))
+      toast.error(err instanceof Error ? err.message : 'Failed to update leisure day')
+    }
+  }
+
   // Reorder a movement item from one position to another.
   // Each item keeps its OWN date — only the display order changes.
   function moveItem(from: number, to: number) {
@@ -755,6 +817,7 @@ export default function AgendaPage() {
       next.splice(index, 0, {
         date: dateHint, location: '', fromPoint: above?.toPoint || '', toPoint: '',
         details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: svcHint,
+        isLeisure: false,
       })
       return next
     })
@@ -1364,7 +1427,12 @@ export default function AgendaPage() {
 
                       {canAssign && (
                         <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
-                          {(item.assignment?.driverName || item.assignment?.vendorId) ? (
+                          {item.isLeisure ? (
+                            <span className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-700 font-medium">
+                              <Palmtree className="w-3.5 h-3.5 text-amber-500" />
+                              Leisure day — no driver required
+                            </span>
+                          ) : (item.assignment?.driverName || item.assignment?.vendorId) ? (
                             item.assignment.vendorId ? (
                               <div className="flex items-center gap-2 text-xs bg-violet-50 border border-violet-100 rounded-lg px-3 py-2">
                                 <Building2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
@@ -1417,10 +1485,29 @@ export default function AgendaPage() {
                           ) : (
                             <span className="text-xs text-slate-400 italic">No driver assigned</span>
                           )}
-                          <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
-                            onClick={() => openAssignPanel(i)}>
-                            {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
-                          </Button>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => toggleLeisureDay(i)}
+                              title={item.isLeisure
+                                ? 'This day is marked as a leisure day. Click to make it a normal movement that needs a driver.'
+                                : 'Mark this as a free / at-leisure day — no driver will be allocated.'}
+                              className={`btn btn-sm flex items-center gap-1.5 ${
+                                item.isLeisure
+                                  ? 'bg-amber-500 text-white border border-amber-600 hover:bg-amber-600'
+                                  : 'btn-secondary'
+                              }`}
+                            >
+                              <Palmtree className="w-3.5 h-3.5" />
+                              {item.isLeisure ? 'Leisure Day' : "It's Leisure Day"}
+                            </button>
+                            {!item.isLeisure && (
+                              <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
+                                onClick={() => openAssignPanel(i)}>
+                                {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </>
@@ -1439,6 +1526,12 @@ export default function AgendaPage() {
                                 {svcType.label}
                               </span>
                             </Badge>
+                          )}
+                          {item.isLeisure && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                              <Palmtree className="w-3 h-3" />
+                              Leisure Day
+                            </span>
                           )}
                           {/* Only show meal plan badge if it has a value */}
                           {normalizeMealPlan(item.mealPlan) && (
@@ -1482,8 +1575,15 @@ export default function AgendaPage() {
                           </div>
                         )}
 
+                        {item.isLeisure && (
+                          <div className="mt-2 flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 w-fit text-amber-700 font-medium">
+                            <Palmtree className="w-3.5 h-3.5 text-amber-500" />
+                            Leisure day — no driver required
+                          </div>
+                        )}
+
                         {/* Allocated driver — clickable to view full info */}
-                        {(item.assignment?.driverName || item.assignment?.vendorId) && (
+                        {!item.isLeisure && (item.assignment?.driverName || item.assignment?.vendorId) && (
                           item.assignment.vendorId ? (
                             <div className="mt-2 flex items-center gap-2 text-xs bg-violet-50 border border-violet-100 rounded-lg px-3 py-2 w-fit">
                               <Building2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
@@ -1536,10 +1636,29 @@ export default function AgendaPage() {
                         )}
                       </div>
                       {canAssign && (
-                        <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
-                          onClick={() => openAssignPanel(i)}>
-                          {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
-                        </Button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => toggleLeisureDay(i)}
+                            title={item.isLeisure
+                              ? 'This day is marked as a leisure day. Click to make it a normal movement that needs a driver.'
+                              : 'Mark this as a free / at-leisure day — no driver will be allocated.'}
+                            className={`btn btn-sm flex items-center gap-1.5 ${
+                              item.isLeisure
+                                ? 'bg-amber-500 text-white border border-amber-600 hover:bg-amber-600'
+                                : 'btn-secondary'
+                            }`}
+                          >
+                            <Palmtree className="w-3.5 h-3.5" />
+                            {item.isLeisure ? 'Leisure Day' : "It's Leisure Day"}
+                          </button>
+                          {!item.isLeisure && (
+                            <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
+                              onClick={() => openAssignPanel(i)}>
+                              {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
@@ -1556,6 +1675,7 @@ export default function AgendaPage() {
             onClick={() => setItems(is => [...is, {
               date: '', location: '', fromPoint: '', toPoint: '',
               details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: 'PVT_TRANSFER',
+              isLeisure: false,
             }])}>
             Add Movement Item
           </Button>

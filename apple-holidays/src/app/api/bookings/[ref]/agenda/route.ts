@@ -108,6 +108,7 @@ export async function POST(
             timeFrom: item.timeFrom as string | undefined,
             timeTo: item.timeTo as string | undefined,
             serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
+            isLeisure: typeof item.isLeisure === 'boolean' ? item.isLeisure : null,
             sortOrder: index,
           },
         }),
@@ -130,6 +131,10 @@ export async function POST(
 
   await Promise.all(
     items.map((item: Record<string, unknown>, index: number) => {
+      // Leisure days carry no driver — the row above was recreated from scratch,
+      // so simply not writing an assignment leaves it unallocated.
+      if (item.isLeisure === true) return Promise.resolve()
+
       const assignment = item.assignment as
         | {
             driverId?: string | null
@@ -195,6 +200,7 @@ export async function POST(
     }>()
 
     for (const raw of items as Record<string, unknown>[]) {
+      if (raw.isLeisure === true) continue
       const a = raw.assignment as { driverName?: string | null; driverPhone?: string | null; vehicleType?: string | null; vehiclePlate?: string | null; driverRate?: number | null; rateCurrency?: string | null } | null | undefined
       if (!a?.driverPhone || !a?.driverName) continue
       const phone = normalisePhone(a.driverPhone)
@@ -360,9 +366,16 @@ export async function PUT(
     return buildApiSuccess(updated, 'Assignment saved')
   }
 
+  // Marking a movement as a leisure day also releases any driver already
+  // allocated to it — a free day must never hold a vehicle booking.
+  if (body.isLeisure === true) {
+    await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
+  }
+
   const updated = await prisma.agendaItem.update({
     where: { id: itemId },
     data: {
+      ...(body.isLeisure !== undefined && { isLeisure: body.isLeisure }),
       ...(body.date && { date: new Date(body.date) }),
       ...(body.location !== undefined && { location: body.location }),
       ...(body.fromPoint !== undefined && { fromPoint: body.fromPoint }),
