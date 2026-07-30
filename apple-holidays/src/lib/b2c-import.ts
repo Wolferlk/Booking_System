@@ -32,6 +32,11 @@ export const SETTING_ENABLED       = 'auto_b2c_import_enabled'
 export const SETTING_HOUR          = 'auto_b2c_import_hour'
 export const SETTING_MINUTE        = 'auto_b2c_import_minute'
 export const SETTING_LAST_RUN_DATE = 'auto_b2c_import_last_run_date'
+/** KV log of recent runs, newest first — powers the B2C page's activity feed. */
+export const SETTING_RUN_LOG       = 'auto_b2c_import_runs'
+
+/** How many recent runs to retain in the KV log. */
+const MAX_RUNS = 25
 
 /** Nightly default: 00:30 in `AUTO_BOOKING_TZ`, i.e. just after midnight. */
 const DEFAULT_HOUR = 0
@@ -74,6 +79,11 @@ export async function saveB2cImportSettings(s: B2cImportSettings): Promise<void>
 // ─── Run summary ──────────────────────────────────────────────────────────────
 
 export interface B2cImportSummary {
+  /** Who/what started the run — shown in the activity feed. */
+  trigger?: 'scheduler' | 'cron-http' | 'manual'
+  triggeredBy?: string | null
+  /** True for a preview: everything is computed, nothing is written. */
+  dryRun?: boolean
   mode: 'nightly' | 'backfill'
   bookedFrom: string | null
   upcomingFrom: string
@@ -94,6 +104,15 @@ export interface RunB2cImportOptions {
   /** 'nightly' imports recently-booked orders; 'backfill' sweeps all upcoming. */
   mode?: 'nightly' | 'backfill'
   /**
+   * Compute the full result but write NOTHING. Used by the B2C page's preview so
+   * staff can see exactly what an import would create before committing to it.
+   */
+  dryRun?: boolean
+  trigger?: 'scheduler' | 'cron-http' | 'manual'
+  triggeredBy?: string | null
+  /** Persist the summary to the run log. Off for previews. */
+  log?: boolean
+  /**
    * 'YYYY-MM-DD' inclusive floor on `booked_date`. Nightly only.
    * Defaults to *yesterday* in the scheduler timezone: the job runs just after
    * midnight, so "today's orders" from a user's point of view are the ones placed
@@ -113,7 +132,12 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
   const upcomingFrom = opts.upcomingFrom ?? today
   const bookedFrom = mode === 'nightly' ? (opts.bookedFrom ?? addDays(today, -1)) : null
 
+  const dryRun = opts.dryRun === true
+
   const summary: B2cImportSummary = {
+    trigger: opts.trigger ?? 'manual',
+    triggeredBy: opts.triggeredBy ?? null,
+    dryRun,
     mode, bookedFrom, upcomingFrom,
     candidates: 0, created: [], alreadyImported: [],
     conflicts: [], skipped: [], failed: [],
@@ -122,16 +146,12 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
 
   if (!isB2cConfigured()) {
     summary.failed.push({ orderId: 0, error: 'B2C database is not configured' })
-    summary.finishedAt = new Date().toISOString()
-    return summary
+    return finish(summary, opts)
   }
 
   const headers = await fetchOrderHeaders({ upcomingFrom, bookedFrom, limit: opts.limit })
   summary.candidates = headers.length
-  if (headers.length === 0) {
-    summary.finishedAt = new Date().toISOString()
-    return summary
-  }
+  if (headers.length === 0) return finish(summary, opts)
 
   const orderIds = headers.map((h) => Number(h.order_id))
 
@@ -166,6 +186,21 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
         continue
       }
 
+      // Preview mode: report what *would* happen without writing anything.
+      if (dryRun) {
+        const existing = await prisma.booking.findUnique({
+          where: { bookingRef: result.booking.bookingRef },
+          select: { agent: true },
+        })
+        if (!existing) summary.created.push(result.booking.bookingRef)
+        else if (isB2cBooking(existing.agent)) summary.alreadyImported.push(result.booking.bookingRef)
+        else summary.conflicts.push({
+          bookingRef: result.booking.bookingRef,
+          reason: 'bookingRef already used by a non-B2C booking',
+        })
+        continue
+      }
+
       const outcome = await persistB2cBooking(result.booking, automationUserId)
       if (outcome === 'created') summary.created.push(result.booking.bookingRef)
       else if (outcome === 'exists') summary.alreadyImported.push(result.booking.bookingRef)
@@ -180,8 +215,45 @@ export async function runB2cImport(opts: RunB2cImportOptions = {}): Promise<B2cI
     }
   }
 
+  return finish(summary, opts)
+}
+
+/**
+ * Stamp the finish time and, unless this was a preview, append the summary to the
+ * run log. Logging is best-effort: a failed log write must never fail an import
+ * that already succeeded.
+ */
+async function finish(
+  summary: B2cImportSummary,
+  opts: RunB2cImportOptions,
+): Promise<B2cImportSummary> {
   summary.finishedAt = new Date().toISOString()
+  const shouldLog = opts.log ?? opts.dryRun !== true
+  if (shouldLog) {
+    try {
+      const runs = await getRunLog()
+      await prisma.systemSetting.upsert({
+        where: { key: SETTING_RUN_LOG },
+        update: { value: JSON.stringify([summary, ...runs].slice(0, MAX_RUNS)) },
+        create: { key: SETTING_RUN_LOG, value: JSON.stringify([summary]) },
+      })
+    } catch {
+      /* activity feed is a convenience, never a correctness requirement */
+    }
+  }
   return summary
+}
+
+/** Recent import runs, newest first. Never throws — a bad row reads as empty. */
+export async function getRunLog(): Promise<B2cImportSummary[]> {
+  try {
+    const row = await prisma.systemSetting.findUnique({ where: { key: SETTING_RUN_LOG } })
+    if (!row?.value) return []
+    const parsed = JSON.parse(row.value)
+    return Array.isArray(parsed) ? (parsed as B2cImportSummary[]) : []
+  } catch {
+    return []
+  }
 }
 
 type PersistOutcome = 'created' | 'exists' | 'conflict'

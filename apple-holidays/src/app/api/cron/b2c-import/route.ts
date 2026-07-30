@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
   const today = dateInTz(new Date(), TZ)
 
   if (backfill) {
-    const summary = await runB2cImport({ mode: 'backfill' })
+    const summary = await runB2cImport({ mode: 'backfill', trigger: 'cron-http' })
     console.log(`[B2cImportCron] backfill — ${summary.created.length} created of ${summary.candidates} candidates`)
     return NextResponse.json({ ok: true, started: true, summary })
   }
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
   // Claim the day before the work starts so a retry cannot double-import.
   await setLastRunDate(today)
 
-  const summary = await runB2cImport({ mode: 'nightly', bookedFrom: addDays(today, -1) })
+  const summary = await runB2cImport({ mode: 'nightly', bookedFrom: addDays(today, -1), trigger: 'cron-http' })
   console.log(
     `[B2cImportCron] ${today} — ${summary.created.length} created, ` +
     `${summary.skipped.length} skipped, ${summary.conflicts.length} conflicts, ${summary.failed.length} failed`,

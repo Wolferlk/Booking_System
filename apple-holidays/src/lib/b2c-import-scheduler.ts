@@ -73,7 +73,7 @@ async function fireOnce(reason: string): Promise<boolean> {
   const bookedFrom = addDays(today, -1)
   console.log(`[B2cImportScheduler] ${reason} — importing Aahaas orders booked since ${bookedFrom} (tz ${TZ})`)
 
-  void runB2cImport({ mode: 'nightly', bookedFrom })
+  void runB2cImport({ mode: 'nightly', bookedFrom, trigger: 'scheduler' })
     .then((s) => {
       console.log(
         `[B2cImportScheduler] done — ${s.created.length} created, ` +
