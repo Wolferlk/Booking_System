@@ -5,10 +5,11 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Search, Send, Paperclip, Loader2, MessageCircle,
-  ExternalLink, X, RefreshCw, FileText,
+  ExternalLink, X, RefreshCw, FileText, MessageSquarePlus, LayoutTemplate,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { STATUS_LABELS, STATUS_COLORS } from '@/lib/state-machine'
+import { countryLabel, countryFlag } from '@/lib/country-detection'
 import type { BookingStatus, OperationCountry } from '@prisma/client'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -46,9 +47,36 @@ interface ThreadBooking extends ConversationBooking {
   departureDate: string
 }
 
+interface WaTemplate {
+  name: string
+  language: string
+  status: string
+  category: string | null
+  headerFormat: string | null
+  headerText: string
+  bodyText: string
+  bodyVariableCount: number
+  headerVariableCount: number
+}
+
 const CONV_POLL_MS = 8000
 const THREAD_POLL_MS = 6000
 const AVATAR_COLORS = ['#0a7d4d', '#2563eb', '#7c3aed', '#c8102e', '#b45309', '#0891b2', '#be185d', '#4f46e5']
+
+function countPlaceholders(s: string): number {
+  const matches = s.match(/\{\{\s*\d+\s*\}\}/g)
+  return matches ? new Set(matches).size : 0
+}
+
+// Singapore & Malaysia are one shared ops team (see lib/country-detection.ts) —
+// collapse both (and the legacy combined value) into one group here too, so
+// the country tabs match how the rest of the app already scopes by country.
+const UNASSIGNED = 'UNASSIGNED'
+function countryGroupKey(oc: OperationCountry | null | undefined): string {
+  if (!oc || oc === 'ALL') return UNASSIGNED
+  if (oc === 'SINGAPORE' || oc === 'MALAYSIA' || oc === 'SINGAPORE_MALAYSIA') return 'SINGAPORE_MALAYSIA'
+  return oc
+}
 
 function avatarColor(seed: string) {
   let h = 0
@@ -94,13 +122,39 @@ function WhatsAppInboxInner() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
 
+  const [viewMode, setViewMode] = useState<'all' | 'country'>('all')
+  const [countryFilter, setCountryFilter] = useState<string | null>(null)
+
   const [messages, setMessages] = useState<WaMessage[]>([])
   const [threadBooking, setThreadBooking] = useState<ThreadBooking | null>(null)
   const [threadLoading, setThreadLoading] = useState(false)
+  const [windowOpen, setWindowOpen] = useState<boolean | null>(null)
 
   const [draft, setDraft] = useState('')
   const [attachment, setAttachment] = useState<File | null>(null)
   const [sending, setSending] = useState(false)
+
+  const [newChatOpen, setNewChatOpen] = useState(false)
+  const [newChatPhone, setNewChatPhone] = useState('')
+
+  const [templatesOpen, setTemplatesOpen] = useState(false)
+  const [templatesTab, setTemplatesTab] = useState<'send' | 'new'>('send')
+  const [approvedTemplates, setApprovedTemplates] = useState<WaTemplate[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [selectedTplName, setSelectedTplName] = useState('')
+  const [tplHeaderVals, setTplHeaderVals] = useState<string[]>([])
+  const [tplBodyVals, setTplBodyVals] = useState<string[]>([])
+  const [tplSending, setTplSending] = useState(false)
+
+  const [newTplName, setNewTplName] = useState('')
+  const [newTplCategory, setNewTplCategory] = useState('UTILITY')
+  const [newTplLanguage, setNewTplLanguage] = useState('en')
+  const [newTplHeader, setNewTplHeader] = useState('')
+  const [newTplHeaderVals, setNewTplHeaderVals] = useState<string[]>([])
+  const [newTplBody, setNewTplBody] = useState('')
+  const [newTplBodyVals, setNewTplBodyVals] = useState<string[]>([])
+  const [newTplFooter, setNewTplFooter] = useState('')
+  const [newTplSubmitting, setNewTplSubmitting] = useState(false)
 
   const boxRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -139,6 +193,7 @@ function WhatsAppInboxInner() {
       if (res.success && selectedRef.current === phone) {
         setMessages(res.data.messages)
         setThreadBooking(res.data.booking)
+        setWindowOpen(res.data.windowOpen)
       }
     } catch {
       if (opts.showLoader) toast.error("Couldn't load this conversation")
@@ -151,10 +206,143 @@ function WhatsAppInboxInner() {
     setSelected(phone)
     setMessages([])
     setThreadBooking(null)
+    setWindowOpen(null)
     setDraft('')
     setAttachment(null)
     loadMessages(phone, { showLoader: true })
     setConversations(cs => cs.map(c => (c.phone === phone ? { ...c, unreadCount: 0 } : c)))
+  }
+
+  // New contact: no message row exists for this phone yet, so it won't be in
+  // `conversations` (that list is just a group-by over existing messages) —
+  // opening it is enough; it appears in the list once the first message sends.
+  function startNewChat() {
+    const phone = newChatPhone.replace(/\D/g, '')
+    if (phone.length < 7) { toast.error('Enter a valid WhatsApp number with country code'); return }
+    setNewChatOpen(false)
+    setNewChatPhone('')
+    openConversation(phone)
+  }
+
+  // ── message templates ────────────────────────────────────────────────────
+  async function openTemplatesModal() {
+    setTemplatesOpen(true)
+    setTemplatesTab('send')
+    setTemplatesLoading(true)
+    try {
+      const res = await fetch('/api/whatsapp/templates?status=APPROVED').then(r => r.json())
+      if (res.success) {
+        setApprovedTemplates(res.data)
+        if (res.data[0]) selectTemplate(res.data[0])
+      } else {
+        toast.error(res.error || "Couldn't load templates")
+      }
+    } catch {
+      toast.error("Couldn't load templates")
+    } finally {
+      setTemplatesLoading(false)
+    }
+  }
+
+  function selectTemplate(t: WaTemplate) {
+    setSelectedTplName(t.name)
+    setTplHeaderVals(Array(t.headerVariableCount).fill(''))
+    setTplBodyVals(Array(t.bodyVariableCount).fill(''))
+  }
+
+  const selectedTpl = approvedTemplates.find(t => t.name === selectedTplName) ?? null
+
+  const tplPreview = useMemo(() => {
+    if (!selectedTpl) return ''
+    const fill = (s: string, vals: string[]) =>
+      vals.reduce((acc, v, i) => acc.replaceAll(`{{${i + 1}}}`, v || `{{${i + 1}}}`), s)
+    const parts = [selectedTpl.headerText ? fill(selectedTpl.headerText, tplHeaderVals) : null, fill(selectedTpl.bodyText, tplBodyVals)]
+    return parts.filter(Boolean).join('\n\n')
+  }, [selectedTpl, tplHeaderVals, tplBodyVals])
+
+  async function sendChosenTemplate() {
+    if (!selected || !selectedTpl) return
+    if (tplHeaderVals.some(v => !v.trim()) || tplBodyVals.some(v => !v.trim())) {
+      toast.error('Fill in every placeholder before sending')
+      return
+    }
+    setTplSending(true)
+    try {
+      const res = await fetch('/api/whatsapp/send-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: selected,
+          template: selectedTpl.name,
+          lang: selectedTpl.language,
+          headerParams: tplHeaderVals,
+          bodyParams: tplBodyVals,
+          previewText: tplPreview,
+        }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.error)
+      toast.success('Template sent.')
+      setTemplatesOpen(false)
+      await loadMessages(selected)
+      loadConversations()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Send failed')
+    } finally {
+      setTplSending(false)
+    }
+  }
+
+  // New-template form: keep the example-value fields in sync with however many
+  // {{n}} placeholders are currently typed into the header/body text.
+  function onNewTplHeaderChange(v: string) {
+    setNewTplHeader(v)
+    const n = countPlaceholders(v)
+    setNewTplHeaderVals(prev => Array.from({ length: n }, (_, i) => prev[i] ?? ''))
+  }
+  function onNewTplBodyChange(v: string) {
+    setNewTplBody(v)
+    const n = countPlaceholders(v)
+    setNewTplBodyVals(prev => Array.from({ length: n }, (_, i) => prev[i] ?? ''))
+  }
+
+  function resetNewTplForm() {
+    setNewTplName(''); setNewTplHeader(''); setNewTplHeaderVals([])
+    setNewTplBody(''); setNewTplBodyVals([]); setNewTplFooter('')
+  }
+
+  async function submitNewTemplate() {
+    const name = newTplName.trim()
+    const bodyText = newTplBody.trim()
+    if (!name) { toast.error('Name is required'); return }
+    if (!bodyText) { toast.error('Body text is required'); return }
+    if (newTplHeaderVals.some(v => !v.trim()) || newTplBodyVals.some(v => !v.trim())) {
+      toast.error('Every {{n}} placeholder needs an example value')
+      return
+    }
+    setNewTplSubmitting(true)
+    try {
+      const res = await fetch('/api/whatsapp/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          category: newTplCategory,
+          language: newTplLanguage.trim() || 'en',
+          bodyText,
+          bodyExamples: newTplBodyVals,
+          headerText: newTplHeader.trim() || null,
+          headerExamples: newTplHeaderVals,
+          footerText: newTplFooter.trim() || null,
+        }),
+      }).then(r => r.json())
+      if (!res.success) throw new Error(res.error)
+      toast.success(`Submitted — status: ${res.data?.status || 'PENDING'}. Meta review can take minutes to ~24h.`)
+      resetNewTplForm()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Submit failed')
+    } finally {
+      setNewTplSubmitting(false)
+    }
   }
 
   // Auto-open a conversation passed in via ?phone= (e.g. from a booking's mini-chat)
@@ -189,6 +377,9 @@ function WhatsAppInboxInner() {
         body: JSON.stringify({ phone: selected, message: text }),
       }).then(r => r.json())
       if (!res.success) throw new Error(res.error)
+      // Outside the 24h window the API silently redirects this through the
+      // approved re-engagement template — flag it so staff know it still went out.
+      if (res.message?.includes('re-engagement template')) toast.info('Sent via approved template (outside 24h window)')
       setDraft('')
       await loadMessages(selected)
       loadConversations()
@@ -227,6 +418,36 @@ function WhatsAppInboxInner() {
 
   const selectedConv = conversations.find(c => c.phone === selected)
 
+  // Country buckets, derived from each conversation's linked booking — no
+  // extra API call, the country already rides along on `booking.operationCountry`.
+  const countryBuckets = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of conversations) {
+      const key = countryGroupKey(c.booking?.operationCountry)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .map(([key, count]) => ({
+        key,
+        count,
+        label: key === UNASSIGNED ? 'Unassigned' : countryLabel(key as OperationCountry),
+        flag: key === UNASSIGNED ? '❔' : countryFlag(key as OperationCountry),
+      }))
+      .sort((a, b) => b.count - a.count)
+  }, [conversations])
+
+  // Default to the busiest country the first time "Country Wise" is opened
+  // (or if the previously selected one no longer has any chats).
+  useEffect(() => {
+    if (viewMode !== 'country') return
+    if (countryFilter && countryBuckets.some(b => b.key === countryFilter)) return
+    setCountryFilter(countryBuckets[0]?.key ?? null)
+  }, [viewMode, countryBuckets, countryFilter])
+
+  const visibleConversations = viewMode === 'country' && countryFilter
+    ? conversations.filter(c => countryGroupKey(c.booking?.operationCountry) === countryFilter)
+    : conversations
+
   // Insert "Today / Yesterday / date" separators between message groups.
   const messageGroups = useMemo(() => {
     const groups: { dayLabel: string; items: WaMessage[] }[] = []
@@ -255,6 +476,12 @@ function WhatsAppInboxInner() {
               <p className="truncate text-sm font-bold leading-tight text-slate-900">WhatsApp</p>
               <p className="text-[11px] text-slate-400">AppleHolidays</p>
             </div>
+            <button onClick={openTemplatesModal} title="Message templates" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700">
+              <LayoutTemplate className="h-4 w-4" />
+            </button>
+            <button onClick={() => setNewChatOpen(true)} title="New chat" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-700">
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
             <button onClick={() => loadConversations({ showLoader: true })} title="Refresh" className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
               <RefreshCw className={`h-4 w-4 ${convLoading ? 'animate-spin' : ''}`} />
             </button>
@@ -269,19 +496,50 @@ function WhatsAppInboxInner() {
               className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/15"
             />
           </div>
+
+          <div className="mt-3 flex gap-1 rounded-lg bg-slate-100 p-1">
+            <button
+              onClick={() => setViewMode('all')}
+              className={`flex-1 rounded-md py-1.5 text-[12.5px] font-bold transition ${viewMode === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              All Chats
+            </button>
+            <button
+              onClick={() => setViewMode('country')}
+              className={`flex-1 rounded-md py-1.5 text-[12.5px] font-bold transition ${viewMode === 'country' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Country Wise
+            </button>
+          </div>
+
+          {viewMode === 'country' && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {countryBuckets.map(b => (
+                <button
+                  key={b.key}
+                  onClick={() => setCountryFilter(b.key)}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-bold transition ${
+                    countryFilter === b.key ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <span>{b.flag}</span> {b.label} <span className="opacity-70">({b.count})</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
           {convLoading && conversations.length === 0 ? (
             <div className="flex items-center justify-center py-14"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></div>
-          ) : conversations.length === 0 ? (
+          ) : visibleConversations.length === 0 ? (
             <div className="mt-6 rounded-xl border border-dashed border-slate-200 px-5 py-10 text-center">
               <MessageCircle className="mx-auto mb-2 h-8 w-8 text-slate-300" />
-              <p className="text-sm font-semibold text-slate-500">{search ? 'No matches' : 'No conversations yet'}</p>
+              <p className="text-sm font-semibold text-slate-500">{search ? 'No matches' : viewMode === 'country' ? 'No chats for this country' : 'No conversations yet'}</p>
               <p className="mt-1 text-xs text-slate-400">{search ? 'Try a different name or number.' : 'Incoming WhatsApp messages will appear here.'}</p>
             </div>
           ) : (
-            conversations.map(c => {
+            visibleConversations.map(c => {
               const active = c.phone === selected
               const hasUnread = c.unreadCount > 0 && !active
               return (
@@ -321,7 +579,8 @@ function WhatsAppInboxInner() {
                     </span>
                     {c.booking && (
                       <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-bold text-blue-600">
-                        Linked · {c.booking.bookingRef}
+                        {c.booking.operationCountry && <span>{countryFlag(c.booking.operationCountry)}</span>}
+                        {c.booking.bookingRef}
                       </span>
                     )}
                   </span>
@@ -360,6 +619,20 @@ function WhatsAppInboxInner() {
                   <p className="text-xs text-slate-400">+{selected}</p>
                 </div>
               </div>
+
+              {windowOpen !== null && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {windowOpen ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Within 24h window — free-form messages deliver
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Outside 24h window — only an approved template will deliver
+                    </span>
+                  )}
+                </div>
+              )}
 
               {threadBooking ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-xl border border-blue-100 bg-blue-50/60 px-3.5 py-2.5">
@@ -456,7 +729,13 @@ function WhatsAppInboxInner() {
                   value={draft}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={onKeyDown}
-                  placeholder={attachment ? 'Add a caption (optional) — Enter to send' : 'Type a message — Enter to send, Shift+Enter for a new line'}
+                  placeholder={
+                    attachment
+                      ? 'Add a caption (optional) — Enter to send'
+                      : windowOpen === false
+                        ? 'Outside 24h window — this will send via the approved re-engagement template'
+                        : 'Type a message — Enter to send, Shift+Enter for a new line'
+                  }
                   className="max-h-[120px] min-h-[42px] flex-1 resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/15"
                 />
                 <button
@@ -472,6 +751,245 @@ function WhatsAppInboxInner() {
           </>
         )}
       </section>
+
+      {/* ============ New chat ============ */}
+      {newChatOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={() => setNewChatOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <p className="text-[15px] font-bold text-slate-900">New chat</p>
+              <button onClick={() => setNewChatOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mt-1 text-[12.5px] text-slate-500">Enter the customer&apos;s WhatsApp number, with country code.</p>
+            <input
+              autoFocus
+              value={newChatPhone}
+              onChange={e => setNewChatPhone(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') startNewChat() }}
+              placeholder="e.g. 94771234567"
+              inputMode="tel"
+              className="mt-3 h-11 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-400 focus:bg-white focus:ring-2 focus:ring-emerald-500/15"
+            />
+            <p className="mt-2 text-[11.5px] text-slate-400">
+              If this number hasn&apos;t messaged us before, WhatsApp requires an approved template for the first message — a free-form text may be rejected.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setNewChatOpen(false)} className="rounded-lg border border-slate-200 px-3.5 py-2 text-[13px] font-semibold text-slate-600 transition hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={startNewChat} className="rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm transition hover:brightness-105">
+                Start chat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ Message templates ============ */}
+      {templatesOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={() => setTemplatesOpen(false)}>
+          <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-3 py-2">
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setTemplatesTab('send')}
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-bold transition ${templatesTab === 'send' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                  Send template
+                </button>
+                <button
+                  onClick={() => setTemplatesTab('new')}
+                  className={`rounded-lg px-3 py-1.5 text-[13px] font-bold transition ${templatesTab === 'new' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'}`}
+                >
+                  New template
+                </button>
+              </div>
+              <button onClick={() => setTemplatesOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4">
+              {templatesTab === 'send' ? (
+                <div className="flex flex-col gap-3">
+                  <p className="text-[12.5px] text-slate-500">
+                    {selected ? <>Sending to <span className="font-semibold text-slate-700">{selectedConv?.displayName || `+${selected}`}</span></> : 'Open a conversation first, then come back here to send a template.'}
+                  </p>
+
+                  {templatesLoading ? (
+                    <div className="flex items-center justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-emerald-500" /></div>
+                  ) : approvedTemplates.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-[12.5px] text-slate-400">
+                      No approved templates yet — register one in the &quot;New template&quot; tab.
+                    </p>
+                  ) : (
+                    <>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[12px] font-semibold text-slate-500">Template</span>
+                        <select
+                          value={selectedTplName}
+                          onChange={e => {
+                            const t = approvedTemplates.find(x => x.name === e.target.value)
+                            if (t) selectTemplate(t)
+                          }}
+                          className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                        >
+                          {approvedTemplates.map(t => (
+                            <option key={t.name} value={t.name}>{t.name} ({t.language})</option>
+                          ))}
+                        </select>
+                      </label>
+
+                      {selectedTpl && selectedTpl.headerVariableCount > 0 && (
+                        <div className="flex flex-col gap-2">
+                          {tplHeaderVals.map((v, i) => (
+                            <label key={i} className="flex flex-col gap-1">
+                              <span className="text-[12px] font-semibold text-slate-500">Header {`{{${i + 1}}}`}</span>
+                              <input
+                                value={v}
+                                onChange={e => setTplHeaderVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                                className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {selectedTpl && selectedTpl.bodyVariableCount > 0 && (
+                        <div className="flex flex-col gap-2">
+                          {tplBodyVals.map((v, i) => (
+                            <label key={i} className="flex flex-col gap-1">
+                              <span className="text-[12px] font-semibold text-slate-500">Body {`{{${i + 1}}}`}</span>
+                              <input
+                                value={v}
+                                onChange={e => setTplBodyVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                                className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      {tplPreview && (
+                        <div className="whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-[12.5px] leading-relaxed text-slate-700">
+                          {tplPreview}
+                        </div>
+                      )}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={sendChosenTemplate}
+                          disabled={!selected || tplSending}
+                          className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-4 py-2 text-[13px] font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+                        >
+                          {tplSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                          Send
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Name</span>
+                    <input
+                      value={newTplName}
+                      onChange={e => setNewTplName(e.target.value)}
+                      placeholder="e.g. singapore_offer — lowercase, underscores only"
+                      className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Category</span>
+                      <select
+                        value={newTplCategory}
+                        onChange={e => setNewTplCategory(e.target.value)}
+                        className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      >
+                        <option value="UTILITY">Utility</option>
+                        <option value="MARKETING">Marketing</option>
+                        <option value="AUTHENTICATION">Authentication</option>
+                      </select>
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Language</span>
+                      <input
+                        value={newTplLanguage}
+                        onChange={e => setNewTplLanguage(e.target.value)}
+                        className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      />
+                    </label>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Header (optional, plain text)</span>
+                    <input
+                      value={newTplHeader}
+                      onChange={e => onNewTplHeaderChange(e.target.value)}
+                      placeholder="e.g. Your itinerary is ready"
+                      className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  {newTplHeaderVals.map((v, i) => (
+                    <label key={i} className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Header {`{{${i + 1}}}`} example</span>
+                      <input
+                        value={v}
+                        onChange={e => setNewTplHeaderVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                        placeholder="value Meta will show reviewers"
+                        className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      />
+                    </label>
+                  ))}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Body</span>
+                    <textarea
+                      value={newTplBody}
+                      onChange={e => onNewTplBodyChange(e.target.value)}
+                      rows={4}
+                      placeholder="Hi {{1}}, your booking {{2}} is confirmed…"
+                      className="resize-y rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  <p className="text-[11.5px] text-slate-400">
+                    Use {'{{1}}'}, {'{{2}}'}… for placeholders — Meta requires an example value for each before it will review the template.
+                  </p>
+                  {newTplBodyVals.map((v, i) => (
+                    <label key={i} className="flex flex-col gap-1">
+                      <span className="text-[12px] font-semibold text-slate-500">Body {`{{${i + 1}}}`} example</span>
+                      <input
+                        value={v}
+                        onChange={e => setNewTplBodyVals(vals => vals.map((x, idx) => (idx === i ? e.target.value : x)))}
+                        placeholder="value Meta will show reviewers"
+                        className="h-9 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                      />
+                    </label>
+                  ))}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[12px] font-semibold text-slate-500">Footer (optional, plain text, no placeholders)</span>
+                    <input
+                      value={newTplFooter}
+                      onChange={e => setNewTplFooter(e.target.value)}
+                      placeholder="e.g. — AppleHolidays"
+                      className="h-10 rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-emerald-400 focus:bg-white"
+                    />
+                  </label>
+                  <div className="flex justify-end">
+                    <button
+                      onClick={submitNewTemplate}
+                      disabled={newTplSubmitting}
+                      className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-b from-emerald-500 to-green-600 px-4 py-2 text-[13px] font-bold text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+                    >
+                      {newTplSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LayoutTemplate className="h-4 w-4" />}
+                      Submit for review
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

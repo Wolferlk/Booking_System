@@ -10,7 +10,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
-import { findBookingByPhone, normalisePhone, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { findBookingByPhone, normalisePhone, isWithin24hWindow, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
 import { syncInboundForPhone } from '@/lib/whatsapp-shared-inbox-sync'
 import type { UserRole } from '@prisma/client'
 
@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
     data:  { read: true },
   })
 
+  const windowOpen = await isWithin24hWindow(phone)
+
   const bookingRow = await findBookingByPhone(phone)
   let booking = null
   if (bookingRow) {
@@ -57,5 +59,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return buildApiSuccess({ messages, booking })
+  return buildApiSuccess({ messages, booking, windowOpen })
 }
