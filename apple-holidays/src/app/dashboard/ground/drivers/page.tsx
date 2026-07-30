@@ -660,9 +660,15 @@ export default function DriversPage() {
                         {/* Actions */}
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <button onClick={() => openEdit(driver)} className="btn-ghost btn btn-sm"><Edit2 className="w-4 h-4" /></button>
+                          {/* Payment action temporarily disabled while payment processing is under review.
+
                           <button onClick={() => { setShowPayModal(driver.id); setPayForm({ amount: '', type: 'ADVANCE', description: '', refNumber: '' }) }} className="btn-secondary btn btn-sm">
+
                             <DollarSign className="w-4 h-4" /> Payment
+
                           </button>
+
+                          */}
                           {canDelete && (
                             <button onClick={() => deleteDriver(driver.id)} className="btn-ghost btn btn-sm text-red-500 hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
                           )}
