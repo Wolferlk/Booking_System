@@ -295,6 +295,10 @@ model AgendaItem {
   sortOrder   Int         @default(0)
   timeFrom    String?
   timeTo      String?
+  /// Free / at-leisure day — no driver or vehicle is required for this movement.
+  /// NULL means "never decided": rows saved before this column existed fall back
+  /// to text detection (see src/lib/leisure-day.ts). true/false are explicit.
+  isLeisure   Boolean?
   agenda      TourAgenda  @relation(fields: [agendaId], references: [id], onDelete: Cascade)
   assignment  Assignment?
   tickets     Ticket[]

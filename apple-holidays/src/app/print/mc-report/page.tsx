@@ -23,6 +23,8 @@ type MCRow = {
   mealPlan:       string | null
   meetingTime:    string | null
   serviceType:    ServiceType
+  /** Free / at-leisure day — no driver is allocated for this movement. */
+  isLeisure:      boolean
   vendor:         string | null
   driverName:     string | null
   driverPhotoUrl: string | null
@@ -124,6 +126,7 @@ function PrintContent() {
   const pvtCount      = rows.filter(r => r.serviceType === 'PVT_TRANSFER').length
   const sicCount      = rows.filter(r => r.serviceType === 'SIC_TRANSFER').length
   const ownCount      = rows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
+  const leisureCount  = rows.filter(r => r.isLeisure).length
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: '#94a3b8', fontSize: 14 }}>
@@ -184,6 +187,7 @@ function PrintContent() {
           { label: 'Private',         value: pvtCount,       bg: '#f0fdf4', fg: '#15803d' },
           { label: 'SIC',             value: sicCount,       bg: '#fff7ed', fg: '#c2410c' },
           { label: 'Own Arr.',        value: ownCount,       bg: '#f1f5f9', fg: '#475569' },
+          { label: 'Leisure',         value: leisureCount,   bg: '#fffbeb', fg: '#b45309' },
         ].map(s => (
           <div key={s.label} style={{ background: s.bg, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 70 }}>
             <span style={{ fontSize: 16, fontWeight: 800, color: s.fg, lineHeight: 1 }}>{s.value}</span>
@@ -300,9 +304,22 @@ function PrintContent() {
                     }}>
                       {SERVICE_LABELS[row.serviceType] ?? row.serviceType}
                     </span>
+                    {row.isLeisure && (
+                      <span style={{
+                        display: 'block', marginTop: 2, padding: '1px 5px', borderRadius: 3,
+                        fontSize: 9, fontWeight: 700, background: '#fef3c7', color: '#b45309',
+                      }}>
+                        Leisure Day
+                      </span>
+                    )}
                   </td>
 
                   <td style={{ ...td, color: '#475569', maxWidth: 120 }}>
+                    {row.isLeisure ? (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: '#b45309', whiteSpace: 'nowrap' }}>
+                        No driver needed
+                      </span>
+                    ) : (
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 5 }}>
                       {row.driverPhotoUrl && (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -325,6 +342,7 @@ function PrintContent() {
                         {!row.vendor && !row.driverName && <span style={{ color: '#cbd5e1' }}>—</span>}
                       </div>
                     </div>
+                    )}
                   </td>
 
                   <td style={{ ...td, color: '#475569', maxWidth: 100, fontSize: 9 }}>

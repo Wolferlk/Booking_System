@@ -9,6 +9,7 @@ import fs from 'fs'
 import path from 'path'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
+import { detectLeisureDay } from '@/lib/leisure-day'
 
 export const dynamic = 'force-dynamic'
 const CONDITIONS_PATH = path.join(process.cwd(), 'public', 'Generating_Agenda_conditions.md')
@@ -435,7 +436,17 @@ ${tqDocumentText
     }
   }
 
-  const finalItems = booking.operationCountry === 'SRILANKA' ? applySriLankaMovementDefaults(items) : items
+  const countryItems = booking.operationCountry === 'SRILANKA' ? applySriLankaMovementDefaults(items) : items
+
+  // ── Flag free / at-leisure days ───────────────────────────────────────────
+  // Runs last so it sees the final serviceType (the first/last-item and Sri
+  // Lanka rules above can still rewrite it). Leisure rows need no driver, so
+  // the agenda screen hides driver allocation for them; the operator can still
+  // toggle the flag either way afterwards.
+  const finalItems = countryItems.map(item => ({
+    ...item,
+    isLeisure: detectLeisureDay(item),
+  }))
 
   return buildApiSuccess({ items: finalItems }, `Generated ${finalItems.length} agenda items`)
 }

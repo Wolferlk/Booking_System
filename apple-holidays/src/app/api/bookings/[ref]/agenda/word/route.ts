@@ -16,6 +16,7 @@ import {
   PURCHASED_TICKET_STATUSES, parseTicketNotes, ticketFacts, ticketCode,
   ticketFileKind, categoryIcon, categoryLabel, paxLabel,
 } from '@/lib/ticket-notes'
+import { resolveIsLeisure } from '@/lib/leisure-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -415,8 +416,14 @@ export async function GET(
               meetDisplay = item.meetingTime
             }
 
-            let driverText = 'Not assigned'
-            if (displayVendorName) {
+            // Leisure days carry no driver by design — say so rather than
+            // printing "Not assigned", which reads as an operational gap.
+            const isLeisure = resolveIsLeisure(item)
+
+            let driverText = isLeisure ? 'No driver required' : 'Not assigned'
+            if (isLeisure) {
+              // no allocation to render
+            } else if (displayVendorName) {
               driverText = displayVendorName
               if (displayDriverName) driverText += ` · ${displayDriverName}`
               if (displayDriverPhone) driverText += ` (${displayDriverPhone})`
@@ -435,8 +442,13 @@ export async function GET(
               dCell(item.toPoint   || '—', { bold: true, shade }),
               dCell(normalizeMealPlan(item.mealPlan), { shade }),
               dCell(meetDisplay, { bold: meetDisplay !== '—', color: meetDisplay !== '—' ? CLR.green : CLR.muted, shade }),
-              dCell(SVC_LABEL[svc] ?? svc, { shade }),
-              driverCell(driverText, { italic: driverText === 'Not assigned', color: driverText === 'Not assigned' ? CLR.muted : undefined, shade, photo: driverPhoto }),
+              dCell(isLeisure ? 'Leisure Day' : SVC_LABEL[svc] ?? svc, { shade }),
+              driverCell(driverText, {
+                italic: isLeisure || driverText === 'Not assigned',
+                color: isLeisure || driverText === 'Not assigned' ? CLR.muted : undefined,
+                shade,
+                photo: isLeisure ? null : driverPhoto,
+              }),
             ]
 
             const rowCells = [new TableRow({ children: rows })]
