@@ -704,7 +704,12 @@ export default function Sidebar() {
               </div>
             </div>
             <button
-              onClick={() => signOut({ callbackUrl: '/' })}
+              onClick={async () => {
+                // Redirect ourselves instead of letting NextAuth use NEXTAUTH_URL,
+                // which points at a different host than the one being browsed.
+                await signOut({ redirect: false })
+                window.location.href = '/login'
+              }}
               title="Sign out"
               className={cn(
                 'w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-400',
