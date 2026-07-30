@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, getCancellationDeadline } from '@/lib/u
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope } from '@/lib/country-detection'
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
+import { bookingSourceWhere } from '@/lib/booking-source'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -46,6 +47,8 @@ export async function GET(req: NextRequest) {
   const page  = parseInt(searchParams.get('page')  ?? '1')
   const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200)
   const dateFilter = searchParams.get('dateFilter') ?? ''
+  // Sales channel filter: B2B (agent bookings) vs B2C (Aahaas store orders).
+  const source = searchParams.get('source')
   // Which date column the period pills AND the explicit range apply to (arrival vs created)
   const dateField = searchParams.get('dateField') === 'createdAt' ? 'createdAt' : 'arrivalDate'
   const rawSortBy = searchParams.get('sortBy') ?? 'arrivalDate'
@@ -79,6 +82,9 @@ export async function GET(req: NextRequest) {
       andClauses.push({ operationCountry: countryOverride })
     }
   }
+
+  const sourceClause = bookingSourceWhere(source)
+  if (sourceClause) andClauses.push(sourceClause)
 
   // The status param accepts the two derived post-travel states alongside real
   // BookingStatus values — they are split out and translated into date/feedback

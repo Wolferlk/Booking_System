@@ -262,6 +262,18 @@ async function startAsImportCreateScheduler() {
   }
 }
 
+async function startB2cImportCreateScheduler() {
+  try {
+    // node-cron scheduler: fires once daily just after midnight (default 00:30
+    // AUTO_BOOKING_TZ) and imports the Aahaas B2C orders booked that day whose
+    // travel is still upcoming. Timezone-aware, with boot catch-up.
+    const { startB2cImportScheduler } = await import('./b2c-import-scheduler')
+    await startB2cImportScheduler()
+  } catch (err) {
+    console.error('[Scheduler] b2c-import scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startCustomerWhatsAppMessagingScheduler() {
   try {
     // node-cron scheduler: fires once daily at CUSTOMER_MSG_SEND_HOUR (default 18:00
@@ -341,6 +353,10 @@ export function startCronJobs() {
   // AppleSystem confirmations auto-import: node-cron daily job at 06:00
   // (timezone-aware, boot catch-up). Imports yesterday's status-2 confirmations.
   void startAsImportCreateScheduler()
+
+  // Aahaas B2C order auto-import: node-cron daily job just after midnight
+  // (timezone-aware, boot catch-up). Imports today's orders with upcoming travel.
+  void startB2cImportCreateScheduler()
 
   // Customer WhatsApp messaging: node-cron daily job at 6pm (timezone-aware, boot
   // catch-up). Started once at boot instead of a per-minute interval.

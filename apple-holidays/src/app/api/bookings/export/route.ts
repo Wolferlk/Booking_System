@@ -6,6 +6,7 @@ import { buildApiError } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
+import { bookingSourceWhere } from '@/lib/booking-source'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@prisma/client'
 
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest) {
   const dateFrom      = searchParams.get('dateFrom')
   const dateTo        = searchParams.get('dateTo')
   const dateFilter    = searchParams.get('dateFilter') ?? ''
+  const source        = searchParams.get('source')
   const dateField     = searchParams.get('dateField') === 'createdAt' ? 'createdAt' : 'arrivalDate'
   const rawSortBy     = searchParams.get('sortBy') ?? 'createdAt'
   const sortDir       = searchParams.get('sortDir') === 'asc' ? ('asc' as const) : ('desc' as const)
@@ -51,6 +53,9 @@ export async function GET(req: NextRequest) {
       andClauses.push({ operationCountry: countryOverride })
     }
   }
+
+  const sourceClause = bookingSourceWhere(source)
+  if (sourceClause) andClauses.push(sourceClause)
 
   if (status) {
     // Derived post-travel states are not stored in the status column — they are
