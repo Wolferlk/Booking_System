@@ -16,6 +16,7 @@ import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
+import { isB2cBooking } from '@/lib/booking-source'
 import Modal from '@/components/ui/modal'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
@@ -186,6 +187,12 @@ const COUNTRY_BADGE: Record<string, { label: string; color: string }> = {
   ALL:                { label: 'All',       color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
 }
 
+/** Sales-channel badge. B2C bookings come from the Aahaas storefront. */
+const SOURCE_BADGE: Record<string, { label: string; color: string }> = {
+  B2B: { label: 'B2B', color: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
+  B2C: { label: 'Aahaas B2C', color: 'bg-fuchsia-500/10 text-fuchsia-400 border-fuchsia-500/20' },
+}
+
 function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortField; sortDir: SortDir }) {
   if (sortBy !== field) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-25 inline" />
   return sortDir === 'asc'
@@ -211,6 +218,7 @@ function BookingsPageInner() {
   const [downloadingExcel, setDownloadingExcel] = useState(false)
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
+  const [source, setSource]             = useState(searchParams.get('source') ?? '')
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
   // Date range and basis are seeded from the URL so a deep link — e.g. the one
   // OPS_AI builds for "arrivals on 1 July" — lands on an already-filtered list.
@@ -260,6 +268,7 @@ function BookingsPageInner() {
     if (refSearch)                                      params.set('refSearch',     refSearch)
     if (contentSearch)                                  params.set('contentSearch', contentSearch)
     if (status)                                         params.set('status',        status)
+    if (source)                                         params.set('source',        source)
     if (dateFilter)                                     params.set('dateFilter',    dateFilter)
     if (dateFilter || dateFrom || dateTo)               params.set('dateField',     dateBasis)
     if (dateFrom)                                       params.set('dateFrom',      dateFrom)
@@ -281,7 +290,7 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
+  }, [search, refSearch, contentSearch, status, source, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
 
   // Close download menu on outside click
   useEffect(() => {
@@ -469,6 +478,7 @@ function BookingsPageInner() {
     if (refSearch)                                params.set('refSearch',     refSearch)
     if (contentSearch)                            params.set('contentSearch', contentSearch)
     if (status)                                   params.set('status',        status)
+    if (source)                                   params.set('source',        source)
     if (dateFilter)                               params.set('dateFilter',    dateFilter)
     if (dateFilter || dateFrom || dateTo)         params.set('dateField',     dateBasis)
     if (dateFrom)                                 params.set('dateFrom',      dateFrom)
@@ -488,6 +498,7 @@ function BookingsPageInner() {
       if (refSearch)                                params.set('refSearch',     refSearch)
       if (contentSearch)                            params.set('contentSearch', contentSearch)
       if (status)                                   params.set('status',        status)
+      if (source)                                   params.set('source',        source)
       if (dateFilter)                               params.set('dateFilter',    dateFilter)
       if (dateFilter || dateFrom || dateTo)         params.set('dateField',     dateBasis)
       if (dateFrom)                                 params.set('dateFrom',      dateFrom)
@@ -650,6 +661,17 @@ function BookingsPageInner() {
               {STATUSES.map(s => (
                 <option key={s.value} value={s.value}>{s.label}</option>
               ))}
+            </select>
+            {/* Sales channel — B2B agent bookings vs Aahaas B2C store orders */}
+            <select
+              value={source}
+              onChange={e => { setSource(e.target.value); setPage(1) }}
+              className="form-select w-full sm:w-44"
+              title="Filter by sales channel"
+            >
+              <option value="">All sources</option>
+              <option value="B2B">B2B — Agents</option>
+              <option value="B2C">B2C — Aahaas</option>
             </select>
           </div>
 
@@ -1041,6 +1063,15 @@ function BookingsPageInner() {
                             {isCancelled && (
                               <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-red-600 text-white">
                                 Cancelled
+                              </span>
+                            )}
+                            {/* Only B2C is badged — B2B is the unremarkable default. */}
+                            {isB2cBooking(b.agent) && (
+                              <span
+                                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border ${SOURCE_BADGE.B2C.color}`}
+                                title="Imported from the Aahaas B2C storefront"
+                              >
+                                {SOURCE_BADGE.B2C.label}
                               </span>
                             )}
                             {b.isNumber && (
