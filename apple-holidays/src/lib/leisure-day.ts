@@ -23,6 +23,13 @@ const LEISURE_RE = /\b(at leisure|leisure day|leisure time|day at leisure|free d
  */
 const SERVICED_RE = /\b(transfer|pick[- ]?up|pickup|drop[- ]?off|airport|flight|depart|arrival|guide|driver|vehicle|coach|bus|cruise|excursion|sightseeing tour)\b/i
 
+/**
+ * Negated service phrases — "No transport or guide arranged", "no vehicle
+ * provided". These *confirm* a leisure day, but they name the very words
+ * `SERVICED_RE` looks for, so they are stripped before that check runs.
+ */
+const NO_SERVICE_RE = /\bno\s+(?:transport(?:ation)?|transfer|vehicle|driver|guide|car|coach|bus)\b[^.;]*/gi
+
 export interface LeisureCandidate {
   location?: string | null
   fromPoint?: string | null
@@ -48,11 +55,13 @@ export function detectLeisureDay(item: LeisureCandidate): boolean {
   if (LEISURE_RE.test(title)) return true
 
   // Title was silent — fall back to the description, but only when it does not
-  // also describe an arranged service.
+  // also describe an arranged service. "No transport or guide arranged" is
+  // dropped first: it argues *for* a leisure day despite naming those services.
   const details = String(item.details ?? '')
   if (!details.trim()) return false
-  if (SERVICED_RE.test(details)) return false
-  return LEISURE_RE.test(details)
+  const withoutNegations = details.replace(NO_SERVICE_RE, ' ')
+  if (SERVICED_RE.test(withoutNegations)) return false
+  return LEISURE_RE.test(withoutNegations)
 }
 
 /**
