@@ -15,6 +15,7 @@ import { toast } from 'sonner'
 import Modal from '@/components/ui/modal'
 import Button from '@/components/ui/button'
 import { useSession } from 'next-auth/react'
+import { EMAIL_REGEX, MOBILE_REGEX, normalizeMobile } from '@/lib/validation'
 
 type CreditPaymentStatus = 'PENDING' | 'PARTIAL' | 'PAID' | 'OVERDUE'
 
@@ -50,6 +51,18 @@ const STATUS_PILL: Record<CreditPaymentStatus, string> = {
   OVERDUE: 'bg-red-100 text-red-700 border border-red-200',
 }
 
+function validateEmail(value: string): string {
+  if (!value.trim()) return ''
+  return EMAIL_REGEX.test(value.trim()) ? '' : 'Enter a valid email address'
+}
+
+function validatePhone(value: string): string {
+  if (!value.trim()) return ''
+  const digits = normalizeMobile(value)
+  return MOBILE_REGEX.test(digits)
+    ? ''
+    : 'Enter a valid phone number (7–15 digits)'
+}
 const EMPTY_FORM = {
   name: '', aliases: '', contactName: '', contactEmail: '',
   contactPhone: '', creditLimit: '', currency: 'USD', notes: '',
@@ -120,6 +133,9 @@ export default function CreditAgentsPage() {
 
   async function save() {
     if (!form.name.trim()) { toast.error('Agent name is required'); return }
+    const emailError = validateEmail(form.contactEmail)
+    const phoneError = validatePhone(form.contactPhone)
+    if (emailError || phoneError) { toast.error(emailError || phoneError); return }
     setSaving(true)
     try {
       const aliases = form.aliases.split(',').map(s => s.trim()).filter(Boolean)
@@ -374,12 +390,14 @@ export default function CreditAgentsPage() {
             </div>
             <div>
               <label className="form-label">Contact Phone</label>
-              <input className="form-input" value={form.contactPhone} onChange={e => setForm(f => ({ ...f, contactPhone: e.target.value }))} />
+              <input type="tel" inputMode="tel" className={`form-input ${validatePhone(form.contactPhone) ? 'border-red-400' : ''}`} value={form.contactPhone} onChange={e => setForm(f => ({ ...f, contactPhone: e.target.value.replace(/[^0-9+().\s-]/g, '') }))} aria-invalid={!!validatePhone(form.contactPhone)} />
+              {validatePhone(form.contactPhone) && <p className="mt-1 text-xs text-red-600">{validatePhone(form.contactPhone)}</p>}
             </div>
           </div>
           <div>
             <label className="form-label">Contact Email</label>
-            <input type="email" className="form-input" value={form.contactEmail} onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))} />
+            <input type="email" inputMode="email" className={`form-input ${validateEmail(form.contactEmail) ? 'border-red-400' : ''}`} value={form.contactEmail} onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))} aria-invalid={!!validateEmail(form.contactEmail)} />
+            {validateEmail(form.contactEmail) && <p className="mt-1 text-xs text-red-600">{validateEmail(form.contactEmail)}</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

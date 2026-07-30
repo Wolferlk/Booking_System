@@ -4,9 +4,22 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { UserRole } from '@prisma/client'
+import { EMAIL_REGEX, MOBILE_REGEX, normalizeMobile } from '@/lib/validation'
 
 export const dynamic = 'force-dynamic'
-export async function GET(
+
+function validateContactFields(email: unknown, phone: unknown): string | null {
+  const emailText = String(email ?? '').trim()
+  const phoneText = String(phone ?? '').trim()
+  if (emailText && !EMAIL_REGEX.test(emailText)) return 'Please enter a valid email address'
+  if (phoneText) {
+    const digits = normalizeMobile(phoneText)
+    if (!MOBILE_REGEX.test(digits)) {
+      return 'Please enter a valid phone number (7–15 digits)'
+    }
+  }
+  return null
+}export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
@@ -49,6 +62,9 @@ export async function PUT(
 
   const body = await req.json()
   const { name, aliases, contactName, contactEmail, contactPhone, creditLimit, currency, notes, isActive } = body
+
+  const contactError = validateContactFields(contactEmail, contactPhone)
+  if (contactError) return buildApiError(contactError, 400)
 
   const agent = await prisma.creditAgent.update({
     where: { id: params.id },
