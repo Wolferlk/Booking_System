@@ -67,7 +67,7 @@ function PrintContent() {
       .catch(() => setError('Network error'))
       .finally(() => {
         setLoading(false)
-        setTimeout(() => window.print(), 1200)
+        setTimeout(() => window.print(), 800)
       })
   }, [sp])
 
@@ -93,18 +93,7 @@ function PrintContent() {
   )
 
   return (
-    <>
-      <style>{`@media print { .bookings-print-controls { display: none !important; } }`}</style>
-      <div className="bookings-print-controls fixed top-4 right-4 z-50 flex gap-2">
-        <button
-          type="button"
-          onClick={() => window.print()}
-          className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-slate-700"
-        >
-          Print / Save as PDF
-        </button>
-      </div>
-      <div className="p-8 text-[11px] font-sans text-slate-900 max-w-[1100px] mx-auto">
+    <div className="p-8 text-[11px] font-sans text-slate-900 max-w-[1100px] mx-auto">
       {/* Header */}
       <div className="flex items-start justify-between mb-6 pb-4 border-b-2 border-slate-800">
         <div className="flex items-center gap-3">
@@ -259,8 +248,7 @@ function PrintContent() {
         <span>Apple Holidays MMT — Confidential</span>
         <span>{now}</span>
       </div>
-      </div>
-    </>
+    </div>
   )
 }
 
