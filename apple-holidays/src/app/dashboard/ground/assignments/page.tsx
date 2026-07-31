@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import {
-  Loader2, Car, Phone, CalendarDays, Users, MapPin,
+  Car, Phone, CalendarDays, Users, MapPin,
   AlertCircle, CheckCircle2, ExternalLink, Calendar,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
@@ -12,6 +12,7 @@ import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 interface Slot {
   agendaItemId:  string
@@ -95,7 +96,7 @@ export default function AssignmentsPage() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
-      <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
+      <LogoSpinner size={48} />
     </div>
   )
 

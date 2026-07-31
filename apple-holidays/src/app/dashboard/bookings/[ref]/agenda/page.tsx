@@ -22,6 +22,7 @@ import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import { formatDate } from '@/lib/utils'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import type { UserRole } from '@prisma/client'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 /**
  * Textarea that grows with its content instead of scrolling. Used for the
@@ -877,8 +878,7 @@ export default function AgendaPage() {
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center h-64 gap-3">
-      <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
-      <p className="text-sm text-slate-400">Loading movement chart...</p>
+      <LogoSpinner size={48} label="Loading movement chart…" />
     </div>
   )
 

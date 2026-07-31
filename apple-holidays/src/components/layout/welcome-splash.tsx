@@ -136,7 +136,7 @@ export default function WelcomeSplash() {
                     transition={{ duration: 18, repeat: Infinity, ease: 'linear' }}
                   />
                   <Image
-                    src="/png/aahaslogo.png"
+                    src="/png/apple-logo.png"
                     alt="Apple Holidays logo"
                     width={72}
                     height={72}

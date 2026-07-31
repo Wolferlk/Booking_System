@@ -105,7 +105,7 @@ export default function HomePage() {
             title="Open Global Command Center"
           >
             <div className="relative w-10 h-10 rounded-xl overflow-hidden shadow-lg shadow-brand-500/20">
-              <Image src="/png/aahaslogo.png" alt="Aahas Logo" fill className="object-contain" />
+              <Image src="/png/apple-logo.png" alt="Aahas Logo" fill className="object-contain" />
             </div>
             <div className="border-l border-white/10 pl-3 flex items-center gap-2">
               <div className="relative h-6 w-16 opacity-60 group-hover:opacity-80 transition-opacity">

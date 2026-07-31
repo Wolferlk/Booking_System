@@ -56,7 +56,7 @@ export default function FileHandlerLoginPage() {
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-3 mb-2">
             <div className="relative w-14 h-14">
-              <Image src="/png/aahaslogo.png" alt="AppleHolidays" fill className="object-contain"
+              <Image src="/png/apple-logo.png" alt="AppleHolidays" fill className="object-contain"
                 onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
             </div>
             <div className="text-left">

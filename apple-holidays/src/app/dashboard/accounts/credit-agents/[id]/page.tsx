@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  Loader2, Plus, Edit2, Trash2, ArrowLeft, Download,
+  Plus, Edit2, Trash2, ArrowLeft, Download,
   Building2, Phone, Mail, DollarSign, Calendar, FileText,
   CheckCircle2, Clock, AlertTriangle, TrendingUp, Users,
   ExternalLink,
@@ -17,6 +17,7 @@ import { toast } from 'sonner'
 import Modal from '@/components/ui/modal'
 import Button from '@/components/ui/button'
 import { useSession } from 'next-auth/react'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -315,7 +316,7 @@ export default function CreditAgentDetailPage() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-[60vh]">
-      <Loader2 className="w-7 h-7 text-brand-500 animate-spin" />
+      <LogoSpinner size={56} />
     </div>
   )
 

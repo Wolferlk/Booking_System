@@ -6,6 +6,7 @@ import {
   CalendarDays, MapPin, Loader2, Clock, CheckCircle2, ChevronDown,
   Car, User2, Navigation2, Route,
 } from 'lucide-react'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -631,7 +632,7 @@ export default function VendorDashboardPage() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-32">
-      <Loader2 className="w-6 h-6 text-brand-400 animate-spin" />
+      <LogoSpinner size={48} />
     </div>
   )
 

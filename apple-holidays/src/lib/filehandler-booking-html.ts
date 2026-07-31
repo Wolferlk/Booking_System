@@ -46,7 +46,7 @@ let LOGO_DATA_URI = ''
 function logoDataUri(): string {
   if (LOGO_DATA_URI) return LOGO_DATA_URI
   try {
-    const buf = readFileSync(path.join(process.cwd(), 'public', 'png', 'aahaslogo.png'))
+    const buf = readFileSync(path.join(process.cwd(), 'public', 'png', 'apple-logo.png'))
     LOGO_DATA_URI = `data:image/png;base64,${buf.toString('base64')}`
   } catch {
     LOGO_DATA_URI = ''

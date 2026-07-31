@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 type Rating = 'EXCELLENT' | 'GOOD' | 'AVERAGE' | 'POOR'
 type Purpose = 'BUSINESS' | 'LEISURE' | 'BOTH'
@@ -117,8 +118,7 @@ export default function GuestFeedbackPage() {
     return (
       <Shell>
         <div className="flex flex-col items-center justify-center py-24 gap-3">
-          <div className="w-8 h-8 border-[3px] border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-slate-400 text-sm">Loading your feedback form…</p>
+          <LogoSpinner size={56} label="Loading your feedback form…" />
         </div>
       </Shell>
     )
@@ -280,7 +280,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         {/* Brand header */}
         <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-b-3xl px-6 pt-8 pb-6 text-center shadow-xl">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/png/aahaslogo.png" alt="Apple Holidays" className="h-12 mx-auto mb-3 object-contain" />
+          <img src="/png/apple-logo.png" alt="Apple Holidays" className="h-12 mx-auto mb-3 object-contain" />
           <h1 className="text-white font-extrabold text-lg tracking-wide">Guest Feedback Form</h1>
           <p className="text-slate-400 text-[11px] mt-1">appleholidaysds.com</p>
         </div>

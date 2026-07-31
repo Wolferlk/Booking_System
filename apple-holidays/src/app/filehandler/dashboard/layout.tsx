@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { LogOut, Loader2, PlaneTakeoff } from 'lucide-react'
+import { LogOut, PlaneTakeoff } from 'lucide-react'
 import Image from 'next/image'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 interface FHSession { id: string; name: string; email: string; country: string | null }
 
@@ -26,7 +27,7 @@ export default function FileHandlerDashboardLayout({ children }: { children: Rea
 
   if (loading) return (
     <div className="min-h-screen bg-[#05121a] flex items-center justify-center">
-      <Loader2 className="w-6 h-6 text-emerald-400 animate-spin" />
+      <LogoSpinner size={56} />
     </div>
   )
   if (!fh) return null
@@ -35,7 +36,7 @@ export default function FileHandlerDashboardLayout({ children }: { children: Rea
     <div className="min-h-screen bg-[#05121a] text-white flex flex-col">
       <header className="sticky top-0 z-30 bg-[#071a24]/90 backdrop-blur-md border-b border-white/6 px-4 sm:px-6 py-3 flex items-center gap-3">
         <div className="relative w-9 h-9 flex-shrink-0 rounded-xl overflow-hidden bg-white">
-          <Image src="/png/aahaslogo.png" alt="AH" fill className="object-contain p-1"
+          <Image src="/png/apple-logo.png" alt="AH" fill className="object-contain p-1"
             onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
         </div>
         <div className="flex-1 min-w-0">
