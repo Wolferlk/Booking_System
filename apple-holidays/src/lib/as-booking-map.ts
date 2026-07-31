@@ -22,7 +22,9 @@
  *   terms/includes/excludes/VAS ← the respective string arrays, newline-joined
  *   passengers        ← [ confirmation_voucher.guest_name ] (lead adult)
  *   accommodations    ← accommodation[]
- *   itineraryItems    ← itinerary[]
+ *   itineraryItems    ← itinerary[].activities[] (one item per activity), falling
+ *                       back to the day's own route/description when a day sells
+ *                       no activity — see `expandDay`
  *   emergencyContacts ← [ confirmation_voucher.emergency_contact ]
  *   flights           ← [] (not present in the AppleSystem payload)
  */
@@ -100,6 +102,59 @@ export interface MappedItineraryItem {
   description: string
 }
 
+/**
+ * AppleSystem truncates long activity names to 50 characters, cutting the title
+ * mid-word ("4 Island Tour (Professional Photoshoot & Drone Vid"). Those tours
+ * repeat their full title as the first line of the description, so recover it
+ * from there — the agenda generator copies `title` verbatim into `toPoint`, and
+ * a half-word title makes the whole movement chart unusable.
+ */
+function resolveActivityTitle(name: string, description: string): string {
+  const n = name.trim()
+  const firstLine = description.split(/\r?\n/)[0].trim()
+  if (n && firstLine.length > n.length && firstLine.startsWith(n)) return firstLine
+  if (n) return n
+  return firstLine
+}
+
+/**
+ * Expand one AppleSystem itinerary day into the itinerary items we store.
+ *
+ * A day carries a generic `route`/`description` pair (often the boilerplate
+ * "Day at leisure at the Hotel!") plus an `activities[]` array holding the
+ * services actually sold that day. When activities are present they ARE the
+ * day's content: each becomes its own item so a day with two transfers yields
+ * two rows. Only a day with no activities falls back to the day-level route and
+ * description.
+ */
+function expandDay(day: {
+  dayNo: number
+  date: string
+  route: string
+  description: string
+  activities: { name: string; description: string }[]
+}): MappedItineraryItem[] {
+  const acts = day.activities
+    .map((a) => ({ title: resolveActivityTitle(a.name, a.description), description: a.description.trim() }))
+    .filter((a) => a.title || a.description)
+
+  if (acts.length === 0) {
+    return [{
+      dayNo: day.dayNo,
+      date: day.date,
+      title: (day.route || `Day ${day.dayNo}`).slice(0, 1000),
+      description: day.description,
+    }]
+  }
+
+  return acts.map((a) => ({
+    dayNo: day.dayNo,
+    date: day.date,
+    title: (a.title || day.route || `Day ${day.dayNo}`).slice(0, 1000),
+    description: a.description,
+  }))
+}
+
 export interface MappedEmergencyContact {
   name: string
   phone: string
@@ -173,8 +228,12 @@ export function mapQuoteToBooking(
     .map((d) => ({
       dayNo: intOf(d.day),
       date: str(d.date).trim(),
-      title: str(d.route).trim() || `Day ${intOf(d.day)}`,
+      route: str(d.route).trim(),
       description: str(d.description).trim(),
+      activities: (Array.isArray(d.activities) ? (d.activities as Record<string, unknown>[]) : []).map((a) => ({
+        name: str(a.name).trim(),
+        description: str(a.description).trim(),
+      })),
     }))
     .filter((d) => /^\d{4}-\d{2}-\d{2}/.test(d.date))
     .sort((a, b) => (a.dayNo - b.dayNo) || a.date.localeCompare(b.date))
@@ -239,7 +298,7 @@ export function mapQuoteToBooking(
     contactEmail: str(voucher.guest_email).trim() || null,
     passengers,
     accommodations,
-    itineraryItems: days.map((d) => ({ dayNo: d.dayNo, date: d.date, title: d.title.slice(0, 1000), description: d.description })),
+    itineraryItems: days.flatMap(expandDay),
     emergencyContacts,
     flights: [],
     source: {
