@@ -678,12 +678,24 @@ export default function AgendaPage() {
       toast.error('No itinerary data available for this booking')
       return
     }
+    // Some imports store only the day number and leave the date null, which
+    // would otherwise drop the whole entry — derive the date from the booking's
+    // arrival date (day 1) so those entries still land on the right movement.
+    const arrival = booking.arrivalDate?.slice(0, 10)
+    const dateForDay = (dayNo: number) => {
+      if (!arrival || !Number.isFinite(dayNo) || dayNo < 1) return ''
+      const d = new Date(`${arrival}T00:00:00Z`)
+      if (Number.isNaN(d.getTime())) return ''
+      d.setUTCDate(d.getUTCDate() + (dayNo - 1))
+      return d.toISOString().slice(0, 10)
+    }
+
     // Group itinerary entries by date, preserving day order. A single date can
     // hold several movements (e.g. a departure transfer AND an arrival transfer),
     // so we must keep every entry — not collapse them into one description per date.
     const itinByDate = new Map<string, { title: string; description: string }[]>()
     for (const it of [...booking.itineraryItems].sort((a, b) => a.dayNo - b.dayNo)) {
-      const d = it.date?.slice(0, 10)
+      const d = it.date?.slice(0, 10) || dateForDay(it.dayNo)
       if (d && it.description?.trim()) {
         const list = itinByDate.get(d) ?? []
         list.push({ title: it.title ?? '', description: it.description.trim() })
@@ -713,39 +725,67 @@ export default function AgendaPage() {
       return hits
     }
 
+    // Track which itinerary entry (per date) has already been consumed so two
+    // agenda movements on the same day don't both grab the same description.
+    const used = new Map<string, Set<number>>()
     let replaced = 0
-    setItems(prev => {
-      // Track which itinerary entry (per date) has already been consumed so two
-      // agenda movements on the same day don't both grab the same description.
-      const used = new Map<string, Set<number>>()
-      return prev.map(item => {
-        const d = item.date?.slice(0, 10)
-        if (!d) return item
-        const candidates = itinByDate.get(d)
-        if (!candidates?.length) return item
 
-        const usedIdx = used.get(d) ?? new Set<number>()
-        // Pick the best-scoring unused itinerary entry for this movement.
-        let bestIdx = -1
-        let bestScore = -1
-        candidates.forEach((c, i) => {
-          if (usedIdx.has(i)) return
-          const sc = score(c.title, item)
-          if (sc > bestScore) { bestScore = sc; bestIdx = i }
-        })
-        // Fall back to the first unused entry (positional order) if nothing matched.
-        if (bestIdx === -1) {
-          bestIdx = candidates.findIndex((_, i) => !usedIdx.has(i))
-        }
-        if (bestIdx === -1) return item
+    const next = items.map(item => {
+      const d = item.date?.slice(0, 10)
+      if (!d) return item
+      const candidates = itinByDate.get(d)
+      if (!candidates?.length) return item
 
-        usedIdx.add(bestIdx)
-        used.set(d, usedIdx)
-        replaced++
-        return { ...item, details: candidates[bestIdx].description }
+      const usedIdx = used.get(d) ?? new Set<number>()
+      used.set(d, usedIdx)
+      // Pick the best-scoring unused itinerary entry for this movement.
+      let bestIdx = -1
+      let bestScore = -1
+      candidates.forEach((c, i) => {
+        if (usedIdx.has(i)) return
+        const sc = score(c.title, item)
+        if (sc > bestScore) { bestScore = sc; bestIdx = i }
       })
+      // Fall back to the first unused entry (positional order) if nothing matched.
+      if (bestIdx === -1) {
+        bestIdx = candidates.findIndex((_, i) => !usedIdx.has(i))
+      }
+      if (bestIdx === -1) return item
+
+      usedIdx.add(bestIdx)
+      replaced++
+      return { ...item, details: candidates[bestIdx].description }
     })
-    toast.success(`Filled descriptions from itinerary (${replaced} item${replaced !== 1 ? 's' : ''} updated)`)
+
+    // A day can carry more itinerary entries than it has movements (two tours on
+    // one day, one transfer row). Those leftovers used to be silently dropped —
+    // append them to that day's last movement so the full day's text survives.
+    const lastIdxByDate = new Map<string, number>()
+    next.forEach((item, i) => {
+      const d = item.date?.slice(0, 10)
+      if (d) lastIdxByDate.set(d, i)
+    })
+    let appended = 0
+    itinByDate.forEach((candidates, d) => {
+      const target = lastIdxByDate.get(d)
+      if (target === undefined) return
+      const usedIdx = used.get(d) ?? new Set<number>()
+      const leftovers = candidates.filter((_, i) => !usedIdx.has(i)).map(c => c.description)
+      if (!leftovers.length) return
+      const existing = next[target].details?.trim()
+      next[target] = {
+        ...next[target],
+        details: [existing, ...leftovers].filter(Boolean).join('\n\n'),
+      }
+      appended += leftovers.length
+    })
+
+    setItems(next)
+    toast.success(
+      `Filled descriptions from itinerary (${replaced} item${replaced !== 1 ? 's' : ''} updated`
+      + (appended ? `, ${appended} extra entr${appended !== 1 ? 'ies' : 'y'} appended` : '')
+      + ')',
+    )
   }
 
   function openDriverView(assignment: AgendaItem['assignment']) {
