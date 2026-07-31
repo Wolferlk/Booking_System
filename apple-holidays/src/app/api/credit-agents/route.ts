@@ -6,10 +6,23 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
+import { EMAIL_REGEX, MOBILE_REGEX, normalizeMobile } from '@/lib/validation'
 import type { OperationCountry } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-export async function GET(req: NextRequest) {
+
+function validateContactFields(email: unknown, phone: unknown): string | null {
+  const emailText = String(email ?? '').trim()
+  const phoneText = String(phone ?? '').trim()
+  if (emailText && !EMAIL_REGEX.test(emailText)) return 'Please enter a valid email address'
+  if (phoneText) {
+    const digits = normalizeMobile(phoneText)
+    if (!MOBILE_REGEX.test(digits)) {
+      return 'Please enter a valid phone number (7–15 digits)'
+    }
+  }
+  return null
+}export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
   const role = session.user.role as UserRole
@@ -70,6 +83,9 @@ export async function POST(req: NextRequest) {
   const { name, aliases, contactName, contactEmail, contactPhone, creditLimit, currency, notes, country } = body
 
   if (!name?.trim()) return buildApiError('Agent name is required')
+
+  const contactError = validateContactFields(contactEmail, contactPhone)
+  if (contactError) return buildApiError(contactError, 400)
 
   const existing = await prisma.creditAgent.findFirst({ where: { name: { equals: name.trim() } } })
   if (existing) return buildApiError('An agent with this name already exists')

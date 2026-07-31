@@ -21,6 +21,7 @@ import Modal from '@/components/ui/modal'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
 import { useSession } from 'next-auth/react'
+import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import type { BookingStatus } from '@prisma/client'
 
@@ -216,6 +217,7 @@ function BookingsPageInner() {
   const [contentSearch, setContentSearch] = useState('')
   const [showDownloadMenu, setShowDownloadMenu] = useState(false)
   const [downloadingExcel, setDownloadingExcel] = useState(false)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [source, setSource]             = useState(searchParams.get('source') ?? '')
@@ -489,6 +491,31 @@ function BookingsPageInner() {
     return `/print/bookings-list?${params}`
   }
 
+  async function downloadPdf(mode: 'full' | 'numbers') {
+    setDownloadingPdf(true)
+    setShowDownloadMenu(false)
+    try {
+      const params = new URLSearchParams(buildPrintUrl(mode).split('?')[1])
+      const res = await fetch(`/api/bookings/export-pdf?${params}`)
+      if (!res.ok) {
+        const error = await res.json().catch(() => null)
+        throw new Error(error?.error ?? 'PDF export failed')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `bookings-${mode}.pdf`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'PDF export failed')
+    } finally {
+      setDownloadingPdf(false)
+    }
+  }
   async function downloadExcel() {
     setDownloadingExcel(true)
     setShowDownloadMenu(false)
@@ -552,7 +579,7 @@ function BookingsPageInner() {
                   </p>
                   <div className="border-t border-slate-100">
                     <button
-                      onClick={() => { setShowDownloadMenu(false); window.open(buildPrintUrl('full'), '_blank') }}
+                      onClick={() => downloadPdf('full')}
                       className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-slate-50 text-sm text-slate-700 transition-colors text-left"
                     >
                       <FileText className="w-4 h-4 text-slate-400" />
@@ -562,7 +589,7 @@ function BookingsPageInner() {
                       </div>
                     </button>
                     <button
-                      onClick={() => { setShowDownloadMenu(false); window.open(buildPrintUrl('numbers'), '_blank') }}
+                      onClick={() => downloadPdf('numbers')}
                       className="w-full flex items-center gap-2.5 px-4 py-3 hover:bg-slate-50 text-sm text-slate-700 transition-colors text-left border-t border-slate-100"
                     >
                       <Hash className="w-4 h-4 text-slate-400" />
