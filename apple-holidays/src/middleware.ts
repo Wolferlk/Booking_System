@@ -38,6 +38,13 @@ export default withAuth(
       return NextResponse.redirect(new URL('/dashboard', req.url))
     }
 
+    // Auto Reports can mail booking, guest and complaint detail to external
+    // addresses, so configuring one is an admin action even though it does not
+    // live under /dashboard/admin.
+    if (pathname.startsWith('/dashboard/reports') && !ADMIN_ROLES.includes(role)) {
+      return NextResponse.redirect(new URL('/dashboard', req.url))
+    }
+
     // Admin-only routes
     if (pathname.startsWith('/dashboard/admin')) {
       // Mail Inbox is available to all internal staff roles

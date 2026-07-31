@@ -11,7 +11,7 @@ import {
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
-  PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag,
+  PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -34,7 +34,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
-  XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag,
+  XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -147,6 +147,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
     { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
@@ -209,6 +210,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
     { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
