@@ -30,7 +30,7 @@ export async function loadPdfDocumentCtor() {
 }
 
 export async function loadLogo(): Promise<Buffer | null> {
-  for (const name of ['aahaslogo.png', 'aahaas.png', 'chat-logo.png']) {
+  for (const name of ['apple-logo.png', 'aahaslogo.png', 'chat-logo.png']) {
     try {
       return await readFile(path.join(process.cwd(), 'public', 'png', name))
     } catch { continue }

@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { CalendarDays, Car, User2, Settings, LogOut, Loader2, ChevronRight, Menu, X } from 'lucide-react'
+import { CalendarDays, Car, User2, Settings, LogOut, ChevronRight, Menu, X } from 'lucide-react'
 import Image from 'next/image'
+import LogoSpinner from '@/components/shared/logo-spinner'
 import { cn } from '@/lib/utils'
 
 interface VendorSession {
@@ -49,7 +50,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
 
   if (loading) return (
     <div className="min-h-screen bg-[#060a14] flex items-center justify-center">
-      <Loader2 className="w-6 h-6 text-brand-400 animate-spin" />
+      <LogoSpinner size={56} />
     </div>
   )
 
@@ -65,7 +66,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
           <div className="flex items-center gap-3">
             <div className="relative w-11 h-11 flex-shrink-0 rounded-2xl overflow-hidden bg-white">
               <Image
-                src="/png/aahaslogo.png"
+                src="/png/apple-logo.png"
                 alt="AH"
                 fill
                 className="object-contain p-1"
@@ -132,7 +133,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
           <div className="flex items-center gap-3">
             <div className="relative w-10 h-10 flex-shrink-0 rounded-2xl overflow-hidden bg-white">
               <Image
-                src="/png/aahaslogo.png"
+                src="/png/apple-logo.png"
                 alt="AH"
                 fill
                 className="object-contain p-1"
@@ -190,7 +191,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
           </button>
           <div className="hidden sm:flex relative w-9 h-9 flex-shrink-0">
             <Image
-              src="/png/aahaslogo.png"
+              src="/png/apple-logo.png"
               alt="AH"
               fill
               className="object-contain"

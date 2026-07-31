@@ -37,6 +37,7 @@ import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 /**
  * Detects whether an accommodation is the customer's OWN arrangement (booked by
@@ -401,7 +402,7 @@ export default function BookingDetailPage() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-screen">
-      <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
+      <LogoSpinner size={64} label="Loading booking…" />
     </div>
   )
 

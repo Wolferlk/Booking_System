@@ -16,6 +16,7 @@ import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import type { UserRole } from '@prisma/client'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 const CATEGORIES = ['HOTEL', 'TICKETS', 'GUIDES', 'MEALS', 'CRUISE', 'WATER', 'TRANSPORT', 'TAX_FEES', 'FLIGHT_TICKETS', 'OTHER']
 const VALUE_COLUMNS = [
@@ -539,8 +540,8 @@ export default function PNLPage() {
   })
 
   if (loading) return (
-    <div className="flex justify-center h-64">
-      <Loader2 className="w-6 h-6 text-brand-500 animate-spin mt-20" />
+    <div className="flex justify-center h-64 pt-16">
+      <LogoSpinner size={48} />
     </div>
   )
 

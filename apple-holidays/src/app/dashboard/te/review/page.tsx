@@ -5,11 +5,12 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useCountryFilter } from '@/hooks/use-country-filter'
-import { ClipboardCheck, Calendar, Users, Clock, AlertCircle, Loader2, CheckCircle2 } from 'lucide-react'
+import { ClipboardCheck, Calendar, Users, Clock, AlertCircle, CheckCircle2 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { formatDate, getDaysUntilTrip } from '@/lib/utils'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 export default function TEReviewPage() {
   const { data: session } = useSession()
@@ -47,7 +48,7 @@ export default function TEReviewPage() {
 
   if (loading) return (
     <div className="flex h-screen items-center justify-center">
-      <Loader2 className="w-7 h-7 animate-spin text-brand-500" />
+      <LogoSpinner size={56} />
     </div>
   )
 

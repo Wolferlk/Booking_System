@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/ui/badge'
 import { formatDate, formatCurrency } from '@/lib/utils'
 import type { BookingStatus } from '@prisma/client'
 import { differenceInDays, format } from 'date-fns'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 interface PortalData {
   bookingRef: string
@@ -93,10 +94,7 @@ export default function ClientPortalPage() {
 
   if (loading) return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-      <div className="text-center">
-        <Loader2 className="w-10 h-10 text-brand-500 animate-spin mx-auto mb-3" />
-        <p className="text-slate-400 text-sm">Loading your trip…</p>
-      </div>
+      <LogoSpinner size={64} label="Loading your trip…" />
     </div>
   )
 

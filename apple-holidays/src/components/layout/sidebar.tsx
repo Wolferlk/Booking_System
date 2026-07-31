@@ -412,7 +412,7 @@ export default function Sidebar() {
           >
             <div className="relative w-9 h-9 rounded-xl overflow-hidden flex-shrink-0 shadow-lg shadow-brand-500/30 bg-white">
               <Image
-                src="/png/aahaslogo.png"
+                src="/png/apple-logo.png"
                 alt="Aahas logo"
                 fill
                 sizes="36px"

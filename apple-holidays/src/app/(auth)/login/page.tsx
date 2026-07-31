@@ -170,12 +170,12 @@ function LoginForm() {
         <div className="text-center mb-7">
           <div className="inline-flex items-center gap-3 mb-5">
             <Image
-              src="/apple-system-operations.png"
+              src="/png/apple-logo.png"
               alt="Apple System Operations"
               width={64}
-              height={85}
+              height={64}
               priority
-              className="w-14 h-auto object-contain drop-shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+              className="w-14 h-14 object-contain drop-shadow-[0_0_20px_rgba(239,68,68,0.3)]"
             />
             <div className="text-left">
               <p className="text-white font-bold text-xl leading-tight">Apple System</p>

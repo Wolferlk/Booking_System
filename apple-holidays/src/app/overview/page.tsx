@@ -547,7 +547,7 @@ export default function OverviewPage(){
           <div className="max-w-[1400px] mx-auto px-6 py-3.5 flex items-center justify-between">
             <button onClick={()=>router.push('/')} className="flex items-center gap-3 hover:opacity-80 transition-opacity group">
               <div className="relative w-8 h-8 rounded-lg overflow-hidden anim-glow">
-                <Image src="/png/aahaslogo.png" alt="Aahas" fill className="object-contain"/>
+                <Image src="/png/apple-logo.png" alt="Aahas" fill className="object-contain"/>
               </div>
               <div className="border-l border-white/8 pl-3 flex items-center gap-2">
                 <div className="relative h-5 w-14 opacity-50 group-hover:opacity-70 transition-opacity"><Image src="/png/aahaas.png" alt="Aahaas" fill className="object-contain"/></div>

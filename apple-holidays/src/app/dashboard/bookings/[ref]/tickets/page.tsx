@@ -22,6 +22,7 @@ import type { UserRole } from '@prisma/client'
 import Link from 'next/link'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import PasteDropzone from '@/components/shared/paste-dropzone'
+import LogoSpinner from '@/components/shared/logo-spinner'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -702,8 +703,8 @@ export default function TicketsPage() {
   // ── Computed ───────────────────────────────────────────────────────────────
 
   if (loading) return (
-    <div className="flex justify-center h-48">
-      <Loader2 className="w-6 h-6 text-brand-500 animate-spin mt-12" />
+    <div className="flex justify-center h-48 pt-10">
+      <LogoSpinner size={48} />
     </div>
   )
 

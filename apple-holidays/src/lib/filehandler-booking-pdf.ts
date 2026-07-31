@@ -26,7 +26,7 @@ let LOGO: Buffer | null | undefined
 function logo(): Buffer | null {
   if (LOGO !== undefined) return LOGO
   try {
-    LOGO = readFileSync(path.join(process.cwd(), 'public', 'png', 'aahaslogo.png'))
+    LOGO = readFileSync(path.join(process.cwd(), 'public', 'png', 'apple-logo.png'))
   } catch {
     LOGO = null
   }
