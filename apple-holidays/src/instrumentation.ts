@@ -21,6 +21,11 @@ export async function register() {
       // 5 min and processes only new mail (shares dedup keys, so no double token spend).
       const { startTqAutoScheduler } = await import('@/lib/tq-auto-scheduler')
       startTqAutoScheduler()
+
+      // Auto-report schedules are configured at runtime, so this ticks every
+      // minute and evaluates due times itself rather than baking in a cron expr.
+      const { startReportScheduler } = await import('@/lib/reports/report-scheduler')
+      startReportScheduler()
     }
   }
 }

@@ -56,7 +56,10 @@ export default function PortalIndexPage() {
             </div>
           </div>
           <button
-            onClick={() => signOut({ callbackUrl: '/' })}
+            onClick={async () => {
+              await signOut({ redirect: false })
+              window.location.href = '/'
+            }}
             className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors px-3 py-2 rounded-xl hover:bg-white/5"
           >
             <LogOut className="w-3.5 h-3.5" />
