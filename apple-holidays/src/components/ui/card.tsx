@@ -32,9 +32,9 @@ export function CardHeader({
   action?: React.ReactNode
 }) {
   return (
-    <div className={cn('flex items-center justify-between px-6 py-4 border-b border-slate-100', className)}>
-      <div className="flex-1">{children}</div>
-      {action && <div className="ml-4 flex-shrink-0">{action}</div>}
+    <div className={cn('flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 py-4 border-b border-slate-100', className)}>
+      <div className="flex-1 min-w-0">{children}</div>
+      {action && <div className="flex-shrink-0 ml-auto">{action}</div>}
     </div>
   )
 }
