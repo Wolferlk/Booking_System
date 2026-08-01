@@ -1,0 +1,1846 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+4 0 obj
+<< /Length 265 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(AppleSystem -> OPS Quotation API Integration Guide Integration documentation ∑ Version) Tj
+ET
+BT
+/F1 8.8 Tf
+45 778 Td
+(1.0) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 1) Tj
+ET
+Q
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 5628 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 21 Tf
+45 790 Td
+(AppleSystem -> OPSQuotation API) Tj
+ET
+BT
+/F1 8.8 Tf
+45 757 Td
+(Authentication, quotation lifecycle integration, cancellation processing, testing, error) Tj
+ET
+BT
+/F1 8.8 Tf
+45 745 Td
+(handling, and production operations.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 734 Td
+(Production base URLhttps://ops.aahaas.com/api/public/as/v1System boundaryAppleSystem is) Tj
+ET
+BT
+/F1 8.8 Tf
+45 722 Td
+(the quotation source of truth. OPS receives and operates the corresponding booking.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 711 Td
+(Prepared from the API reference, integration notes, and Postman collection in the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 699 Td
+(project repository.Generated 01 August 2026.) Tj
+ET
+BT
+/F2 14 Tf
+45 680 Td
+(Contents) Tj
+ET
+BT
+/F1 8.8 Tf
+45 662 Td
+(? Purpose and architecture) Tj
+ET
+BT
+/F1 8.8 Tf
+45 651 Td
+(? Environments and URL structure) Tj
+ET
+BT
+/F1 8.8 Tf
+45 640 Td
+(? Authentication) Tj
+ET
+BT
+/F1 8.8 Tf
+45 629 Td
+(? Booking identifiers and common conventions) Tj
+ET
+BT
+/F1 8.8 Tf
+45 618 Td
+(? Quotation lifecycle endpoints) Tj
+ET
+BT
+/F1 8.8 Tf
+45 607 Td
+(? Single-endpoint synchronization) Tj
+ET
+BT
+/F1 8.8 Tf
+45 596 Td
+(? Response envelope and error handling) Tj
+ET
+BT
+/F1 8.8 Tf
+45 585 Td
+(? Integration implementation pattern) Tj
+ET
+BT
+/F1 8.8 Tf
+45 574 Td
+(? Postman setup and safe testing) Tj
+ET
+BT
+/F1 8.8 Tf
+45 563 Td
+(? Security and production configuration) Tj
+ET
+BT
+/F1 8.8 Tf
+45 552 Td
+(? Go-live checklist) Tj
+ET
+BT
+/F2 14 Tf
+45 533 Td
+(1. Purpose and architecture) Tj
+ET
+BT
+/F1 8.8 Tf
+45 515 Td
+(This API allows AppleSystem \(AS\) to drive the OPS booking lifecycle. When a quotation is) Tj
+ET
+BT
+/F1 8.8 Tf
+45 503 Td
+(confirmed, AS creates an OPS booking. When the quotation changes, AS sends an amendment.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 491 Td
+(When the quotation is cancelled, OPS is automatically moved to CANCELLED and any) Tj
+ET
+BT
+/F1 8.8 Tf
+45 479 Td
+(applicable cancellation fee is recorded.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 468 Td
+(System | Responsibility) Tj
+ET
+BT
+/F1 8.8 Tf
+45 457 Td
+(AppleSystem | Creates, revises, and cancels quotations; supplies quotation numbers,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 445 Td
+(reference IDs, itinerary data, and commercial decisions.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 434 Td
+(OPS Public API | Authenticates AS, resolves the matching booking, imports or updates the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 422 Td
+(booking, records audit information, and returns a standard JSON response.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 411 Td
+(OPS booking system | Stores operational booking data, status history, versions,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 399 Td
+(cancellation details, and notification results.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 388 Td
+(The integration does not introduce new database tables or columns. It writes to existing) Tj
+ET
+BT
+/F1 8.8 Tf
+45 376 Td
+(booking, booking-version, status-event, and activity-log structures.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 361 Td
+(Lifecycle flow) Tj
+ET
+BT
+/F3 7.1 Tf
+45 345 Td
+(AppleSystem                         OPS Public API                 OPS booking) Tj
+ET
+BT
+/F3 7.1 Tf
+45 336 Td
+(    |                                      |                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 327 Td
+(    | POST /auth/login                     |                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 318 Td
+(    |------------------------------------->|                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 309 Td
+(    |              bearer token            |                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 300 Td
+(    |<-------------------------------------|                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 291 Td
+(    | POST /quotation/create               |                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 282 Td
+(    |------------------------------------->| create/import as DRAFT     |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 273 Td
+(    |                                      |--------------------------->|) Tj
+ET
+BT
+/F3 7.1 Tf
+45 264 Td
+(    | POST /quotation/update               |                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 255 Td
+(    |------------------------------------->| version + amendment trail  |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 246 Td
+(    |                                      |--------------------------->|) Tj
+ET
+BT
+/F3 7.1 Tf
+45 237 Td
+(    | POST /quotation/cancel               |                            |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 228 Td
+(    |------------------------------------->| status -> CANCELLED         |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 219 Td
+(    |                                      |--------------------------->|) Tj
+ET
+BT
+/F2 14 Tf
+45 199 Td
+(2. Environments and URL structure) Tj
+ET
+BT
+/F1 8.8 Tf
+45 181 Td
+(Environment | Base URL | Use) Tj
+ET
+BT
+/F1 8.8 Tf
+45 170 Td
+(Live | https://ops.aahaas.com/api/public/as/v1 | Production integration. Use real) Tj
+ET
+BT
+/F1 8.8 Tf
+45 158 Td
+(credentials and approved booking references only.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 147 Td
+(Local | http://localhost:3000/api/public/as/v1 | Development server only.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 136 Td
+(All requests use JSON. Set these headers on authenticated calls:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 123 Td
+(Content-Type: application/json) Tj
+ET
+BT
+/F3 7.1 Tf
+45 114 Td
+(Accept: application/json) Tj
+ET
+BT
+/F3 7.1 Tf
+45 105 Td
+(Authorization: Bearer <access_token>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 91 Td
+(Production warning: /quotation/create, /quotation/update, /quotation/cancel, and /quotatio) Tj
+ET
+BT
+/F3 7.1 Tf
+45 82 Td
+(n/sync can change production data. Never run the complete Postman collection against live ) Tj
+ET
+BT
+/F3 7.1 Tf
+45 73 Td
+(without an approved test booking and an explicit rehearsal plan.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 2) Tj
+ET
+Q
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 4770 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(3. Authentication) Tj
+ET
+BT
+/F2 10.5 Tf
+45 760 Td
+(3.1 Login - POST /auth/login) Tj
+ET
+BT
+/F1 8.8 Tf
+45 746 Td
+(Exchange the AS integration username and password for a bearer token. The token is valid) Tj
+ET
+BT
+/F1 8.8 Tf
+45 734 Td
+(for 12 hours by default \(configurable on the server\).) Tj
+ET
+BT
+/F3 7.1 Tf
+45 721 Td
+(curl -X POST 'https://ops.aahaas.com/api/public/as/v1/auth/login' \\) Tj
+ET
+BT
+/F3 7.1 Tf
+45 712 Td
+(  -H 'Content-Type: application/json' \\) Tj
+ET
+BT
+/F3 7.1 Tf
+45 703 Td
+(  -d '{"username":"as_integration","password":"<stored-secret>"}') Tj
+ET
+BT
+/F3 7.1 Tf
+45 689 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 680 Td
+(  "success": true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 671 Td
+(  "message": "Authenticated",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 662 Td
+(  "data": {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 653 Td
+(    "access_token": "<JWT>",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 644 Td
+(    "token_type": "Bearer",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 635 Td
+(    "expires_in": 43200,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 626 Td
+(    "expires_at": "2026-08-01T20:00:19.122Z",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 617 Td
+(    "scopes": ["*"]) Tj
+ET
+BT
+/F3 7.1 Tf
+45 608 Td
+(  },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 599 Td
+(  "request_id": "<uuid>",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 590 Td
+(  "timestamp": "2026-08-01T08:00:19.129Z") Tj
+ET
+BT
+/F3 7.1 Tf
+45 581 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 569 Td
+(Cache the token. Re-authenticate approximately one minute before expiry, or after one) Tj
+ET
+BT
+/F1 8.8 Tf
+45 557 Td
+(401 UNAUTHORIZED. Do not log in for every request.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 542 Td
+(3.2 Verify token - GET /auth/verify) Tj
+ET
+BT
+/F3 7.1 Tf
+45 526 Td
+(curl 'https://ops.aahaas.com/api/public/as/v1/auth/verify' \\) Tj
+ET
+BT
+/F3 7.1 Tf
+45 517 Td
+(  -H 'Authorization: Bearer <access_token>') Tj
+ET
+BT
+/F1 8.8 Tf
+45 505 Td
+(Use this low-cost probe before a batch operation. A valid response includes data.valid:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 493 Td
+(true, the client name, and scopes.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 478 Td
+(3.3 Authentication failures) Tj
+ET
+BT
+/F1 8.8 Tf
+45 464 Td
+(Status | Code | Meaning / action) Tj
+ET
+BT
+/F1 8.8 Tf
+45 453 Td
+(401 | INVALID_CREDENTIALS | Credentials are wrong. Stop and alert; do not repeatedly) Tj
+ET
+BT
+/F1 8.8 Tf
+45 441 Td
+(retry.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 430 Td
+(401 | UNAUTHORIZED | Token missing, invalid, or expired. Login again once.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 419 Td
+(422 | CREDENTIALS_REQUIRED | Username or password was not supplied.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 408 Td
+(429 | TOO_MANY_ATTEMPTS | Eight failed logins trigger a five-minute lockout. Back off.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 397 Td
+(503 | NOT_CONFIGURED | OPS has no configured API client. Contact the OPS administrator.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 386 Td
+(Alternative: a static x-api-key may be configured, but bearer authentication is) Tj
+ET
+BT
+/F1 8.8 Tf
+45 374 Td
+(preferred. Treat an API key like a password.) Tj
+ET
+BT
+/F2 14 Tf
+45 355 Td
+(4. Booking identifiers and common conventions) Tj
+ET
+BT
+/F1 8.8 Tf
+45 337 Td
+(Most write requests require one booking identifier. Resolution accepts these names and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 325 Td
+(aliases:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 314 Td
+(Field | Example | Purpose) Tj
+ET
+BT
+/F1 8.8 Tf
+45 303 Td
+(is_number | IS48748 | OPS IS number / booking reference. Case and surrounding spaces are) Tj
+ET
+BT
+/F1 8.8 Tf
+45 291 Td
+(normalized.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 280 Td
+(booking_ref | IS48748 | Alias for the IS number.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 269 Td
+(quotation_no | 479416CNTL | AppleSystem quotation reference; the most recent matching) Tj
+ET
+BT
+/F1 8.8 Tf
+45 257 Td
+(booking is used.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 246 Td
+(reference_id | 18452 | AppleSystem list-row ID. Required when OPS must pull the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 234 Td
+(quotation template.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 223 Td
+(Accepted spelling aliases include isNumber, quotationNo, referenceId, ref_number, and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 211 Td
+(quotation_ref.) Tj
+ET
+BT
+/F2 14 Tf
+45 192 Td
+(5. Quotation lifecycle endpoints) Tj
+ET
+BT
+/F2 10.5 Tf
+45 170 Td
+(5.1 Create booking - POST /quotation/create) Tj
+ET
+BT
+/F1 8.8 Tf
+45 156 Td
+(Imports the quotation from AppleSystem and creates an OPS booking in DRAFT. The import) Tj
+ET
+BT
+/F1 8.8 Tf
+45 144 Td
+(includes dates, passengers, hotels, itinerary, contacts, pricing, and mapped quotation) Tj
+ET
+BT
+/F1 8.8 Tf
+45 132 Td
+(information.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 119 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 110 Td
+(  "quotation_no": "479416CNTL",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 101 Td
+(  "reference_id": "18452",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 92 Td
+(  "is_number": "IS48748") Tj
+ET
+BT
+/F3 7.1 Tf
+45 83 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 71 Td
+(quotation_no and reference_id are required. is_number is optional when the template) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 3) Tj
+ET
+Q
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 5265 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(contains the IS number.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 779 Td
+(Idempotency: first success normally returns 201. A repeated request returns 200 with) Tj
+ET
+BT
+/F1 8.8 Tf
+45 767 Td
+(already_exists: true and does not create a duplicate. This makes timeout retries safe.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 752 Td
+(5.2 Update booking - POST /quotation/update) Tj
+ET
+BT
+/F1 8.8 Tf
+45 738 Td
+(The endpoint also accepts PUT and PATCH. Use the re-pull path when AppleSystem has a) Tj
+ET
+BT
+/F1 8.8 Tf
+45 726 Td
+(revised quotation:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 713 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 704 Td
+(  "is_number": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 695 Td
+(  "quotation_no": "479416CNTL",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 686 Td
+(  "reference_id": "18452",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 677 Td
+(  "amendment_note": "Revision 3 - hotel changed in Kandy",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 668 Td
+(  "force_replace_details": false,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 659 Td
+(  "create_if_missing": false) Tj
+ET
+BT
+/F3 7.1 Tf
+45 650 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 638 Td
+(Header fields are refreshed. Passenger, hotel, and itinerary child records are replaced) Tj
+ET
+BT
+/F1 8.8 Tf
+45 626 Td
+(only for early statuses such as DRAFT, BT_CONFIRMED, GT_REVIEW, CHANGE_REQUESTED, and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 614 Td
+(GT_VERIFIED. Set force_replace_details: true only when an approved operational decision) Tj
+ET
+BT
+/F1 8.8 Tf
+45 602 Td
+(permits overwriting advanced booking details.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 591 Td
+(The response contains an incremented version, changed_fields, and details_replaced. The) Tj
+ET
+BT
+/F1 8.8 Tf
+45 579 Td
+(API also records a version snapshot and status event.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 564 Td
+(5.3 Patch fields only) Tj
+ET
+BT
+/F1 8.8 Tf
+45 550 Td
+(When no reference_id is supplied, no AppleSystem round-trip occurs. Only explicit fields) Tj
+ET
+BT
+/F1 8.8 Tf
+45 538 Td
+(are applied:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 525 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 516 Td
+(  "quotation_no": "479416CNTL",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 507 Td
+(  "amendment_note": "Pax corrected by agent",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 498 Td
+(  "fields": {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 489 Td
+(    "pax_adults": 3,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 480 Td
+(    "pax_children": 1,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 471 Td
+(    "quoted_total": 690.00,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 462 Td
+(    "currency": "USD",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 453 Td
+(    "arrival_date": "2026-08-08",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 444 Td
+(    "departure_date": "2026-08-14") Tj
+ET
+BT
+/F3 7.1 Tf
+45 435 Td
+(  }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 426 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 414 Td
+(Allowed keys: arrival_date, departure_date, pax_adults, pax_children, pax_infants,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 402 Td
+(quoted_total, currency, agent, file_handler, contact_email, contact_phone,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 390 Td
+(package_includes, package_excludes, important_notes, and quotation_no.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 379 Td
+(create_if_missing: true can import a missing booking, but requires both quotation_no and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 367 Td
+(reference_id. Cancelled and completed bookings cannot be updated.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 352 Td
+(5.4 Cancel booking - POST /quotation/cancel) Tj
+ET
+BT
+/F1 8.8 Tf
+45 338 Td
+(The endpoint also accepts DELETE. It immediately changes the booking to CANCELLED; it) Tj
+ET
+BT
+/F1 8.8 Tf
+45 326 Td
+(does not wait for an accounts approval step.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 313 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 304 Td
+(  "is_number": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 295 Td
+(  "reason": "Guest cancelled the trip",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 286 Td
+(  "cancellation_fee": 150.00,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 277 Td
+(  "currency": "USD",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 268 Td
+(  "cancelled_by": "Nimal Perera",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 259 Td
+(  "cancelled_by_email": "nimal@appleholidays.lk",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 250 Td
+(  "suppress_email": false) Tj
+ET
+BT
+/F3 7.1 Tf
+45 241 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 229 Td
+(For multiple charges, send itemized fees instead of cancellation_fee. The server) Tj
+ET
+BT
+/F1 8.8 Tf
+45 217 Td
+(recomputes the total:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 204 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 195 Td
+(  "is_number": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 186 Td
+(  "reason": "Guest cancelled",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 177 Td
+(  "cancellation_fees": [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 168 Td
+(    {"note":"Hotel one-night penalty", "amount":120},) Tj
+ET
+BT
+/F3 7.1 Tf
+45 159 Td
+(    {"note":"Non-refundable entrance tickets", "amount":30}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 150 Td
+(  ]) Tj
+ET
+BT
+/F3 7.1 Tf
+45 141 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 129 Td
+(On cancellation, OPS stores the previous status, cancellation timestamp, reason, caller) Tj
+ET
+BT
+/F1 8.8 Tf
+45 117 Td
+(details, fee lines, total fee, automatic approval trail, and a status event. It sends) Tj
+ET
+BT
+/F1 8.8 Tf
+45 105 Td
+(the standard cancellation notice unless suppress_email: true. A mail failure does not) Tj
+ET
+BT
+/F1 8.8 Tf
+45 93 Td
+(roll back the cancellation; the response reports email_sent: false.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 82 Td
+(Repeated cancellation is safe: an already-cancelled booking returns 200 with) Tj
+ET
+BT
+/F1 8.8 Tf
+45 70 Td
+(already_cancelled: true. Completed or otherwise non-cancellable bookings return 409) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 4) Tj
+ET
+Q
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 5140 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(NOT_CANCELLABLE.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 775 Td
+(5.5 Read status - GET /quotation/status) Tj
+ET
+BT
+/F1 8.8 Tf
+45 761 Td
+(This is read-only and should be used before or after a lifecycle operation:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 748 Td
+(GET /quotation/status?is_number=IS48748) Tj
+ET
+BT
+/F3 7.1 Tf
+45 739 Td
+(GET /quotation/status?quotation_no=479416CNTL) Tj
+ET
+BT
+/F1 8.8 Tf
+45 727 Td
+(The response includes whether the booking was found, cancellation state, booking status,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 715 Td
+(version, dates, passenger totals, pricing, and update timestamp.) Tj
+ET
+BT
+/F2 14 Tf
+45 696 Td
+(6. Single-endpoint synchronization) Tj
+ET
+BT
+/F2 10.5 Tf
+45 674 Td
+(POST /quotation/sync) Tj
+ET
+BT
+/F1 8.8 Tf
+45 660 Td
+(Use this endpoint when AppleSystem wants one webhook URL. The action determines the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 648 Td
+(behavior:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 637 Td
+(Action | Equivalent endpoint | Accepted aliases) Tj
+ET
+BT
+/F1 8.8 Tf
+45 626 Td
+(CREATE | /quotation/create | CREATED, NEW) Tj
+ET
+BT
+/F1 8.8 Tf
+45 615 Td
+(UPDATE | /quotation/update | UPDATED, AMENDED, REVISED) Tj
+ET
+BT
+/F1 8.8 Tf
+45 604 Td
+(CANCEL | /quotation/cancel | CANCELLED, CANCELLATION) Tj
+ET
+BT
+/F3 7.1 Tf
+45 591 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 582 Td
+(  "action": "CANCEL",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 573 Td
+(  "is_number": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 564 Td
+(  "reason": "Quotation cancelled in AppleSystem",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 555 Td
+(  "cancellation_fee": 150) Tj
+ET
+BT
+/F3 7.1 Tf
+45 546 Td
+(}) Tj
+ET
+BT
+/F2 14 Tf
+45 526 Td
+(7. Response envelope and error handling) Tj
+ET
+BT
+/F1 8.8 Tf
+45 508 Td
+(Every response includes a consistent envelope. Save the request_id and quote it when) Tj
+ET
+BT
+/F1 8.8 Tf
+45 496 Td
+(reporting a problem.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 483 Td
+(// Success) Tj
+ET
+BT
+/F3 7.1 Tf
+45 474 Td
+({"success":true,"message":"...","data":{...},"request_id":"<uuid>","timestamp":"<ISO-8601>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 465 Td
+("}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 456 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 447 Td
+(// Failure) Tj
+ET
+BT
+/F3 7.1 Tf
+45 438 Td
+({"success":false,"error":"...","code":"MACHINE_CODE","request_id":"<uuid>","timestamp":"<I) Tj
+ET
+BT
+/F3 7.1 Tf
+45 429 Td
+(SO-8601>"}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 417 Td
+(Status | Codes | Recommended handling) Tj
+ET
+BT
+/F1 8.8 Tf
+45 406 Td
+(400 | INVALID_JSON, INVALID_BODY | Fix JSON/object shape.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 395 Td
+(401 | UNAUTHORIZED, INVALID_CREDENTIALS | Re-login once for an expired token; stop for) Tj
+ET
+BT
+/F1 8.8 Tf
+45 383 Td
+(bad credentials.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 372 Td
+(403 | UNAUTHORIZED scope | Stop and request the required scope.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 361 Td
+(404 | BOOKING_NOT_FOUND | For create flows, create/import; for cancellation, normally) Tj
+ET
+BT
+/F1 8.8 Tf
+45 349 Td
+(ignore if never imported.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 338 Td
+(409 | BOOKING_CANCELLED, BOOKING_COMPLETED, NOT_CANCELLABLE, IDENTIFIER_MISMATCH,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 326 Td
+(COUNTRY_MISMATCH | Do not blindly retry. Resolve the business conflict.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 315 Td
+(422 | IDENTIFIER_REQUIRED, INVALID_FIELD, INVALID_FEE, NOTHING_TO_UPDATE,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 303 Td
+(QUOTATION_NOT_MAPPABLE, COUNTRY_UNRESOLVED | Correct the request or source quotation.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 292 Td
+(429 | TOO_MANY_ATTEMPTS | Back off for the lockout period.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 281 Td
+(500/502/503 | INTERNAL_ERROR, UPSTREAM_UNAVAILABLE, NOT_CONFIGURED | Retry transient) Tj
+ET
+BT
+/F1 8.8 Tf
+45 269 Td
+(failures with backoff; alert for configuration failures.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 258 Td
+(Retry policy: retry 500, 502, and 503 with exponential backoff. Create and cancel are) Tj
+ET
+BT
+/F1 8.8 Tf
+45 246 Td
+(designed to be safe to retry. Retry 401 once after re-login. Do not retry normal 4xx) Tj
+ET
+BT
+/F1 8.8 Tf
+45 234 Td
+(validation or business errors.) Tj
+ET
+BT
+/F2 14 Tf
+45 215 Td
+(8. Integration implementation pattern) Tj
+ET
+BT
+/F1 8.8 Tf
+45 197 Td
+(? Store the API username and password in a secret manager or protected environment) Tj
+ET
+BT
+/F1 8.8 Tf
+45 185 Td
+(configuration.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 174 Td
+(? Login once and cache the token until one minute before expiry.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 163 Td
+(? Send the bearer token and JSON headers on every API call.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 152 Td
+(? Persist the API response and request_id in the AS integration log.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 141 Td
+(? For transient failures, enqueue a retry with exponential backoff.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 130 Td
+(? For a 401, refresh the token once and retry the original operation.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 119 Td
+(? For business errors, stop retrying and notify the responsible operator.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 104 Td
+(Recommended event mapping) Tj
+ET
+BT
+/F1 8.8 Tf
+45 90 Td
+(AppleSystem event | API call | Notes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 79 Td
+(Quotation confirmed / IS issued | POST /quotation/create | Safe to retry; idempotent.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 68 Td
+(Quotation revised | POST /quotation/update with reference_id | Re-pulls the latest) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 5) Tj
+ET
+Q
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 5104 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(template.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 779 Td
+(Small correction | POST /quotation/update with fields | No AppleSystem round-trip.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 768 Td
+(Quotation cancelled | POST /quotation/cancel | Include fee data when applicable.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 757 Td
+(Unified webhook | POST /quotation/sync | Set action to CREATE, UPDATE, or CANCEL.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 742 Td
+(Minimal PHP client pattern) Tj
+ET
+BT
+/F3 7.1 Tf
+45 726 Td
+($base = 'https://ops.aahaas.com/api/public/as/v1';) Tj
+ET
+BT
+/F3 7.1 Tf
+45 717 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 708 Td
+(// Login once; cache data.access_token and data.expires_in.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 699 Td
+($login = postJson\($base . '/auth/login', [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 690 Td
+(  'username' => getenv\('OPS_API_USERNAME'\),) Tj
+ET
+BT
+/F3 7.1 Tf
+45 681 Td
+(  'password' => getenv\('OPS_API_PASSWORD'\),) Tj
+ET
+BT
+/F3 7.1 Tf
+45 672 Td
+(]\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 663 Td
+($token = $login['data']['access_token'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 654 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 645 Td
+(// Create after quotation confirmation.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 636 Td
+($result = postJson\($base . '/quotation/create', [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 627 Td
+(  'quotation_no' => $quotationNo,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 618 Td
+(  'reference_id' => $referenceId,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 609 Td
+(  'is_number' => $isNumber,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 600 Td
+(], $token\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 591 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 582 Td
+(// Cancel from the AS cancellation hook.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 573 Td
+($result = postJson\($base . '/quotation/cancel', [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 564 Td
+(  'is_number' => $isNumber,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 555 Td
+(  'reason' => $reason,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 546 Td
+(  'cancellation_fee' => $fee,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 537 Td
+(], $token\);) Tj
+ET
+BT
+/F1 8.8 Tf
+45 525 Td
+(The client should treat a response with HTTP status 400 or higher, or success: false, as) Tj
+ET
+BT
+/F1 8.8 Tf
+45 513 Td
+(an error and include the returned machine code and request ID in logs.) Tj
+ET
+BT
+/F2 14 Tf
+45 494 Td
+(9. Postman setup and safe testing) Tj
+ET
+BT
+/F1 8.8 Tf
+45 476 Td
+(? Import AS-Quotation-API.postman_collection.json.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 465 Td
+(? Import AS-Quotation-API.postman_environment.json.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 454 Td
+(? Select the environment targeting https://ops.aahaas.com.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 443 Td
+(? Set as_username and as_password from the approved secret store; do not commit real) Tj
+ET
+BT
+/F1 8.8 Tf
+45 431 Td
+(credentials.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 420 Td
+(? Run Auth -> Login; its test script stores access_token.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 409 Td
+(? Run Auth -> Verify token.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 398 Td
+(? Run only Status requests for read-only validation unless a test booking has been) Tj
+ET
+BT
+/F1 8.8 Tf
+45 386 Td
+(approved.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 375 Td
+(? Safe live probes: GET /auth/verify with a valid token and GET) Tj
+ET
+BT
+/F1 8.8 Tf
+45 363 Td
+(/quotation/status?is_number=IS00000 using a deliberately nonexistent identifier. These) Tj
+ET
+BT
+/F1 8.8 Tf
+45 351 Td
+(do not create, update, or cancel a booking. Do not use these against live without) Tj
+ET
+BT
+/F1 8.8 Tf
+45 339 Td
+(approval: Create booking, both update requests, all cancel requests, and all sync) Tj
+ET
+BT
+/F1 8.8 Tf
+45 327 Td
+(requests with CREATE, UPDATE, or CANCEL actions. They change OPS data and may send) Tj
+ET
+BT
+/F1 8.8 Tf
+45 315 Td
+(cancellation email.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 304 Td
+(For a full rehearsal, use a non-production OPS database and a dedicated test quotation.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 292 Td
+(Validate the sequence: create -> status -> update -> status -> cancel with fee -> status) Tj
+ET
+BT
+/F1 8.8 Tf
+45 280 Td
+(confirms CANCELLED.) Tj
+ET
+BT
+/F2 14 Tf
+45 261 Td
+(10. Security and production configuration) Tj
+ET
+BT
+/F1 8.8 Tf
+45 243 Td
+(OPS server configuration should include:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 230 Td
+(AS_PUBLIC_API_USERNAME=as_integration) Tj
+ET
+BT
+/F3 7.1 Tf
+45 221 Td
+(AS_PUBLIC_API_PASSWORD=<long-random-secret>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 212 Td
+(AS_PUBLIC_API_CLIENT_NAME=AppleSystem Integration) Tj
+ET
+BT
+/F3 7.1 Tf
+45 203 Td
+(AS_PUBLIC_API_JWT_SECRET=<fresh-random-signing-key>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 194 Td
+(AS_PUBLIC_API_TOKEN_TTL_MIN=720) Tj
+ET
+BT
+/F1 8.8 Tf
+45 182 Td
+(? Use HTTPS in production.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 171 Td
+(? Keep credentials out of source control, Postman exports, application logs, and error) Tj
+ET
+BT
+/F1 8.8 Tf
+45 159 Td
+(messages.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 148 Td
+(? Use a fresh JWT secret; do not rely on a development fallback.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 137 Td
+(? Prefer restricted scopes for read-only clients: quotation:read.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 126 Td
+(? Review the cancellation notification list before enabling automatic cancellation.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 115 Td
+(? Monitor ActivityLog, StatusEvent, request IDs, and failed retries.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 104 Td
+(? Never use the sample development password in production.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 6) Tj
+ET
+Q
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 2006 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(11. Go-live checklist) Tj
+ET
+BT
+/F1 8.8 Tf
+45 764 Td
+(Check | Complete) Tj
+ET
+BT
+/F1 8.8 Tf
+45 753 Td
+(Real AS username and strong password configured in OPS and AS secret stores | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 742 Td
+(JWT signing secret configured and protected | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 731 Td
+(Sample credentials disabled in production | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 720 Td
+(Live HTTPS base URL configured | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 709 Td
+(AS token caching and one-time 401 refresh implemented | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 698 Td
+(Retry queue implemented for 500/502/503 | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 687 Td
+(Request IDs stored in integration logs | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 676 Td
+(Cancellation email recipients reviewed | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 665 Td
+(Non-production end-to-end rehearsal completed | [ ]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 654 Td
+(Business owners approved automatic cancellation behavior and fee mapping | [ ]) Tj
+ET
+BT
+/F2 14 Tf
+45 635 Td
+(Appendix: endpoint summary) Tj
+ET
+BT
+/F1 8.8 Tf
+45 617 Td
+(Method | Path | Writes data? | Purpose) Tj
+ET
+BT
+/F1 8.8 Tf
+45 606 Td
+(POST | /auth/login | No booking data | Issue bearer token.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 595 Td
+(GET | /auth/verify | No | Validate token.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 584 Td
+(POST | /quotation/create | Yes | Import quotation as DRAFT.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 573 Td
+(POST / PUT / PATCH | /quotation/update | Yes | Refresh or patch booking.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 562 Td
+(POST / DELETE | /quotation/cancel | Yes | Automatic cancellation and fee recording.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 551 Td
+(GET | /quotation/status | No | Read current OPS state.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 540 Td
+(POST | /quotation/sync | Depends on action | Unified CREATE, UPDATE, or CANCEL webhook.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 529 Td
+(End of document ∑ Keep this guide with the Postman collection and environment file.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(AppleSystem - OPS Quotation API Integration Guide    Page 7) Tj
+ET
+Q
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 16 0 R >>
+endobj
+18 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R] /Count 7 >>
+endobj
+19 0 obj
+<< /Type /Catalog /Pages 18 0 R >>
+endobj
+xref
+0 20
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000000160 00000 n 
+0000000228 00000 n 
+0000000544 00000 n 
+0000000691 00000 n 
+0000006371 00000 n 
+0000006518 00000 n 
+0000011340 00000 n 
+0000011487 00000 n 
+0000016805 00000 n 
+0000016954 00000 n 
+0000022147 00000 n 
+0000022296 00000 n 
+0000027453 00000 n 
+0000027602 00000 n 
+0000029661 00000 n 
+0000029810 00000 n 
+0000029908 00000 n 
+trailer
+<< /Size 20 /Root 19 0 R >>
+startxref
+29959
+%%EOF

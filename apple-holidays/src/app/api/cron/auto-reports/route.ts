@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { runDueSchedules } from '@/lib/reports/report-runner'
+import { runDueCallReport } from '@/lib/te/call-report-schedule'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -29,11 +30,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
   }
 
+  // The AI call report rides on this tick rather than its own cron entry: it is
+  // the same "user-configured send time, evaluate every few minutes" problem,
+  // and it carries its own slot claim so a double tick cannot double-send.
+  const callReport = await runDueCallReport()
+    .catch(err => {
+      console.error('[AutoReportCron] AI call report failed:', err instanceof Error ? err.message : err)
+      return null
+    })
+
   try {
     const result = await runDueSchedules()
 
     if (result.masterSwitchOff) {
-      return NextResponse.json({ ok: true, skipped: true, reason: 'auto reports paused' })
+      return NextResponse.json({ ok: true, skipped: true, reason: 'auto reports paused', callReport })
     }
 
     if (result.fired.length) {
@@ -45,6 +55,7 @@ export async function GET(req: NextRequest) {
       checked: result.checked,
       fired: result.fired.length,
       outcomes: result.fired,
+      callReport,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

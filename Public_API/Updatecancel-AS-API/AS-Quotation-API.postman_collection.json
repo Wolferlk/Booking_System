@@ -27,7 +27,7 @@
     }
   ],
   "variable": [
-    { "key": "base_url", "value": "http://localhost:3000", "type": "string" },
+    { "key": "base_url", "value": "https://ops.aahaas.com", "type": "string" },
     { "key": "api_base", "value": "{{base_url}}/api/public/as/v1", "type": "string" }
   ],
   "item": [
