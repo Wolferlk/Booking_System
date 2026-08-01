@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AppleSystem → OPS Quotation API Integration Guide</title>
+<style>
+@page { size: A4; margin: 17mm 16mm 18mm; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; color:#172033; font-size:10.2pt; line-height:1.48; margin:0; }
+h1 { color:#0b3658; font-size:27pt; line-height:1.12; margin:0 0 9mm; }
+h2 { color:#0d517c; font-size:17pt; border-bottom:2px solid #d9e8f2; padding-bottom:3px; margin:12mm 0 4mm; page-break-after:avoid; }
+h3 { color:#173f5f; font-size:12.5pt; margin:7mm 0 2mm; page-break-after:avoid; }
+p { margin: 0 0 3.2mm; }
+ul, ol { margin-top:1mm; margin-bottom:4mm; }
+li { margin:1.2mm 0; }
+code { font-family: Menlo, Monaco, Consolas, monospace; font-size:8.7pt; color:#183f59; }
+pre { background:#f4f7fa; border:1px solid #dce5ec; border-radius:4px; padding:4mm; white-space:pre-wrap; word-break:break-word; font:8.1pt/1.38 Menlo, Monaco, Consolas, monospace; page-break-inside:avoid; }
+table { border-collapse:collapse; width:100%; margin:3mm 0 5mm; page-break-inside:avoid; }
+th { background:#0d517c; color:#fff; text-align:left; font-weight:600; }
+th, td { border:1px solid #cbd8e1; padding:2.2mm 2.5mm; vertical-align:top; }
+tr:nth-child(even) td { background:#f7fafc; }
+.cover { min-height:245mm; display:flex; flex-direction:column; justify-content:center; page-break-after:always; }
+.eyebrow { color:#2b82b4; text-transform:uppercase; letter-spacing:1.8px; font-size:9pt; font-weight:700; margin-bottom:7mm; }
+.subtitle { font-size:15pt; color:#516477; max-width:150mm; }
+.meta { margin-top:30mm; border-left:4px solid #2b82b4; padding:4mm 6mm; color:#42576a; }
+.note { background:#fff8e8; border-left:4px solid #e0a32b; padding:3.5mm 4mm; margin:4mm 0; page-break-inside:avoid; }
+.safe { background:#edf8f1; border-left:4px solid #2b9b5f; padding:3.5mm 4mm; margin:4mm 0; page-break-inside:avoid; }
+.danger { background:#fff0f0; border-left:4px solid #c84646; padding:3.5mm 4mm; margin:4mm 0; page-break-inside:avoid; }
+.small { font-size:8.7pt; color:#516477; }
+.path { font-family:Menlo,monospace; color:#116b9d; font-weight:600; }
+.pagebreak { page-break-before:always; }
+.toc li { margin:2mm 0; }
+.footer { color:#647687; font-size:8pt; margin-top:7mm; }
+</style>
+</head>
+<body>
+<section class="cover">
+  <div class="eyebrow">Integration documentation · Version 1.0</div>
+  <h1>AppleSystem → OPS<br>Quotation API</h1>
+  <p class="subtitle">Authentication, quotation lifecycle integration, cancellation processing, testing, error handling, and production operations.</p>
+  <div class="meta"><b>Production base URL</b><br><span class="path">https://ops.aahaas.com/api/public/as/v1</span><br><br><b>System boundary</b><br>AppleSystem is the quotation source of truth. OPS receives and operates the corresponding booking.</div>
+  <p class="footer">Prepared from the API reference, integration notes, and Postman collection in the project repository.<br>Generated 01 August 2026.</p>
+</section>
+
+<h2>Contents</h2>
+<ol class="toc">
+  <li>Purpose and architecture</li>
+  <li>Environments and URL structure</li>
+  <li>Authentication</li>
+  <li>Booking identifiers and common conventions</li>
+  <li>Quotation lifecycle endpoints</li>
+  <li>Single-endpoint synchronization</li>
+  <li>Response envelope and error handling</li>
+  <li>Integration implementation pattern</li>
+  <li>Postman setup and safe testing</li>
+  <li>Security and production configuration</li>
+  <li>Go-live checklist</li>
+</ol>
+
+<h2>1. Purpose and architecture</h2>
+<p>This API allows AppleSystem (AS) to drive the OPS booking lifecycle. When a quotation is confirmed, AS creates an OPS booking. When the quotation changes, AS sends an amendment. When the quotation is cancelled, OPS is automatically moved to <code>CANCELLED</code> and any applicable cancellation fee is recorded.</p>
+<table><tr><th>System</th><th>Responsibility</th></tr><tr><td>AppleSystem</td><td>Creates, revises, and cancels quotations; supplies quotation numbers, reference IDs, itinerary data, and commercial decisions.</td></tr><tr><td>OPS Public API</td><td>Authenticates AS, resolves the matching booking, imports or updates the booking, records audit information, and returns a standard JSON response.</td></tr><tr><td>OPS booking system</td><td>Stores operational booking data, status history, versions, cancellation details, and notification results.</td></tr></table>
+<p class="small">The integration does not introduce new database tables or columns. It writes to existing booking, booking-version, status-event, and activity-log structures.</p>
+
+<h3>Lifecycle flow</h3>
+<pre>AppleSystem                         OPS Public API                 OPS booking
+    |                                      |                            |
+    | POST /auth/login                     |                            |
+    |------------------------------------->|                            |
+    |              bearer token            |                            |
+    |<-------------------------------------|                            |
+    | POST /quotation/create               |                            |
+    |------------------------------------->| create/import as DRAFT     |
+    |                                      |--------------------------->|
+    | POST /quotation/update               |                            |
+    |------------------------------------->| version + amendment trail  |
+    |                                      |--------------------------->|
+    | POST /quotation/cancel               |                            |
+    |------------------------------------->| status → CANCELLED         |
+    |                                      |--------------------------->|</pre>
+
+<h2>2. Environments and URL structure</h2>
+<table><tr><th>Environment</th><th>Base URL</th><th>Use</th></tr><tr><td>Live</td><td><code>https://ops.aahaas.com/api/public/as/v1</code></td><td>Production integration. Use real credentials and approved booking references only.</td></tr><tr><td>Local</td><td><code>http://localhost:3000/api/public/as/v1</code></td><td>Development server only.</td></tr></table>
+<p>All requests use JSON. Set these headers on authenticated calls:</p>
+<pre>Content-Type: application/json
+Accept: application/json
+Authorization: Bearer &lt;access_token&gt;</pre>
+<div class="danger"><b>Production warning:</b> <code>/quotation/create</code>, <code>/quotation/update</code>, <code>/quotation/cancel</code>, and <code>/quotation/sync</code> can change production data. Never run the complete Postman collection against live without an approved test booking and an explicit rehearsal plan.</div>
+
+<h2>3. Authentication</h2>
+<h3>3.1 Login — <span class="path">POST /auth/login</span></h3>
+<p>Exchange the AS integration username and password for a bearer token. The token is valid for 12 hours by default (configurable on the server).</p>
+<pre>curl -X POST 'https://ops.aahaas.com/api/public/as/v1/auth/login' \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"as_integration","password":"&lt;stored-secret&gt;"}'</pre>
+<pre>{
+  "success": true,
+  "message": "Authenticated",
+  "data": {
+    "access_token": "&lt;JWT&gt;",
+    "token_type": "Bearer",
+    "expires_in": 43200,
+    "expires_at": "2026-08-01T20:00:19.122Z",
+    "scopes": ["*"]
+  },
+  "request_id": "&lt;uuid&gt;",
+  "timestamp": "2026-08-01T08:00:19.129Z"
+}</pre>
+<p>Cache the token. Re-authenticate approximately one minute before expiry, or after one <code>401 UNAUTHORIZED</code>. Do not log in for every request.</p>
+
+<h3>3.2 Verify token — <span class="path">GET /auth/verify</span></h3>
+<pre>curl 'https://ops.aahaas.com/api/public/as/v1/auth/verify' \
+  -H 'Authorization: Bearer &lt;access_token&gt;'</pre>
+<p>Use this low-cost probe before a batch operation. A valid response includes <code>data.valid: true</code>, the client name, and scopes.</p>
+
+<h3>3.3 Authentication failures</h3>
+<table><tr><th>Status</th><th>Code</th><th>Meaning / action</th></tr><tr><td>401</td><td><code>INVALID_CREDENTIALS</code></td><td>Credentials are wrong. Stop and alert; do not repeatedly retry.</td></tr><tr><td>401</td><td><code>UNAUTHORIZED</code></td><td>Token missing, invalid, or expired. Login again once.</td></tr><tr><td>422</td><td><code>CREDENTIALS_REQUIRED</code></td><td>Username or password was not supplied.</td></tr><tr><td>429</td><td><code>TOO_MANY_ATTEMPTS</code></td><td>Eight failed logins trigger a five-minute lockout. Back off.</td></tr><tr><td>503</td><td><code>NOT_CONFIGURED</code></td><td>OPS has no configured API client. Contact the OPS administrator.</td></tr></table>
+<p><b>Alternative:</b> a static <code>x-api-key</code> may be configured, but bearer authentication is preferred. Treat an API key like a password.</p>
+
+<h2>4. Booking identifiers and common conventions</h2>
+<p>Most write requests require one booking identifier. Resolution accepts these names and aliases:</p>
+<table><tr><th>Field</th><th>Example</th><th>Purpose</th></tr><tr><td><code>is_number</code></td><td><code>IS48748</code></td><td>OPS IS number / booking reference. Case and surrounding spaces are normalized.</td></tr><tr><td><code>booking_ref</code></td><td><code>IS48748</code></td><td>Alias for the IS number.</td></tr><tr><td><code>quotation_no</code></td><td><code>479416CNTL</code></td><td>AppleSystem quotation reference; the most recent matching booking is used.</td></tr><tr><td><code>reference_id</code></td><td><code>18452</code></td><td>AppleSystem list-row ID. Required when OPS must pull the quotation template.</td></tr></table>
+<p>Accepted spelling aliases include <code>isNumber</code>, <code>quotationNo</code>, <code>referenceId</code>, <code>ref_number</code>, and <code>quotation_ref</code>.</p>
+
+<h2>5. Quotation lifecycle endpoints</h2>
+<h3>5.1 Create booking — <span class="path">POST /quotation/create</span></h3>
+<p>Imports the quotation from AppleSystem and creates an OPS booking in <code>DRAFT</code>. The import includes dates, passengers, hotels, itinerary, contacts, pricing, and mapped quotation information.</p>
+<pre>{
+  "quotation_no": "479416CNTL",
+  "reference_id": "18452",
+  "is_number": "IS48748"
+}</pre>
+<p><code>quotation_no</code> and <code>reference_id</code> are required. <code>is_number</code> is optional when the template contains the IS number.</p>
+<p><b>Idempotency:</b> first success normally returns <code>201</code>. A repeated request returns <code>200</code> with <code>already_exists: true</code> and does not create a duplicate. This makes timeout retries safe.</p>
+
+<h3>5.2 Update booking — <span class="path">POST /quotation/update</span></h3>
+<p>The endpoint also accepts <code>PUT</code> and <code>PATCH</code>. Use the re-pull path when AppleSystem has a revised quotation:</p>
+<pre>{
+  "is_number": "IS48748",
+  "quotation_no": "479416CNTL",
+  "reference_id": "18452",
+  "amendment_note": "Revision 3 - hotel changed in Kandy",
+  "force_replace_details": false,
+  "create_if_missing": false
+}</pre>
+<p>Header fields are refreshed. Passenger, hotel, and itinerary child records are replaced only for early statuses such as <code>DRAFT</code>, <code>BT_CONFIRMED</code>, <code>GT_REVIEW</code>, <code>CHANGE_REQUESTED</code>, and <code>GT_VERIFIED</code>. Set <code>force_replace_details: true</code> only when an approved operational decision permits overwriting advanced booking details.</p>
+<p>The response contains an incremented <code>version</code>, <code>changed_fields</code>, and <code>details_replaced</code>. The API also records a version snapshot and status event.</p>
+
+<h3>5.3 Patch fields only</h3>
+<p>When no <code>reference_id</code> is supplied, no AppleSystem round-trip occurs. Only explicit fields are applied:</p>
+<pre>{
+  "quotation_no": "479416CNTL",
+  "amendment_note": "Pax corrected by agent",
+  "fields": {
+    "pax_adults": 3,
+    "pax_children": 1,
+    "quoted_total": 690.00,
+    "currency": "USD",
+    "arrival_date": "2026-08-08",
+    "departure_date": "2026-08-14"
+  }
+}</pre>
+<p>Allowed keys: <code>arrival_date</code>, <code>departure_date</code>, <code>pax_adults</code>, <code>pax_children</code>, <code>pax_infants</code>, <code>quoted_total</code>, <code>currency</code>, <code>agent</code>, <code>file_handler</code>, <code>contact_email</code>, <code>contact_phone</code>, <code>package_includes</code>, <code>package_excludes</code>, <code>important_notes</code>, and <code>quotation_no</code>.</p>
+<p><code>create_if_missing: true</code> can import a missing booking, but requires both <code>quotation_no</code> and <code>reference_id</code>. Cancelled and completed bookings cannot be updated.</p>
+
+<h3>5.4 Cancel booking — <span class="path">POST /quotation/cancel</span></h3>
+<p>The endpoint also accepts <code>DELETE</code>. It immediately changes the booking to <code>CANCELLED</code>; it does not wait for an accounts approval step.</p>
+<pre>{
+  "is_number": "IS48748",
+  "reason": "Guest cancelled the trip",
+  "cancellation_fee": 150.00,
+  "currency": "USD",
+  "cancelled_by": "Nimal Perera",
+  "cancelled_by_email": "nimal@appleholidays.lk",
+  "suppress_email": false
+}</pre>
+<p>For multiple charges, send itemized fees instead of <code>cancellation_fee</code>. The server recomputes the total:</p>
+<pre>{
+  "is_number": "IS48748",
+  "reason": "Guest cancelled",
+  "cancellation_fees": [
+    {"note":"Hotel one-night penalty", "amount":120},
+    {"note":"Non-refundable entrance tickets", "amount":30}
+  ]
+}</pre>
+<p>On cancellation, OPS stores the previous status, cancellation timestamp, reason, caller details, fee lines, total fee, automatic approval trail, and a status event. It sends the standard cancellation notice unless <code>suppress_email: true</code>. A mail failure does not roll back the cancellation; the response reports <code>email_sent: false</code>.</p>
+<p>Repeated cancellation is safe: an already-cancelled booking returns <code>200</code> with <code>already_cancelled: true</code>. Completed or otherwise non-cancellable bookings return <code>409 NOT_CANCELLABLE</code>.</p>
+
+<h3>5.5 Read status — <span class="path">GET /quotation/status</span></h3>
+<p>This is read-only and should be used before or after a lifecycle operation:</p>
+<pre>GET /quotation/status?is_number=IS48748
+GET /quotation/status?quotation_no=479416CNTL</pre>
+<p>The response includes whether the booking was found, cancellation state, booking status, version, dates, passenger totals, pricing, and update timestamp.</p>
+
+<h2>6. Single-endpoint synchronization</h2>
+<h3><span class="path">POST /quotation/sync</span></h3>
+<p>Use this endpoint when AppleSystem wants one webhook URL. The action determines the behavior:</p>
+<table><tr><th>Action</th><th>Equivalent endpoint</th><th>Accepted aliases</th></tr><tr><td><code>CREATE</code></td><td><code>/quotation/create</code></td><td><code>CREATED</code>, <code>NEW</code></td></tr><tr><td><code>UPDATE</code></td><td><code>/quotation/update</code></td><td><code>UPDATED</code>, <code>AMENDED</code>, <code>REVISED</code></td></tr><tr><td><code>CANCEL</code></td><td><code>/quotation/cancel</code></td><td><code>CANCELLED</code>, <code>CANCELLATION</code></td></tr></table>
+<pre>{
+  "action": "CANCEL",
+  "is_number": "IS48748",
+  "reason": "Quotation cancelled in AppleSystem",
+  "cancellation_fee": 150
+}</pre>
+
+<h2>7. Response envelope and error handling</h2>
+<p>Every response includes a consistent envelope. Save the <code>request_id</code> and quote it when reporting a problem.</p>
+<pre>// Success
+{"success":true,"message":"...","data":{...},"request_id":"&lt;uuid&gt;","timestamp":"&lt;ISO-8601&gt;"}
+
+// Failure
+{"success":false,"error":"...","code":"MACHINE_CODE","request_id":"&lt;uuid&gt;","timestamp":"&lt;ISO-8601&gt;"}</pre>
+<table><tr><th>Status</th><th>Codes</th><th>Recommended handling</th></tr><tr><td>400</td><td><code>INVALID_JSON</code>, <code>INVALID_BODY</code></td><td>Fix JSON/object shape.</td></tr><tr><td>401</td><td><code>UNAUTHORIZED</code>, <code>INVALID_CREDENTIALS</code></td><td>Re-login once for an expired token; stop for bad credentials.</td></tr><tr><td>403</td><td><code>UNAUTHORIZED</code> scope</td><td>Stop and request the required scope.</td></tr><tr><td>404</td><td><code>BOOKING_NOT_FOUND</code></td><td>For create flows, create/import; for cancellation, normally ignore if never imported.</td></tr><tr><td>409</td><td><code>BOOKING_CANCELLED</code>, <code>BOOKING_COMPLETED</code>, <code>NOT_CANCELLABLE</code>, <code>IDENTIFIER_MISMATCH</code>, <code>COUNTRY_MISMATCH</code></td><td>Do not blindly retry. Resolve the business conflict.</td></tr><tr><td>422</td><td><code>IDENTIFIER_REQUIRED</code>, <code>INVALID_FIELD</code>, <code>INVALID_FEE</code>, <code>NOTHING_TO_UPDATE</code>, <code>QUOTATION_NOT_MAPPABLE</code>, <code>COUNTRY_UNRESOLVED</code></td><td>Correct the request or source quotation.</td></tr><tr><td>429</td><td><code>TOO_MANY_ATTEMPTS</code></td><td>Back off for the lockout period.</td></tr><tr><td>500/502/503</td><td><code>INTERNAL_ERROR</code>, <code>UPSTREAM_UNAVAILABLE</code>, <code>NOT_CONFIGURED</code></td><td>Retry transient failures with backoff; alert for configuration failures.</td></tr></table>
+<div class="safe"><b>Retry policy:</b> retry <code>500</code>, <code>502</code>, and <code>503</code> with exponential backoff. Create and cancel are designed to be safe to retry. Retry <code>401</code> once after re-login. Do not retry normal <code>4xx</code> validation or business errors.</div>
+
+<h2>8. Integration implementation pattern</h2>
+<ol><li>Store the API username and password in a secret manager or protected environment configuration.</li><li>Login once and cache the token until one minute before expiry.</li><li>Send the bearer token and JSON headers on every API call.</li><li>Persist the API response and <code>request_id</code> in the AS integration log.</li><li>For transient failures, enqueue a retry with exponential backoff.</li><li>For a <code>401</code>, refresh the token once and retry the original operation.</li><li>For business errors, stop retrying and notify the responsible operator.</li></ol>
+<h3>Recommended event mapping</h3>
+<table><tr><th>AppleSystem event</th><th>API call</th><th>Notes</th></tr><tr><td>Quotation confirmed / IS issued</td><td><code>POST /quotation/create</code></td><td>Safe to retry; idempotent.</td></tr><tr><td>Quotation revised</td><td><code>POST /quotation/update</code> with <code>reference_id</code></td><td>Re-pulls the latest template.</td></tr><tr><td>Small correction</td><td><code>POST /quotation/update</code> with <code>fields</code></td><td>No AppleSystem round-trip.</td></tr><tr><td>Quotation cancelled</td><td><code>POST /quotation/cancel</code></td><td>Include fee data when applicable.</td></tr><tr><td>Unified webhook</td><td><code>POST /quotation/sync</code></td><td>Set <code>action</code> to CREATE, UPDATE, or CANCEL.</td></tr></table>
+
+<h3>Minimal PHP client pattern</h3>
+<pre>$base = 'https://ops.aahaas.com/api/public/as/v1';
+
+// Login once; cache data.access_token and data.expires_in.
+$login = postJson($base . '/auth/login', [
+  'username' =&gt; getenv('OPS_API_USERNAME'),
+  'password' =&gt; getenv('OPS_API_PASSWORD'),
+]);
+$token = $login['data']['access_token'];
+
+// Create after quotation confirmation.
+$result = postJson($base . '/quotation/create', [
+  'quotation_no' =&gt; $quotationNo,
+  'reference_id' =&gt; $referenceId,
+  'is_number' =&gt; $isNumber,
+], $token);
+
+// Cancel from the AS cancellation hook.
+$result = postJson($base . '/quotation/cancel', [
+  'is_number' =&gt; $isNumber,
+  'reason' =&gt; $reason,
+  'cancellation_fee' =&gt; $fee,
+], $token);</pre>
+<p>The client should treat a response with HTTP status 400 or higher, or <code>success: false</code>, as an error and include the returned machine code and request ID in logs.</p>
+
+<h2>9. Postman setup and safe testing</h2>
+<ol><li>Import <code>AS-Quotation-API.postman_collection.json</code>.</li><li>Import <code>AS-Quotation-API.postman_environment.json</code>.</li><li>Select the environment targeting <code>https://ops.aahaas.com</code>.</li><li>Set <code>as_username</code> and <code>as_password</code> from the approved secret store; do not commit real credentials.</li><li>Run <b>Auth → Login</b>; its test script stores <code>access_token</code>.</li><li>Run <b>Auth → Verify token</b>.</li><li>Run only <b>Status</b> requests for read-only validation unless a test booking has been approved.</li></ol>
+<div class="safe"><b>Safe live probes:</b> <code>GET /auth/verify</code> with a valid token and <code>GET /quotation/status?is_number=IS00000</code> using a deliberately nonexistent identifier. These do not create, update, or cancel a booking.</div>
+<div class="danger"><b>Do not use these against live without approval:</b> Create booking, both update requests, all cancel requests, and all sync requests with CREATE, UPDATE, or CANCEL actions. They change OPS data and may send cancellation email.</div>
+<p>For a full rehearsal, use a non-production OPS database and a dedicated test quotation. Validate the sequence: create → status → update → status → cancel with fee → status confirms <code>CANCELLED</code>.</p>
+
+<h2>10. Security and production configuration</h2>
+<p>OPS server configuration should include:</p>
+<pre>AS_PUBLIC_API_USERNAME=as_integration
+AS_PUBLIC_API_PASSWORD=&lt;long-random-secret&gt;
+AS_PUBLIC_API_CLIENT_NAME=AppleSystem Integration
+AS_PUBLIC_API_JWT_SECRET=&lt;fresh-random-signing-key&gt;
+AS_PUBLIC_API_TOKEN_TTL_MIN=720</pre>
+<ul><li>Use HTTPS in production.</li><li>Keep credentials out of source control, Postman exports, application logs, and error messages.</li><li>Use a fresh JWT secret; do not rely on a development fallback.</li><li>Prefer restricted scopes for read-only clients: <code>quotation:read</code>.</li><li>Review the cancellation notification list before enabling automatic cancellation.</li><li>Monitor <code>ActivityLog</code>, <code>StatusEvent</code>, request IDs, and failed retries.</li><li>Never use the sample development password in production.</li></ul>
+
+<h2>11. Go-live checklist</h2>
+<table><tr><th>Check</th><th>Complete</th></tr><tr><td>Real AS username and strong password configured in OPS and AS secret stores</td><td>□</td></tr><tr><td>JWT signing secret configured and protected</td><td>□</td></tr><tr><td>Sample credentials disabled in production</td><td>□</td></tr><tr><td>Live HTTPS base URL configured</td><td>□</td></tr><tr><td>AS token caching and one-time 401 refresh implemented</td><td>□</td></tr><tr><td>Retry queue implemented for 500/502/503</td><td>□</td></tr><tr><td>Request IDs stored in integration logs</td><td>□</td></tr><tr><td>Cancellation email recipients reviewed</td><td>□</td></tr><tr><td>Non-production end-to-end rehearsal completed</td><td>□</td></tr><tr><td>Business owners approved automatic cancellation behavior and fee mapping</td><td>□</td></tr></table>
+
+<h2>Appendix: endpoint summary</h2>
+<table><tr><th>Method</th><th>Path</th><th>Writes data?</th><th>Purpose</th></tr><tr><td>POST</td><td><code>/auth/login</code></td><td>No booking data</td><td>Issue bearer token.</td></tr><tr><td>GET</td><td><code>/auth/verify</code></td><td>No</td><td>Validate token.</td></tr><tr><td>POST</td><td><code>/quotation/create</code></td><td><b>Yes</b></td><td>Import quotation as DRAFT.</td></tr><tr><td>POST / PUT / PATCH</td><td><code>/quotation/update</code></td><td><b>Yes</b></td><td>Refresh or patch booking.</td></tr><tr><td>POST / DELETE</td><td><code>/quotation/cancel</code></td><td><b>Yes</b></td><td>Automatic cancellation and fee recording.</td></tr><tr><td>GET</td><td><code>/quotation/status</code></td><td>No</td><td>Read current OPS state.</td></tr><tr><td>POST</td><td><code>/quotation/sync</code></td><td>Depends on action</td><td>Unified CREATE, UPDATE, or CANCEL webhook.</td></tr></table>
+<p class="footer">End of document · Keep this guide with the Postman collection and environment file.</p>
+</body></html>
