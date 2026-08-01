@@ -1,0 +1,959 @@
+{
+  "info": {
+    "_postman_id": "5d9a41b7-3c62-4f08-9a1e-7c6b2d4e8f31",
+    "name": "OPS File Handler API (v1)",
+    "description": "Everything the File Handler Portal can do, callable from another application: search or import a booking, maintain flights and hotels, fix contacts, raise a cancellation, and generate or email the Booking Update PDF.\n\n**Start here:** select the \"File Handler API — OPS Live\" environment, put a real approved file handler's portal login into {{fh_credential}} / {{fh_password}}, then run `Auth → 1. Login` (the token is stored automatically into {{access_token}}).\n\nBookings are addressed by **booking ref**, **IS number** or **CNTL number** — whichever you have. Requests are ordered so the folders can be run top to bottom: Flights and Accommodations capture the ids they create into {{flight_id}} / {{acc_id}} for the update and delete calls that follow.\n\nFull reference: FileHandler-API.md",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Applies to every request in the collection.",
+          "// The PDF download returns a binary body, so only assert the envelope on JSON.",
+          "const type = pm.response.headers.get('Content-Type') || '';",
+          "if (type.includes('application/json')) {",
+          "    pm.test('Response is JSON with the standard envelope', function () {",
+          "        const body = pm.response.json();",
+          "        pm.expect(body).to.have.property('success');",
+          "        pm.expect(body).to.have.property('request_id');",
+          "        pm.expect(body).to.have.property('timestamp');",
+          "    });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "https://ops.aahaas.com", "type": "string" },
+    { "key": "api_base", "value": "{{base_url}}/api/public/fh/v1", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "0. Discover the API (no token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log(d.name + ' v' + d.version + ' — ' + d.endpoints.length + ' endpoints');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{api_base}}", "host": ["{{api_base}}"] },
+            "description": "Service discovery and health check. Lists every endpoint and the scope it needs, straight from the running server. No token required."
+          }
+        },
+        {
+          "name": "1. Login (file handler)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Token returned', function () {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data.access_token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.data.token_type).to.eql('Bearer');",
+                  "});",
+                  "// Store the token for every other request in the collection.",
+                  "pm.environment.set('access_token', body.data.access_token);",
+                  "pm.environment.set('token_expires_at', body.data.expires_at);",
+                  "if (body.data.file_handler) {",
+                  "    pm.environment.set('file_handler_id', body.data.file_handler.id);",
+                  "}",
+                  "console.log('Token stored — valid until ' + body.data.expires_at);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": \"{{fh_credential}}\",\n  \"password\": \"{{fh_password}}\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/auth/login", "host": ["{{api_base}}"], "path": ["auth", "login"] },
+            "description": "Logs in with a real file handler's portal credentials — email or phone, plus password. The token carries scope `*`, so it can do everything the portal can, and every action is attributed to that handler.\n\nThe test script saves the token into {{access_token}}."
+          }
+        },
+        {
+          "name": "2. Login (service client, acts for a handler)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Service token', () => pm.expect(body.data.subject_type).to.eql('service'));",
+                  "// Uncomment to run the rest of the collection as the service client:",
+                  "// pm.environment.set('access_token', body.data.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{fh_service_username}}\",\n  \"password\": \"{{fh_service_password}}\",\n  \"act_as\": \"{{act_as}}\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/auth/login", "host": ["{{api_base}}"], "path": ["auth", "login"] },
+            "description": "For a machine account configured with FH_PUBLIC_API_USERNAME / FH_PUBLIC_API_PASSWORD, so the calling app never stores handler passwords.\n\n`act_as` names the file handler every write is attributed to; it can also be sent per request as the `X-File-Handler` header. Without either (and without a server default) calls fail with 400 ACT_AS_REQUIRED."
+          }
+        },
+        {
+          "name": "3. Verify token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Token valid', () => pm.expect(pm.response.json().data.valid).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{api_base}}/auth/verify", "host": ["{{api_base}}"], "path": ["auth", "verify"] },
+            "description": "Cheap probe — call it before a batch run instead of discovering an expired token halfway through a flight upload."
+          }
+        },
+        {
+          "name": "4. Who am I",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log(d.file_handler.name + ' — ' + d.stats.bookings_touched + ' bookings touched');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{api_base}}/auth/me", "host": ["{{api_base}}"], "path": ["auth", "me"] },
+            "description": "Profile of the file handler this token acts as, plus how many actions and bookings they have to their name."
+          }
+        },
+        {
+          "name": "5. Is this email registered? (no token)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/auth/register?email={{fh_credential}}",
+              "host": ["{{api_base}}"],
+              "path": ["auth", "register"],
+              "query": [{ "key": "email", "value": "{{fh_credential}}" }]
+            },
+            "description": "Live availability check for a sign-up form. Returns nothing but `exists` and `approved`."
+          }
+        },
+        {
+          "name": "6. Register a new file handler (no token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// 201 first time, 409 ALREADY_REGISTERED afterwards — both are correct.",
+                  "pm.test('201 Created or 409 already registered', () => pm.expect([201, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Handler\",\n  \"email\": \"test.handler@example.com\",\n  \"password\": \"ChangeMe123\",\n  \"phone\": \"+94 77 123 4567\",\n  \"whatsapp_phone\": \"+94 77 123 4567\",\n  \"country\": \"SRILANKA\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/auth/register", "host": ["{{api_base}}"], "path": ["auth", "register"] },
+            "description": "Creates a **pending** account. An ultra/super admin must approve it in /dashboard/admin/file-handlers before it can log in.\n\nDo not run this against the live server unless a real handler is being onboarded."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "item": [
+        {
+          "name": "Search by ref / IS / CNTL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log(d.count + ' result(s) for ' + d.query);",
+                  "if (d.count) {",
+                  "    pm.environment.set('booking_ref', d.results[0].booking_ref);",
+                  "    const f = d.results[0].flights[0];  if (f) pm.environment.set('flight_id', f.id);",
+                  "    const a = d.results[0].accommodations[0];  if (a) pm.environment.set('acc_id', a.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/search?q={{booking_ref}}&limit=10",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "search"],
+              "query": [
+                { "key": "q", "value": "{{booking_ref}}" },
+                { "key": "limit", "value": "10" },
+                { "key": "auto_import", "value": "true", "disabled": true }
+              ]
+            },
+            "description": "The portal's search box. Space-insensitive: \"IS 40475\" and \"IS40475\" find the same booking. Each hit comes back complete — flights, hotels, passengers, contacts, cancellation trail.\n\nEnable `auto_import=true` to have a miss pulled in from AppleSystem instead of returning an empty list (needs the booking:import scope)."
+          }
+        },
+        {
+          "name": "Get one booking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json().data.booking;",
+                  "console.log(b.booking_ref + ' → ' + b.status + ' · ' + b.flights.length + ' flights · ' + b.accommodations.length + ' hotels');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}"]
+            },
+            "description": "Everything the file handler sees for one booking. `{ref}` may be the booking ref, the IS number or the CNTL number."
+          }
+        },
+        {
+          "name": "Import from AppleSystem",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created or 200 already exists', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "const d = pm.response.json().data;",
+                  "if (d) console.log(d.booking.booking_ref + ' — already_existed=' + d.already_existed);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"q\": \"{{booking_ref}}\"\n}" },
+            "url": { "raw": "{{api_base}}/bookings/import", "host": ["{{api_base}}"], "path": ["bookings", "import"] },
+            "description": "For a booking that exists as a confirmed AppleSystem quotation but was never imported into OPS. Idempotent — a booking that already exists comes back with `already_existed: true`."
+          }
+        },
+        {
+          "name": "Update contacts + important notes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "console.log('changed: ' + JSON.stringify(pm.response.json().data.changed_fields));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agent_email\": \"ops@makemytrip.com\",\n  \"agent_phone\": \"+91 22 1234 5678\",\n  \"agent_whatsapp\": \"+91 98765 43210\",\n  \"contact_email\": \"guest@example.com\",\n  \"contact_phone\": \"+91 98111 22333\",\n  \"contact_whatsapp\": \"+91 98111 22333\",\n  \"important_notes\": \"Vegetarian meals throughout. Guest lands with a wheelchair request.\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}"]
+            },
+            "description": "The only booking fields a file handler may edit. Send just the ones that changed; send \"\" to clear one. PUT behaves identically.\n\nStatus, pax, dates and prices are deliberately not editable here."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Flights",
+      "item": [
+        {
+          "name": "List flights",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "if (d.count) pm.environment.set('flight_id', d.flights[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights"]
+            },
+            "description": "Every flight on the booking, earliest first."
+          }
+        },
+        {
+          "name": "Add one flight",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.environment.set('flight_id', d.flights[0].id);",
+                  "console.log('flight_id stored: ' + d.flights[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"flight_no\": \"UL309\",\n  \"date\": \"2026-09-04\",\n  \"from_airport\": \"BOM\",\n  \"dep_time\": \"01:25\",\n  \"to_airport\": \"CMB\",\n  \"arr_time\": \"03:05\",\n  \"airline\": \"SriLankan Airlines\",\n  \"notes\": \"Guest requested aisle seats\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights"]
+            },
+            "description": "Required: flight_no, date, from_airport, to_airport. Optional: dep_time, arr_time, airline, notes.\n\ncamelCase spellings (flightNo, fromApt, depTime …) are accepted too, so the output of /flights/extract can be posted back verbatim."
+          }
+        },
+        {
+          "name": "Add a whole itinerary (batch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "console.log('added: ' + pm.response.json().data.added);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"flights\": [\n    {\n      \"flight_no\": \"UL309\",\n      \"date\": \"2026-09-04\",\n      \"from_airport\": \"BOM\",\n      \"dep_time\": \"01:25\",\n      \"to_airport\": \"CMB\",\n      \"arr_time\": \"03:05\",\n      \"airline\": \"SriLankan Airlines\"\n    },\n    {\n      \"flight_no\": \"UL308\",\n      \"date\": \"2026-09-11\",\n      \"from_airport\": \"CMB\",\n      \"dep_time\": \"20:40\",\n      \"to_airport\": \"BOM\",\n      \"arr_time\": \"22:35\",\n      \"airline\": \"SriLankan Airlines\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights"]
+            },
+            "description": "The batch is validated in full before anything is written, so one bad segment rejects the request rather than leaving half an itinerary in the booking."
+          }
+        },
+        {
+          "name": "Replace a flight",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"flight_no\": \"UL309\",\n  \"date\": \"2026-09-04\",\n  \"from_airport\": \"BOM\",\n  \"dep_time\": \"02:10\",\n  \"to_airport\": \"CMB\",\n  \"arr_time\": \"03:50\",\n  \"airline\": \"SriLankan Airlines\",\n  \"notes\": \"Retimed by the airline\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights/{{flight_id}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights", "{{flight_id}}"]
+            },
+            "description": "A full replace, not a partial patch — the same required fields as POST apply. PATCH is accepted as an alias."
+          }
+        },
+        {
+          "name": "Extract flights from a ticket (pasted text)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log('extracted ' + d.count + ' segment(s), saved=' + d.saved);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"UL 309 04SEP BOM CMB 0125 0305 CONFIRMED\\nUL 308 11SEP CMB BOM 2040 2235 CONFIRMED\",\n  \"save\": false\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights/extract",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights", "extract"]
+            },
+            "description": "GPT-4o reads the segments out of pasted e-ticket text. Nothing is written — the parsed flights come back for a human to confirm, then POST them to /flights.\n\nSet \"save\": true to extract and persist in one call."
+          }
+        },
+        {
+          "name": "Extract flights from a ticket (file upload)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": [], "description": "JPG, PNG, WebP, GIF or PDF — max 10 MB" },
+                { "key": "save", "value": "false", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights/extract",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights", "extract"]
+            },
+            "description": "The same upload the portal sends. Attach a ticket image or PDF to the `file` field before running.\n\nIf your client cannot do multipart, send JSON instead: { \"file_base64\": \"…\", \"file_name\": \"ticket.pdf\" }."
+          }
+        },
+        {
+          "name": "Remove a flight",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights/{{flight_id}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights", "{{flight_id}}"]
+            },
+            "description": "Removes the flight from the booking. 404 FLIGHT_NOT_FOUND if it is not on that booking."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Accommodations",
+      "item": [
+        {
+          "name": "List hotels",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "if (d.count) pm.environment.set('acc_id', d.accommodations[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/accommodations",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "accommodations"]
+            },
+            "description": "Every hotel on the booking, earliest check-in first."
+          }
+        },
+        {
+          "name": "Add a hotel",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.environment.set('acc_id', d.accommodations[0].id);",
+                  "console.log('acc_id stored: ' + d.accommodations[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"city\": \"Kandy\",\n  \"hotel\": \"Earl's Regency\",\n  \"check_in\": \"2026-09-06\",\n  \"check_out\": \"2026-09-08\",\n  \"room_type\": \"Deluxe Double\",\n  \"meal_type\": \"HB\",\n  \"address\": \"Tennekumbura, Kandy 20000\",\n  \"contact\": \"+94 81 242 2122\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/accommodations",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "accommodations"]
+            },
+            "description": "Required: city, hotel, check_in, check_out. `nights` is computed from the dates unless you send it explicitly.\n\nSend { \"accommodations\": [ … ] } to add several at once."
+          }
+        },
+        {
+          "name": "Replace a hotel",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"city\": \"Kandy\",\n  \"hotel\": \"Earl's Regency\",\n  \"check_in\": \"2026-09-06\",\n  \"check_out\": \"2026-09-09\",\n  \"room_type\": \"Executive Suite\",\n  \"meal_type\": \"FB\",\n  \"address\": \"Tennekumbura, Kandy 20000\",\n  \"contact\": \"+94 81 242 2122\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/accommodations/{{acc_id}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "accommodations", "{{acc_id}}"]
+            },
+            "description": "A full replace — the same required fields as POST. PATCH is accepted as an alias. `nights` is recomputed from the new dates."
+          }
+        },
+        {
+          "name": "Remove a hotel",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/accommodations/{{acc_id}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "accommodations", "{{acc_id}}"]
+            },
+            "description": "404 HOTEL_NOT_FOUND if the hotel is not on that booking."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cancellation",
+      "item": [
+        {
+          "name": "Can this booking be cancelled?",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log(d.booking_ref + ' → cancellable=' + d.cancellable + ' pending=' + d.pending_approval);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/cancel",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "cancel"]
+            },
+            "description": "Read-only. Use it to enable or grey out a Cancel button before the user presses it."
+          }
+        },
+        {
+          "name": "Request cancellation (with fees)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('Now pending approval', () => pm.expect(d.status).to.eql('PENDING_CANCELLATION'));",
+                  "console.log('fee_total=' + d.cancellation_fee_total + ' email_sent=' + d.email_sent);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Guest cancelled the trip\",\n  \"fees\": [\n    { \"note\": \"Hotel one-night penalty\", \"amount\": 120 },\n    { \"note\": \"Non-refundable entrance tickets\", \"amount\": 30 }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/cancel",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "cancel"]
+            },
+            "description": "**This does not cancel the booking.** Exactly as in the portal, it moves the booking to PENDING_CANCELLATION and emails the accounts team to approve — hence 202 Accepted.\n\n`fees` is optional and its total is always recomputed server-side, never trusted from the caller. A mail failure does not undo the request: watch `email_sent`.\n\nDestructive on live data — do not run against a real booking without approval."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "Download the Booking Update PDF",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Is a PDF', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/pdf'));",
+                  "console.log(pm.response.headers.get('Content-Disposition'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/pdf",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "pdf"]
+            },
+            "description": "Streams the PDF as a download, named <IS>_<CNTL>CNTL_Updates.PDF. Use \"Save Response → Save to a file\" in Postman to keep it."
+          }
+        },
+        {
+          "name": "Get the PDF as base64",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "console.log(d.filename + ' — ' + d.size_bytes + ' bytes');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/pdf?format=base64",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "pdf"],
+              "query": [{ "key": "format", "value": "base64" }]
+            },
+            "description": "The same document inside the normal JSON envelope, for integrations that cannot handle a binary body."
+          }
+        },
+        {
+          "name": "Email the PDF",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Sent', () => pm.expect(pm.response.json().data.sent).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"{{recipient_email}}\",\n  \"subject\": \"Your updated itinerary\",\n  \"message\": \"Flights are now confirmed — see the attached update.\",\n  \"self\": false\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/pdf/email",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "pdf", "email"]
+            },
+            "description": "Sends the PDF as an attachment via Microsoft Graph. Omit `to` (or send \"self\": true) and it goes to the acting handler's own address — the portal's \"Save & Confirm\" behaviour.\n\nThis really sends mail. Point {{recipient_email}} at your own inbox when testing."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Activity",
+      "item": [
+        {
+          "name": "My recent actions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "d.events.slice(0, 5).forEach(e => console.log(e.created_at + '  ' + e.action + '  ' + (e.booking_ref || '')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/activity?limit=25",
+              "host": ["{{api_base}}"],
+              "path": ["activity"],
+              "query": [
+                { "key": "limit", "value": "25" },
+                { "key": "scope", "value": "me", "disabled": true },
+                { "key": "since", "value": "2026-07-01T00:00:00Z", "disabled": true }
+              ]
+            },
+            "description": "The audit trail for the acting handler, newest first. Every write made through this API is tagged [API] in `details`."
+          }
+        },
+        {
+          "name": "Everything that happened to one booking",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/activity?scope=all&booking_ref={{booking_ref}}&limit=50",
+              "host": ["{{api_base}}"],
+              "path": ["activity"],
+              "query": [
+                { "key": "scope", "value": "all" },
+                { "key": "booking_ref", "value": "{{booking_ref}}" },
+                { "key": "limit", "value": "50" }
+              ]
+            },
+            "description": "Across every file handler, not just the acting one. Add `action=FLIGHT_ADDED,CANCEL_REQUESTED` to narrow it."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "No token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Code is UNAUTHORIZED', () => pm.expect(pm.response.json().code).to.eql('UNAUTHORIZED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}"]
+            }
+          }
+        },
+        {
+          "name": "Login with wrong password (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Code is INVALID_CREDENTIALS', () => pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": \"{{fh_credential}}\",\n  \"password\": \"definitely-wrong\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/auth/login", "host": ["{{api_base}}"], "path": ["auth", "login"] },
+            "description": "Eight of these in a row lock the credential for five minutes (429 TOO_MANY_ATTEMPTS)."
+          }
+        },
+        {
+          "name": "Unknown booking (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Code is BOOKING_NOT_FOUND', () => pm.expect(pm.response.json().code).to.eql('BOOKING_NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{api_base}}/bookings/IS00000", "host": ["{{api_base}}"], "path": ["bookings", "IS00000"] }
+          }
+        },
+        {
+          "name": "Flight without a flight number (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('Code is FLIGHT_NO_REQUIRED', () => pm.expect(pm.response.json().code).to.eql('FLIGHT_NO_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2026-09-04\",\n  \"from_airport\": \"BOM\",\n  \"to_airport\": \"CMB\"\n}"
+            },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/flights",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "flights"]
+            }
+          }
+        },
+        {
+          "name": "PATCH with nothing editable (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('Code is NOTHING_TO_UPDATE', () => pm.expect(pm.response.json().code).to.eql('NOTHING_TO_UPDATE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"CANCELLED\",\n  \"quoted_total\": 1\n}" },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}"]
+            },
+            "description": "Proof that status and money cannot be touched through this API — unknown keys are simply not editable fields."
+          }
+        },
+        {
+          "name": "Cancellation without a reason (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('Code is REASON_REQUIRED', () => pm.expect(pm.response.json().code).to.eql('REASON_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"fees\": []\n}" },
+            "url": {
+              "raw": "{{api_base}}/bookings/{{booking_ref}}/cancel",
+              "host": ["{{api_base}}"],
+              "path": ["bookings", "{{booking_ref}}", "cancel"]
+            },
+            "description": "Safe to run — it is rejected before anything is written."
+          }
+        }
+      ]
+    }
+  ]
+}

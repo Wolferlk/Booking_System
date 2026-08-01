@@ -1116,7 +1116,15 @@ export default function AICallBotPage() {
     if (!p) { toast.error('Enter phone number'); return }
     setApprovalLoading(true)
     try {
-      const res = await teProxy('approval', 'POST', { to: p, name: name || 'Valued Customer' })
+      // Not the bare proxy: this route also records the request, which is what
+      // lets the AI Call Report show who has approved automated calls.
+      const out = await fetch('/api/te/approval', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: p, name: name || 'Valued Customer', bookingRef: bookingRef || undefined }),
+      }).then(r => r.json())
+      const res = out?.data ?? out
+      if (!out?.success) { toast.error(out?.error ?? 'Failed'); return }
       if (res.already_allowed) toast.success('Already allowed ✓')
       else toast.success(res.message ?? 'Approval sent')
     } catch { toast.error('Failed') } finally { setApprovalLoading(false) }
@@ -1446,9 +1454,14 @@ export default function AICallBotPage() {
         title={<span className="flex items-center gap-2"><Bot className="w-5 h-5 text-violet-400" /> AI Call Bot</span>}
         subtitle="Automated WhatsApp voice calls powered by AI · Traveller Experience"
         actions={
-          <button onClick={() => { loadServices(); loadCampaigns() }} className="btn-secondary btn btn-sm">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <a href="/dashboard/te/ai-call-report" className="btn-secondary btn btn-sm" title="Assigned-call report, downloads and the daily email">
+              <BarChart2 className="w-3.5 h-3.5" /> Report
+            </a>
+            <button onClick={() => { loadServices(); loadCampaigns() }} className="btn-secondary btn btn-sm">
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            </button>
+          </div>
         }
       />
 

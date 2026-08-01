@@ -12,6 +12,7 @@
  */
 import * as cron from 'node-cron'
 import type { ScheduledTask } from 'node-cron'
+import { runDueCallReport } from '@/lib/te/call-report-schedule'
 import { runDueSchedules } from './report-runner'
 
 let task: ScheduledTask | null = null
@@ -22,6 +23,17 @@ async function tick(reason: string): Promise<void> {
   if (running) return
   running = true
   try {
+    // The AI voice-call report shares this tick — same "send time is configured
+    // at runtime" shape, and its own slot claim keeps it safe next to the HTTP cron.
+    const callReport = await runDueCallReport()
+      .catch(err => {
+        console.error('[ReportScheduler] AI call report error:', err instanceof Error ? err.message : err)
+        return null
+      })
+    if (callReport) {
+      console.log(`[ReportScheduler] ${reason} — AI call report: ${callReport.status}${callReport.reason ? ` (${callReport.reason})` : ''}`)
+    }
+
     const result = await runDueSchedules()
     if (result.fired.length) {
       for (const r of result.fired) {
