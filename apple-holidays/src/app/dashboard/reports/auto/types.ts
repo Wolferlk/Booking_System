@@ -84,8 +84,9 @@ export const COUNTRY_OPTIONS: { value: string; label: string }[] = [
   { value: 'SRILANKA', label: 'Sri Lanka' },
   { value: 'SINGAPORE', label: 'Singapore' },
   { value: 'MALAYSIA', label: 'Malaysia' },
-  { value: 'SINGAPORE_MALAYSIA', label: 'Singapore & Malaysia' },
-  { value: 'UNASSIGNED', label: 'Unassigned' },
+  // Legacy combined rows are split into Singapore / Malaysia by the report data
+  // layer, so there is no combined option to pick here.
+  { value: 'UNASSIGNED', label: 'Others' },
 ]
 
 export const SECTION_OPTIONS: { key: keyof ScheduleSections; label: string; hint: string }[] = [
