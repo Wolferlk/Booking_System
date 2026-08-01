@@ -38,11 +38,15 @@ const ALIASES: Record<string, string> = {
   'mmt': 'Make My Trip',
   'mmt india': 'Make My Trip',
   'make my trip india': 'Make My Trip',
-  // Pick Your Trail ("Trial" is a recurring typo)
+  // Pick Your Trail ("Trial" is a recurring typo; the plural is also typed)
   'pick your trail': 'Pick Your Trail',
+  'pick your trails': 'Pick Your Trail',
   'pick your trial': 'Pick Your Trail',
+  'pick your trials': 'Pick Your Trail',
   'pickyourtrail': 'Pick Your Trail',
+  'pickyourtrails': 'Pick Your Trail',
   'pickyourtrial': 'Pick Your Trail',
+  'pickyourtrials': 'Pick Your Trail',
   'pyt': 'Pick Your Trail',
   // 30 Sundays
   '30 sundays': '30 Sundays',
