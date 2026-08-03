@@ -12,6 +12,7 @@
  * quotations coming from AppleSystem without touching our own records.
  */
 
+import { AsyncLocalStorage } from 'async_hooks'
 import { prisma } from './prisma'
 
 const AS_BASE = (process.env.AS_API_URL || 'https://applev2.appletechlabs.com').replace(/\/+$/, '')
@@ -19,6 +20,79 @@ const AS_BASE = (process.env.AS_API_URL || 'https://applev2.appletechlabs.com').
 /** Upstream can be slow; cap every call so a hung socket can't stall the whole request. */
 const AS_TIMEOUT_MS = Number(process.env.AS_TIMEOUT_MS || 25_000)
 const AS_LOGIN_TIMEOUT_MS = Number(process.env.AS_LOGIN_TIMEOUT_MS || 12_000)
+
+/**
+ * Escalating timeout ladder.
+ *
+ * AppleSystem intermittently stalls under load — a wide `/api/quotation/list`
+ * query can take well over a minute on a bad morning. With a single fixed 25s
+ * cap those stalls became hard failures ("AppleSystem timed out after 25s"),
+ * which is what kept killing the 6 AM daily import even though the upstream was
+ * alive and would have answered a few seconds later.
+ *
+ * So every call now gets up to 5 attempts, each with a *longer* budget than the
+ * last, plus a short backoff between them. A slow-but-alive upstream is waited
+ * out; a genuinely dead one still fails, just with a much clearer error.
+ *
+ * Tunable with `AS_TIMEOUT_LADDER_MS` (comma-separated ms, e.g. "25000,40000,60000").
+ */
+const LADDER_FACTORS = [1, 1.6, 2.2, 2.8, 3.6]
+
+function parseLadder(raw: string | undefined): number[] | null {
+  if (!raw) return null
+  const nums = raw.split(',').map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0)
+  return nums.length > 0 ? nums : null
+}
+
+const AS_TIMEOUT_LADDER_MS: number[] =
+  parseLadder(process.env.AS_TIMEOUT_LADDER_MS) ??
+  LADDER_FACTORS.map((f) => Math.round(AS_TIMEOUT_MS * f))
+
+const AS_LOGIN_LADDER_MS: number[] =
+  parseLadder(process.env.AS_LOGIN_TIMEOUT_LADDER_MS) ??
+  [1, 1.7, 2.5].map((f) => Math.round(AS_LOGIN_TIMEOUT_MS * f))
+
+/**
+ * Hard ceiling on the wall-clock one call may spend across *all* its attempts,
+ * so a dead upstream can't hold a request open for the sum of every rung.
+ *
+ * The default is deliberately short: most callers are interactive (the Search &
+ * Import tab), where a browser waiting minutes is worse than a clean error, so
+ * they get ~2 rungs. The background importer opts into the full ladder with
+ * {@link withAsRetryBudget} — it has no user waiting on it, and finishing the
+ * daily run matters far more than finishing it quickly.
+ */
+const AS_RETRY_BUDGET_MS = Number(process.env.AS_RETRY_BUDGET_MS || 90_000)
+
+/** Budget the background importer uses — long enough for all five rungs. */
+export const AS_IMPORT_RETRY_BUDGET_MS = Number(process.env.AS_IMPORT_RETRY_BUDGET_MS || 300_000)
+
+const budgetStore = new AsyncLocalStorage<number>()
+
+/**
+ * Run `fn` with a non-default total retry budget. Applies to every AppleSystem
+ * call made inside it, however deeply nested.
+ */
+export function withAsRetryBudget<T>(budgetMs: number, fn: () => Promise<T>): Promise<T> {
+  return budgetStore.run(budgetMs, fn)
+}
+
+function currentBudgetMs(): number {
+  return budgetStore.getStore() ?? AS_RETRY_BUDGET_MS
+}
+
+/** Backoff before retry `i` (1-based): 1s, 2s, 3s… capped at 5s. */
+function backoffMs(i: number): number {
+  return Math.min(1_000 * i, 5_000)
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+function secs(ms: number): string {
+  return `${Math.round(ms / 1000)}s`
+}
 
 // ── Token cache ──────────────────────────────────────────────────────────────
 // Two tiers:
@@ -90,11 +164,13 @@ async function doLogin(): Promise<string> {
 
   const body = new URLSearchParams({ email, password })
 
-  // Two attempts: a login is the one call we cannot afford to lose to a blip.
+  // Several attempts on an escalating timeout: a login is the one call we cannot
+  // afford to lose to a blip, and a slow upstream deserves a longer wait, not a
+  // repeat of the same too-short one.
   let lastErr: unknown = null
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 750))
-    const { signal, done } = withTimeout(AS_LOGIN_TIMEOUT_MS)
+  for (let attempt = 0; attempt < AS_LOGIN_LADDER_MS.length; attempt++) {
+    if (attempt > 0) await sleep(750 * attempt)
+    const { signal, done } = withTimeout(AS_LOGIN_LADDER_MS[attempt])
     try {
       const res = await fetch(`${AS_BASE}/api/auth/login`, {
         method: 'POST',
@@ -190,15 +266,40 @@ async function isExpiredSession(res: Response): Promise<boolean> {
 }
 
 /**
- * Authenticated fetch against AppleSystem.
+ * Error thrown when every rung of the timeout ladder was exhausted.
  *
- * Transparently re-logs-in and replays the call when the token has expired, and
- * retries once on a transport error, so a dropped socket or an overnight token
- * expiry never surfaces to the user.
+ * Carries the attempt telemetry so callers (the importer, its alerting) can say
+ * exactly how hard we tried before giving up, instead of just "timed out".
  */
-async function asFetch(path: string, init: RequestInit = {}, attempt = 0): Promise<Response> {
+export class ASUnreachableError extends Error {
+  readonly path: string
+  readonly attempts: number
+  readonly timedOut: boolean
+  readonly elapsedMs: number
+
+  constructor(opts: { message: string; path: string; attempts: number; timedOut: boolean; elapsedMs: number }) {
+    super(opts.message)
+    this.name = 'ASUnreachableError'
+    this.path = opts.path
+    this.attempts = opts.attempts
+    this.timedOut = opts.timedOut
+    this.elapsedMs = opts.elapsedMs
+  }
+}
+
+/**
+ * One shot at a request: authenticate, fetch under `timeoutMs`, and transparently
+ * re-login + replay once if the token turned out to be expired. Transport errors
+ * propagate to the ladder in {@link asFetch}.
+ */
+async function attemptFetch(
+  path: string,
+  init: RequestInit,
+  timeoutMs: number,
+  allowRelogin: boolean,
+): Promise<Response> {
   const token = await getToken()
-  const { signal, done } = withTimeout(AS_TIMEOUT_MS)
+  const { signal, done } = withTimeout(timeoutMs)
 
   let res: Response
   try {
@@ -212,24 +313,70 @@ async function asFetch(path: string, init: RequestInit = {}, attempt = 0): Promi
       cache: 'no-store',
       signal,
     })
-  } catch (err) {
-    if (attempt < 1 && isTransport(err)) return asFetch(path, init, attempt + 1)
-    throw new Error(
-      err instanceof Error && err.name === 'AbortError'
-        ? `AppleSystem timed out after ${Math.round(AS_TIMEOUT_MS / 1000)}s (${path})`
-        : `Could not reach AppleSystem (${path})`,
-    )
   } finally {
     done()
   }
 
-  if (attempt < 1 && (await isExpiredSession(res))) {
+  if (allowRelogin && (await isExpiredSession(res))) {
     await invalidateToken()
     await getToken(true)
-    return asFetch(path, init, attempt + 1)
+    return attemptFetch(path, init, timeoutMs, false)
   }
 
   return res
+}
+
+/**
+ * Authenticated fetch against AppleSystem, retried on an escalating timeout.
+ *
+ * Each attempt gets a longer budget than the last (see {@link AS_TIMEOUT_LADDER_MS}),
+ * with a short backoff between them, so an upstream that is merely slow is waited
+ * out instead of being abandoned at a fixed 25s. Token expiry is still handled
+ * transparently inside each attempt. Only when every rung is spent — or the total
+ * retry budget runs out — does an {@link ASUnreachableError} surface.
+ */
+async function asFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const startedAt = Date.now()
+  const ladder = AS_TIMEOUT_LADDER_MS
+  const budgetMs = currentBudgetMs()
+  let attempts = 0
+  let sawTimeout = false
+
+  for (let i = 0; i < ladder.length; i++) {
+    const timeoutMs = ladder[i]
+
+    if (i > 0) {
+      const wait = backoffMs(i)
+      // Don't start a rung we can't afford to finish.
+      if (Date.now() - startedAt + wait + timeoutMs > budgetMs) break
+      console.warn(
+        `[AppleSystem] attempt ${i + 1}/${ladder.length} for ${path} — retrying with a ${secs(timeoutMs)} timeout`,
+      )
+      await sleep(wait)
+    }
+
+    attempts++
+    try {
+      return await attemptFetch(path, init, timeoutMs, true)
+    } catch (err) {
+      // A non-transport failure (bad credentials, malformed response) is permanent
+      // — climbing the ladder would only waste minutes repeating it.
+      if (!isTransport(err)) throw err
+      if (err instanceof Error && err.name === 'AbortError') sawTimeout = true
+    }
+  }
+
+  const elapsedMs = Date.now() - startedAt
+  const span = `${secs(ladder[0])} → ${secs(ladder[Math.min(attempts, ladder.length) - 1])}`
+  throw new ASUnreachableError({
+    message: sawTimeout
+      ? `AppleSystem timed out after ${attempts} attempts (${span}, ${secs(elapsedMs)} total) (${path})`
+      : `Could not reach AppleSystem after ${attempts} attempts (${secs(elapsedMs)} total) (${path})`,
+    path,
+    attempts,
+    timedOut: sawTimeout,
+    elapsedMs,
+  })
 }
 
 // ── Types (subset of the fields the API returns that we actually use) ────────

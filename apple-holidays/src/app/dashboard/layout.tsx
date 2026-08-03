@@ -1,6 +1,7 @@
 import DashboardShell from '@/components/layout/dashboard-shell'
 import OneDriveSyncOnLogin from '@/components/layout/onedrive-sync-on-login'
 import WelcomeSplash from '@/components/layout/welcome-splash'
+import AsImportAlert from '@/components/layout/as-import-alert'
 import OpsAI from '@/components/ops-ai/ops-ai'
 import OpsAiTour from '@/components/ops-ai/ops-ai-tour'
 import { CountryFilterProvider } from '@/hooks/use-country-filter'
@@ -15,6 +16,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </DashboardShell>
         <OneDriveSyncOnLogin />
         <WelcomeSplash />
+        {/* Surfaces a failed AppleSystem confirmations import to the first staff
+            member who signs in after it, so a missed morning run is caught the
+            same day rather than whenever someone checks the run history. */}
+        <AsImportAlert />
         {/* OPS_AI copilot — floats above every dashboard route, including the
             full-screen ones, so it is always one keystroke (⌘J) away. */}
         <OpsAI />

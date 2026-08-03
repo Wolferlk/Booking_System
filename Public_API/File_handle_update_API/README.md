@@ -12,6 +12,8 @@ trail as a real portal click.
 | [`Integration-Notes.md`](./Integration-Notes.md) | How to wire it up on the other app's side + server setup and go-live checklist |
 | [`FileHandler-API.postman_collection.json`](./FileHandler-API.postman_collection.json) | Postman collection — login stores the token automatically, every call is ready to fire |
 | [`FileHandler-API.postman_environment.json`](./FileHandler-API.postman_environment.json) | Postman environment — base URL, credentials, test booking ref |
+| [`FileHandler-API-Integration-Guide.pdf`](./FileHandler-API-Integration-Guide.pdf) | All three documents as one printable PDF, for handing to the other app's team |
+| [`make_api_pdf.py`](./make_api_pdf.py) | Rebuilds that PDF from the Markdown (`python3 make_api_pdf.py`, no dependencies) |
 
 ## 60-second start
 

@@ -1,0 +1,4397 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+4 0 obj
+<< /Length 5196 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 21 Tf
+45 790 Td
+(File Handler API - OPS) Tj
+ET
+BT
+/F1 8.8 Tf
+45 757 Td
+(Everything the File Handler Portal \(/filehandler\) can do, exposed as a REST API so) Tj
+ET
+BT
+/F1 8.8 Tf
+45 745 Td
+(another application can do it too: find or import a booking, maintain its flights and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 733 Td
+(hotels, correct agent/guest contacts, raise a cancellation, and generate or email the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 721 Td
+(Booking Update PDF - with tokens, scopes and the same audit trail as a real portal) Tj
+ET
+BT
+/F1 8.8 Tf
+45 709 Td
+(click.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 698 Td
+(File What it is) Tj
+ET
+BT
+/F1 8.8 Tf
+45 687 Td
+(FileHandler-API.md The full API reference - auth, every endpoint, payloads, error codes,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 675 Td
+(flows) Tj
+ET
+BT
+/F1 8.8 Tf
+45 664 Td
+(Integration-Notes.md How to wire it up on the other app's side + server setup and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 652 Td
+(go-live checklist) Tj
+ET
+BT
+/F1 8.8 Tf
+45 641 Td
+(FileHandler-API.postman_collection.json Postman collection - login stores the token) Tj
+ET
+BT
+/F1 8.8 Tf
+45 629 Td
+(automatically, every call is ready to fire) Tj
+ET
+BT
+/F1 8.8 Tf
+45 618 Td
+(FileHandler-API.postman_environment.json Postman environment - base URL, credentials,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 606 Td
+(test booking ref) Tj
+ET
+BT
+/F1 8.8 Tf
+45 595 Td
+(FileHandler-API-Integration-Guide.pdf All three documents as one printable PDF, for) Tj
+ET
+BT
+/F1 8.8 Tf
+45 583 Td
+(handing to the other app's team) Tj
+ET
+BT
+/F1 8.8 Tf
+45 572 Td
+(make_api_pdf.py Rebuilds that PDF from the Markdown \(python3 make_api_pdf.py, no) Tj
+ET
+BT
+/F1 8.8 Tf
+45 560 Td
+(dependencies\)) Tj
+ET
+BT
+/F2 14 Tf
+45 541 Td
+(60-second start) Tj
+ET
+BT
+/F1 8.8 Tf
+45 523 Td
+(- Import both Postman files, select the File Handler API - OPS Live environment.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 512 Td
+(- Fill fh_credential / fh_password with a real, approved file handler's) Tj
+ET
+BT
+/F1 8.8 Tf
+45 501 Td
+(portal login \(or the service username, see below\).) Tj
+ET
+BT
+/F1 8.8 Tf
+45 490 Td
+(- Run Auth -> 1. Login. The token is captured into {{access_token}}.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 479 Td
+(- Run Bookings -> Search - the ref in {{booking_ref}} comes back with its) Tj
+ET
+BT
+/F1 8.8 Tf
+45 468 Td
+(flights, hotels, passengers and contacts.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 457 Td
+(- Run Flights -> Add flight, then Documents -> Download PDF.) Tj
+ET
+BT
+/F2 14 Tf
+45 438 Td
+(Endpoints at a glance) Tj
+ET
+BT
+/F1 8.8 Tf
+45 420 Td
+(Base path: /api/public/fh/v1) Tj
+ET
+BT
+/F1 8.8 Tf
+45 409 Td
+(Method Path Scope Purpose) Tj
+ET
+BT
+/F1 8.8 Tf
+45 398 Td
+(GET / - Service discovery: this list, live from the server) Tj
+ET
+BT
+/F1 8.8 Tf
+45 387 Td
+(POST /auth/register - File handler self-registration \(pending admin approval\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 376 Td
+(GET /auth/register?email= - Is this email already registered?) Tj
+ET
+BT
+/F1 8.8 Tf
+45 365 Td
+(POST /auth/login - Credentials -> bearer token \(12 h\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 354 Td
+(GET /auth/verify booking:read Is my token still valid?) Tj
+ET
+BT
+/F1 8.8 Tf
+45 343 Td
+(GET /auth/me booking:read Acting file handler profile + activity stats) Tj
+ET
+BT
+/F1 8.8 Tf
+45 332 Td
+(GET /bookings/search?q= booking:read Search by booking ref / IS / CNTL) Tj
+ET
+BT
+/F1 8.8 Tf
+45 321 Td
+(POST /bookings/import booking:import Pull a quotation in from AppleSystem) Tj
+ET
+BT
+/F1 8.8 Tf
+45 310 Td
+(GET /bookings/{ref} booking:read The whole booking) Tj
+ET
+BT
+/F1 8.8 Tf
+45 299 Td
+(PATCH /bookings/{ref} booking:write Agent + guest contacts, important notes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 288 Td
+(GET /bookings/{ref}/flights booking:read List flights) Tj
+ET
+BT
+/F1 8.8 Tf
+45 277 Td
+(POST /bookings/{ref}/flights flight:write Add one flight, or a batch) Tj
+ET
+BT
+/F1 8.8 Tf
+45 266 Td
+(PUT /bookings/{ref}/flights/{id} flight:write Replace a flight) Tj
+ET
+BT
+/F1 8.8 Tf
+45 255 Td
+(DELETE /bookings/{ref}/flights/{id} flight:write Remove a flight) Tj
+ET
+BT
+/F1 8.8 Tf
+45 244 Td
+(POST /bookings/{ref}/flights/extract ai:extract Read flights off a ticket with GPT-4o) Tj
+ET
+BT
+/F1 8.8 Tf
+45 233 Td
+(GET /bookings/{ref}/accommodations booking:read List hotels) Tj
+ET
+BT
+/F1 8.8 Tf
+45 222 Td
+(POST /bookings/{ref}/accommodations hotel:write Add one hotel, or a batch) Tj
+ET
+BT
+/F1 8.8 Tf
+45 211 Td
+(PUT /bookings/{ref}/accommodations/{id} hotel:write Replace a hotel) Tj
+ET
+BT
+/F1 8.8 Tf
+45 200 Td
+(DELETE /bookings/{ref}/accommodations/{id} hotel:write Remove a hotel) Tj
+ET
+BT
+/F1 8.8 Tf
+45 189 Td
+(GET /bookings/{ref}/cancel booking:read Can this booking be cancelled?) Tj
+ET
+BT
+/F1 8.8 Tf
+45 178 Td
+(POST /bookings/{ref}/cancel booking:cancel Raise a cancellation request) Tj
+ET
+BT
+/F1 8.8 Tf
+45 167 Td
+(GET /bookings/{ref}/pdf document:read Booking Update PDF \(binary or base64\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 156 Td
+(POST /bookings/{ref}/pdf/email document:send Email that PDF) Tj
+ET
+BT
+/F1 8.8 Tf
+45 145 Td
+(GET /activity activity:read File handler audit trail) Tj
+ET
+BT
+/F1 8.8 Tf
+45 134 Td
+({ref} is the booking ref, IS number or CNTL number - whichever the calling app has to) Tj
+ET
+BT
+/F1 8.8 Tf
+45 122 Td
+(hand, with or without spaces \(IS 40475 = IS40475\).) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 1) Tj
+ET
+Q
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 4 0 R >>
+endobj
+6 0 obj
+<< /Length 2038 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(Two ways to authenticate) Tj
+ET
+BT
+/F1 8.8 Tf
+45 764 Td
+(A file handler's own login - the same email/phone + password they use on the portal.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 752 Td
+(Nothing to configure; every action is attributed to them.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 739 Td
+(POST /auth/login) Tj
+ET
+BT
+/F3 7.1 Tf
+45 730 Td
+({ "credential": "nimal@appleholidays.lk", "password": "..." }) Tj
+ET
+BT
+/F1 8.8 Tf
+45 718 Td
+(A service client - a machine account configured in the server environment, so the other) Tj
+ET
+BT
+/F1 8.8 Tf
+45 706 Td
+(app never stores handler passwords. It names the handler it acts for with the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 694 Td
+(X-File-Handler header \(email or id\).) Tj
+ET
+BT
+/F3 7.1 Tf
+45 681 Td
+(POST /auth/login) Tj
+ET
+BT
+/F3 7.1 Tf
+45 672 Td
+({ "username": "fh_integration", "password": "...", "act_as": "nimal@appleholidays.lk" }) Tj
+ET
+BT
+/F1 8.8 Tf
+45 660 Td
+(Development-default sample service credentials:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 647 Td
+(username: fh_integration) Tj
+ET
+BT
+/F3 7.1 Tf
+45 638 Td
+(password: FileHandler@2026#Portal) Tj
+ET
+BT
+/F1 8.8 Tf
+45 626 Td
+(- These only work when the server has no service client configured, and are) Tj
+ET
+BT
+/F1 8.8 Tf
+45 615 Td
+(- refused in production unless FH_PUBLIC_API_ALLOW_SAMPLE=true. Set real) Tj
+ET
+BT
+/F1 8.8 Tf
+45 604 Td
+(- ones with FH_PUBLIC_API_USERNAME / FH_PUBLIC_API_PASSWORD before go-live.) Tj
+ET
+BT
+/F2 14 Tf
+45 585 Td
+(One thing worth knowing up front) Tj
+ET
+BT
+/F1 8.8 Tf
+45 567 Td
+(POST /bookings/{ref}/cancel does not cancel the booking. Exactly as in the portal, it) Tj
+ET
+BT
+/F1 8.8 Tf
+45 555 Td
+(moves the booking to PENDING_CANCELLATION and emails the accounts team to approve. The) Tj
+ET
+BT
+/F1 8.8 Tf
+45 543 Td
+(response is 202 Accepted for that reason.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 532 Td
+(*\(Outright cancellation is the AppleSystem quotation API's job - see) Tj
+ET
+BT
+/F1 8.8 Tf
+45 520 Td
+(../Updatecancel-AS-API/.\)*) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 2) Tj
+ET
+Q
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 6 0 R >>
+endobj
+8 0 obj
+<< /Length 4851 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 21 Tf
+45 790 Td
+(File Handler API - Reference) Tj
+ET
+BT
+/F1 8.8 Tf
+45 757 Td
+(Version 1.0 - Base path /api/public/fh/v1 - Content type application/json) Tj
+ET
+BT
+/F1 8.8 Tf
+45 746 Td
+(Environment Base URL) Tj
+ET
+BT
+/F1 8.8 Tf
+45 735 Td
+(Local http://localhost:3000/api/public/fh/v1) Tj
+ET
+BT
+/F1 8.8 Tf
+45 724 Td
+(Live https://ops.aahaas.com/api/public/fh/v1) Tj
+ET
+BT
+/F2 14 Tf
+45 705 Td
+(1. What this API does) Tj
+ET
+BT
+/F1 8.8 Tf
+45 687 Td
+(The File Handler Portal \(/filehandler\) is where an external file handler looks a booking) Tj
+ET
+BT
+/F1 8.8 Tf
+45 675 Td
+(up, types in the flights and hotels they have arranged, fixes the agent and guest) Tj
+ET
+BT
+/F1 8.8 Tf
+45 663 Td
+(contact details, raises a cancellation, and sends the guest a "Booking Update" PDF.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 652 Td
+(This API is that same portal, without the browser. Everything a handler can click,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 640 Td
+(another application can call - with the same validation, the same file_handler_logs) Tj
+ET
+BT
+/F1 8.8 Tf
+45 628 Td
+(audit rows, and the same effect on the OPS dashboards and the office Live Screen.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 615 Td
+(sequenceDiagram) Tj
+ET
+BT
+/F3 7.1 Tf
+45 606 Td
+(    participant APP as Your application) Tj
+ET
+BT
+/F3 7.1 Tf
+45 597 Td
+(    participant API as OPS File Handler API) Tj
+ET
+BT
+/F3 7.1 Tf
+45 588 Td
+(    participant OPS as OPS Booking System) Tj
+ET
+BT
+/F3 7.1 Tf
+45 579 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 570 Td
+(    APP->>API: POST /auth/login  \(handler credentials\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 561 Td
+(    API-->>APP: bearer token \(12 h\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 552 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 543 Td
+(    APP->>API: GET /bookings/search?q=IS48748) Tj
+ET
+BT
+/F3 7.1 Tf
+45 534 Td
+(    API-->>APP: booking + flights + hotels + contacts) Tj
+ET
+BT
+/F3 7.1 Tf
+45 525 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 516 Td
+(    Note over APP,OPS: Not in OPS yet?) Tj
+ET
+BT
+/F3 7.1 Tf
+45 507 Td
+(    APP->>API: POST /bookings/import {q}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 498 Td
+(    API->>OPS: pull quotation from AppleSystem -> create booking) Tj
+ET
+BT
+/F3 7.1 Tf
+45 489 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 480 Td
+(    APP->>API: POST /bookings/IS48748/flights/extract \(ticket PDF\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 471 Td
+(    API-->>APP: parsed flight segments) Tj
+ET
+BT
+/F3 7.1 Tf
+45 462 Td
+(    APP->>API: POST /bookings/IS48748/flights {flights:[...]}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 453 Td
+(    API->>OPS: flights saved + audit row + Live Screen popup) Tj
+ET
+BT
+/F3 7.1 Tf
+45 444 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 435 Td
+(    APP->>API: POST /bookings/IS48748/pdf/email {to}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 426 Td
+(    API-->>APP: 200 { sent: true }) Tj
+ET
+BT
+/F2 10.5 Tf
+45 410 Td
+(How a booking is identified) Tj
+ET
+BT
+/F1 8.8 Tf
+45 396 Td
+(Everywhere {ref} appears in a path - and in q for search/import - send any one of these:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 385 Td
+(Value Example Matches in OPS) Tj
+ET
+BT
+/F1 8.8 Tf
+45 374 Td
+(Booking ref IS48748 bookingRef) Tj
+ET
+BT
+/F1 8.8 Tf
+45 363 Td
+(IS number IS 48748 isNumber \(spaces are stripped, case ignored\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 352 Td
+(CNTL / quotation number 479416CNTL cntlNumber) Tj
+ET
+BT
+/F1 8.8 Tf
+45 341 Td
+(Remember to URL-encode the segment if it contains a space.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 326 Td
+(The response envelope) Tj
+ET
+BT
+/F1 8.8 Tf
+45 312 Td
+(Every response - success or failure - has the same shape:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 299 Td
+(// success) Tj
+ET
+BT
+/F3 7.1 Tf
+45 290 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 281 Td
+(  "success": true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 272 Td
+(  "message": "Added 2 flights to IS48748",   // present when there is something to say) Tj
+ET
+BT
+/F3 7.1 Tf
+45 263 Td
+(  "data":    { /* the payload */ },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 254 Td
+(  "request_id": "0f2c...",                     // quote this in a support ticket) Tj
+ET
+BT
+/F3 7.1 Tf
+45 245 Td
+(  "timestamp": "2026-08-01T09:14:22.418Z") Tj
+ET
+BT
+/F3 7.1 Tf
+45 236 Td
+(}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 227 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 218 Td
+(// failure) Tj
+ET
+BT
+/F3 7.1 Tf
+45 209 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 200 Td
+(  "success": false,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 191 Td
+(  "error": "flight_no is required",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 182 Td
+(  "code":  "FLIGHT_NO_REQUIRED",             // branch on this, never on the message) Tj
+ET
+BT
+/F3 7.1 Tf
+45 173 Td
+(  "request_id": "0f2c...",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 164 Td
+(  "timestamp": "2026-08-01T09:14:22.418Z") Tj
+ET
+BT
+/F3 7.1 Tf
+45 155 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 143 Td
+(request_id is also returned as the x-request-id header, including on the binary PDF) Tj
+ET
+BT
+/F1 8.8 Tf
+45 131 Td
+(download.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 120 Td
+(The only endpoint that does not return JSON is GET /bookings/{ref}/pdf without) Tj
+ET
+BT
+/F1 8.8 Tf
+45 108 Td
+(?format=base64 - that streams application/pdf.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 3) Tj
+ET
+Q
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 8 0 R >>
+endobj
+10 0 obj
+<< /Length 5133 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(2. Authentication) Tj
+ET
+BT
+/F1 8.8 Tf
+45 764 Td
+(Two kinds of caller, one token format. All authenticated calls carry:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 751 Td
+(Authorization: Bearer <access_token>) Tj
+ET
+BT
+/F2 10.5 Tf
+45 735 Td
+(2.1 A file handler's own login) Tj
+ET
+BT
+/F1 8.8 Tf
+45 721 Td
+(The email \(or phone\) and password the handler already uses on the portal. Nothing has to) Tj
+ET
+BT
+/F1 8.8 Tf
+45 709 Td
+(be configured on the server, and the handler keeps full portal capabilities - the token) Tj
+ET
+BT
+/F1 8.8 Tf
+45 697 Td
+(is issued with scope *.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 684 Td
+(POST /auth/login) Tj
+ET
+BT
+/F3 7.1 Tf
+45 675 Td
+(Content-Type: application/json) Tj
+ET
+BT
+/F3 7.1 Tf
+45 666 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 657 Td
+({ "credential": "nimal@appleholidays.lk", "password": "..." }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 643 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 634 Td
+(  "success": true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 625 Td
+(  "message": "Authenticated as Nimal Perera",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 616 Td
+(  "data": {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 607 Td
+(    "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 598 Td
+(    "token_type": "Bearer",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 589 Td
+(    "expires_in": 43200,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 580 Td
+(    "expires_at": "2026-08-01T21:14:22.418Z",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 571 Td
+(    "scopes": ["*"],) Tj
+ET
+BT
+/F3 7.1 Tf
+45 562 Td
+(    "subject_type": "handler",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 553 Td
+(    "client_name": "Nimal Perera",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 544 Td
+(    "file_handler": { "id": "clx...", "name": "Nimal Perera", "email": "nimal@appleholiday) Tj
+ET
+BT
+/F3 7.1 Tf
+45 535 Td
+(s.lk", "country": "SRILANKA" }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 526 Td
+(  }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 517 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 505 Td
+(The account must be approved \(isActive\). An unapproved one gets 403 ACCOUNT_PENDING. A) Tj
+ET
+BT
+/F1 8.8 Tf
+45 493 Td
+(handler deactivated *after* a token was issued is rejected on the next call - approval) Tj
+ET
+BT
+/F1 8.8 Tf
+45 481 Td
+(is re-checked on every request, not just at login.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 466 Td
+(2.2 A service client) Tj
+ET
+BT
+/F1 8.8 Tf
+45 452 Td
+(A machine account configured in the server environment. Use this when the calling) Tj
+ET
+BT
+/F1 8.8 Tf
+45 440 Td
+(application has its own users and should never hold handler passwords.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 427 Td
+(POST /auth/login) Tj
+ET
+BT
+/F3 7.1 Tf
+45 418 Td
+({ "username": "fh_integration", "password": "...", "act_as": "nimal@appleholidays.lk" }) Tj
+ET
+BT
+/F1 8.8 Tf
+45 406 Td
+(A service token must always resolve a file handler to act as - every write is attributed) Tj
+ET
+BT
+/F1 8.8 Tf
+45 394 Td
+(to a real person in the audit trail. It is taken from, in order:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 383 Td
+(- the X-File-Handler request header \(handler email or id\),) Tj
+ET
+BT
+/F1 8.8 Tf
+45 372 Td
+(- act_as given at login and baked into the token,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 361 Td
+(- the server default FH_PUBLIC_API_ACT_AS.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 350 Td
+(If none resolves, the call fails with 400 ACT_AS_REQUIRED. A client configured with) Tj
+ET
+BT
+/F1 8.8 Tf
+45 338 Td
+("lockActAs": true ignores the header and can only ever act as its configured handler.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 325 Td
+(GET /bookings/IS48748) Tj
+ET
+BT
+/F3 7.1 Tf
+45 316 Td
+(Authorization: Bearer <service token>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 307 Td
+(X-File-Handler: nimal@appleholidays.lk) Tj
+ET
+BT
+/F2 10.5 Tf
+45 291 Td
+(2.3 Static API key) Tj
+ET
+BT
+/F1 8.8 Tf
+45 277 Td
+(When FH_PUBLIC_API_KEY is set, a caller that cannot hold a token may send it instead of) Tj
+ET
+BT
+/F1 8.8 Tf
+45 265 Td
+(the Authorization header. X-File-Handler is still required \(or the server default\).) Tj
+ET
+BT
+/F3 7.1 Tf
+45 252 Td
+(GET /bookings/IS48748) Tj
+ET
+BT
+/F3 7.1 Tf
+45 243 Td
+(X-API-Key: <FH_PUBLIC_API_KEY>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 234 Td
+(X-File-Handler: nimal@appleholidays.lk) Tj
+ET
+BT
+/F2 10.5 Tf
+45 218 Td
+(2.4 Scopes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 204 Td
+(Handler tokens get *. Service clients get whatever FH_PUBLIC_API_CLIENTS grants them:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 193 Td
+(Scope Unlocks) Tj
+ET
+BT
+/F1 8.8 Tf
+45 182 Td
+(booking:read search, read a booking, list flights/hotels, verify, me, cancel status) Tj
+ET
+BT
+/F1 8.8 Tf
+45 171 Td
+(booking:write update contacts and important notes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 160 Td
+(booking:import import from AppleSystem) Tj
+ET
+BT
+/F1 8.8 Tf
+45 149 Td
+(booking:cancel raise a cancellation request) Tj
+ET
+BT
+/F1 8.8 Tf
+45 138 Td
+(flight:write add / replace / remove flights) Tj
+ET
+BT
+/F1 8.8 Tf
+45 127 Td
+(hotel:write add / replace / remove hotels) Tj
+ET
+BT
+/F1 8.8 Tf
+45 116 Td
+(document:read download the Booking Update PDF) Tj
+ET
+BT
+/F1 8.8 Tf
+45 105 Td
+(document:send email the Booking Update PDF) Tj
+ET
+BT
+/F1 8.8 Tf
+45 94 Td
+(ai:extract GPT-4o flight extraction) Tj
+ET
+BT
+/F1 8.8 Tf
+45 83 Td
+(activity:read the audit trail feed) Tj
+ET
+BT
+/F1 8.8 Tf
+45 72 Td
+(* all of the above) Tj
+ET
+BT
+/F1 8.8 Tf
+45 61 Td
+(A call outside the token's scopes returns 403 INSUFFICIENT_SCOPE.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 4) Tj
+ET
+Q
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 10 0 R >>
+endobj
+12 0 obj
+<< /Length 4633 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 10.5 Tf
+45 790 Td
+(2.5 Token lifetime and lockout) Tj
+ET
+BT
+/F1 8.8 Tf
+45 776 Td
+(Tokens last 12 hours \(FH_PUBLIC_API_TOKEN_TTL_MIN\). An expired one returns 401) Tj
+ET
+BT
+/F1 8.8 Tf
+45 764 Td
+(TOKEN_EXPIRED - log in again; there is no refresh endpoint by design. Eight failed) Tj
+ET
+BT
+/F1 8.8 Tf
+45 752 Td
+(logins for the same credential lock it for five minutes \(429 TOO_MANY_ATTEMPTS\).) Tj
+ET
+BT
+/F2 14 Tf
+45 733 Td
+(3. Discovery) Tj
+ET
+BT
+/F2 10.5 Tf
+45 711 Td
+(GET / - what this API offers) Tj
+ET
+BT
+/F1 8.8 Tf
+45 697 Td
+(No token required. Returns the name, version, auth summary, scope list and every) Tj
+ET
+BT
+/F1 8.8 Tf
+45 685 Td
+(endpoint. Useful as a health check and as the single URL to hand a new integrator.) Tj
+ET
+BT
+/F2 14 Tf
+45 666 Td
+(4. Accounts) Tj
+ET
+BT
+/F2 10.5 Tf
+45 644 Td
+(POST /auth/register - self-registration) Tj
+ET
+BT
+/F1 8.8 Tf
+45 630 Td
+(No token required. Creates a pending file handler; an ultra/super admin must approve it) Tj
+ET
+BT
+/F1 8.8 Tf
+45 618 Td
+(in /dashboard/admin/file-handlers before it can log in anywhere.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 605 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 596 Td
+(  "name": "Nimal Perera",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 587 Td
+(  "email": "nimal@appleholidays.lk",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 578 Td
+(  "password": "at-least-6-chars",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 569 Td
+(  "phone": "+94 77 123 4567",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 560 Td
+(  "whatsapp_phone": "+94 77 123 4567",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 551 Td
+(  "country": "SRILANKA"     // ALL | VIETNAM | SRILANKA | SINGAPORE_MALAYSIA | SINGAPORE |) Tj
+ET
+BT
+/F3 7.1 Tf
+45 542 Td
+( MALAYSIA) Tj
+ET
+BT
+/F3 7.1 Tf
+45 533 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 521 Td
+(-> 201 { "id": "clx...", "pending_approval": true } - 409 ALREADY_REGISTERED if the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 509 Td
+(email is taken.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 494 Td
+(GET /auth/register?email=... - availability check) Tj
+ET
+BT
+/F1 8.8 Tf
+45 480 Td
+(No token required. { "exists": true, "approved": false } - nothing else is disclosed.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 465 Td
+(GET /auth/verify - is my token still good?) Tj
+ET
+BT
+/F3 7.1 Tf
+45 449 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 440 Td
+(  "valid": true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 431 Td
+(  "subject_type": "handler",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 422 Td
+(  "client_name": "Nimal Perera",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 413 Td
+(  "scopes": ["*"],) Tj
+ET
+BT
+/F3 7.1 Tf
+45 404 Td
+(  "authenticated_via": "bearer",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 395 Td
+(  "acting_as": { "id": "clx...", "name": "Nimal Perera", "email": "...", "country": "SRILA) Tj
+ET
+BT
+/F3 7.1 Tf
+45 386 Td
+(NKA" }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 377 Td
+(}) Tj
+ET
+BT
+/F2 10.5 Tf
+45 361 Td
+(GET /auth/me - profile of the acting handler) Tj
+ET
+BT
+/F1 8.8 Tf
+45 347 Td
+(Adds stats.total_actions and stats.bookings_touched to the profile, so the calling app) Tj
+ET
+BT
+/F1 8.8 Tf
+45 335 Td
+(can show a handler their own footprint.) Tj
+ET
+BT
+/F2 14 Tf
+45 316 Td
+(5. Bookings) Tj
+ET
+BT
+/F2 10.5 Tf
+45 294 Td
+(GET /bookings/search?q=IS48748 - the portal search box) Tj
+ET
+BT
+/F1 8.8 Tf
+45 280 Td
+(Query Default Meaning) Tj
+ET
+BT
+/F1 8.8 Tf
+45 269 Td
+(q - required - booking ref, IS number or CNTL number) Tj
+ET
+BT
+/F1 8.8 Tf
+45 258 Td
+(limit 10 1-50) Tj
+ET
+BT
+/F1 8.8 Tf
+45 247 Td
+(auto_import false when nothing matches locally, pull it from AppleSystem \(also needs) Tj
+ET
+BT
+/F1 8.8 Tf
+45 235 Td
+(booking:import\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 222 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 213 Td
+(  "query": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 204 Td
+(  "count": 1,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 195 Td
+(  "imported": false,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 186 Td
+(  "results": [ /* full booking objects - see ß5.3 */ ]) Tj
+ET
+BT
+/F3 7.1 Tf
+45 177 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 165 Td
+(An empty result is a 200 with count: 0, not a 404 - searching is not finding.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 150 Td
+(POST /bookings/import - pull one in from AppleSystem) Tj
+ET
+BT
+/F1 8.8 Tf
+45 136 Td
+(For when the booking exists as a confirmed AppleSystem quotation but was never imported) Tj
+ET
+BT
+/F1 8.8 Tf
+45 124 Td
+(into OPS. Same pipeline as the portal's "import" rescue path: fetch the quote template,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 112 Td
+(map it, create the booking with the automation user as creator, and stamp the acting) Tj
+ET
+BT
+/F1 8.8 Tf
+45 100 Td
+(file handler on it.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 87 Td
+({ "q": "IS48748" }     // aliases: is_number, booking_ref, ref) Tj
+ET
+BT
+/F1 8.8 Tf
+45 75 Td
+(-> 201 with the new booking, or 200 with already_existed: true if OPS had it all along.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 63 Td
+(Idempotent - safe to retry.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 5) Tj
+ET
+Q
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 12 0 R >>
+endobj
+14 0 obj
+<< /Length 5292 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(Code Status When) Tj
+ET
+BT
+/F1 8.8 Tf
+45 779 Td
+(BOOKING_NOT_FOUND 404 Not in OPS and not in AppleSystem) Tj
+ET
+BT
+/F1 8.8 Tf
+45 768 Td
+(APPLESYSTEM_UNREACHABLE 502 AppleSystem did not answer) Tj
+ET
+BT
+/F1 8.8 Tf
+45 757 Td
+(COUNTRY_UNKNOWN 422 The IS number does not map to an operating country) Tj
+ET
+BT
+/F1 8.8 Tf
+45 746 Td
+(MAPPING_FAILED 422 The quotation could not be mapped to a booking) Tj
+ET
+BT
+/F2 10.5 Tf
+45 731 Td
+(GET /bookings/{ref} - the whole booking) Tj
+ET
+BT
+/F3 7.1 Tf
+45 715 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 706 Td
+(  "booking": {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 697 Td
+(    "booking_ref": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 688 Td
+(    "is_number": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 679 Td
+(    "cntl_number": "479416CNTL",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 670 Td
+(    "quotation_no": "479416CNTL",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 661 Td
+(    "status": "GT_VERIFIED",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 652 Td
+(    "version": 3,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 643 Td
+(    "agent": "Make My Trip",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 634 Td
+(    "agent_booking_id": "NH70123456",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 625 Td
+(    "file_handler": "Nimal Perera",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 616 Td
+(    "operation_country": "SRILANKA",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 607 Td
+(    "arrival_date": "2026-09-04",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 598 Td
+(    "departure_date": "2026-09-11",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 589 Td
+(    "pax": { "adults": 2, "children": 1, "infants": 0 },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 580 Td
+(    "quoted_total": 1840.0,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 571 Td
+(    "currency": "USD",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 562 Td
+(    "lead_passenger": "Rahul Sharma",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 553 Td
+(    "contacts": {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 544 Td
+(      "agent_email": "ops@mmt.com",   "agent_phone": "+91 ...",  "agent_whatsapp": "+91 ..) Tj
+ET
+BT
+/F3 7.1 Tf
+45 535 Td
+(.",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 526 Td
+(      "contact_email": "rahul@...",     "contact_phone": "+91 ...", "contact_whatsapp": "+) Tj
+ET
+BT
+/F3 7.1 Tf
+45 517 Td
+(91 ...") Tj
+ET
+BT
+/F3 7.1 Tf
+45 508 Td
+(    },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 499 Td
+(    "important_notes": "Vegetarian meals throughout.",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 490 Td
+(    "passengers":     [ { "id": "...", "name": "Rahul Sharma", "type": "ADULT", "age": nul) Tj
+ET
+BT
+/F3 7.1 Tf
+45 481 Td
+(l, "is_lead": true, "nationality": "IN", "passport": "..." } ],) Tj
+ET
+BT
+/F3 7.1 Tf
+45 472 Td
+(    "flights":        [ { "id": "...", "flight_no": "UL309", "date": "2026-09-04", "from_a) Tj
+ET
+BT
+/F3 7.1 Tf
+45 463 Td
+(irport": "BOM", "dep_time": "01:25", "to_airport": "CMB", "arr_time": "03:05", "airline": ) Tj
+ET
+BT
+/F3 7.1 Tf
+45 454 Td
+("SriLankan", "notes": null } ],) Tj
+ET
+BT
+/F3 7.1 Tf
+45 445 Td
+(    "accommodations": [ { "id": "...", "city": "Kandy", "hotel": "Earl's Regency", "check_) Tj
+ET
+BT
+/F3 7.1 Tf
+45 436 Td
+(in": "2026-09-06", "check_out": "2026-09-08", "nights": 2, "address": "...", "contact": ".) Tj
+ET
+BT
+/F3 7.1 Tf
+45 427 Td
+(..", "room_type": "Deluxe Double", "meal_type": "HB" } ],) Tj
+ET
+BT
+/F3 7.1 Tf
+45 418 Td
+(    "cancellation": {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 409 Td
+(      "requested_at": null, "previous_status": null, "cancelled_at": null,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 400 Td
+(      "requested_by": null, "requested_by_email": null, "reason": null,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 391 Td
+(      "fees": [], "fee_total": null, "pending_approval": false) Tj
+ET
+BT
+/F3 7.1 Tf
+45 382 Td
+(    },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 373 Td
+(    "created_at": "2026-06-02T08:11:00.000Z",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 364 Td
+(    "updated_at": "2026-07-30T14:52:11.000Z") Tj
+ET
+BT
+/F3 7.1 Tf
+45 355 Td
+(  }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 346 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 334 Td
+(404 BOOKING_NOT_FOUND when nothing matches.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 319 Td
+(PATCH /bookings/{ref} - contacts and notes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 305 Td
+(The only booking fields a file handler may edit. Send just the ones that changed; send) Tj
+ET
+BT
+/F1 8.8 Tf
+45 293 Td
+("" or null to clear one. PUT behaves identically.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 280 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 271 Td
+(  "agent_email": "ops@mmt.com",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 262 Td
+(  "agent_phone": "+91 22 1234 5678",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 253 Td
+(  "agent_whatsapp": "+91 98765 43210",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 244 Td
+(  "contact_email": "rahul@example.com",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 235 Td
+(  "contact_phone": "+91 98111 22333",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 226 Td
+(  "contact_whatsapp": "+91 98111 22333",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 217 Td
+(  "important_notes": "Guest lands with a wheelchair request.") Tj
+ET
+BT
+/F3 7.1 Tf
+45 208 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 196 Td
+(Contacts may also be nested under "contacts": { ... }, and camelCase spellings) Tj
+ET
+BT
+/F1 8.8 Tf
+45 184 Td
+(\(agentEmail, importantNotes\) are accepted - send whichever your app already produces.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 173 Td
+(-> 200 { "booking": {...}, "changed_fields": ["agentEmail", "importantNotes"] } - 422) Tj
+ET
+BT
+/F1 8.8 Tf
+45 161 Td
+(NOTHING_TO_UPDATE when the body has no editable field.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 150 Td
+(Anything else - status, pax, dates, prices - is deliberately not editable here; those) Tj
+ET
+BT
+/F1 8.8 Tf
+45 138 Td
+(belong to the booking team and to the AppleSystem quotation API.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 6) Tj
+ET
+Q
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 14 0 R >>
+endobj
+16 0 obj
+<< /Length 4453 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(6. Flights) Tj
+ET
+BT
+/F2 10.5 Tf
+45 760 Td
+(GET /bookings/{ref}/flights) Tj
+ET
+BT
+/F1 8.8 Tf
+45 746 Td
+({ "booking_ref": "IS48748", "count": 2, "flights": [ ... ] }, earliest first.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 731 Td
+(POST /bookings/{ref}/flights - add) Tj
+ET
+BT
+/F1 8.8 Tf
+45 717 Td
+(One flight:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 704 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 695 Td
+(  "flight_no": "UL309",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 686 Td
+(  "date": "2026-09-04",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 677 Td
+(  "from_airport": "BOM",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 668 Td
+(  "dep_time": "01:25",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 659 Td
+(  "to_airport": "CMB",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 650 Td
+(  "arr_time": "03:05",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 641 Td
+(  "airline": "SriLankan Airlines",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 632 Td
+(  "notes": "Guest requested aisle seats") Tj
+ET
+BT
+/F3 7.1 Tf
+45 623 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 611 Td
+(Or a whole itinerary at once:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 598 Td
+({ "flights": [ { ... }, { ... } ] }) Tj
+ET
+BT
+/F1 8.8 Tf
+45 586 Td
+(The batch is validated in full before anything is written, so one bad segment rejects) Tj
+ET
+BT
+/F1 8.8 Tf
+45 574 Td
+(the request rather than leaving half an itinerary in the booking.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 563 Td
+(Required: flight_no, date, from_airport, to_airport. Optional: dep_time, arr_time,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 551 Td
+(airline, notes. camelCase \(flightNo, fromApt, depTime, ...\) is accepted, which is why) Tj
+ET
+BT
+/F1 8.8 Tf
+45 539 Td
+(the output of /flights/extract can be posted back verbatim.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 528 Td
+(-> 201 { "added": 2, "flights": [ ... ], "booking": { ... } }) Tj
+ET
+BT
+/F1 8.8 Tf
+45 517 Td
+(Code Status) Tj
+ET
+BT
+/F1 8.8 Tf
+45 506 Td
+(FLIGHT_NO_REQUIRED / FLIGHT_DATE_REQUIRED / FROM_AIRPORT_REQUIRED / TO_AIRPORT_REQUIRED) Tj
+ET
+BT
+/F1 8.8 Tf
+45 494 Td
+(422) Tj
+ET
+BT
+/F1 8.8 Tf
+45 483 Td
+(INVALID_DATE 422) Tj
+ET
+BT
+/F1 8.8 Tf
+45 472 Td
+(NO_FLIGHTS 422) Tj
+ET
+BT
+/F2 10.5 Tf
+45 457 Td
+(PUT /bookings/{ref}/flights/{flightId} - replace) Tj
+ET
+BT
+/F1 8.8 Tf
+45 443 Td
+(Same body and same required fields as POST: this is a full replace, not a partial patch.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 431 Td
+(PATCH is accepted as an alias with identical semantics. 404 FLIGHT_NOT_FOUND if that) Tj
+ET
+BT
+/F1 8.8 Tf
+45 419 Td
+(flight is not on that booking.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 404 Td
+(DELETE /bookings/{ref}/flights/{flightId} - remove) Tj
+ET
+BT
+/F1 8.8 Tf
+45 390 Td
+(-> 200 { "deleted": true, "flight": { ... } }) Tj
+ET
+BT
+/F2 10.5 Tf
+45 375 Td
+(POST /bookings/{ref}/flights/extract - read a ticket with GPT-4o) Tj
+ET
+BT
+/F1 8.8 Tf
+45 361 Td
+(Three input modes:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 348 Td
+(// 1 - pasted e-ticket text) Tj
+ET
+BT
+/F3 7.1 Tf
+45 339 Td
+({ "text": "UL309 04SEP BOM CMB 0125 0305 ..." }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 330 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 321 Td
+(// 2 - base64 image or PDF \(a data: URL is tolerated too\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 312 Td
+({ "file_base64": "JVBERi0xLjQK...", "file_name": "ticket.pdf" }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 298 Td
+(# 3 - multipart, the same upload the portal sends) Tj
+ET
+BT
+/F3 7.1 Tf
+45 289 Td
+(POST /bookings/IS48748/flights/extract) Tj
+ET
+BT
+/F3 7.1 Tf
+45 280 Td
+(Content-Type: multipart/form-data) Tj
+ET
+BT
+/F3 7.1 Tf
+45 271 Td
+(file=@ticket.pdf) Tj
+ET
+BT
+/F1 8.8 Tf
+45 259 Td
+(By default nothing is written - the parsed segments come back for a human to confirm:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 246 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 237 Td
+(  "source": "ticket.pdf",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 228 Td
+(  "count": 2,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 219 Td
+(  "saved": false,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 210 Td
+(  "flights": [ { "flightNo": "UL309", "date": "2026-09-04", "fromApt": "BOM", "depTime": ") Tj
+ET
+BT
+/F3 7.1 Tf
+45 201 Td
+(01:25", "toApt": "CMB", "arrTime": "03:05", "airline": "SriLankan" } ]) Tj
+ET
+BT
+/F3 7.1 Tf
+45 192 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 180 Td
+(Add ?save=true \(or "save": true in the JSON body / save in the form\) to extract and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 168 Td
+(persist in a single call - the response is then 201 with saved: true and the saved rows.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 157 Td
+(Limits: JPG, PNG, WebP, GIF or PDF, up to 10 MB \(UNSUPPORTED_FILE, FILE_TOO_LARGE,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 145 Td
+(EMPTY_FILE\). Extraction costs an OpenAI call and is logged to AiUsageLog like every) Tj
+ET
+BT
+/F1 8.8 Tf
+45 133 Td
+(other AI call in the system.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 7) Tj
+ET
+Q
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 16 0 R >>
+endobj
+18 0 obj
+<< /Length 4731 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(7. Accommodations) Tj
+ET
+BT
+/F2 10.5 Tf
+45 760 Td
+(GET /bookings/{ref}/accommodations) Tj
+ET
+BT
+/F1 8.8 Tf
+45 746 Td
+({ "booking_ref": "IS48748", "count": 3, "accommodations": [ ... ] }, earliest check-in) Tj
+ET
+BT
+/F1 8.8 Tf
+45 734 Td
+(first.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 719 Td
+(POST /bookings/{ref}/accommodations - add) Tj
+ET
+BT
+/F3 7.1 Tf
+45 703 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 694 Td
+(  "city": "Kandy",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 685 Td
+(  "hotel": "Earl's Regency",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 676 Td
+(  "check_in": "2026-09-06",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 667 Td
+(  "check_out": "2026-09-08",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 658 Td
+(  "room_type": "Deluxe Double",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 649 Td
+(  "meal_type": "HB",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 640 Td
+(  "address": "Tennekumbura, Kandy 20000",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 631 Td
+(  "contact": "+94 81 242 2122") Tj
+ET
+BT
+/F3 7.1 Tf
+45 622 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 610 Td
+(Batch with { "accommodations": [ ... ] } \(or "hotels"\).) Tj
+ET
+BT
+/F1 8.8 Tf
+45 599 Td
+(Required: city, hotel, check_in, check_out. nights is computed from the dates unless you) Tj
+ET
+BT
+/F1 8.8 Tf
+45 587 Td
+(send it explicitly. camelCase \(checkIn, roomType, mealType\) accepted.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 576 Td
+(-> 201 { "added": 1, "accommodations": [ ... ], "booking": { ... } }) Tj
+ET
+BT
+/F2 10.5 Tf
+45 561 Td
+(PUT /bookings/{ref}/accommodations/{accId} - replace) Tj
+ET
+BT
+/F2 10.5 Tf
+45 543 Td
+(DELETE /bookings/{ref}/accommodations/{accId} - remove) Tj
+ET
+BT
+/F1 8.8 Tf
+45 529 Td
+(Same conventions as flights; 404 HOTEL_NOT_FOUND when the hotel is not on that booking.) Tj
+ET
+BT
+/F2 14 Tf
+45 510 Td
+(8. Cancellation) Tj
+ET
+BT
+/F1 8.8 Tf
+45 492 Td
+(- This does not cancel the booking. A file handler may only *request* a) Tj
+ET
+BT
+/F1 8.8 Tf
+45 481 Td
+(- cancellation; the accounts team approves it. That is exactly what the portal) Tj
+ET
+BT
+/F1 8.8 Tf
+45 470 Td
+(- button does, and the API keeps the same rule.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 455 Td
+(GET /bookings/{ref}/cancel - may I?) Tj
+ET
+BT
+/F3 7.1 Tf
+45 439 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 430 Td
+(  "booking_ref": "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 421 Td
+(  "status": "GT_VERIFIED",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 412 Td
+(  "pending_approval": false,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 403 Td
+(  "cancellable": true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 394 Td
+(  "cancellation": { "requested_at": null, "reason": null, "fees": [], "fee_total": null, ") Tj
+ET
+BT
+/F3 7.1 Tf
+45 385 Td
+(pending_approval": false }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 376 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 364 Td
+(Use it to enable or grey out a Cancel button before the user presses it.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 349 Td
+(POST /bookings/{ref}/cancel - raise the request) Tj
+ET
+BT
+/F3 7.1 Tf
+45 333 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 324 Td
+(  "reason": "Guest cancelled the trip",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 315 Td
+(  "fees": [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 306 Td
+(    { "note": "Hotel one-night penalty", "amount": 120 },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 297 Td
+(    { "note": "Non-refundable entrance tickets", "amount": 30 }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 288 Td
+(  ]) Tj
+ET
+BT
+/F3 7.1 Tf
+45 279 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 267 Td
+(fees is optional. Its total is always recomputed server-side and never trusted from the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 255 Td
+(caller.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 244 Td
+(What happens:) Tj
+ET
+BT
+/F1 8.8 Tf
+45 233 Td
+(- the booking moves to PENDING_CANCELLATION, its previous status is remembered,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 222 Td
+(- the acting handler is recorded as the requester \(... \(File Handler\)\),) Tj
+ET
+BT
+/F1 8.8 Tf
+45 211 Td
+(- a CANCEL_REQUESTED audit row fires the Live Screen alert,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 200 Td
+(- every active AC_USER is emailed a link to /dashboard/accounts/cancellations.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 189 Td
+(-> 202 Accepted) Tj
+ET
+BT
+/F3 7.1 Tf
+45 176 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 167 Td
+(  "booking": { /* now PENDING_CANCELLATION */ },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 158 Td
+(  "status": "PENDING_CANCELLATION",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 149 Td
+(  "pending_approval": true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 140 Td
+(  "cancellation_fee_total": 150,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 131 Td
+(  "email_sent": true) Tj
+ET
+BT
+/F3 7.1 Tf
+45 122 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 110 Td
+(A mail failure does not undo the request - it comes back as email_sent: false with a) Tj
+ET
+BT
+/F1 8.8 Tf
+45 98 Td
+(different message. Treat the request as recorded and tell the ops team to check.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 87 Td
+(Code Status When) Tj
+ET
+BT
+/F1 8.8 Tf
+45 76 Td
+(REASON_REQUIRED 422 reason missing or blank) Tj
+ET
+BT
+/F1 8.8 Tf
+45 65 Td
+(ALREADY_PENDING_CANCELLATION 409 A request is already awaiting approval) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 8) Tj
+ET
+Q
+endstream
+endobj
+19 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 18 0 R >>
+endobj
+20 0 obj
+<< /Length 4908 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(NOT_CANCELLABLE 409 The booking's status is past the point of cancelling) Tj
+ET
+BT
+/F1 8.8 Tf
+45 779 Td
+(DELETE on the same path is accepted as an alias for apps that model this as a delete.) Tj
+ET
+BT
+/F2 14 Tf
+45 760 Td
+(9. The Booking Update PDF) Tj
+ET
+BT
+/F2 10.5 Tf
+45 738 Td
+(GET /bookings/{ref}/pdf - download) Tj
+ET
+BT
+/F1 8.8 Tf
+45 724 Td
+(Streams application/pdf with Content-Disposition: attachment;) Tj
+ET
+BT
+/F1 8.8 Tf
+45 712 Td
+(filename="IS48748_479416CNTL_Updates.PDF".) Tj
+ET
+BT
+/F1 8.8 Tf
+45 701 Td
+(For integrations that cannot handle a binary body, ?format=base64 returns it inside the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 689 Td
+(normal envelope instead:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 676 Td
+({ "filename": "IS48748_479416CNTL_Updates.PDF", "content_type": "application/pdf", "size_b) Tj
+ET
+BT
+/F3 7.1 Tf
+45 667 Td
+(ytes": 148213, "content_base64": "JVBERi0..." }) Tj
+ET
+BT
+/F2 10.5 Tf
+45 651 Td
+(POST /bookings/{ref}/pdf/email - send it) Tj
+ET
+BT
+/F3 7.1 Tf
+45 635 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 626 Td
+(  "to": "rahul@example.com",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 617 Td
+(  "subject": "Your updated Sri Lanka itinerary",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 608 Td
+(  "message": "Flights are now confirmed - see the attached update.",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 599 Td
+(  "self": false) Tj
+ET
+BT
+/F3 7.1 Tf
+45 590 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 578 Td
+(Omit to \(or send "self": true\) and it goes to the acting handler's own address - the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 566 Td
+(portal's "Save & Confirm" behaviour.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 555 Td
+(-> 200 { "sent": true, "to": "...", "filename": "...", "subject": "..." } - 422) Tj
+ET
+BT
+/F1 8.8 Tf
+45 543 Td
+(RECIPIENT_INVALID - 502 EMAIL_FAILED \(Microsoft Graph refused it\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 532 Td
+(Both endpoints write an audit row \(PDF_GENERATED / PDF_EMAILED\).) Tj
+ET
+BT
+/F2 14 Tf
+45 513 Td
+(10. Activity feed) Tj
+ET
+BT
+/F2 10.5 Tf
+45 491 Td
+(GET /activity) Tj
+ET
+BT
+/F1 8.8 Tf
+45 477 Td
+(The File Handler audit trail, newest first - the same feed behind the office Live) Tj
+ET
+BT
+/F1 8.8 Tf
+45 465 Td
+(Screen.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 454 Td
+(Query Default Meaning) Tj
+ET
+BT
+/F1 8.8 Tf
+45 443 Td
+(scope me me = the acting handler only, all = every handler) Tj
+ET
+BT
+/F1 8.8 Tf
+45 432 Td
+(booking_ref - Restrict to one booking \(ref, IS or CNTL\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 421 Td
+(action - Filter by action; repeatable or comma-separated) Tj
+ET
+BT
+/F1 8.8 Tf
+45 410 Td
+(since - ISO date - only entries after it) Tj
+ET
+BT
+/F1 8.8 Tf
+45 399 Td
+(limit 50 1-200) Tj
+ET
+BT
+/F3 7.1 Tf
+45 386 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 377 Td
+(  "scope": "me",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 368 Td
+(  "count": 2,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 359 Td
+(  "events": [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 350 Td
+(    { "id": "...", "action": "FLIGHT_ADDED", "file_handler": "Nimal Perera", "booking_ref") Tj
+ET
+BT
+/F3 7.1 Tf
+45 341 Td
+(: "IS48748",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 332 Td
+(      "is_number": "IS48748", "cntl_number": "479416CNTL", "operation_country": "SRILANKA") Tj
+ET
+BT
+/F3 7.1 Tf
+45 323 Td
+(,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 314 Td
+(      "details": "Added flight UL309 \(BOM->CMB\) [API]", "created_at": "2026-08-01T09:14:22) Tj
+ET
+BT
+/F3 7.1 Tf
+45 305 Td
+(.418Z" }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 296 Td
+(  ]) Tj
+ET
+BT
+/F3 7.1 Tf
+45 287 Td
+(}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 275 Td
+(Actions: LOGIN, AS_IMPORTED, DETAILS_UPDATED, FLIGHT_ADDED, FLIGHT_UPDATED,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 263 Td
+(HOTEL_UPDATED, CANCEL_REQUESTED, PDF_GENERATED, PDF_EMAILED.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 252 Td
+(Every write made through this API is tagged [API] in details \(and [API - <client name>]) Tj
+ET
+BT
+/F1 8.8 Tf
+45 240 Td
+(for service clients\), so ops staff can always tell an integration's change from a portal) Tj
+ET
+BT
+/F1 8.8 Tf
+45 228 Td
+(click.) Tj
+ET
+BT
+/F2 14 Tf
+45 209 Td
+(11. Error codes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 191 Td
+(Code Status Meaning) Tj
+ET
+BT
+/F1 8.8 Tf
+45 180 Td
+(CREDENTIALS_REQUIRED 422 Login body incomplete) Tj
+ET
+BT
+/F1 8.8 Tf
+45 169 Td
+(INVALID_CREDENTIALS 401 Wrong username/password) Tj
+ET
+BT
+/F1 8.8 Tf
+45 158 Td
+(ACCOUNT_PENDING 403 The handler exists but is not approved) Tj
+ET
+BT
+/F1 8.8 Tf
+45 147 Td
+(TOO_MANY_ATTEMPTS 429 8 failed logins - locked for 5 minutes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 136 Td
+(UNAUTHORIZED 401 No bearer token sent) Tj
+ET
+BT
+/F1 8.8 Tf
+45 125 Td
+(INVALID_TOKEN 401 Signature/issuer/audience did not verify) Tj
+ET
+BT
+/F1 8.8 Tf
+45 114 Td
+(TOKEN_EXPIRED 401 Past expires_at - log in again) Tj
+ET
+BT
+/F1 8.8 Tf
+45 103 Td
+(INSUFFICIENT_SCOPE 403 The token lacks the scope this endpoint needs) Tj
+ET
+BT
+/F1 8.8 Tf
+45 92 Td
+(ACT_AS_REQUIRED 400 Service caller did not name a file handler) Tj
+ET
+BT
+/F1 8.8 Tf
+45 81 Td
+(HANDLER_NOT_FOUND 404 X-File-Handler matches no handler) Tj
+ET
+BT
+/F1 8.8 Tf
+45 70 Td
+(HANDLER_INACTIVE 403 That handler is not approved for portal access) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 9) Tj
+ET
+Q
+endstream
+endobj
+21 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 20 0 R >>
+endobj
+22 0 obj
+<< /Length 5103 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F1 8.8 Tf
+45 790 Td
+(NOT_CONFIGURED 503 No signing secret configured on the server) Tj
+ET
+BT
+/F1 8.8 Tf
+45 779 Td
+(QUERY_REQUIRED 422 q missing on search/import) Tj
+ET
+BT
+/F1 8.8 Tf
+45 768 Td
+(BOOKING_NOT_FOUND 404 No booking matches {ref}) Tj
+ET
+BT
+/F1 8.8 Tf
+45 757 Td
+(NOTHING_TO_UPDATE 422 PATCH body had no editable field) Tj
+ET
+BT
+/F1 8.8 Tf
+45 746 Td
+(FLIGHT_NOT_FOUND / HOTEL_NOT_FOUND 404 Not on that booking) Tj
+ET
+BT
+/F1 8.8 Tf
+45 735 Td
+(FLIGHT_NO_REQUIRED, FLIGHT_DATE_REQUIRED, FROM_AIRPORT_REQUIRED, TO_AIRPORT_REQUIRED,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 723 Td
+(NO_FLIGHTS 422 Flight validation) Tj
+ET
+BT
+/F1 8.8 Tf
+45 712 Td
+(HOTEL_REQUIRED, CITY_REQUIRED, CHECK_IN_REQUIRED, CHECK_OUT_REQUIRED, NO_HOTELS 422) Tj
+ET
+BT
+/F1 8.8 Tf
+45 700 Td
+(Hotel validation) Tj
+ET
+BT
+/F1 8.8 Tf
+45 689 Td
+(INVALID_DATE 422 Unparseable date \(use YYYY-MM-DD\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 678 Td
+(REASON_REQUIRED 422 Cancellation without a reason) Tj
+ET
+BT
+/F1 8.8 Tf
+45 667 Td
+(ALREADY_PENDING_CANCELLATION 409 Already awaiting accounts approval) Tj
+ET
+BT
+/F1 8.8 Tf
+45 656 Td
+(NOT_CANCELLABLE 409 Status no longer allows cancellation) Tj
+ET
+BT
+/F1 8.8 Tf
+45 645 Td
+(INPUT_REQUIRED, FILE_REQUIRED, UNSUPPORTED_FILE, EMPTY_FILE 422 Extraction input) Tj
+ET
+BT
+/F1 8.8 Tf
+45 634 Td
+(FILE_TOO_LARGE 413 Over 10 MB) Tj
+ET
+BT
+/F1 8.8 Tf
+45 623 Td
+(RECIPIENT_INVALID 422 Bad or missing email recipient) Tj
+ET
+BT
+/F1 8.8 Tf
+45 612 Td
+(PDF_FAILED 502 PDF renderer failed) Tj
+ET
+BT
+/F1 8.8 Tf
+45 601 Td
+(EMAIL_FAILED 502 Microsoft Graph refused the send) Tj
+ET
+BT
+/F1 8.8 Tf
+45 590 Td
+(APPLESYSTEM_UNREACHABLE, IMPORT_FAILED 502 AppleSystem import problems) Tj
+ET
+BT
+/F1 8.8 Tf
+45 579 Td
+(MAPPING_FAILED, COUNTRY_UNKNOWN 422 Quotation could not be mapped) Tj
+ET
+BT
+/F1 8.8 Tf
+45 568 Td
+(ALREADY_REGISTERED 409 Registration email already used) Tj
+ET
+BT
+/F1 8.8 Tf
+45 557 Td
+(INVALID_JSON, INVALID_BODY 400 The body is not a JSON object) Tj
+ET
+BT
+/F1 8.8 Tf
+45 546 Td
+(INTERNAL_ERROR 500 Logged server-side against request_id) Tj
+ET
+BT
+/F2 14 Tf
+45 527 Td
+(12. Typical flows) Tj
+ET
+BT
+/F2 10.5 Tf
+45 505 Td
+(Handle a booking end to end) Tj
+ET
+BT
+/F3 7.1 Tf
+45 489 Td
+(POST /auth/login                         -> token) Tj
+ET
+BT
+/F3 7.1 Tf
+45 480 Td
+(GET  /bookings/search?q=IS48748&auto_import=true) Tj
+ET
+BT
+/F3 7.1 Tf
+45 471 Td
+(POST /bookings/IS48748/flights/extract   \(ticket PDF\)   -> segments) Tj
+ET
+BT
+/F3 7.1 Tf
+45 462 Td
+(POST /bookings/IS48748/flights           { "flights": [ ...segments... ] }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 453 Td
+(POST /bookings/IS48748/accommodations    { "hotels": [ ... ] }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 444 Td
+(PATCH /bookings/IS48748                  { "contact_phone": "..." }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 435 Td
+(POST /bookings/IS48748/pdf/email         { "to": "guest@..." }) Tj
+ET
+BT
+/F2 10.5 Tf
+45 419 Td
+(Nightly reconciliation from another system) Tj
+ET
+BT
+/F3 7.1 Tf
+45 403 Td
+(POST /auth/login                          \(service client\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 394 Td
+(GET  /activity?scope=all&since=2026-07-31T00:00:00Z&limit=200) Tj
+ET
+BT
+/F3 7.1 Tf
+45 385 Td
+(GET  /bookings/{ref}                      for anything that changed) Tj
+ET
+BT
+/F2 10.5 Tf
+45 369 Td
+(Guest cancels) Tj
+ET
+BT
+/F3 7.1 Tf
+45 353 Td
+(GET  /bookings/IS48748/cancel             -> { "cancellable": true }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 344 Td
+(POST /bookings/IS48748/cancel             { "reason": "...", "fees": [ ... ] }   -> 202) Tj
+ET
+BT
+/F3 7.1 Tf
+45 335 Td
+(... accounts approve in OPS; poll GET /bookings/IS48748 for status CANCELLED) Tj
+ET
+BT
+/F2 14 Tf
+45 315 Td
+(13. Rules worth repeating) Tj
+ET
+BT
+/F1 8.8 Tf
+45 297 Td
+(- Idempotency. POST /bookings/import is safe to retry. Adding a flight or a) Tj
+ET
+BT
+/F1 8.8 Tf
+45 286 Td
+(hotel is not - it creates a new row each time. Read first, or track the ids you get) Tj
+ET
+BT
+/F1 8.8 Tf
+45 274 Td
+(back.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 263 Td
+(- No country restriction. File handlers may work on bookings in every) Tj
+ET
+BT
+/F1 8.8 Tf
+45 252 Td
+(operating country; that is a deliberate product decision, mirrored here.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 241 Td
+(- Ownership stamping. The first handler to touch a booking through this API is) Tj
+ET
+BT
+/F1 8.8 Tf
+45 230 Td
+(written into booking.fileHandler if it was empty. Existing values are never overwritten.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 219 Td
+(- Everything is audited. There is no silent write; each one lands in) Tj
+ET
+BT
+/F1 8.8 Tf
+45 208 Td
+(file_handler_logs and surfaces on the office Live Screen.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 197 Td
+(- Money and status are out of reach. Nothing here can change a booking's) Tj
+ET
+BT
+/F1 8.8 Tf
+45 186 Td
+(status \(except requesting cancellation\), its prices, or its P&L.) Tj
+ET
+BT
+/F2 14 Tf
+45 167 Td
+(14. Changelog) Tj
+ET
+BT
+/F1 8.8 Tf
+45 149 Td
+(Version Date Change) Tj
+ET
+BT
+/F1 8.8 Tf
+45 138 Td
+(1.0 2026-08-01 First release - auth, search/import, bookings, flights \(+AI extraction\),) Tj
+ET
+BT
+/F1 8.8 Tf
+45 126 Td
+(accommodations, cancellation requests, PDF download/email, activity feed) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 10) Tj
+ET
+Q
+endstream
+endobj
+23 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 22 0 R >>
+endobj
+24 0 obj
+<< /Length 4843 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 21 Tf
+45 790 Td
+(Integration Notes - client side & server) Tj
+ET
+BT
+/F2 21 Tf
+45 765 Td
+(setup) Tj
+ET
+BT
+/F1 8.8 Tf
+45 732 Td
+(Companion to FileHandler-API.md. Everything here is about *wiring it up*, not about the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 720 Td
+(payloads.) Tj
+ET
+BT
+/F2 14 Tf
+45 701 Td
+(1. Server configuration \(OPS side\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 683 Td
+(Nothing has to be configured for the handler login flow - a file handler who can sign in) Tj
+ET
+BT
+/F1 8.8 Tf
+45 671 Td
+(to /filehandler can already get a token. The variables below only matter if you also) Tj
+ET
+BT
+/F1 8.8 Tf
+45 659 Td
+(want a service client \(a machine account acting on behalf of a handler\).) Tj
+ET
+BT
+/F1 8.8 Tf
+45 648 Td
+(Add to the OPS .env \(Amplify environment variables in production\):) Tj
+ET
+BT
+/F3 7.1 Tf
+45 635 Td
+(# ?? Public File Handler API ???????????????????????????????????????????????) Tj
+ET
+BT
+/F3 7.1 Tf
+45 626 Td
+(# A machine account, so the calling app never stores handler passwords.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 617 Td
+(FH_PUBLIC_API_USERNAME=fh_integration) Tj
+ET
+BT
+/F3 7.1 Tf
+45 608 Td
+(FH_PUBLIC_API_PASSWORD=<a long random password>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 599 Td
+(FH_PUBLIC_API_CLIENT_NAME=File Handler Integration) Tj
+ET
+BT
+/F3 7.1 Tf
+45 590 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 581 Td
+(# The handler a service client acts for when no X-File-Handler header is sent.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 572 Td
+(FH_PUBLIC_API_ACT_AS=nimal@appleholidays.lk) Tj
+ET
+BT
+/F3 7.1 Tf
+45 563 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 554 Td
+(# Signing key for the issued tokens. Falls back to NEXTAUTH_SECRET if unset.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 545 Td
+(FH_PUBLIC_API_JWT_SECRET=<openssl rand -base64 48>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 536 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 527 Td
+(# Token lifetime in minutes \(default 720 = 12 h\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 518 Td
+(FH_PUBLIC_API_TOKEN_TTL_MIN=720) Tj
+ET
+BT
+/F3 7.1 Tf
+45 509 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 500 Td
+(# Optional: static key alternative to the bearer flow \(header: x-api-key\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 491 Td
+(# FH_PUBLIC_API_KEY=<a long random key>) Tj
+ET
+BT
+/F3 7.1 Tf
+45 482 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 473 Td
+(# Optional: allow the built-in sample service credentials in production. Leave unset.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 464 Td
+(# FH_PUBLIC_API_ALLOW_SAMPLE=true) Tj
+ET
+BT
+/F2 10.5 Tf
+45 448 Td
+(Several clients / restricted scopes) Tj
+ET
+BT
+/F1 8.8 Tf
+45 434 Td
+(FH_PUBLIC_API_CLIENTS takes a JSON array instead of the single username/password pair.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 422 Td
+(Useful for giving a dashboard read-only access, or pinning a partner app to one handler:) Tj
+ET
+BT
+/F3 7.1 Tf
+45 409 Td
+(FH_PUBLIC_API_CLIENTS='[) Tj
+ET
+BT
+/F3 7.1 Tf
+45 400 Td
+(  {"username":"partner_app","password":"...","name":"Partner Booking App",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 391 Td
+(   "scopes":["*"],"actAs":"nimal@appleholidays.lk"},) Tj
+ET
+BT
+/F3 7.1 Tf
+45 382 Td
+(  {"username":"reporting","password":"...","name":"Reporting",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 373 Td
+(   "scopes":["booking:read","activity:read"]},) Tj
+ET
+BT
+/F3 7.1 Tf
+45 364 Td
+(  {"username":"kiosk","password":"...","name":"Airport Kiosk",) Tj
+ET
+BT
+/F3 7.1 Tf
+45 355 Td
+(   "scopes":["booking:read","flight:write"],"actAs":"kiosk@appleholidays.lk","lockActAs":t) Tj
+ET
+BT
+/F3 7.1 Tf
+45 346 Td
+(rue}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 337 Td
+(]') Tj
+ET
+BT
+/F1 8.8 Tf
+45 325 Td
+(lockActAs: true makes the client ignore X-File-Handler - it can only ever act as its) Tj
+ET
+BT
+/F1 8.8 Tf
+45 313 Td
+(configured handler.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 302 Td
+(Precedence: FH_PUBLIC_API_CLIENTS -> FH_PUBLIC_API_USERNAME/PASSWORD -> sample client) Tj
+ET
+BT
+/F1 8.8 Tf
+45 290 Td
+(\(dev only\).) Tj
+ET
+BT
+/F2 10.5 Tf
+45 275 Td
+(No database change) Tj
+ET
+BT
+/F1 8.8 Tf
+45 261 Td
+(This API adds no tables and no columns. It writes only to existing ones: bookings,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 249 Td
+(flights, accommodations and file_handler_logs. Nothing to migrate on the live database.) Tj
+ET
+BT
+/F2 10.5 Tf
+45 234 Td
+(Existing behaviour it depends on) Tj
+ET
+BT
+/F1 8.8 Tf
+45 220 Td
+(Feature Needs) Tj
+ET
+BT
+/F1 8.8 Tf
+45 209 Td
+(POST /bookings/import AppleSystem credentials \(APPLESYSTEM_*\) already configured for the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 197 Td
+(staff import screen) Tj
+ET
+BT
+/F1 8.8 Tf
+45 186 Td
+(POST /flights/extract OPENAI_API_KEY - the same GPT-4o path the portal uses) Tj
+ET
+BT
+/F1 8.8 Tf
+45 175 Td
+(POST /pdf/email and cancellation alerts Microsoft Graph mail \(sendMailViaGraph\) already) Tj
+ET
+BT
+/F1 8.8 Tf
+45 163 Td
+(configured) Tj
+ET
+BT
+/F1 8.8 Tf
+45 152 Td
+(Cancellation approval mail At least one active AC_USER) Tj
+ET
+BT
+/F1 8.8 Tf
+45 141 Td
+(Each of these fails softly and reports why - a broken mailbox does not take the rest of) Tj
+ET
+BT
+/F1 8.8 Tf
+45 129 Td
+(the API down.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 11) Tj
+ET
+Q
+endstream
+endobj
+25 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 24 0 R >>
+endobj
+26 0 obj
+<< /Length 5212 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F2 14 Tf
+45 782 Td
+(2. Where the code lives) Tj
+ET
+BT
+/F1 8.8 Tf
+45 764 Td
+(Path Role) Tj
+ET
+BT
+/F1 8.8 Tf
+45 753 Td
+(src/lib/public-api/fh-api-auth.ts Handler + service auth, JWT issue/verify, scopes,) Tj
+ET
+BT
+/F1 8.8 Tf
+45 741 Td
+(act-as resolution) Tj
+ET
+BT
+/F1 8.8 Tf
+45 730 Td
+(src/lib/public-api/fh-http.ts Response envelope, JSON parsing, error mapping) Tj
+ET
+BT
+/F1 8.8 Tf
+45 719 Td
+(src/lib/public-api/fh-actions.ts Booking lookup, flights, hotels, contacts, cancellation) Tj
+ET
+BT
+/F1 8.8 Tf
+45 707 Td
+(- the real logic) Tj
+ET
+BT
+/F1 8.8 Tf
+45 696 Td
+(src/lib/public-api/fh-import.ts The AppleSystem import path) Tj
+ET
+BT
+/F1 8.8 Tf
+45 685 Td
+(src/app/api/public/fh/v1/ The API surface \(17 routes\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 674 Td
+(The portal's own routes under src/app/api/filehandler/* are untouched and keep serving) Tj
+ET
+BT
+/F1 8.8 Tf
+45 662 Td
+(the browser on its signed cookie. The public API re-expresses the same rules against the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 650 Td
+(same tables, so both produce identical audit rows - the only visible difference is the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 638 Td
+([API] tag appended to file_handler_logs.details.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 627 Td
+(/api/public/ is outside the NextAuth middleware matcher \(src/middleware.ts\), which is) Tj
+ET
+BT
+/F1 8.8 Tf
+45 615 Td
+(why these routes are reachable without a session cookie.) Tj
+ET
+BT
+/F2 14 Tf
+45 596 Td
+(3. Client examples) Tj
+ET
+BT
+/F2 10.5 Tf
+45 574 Td
+(PHP - cache the token, do not log in per request) Tj
+ET
+BT
+/F3 7.1 Tf
+45 558 Td
+(<?php) Tj
+ET
+BT
+/F3 7.1 Tf
+45 549 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 540 Td
+(class OpsFileHandlerApi) Tj
+ET
+BT
+/F3 7.1 Tf
+45 531 Td
+({) Tj
+ET
+BT
+/F3 7.1 Tf
+45 522 Td
+(    private string $base;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 513 Td
+(    private string $user;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 504 Td
+(    private string $pass;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 495 Td
+(    private ?string $token = null;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 486 Td
+(    private int $expiresAt = 0;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 477 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 468 Td
+(    public function __construct\(string $base, string $user, string $pass\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 459 Td
+(    {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 450 Td
+(        $this->base = rtrim\($base, '/'\) . '/api/public/fh/v1';) Tj
+ET
+BT
+/F3 7.1 Tf
+45 441 Td
+(        $this->user = $user;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 432 Td
+(        $this->pass = $pass;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 423 Td
+(    }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 414 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 405 Td
+(    private function token\(\): string) Tj
+ET
+BT
+/F3 7.1 Tf
+45 396 Td
+(    {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 387 Td
+(        if \($this->token && time\(\) < $this->expiresAt - 60\) {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 378 Td
+(            return $this->token;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 369 Td
+(        }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 360 Td
+(        $res = $this->call\('POST', '/auth/login', [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 351 Td
+(            'credential' => $this->user,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 342 Td
+(            'password'   => $this->pass,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 333 Td
+(        ], false\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 324 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 315 Td
+(        $this->token     = $res['data']['access_token'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 306 Td
+(        $this->expiresAt = time\(\) + \(int\) $res['data']['expires_in'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 297 Td
+(        return $this->token;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 288 Td
+(    }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 279 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 270 Td
+(    private function call\(string $method, string $path, ?array $body = null, bool $auth = ) Tj
+ET
+BT
+/F3 7.1 Tf
+45 261 Td
+(true\): array) Tj
+ET
+BT
+/F3 7.1 Tf
+45 252 Td
+(    {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 243 Td
+(        $ch = curl_init\($this->base . $path\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 234 Td
+(        $headers = ['Content-Type: application/json'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 225 Td
+(        if \($auth\) {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 216 Td
+(            $headers[] = 'Authorization: Bearer ' . $this->token\(\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 207 Td
+(        }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 198 Td
+(        curl_setopt_array\($ch, [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 189 Td
+(            CURLOPT_CUSTOMREQUEST  => $method,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 180 Td
+(            CURLOPT_RETURNTRANSFER => true,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 171 Td
+(            CURLOPT_HTTPHEADER     => $headers,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 162 Td
+(            CURLOPT_TIMEOUT        => 60,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 153 Td
+(        ]\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 144 Td
+(        if \($body !== null\) {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 135 Td
+(            curl_setopt\($ch, CURLOPT_POSTFIELDS, json_encode\($body\)\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 126 Td
+(        }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 117 Td
+(        $raw    = curl_exec\($ch\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 108 Td
+(        $status = curl_getinfo\($ch, CURLINFO_HTTP_CODE\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 99 Td
+(        curl_close\($ch\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 90 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 81 Td
+(        $decoded = json_decode\($raw, true\) ?: [];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 72 Td
+(        if \($status >= 400\) {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 63 Td
+(            // Always log request_id - it is the key to the server-side log entry.) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 12) Tj
+ET
+Q
+endstream
+endobj
+27 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 26 0 R >>
+endobj
+28 0 obj
+<< /Length 5188 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F3 7.1 Tf
+45 790 Td
+(            throw new RuntimeException\(sprintf\() Tj
+ET
+BT
+/F3 7.1 Tf
+45 781 Td
+(                '[%s] %s \(request_id %s\)',) Tj
+ET
+BT
+/F3 7.1 Tf
+45 772 Td
+(                $decoded['code'] ?? 'HTTP_' . $status,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 763 Td
+(                $decoded['error'] ?? 'Request failed',) Tj
+ET
+BT
+/F3 7.1 Tf
+45 754 Td
+(                $decoded['request_id'] ?? '-') Tj
+ET
+BT
+/F3 7.1 Tf
+45 745 Td
+(            \)\);) Tj
+ET
+BT
+/F3 7.1 Tf
+45 736 Td
+(        }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 727 Td
+(        return $decoded;) Tj
+ET
+BT
+/F3 7.1 Tf
+45 718 Td
+(    }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 709 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 700 Td
+(    public function getBooking\(string $ref\): array) Tj
+ET
+BT
+/F3 7.1 Tf
+45 691 Td
+(    {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 682 Td
+(        return $this->call\('GET', '/bookings/' . rawurlencode\($ref\)\)['data']['booking'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 673 Td
+(    }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 664 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 655 Td
+(    public function addFlights\(string $ref, array $flights\): array) Tj
+ET
+BT
+/F3 7.1 Tf
+45 646 Td
+(    {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 637 Td
+(        return $this->call\('POST', '/bookings/' . rawurlencode\($ref\) . '/flights', ['fligh) Tj
+ET
+BT
+/F3 7.1 Tf
+45 628 Td
+(ts' => $flights]\)['data'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 619 Td
+(    }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 610 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 601 Td
+(    public function requestCancellation\(string $ref, string $reason, array $fees = []\): ar) Tj
+ET
+BT
+/F3 7.1 Tf
+45 592 Td
+(ray) Tj
+ET
+BT
+/F3 7.1 Tf
+45 583 Td
+(    {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 574 Td
+(        return $this->call\('POST', '/bookings/' . rawurlencode\($ref\) . '/cancel', [) Tj
+ET
+BT
+/F3 7.1 Tf
+45 565 Td
+(            'reason' => $reason,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 556 Td
+(            'fees'   => $fees,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 547 Td
+(        ]\)['data'];) Tj
+ET
+BT
+/F3 7.1 Tf
+45 538 Td
+(    }) Tj
+ET
+BT
+/F3 7.1 Tf
+45 529 Td
+(}) Tj
+ET
+BT
+/F2 10.5 Tf
+45 513 Td
+(Node / TypeScript) Tj
+ET
+BT
+/F3 7.1 Tf
+45 497 Td
+(const BASE = 'https://ops.aahaas.com/api/public/fh/v1') Tj
+ET
+BT
+/F3 7.1 Tf
+45 488 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 479 Td
+(let token = '') Tj
+ET
+BT
+/F3 7.1 Tf
+45 470 Td
+(let expiresAt = 0) Tj
+ET
+BT
+/F3 7.1 Tf
+45 461 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 452 Td
+(async function auth\(\): Promise<string> {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 443 Td
+(  if \(token && Date.now\(\) < expiresAt - 60_000\) return token) Tj
+ET
+BT
+/F3 7.1 Tf
+45 434 Td
+(  const res = await fetch\(`${BASE}/auth/login`, {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 425 Td
+(    method: 'POST',) Tj
+ET
+BT
+/F3 7.1 Tf
+45 416 Td
+(    headers: { 'Content-Type': 'application/json' },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 407 Td
+(    body: JSON.stringify\({ credential: process.env.FH_USER, password: process.env.FH_PASS ) Tj
+ET
+BT
+/F3 7.1 Tf
+45 398 Td
+(}\),) Tj
+ET
+BT
+/F3 7.1 Tf
+45 389 Td
+(  }\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 380 Td
+(  const body = await res.json\(\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 371 Td
+(  if \(!body.success\) throw new Error\(`${body.code}: ${body.error}`\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 362 Td
+(  token = body.data.access_token) Tj
+ET
+BT
+/F3 7.1 Tf
+45 353 Td
+(  expiresAt = Date.now\(\) + body.data.expires_in * 1000) Tj
+ET
+BT
+/F3 7.1 Tf
+45 344 Td
+(  return token) Tj
+ET
+BT
+/F3 7.1 Tf
+45 335 Td
+(}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 326 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 317 Td
+(export async function api<T>\(path: string, init: RequestInit = {}\): Promise<T> {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 308 Td
+(  const res = await fetch\(`${BASE}${path}`, {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 299 Td
+(    ...init,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 290 Td
+(    headers: {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 281 Td
+(      'Content-Type': 'application/json',) Tj
+ET
+BT
+/F3 7.1 Tf
+45 272 Td
+(      Authorization: `Bearer ${await auth\(\)}`,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 263 Td
+(      ...\(init.headers ?? {}\),) Tj
+ET
+BT
+/F3 7.1 Tf
+45 254 Td
+(    },) Tj
+ET
+BT
+/F3 7.1 Tf
+45 245 Td
+(  }\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 236 Td
+(  const body = await res.json\(\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 227 Td
+(  if \(!body.success\) throw new Error\(`${body.code}: ${body.error} \(request_id ${body.reque) Tj
+ET
+BT
+/F3 7.1 Tf
+45 218 Td
+(st_id}\)`\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 209 Td
+(  return body.data as T) Tj
+ET
+BT
+/F3 7.1 Tf
+45 200 Td
+(}) Tj
+ET
+BT
+/F3 7.1 Tf
+45 191 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 182 Td
+(// Ticket in -> flights saved, in two calls.) Tj
+ET
+BT
+/F3 7.1 Tf
+45 173 Td
+(const { flights } = await api<{ flights: unknown[] }>\(`/bookings/IS48748/flights/extract`,) Tj
+ET
+BT
+/F3 7.1 Tf
+45 164 Td
+( {) Tj
+ET
+BT
+/F3 7.1 Tf
+45 155 Td
+(  method: 'POST',) Tj
+ET
+BT
+/F3 7.1 Tf
+45 146 Td
+(  body: JSON.stringify\({ text: pastedTicketText }\),) Tj
+ET
+BT
+/F3 7.1 Tf
+45 137 Td
+(}\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 128 Td
+(await api\(`/bookings/IS48748/flights`, { method: 'POST', body: JSON.stringify\({ flights }\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 119 Td
+( }\)) Tj
+ET
+BT
+/F2 10.5 Tf
+45 103 Td
+(curl - the five-minute smoke test) Tj
+ET
+BT
+/F3 7.1 Tf
+45 87 Td
+(BASE=https://ops.aahaas.com/api/public/fh/v1) Tj
+ET
+BT
+/F3 7.1 Tf
+45 78 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 69 Td
+(TOKEN=$\(curl -s -X POST "$BASE/auth/login" \\) Tj
+ET
+BT
+/F3 7.1 Tf
+45 60 Td
+(  -H 'Content-Type: application/json' \\) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 13) Tj
+ET
+Q
+endstream
+endobj
+29 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 28 0 R >>
+endobj
+30 0 obj
+<< /Length 3891 >>
+stream
+q
+0.12 0.18 0.24 rg
+BT
+/F3 7.1 Tf
+45 790 Td
+(  -d '{"credential":"nimal@appleholidays.lk","password":"..."}' \\) Tj
+ET
+BT
+/F3 7.1 Tf
+45 781 Td
+(  | python3 -c 'import sys,json; print\(json.load\(sys.stdin\)["data"]["access_token"]\)'\)) Tj
+ET
+BT
+/F3 7.1 Tf
+45 772 Td
+() Tj
+ET
+BT
+/F3 7.1 Tf
+45 763 Td
+(curl -s "$BASE/auth/verify"                  -H "Authorization: Bearer $TOKEN") Tj
+ET
+BT
+/F3 7.1 Tf
+45 754 Td
+(curl -s "$BASE/bookings/search?q=IS48748"    -H "Authorization: Bearer $TOKEN") Tj
+ET
+BT
+/F3 7.1 Tf
+45 745 Td
+(curl -s "$BASE/bookings/IS48748/cancel"      -H "Authorization: Bearer $TOKEN") Tj
+ET
+BT
+/F3 7.1 Tf
+45 736 Td
+(curl -s -o update.pdf "$BASE/bookings/IS48748/pdf" -H "Authorization: Bearer $TOKEN") Tj
+ET
+BT
+/F2 14 Tf
+45 716 Td
+(4. Things that bite) Tj
+ET
+BT
+/F1 8.8 Tf
+45 698 Td
+(Adding a flight is not idempotent. A retried POST /flights creates a second row. If your) Tj
+ET
+BT
+/F1 8.8 Tf
+45 686 Td
+(app retries on timeout, either read the flight list first, or keep the id you got back) Tj
+ET
+BT
+/F1 8.8 Tf
+45 674 Td
+(and switch to PUT.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 663 Td
+({ref} may contain a space. IS 40475 works, but URL-encode it \(IS%2040475\). The server) Tj
+ET
+BT
+/F1 8.8 Tf
+45 651 Td
+(normalises spaces away either way.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 640 Td
+(Cancellation is a request, not an act. 202 Accepted and PENDING_CANCELLATION mean the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 628 Td
+(accounts team still has to approve. Do not show your users "cancelled" until GET) Tj
+ET
+BT
+/F1 8.8 Tf
+45 616 Td
+(/bookings/{ref} reports CANCELLED.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 605 Td
+(email_sent: false is not a failure of the cancellation. The request is recorded either) Tj
+ET
+BT
+/F1 8.8 Tf
+45 593 Td
+(way; only the notification failed. Surface it to ops, do not retry the cancellation.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 582 Td
+(Service tokens need X-File-Handler. Forgetting it is 400 ACT_AS_REQUIRED, not a 401 -) Tj
+ET
+BT
+/F1 8.8 Tf
+45 570 Td
+(the token is fine, it just does not know who it is acting for.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 559 Td
+(Approval is re-checked on every call. Deactivating a handler in the admin screen kills) Tj
+ET
+BT
+/F1 8.8 Tf
+45 547 Td
+(their API access immediately, mid-token.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 536 Td
+(Token TTL is 12 hours and there is no refresh. Cache the token, watch expires_at, and) Tj
+ET
+BT
+/F1 8.8 Tf
+45 524 Td
+(log in again when it lapses.) Tj
+ET
+BT
+/F1 8.8 Tf
+45 513 Td
+(Extraction costs money. Every /flights/extract call is a GPT-4o request logged to) Tj
+ET
+BT
+/F1 8.8 Tf
+45 501 Td
+(AiUsageLog. Do not put it in a polling loop.) Tj
+ET
+BT
+/F2 14 Tf
+45 482 Td
+(5. Go-live checklist) Tj
+ET
+BT
+/F1 8.8 Tf
+45 464 Td
+(- [ ] FH_PUBLIC_API_JWT_SECRET set to a fresh random value \(not the fallback\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 453 Td
+(- [ ] Real service credentials set, or handler-login-only agreed with the partner) Tj
+ET
+BT
+/F1 8.8 Tf
+45 442 Td
+(- [ ] FH_PUBLIC_API_ALLOW_SAMPLE unset in production) Tj
+ET
+BT
+/F1 8.8 Tf
+45 431 Td
+(- [ ] Every file handler the integration acts as exists and is approved) Tj
+ET
+BT
+/F1 8.8 Tf
+45 420 Td
+(- [ ] Scopes narrowed per client - nobody gets * who does not need it) Tj
+ET
+BT
+/F1 8.8 Tf
+45 409 Td
+(- [ ] X-File-Handler wired into the partner's request layer \(service clients\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 398 Td
+(- [ ] Partner logs request_id on every failure) Tj
+ET
+BT
+/F1 8.8 Tf
+45 387 Td
+(- [ ] Smoke test run against live: verify -> search -> PDF \(all read-only\)) Tj
+ET
+BT
+/F1 8.8 Tf
+45 376 Td
+(- [ ] One end-to-end write rehearsed on a disposable booking, then checked in) Tj
+ET
+BT
+/F1 8.8 Tf
+45 365 Td
+(/dashboard/admin/file-handlers and on the /view Live Screen) Tj
+ET
+BT
+/F1 8.8 Tf
+45 354 Td
+(- [ ] Accounts team told that cancellation requests can now arrive from the) Tj
+ET
+BT
+/F1 8.8 Tf
+45 343 Td
+(partner app as well as the portal) Tj
+ET
+BT
+/F1 7 Tf
+45 27 Td
+(OPS File Handler API - Integration Guide    Page 14) Tj
+ET
+Q
+endstream
+endobj
+31 0 obj
+<< /Type /Page /Parent 32 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R /F3 3 0 R >> >> /Contents 30 0 R >>
+endobj
+32 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R 27 0 R 29 0 R 31 0 R] /Count 14 >>
+endobj
+33 0 obj
+<< /Type /Catalog /Pages 32 0 R >>
+endobj
+xref
+0 34
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000000160 00000 n 
+0000000228 00000 n 
+0000005476 00000 n 
+0000005623 00000 n 
+0000007713 00000 n 
+0000007860 00000 n 
+0000012763 00000 n 
+0000012910 00000 n 
+0000018096 00000 n 
+0000018245 00000 n 
+0000022931 00000 n 
+0000023080 00000 n 
+0000028425 00000 n 
+0000028574 00000 n 
+0000033080 00000 n 
+0000033229 00000 n 
+0000038013 00000 n 
+0000038162 00000 n 
+0000043123 00000 n 
+0000043272 00000 n 
+0000048428 00000 n 
+0000048577 00000 n 
+0000053473 00000 n 
+0000053622 00000 n 
+0000058887 00000 n 
+0000059036 00000 n 
+0000064277 00000 n 
+0000064426 00000 n 
+0000068370 00000 n 
+0000068519 00000 n 
+0000068667 00000 n 
+trailer
+<< /Size 34 /Root 33 0 R >>
+startxref
+68718
+%%EOF
