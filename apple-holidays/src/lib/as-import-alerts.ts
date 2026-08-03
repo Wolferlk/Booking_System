@@ -25,6 +25,18 @@ const ALERTS_KEY = 'as_import_alerts'
 /** How many alerts we retain in the KV log (acknowledged ones included). */
 const MAX_ALERTS = 20
 
+/** Cap on a single alert's message, so one verbose upstream error can't dominate. */
+const MAX_MESSAGE = 1_200
+
+/**
+ * Byte budget for the serialized alert log. `system_settings.value` is a MySQL
+ * TEXT column (65,535 bytes) and a write that overruns it throws — which is
+ * exactly how the sibling `as_import_jobs` log broke the importer. Retaining
+ * only 20 alerts leaves this far from the ceiling, but the guard makes overrun
+ * impossible rather than merely unlikely.
+ */
+const MAX_ALERTS_BYTES = 48_000
+
 /**
  * A repeat of the *same* failure inside this window neither creates a new alert
  * nor sends a new email — it just bumps the existing one's counter. Without it a
@@ -80,8 +92,19 @@ async function readAlerts(): Promise<AsImportAlert[]> {
   }
 }
 
+/** Serialize within the byte budget, dropping the oldest alerts if it overruns. */
+function serializeAlerts(alerts: AsImportAlert[]): string {
+  const list = alerts.slice(0, MAX_ALERTS)
+  let out = JSON.stringify(list)
+  while (list.length > 1 && Buffer.byteLength(out, 'utf8') > MAX_ALERTS_BYTES) {
+    list.pop()
+    out = JSON.stringify(list)
+  }
+  return out
+}
+
 async function writeAlerts(alerts: AsImportAlert[]): Promise<void> {
-  const value = JSON.stringify(alerts.slice(0, MAX_ALERTS))
+  const value = serializeAlerts(alerts)
   await prisma.systemSetting.upsert({
     where: { key: ALERTS_KEY },
     update: { value },
@@ -184,7 +207,7 @@ export async function raiseAsImportAlert(input: RaiseAlertInput): Promise<AsImpo
       occurrences: 1,
       severity: input.severity,
       title: input.title,
-      message: input.message,
+      message: input.message.length > MAX_MESSAGE ? `${input.message.slice(0, MAX_MESSAGE)}…` : input.message,
       signature,
       jobId: input.jobId ?? null,
       jobMode: input.jobMode,
