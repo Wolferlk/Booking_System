@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import type { OperationCountry } from '@prisma/client'
+import { normalizeEmail, phoneMatches } from '@/lib/credential-match'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,19 +17,33 @@ export async function POST(req: NextRequest) {
     if (!email?.trim()) return buildApiError('Email is required')
     if (!password || password.length < 6) return buildApiError('Password must be at least 6 characters')
 
-    // Prevent duplicate email registrations
-    const existing = await prisma.vehicleVendor.findFirst({
-      where: { email: email.trim().toLowerCase() },
+    const cleanEmail = normalizeEmail(email)
+    const cleanWhatsapp = whatsappPhone?.trim() || null
+
+    // The duplicate check has to see the same way the login does. A plain equality lookup
+    // only caught rows stored in exactly the same shape, so a second account for the same
+    // person slipped through — and then the portal had two rows to authenticate against and
+    // signed them into whichever one it hit first.
+    const rows = await prisma.vehicleVendor.findMany({
+      select: { id: true, email: true, phone: true, whatsappPhone: true },
     })
-    if (existing) return buildApiError('An account with this email already exists. Please contact admin if you need help.')
+    const clash = rows.find(v =>
+      normalizeEmail(v.email) === cleanEmail ||
+      (cleanWhatsapp ? phoneMatches(v.phone, cleanWhatsapp) || phoneMatches(v.whatsappPhone, cleanWhatsapp) : false)
+    )
+    if (clash) {
+      return buildApiError(
+        'An account already exists with this email or WhatsApp number. Sign in instead, or contact the team if you cannot get in.'
+      )
+    }
 
     const hashed = await bcrypt.hash(password, 10)
 
     const vendor = await prisma.vehicleVendor.create({
       data: {
         name: name.trim(),
-        email: email.trim().toLowerCase(),
-        whatsappPhone: whatsappPhone?.trim() || null,
+        email: cleanEmail,
+        whatsappPhone: cleanWhatsapp,
         password: hashed,
         isRegistered: true,
         isActive: false,
@@ -54,13 +69,13 @@ export async function POST(req: NextRequest) {
 // GET — check if an email is already registered (for form validation)
 export async function GET(req: NextRequest) {
   const email = req.nextUrl.searchParams.get('email')
-  if (!email) return buildApiSuccess({ exists: false })
+  const wanted = normalizeEmail(email)
+  // Blank never "exists" — vendor rows created from the admin side can carry an empty
+  // string in this column, and an equality lookup matched every one of them.
+  if (!wanted) return buildApiSuccess({ exists: false })
   try {
-    const existing = await prisma.vehicleVendor.findFirst({
-      where: { email: email.trim().toLowerCase() },
-      select: { id: true },
-    })
-    return buildApiSuccess({ exists: !!existing })
+    const rows = await prisma.vehicleVendor.findMany({ select: { email: true } })
+    return buildApiSuccess({ exists: rows.some(v => normalizeEmail(v.email) === wanted) })
   } catch {
     return buildApiSuccess({ exists: false })
   }
