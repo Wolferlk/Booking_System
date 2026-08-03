@@ -18,11 +18,18 @@
 
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { listByCreateDate, listBookings, getQuoteTemplate } from '@/lib/applesystem'
+import {
+  listByCreateDate,
+  listBookings,
+  getQuoteTemplate,
+  withAsRetryBudget,
+  AS_IMPORT_RETRY_BUDGET_MS,
+} from '@/lib/applesystem'
 import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
 import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-import'
 import { detectCountryFromRef, type OperationCountry } from '@/lib/country-detection'
 import { getCancellationDeadline } from '@/lib/utils'
+import { raiseAsImportAlert } from '@/lib/as-import-alerts'
 
 // ── Settings keys (system_settings) ───────────────────────────────────────────
 export const SETTING_ENABLED       = 'as_auto_import_enabled'
@@ -210,6 +217,12 @@ function newJob(params: RunAsImportParams): ImportJob {
  * Per-item failures are recorded and never abort the run.
  */
 async function executeJob(job: ImportJob, triggeredById: string): Promise<void> {
+  // Nothing is waiting on this run, so give every AppleSystem call inside it the
+  // full escalating-timeout ladder rather than the short interactive budget.
+  return withAsRetryBudget(AS_IMPORT_RETRY_BUDGET_MS, () => executeJobInner(job, triggeredById))
+}
+
+async function executeJobInner(job: ImportJob, triggeredById: string): Promise<void> {
   const start = Date.now()
   try {
     const { items } = job.dateField === 'arrival'
@@ -284,6 +297,68 @@ async function executeJob(job: ImportJob, triggeredById: string): Promise<void> 
     job.durationMs = Date.now() - start
     await patchJob(job.id, { ...job }).catch(() => {})
     console.log(`[AsImport] ${job.mode} ${job.dateField ?? 'create'} ${job.dateFrom}→${job.dateTo}: found=${job.totalFound} created=${job.totalCreated} skipped=${job.totalSkipped} errors=${job.totalErrors} (${job.durationMs}ms)`)
+    await notifyOnFailure(job)
+  }
+}
+
+/**
+ * Turn a failed (or partially failed) run into an in-app alert + an IT email.
+ *
+ * Two distinct failures are worth waking someone for:
+ *   - the run itself died — typically AppleSystem stalling past every rung of the
+ *     retry ladder — so *nothing* in the window was imported;
+ *   - the run completed but individual confirmations could not be mapped, which
+ *     leaves specific bookings missing while everything looks green.
+ *
+ * Best-effort by construction: `raiseAsImportAlert` never throws.
+ */
+async function notifyOnFailure(job: ImportJob): Promise<void> {
+  const window = job.dateFrom === job.dateTo ? job.dateFrom : `${job.dateFrom} → ${job.dateTo}`
+  const label = job.mode === 'auto' ? 'Daily auto-import' : 'Manual import'
+  const field = job.dateField === 'arrival' ? 'arrival date' : 'create date'
+
+  if (job.status === 'error') {
+    await raiseAsImportAlert({
+      severity: 'error',
+      title: `${label} failed for ${window}`,
+      message:
+        `${job.errorMessage ?? 'Unknown error'} — no confirmations were imported for this ${field} window. ` +
+        `Re-run the range from the New Booking · AppleSystem page once AppleSystem responds again.`,
+      // Group by run + the failing operation, not the exact wording (elapsed times
+      // vary run to run and would defeat the dedup window otherwise).
+      signature: `run-failed::${job.mode}::${(job.errorMessage ?? '').replace(/[\d.]+s/g, 'Ns')}`,
+      jobId: job.id,
+      jobMode: job.mode,
+      dateFrom: job.dateFrom,
+      dateTo: job.dateTo,
+      totalFound: job.totalFound,
+      totalCreated: job.totalCreated,
+      totalErrors: job.totalErrors,
+    })
+    return
+  }
+
+  if (job.totalErrors > 0) {
+    const samples = job.events
+      .filter((e) => e.result === 'error')
+      .slice(0, 5)
+      .map((e) => `${e.ref ?? `q${e.quotationNo}`}: ${e.message ?? 'unknown error'}`)
+      .join(' · ')
+    await raiseAsImportAlert({
+      severity: 'warning',
+      title: `${label} finished with ${job.totalErrors} failed booking${job.totalErrors === 1 ? '' : 's'} (${window})`,
+      message:
+        `${job.totalCreated} created, ${job.totalSkipped} already present, ${job.totalErrors} could not be imported. ` +
+        (samples ? `First failures — ${samples}` : ''),
+      signature: `items-failed::${job.mode}::${job.dateFrom}::${job.dateTo}`,
+      jobId: job.id,
+      jobMode: job.mode,
+      dateFrom: job.dateFrom,
+      dateTo: job.dateTo,
+      totalFound: job.totalFound,
+      totalCreated: job.totalCreated,
+      totalErrors: job.totalErrors,
+    })
   }
 }
 
