@@ -12,6 +12,7 @@ import {
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck,
+  ChevronDown, Zap,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -87,6 +88,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
+    { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',       icon: 'BarChart2' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',             icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',              icon: 'CreditCard' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',               icon: 'Navigation2' },
@@ -134,6 +136,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',                  icon: 'Navigation2' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
+    { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
     { label: 'Cancellations',      href: '/dashboard/accounts/cancellations',      icon: 'XCircle' },
@@ -173,6 +176,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',                 icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
+    { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',                icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',                 icon: 'CreditCard' },
     { ...WHATSAPP_NAV_ITEM },
@@ -197,6 +201,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Driver Logs',        href: '/dashboard/driver-log',                  icon: 'Navigation2' },
     // { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
+    { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
     { label: 'Cancellations',      href: '/dashboard/accounts/cancellations',      icon: 'XCircle' },
@@ -227,6 +232,73 @@ const COUNTRY_META: Record<string, { name: string; code: string; color: string }
           }
 
 type NavItem = (typeof NAV_ITEMS)[UserRole][number]
+
+/* ─────────────────────────── Category model ───────────────────────────
+ * The per-role lists above stay the single source of truth for *access*.
+ * Everything below only decides how those items are *presented*: which
+ * category a link belongs to, and which links are promoted to the pinned
+ * Quick Access rail at the top of the sidebar.
+ * ------------------------------------------------------------------- */
+
+type NavGroupId = 'quick' | 'bookings' | 'ops' | 'te' | 'finance' | 'reports' | 'comms' | 'admin' | 'danger'
+
+/** The day-to-day links, in the order they should appear when pinned. */
+const QUICK_ACCESS_HREFS = [
+  '/dashboard/bookings',
+  '/dashboard/mc-report',
+  '/dashboard/accounts/reports',
+  '/dashboard/whatsapp',
+  '/dashboard/srilanka/driver-allocation',
+  '/dashboard/ground/drivers',
+  '/dashboard/ground/vendors',
+] as const
+
+const QUICK_RANK = new Map<string, number>(QUICK_ACCESS_HREFS.map((href, i) => [href, i]))
+
+const GROUP_META: Record<NavGroupId, {
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  accent: string
+  dot: string
+  rail: string
+}> = {
+  quick:    { label: 'Quick Access',      icon: Zap,           accent: 'text-amber-400',   dot: 'bg-amber-400',   rail: 'border-amber-500/30'   },
+  bookings: { label: 'Bookings',          icon: FileText,      accent: 'text-brand-400',   dot: 'bg-brand-400',   rail: 'border-brand-500/25'   },
+  ops:      { label: 'Ground Ops',        icon: Truck,         accent: 'text-emerald-400', dot: 'bg-emerald-400', rail: 'border-emerald-500/25' },
+  te:       { label: 'Travel Experience', icon: Radio,         accent: 'text-sky-400',     dot: 'bg-sky-400',     rail: 'border-sky-500/25'     },
+  finance:  { label: 'Finance',           icon: CreditCard,    accent: 'text-violet-400',  dot: 'bg-violet-400',  rail: 'border-violet-500/25'  },
+  reports:  { label: 'Reports',           icon: BarChart2,     accent: 'text-cyan-400',    dot: 'bg-cyan-400',    rail: 'border-cyan-500/25'    },
+  comms:    { label: 'Communication',     icon: MessageCircle, accent: 'text-pink-400',    dot: 'bg-pink-400',    rail: 'border-pink-500/25'    },
+  admin:    { label: 'Administration',    icon: Settings,      accent: 'text-slate-300',   dot: 'bg-slate-400',   rail: 'border-slate-600/40'   },
+  danger:   { label: 'Danger Zone',       icon: ShieldAlert,   accent: 'text-red-400',     dot: 'bg-red-500',     rail: 'border-red-500/30'     },
+}
+
+const GROUP_ORDER: NavGroupId[] = ['quick', 'bookings', 'ops', 'te', 'finance', 'reports', 'comms', 'admin', 'danger']
+
+/** Buckets a nav link into a category. First rule that matches wins. */
+function classifyNavItem(item: NavItem): NavGroupId {
+  const h = item.href
+  if (item.danger) return 'danger'
+  if (QUICK_RANK.has(h)) return 'quick'
+  // Mail/Drive live under /admin but belong with the other inboxes.
+  if (h.startsWith('/dashboard/whatsapp')) return 'comms'
+  if (h.startsWith('/dashboard/admin/mail-inbox')) return 'comms'
+  if (h.startsWith('/dashboard/admin/onedrive')) return 'comms'
+  if (h.startsWith('/dashboard/mc-report')) return 'reports'
+  if (h.startsWith('/dashboard/reports')) return 'reports'
+  if (h.startsWith('/dashboard/bookings')) return 'bookings'
+  if (h.startsWith('/dashboard/as-bookings')) return 'bookings'
+  if (h.startsWith('/dashboard/new-as-booking')) return 'bookings'
+  if (h.startsWith('/dashboard/b2c')) return 'bookings'
+  if (h.startsWith('/dashboard/change-requests')) return 'bookings'
+  if (h.startsWith('/dashboard/ground')) return 'ops'
+  if (h.startsWith('/dashboard/srilanka')) return 'ops'
+  if (h.startsWith('/dashboard/driver-log')) return 'ops'
+  if (h.startsWith('/dashboard/te')) return 'te'
+  if (h.startsWith('/dashboard/accounts')) return 'finance'
+  if (h.startsWith('/dashboard/admin')) return 'admin'
+  return 'quick'
+}
 
 /**
  * Subsequence match — "asb" finds "AS Bookings", "pnl" finds "P&L Management".
@@ -275,6 +347,108 @@ function HighlightedLabel({
   )
 }
 
+/**
+ * A link is active when it is the deepest nav entry matching the current path,
+ * so `/dashboard/admin/onedrive/bookings` doesn't also light up `…/onedrive`.
+ */
+function isItemActive(item: NavItem, pathname: string, navItems: NavItem[]): boolean {
+  if (item.href === '/dashboard') return pathname === '/dashboard'
+  if (pathname === item.href) return true
+  if (!pathname.startsWith(item.href + '/')) return false
+  const hasMoreSpecificMatch = navItems.some(other =>
+    other.href !== item.href &&
+    other.href.startsWith(item.href) &&
+    pathname.startsWith(other.href),
+  )
+  return !hasMoreSpecificMatch
+}
+
+function NavRow({
+  item, positions, isActive, isHighlighted, isCollapsed, quickIndex, groupLabel, onNavigate,
+}: {
+  item: NavItem
+  positions: number[]
+  isActive: boolean
+  isHighlighted: boolean
+  isCollapsed: boolean
+  /** 0-based slot in Quick Access — renders the ⌥N shortcut hint. */
+  quickIndex?: number
+  /** Category name shown as a trailing chip while searching. */
+  groupLabel?: string
+  onNavigate: () => void
+}) {
+  const Icon = ICON_MAP[item.icon]
+  const danger = Boolean(item.danger)
+
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      title={item.label}
+      {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+      className={cn(
+        'relative flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
+        isCollapsed && 'lg:justify-center lg:px-2',
+        danger
+          ? isActive
+            ? 'bg-red-500/15 text-red-400 border border-red-500/30'
+            : 'text-red-500/70 hover:text-red-400 hover:bg-red-500/10'
+          : isActive
+            ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
+            : 'text-slate-400 hover:text-white hover:bg-slate-800',
+        isHighlighted && (danger
+          ? 'ring-1 ring-red-500/50 bg-red-500/10'
+          : 'ring-1 ring-brand-500/50 bg-slate-800 text-white'),
+      )}
+    >
+      {Icon && (
+        <Icon className={cn(
+          'w-4 h-4 flex-shrink-0 transition-colors',
+          danger
+            ? 'text-red-500/70 group-hover:text-red-400'
+            : isActive ? 'text-brand-400' : 'text-slate-500 group-hover:text-slate-300',
+        )} />
+      )}
+
+      <span className={cn('truncate', isCollapsed && 'lg:hidden')}>
+        <HighlightedLabel
+          label={item.label}
+          positions={positions}
+          hitClassName={danger ? 'text-red-300 font-bold' : 'text-brand-300 font-bold'}
+        />
+      </span>
+
+      {groupLabel && (
+        <span className={cn(
+          'ml-auto flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] uppercase tracking-wider font-bold',
+          'bg-slate-800 text-slate-500 border border-slate-700/60',
+          isCollapsed && 'lg:hidden',
+        )}>
+          {groupLabel}
+        </span>
+      )}
+
+      {!groupLabel && quickIndex !== undefined && quickIndex < 9 && (
+        <kbd className={cn(
+          'ml-auto flex-shrink-0 hidden lg:block px-1.5 py-0.5 rounded text-[9px] font-sans font-semibold',
+          'border border-slate-700/70 bg-slate-900/70 text-slate-600 group-hover:text-slate-400 transition-colors',
+          isCollapsed && 'lg:hidden',
+        )}>
+          ⌥{quickIndex + 1}
+        </kbd>
+      )}
+
+      {!groupLabel && quickIndex === undefined && isActive && (
+        <ChevronRight className={cn(
+          'w-3 h-3 ml-auto flex-shrink-0',
+          danger ? 'text-red-400' : 'text-brand-400',
+          isCollapsed && 'lg:hidden',
+        )} />
+      )}
+    </Link>
+  )
+}
+
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
@@ -305,6 +479,67 @@ export default function Sidebar() {
     ?? navItems.map(item => ({ item, positions: [] as number[] }))
 
   useEffect(() => { setActiveIndex(0) }, [query])
+
+  /* ── Categories ─────────────────────────────────────────────────── */
+
+  // The overview link sits above the categories rather than inside one.
+  const overviewItem = useMemo(() => navItems.find(i => i.href === '/dashboard'), [navItems])
+
+  const groups = useMemo(() => {
+    const buckets = new Map<NavGroupId, NavItem[]>()
+    for (const item of navItems) {
+      if (item.href === '/dashboard') continue
+      const id = classifyNavItem(item)
+      const bucket = buckets.get(id)
+      if (bucket) bucket.push(item)
+      else buckets.set(id, [item])
+    }
+    buckets.get('quick')?.sort(
+      (a, b) => (QUICK_RANK.get(a.href) ?? 99) - (QUICK_RANK.get(b.href) ?? 99),
+    )
+    return GROUP_ORDER
+      .filter(id => (buckets.get(id)?.length ?? 0) > 0)
+      .map(id => ({ id, items: buckets.get(id)! }))
+  }, [navItems])
+
+  const quickItems = useMemo(
+    () => groups.find(g => g.id === 'quick')?.items ?? [],
+    [groups],
+  )
+
+  // Which category owns the page currently open — used to auto-reveal it.
+  const activeGroupId = useMemo(() => {
+    const active = navItems.find(item => item.href !== '/dashboard' && isItemActive(item, pathname, navItems))
+    return active ? classifyNavItem(active) : null
+  }, [navItems, pathname])
+
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sidebar-groups')
+      if (saved) setOpenGroups(JSON.parse(saved) as Record<string, boolean>)
+    } catch {}
+  }, [])
+
+  const toggleGroup = useCallback((id: NavGroupId, defaultOpen: boolean) => {
+    setOpenGroups(prev => {
+      const next = { ...prev, [id]: !(prev[id] ?? defaultOpen) }
+      try { localStorage.setItem('sidebar-groups', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }, [])
+
+  // Quick Access and the category you're currently in are open unless you
+  // explicitly closed them; everything else stays folded away.
+  const groupDefaultOpen = useCallback(
+    (id: NavGroupId) => id === 'quick' || id === activeGroupId,
+    [activeGroupId],
+  )
+  const isGroupOpen = useCallback(
+    (id: NavGroupId) => openGroups[id] ?? groupDefaultOpen(id),
+    [openGroups, groupDefaultOpen],
+  )
 
   // ⌘K / Ctrl+K jumps to the search box from anywhere in the dashboard.
   useEffect(() => {
@@ -342,6 +577,22 @@ export default function Sidebar() {
     closeMobile()
     router.push(item.href)
   }, [closeMobile, router])
+
+  // ⌥1…⌥9 jump straight to the pinned Quick Access links.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.altKey || e.metaKey || e.ctrlKey) return
+      // e.key carries the alt-composed character on macOS, so use the code.
+      const match = /^Digit([1-9])$/.exec(e.code)
+      if (!match) return
+      const target = quickItems[Number(match[1]) - 1]
+      if (!target) return
+      e.preventDefault()
+      goToItem(target)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [quickItems, goToItem])
 
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
@@ -568,102 +819,143 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto scrollbar-hide">
-          <div className={cn('mb-2 px-3', isCollapsed && 'lg:px-1')}>
-            <p className={cn(
-              'text-slate-500 text-[10px] uppercase tracking-wider font-semibold px-2 mb-1',
-              isCollapsed && 'lg:hidden',
-            )}>
-              {query ? 'Search Results' : role ? ROLE_LABELS[role] : 'Navigation'}
-            </p>
-          </div>
-
-          {query && visibleItems.length === 0 && (
-            <div className={cn('px-5 py-6 flex flex-col items-center gap-2 text-center', isCollapsed && 'lg:hidden')}>
-              <SearchX className="w-6 h-6 text-slate-700" />
-              <p className="text-slate-500 text-xs">
-                No menu item matches <span className="text-slate-300 font-medium">“{query}”</span>
+          {/* Searching flattens every category into one keyboard-driven list. */}
+          {query ? (
+            <>
+              <p className={cn(
+                'text-slate-500 text-[10px] uppercase tracking-wider font-semibold px-5 mb-2',
+                isCollapsed && 'lg:hidden',
+              )}>
+                Search Results
               </p>
-            </div>
-          )}
 
-          <ul className={cn('space-y-0.5 px-2', isCollapsed && 'lg:px-1')}>
-            {visibleItems.map(({ item, positions }, index) => {
-              const Icon = ICON_MAP[item.icon]
-              const isHighlighted = Boolean(query) && index === activeIndex
-              const isActive = (() => {
-              if (item.href === '/dashboard') return pathname === '/dashboard'
-              if (pathname === item.href) return true
-              if (!pathname.startsWith(item.href + '/')) return false
-              // Check if there's a more specific route that also matches
-              const hasMoreSpecificMatch = navItems.some(other =>
-                other.href !== item.href &&
-                other.href.startsWith(item.href) &&
-                pathname.startsWith(other.href)
-              )
-              return !hasMoreSpecificMatch
-            })()
+              {visibleItems.length === 0 ? (
+                <div className={cn('px-5 py-6 flex flex-col items-center gap-2 text-center', isCollapsed && 'lg:hidden')}>
+                  <SearchX className="w-6 h-6 text-slate-700" />
+                  <p className="text-slate-500 text-xs">
+                    No menu item matches <span className="text-slate-300 font-medium">“{query}”</span>
+                  </p>
+                </div>
+              ) : (
+                <ul className={cn('space-y-0.5 px-2', isCollapsed && 'lg:px-1')}>
+                  {visibleItems.map(({ item, positions }, index) => (
+                    <li key={item.href}>
+                      <NavRow
+                        item={item}
+                        positions={positions}
+                        isActive={isItemActive(item, pathname, navItems)}
+                        isHighlighted={index === activeIndex}
+                        isCollapsed={isCollapsed}
+                        groupLabel={GROUP_META[classifyNavItem(item)].label}
+                        onNavigate={() => { setQuery(''); closeMobile() }}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <div className={cn('px-2 space-y-1', isCollapsed && 'lg:px-1')}>
+              <p className={cn(
+                'text-slate-500 text-[10px] uppercase tracking-wider font-semibold px-3 mb-1',
+                isCollapsed && 'lg:hidden',
+              )}>
+                {role ? ROLE_LABELS[role] : 'Navigation'}
+              </p>
 
-              if (item.danger) {
+              {overviewItem && (
+                <NavRow
+                  item={overviewItem}
+                  positions={[]}
+                  isActive={pathname === '/dashboard'}
+                  isHighlighted={false}
+                  isCollapsed={isCollapsed}
+                  onNavigate={closeMobile}
+                />
+              )}
+
+              {groups.map(group => {
+                const meta = GROUP_META[group.id]
+                const GroupIcon = meta.icon
+                const open = isGroupOpen(group.id)
+                const holdsActive = activeGroupId === group.id
+                const isQuick = group.id === 'quick'
+
                 return (
-                  <li key={item.href} className={cn(!query && 'mt-2 pt-2 border-t border-slate-800')}>
-                    <Link
-                      href={item.href}
-                      onClick={() => { setQuery(''); closeMobile() }}
-                      title={item.label}
-                      className={cn(
-                        'flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
-                        isCollapsed && 'lg:justify-center lg:px-2',
-                        isActive
-                          ? 'bg-red-500/15 text-red-400 border border-red-500/30'
-                          : 'text-red-500/70 hover:text-red-400 hover:bg-red-500/10',
-                        isHighlighted && 'ring-1 ring-red-500/50 bg-red-500/10',
-                      )}
-                    >
-                      {Icon && <Icon className="w-4 h-4 flex-shrink-0 text-red-500/70 group-hover:text-red-400 transition-colors" />}
-                      <span className={cn(isCollapsed && 'lg:hidden')}>
-                        <HighlightedLabel label={item.label} positions={positions} hitClassName="text-red-300 font-bold" />
-                      </span>
-                      {isActive && (
-                        <ChevronRight className={cn('w-3 h-3 ml-auto text-red-400', isCollapsed && 'lg:hidden')} />
-                      )}
-                    </Link>
-                  </li>
-                )
-              }
-
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    onClick={() => { setQuery(''); closeMobile() }}
-                    title={item.label}
-                    {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                  <div
+                    key={group.id}
                     className={cn(
-                      'flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
-                      isCollapsed && 'lg:justify-center lg:px-2',
-                      isActive
-                        ? 'bg-brand-500/10 text-brand-400 border border-brand-500/20'
-                        : 'text-slate-400 hover:text-white hover:bg-slate-800',
-                      isHighlighted && 'ring-1 ring-brand-500/50 bg-slate-800 text-white',
+                      'pt-1',
+                      // Collapsed rail has no labels, so hairlines carry the grouping.
+                      isCollapsed && 'lg:mt-1 lg:pt-1 lg:border-t lg:border-slate-800',
                     )}
                   >
-                    {Icon && (
-                      <Icon className={cn(
-                        'w-4 h-4 flex-shrink-0 transition-colors',
-                        isActive ? 'text-brand-400' : 'text-slate-500 group-hover:text-slate-300',
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.id, groupDefaultOpen(group.id))}
+                      aria-expanded={open}
+                      title={`${meta.label} · ${group.items.length}`}
+                      className={cn(
+                        'w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors group/head',
+                        'hover:bg-slate-800/60',
+                        isCollapsed && 'lg:justify-center lg:px-0 lg:py-0.5 lg:pointer-events-none lg:hover:bg-transparent',
+                      )}
+                    >
+                      <GroupIcon className={cn(
+                        'w-3.5 h-3.5 flex-shrink-0 transition-colors',
+                        holdsActive ? meta.accent : 'text-slate-500 group-hover/head:text-slate-300',
+                        isCollapsed && 'lg:w-3 lg:h-3',
                       )} />
-                    )}
-                    <span className={cn(isCollapsed && 'lg:hidden')}>
-                      <HighlightedLabel label={item.label} positions={positions} />
-                    </span>
-                    {isActive && (
-                      <ChevronRight className={cn('w-3 h-3 ml-auto text-brand-400', isCollapsed && 'lg:hidden')} />
-                    )}
-                  </Link>
-                </li>
-              )
-            })}
-          </ul>
+                      <span className={cn(
+                        'text-[10px] uppercase tracking-widest font-bold transition-colors',
+                        holdsActive ? 'text-slate-200' : 'text-slate-500 group-hover/head:text-slate-300',
+                        isCollapsed && 'lg:hidden',
+                      )}>
+                        {meta.label}
+                      </span>
+                      {holdsActive && !open && (
+                        <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', meta.dot, isCollapsed && 'lg:hidden')} />
+                      )}
+                      <span className={cn(
+                        'ml-auto text-[9px] font-semibold text-slate-600 tabular-nums',
+                        isCollapsed && 'lg:hidden',
+                      )}>
+                        {group.items.length}
+                      </span>
+                      <ChevronDown className={cn(
+                        'w-3 h-3 flex-shrink-0 text-slate-600 transition-transform duration-200',
+                        !open && '-rotate-90',
+                        isCollapsed && 'lg:hidden',
+                      )} />
+                    </button>
+
+                    <ul className={cn(
+                      'mt-0.5 space-y-0.5 ml-3.5 pl-2 border-l',
+                      meta.rail,
+                      isQuick && 'py-0.5',
+                      !open && 'hidden',
+                      // Collapsed rail always shows every icon, folded or not.
+                      isCollapsed && 'lg:block lg:mt-0 lg:ml-0 lg:pl-0 lg:border-l-0',
+                    )}>
+                      {group.items.map(item => (
+                        <li key={item.href}>
+                          <NavRow
+                            item={item}
+                            positions={[]}
+                            isActive={isItemActive(item, pathname, navItems)}
+                            isHighlighted={false}
+                            isCollapsed={isCollapsed}
+                            quickIndex={isQuick ? group.items.indexOf(item) : undefined}
+                            onNavigate={closeMobile}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </nav>
 
         <button

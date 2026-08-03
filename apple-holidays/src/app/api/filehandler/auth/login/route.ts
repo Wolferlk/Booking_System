@@ -3,8 +3,12 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { setFileHandlerCookie } from '@/lib/filehandler-auth'
+import { looksLikePhone, normalizeEmail, phoneMatches } from '@/lib/credential-match'
 
 export const dynamic = 'force-dynamic'
+
+// Same number can sit on more than one row; test the password against each match, but cap the work.
+const MAX_CANDIDATES = 5
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,18 +17,35 @@ export async function POST(req: NextRequest) {
     if (!credential) return buildApiError('Email or phone is required')
 
     const raw = String(credential).trim()
-    const isPhone = /^[+\d][\d\s\-().]{4,}$/.test(raw)
 
-    const handler = await prisma.fileHandler.findFirst({
-      where: isPhone
-        ? { OR: [{ phone: { contains: raw } }, { whatsappPhone: { contains: raw } }] }
-        : { email: raw.toLowerCase() },
-      select: { id: true, name: true, email: true, country: true, isActive: true, password: true },
+    // Phone numbers are stored in too many shapes for a SQL `contains` to find them —
+    // narrow the rows here, then match on normalised digits. See credential-match.ts.
+    const rows = await prisma.fileHandler.findMany({
+      select: { id: true, email: true, phone: true, whatsappPhone: true },
     })
+    const ids = rows
+      .filter(h => looksLikePhone(raw)
+        ? phoneMatches(h.phone, raw) || phoneMatches(h.whatsappPhone, raw)
+        : normalizeEmail(h.email) === normalizeEmail(raw))
+      .map(h => h.id)
+      .slice(0, MAX_CANDIDATES)
 
-    if (!handler || !handler.password) return buildApiError('Invalid credentials', 401)
-    const valid = await bcrypt.compare(password, handler.password)
-    if (!valid) return buildApiError('Invalid credentials', 401)
+    const candidates = ids.length
+      ? await prisma.fileHandler.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, name: true, email: true, country: true, isActive: true, password: true },
+        })
+      : []
+
+    if (!candidates.length) {
+      return buildApiError('No account found for that email or phone number. Please check it, or register first.', 401)
+    }
+
+    let handler: (typeof candidates)[number] | null = null
+    for (const c of candidates) {
+      if (c.password && await bcrypt.compare(password, c.password)) { handler = c; break }
+    }
+    if (!handler) return buildApiError('Incorrect password. Please try again.', 401)
     if (!handler.isActive) return buildApiError('Your account is pending admin approval. Please contact the team.', 403)
 
     setFileHandlerCookie(handler.id)

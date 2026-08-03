@@ -1,0 +1,442 @@
+{
+  "info": {
+    "_postman_id": "a1f0c9d2-7b64-4c11-9d3e-5a2f8e1b0d77",
+    "name": "AppleSystem → OPS Quotation API (v1)",
+    "description": "Create, update and auto-cancel OPS bookings from AppleSystem.\n\n**Start here:** select the \"AS Quotation API — Local\" environment, run `Auth → Login` (the token is stored automatically into {{access_token}}), then any other request.\n\nBookings are identified by **IS number** (`is_number`) or **quotation reference number** (`quotation_no`). Cancellation fees are optional.\n\nFull reference: AS-Quotation-API.md",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Applies to every request in the collection.",
+          "pm.test('Response is JSON with the standard envelope', function () {",
+          "    const body = pm.response.json();",
+          "    pm.expect(body).to.have.property('success');",
+          "    pm.expect(body).to.have.property('request_id');",
+          "    pm.expect(body).to.have.property('timestamp');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "https://ops.aahaas.com", "type": "string" },
+    { "key": "api_base", "value": "{{base_url}}/api/public/as/v1", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "1. Login (get token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Token returned', function () {",
+                  "    pm.expect(body.success).to.be.true;",
+                  "    pm.expect(body.data.access_token).to.be.a('string').and.not.empty;",
+                  "    pm.expect(body.data.token_type).to.eql('Bearer');",
+                  "});",
+                  "// Store the token for every other request in the collection.",
+                  "pm.environment.set('access_token', body.data.access_token);",
+                  "pm.environment.set('token_expires_at', body.data.expires_at);",
+                  "console.log('Token stored — valid until ' + body.data.expires_at);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{as_username}}\",\n  \"password\": \"{{as_password}}\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/auth/login", "host": ["{{api_base}}"], "path": ["auth", "login"] },
+            "description": "Exchanges the integration credentials for a bearer token (valid 12 h by default). The test script saves it into {{access_token}}."
+          }
+        },
+        {
+          "name": "2. Verify token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Token valid', () => pm.expect(pm.response.json().data.valid).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{api_base}}/auth/verify", "host": ["{{api_base}}"], "path": ["auth", "verify"] },
+            "description": "Cheap probe — call it before a batch run instead of discovering an expired token mid-cancellation."
+          }
+        },
+        {
+          "name": "3. Login with wrong password (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Code is INVALID_CREDENTIALS', () => pm.expect(pm.response.json().code).to.eql('INVALID_CREDENTIALS'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"{{as_username}}\",\n  \"password\": \"definitely-wrong\"\n}" },
+            "url": { "raw": "{{api_base}}/auth/login", "host": ["{{api_base}}"], "path": ["auth", "login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Quotation",
+      "item": [
+        {
+          "name": "Create booking from quotation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created or 200 already exists', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "const body = pm.response.json();",
+                  "if (body.success) {",
+                  "    pm.environment.set('is_number', body.data.booking.booking_ref);",
+                  "    console.log('Booking ' + body.data.booking.booking_ref + ' — already_exists=' + body.data.already_exists);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotation_no\": \"{{quotation_no}}\",\n  \"reference_id\": \"{{reference_id}}\",\n  \"is_number\": \"{{is_number}}\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/create", "host": ["{{api_base}}"], "path": ["quotation", "create"] },
+            "description": "Pulls the quotation template from AppleSystem and creates the OPS booking as a DRAFT.\n\nIdempotent — a second call returns the existing booking with `already_exists: true`.\n\n`reference_id` is the AppleSystem list-row id; without it the template cannot be fetched."
+          }
+        },
+        {
+          "name": "Update — re-pull revised quotation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Version incremented', () => pm.expect(body.data.version).to.be.a('number'));",
+                  "console.log('changed: ' + JSON.stringify(body.data.changed_fields) + ' details_replaced=' + body.data.details_replaced);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_number\": \"{{is_number}}\",\n  \"quotation_no\": \"{{quotation_no}}\",\n  \"reference_id\": \"{{reference_id}}\",\n  \"amendment_note\": \"Revision received from AppleSystem\",\n  \"force_replace_details\": false,\n  \"create_if_missing\": false\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/update", "host": ["{{api_base}}"], "path": ["quotation", "update"] },
+            "description": "Re-pulls the revised template from AppleSystem and applies it.\n\nPassengers / hotels / itinerary are replaced only while the booking is still early (DRAFT…GT_VERIFIED). Set `force_replace_details: true` to overwrite them on a booking that has moved further along.\n\nSet `create_if_missing: true` to import the quotation when it was never created in OPS."
+          }
+        },
+        {
+          "name": "Update — patch fields only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotation_no\": \"{{quotation_no}}\",\n  \"amendment_note\": \"Pax corrected by the agent\",\n  \"fields\": {\n    \"pax_adults\": 3,\n    \"pax_children\": 1,\n    \"quoted_total\": 690.00,\n    \"currency\": \"USD\"\n  }\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/update", "host": ["{{api_base}}"], "path": ["quotation", "update"] },
+            "description": "No `reference_id` → no AppleSystem round-trip. Only the keys inside `fields` are applied.\n\nAllowed: arrival_date, departure_date, pax_adults, pax_children, pax_infants, quoted_total, currency, agent, file_handler, contact_email, contact_phone, package_includes, package_excludes, important_notes, quotation_no."
+          }
+        },
+        {
+          "name": "Cancel — by IS number (no fee)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Booking is CANCELLED', () => pm.expect(body.data.booking.status).to.eql('CANCELLED'));",
+                  "console.log('email_sent=' + body.data.email_sent + ' already_cancelled=' + body.data.already_cancelled);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_number\": \"{{is_number}}\",\n  \"reason\": \"Guest cancelled the trip\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/cancel", "host": ["{{api_base}}"], "path": ["quotation", "cancel"] },
+            "description": "Cancels the OPS booking automatically — straight to CANCELLED, no accounts approval step.\n\nIdempotent: cancelling an already-cancelled booking returns 200 with `already_cancelled: true`."
+          }
+        },
+        {
+          "name": "Cancel — by quotation ref, with cancellation fee",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('Fee recorded', () => pm.expect(body.data.cancellation_fee_total).to.eql(150));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quotation_no\": \"{{quotation_no}}\",\n  \"reason\": \"Guest cancelled — inside the hotel penalty window\",\n  \"cancellation_fee\": 150.00,\n  \"currency\": \"USD\",\n  \"cancelled_by\": \"Nimal Perera\",\n  \"cancelled_by_email\": \"nimal@appleholidays.lk\",\n  \"suppress_email\": false\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/cancel", "host": ["{{api_base}}"], "path": ["quotation", "cancel"] },
+            "description": "The cancellation fee is optional. Sent here as a single amount; the booking is identified by the quotation reference number instead of the IS number.\n\n`suppress_email: true` skips the cancellation notice mail."
+          }
+        },
+        {
+          "name": "Cancel — itemised cancellation fees",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_number\": \"{{is_number}}\",\n  \"reason\": \"Guest cancelled\",\n  \"cancellation_fees\": [\n    { \"note\": \"Hotel one-night penalty\", \"amount\": 120 },\n    { \"note\": \"Non-refundable entrance tickets\", \"amount\": 30 }\n  ]\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/cancel", "host": ["{{api_base}}"], "path": ["quotation", "cancel"] },
+            "description": "Itemised alternative to `cancellation_fee`. The total is always recomputed server-side — never trusted from the caller."
+          }
+        },
+        {
+          "name": "Status — by IS number",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json().data.booking;",
+                  "console.log(b.booking_ref + ' → ' + b.status + ' (v' + b.version + ')');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/quotation/status?is_number={{is_number}}",
+              "host": ["{{api_base}}"],
+              "path": ["quotation", "status"],
+              "query": [{ "key": "is_number", "value": "{{is_number}}" }]
+            },
+            "description": "Read-only lookup of what OPS currently holds — status, version, cancellation details."
+          }
+        },
+        {
+          "name": "Status — by quotation ref",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/quotation/status?quotation_no={{quotation_no}}",
+              "host": ["{{api_base}}"],
+              "path": ["quotation", "status"],
+              "query": [{ "key": "quotation_no", "value": "{{quotation_no}}" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sync (single URL)",
+      "item": [
+        {
+          "name": "Sync — CREATE",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"CREATE\",\n  \"quotation_no\": \"{{quotation_no}}\",\n  \"reference_id\": \"{{reference_id}}\",\n  \"is_number\": \"{{is_number}}\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/sync", "host": ["{{api_base}}"], "path": ["quotation", "sync"] },
+            "description": "One webhook URL for the whole integration — switch on `action`. Aliases accepted: CREATED, NEW, UPDATED, AMENDED, REVISED, CANCELLED, CANCELLATION."
+          }
+        },
+        {
+          "name": "Sync — UPDATE",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"UPDATE\",\n  \"is_number\": \"{{is_number}}\",\n  \"quotation_no\": \"{{quotation_no}}\",\n  \"reference_id\": \"{{reference_id}}\",\n  \"amendment_note\": \"Revision from AppleSystem\"\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/sync", "host": ["{{api_base}}"], "path": ["quotation", "sync"] }
+          }
+        },
+        {
+          "name": "Sync — CANCEL (with fee)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"CANCEL\",\n  \"is_number\": \"{{is_number}}\",\n  \"reason\": \"Quotation cancelled in AppleSystem\",\n  \"cancellation_fee\": 150\n}"
+            },
+            "url": { "raw": "{{api_base}}/quotation/sync", "host": ["{{api_base}}"], "path": ["quotation", "sync"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error cases",
+      "item": [
+        {
+          "name": "No token (expect 401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+                  "pm.test('Code is UNAUTHORIZED', () => pm.expect(pm.response.json().code).to.eql('UNAUTHORIZED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"is_number\": \"{{is_number}}\"\n}" },
+            "url": { "raw": "{{api_base}}/quotation/cancel", "host": ["{{api_base}}"], "path": ["quotation", "cancel"] }
+          }
+        },
+        {
+          "name": "Unknown IS number (expect 404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Code is BOOKING_NOT_FOUND', () => pm.expect(pm.response.json().code).to.eql('BOOKING_NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_base}}/quotation/status?is_number=IS00000",
+              "host": ["{{api_base}}"],
+              "path": ["quotation", "status"],
+              "query": [{ "key": "is_number", "value": "IS00000" }]
+            }
+          }
+        },
+        {
+          "name": "No identifier (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('Code is IDENTIFIER_REQUIRED', () => pm.expect(pm.response.json().code).to.eql('IDENTIFIER_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{api_base}}/quotation/status", "host": ["{{api_base}}"], "path": ["quotation", "status"] }
+          }
+        },
+        {
+          "name": "Bad action on sync (expect 422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('Code is INVALID_ACTION', () => pm.expect(pm.response.json().code).to.eql('INVALID_ACTION'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"action\": \"FOO\",\n  \"is_number\": \"{{is_number}}\"\n}" },
+            "url": { "raw": "{{api_base}}/quotation/sync", "host": ["{{api_base}}"], "path": ["quotation", "sync"] }
+          }
+        }
+      ]
+    }
+  ]
+}

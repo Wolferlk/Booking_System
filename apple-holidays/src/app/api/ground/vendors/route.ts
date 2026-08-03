@@ -86,9 +86,11 @@ export async function POST(req: NextRequest) {
   const vendor = await prisma.vehicleVendor.create({
     data: {
       name,
-      phone:   phone   || null,
-      email:   email   || null,
-      address: address || null,
+      // Blank fields are stored as null, never as "" — an empty string looks like a real
+      // value to the portal's credential lookup and to the vendor list's contact display.
+      phone:   phone?.trim()   || null,
+      email:   email?.trim().toLowerCase() || null,
+      address: address?.trim() || null,
       country: vendorCountry as OperationCountry || null,
     },
   })

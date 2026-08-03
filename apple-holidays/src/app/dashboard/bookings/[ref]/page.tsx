@@ -36,6 +36,7 @@ import BookingCallTranscripts from '@/components/bookings/booking-call-transcrip
 import AICallsFeedbackModal from '@/components/bookings/ai-calls-feedback-modal'
 import CustomerWhatsappPanel from '@/components/bookings/customer-whatsapp-panel'
 import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
+import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 import LogoSpinner from '@/components/shared/logo-spinner'
 
@@ -1579,6 +1580,14 @@ Wishing you a wonderful trip! ✈️
                   <Edit2 className="w-3.5 h-3.5" /> Edit
                 </button>
               )}
+              {/* AppleSystem: re-pull the itinerary, or inspect the raw upstream payload */}
+              <AppleSystemActions
+                bookingRef={ref}
+                isNumber={booking.isNumber as string | null}
+                canRefetch={canEditBooking}
+                canViewRaw={['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
+                onRefetched={load}
+              />
               {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/print/booking/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                   <FileText className="w-3.5 h-3.5" /> PDF

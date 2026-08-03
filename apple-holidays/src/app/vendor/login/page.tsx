@@ -81,9 +81,12 @@ export default function VendorLoginPage() {
         body: JSON.stringify(body),
       })
       const data = await res.json()
-      if (!data.success) { toast.error(data.error); return }
+      if (!data.success) { toast.error(data.error || 'Sign in failed. Please try again.'); return }
       toast.success(`Welcome, ${data.data.name}!`)
       router.push('/vendor/dashboard')
+    } catch {
+      // Without this a dropped connection failed silently — the button just stopped spinning.
+      toast.error('Could not reach the server. Check your connection and try again.')
     } finally { setLoading(false) }
   }
 

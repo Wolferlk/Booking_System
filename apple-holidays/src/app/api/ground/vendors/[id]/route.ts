@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { handlePrismaApiError } from '@/lib/prisma-error'
+import type { OperationCountry, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,18 +32,28 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!ALLOWED_ROLES.includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   const body = await req.json()
-  const { name, phone, email, address, country, isActive } = body
+
+  // A partial body has to stay partial. The Active toggle sends `{ isActive }` and nothing
+  // else, and `email ?? null` turned that into "wipe the email, phone and address" — so
+  // approving a vendor's registration deleted the very address they sign in with, and the
+  // portal then told them no account existed. The edit modal always sends every field, so
+  // clearing one on purpose still works: it arrives as "" and is stored as null.
+  const data: Prisma.VehicleVendorUpdateInput = {}
+  const setText = (value: unknown) => {
+    const trimmed = typeof value === 'string' ? value.trim() : ''
+    return trimmed || null
+  }
+
+  if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim()
+  if (body.phone !== undefined) data.phone = setText(body.phone)
+  if (body.email !== undefined) data.email = setText(body.email)?.toLowerCase() ?? null
+  if (body.address !== undefined) data.address = setText(body.address)
+  if (body.country !== undefined) data.country = (body.country || null) as OperationCountry | null
+  if (typeof body.isActive === 'boolean') data.isActive = body.isActive
 
   const vendor = await prisma.vehicleVendor.update({
     where: { id: params.id },
-    data: {
-      name:     name     || undefined,
-      phone:    phone    ?? null,
-      email:    email    ?? null,
-      address:  address  ?? null,
-      country:  country  ?? undefined,
-      isActive: isActive ?? undefined,
-    },
+    data,
   })
 
   return buildApiSuccess(vendor, 'Vendor updated')
