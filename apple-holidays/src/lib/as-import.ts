@@ -42,6 +42,22 @@ const  JOBS_KEY                    = 'as_import_jobs'
 const MAX_JOBS = 30
 /** Defensive cap on per-job event rows (a single day is normally well under this). */
 const MAX_EVENTS = 400
+/** Per-event message cap — a stack-trace-ish upstream error must not eat the log. */
+const MAX_EVENT_MESSAGE = 240
+
+/**
+ * Byte budget for the serialized job log.
+ *
+ * `system_settings.value` is a MySQL TEXT column, which holds 65,535 **bytes**.
+ * Retaining 30 runs × up to 400 events grew straight through that ceiling, and
+ * once it did, every `writeJobs` upsert failed with "the provided value is too
+ * long for the column's type" — which meant `appendJob` threw before the run
+ * even started, silently disabling both the daily import and "Run yesterday now".
+ *
+ * So the log is now serialized to fit, shedding detail in order of how little it
+ * is missed (see {@link serializeJobs}), with headroom left under the hard limit.
+ */
+const MAX_JOBS_BYTES = 56_000
 
 export interface AsImportSettings {
   enabled: boolean
@@ -124,9 +140,59 @@ async function readJobs(): Promise<ImportJob[]> {
   }
 }
 
+function byteLen(s: string): number {
+  return Buffer.byteLength(s, 'utf8')
+}
+
+/**
+ * Serialize the run log so it always fits {@link MAX_JOBS_BYTES}.
+ *
+ * Detail is shed in the order it is least missed, stopping as soon as the
+ * payload fits:
+ *   1. older runs drop their per-booking event lists — the UI only ever renders
+ *      events for the newest run (and for whichever run is being polled live),
+ *      so the tallies older runs keep are all anyone actually reads;
+ *   2. the surviving runs cap their own event lists, newest run last;
+ *   3. as a final fallback, the oldest runs are dropped entirely.
+ *
+ * Step 3 is effectively unreachable — a run stripped to its tallies is a few
+ * hundred bytes — but it guarantees the write can never fail on length.
+ */
+function serializeJobs(jobs: ImportJob[]): string {
+  const base = jobs.slice(0, MAX_JOBS)
+
+  const fits = (list: ImportJob[]): string | null => {
+    const out = JSON.stringify(list)
+    return byteLen(out) <= MAX_JOBS_BYTES ? out : null
+  }
+
+  const asIs = fits(base)
+  if (asIs) return asIs
+
+  // 1 — keep full events on only the newest few runs.
+  for (const keepFull of [5, 3, 1]) {
+    const out = fits(base.map((j, i) => (i < keepFull ? j : { ...j, events: [] })))
+    if (out) return out
+  }
+
+  // 2 — cap the newest run's own events too.
+  for (const cap of [120, 40, 10, 0]) {
+    const out = fits(base.map((j, i) => ({ ...j, events: i === 0 ? j.events.slice(0, cap) : [] })))
+    if (out) return out
+  }
+
+  // 3 — drop the oldest runs until it fits.
+  const stripped = base.map((j) => ({ ...j, events: [] }))
+  while (stripped.length > 1) {
+    stripped.pop()
+    const out = fits(stripped)
+    if (out) return out
+  }
+  return JSON.stringify(stripped)
+}
+
 async function writeJobs(jobs: ImportJob[]): Promise<void> {
-  const trimmed = jobs.slice(0, MAX_JOBS)
-  const value = JSON.stringify(trimmed)
+  const value = serializeJobs(jobs)
   await prisma.systemSetting.upsert({
     where: { key: JOBS_KEY },
     update: { value },
@@ -186,7 +252,12 @@ function tally(job: ImportJob, country: OperationCountry | null): CountryTally {
 }
 
 function pushEvent(job: ImportJob, ev: ImportEvent): void {
-  if (job.events.length < MAX_EVENTS) job.events.push(ev)
+  if (job.events.length >= MAX_EVENTS) return
+  job.events.push(
+    ev.message && ev.message.length > MAX_EVENT_MESSAGE
+      ? { ...ev, message: `${ev.message.slice(0, MAX_EVENT_MESSAGE)}…` }
+      : ev,
+  )
 }
 
 function newJob(params: RunAsImportParams): ImportJob {
