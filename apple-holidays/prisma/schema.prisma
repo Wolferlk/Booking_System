@@ -238,18 +238,19 @@ model Flight {
 }
 
 model Accommodation {
-  id        String   @id @default(cuid())
-  bookingId String
-  city      String
-  hotel     String
-  checkIn   DateTime
-  checkOut  DateTime
-  address   String?  @db.Text
-  contact   String?
-  nights    Int
-  roomType  String?
-  mealType  String?
-  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  bookingId      String
+  city           String
+  hotel          String
+  checkIn        DateTime
+  checkOut       DateTime
+  address        String?  @db.Text
+  contact        String?
+  nights         Int
+  roomType       String?
+  mealType       String?
+  ownArrangement Boolean  @default(false)
+  booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([bookingId], map: "accommodations_bookingId_fkey")
   @@map("accommodations")

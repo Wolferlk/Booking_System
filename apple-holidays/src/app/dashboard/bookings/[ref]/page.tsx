@@ -47,6 +47,7 @@ import LogoSpinner from '@/components/shared/logo-spinner'
  * "self booked", "TBA", or with no hotel name are treated as own-arrangement.
  */
 function isOwnArrangement(a: Record<string, unknown>): boolean {
+  if (a.ownArrangement === true) return true
   const hay = [a.hotel, a.roomType, a.mealType, a.address, a.contact]
     .map(v => String(v ?? '').toLowerCase())
     .join(' | ')
