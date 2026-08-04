@@ -93,6 +93,7 @@ export interface MappedAccommodation {
   roomType: string | null
   mealType: string | null
   address: string
+  ownArrangement: boolean
 }
 
 export interface MappedItineraryItem {
@@ -249,16 +250,20 @@ export function mapQuoteToBooking(
   // Accommodations
   const rawAcc = Array.isArray(quote.accommodation) ? (quote.accommodation as Record<string, unknown>[]) : []
   const accommodations: MappedAccommodation[] = rawAcc
-    .map((h) => ({
-      city: str(h.city).trim(),
-      hotel: str(h.name).trim(),
-      checkIn: str(h.check_in).trim(),
-      checkOut: str(h.check_out).trim(),
-      nights: intOf(h.nights),
-      roomType: str(h.room_type).trim() || str(h.cabin_type).trim() || null,
-      mealType: str(h.meal_plan).trim() || null,
-      address: '',
-    }))
+    .map((h) => {
+      const ownArrangement = str(h.type).trim().toLowerCase() === 'own_arrangement'
+      return {
+        city: str(h.city).trim(),
+        hotel: str(h.name).trim() || (ownArrangement ? 'Own Arrangement' : ''),
+        checkIn: str(h.check_in).trim(),
+        checkOut: str(h.check_out).trim(),
+        nights: intOf(h.nights),
+        roomType: str(h.room_type).trim() || str(h.cabin_type).trim() || null,
+        mealType: str(h.meal_plan).trim() || null,
+        address: '',
+        ownArrangement,
+      }
+    })
     .filter((h) => h.hotel && /^\d{4}-\d{2}-\d{2}/.test(h.checkIn) && /^\d{4}-\d{2}-\d{2}/.test(h.checkOut))
 
   // Lead passenger from the confirmation voucher.

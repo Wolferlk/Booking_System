@@ -413,6 +413,7 @@ export async function updateQuotationBooking(input: UpdateInput, caller: AuthedC
             roomType: a.roomType,
             mealType: a.mealType,
             address: a.address || null,
+            ownArrangement: a.ownArrangement,
           })),
         },
         itineraryItems: {

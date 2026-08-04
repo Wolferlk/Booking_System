@@ -88,6 +88,7 @@ export async function importMappedBooking(
           roomType: a.roomType,
           mealType: a.mealType,
           address: a.address || null,
+          ownArrangement: a.ownArrangement,
         })),
       },
       itineraryItems: {
