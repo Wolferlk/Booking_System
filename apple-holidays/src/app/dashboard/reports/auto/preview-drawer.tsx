@@ -59,6 +59,7 @@ interface Summary {
     window: { label: string; fromDate: string; toDate: string; timezone: string }
     created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
     onGround: { total: number; pax: number }
+    readiness: { total: number; notReady: number; tomorrow: number }
     complaints: { total: number; open: number; available: boolean }
     upcoming: { total: number; next7: number }
   }
@@ -111,6 +112,7 @@ export default function PreviewDrawer({
   const stats = d ? [
     { label: 'Created', value: d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
     { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
+    { label: 'Next 3 days', value: d.readiness.total, sub: `${d.readiness.notReady} not ready` },
     { label: 'Complaints', value: d.complaints.total, sub: d.complaints.available ? `${d.complaints.open} open` : 'unavailable' },
     { label: 'Upcoming', value: d.upcoming.total, sub: `${d.upcoming.next7} in 7 days` },
   ] : []
@@ -160,7 +162,7 @@ export default function PreviewDrawer({
 
         {/* Stat strip */}
         {stats.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-slate-200 border-b border-slate-200">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-slate-200 border-b border-slate-200">
             {stats.map(s => (
               <div key={s.label} className="bg-white px-4 py-2.5">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{s.label}</div>

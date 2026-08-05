@@ -23,9 +23,10 @@
 import { prisma } from '@/lib/prisma'
 import { countryLabel, detectCountryFromRef, detectCountryFromText } from '@/lib/country-detection'
 import { bookingSourceOf, type BookingSource } from '@/lib/booking-source'
+import { computeReadiness, type BookingReadiness } from '@/lib/booking-readiness'
 import { groupByAgent } from './agent-names'
 import {
-  buildReportWindow, previousWindow, zonedDayStart, shiftDate, dateInTz,
+  buildReportWindow, previousWindow, zonedDayStart, shiftDate, dateInTz, formatReportDate,
   type ReportPeriod, type ReportWindow,
 } from './report-window'
 import type { Prisma } from '@prisma/client'
@@ -143,12 +144,53 @@ export interface UpcomingSection {
   imminent: BookingLine[]
 }
 
+/** One imminent arrival, with its operational checklist resolved. */
+export interface ReadinessLine extends BookingLine {
+  leadPassenger: string | null
+  /** Whole days from the report date to arrival — 1 = tomorrow. */
+  daysToArrival: number
+  readiness: BookingReadiness
+}
+
+export interface ReadinessDay {
+  date: string
+  /** "Tomorrow", "Fri 07 Aug 2026". */
+  label: string
+  bookings: number
+  pax: number
+  ready: number
+  notReady: number
+}
+
+export interface ReadinessSection {
+  /** First and last local date covered — tomorrow through tomorrow + 2. */
+  fromDate: string
+  toDate: string
+  total: number
+  pax: number
+  /** Arriving tomorrow, the subset ops acts on first. */
+  tomorrow: number
+  tomorrowNotReady: number
+  ready: number
+  notReady: number
+  /** Counts of bookings with each check still outstanding. */
+  pendingClient: number
+  pendingDriver: number
+  pendingTickets: number
+  pendingQc: number
+  byDay: ReadinessDay[]
+  byCountry: CountryRow[]
+  /** Not-ready first, soonest first — the work list. */
+  bookings: ReadinessLine[]
+}
+
 export interface ReportData {
   window: ReportWindow
   generatedAt: string
   countries: string[]
   created: CreatedSection
   onGround: OnGroundSection
+  readiness: ReadinessSection
   complaints: ComplaintsSection
   upcoming: UpcomingSection
 }
@@ -177,6 +219,13 @@ const DEFAULT_MAX_ROWS = 30
 
 /** Statuses that mean "this booking is not happening" — excluded from operational counts. */
 const DEAD_STATUSES = ['CANCELLED'] as const
+
+/**
+ * How far ahead the readiness section looks: tomorrow plus the two days after
+ * it. Three days is the window in which an unallocated driver or an unissued
+ * ticket can still be fixed without scrambling.
+ */
+const READINESS_DAYS = 3
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
 
@@ -428,6 +477,120 @@ async function collectOnGround(w: ReportWindow, countries: string[], maxRows: nu
 }
 
 /**
+ * Tours arriving tomorrow and the two days after — each with its readiness
+ * checklist (client confirmation, driver allocation, tickets, QC).
+ *
+ * Anchored to "today" like the on-ground section, not to the report window: a
+ * daily mail read at 04:00 is used to chase what is about to land, and a list
+ * that quietly meant "three days after yesterday" would drop a day of arrivals.
+ *
+ * The checklist itself is `computeReadiness()` — the same rules the booking QC
+ * panel shows on screen, so the mail and the dashboard cannot disagree.
+ */
+async function collectReadiness(w: ReportWindow, countries: string[], maxRows: number): Promise<ReadinessSection> {
+  const scope = countryWhere(countries)
+  const fromDate = shiftDate(w.today, 1)
+  const toDate = shiftDate(w.today, READINESS_DAYS)
+  const start = zonedDayStart(fromDate, w.timezone)
+  const end = zonedDayStart(shiftDate(toDate, 1), w.timezone)
+
+  const rows = await prisma.booking.findMany({
+    where: {
+      arrivalDate: { gte: start, lt: end },
+      status: { notIn: [...DEAD_STATUSES] },
+      ...(scope ?? {}),
+    },
+    select: {
+      ...BOOKING_SELECT,
+      qcPassedAt: true,
+      passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
+      tourAgenda: {
+        select: {
+          items: {
+            select: {
+              serviceType: true,
+              isLeisure: true,
+              assignment: { select: { driverId: true, vendorId: true } },
+            },
+          },
+        },
+      },
+      slDriverAllocation: { select: { driverId: true, vendorId: true } },
+      tickets: { select: { activated: true, status: true } },
+    },
+    orderBy: { arrivalDate: 'asc' },
+  })
+
+  const lines: ReadinessLine[] = rows
+    .map(r => {
+      const line = toLine(r)
+      return {
+        ...line,
+        leadPassenger: r.passengers[0]?.name ?? null,
+        daysToArrival: daysBetween(w.today, line.arrivalDate),
+        readiness: computeReadiness({
+          status: r.status,
+          qcPassedAt: r.qcPassedAt,
+          tourAgenda: r.tourAgenda,
+          slDriverAllocation: r.slDriverAllocation,
+          tickets: r.tickets,
+        }),
+      }
+    })
+    .filter(l => inSelectedCountries(l.country, countries))
+
+  const dayMap = new Map<string, ReadinessDay>()
+  for (let i = 1; i <= READINESS_DAYS; i++) {
+    const date = shiftDate(w.today, i)
+    dayMap.set(date, {
+      date,
+      label: i === 1 ? 'Tomorrow' : formatReportDate(date, { weekday: true }),
+      bookings: 0,
+      pax: 0,
+      ready: 0,
+      notReady: 0,
+    })
+  }
+  for (const l of lines) {
+    const day = dayMap.get(l.arrivalDate)
+    if (!day) continue
+    day.bookings += 1
+    day.pax += l.pax
+    if (l.readiness.ready) day.ready += 1
+    else day.notReady += 1
+  }
+
+  const tomorrow = lines.filter(l => l.arrivalDate === fromDate)
+  const notReady = lines.filter(l => !l.readiness.ready)
+
+  return {
+    fromDate,
+    toDate,
+    total: lines.length,
+    pax: lines.reduce((s, l) => s + l.pax, 0),
+    tomorrow: tomorrow.length,
+    tomorrowNotReady: tomorrow.filter(l => !l.readiness.ready).length,
+    ready: lines.length - notReady.length,
+    notReady: notReady.length,
+    pendingClient: lines.filter(l => l.readiness.outstanding.includes('client confirmation')).length,
+    pendingDriver: lines.filter(l => l.readiness.outstanding.includes('driver allocation')).length,
+    pendingTickets: lines.filter(l => l.readiness.outstanding.includes('tickets')).length,
+    pendingQc: lines.filter(l => l.readiness.outstanding.includes('QC')).length,
+    byDay: Array.from(dayMap.values()),
+    byCountry: rollUpByCountry(lines),
+    // Anything outstanding first, then by arrival — the order the desk works in.
+    bookings: lines.slice()
+      .sort((a, b) =>
+        Number(a.readiness.ready) - Number(b.readiness.ready) ||
+        a.arrivalDate.localeCompare(b.arrivalDate) ||
+        a.bookingRef.localeCompare(b.bookingRef))
+      // Eight columns a row makes this the widest table in the mail, so it is
+      // capped tighter than the rest to keep the message under Gmail's clip.
+      .slice(0, Math.min(maxRows, 25)),
+  }
+}
+
+/**
  * Complaints raised in the window, plus anything still open from before it.
  *
  * `tbl_te_important_alerts` has no country column, so country is resolved by
@@ -601,9 +764,10 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
   const window = buildReportWindow(opts.period, opts.timezone, now)
 
-  const [created, onGround, complaints, upcoming] = await Promise.all([
+  const [created, onGround, readiness, complaints, upcoming] = await Promise.all([
     collectCreated(window, countries, maxRows),
     collectOnGround(window, countries, maxRows),
+    collectReadiness(window, countries, maxRows),
     collectComplaints(window, countries, maxRows),
     collectUpcoming(window, countries, maxRows),
   ])
@@ -614,6 +778,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     countries,
     created,
     onGround,
+    readiness,
     complaints,
     upcoming,
   }
