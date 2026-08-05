@@ -24,6 +24,8 @@ const MAX_SCHEDULES = 40
 export interface ReportSections {
   created: boolean
   onGround: boolean
+  /** Arrivals over the next three days with their operational checklist. */
+  readiness: boolean
   complaints: boolean
   upcoming: boolean
 }
@@ -152,10 +154,14 @@ export function normalizeSchedule(
   const sections: ReportSections = {
     created: bool(sectionsIn.created, prevSections?.created ?? true),
     onGround: bool(sectionsIn.onGround, prevSections?.onGround ?? true),
+    // Schedules saved before this section existed carry no flag for it; they get
+    // it switched on, because a report about today's operations that omits what
+    // lands tomorrow is the weaker default.
+    readiness: bool(sectionsIn.readiness, prevSections?.readiness ?? true),
     complaints: bool(sectionsIn.complaints, prevSections?.complaints ?? true),
     upcoming: bool(sectionsIn.upcoming, prevSections?.upcoming ?? true),
   }
-  if (!sections.created && !sections.onGround && !sections.complaints && !sections.upcoming) {
+  if (!Object.values(sections).some(Boolean)) {
     throw new ScheduleValidationError('Select at least one report section.')
   }
 
@@ -215,9 +221,32 @@ async function writeSetting(key: string, value: unknown): Promise<void> {
   })
 }
 
+/**
+ * Fill in section flags a stored schedule predates.
+ *
+ * Sections are added over time but the JSON in `system_settings` is whatever was
+ * written the last time someone hit save. Defaulting on read keeps one answer to
+ * "is this section on?" — without it the renderer would include a new section
+ * (absent ≠ false) while the dashboard card, reading the same row, left it off
+ * the "Includes:" line.
+ */
+function withSectionDefaults(s: ReportSchedule): ReportSchedule {
+  const sections = (s.sections ?? {}) as Partial<ReportSections>
+  return {
+    ...s,
+    sections: {
+      created: sections.created ?? true,
+      onGround: sections.onGround ?? true,
+      readiness: sections.readiness ?? true,
+      complaints: sections.complaints ?? true,
+      upcoming: sections.upcoming ?? true,
+    },
+  }
+}
+
 export async function listSchedules(): Promise<ReportSchedule[]> {
   const rows = await readSetting<ReportSchedule[]>(SCHEDULES_KEY, [])
-  return Array.isArray(rows) ? rows : []
+  return Array.isArray(rows) ? rows.map(withSectionDefaults) : []
 }
 
 export async function getSchedule(id: string): Promise<ReportSchedule | null> {
