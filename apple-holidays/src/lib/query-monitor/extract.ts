@@ -99,14 +99,17 @@ export function extractTravelDate(text: string, receivedAt: Date): { date: Date 
   }
 
   // 05th FEB 2026 · 5 February 2026 · 22/Jan/2026
-  for (const m of text.matchAll(/\b(\d{1,2})\s*(?:st|nd|rd|th)?[\s/-]*([a-z]{3,9})[\s/-]*(\d{2,4})?\b/gi)) {
+  // (?!\d) stops the day group from biting the first digits of a 4-digit year.
+  for (const m of text.matchAll(/\b(\d{1,2})(?!\d)\s*(?:st|nd|rd|th)?[\s/-]*([a-z]{3,9})[\s/-]*(\d{2,4})?\b/gi)) {
     const month = MONTHS[m[2].toLowerCase()]
     if (month === undefined) continue
     push(normaliseYear(m[3]), month, Number(m[1]), m[0])
   }
 
   // FEB 05 2026 · March 14
-  for (const m of text.matchAll(/\b([a-z]{3,9})[\s/-]+(\d{1,2})\s*(?:st|nd|rd|th)?[\s,/-]*(\d{2,4})?\b/gi)) {
+  // Without (?!\d), "Jan/2026" reads as day 20 of January — an earlier date than
+  // the real one, which then wins the "earliest plausible" pick.
+  for (const m of text.matchAll(/\b([a-z]{3,9})[\s/-]+(\d{1,2})(?!\d)\s*(?:st|nd|rd|th)?[\s,/-]*(\d{2,4})?\b/gi)) {
     const month = MONTHS[m[1].toLowerCase()]
     if (month === undefined) continue
     push(normaliseYear(m[3]), month, Number(m[2]), m[0])
