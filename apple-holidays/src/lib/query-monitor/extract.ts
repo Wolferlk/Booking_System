@@ -94,13 +94,13 @@ export function extractTravelDate(text: string, receivedAt: Date): { date: Date 
   }
 
   // 05.02.2026 · 05/02/2026 · 5-2-26   (day first — the agents are Indian/Sri Lankan)
-  for (const m of text.matchAll(/\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/g)) {
+  for (const m of Array.from(text.matchAll(/\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/g))) {
     push(normaliseYear(m[3]), Number(m[2]) - 1, Number(m[1]), m[0])
   }
 
   // 05th FEB 2026 · 5 February 2026 · 22/Jan/2026
   // (?!\d) stops the day group from biting the first digits of a 4-digit year.
-  for (const m of text.matchAll(/\b(\d{1,2})(?!\d)\s*(?:st|nd|rd|th)?[\s/-]*([a-z]{3,9})[\s/-]*(\d{2,4})?\b/gi)) {
+  for (const m of Array.from(text.matchAll(/\b(\d{1,2})(?!\d)\s*(?:st|nd|rd|th)?[\s/-]*([a-z]{3,9})[\s/-]*(\d{2,4})?\b/gi))) {
     const month = MONTHS[m[2].toLowerCase()]
     if (month === undefined) continue
     push(normaliseYear(m[3]), month, Number(m[1]), m[0])
@@ -109,7 +109,7 @@ export function extractTravelDate(text: string, receivedAt: Date): { date: Date 
   // FEB 05 2026 · March 14
   // Without (?!\d), "Jan/2026" reads as day 20 of January — an earlier date than
   // the real one, which then wins the "earliest plausible" pick.
-  for (const m of text.matchAll(/\b([a-z]{3,9})[\s/-]+(\d{1,2})(?!\d)\s*(?:st|nd|rd|th)?[\s,/-]*(\d{2,4})?\b/gi)) {
+  for (const m of Array.from(text.matchAll(/\b([a-z]{3,9})[\s/-]+(\d{1,2})(?!\d)\s*(?:st|nd|rd|th)?[\s,/-]*(\d{2,4})?\b/gi))) {
     const month = MONTHS[m[1].toLowerCase()]
     if (month === undefined) continue
     push(normaliseYear(m[3]), month, Number(m[2]), m[0])

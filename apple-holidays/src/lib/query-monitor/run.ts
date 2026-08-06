@@ -323,7 +323,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
 
     // ── 2. Upsert entries ───────────────────────────────────────────────────
     const rules = await loadSenderRules()
-    const ordered = [...groups.values()].sort(
+    const ordered = Array.from(groups.values()).sort(
       (a, b) => a.message.receivedAt.getTime() - b.message.receivedAt.getTime(),
     )
 
