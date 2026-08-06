@@ -22,6 +22,10 @@ import { STATUS_LABELS } from '@/lib/state-machine'
 import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
 import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
+import QuickStatCards, { type QuickStats } from '@/components/bookings/quick-stat-cards'
+import {
+  isQuickFilter, QUICK_FILTER_LABELS, QUICK_FILTER_SORT, type QuickFilter,
+} from '@/lib/booking-quick-filters'
 import type { BookingStatus } from '@prisma/client'
 
 // Real statuses plus the two derived post-travel states, which the bookings API
@@ -232,6 +236,15 @@ function BookingsPageInner() {
   const [page, setPage]               = useState(1)
   const [limit, setLimit]             = useState(50)
 
+  // ── Operational quick filter (the stat cards) ─────────────────────────────
+  // Seeded from the URL so "on ground right now" is a shareable deep link.
+  const initialQuick = searchParams.get('quick')
+  const [quick, setQuick] = useState<QuickFilter | null>(
+    initialQuick && isQuickFilter(initialQuick) ? initialQuick : null,
+  )
+  const [quickStats, setQuickStats]     = useState<QuickStats | null>(null)
+  const [quickLoading, setQuickLoading] = useState(true)
+
   // ── Multi-select state ────────────────────────────────────────────────────
   const [selected, setSelected]       = useState<Set<string>>(new Set())
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -274,6 +287,7 @@ function BookingsPageInner() {
     if (dateFrom)                                       params.set('dateFrom',      dateFrom)
     if (dateTo)                                         params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
+    if (quick)                                          params.set('quick',         quick)
     params.set('sortBy',  sortBy)
     params.set('sortDir', sortDir)
     params.set('page',    String(page))
@@ -290,7 +304,44 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, source, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, page, limit])
+  }, [search, refSearch, contentSearch, status, source, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, page, limit])
+
+  // Card counts follow the scope filters only (country + channel) — never the
+  // search box — so the row of numbers stays a steady operational readout.
+  const fetchQuickStats = useCallback(async () => {
+    setQuickLoading(true)
+    const params = new URLSearchParams()
+    if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+    if (source)                                   params.set('source',  source)
+    try {
+      const res  = await fetch(`/api/bookings/quick-stats?${params}`)
+      const json = await res.json()
+      if (json.success) setQuickStats(json.data.stats)
+    } catch {
+      /* leave the previous numbers on screen rather than blanking the row */
+    } finally {
+      setQuickLoading(false)
+    }
+  }, [countryFilter, source])
+
+  useEffect(() => { fetchQuickStats() }, [fetchQuickStats])
+
+  /**
+   * Card click. The bucket already carries its own date meaning, so the manual
+   * date filters are cleared to stop the two from silently intersecting, and
+   * the sort is switched to whatever reads best for that bucket.
+   */
+  function selectQuick(next: QuickFilter | null) {
+    setQuick(next)
+    setPage(1)
+    if (next) {
+      setDateFilter('')
+      setDateFrom('')
+      setDateTo('')
+      setSortBy(QUICK_FILTER_SORT[next].sortBy)
+      setSortDir(QUICK_FILTER_SORT[next].sortDir)
+    }
+  }
 
   // Close download menu on outside click
   useEffect(() => {
@@ -484,6 +535,7 @@ function BookingsPageInner() {
     if (dateFrom)                                 params.set('dateFrom',      dateFrom)
     if (dateTo)                                   params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
+    if (quick)                                    params.set('quick',         quick)
     params.set('sortBy',  sortBy)
     params.set('sortDir', sortDir)
     return `/print/bookings-list?${params}`
@@ -504,6 +556,7 @@ function BookingsPageInner() {
       if (dateFrom)                                 params.set('dateFrom',      dateFrom)
       if (dateTo)                                   params.set('dateTo',        dateTo)
       if (countryFilter && countryFilter !== 'ALL') params.set('country',       countryFilter)
+      if (quick)                                    params.set('quick',         quick)
       params.set('sortBy',  sortBy)
       params.set('sortDir', sortDir)
 
@@ -628,6 +681,34 @@ function BookingsPageInner() {
       )}
 
       <div className="p-8 space-y-5">
+        {/* ── Operational pulse cards ──────────────────────────────────── */}
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Operations today
+            </p>
+            <span className="text-[11px] text-slate-300">
+              {new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short' })}
+            </span>
+            {quick && (
+              <button
+                onClick={() => selectQuick(null)}
+                className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-brand-50 border border-brand-200 text-[11px] font-semibold text-brand-700 hover:bg-brand-100 transition-colors"
+              >
+                Filtered · {QUICK_FILTER_LABELS[quick]}
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          <QuickStatCards
+            stats={quickStats}
+            loading={quickLoading && !quickStats}
+            active={quick}
+            onSelect={selectQuick}
+          />
+        </div>
+
         {/* ── Filters ──────────────────────────────────────────────────── */}
         <Card className="p-4 space-y-3">
 
@@ -705,14 +786,14 @@ function BookingsPageInner() {
               <input
                 type="date"
                 value={dateFrom}
-                onChange={e => { setDateFrom(e.target.value); setDateFilter(''); setPage(1) }}
+                onChange={e => { setDateFrom(e.target.value); setDateFilter(''); setQuick(null); setPage(1) }}
                 className="form-input text-sm py-1.5 w-36"
               />
               <span className="text-xs text-slate-400">→</span>
               <input
                 type="date"
                 value={dateTo}
-                onChange={e => { setDateTo(e.target.value); setDateFilter(''); setPage(1) }}
+                onChange={e => { setDateTo(e.target.value); setDateFilter(''); setQuick(null); setPage(1) }}
                 className="form-input text-sm py-1.5 w-36"
               />
               {(dateFrom || dateTo) && (
@@ -733,7 +814,7 @@ function BookingsPageInner() {
               {DATE_FILTER_OPTIONS.map(opt => (
                 <button
                   key={opt.value}
-                  onClick={() => { setDateFilter(opt.value); setPage(1); if (opt.value) clearDateRange() }}
+                  onClick={() => { setDateFilter(opt.value); setQuick(null); setPage(1); if (opt.value) clearDateRange() }}
                   className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
                     dateFilter === opt.value && !dateFrom && !dateTo
                       ? 'bg-brand-600 text-white border-brand-600'
