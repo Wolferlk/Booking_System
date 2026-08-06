@@ -40,7 +40,6 @@ const TEMPLATES = [
       'Trincomalee: Airport → Uppuveli Beach By Dsk',
       'Mr. Harre · 2 Adult(s)',
       'Car · ABC-1234',
-      'USD 120.00',
     ],
     footerText: 'AppleHolidays Operations',
   },

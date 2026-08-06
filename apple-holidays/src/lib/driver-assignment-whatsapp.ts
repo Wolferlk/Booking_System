@@ -63,8 +63,7 @@ export const DRIVER_ASSIGN_BODY =
   '📅 Date: {{3}}\n' +
   '🛣 Route: {{4}}\n' +
   '👥 Guest: {{5}}\n' +
-  '🚌 Vehicle: {{6}}\n' +
-  '💰 Rate: {{7}}\n\n' +
+  '🚌 Vehicle: {{6}}\n\n' +
   'Please reply CONFIRM to accept this assignment. Our operations team will share any further details here.'
 
 /** The exact approved body of TEMPLATE_DRIVER_CANCEL. */
@@ -93,8 +92,6 @@ export interface DriverAssignmentInput {
   leadPassenger: string | null
   vehicleType:   string | null
   vehiclePlate:  string | null
-  driverRate?:   number | null
-  rateCurrency?: string | null
   movements:     DriverMovement[]
 }
 
@@ -193,13 +190,13 @@ function vehicleParam(input: DriverAssignmentInput): string {
   return [input.vehicleType, input.vehiclePlate].filter(Boolean).join(' · ') || 'TBC'
 }
 
-function rateParam(input: DriverAssignmentInput): string {
-  return input.driverRate
-    ? `${input.rateCurrency ?? 'USD'} ${Number(input.driverRate).toFixed(2)}`
-    : 'As agreed'
-}
-
-/** The seven body parameters of TEMPLATE_DRIVER_ASSIGN, in order. */
+/**
+ * The six body parameters of TEMPLATE_DRIVER_ASSIGN, in order.
+ *
+ * The agreed rate is deliberately NOT among them. It is held on the assignment
+ * for the P&L and the driver advance sheet, but it is not part of what the
+ * driver is told when the movement is allocated.
+ */
 export function driverAssignParams(input: DriverAssignmentInput): string[] {
   return [
     param(input.driverName, 'Driver'),
@@ -208,7 +205,6 @@ export function driverAssignParams(input: DriverAssignmentInput): string[] {
     param(routeParam(input.movements)),
     param(guestParam(input)),
     param(vehicleParam(input)),
-    param(rateParam(input)),
   ]
 }
 
@@ -312,8 +308,8 @@ export async function sendDriverAssignment(
         leadPassenger: input.leadPassenger,
         vehicleType:   input.vehicleType,
         vehiclePlate:  input.vehiclePlate,
-        driverRate:    input.driverRate,
-        rateCurrency:  input.rateCurrency,
+        // Same rule as the template: the driver is never told the agreed rate.
+        driverRate:    null,
         movements:     input.movements,
       })
       detailSent = await sendWhatsAppText(phone, detail, driverName)

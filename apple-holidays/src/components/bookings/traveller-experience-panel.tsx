@@ -642,7 +642,9 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // ── Auto-fill the customer's number ───────────────────────────────────────
   // The booking record is fetched by the parent page, so `booking` can still be
   // empty on our first render — seed the forms whenever a number turns up, but
-  // never overwrite what a user typed (or deliberately cleared on Cancel).
+  // never overwrite a field that already holds something. `phoneTouched` covers
+  // the one case the empty check cannot: Cancel deliberately blanks the field so
+  // a new number can be typed, and that blank must stay blank.
   const phoneTouched = useRef(false)
   useEffect(() => {
     if (!defaultPhone || phoneTouched.current) return
@@ -688,7 +690,13 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       setPerm({ checked: Boolean(res.checked), allowed: res.allowed ?? null, message: res.message, can_request: res.can_request })
     } catch { setPerm(null) } finally { setPermLoading(false) }
   }, [])
-  useEffect(() => { if (permPhone) loadPermission(permPhone) }, [permPhone, loadPermission])
+  // Debounced — the intake field feeds this, so typing must not fire a Meta
+  // permission lookup per keystroke.
+  useEffect(() => {
+    if (permPhone.length < 8) { setPerm(null); return }
+    const t = setTimeout(() => loadPermission(permPhone), 400)
+    return () => clearTimeout(t)
+  }, [permPhone, loadPermission])
 
   // ── Register ──────────────────────────────────────────────────────────────
   async function registerBooking() {
@@ -1071,24 +1079,57 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         // ══════════════════════════════════════════════════════════════════
         tab === 'overview' ? (
           <div className="space-y-5">
-            {!registered ? (
+            {needsIntake ? (
               <>
-                <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl">
-                  <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-semibold text-amber-800 mb-0.5">Not registered for AI calls</p>
-                    <p className="text-xs text-amber-700 leading-relaxed">Register this booking to start automated check-in calls. The AI bot uses the booking&apos;s itinerary, hotels, and passenger details to create personalised conversations.</p>
+                {cancelled ? (
+                  <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-100 rounded-xl">
+                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs font-semibold text-red-800 mb-0.5">AI calls cancelled — number removed</p>
+                      <p className="text-xs text-red-700 leading-relaxed">Enter a number below and register again to restart the calls, or bring the previous schedule back as it was.</p>
+                    </div>
+                    <button onClick={() => updateStatus('active')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-600 text-[11px] font-semibold hover:bg-red-100 transition-colors flex-shrink-0">
+                      <RefreshCw className="w-3 h-3" /> Reactivate previous
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl">
+                    <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold text-amber-800 mb-0.5">Not registered for AI calls</p>
+                      <p className="text-xs text-amber-700 leading-relaxed">Register this booking to start automated check-in calls. The AI bot uses the booking&apos;s itinerary, hotels, and passenger details to create personalised conversations.</p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <div>
                     <label className="form-label">Customer Phone *</label>
                     <div className="flex gap-2">
-                      <input className="form-input flex-1 font-mono" placeholder="94771234567" value={intakeForm.phone} onChange={e => setIntakeForm(f => ({ ...f, phone: e.target.value }))} />
+                      <input className="form-input flex-1 font-mono" placeholder="94771234567" value={intakeForm.phone}
+                        onChange={e => setIntakeForm(f => ({ ...f, phone: e.target.value }))} />
                       {leadName && <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 font-medium flex-shrink-0"><User className="w-3.5 h-3.5 text-slate-400" />{leadName.split(' ')[0]}</div>}
                     </div>
+                    {/* Numbers already on the booking — one tap instead of retyping. */}
+                    {phoneOptions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">From booking</span>
+                        {phoneOptions.map(c => {
+                          const active = digitsOnly(intakeForm.phone) === c.value
+                          return (
+                            <button key={c.value} type="button"
+                              onClick={() => setIntakeForm(f => ({ ...f, phone: c.value }))}
+                              className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
+                              {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                     <p className="text-[10px] text-slate-400 mt-1">International format without + (e.g. 94 = Sri Lanka · 91 = India)</p>
+                    {intakeForm.phone.trim().startsWith('0') && (
+                      <p className="text-[10px] text-amber-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Looks like a local number — replace the leading 0 with the country code.</p>
+                    )}
                   </div>
 
                   <div>
@@ -1180,12 +1221,15 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   {permChip()}
                   <button onClick={registerBooking} disabled={intakeLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
-                    {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> Register for AI Calls</>}
+                    {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> {cancelled ? 'Register with this number' : 'Register for AI Calls'}</>}
                   </button>
                   <button onClick={() => sendApproval()} disabled={approvalLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors">
                     {approvalLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><MessageSquare className="w-4 h-4" /> WhatsApp Approval</>}
                   </button>
+                  {perm?.allowed !== true && (
+                    <span className="text-[10px] text-slate-400 w-full">Registering also sends the WhatsApp call-approval request to this number automatically.</span>
+                  )}
                 </div>
               </>
             ) : editOpen ? (
@@ -1253,7 +1297,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   {service!.status === 'active' ? (
                     <>
                       <button onClick={() => updateStatus('completed')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-semibold hover:bg-emerald-100 transition-colors border border-emerald-100"><CheckCircle2 className="w-3.5 h-3.5" /> Mark Completed</button>
-                      <button onClick={() => updateStatus('cancelled')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-semibold hover:bg-red-100 transition-colors border border-red-100"><XCircle className="w-3.5 h-3.5" /> Cancel</button>
+                      <button onClick={cancelService} title="Stop the calls and remove this number from the service" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-semibold hover:bg-red-100 transition-colors border border-red-100"><XCircle className="w-3.5 h-3.5" /> Cancel</button>
                     </>
                   ) : (
                     <button onClick={() => updateStatus('active')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 text-violet-600 text-xs font-semibold hover:bg-violet-100 transition-colors border border-violet-100"><RefreshCw className="w-3.5 h-3.5" /> Reactivate</button>
@@ -1497,6 +1541,21 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   value={quickForm.to}
                   onChange={e => setQuickForm(f => ({ ...f, to: e.target.value }))}
                 />
+                {phoneOptions.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">From booking</span>
+                    {phoneOptions.map(c => {
+                      const active = digitsOnly(quickForm.to) === c.value
+                      return (
+                        <button key={c.value} type="button"
+                          onClick={() => setQuickForm(f => ({ ...f, to: c.value }))}
+                          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
+                          {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-400 mt-1">International format without + (94 = Sri Lanka · 91 = India)</p>
                 {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}</div>}
               </div>

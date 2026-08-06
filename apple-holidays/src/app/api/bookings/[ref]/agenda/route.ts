@@ -197,14 +197,15 @@ export async function POST(
   try {
     // Current drivers assigned across the saved chart, keyed by normalised phone,
     // with every movement they cover folded into one entry.
+    // The agreed rate is not collected here — it is never sent to the driver.
     const currentDrivers = new Map<string, {
       name: string; vehicleType: string | null; vehiclePlate: string | null
-      driverRate: number | null; rateCurrency: string | null; movements: DriverMovement[]
+      movements: DriverMovement[]
     }>()
 
     for (const raw of items as Record<string, unknown>[]) {
       if (raw.isLeisure === true) continue
-      const a = raw.assignment as { driverName?: string | null; driverPhone?: string | null; vehicleType?: string | null; vehiclePlate?: string | null; driverRate?: number | null; rateCurrency?: string | null } | null | undefined
+      const a = raw.assignment as { driverName?: string | null; driverPhone?: string | null; vehicleType?: string | null; vehiclePlate?: string | null } | null | undefined
       if (!a?.driverPhone || !a?.driverName) continue
       const phone = normalisePhone(a.driverPhone)
       if (!phone) continue
@@ -224,8 +225,6 @@ export async function POST(
           name:         a.driverName,
           vehicleType:  a.vehicleType ?? null,
           vehiclePlate: a.vehiclePlate ?? null,
-          driverRate:   a.driverRate != null ? Number(a.driverRate) : null,
-          rateCurrency: a.rateCurrency ?? 'USD',
           movements:    [mv],
         })
       }
@@ -246,8 +245,6 @@ export async function POST(
         leadPassenger: booking.passengers[0]?.name ?? null,
         vehicleType:   d.vehicleType,
         vehiclePlate:  d.vehiclePlate,
-        driverRate:    d.driverRate,
-        rateCurrency:  d.rateCurrency,
         movements:     d.movements,
       })
     }
@@ -352,8 +349,6 @@ export async function PUT(
           leadPassenger: booking?.passengers[0]?.name ?? null,
           vehicleType:   assignment.vehicleType  ?? null,
           vehiclePlate:  assignment.vehiclePlate ?? null,
-          driverRate:    assignment.driverRate != null ? Number(assignment.driverRate) : null,
-          rateCurrency:  assignment.rateCurrency ?? 'USD',
           movements: [{
             date:        agendaItem.date,
             location:    agendaItem.location,
