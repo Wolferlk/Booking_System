@@ -286,6 +286,19 @@ async function startCustomerWhatsAppMessagingScheduler() {
   }
 }
 
+async function startPortalLinkWhatsAppMessagingScheduler() {
+  try {
+    // node-cron scheduler: fires once daily at PORTAL_MSG_SEND_HOUR (default 10:00)
+    // in PORTAL_MSG_TZ and WhatsApps the customer trip-portal link — the welcome
+    // the day after a booking is created, and the "ready to travel?" reminder
+    // 3 days before arrival. Timezone-aware, with boot catch-up.
+    const { startPortalLinkWhatsAppScheduler } = await import('./portal-link-whatsapp-scheduler')
+    await startPortalLinkWhatsAppScheduler()
+  } catch (err) {
+    console.error('[Scheduler] portal-link WhatsApp scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startDriverLogAutoSendScheduler() {
   try {
     // node-cron scheduler: sends tomorrow's Sri Lanka Driver Advance Sheets at
@@ -361,6 +374,10 @@ export function startCronJobs() {
   // Customer WhatsApp messaging: node-cron daily job at 6pm (timezone-aware, boot
   // catch-up). Started once at boot instead of a per-minute interval.
   void startCustomerWhatsAppMessagingScheduler()
+
+  // Customer trip-portal link on WhatsApp: node-cron daily job at 10am — welcome
+  // the day after booking creation, "ready to travel?" 3 days before arrival.
+  void startPortalLinkWhatsAppMessagingScheduler()
 
   // Driver Log auto-send: node-cron daily job at 6pm Sri Lanka (day before tour),
   // timezone-aware with boot catch-up. Backend-only, gated by a global switch.

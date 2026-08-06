@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   MessageCircle, Send, Loader2, CheckCircle2, Calendar, Plane, Hotel,
   ChevronDown, ChevronUp, Star, RefreshCw, Clock, Sparkles, MapPin, ExternalLink,
+  Link as LinkIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -46,7 +47,25 @@ interface PanelData {
   days: TripDay[]
   feedbackRequestSentAt: string | null
   feedback: GuestFeedback | null
+  portalLink: string
+  portalWelcomeSentAt: string | null
+  portalReminderSentAt: string | null
+  portalFallbackNumbers: string[]
 }
+
+/** The two trip-portal WhatsApp templates staff can fire manually. */
+const PORTAL_STAGES = [
+  {
+    stage: 'welcome' as const,
+    title: 'Booking confirmed — follow your trip',
+    blurb: 'Sent automatically the day after the booking is created.',
+  },
+  {
+    stage: 'reminder' as const,
+    title: 'Ready to travel? — latest details',
+    blurb: 'Sent automatically 3 days before arrival.',
+  },
+]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +92,7 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
   const [open, setOpen]       = useState(false)
   const [sendingDate, setSendingDate] = useState<string | null>(null)
   const [sendingFeedback, setSendingFeedback] = useState(false)
+  const [sendingPortal, setSendingPortal] = useState<'welcome' | 'reminder' | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -106,6 +126,18 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
       if (res.success) { toast.success(res.message ?? 'Feedback form sent to the guest'); load() }
       else toast.error(res.error ?? 'Send failed')
     } catch { toast.error('Send failed') } finally { setSendingFeedback(false) }
+  }
+
+  async function sendPortal(stage: 'welcome' | 'reminder') {
+    setSendingPortal(stage)
+    try {
+      const res = await fetch(`/api/bookings/${bookingRef}/whatsapp-customer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'portal', stage }),
+      }).then(r => r.json())
+      if (res.success) { toast.success(res.message ?? 'Portal link sent'); load() }
+      else toast.error(res.error ?? 'Send failed')
+    } catch { toast.error('Send failed') } finally { setSendingPortal(null) }
   }
 
   return (
@@ -165,8 +197,59 @@ export default function CustomerWhatsappPanel({ bookingRef }: { bookingRef: stri
                 </span>
               </div>
 
-              {/* Day-by-day sender */}
+              {/* Trip portal link — the two automated templates, manually re-sendable */}
               <div>
+                <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <LinkIcon className="w-3.5 h-3.5" /> Trip Portal Link
+                </p>
+                <div className="space-y-1.5">
+                  {PORTAL_STAGES.map(({ stage, title, blurb }) => {
+                    const sentAt = stage === 'welcome' ? data.portalWelcomeSentAt : data.portalReminderSentAt
+                    const sending = sendingPortal === stage
+                    return (
+                      <div key={stage} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-slate-100 hover:border-slate-200 bg-white transition-colors">
+                        <div className="w-9 h-9 rounded-lg bg-brand-600 text-white flex items-center justify-center flex-shrink-0">
+                          <LinkIcon className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-slate-800 truncate">{title}</p>
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                            {sentAt ? `Last sent ${fmtSent(sentAt)}` : blurb}
+                          </p>
+                        </div>
+                        {sentAt && (
+                          <span className="hidden sm:inline-flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
+                            <CheckCircle2 className="w-3 h-3" /> Sent
+                          </span>
+                        )}
+                        <button
+                          onClick={() => sendPortal(stage)}
+                          disabled={sending}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
+                            sentAt ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-brand-600 text-white hover:bg-brand-700'
+                          }`}
+                        >
+                          {sending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                          {sentAt ? 'Resend' : 'Send'}
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+                {!data.hasContact && data.portalFallbackNumbers.length > 0 && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mt-2">
+                    No guest/tourist number on this booking — the portal link goes to{' '}
+                    <span className="font-mono font-semibold">{data.portalFallbackNumbers.join(', ')}</span>{' '}
+                    with a request to pass it on to the guest.
+                  </p>
+                )}
+                <p className="text-[10px] text-slate-400 font-mono truncate mt-1.5" title={data.portalLink}>
+                  {data.portalLink}
+                </p>
+              </div>
+
+              {/* Day-by-day sender */}
+              <div className="border-t border-slate-100 pt-4">
                 <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-2 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5" /> Daily Trip Details
                 </p>
