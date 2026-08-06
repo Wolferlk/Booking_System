@@ -16,7 +16,7 @@
  * workbook downgrades the run to PARTIAL and the next hour tries again.
  */
 import { prisma } from '@/lib/prisma'
-import type { Prisma } from '@prisma/client'
+import type { Prisma, QueryMonitorEntry } from '@prisma/client'
 import {
   REPLY_STATUS_SHEET_LABEL, SETTINGS, UNMATCHED_SALES_PERSON,
   type ReplyStatus, type RunStatus, type RunTrigger,
@@ -147,11 +147,9 @@ export function dedupKeyFor(message: MonitoredMessage): string {
 
 // ── Sheet row assembly ───────────────────────────────────────────────────────
 
-type EntryRecord = Prisma.QueryMonitorEntryGetPayload<Record<string, never>>
-
-export function buildSheetRow(entry: EntryRecord, writeStatus: boolean): SheetRowValues {
+export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): SheetRowValues {
   const status = writeStatus
-    ? REPLY_STATUS_SHEET_LABEL[(entry.replyStatus as ReplyStatus)] ?? ''
+    ? (REPLY_STATUS_SHEET_LABEL[entry.replyStatus as ReplyStatus] ?? '')
     : ''
 
   return {
@@ -562,11 +560,12 @@ async function detectReplies(
           const sent = await findReplyForConversation(
             match.mailbox.email, entry.conversationId, entry.receivedAt,
           )
-          if (sent && (!repliedAt || sent < repliedAt)) {
+          // The loop stops at the first hit, so there is nothing to compare against.
+          if (sent) {
             repliedAt = sent
             repliedBy = match.handlerName
+            break
           }
-          if (repliedAt) break
         }
       }
     }

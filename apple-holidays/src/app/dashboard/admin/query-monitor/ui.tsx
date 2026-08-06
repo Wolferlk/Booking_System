@@ -29,16 +29,14 @@ export function Stat({
     violet:  'text-violet-700 bg-violet-50 border-violet-200',
   }
 
-  const Tag = onClick ? 'button' : 'div'
-  return (
-    <Tag
-      onClick={onClick}
-      className={cn(
-        'text-left rounded-xl border bg-white p-4 transition-shadow',
-        onClick && 'hover:shadow-md cursor-pointer',
-        active && 'ring-2 ring-emerald-500 ring-offset-1',
-      )}
-    >
+  const className = cn(
+    'text-left rounded-xl border bg-white p-4 transition-shadow w-full',
+    onClick && 'hover:shadow-md cursor-pointer',
+    active && 'ring-2 ring-emerald-500 ring-offset-1',
+  )
+
+  const inner = (
+    <>
       <div className="flex items-center gap-2.5">
         <span className={cn('grid place-items-center w-9 h-9 rounded-lg border', tones[tone])}>{icon}</span>
         <div className="min-w-0">
@@ -47,8 +45,12 @@ export function Stat({
         </div>
       </div>
       {hint && <p className="mt-2 text-[11px] text-slate-400 truncate">{hint}</p>}
-    </Tag>
+    </>
   )
+
+  return onClick
+    ? <button type="button" onClick={onClick} className={className}>{inner}</button>
+    : <div className={className}>{inner}</div>
 }
 
 // ── Badges ───────────────────────────────────────────────────────────────────

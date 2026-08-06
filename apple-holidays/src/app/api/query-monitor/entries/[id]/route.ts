@@ -13,13 +13,10 @@ import { requireAdmin } from '@/lib/query-monitor/auth'
 
 export const dynamic = 'force-dynamic'
 
-/** Fields a user may correct from the dashboard. */
-const EDITABLE = [
-  'subject', 'handlerNames', 'salesPerson', 'agent', 'destination',
-  'region', 'cntl', 'amendment', 'travelDate', 'repliedAt', 'replyStatus',
-] as const
-
-type EditableField = (typeof EDITABLE)[number]
+/** Free-text fields a user may correct. `subject` and `handlerNames` are NOT NULL. */
+const TEXT_FIELDS = ['salesPerson', 'agent', 'destination', 'region', 'cntl', 'amendment'] as const
+const REQUIRED_TEXT_FIELDS = ['subject', 'handlerNames'] as const
+const DATE_FIELDS = ['travelDate', 'repliedAt'] as const
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const guard = await requireAdmin()
@@ -45,25 +42,41 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const data: Prisma.QueryMonitorEntryUpdateInput = {}
   const touched: string[] = []
 
-  for (const field of EDITABLE) {
-    if (!(field in body)) continue
-    const value = body[field]
+  const asText = (value: unknown) =>
+    value === null || value === undefined || value === '' ? null : String(value).slice(0, 500)
 
-    if (field === 'travelDate' || field === 'repliedAt') {
-      const date = value ? new Date(String(value)) : null
-      if (date && Number.isNaN(date.getTime())) return buildApiError(`${field} is not a valid date`)
-      data[field] = date
-    } else {
-      data[field as Exclude<EditableField, 'travelDate' | 'repliedAt'>] =
-        value === null || value === '' ? null : String(value).slice(0, 500)
-    }
+  for (const field of TEXT_FIELDS) {
+    if (!(field in body)) continue
+    data[field] = asText(body[field])
     touched.push(field)
   }
 
-  if (touched.length === 0) return buildApiError('No editable fields supplied')
+  for (const field of REQUIRED_TEXT_FIELDS) {
+    if (!(field in body)) continue
+    // Both columns are NOT NULL — an emptied correction becomes an empty cell.
+    data[field] = asText(body[field]) ?? ''
+    touched.push(field)
+  }
 
-  // handlerNames is NOT NULL in the schema — an empty correction means "unknown".
-  if (data.handlerNames === null) data.handlerNames = ''
+  for (const field of DATE_FIELDS) {
+    if (!(field in body)) continue
+    const raw = body[field]
+    const date = raw ? new Date(String(raw)) : null
+    if (date && Number.isNaN(date.getTime())) return buildApiError(`${field} is not a valid date`)
+    data[field] = date
+    touched.push(field)
+  }
+
+  if ('replyStatus' in body) {
+    const status = String(body.replyStatus ?? '').toUpperCase()
+    if (!['REPLIED', 'PENDING', 'OVERDUE'].includes(status)) {
+      return buildApiError('replyStatus must be REPLIED, PENDING or OVERDUE')
+    }
+    data.replyStatus = status
+    touched.push('replyStatus')
+  }
+
+  if (touched.length === 0) return buildApiError('No editable fields supplied')
 
   // Editing the reply time implies the query is answered, unless told otherwise.
   if (touched.includes('repliedAt') && !touched.includes('replyStatus')) {
