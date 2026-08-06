@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Phone, PhoneCall, PhoneIncoming, PhoneMissed,
   Calendar, RefreshCw, Plus,
@@ -164,6 +164,35 @@ function teProxy(path: string, method = 'GET', body?: unknown, extra?: Record<st
     headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
     body: hasBody ? JSON.stringify(body) : undefined,
   }).then(r => r.json())
+}
+
+// ─── Customer number discovery ────────────────────────────────────────────────
+// The AI service dials a digits-only international number. The booking already
+// holds the customer's numbers (WhatsApp, phone, passenger contacts) — pull them
+// out so staff never have to retype what the booking record already knows.
+
+/** Digits only; a leading 00 international prefix is dropped (94… not 0094…). */
+function digitsOnly(v?: string | null): string {
+  return String(v ?? '').replace(/\D/g, '').replace(/^00/, '')
+}
+
+interface PhoneCandidate { label: string; value: string }
+
+function phoneCandidates(booking: Props['booking']): PhoneCandidate[] {
+  const out: PhoneCandidate[] = []
+  const push = (label: string, raw?: string | null) => {
+    const value = digitsOnly(raw)
+    // Under 8 digits is a landline fragment / extension — not dialable abroad.
+    if (value.length < 8) return
+    if (out.some(c => c.value === value)) return
+    out.push({ label, value })
+  }
+  push('Customer WhatsApp', booking.contactWhatsapp)
+  push('Customer phone', booking.contactPhone)
+  for (const p of booking.passengers ?? []) {
+    push(`${p.isLead ? 'Lead' : 'Traveller'}${p.name ? ` · ${p.name.split(' ')[0]}` : ''}`, p.contact)
+  }
+  return out
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -569,8 +598,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [config, setConfig]   = useState<TEConfig | null>(null)
 
   const lead        = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
-  const defaultPhone = (booking.contactWhatsapp ?? booking.contactPhone ?? lead?.contact ?? '') as string
   const leadName    = (lead?.name ?? '') as string
+  // Every number the booking knows about, best first — WhatsApp beats phone
+  // beats a passenger's own contact. The first one seeds the forms below.
+  const phoneOptions = useMemo(() => phoneCandidates(booking), [booking])
+  const defaultPhone = phoneOptions[0]?.value ?? ''
 
   // ── Intake form ───────────────────────────────────────────────────────────
   const [intakeForm, setIntakeForm] = useState({ phone: defaultPhone, mode: 'agenda' as 'agenda' | 'interval', call_time: '18:00', interval_count: '10', interval_unit: 'minute' as 'minute' | 'hour' | 'day', retry_gap_min: '15' })
@@ -607,6 +639,22 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // ── Approval ──────────────────────────────────────────────────────────────
   const [approvalLoading, setApprovalLoading] = useState(false)
 
+  // ── Auto-fill the customer's number ───────────────────────────────────────
+  // The booking record is fetched by the parent page, so `booking` can still be
+  // empty on our first render — seed the forms whenever a number turns up, but
+  // never overwrite what a user typed (or deliberately cleared on Cancel).
+  const phoneTouched = useRef(false)
+  useEffect(() => {
+    if (!defaultPhone || phoneTouched.current) return
+    setIntakeForm(f => (f.phone ? f : { ...f, phone: defaultPhone }))
+    setEditForm(f => (f.phone ? f : { ...f, phone: defaultPhone }))
+    setQuickForm(f => (f.to ? f : { ...f, to: defaultPhone }))
+  }, [defaultPhone])
+  useEffect(() => {
+    if (!leadName) return
+    setQuickForm(f => (f.name ? f : { ...f, name: leadName }))
+  }, [leadName])
+
   // ── Load service + config ─────────────────────────────────────────────────
   const loadService = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -627,7 +675,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // allowed WhatsApp calls, instead of every dial guessing and failing.
   const [perm, setPerm] = useState<{ checked: boolean; allowed: boolean | null; message?: string; can_request?: boolean } | null>(null)
   const [permLoading, setPermLoading] = useState(false)
-  const permPhone = (service?.call_phone || intakeForm.phone || '').replace(/\D/g, '')
+  // A cancelled service has had its number removed — the intake field is then
+  // the only number in play, so the permission chip must follow that instead.
+  const cancelled   = service?.status === 'cancelled'
+  const needsIntake = !service || cancelled
+  const permPhone = ((needsIntake ? intakeForm.phone : service?.call_phone) || '').replace(/\D/g, '')
   const loadPermission = useCallback(async (phone: string) => {
     if (!phone) { setPerm(null); return }
     setPermLoading(true)
@@ -655,11 +707,19 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       scheduleBody.post_tour = postTourPlan.enabled
         ? { enabled: true, days_after: Number(postTourPlan.days_after) || 3, ...(postTourPlan.call_time && { call_time: postTourPlan.call_time }) }
         : { enabled: false }
-      const body: Record<string, unknown> = { bookingRef, phone: intakeForm.phone.replace(/\D/g, ''), schedule: scheduleBody }
+      const phone = intakeForm.phone.replace(/\D/g, '')
+      const body: Record<string, unknown> = { bookingRef, phone, schedule: scheduleBody }
       const res = await teProxy('intake', 'POST', body)
       if (res.ok === false && !res.service) throw new Error(res.message ?? 'Registration failed')
+      // Re-registering a cancelled service (new number) must bring it back to
+      // active — intake alone leaves the old cancelled status in place.
+      if (cancelled) await teProxy(`services/${bookingRef}/status`, 'PATCH', { status: 'active' }).catch(() => {})
       toast.success(`Registered — ${res.schedule_inserted ?? 0} day${res.schedule_inserted !== 1 ? 's' : ''} scheduled`)
       await loadService()
+      // Nothing can actually be dialled until the customer taps Allow in
+      // WhatsApp, so send that request as part of registering rather than
+      // leaving it to whoever remembers the button.
+      if (perm?.allowed !== true) await sendApproval(phone)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to register') }
     finally { setIntakeLoading(false) }
   }
@@ -729,17 +789,44 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to update status') }
   }
 
+  // Cancelling stops the calls AND drops the number from the service, so the
+  // booking can be re-registered against a different phone (a second traveller,
+  // a corrected number) without carrying the old one forward.
+  async function cancelService() {
+    if (!confirm('Cancel AI calls for this booking?\n\nThe number will be removed from this service. You can register again with the same or a different number afterwards.')) return
+    try {
+      const res = await teProxy(`services/${bookingRef}/status`, 'PATCH', { status: 'cancelled' })
+      if (res.error) throw new Error(res.error)
+      // The upstream may reject a blank phone — the service is cancelled either
+      // way, and the panel stops offering the old number regardless.
+      await teProxy(`services/${bookingRef}`, 'PATCH', { phone: '' }).catch(() => {})
+      phoneTouched.current = true          // leave the field blank for a new number
+      setIntakeForm(f => ({ ...f, phone: '' }))
+      setPerm(null)
+      toast.success('Service cancelled — number removed')
+      await loadService()
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to cancel') }
+  }
+
   // ── Approval ──────────────────────────────────────────────────────────────
+  // Goes through /api/te/approval (not the raw proxy) so the send is written to
+  // the approval ledger the call report reads from.
   async function sendApproval(overridePhone?: string) {
     const phone = (overridePhone ?? service?.call_phone ?? intakeForm.phone).replace(/\D/g, '')
     if (!phone) { toast.error('Enter a phone number first'); return }
     setApprovalLoading(true)
     try {
-      const res = await teProxy('approval', 'POST', { to: phone, name: leadName || 'Valued Customer' })
+      const json = await fetch('/api/te/approval', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: phone, name: leadName || 'Valued Customer', bookingRef }),
+      }).then(r => r.json())
+      if (json.success === false) throw new Error(json.error ?? 'Approval failed')
+      const res = (json.data ?? json) as { already_allowed?: boolean; message?: string }
       if (res.already_allowed) toast.success('Customer already allowed WhatsApp calls ✓')
       else toast.success(res.message ?? 'Approval request sent — awaiting customer confirmation')
       await loadPermission(phone)
-    } catch { toast.error('Failed to send approval request') }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to send approval request') }
     finally { setApprovalLoading(false) }
   }
 

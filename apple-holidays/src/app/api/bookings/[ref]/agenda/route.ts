@@ -331,7 +331,10 @@ export async function PUT(
       const newPhone = assignment === null ? '' : normalisePhone(assignment.driverPhone ?? '')
       const oldPhone = normalisePhone(previous?.driverPhone ?? '')
 
-      if (newPhone) {
+      // Attempted whenever a driver was named, even without a number — the lib
+      // reports 'no-phone' back so the toast can say the driver wasn't reached
+      // rather than leaving staff to assume the message went out.
+      if (assignment !== null && (assignment.driverName || newPhone)) {
         const booking = await prisma.booking.findUnique({
           where:  { bookingRef: params.ref },
           select: {
