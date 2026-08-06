@@ -86,7 +86,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const previous = Array.isArray(entry.manualOverrides)
     ? entry.manualOverrides.filter((v): v is string => typeof v === 'string')
     : []
-  const overrides = [...new Set([...previous, ...touched])]
+  const overrides = Array.from(new Set(previous.concat(touched)))
 
   const updated = await prisma.queryMonitorEntry.update({
     where: { id: entry.id },

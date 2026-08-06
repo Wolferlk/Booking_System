@@ -85,7 +85,7 @@ export default function QueriesTab({
         tally.set(name, (tally.get(name) ?? 0) + 1)
       }
     }
-    return [...tally.entries()].sort((a, b) => b[1] - a[1])
+    return Array.from(tally.entries()).sort((a, b) => b[1] - a[1])
   }, [entries])
 
   async function saveEdit(patch: Record<string, unknown>) {
