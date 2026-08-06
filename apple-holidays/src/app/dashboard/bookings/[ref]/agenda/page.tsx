@@ -570,7 +570,8 @@ export default function AgendaPage() {
       if (overrideAssignment !== undefined) {
         setItems(is => is.map((x, j) => j === idx ? { ...x, assignment: overrideAssignment } : x))
       }
-      toast.success('Assignment saved!')
+      // The server reports whether the driver's WhatsApp actually went out.
+      toast.success(json.message || 'Assignment saved!')
       setAssigningIdx(null)
       if (item.date) loadDriversForDate(item.date)
     } catch (err: unknown) {

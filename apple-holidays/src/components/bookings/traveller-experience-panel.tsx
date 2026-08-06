@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Phone, PhoneCall, PhoneIncoming, PhoneMissed,
   Calendar, RefreshCw, Plus,
@@ -164,6 +164,35 @@ function teProxy(path: string, method = 'GET', body?: unknown, extra?: Record<st
     headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
     body: hasBody ? JSON.stringify(body) : undefined,
   }).then(r => r.json())
+}
+
+// ─── Customer number discovery ────────────────────────────────────────────────
+// The AI service dials a digits-only international number. The booking already
+// holds the customer's numbers (WhatsApp, phone, passenger contacts) — pull them
+// out so staff never have to retype what the booking record already knows.
+
+/** Digits only; a leading 00 international prefix is dropped (94… not 0094…). */
+function digitsOnly(v?: string | null): string {
+  return String(v ?? '').replace(/\D/g, '').replace(/^00/, '')
+}
+
+interface PhoneCandidate { label: string; value: string }
+
+function phoneCandidates(booking: Props['booking']): PhoneCandidate[] {
+  const out: PhoneCandidate[] = []
+  const push = (label: string, raw?: string | null) => {
+    const value = digitsOnly(raw)
+    // Under 8 digits is a landline fragment / extension — not dialable abroad.
+    if (value.length < 8) return
+    if (out.some(c => c.value === value)) return
+    out.push({ label, value })
+  }
+  push('Customer WhatsApp', booking.contactWhatsapp)
+  push('Customer phone', booking.contactPhone)
+  for (const p of booking.passengers ?? []) {
+    push(`${p.isLead ? 'Lead' : 'Traveller'}${p.name ? ` · ${p.name.split(' ')[0]}` : ''}`, p.contact)
+  }
+  return out
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -569,8 +598,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   const [config, setConfig]   = useState<TEConfig | null>(null)
 
   const lead        = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
-  const defaultPhone = (booking.contactWhatsapp ?? booking.contactPhone ?? lead?.contact ?? '') as string
   const leadName    = (lead?.name ?? '') as string
+  // Every number the booking knows about, best first — WhatsApp beats phone
+  // beats a passenger's own contact. The first one seeds the forms below.
+  const phoneOptions = useMemo(() => phoneCandidates(booking), [booking])
+  const defaultPhone = phoneOptions[0]?.value ?? ''
 
   // ── Intake form ───────────────────────────────────────────────────────────
   const [intakeForm, setIntakeForm] = useState({ phone: defaultPhone, mode: 'agenda' as 'agenda' | 'interval', call_time: '18:00', interval_count: '10', interval_unit: 'minute' as 'minute' | 'hour' | 'day', retry_gap_min: '15' })
@@ -607,6 +639,24 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // ── Approval ──────────────────────────────────────────────────────────────
   const [approvalLoading, setApprovalLoading] = useState(false)
 
+  // ── Auto-fill the customer's number ───────────────────────────────────────
+  // The booking record is fetched by the parent page, so `booking` can still be
+  // empty on our first render — seed the forms whenever a number turns up, but
+  // never overwrite a field that already holds something. `phoneTouched` covers
+  // the one case the empty check cannot: Cancel deliberately blanks the field so
+  // a new number can be typed, and that blank must stay blank.
+  const phoneTouched = useRef(false)
+  useEffect(() => {
+    if (!defaultPhone || phoneTouched.current) return
+    setIntakeForm(f => (f.phone ? f : { ...f, phone: defaultPhone }))
+    setEditForm(f => (f.phone ? f : { ...f, phone: defaultPhone }))
+    setQuickForm(f => (f.to ? f : { ...f, to: defaultPhone }))
+  }, [defaultPhone])
+  useEffect(() => {
+    if (!leadName) return
+    setQuickForm(f => (f.name ? f : { ...f, name: leadName }))
+  }, [leadName])
+
   // ── Load service + config ─────────────────────────────────────────────────
   const loadService = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -627,7 +677,11 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
   // allowed WhatsApp calls, instead of every dial guessing and failing.
   const [perm, setPerm] = useState<{ checked: boolean; allowed: boolean | null; message?: string; can_request?: boolean } | null>(null)
   const [permLoading, setPermLoading] = useState(false)
-  const permPhone = (service?.call_phone || intakeForm.phone || '').replace(/\D/g, '')
+  // A cancelled service has had its number removed — the intake field is then
+  // the only number in play, so the permission chip must follow that instead.
+  const cancelled   = service?.status === 'cancelled'
+  const needsIntake = !service || cancelled
+  const permPhone = ((needsIntake ? intakeForm.phone : service?.call_phone) || '').replace(/\D/g, '')
   const loadPermission = useCallback(async (phone: string) => {
     if (!phone) { setPerm(null); return }
     setPermLoading(true)
@@ -636,7 +690,13 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       setPerm({ checked: Boolean(res.checked), allowed: res.allowed ?? null, message: res.message, can_request: res.can_request })
     } catch { setPerm(null) } finally { setPermLoading(false) }
   }, [])
-  useEffect(() => { if (permPhone) loadPermission(permPhone) }, [permPhone, loadPermission])
+  // Debounced — the intake field feeds this, so typing must not fire a Meta
+  // permission lookup per keystroke.
+  useEffect(() => {
+    if (permPhone.length < 8) { setPerm(null); return }
+    const t = setTimeout(() => loadPermission(permPhone), 400)
+    return () => clearTimeout(t)
+  }, [permPhone, loadPermission])
 
   // ── Register ──────────────────────────────────────────────────────────────
   async function registerBooking() {
@@ -655,11 +715,19 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
       scheduleBody.post_tour = postTourPlan.enabled
         ? { enabled: true, days_after: Number(postTourPlan.days_after) || 3, ...(postTourPlan.call_time && { call_time: postTourPlan.call_time }) }
         : { enabled: false }
-      const body: Record<string, unknown> = { bookingRef, phone: intakeForm.phone.replace(/\D/g, ''), schedule: scheduleBody }
+      const phone = intakeForm.phone.replace(/\D/g, '')
+      const body: Record<string, unknown> = { bookingRef, phone, schedule: scheduleBody }
       const res = await teProxy('intake', 'POST', body)
       if (res.ok === false && !res.service) throw new Error(res.message ?? 'Registration failed')
+      // Re-registering a cancelled service (new number) must bring it back to
+      // active — intake alone leaves the old cancelled status in place.
+      if (cancelled) await teProxy(`services/${bookingRef}/status`, 'PATCH', { status: 'active' }).catch(() => {})
       toast.success(`Registered — ${res.schedule_inserted ?? 0} day${res.schedule_inserted !== 1 ? 's' : ''} scheduled`)
       await loadService()
+      // Nothing can actually be dialled until the customer taps Allow in
+      // WhatsApp, so send that request as part of registering rather than
+      // leaving it to whoever remembers the button.
+      if (perm?.allowed !== true) await sendApproval(phone)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to register') }
     finally { setIntakeLoading(false) }
   }
@@ -729,17 +797,44 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to update status') }
   }
 
+  // Cancelling stops the calls AND drops the number from the service, so the
+  // booking can be re-registered against a different phone (a second traveller,
+  // a corrected number) without carrying the old one forward.
+  async function cancelService() {
+    if (!confirm('Cancel AI calls for this booking?\n\nThe number will be removed from this service. You can register again with the same or a different number afterwards.')) return
+    try {
+      const res = await teProxy(`services/${bookingRef}/status`, 'PATCH', { status: 'cancelled' })
+      if (res.error) throw new Error(res.error)
+      // The upstream may reject a blank phone — the service is cancelled either
+      // way, and the panel stops offering the old number regardless.
+      await teProxy(`services/${bookingRef}`, 'PATCH', { phone: '' }).catch(() => {})
+      phoneTouched.current = true          // leave the field blank for a new number
+      setIntakeForm(f => ({ ...f, phone: '' }))
+      setPerm(null)
+      toast.success('Service cancelled — number removed')
+      await loadService()
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to cancel') }
+  }
+
   // ── Approval ──────────────────────────────────────────────────────────────
+  // Goes through /api/te/approval (not the raw proxy) so the send is written to
+  // the approval ledger the call report reads from.
   async function sendApproval(overridePhone?: string) {
     const phone = (overridePhone ?? service?.call_phone ?? intakeForm.phone).replace(/\D/g, '')
     if (!phone) { toast.error('Enter a phone number first'); return }
     setApprovalLoading(true)
     try {
-      const res = await teProxy('approval', 'POST', { to: phone, name: leadName || 'Valued Customer' })
+      const json = await fetch('/api/te/approval', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: phone, name: leadName || 'Valued Customer', bookingRef }),
+      }).then(r => r.json())
+      if (json.success === false) throw new Error(json.error ?? 'Approval failed')
+      const res = (json.data ?? json) as { already_allowed?: boolean; message?: string }
       if (res.already_allowed) toast.success('Customer already allowed WhatsApp calls ✓')
       else toast.success(res.message ?? 'Approval request sent — awaiting customer confirmation')
       await loadPermission(phone)
-    } catch { toast.error('Failed to send approval request') }
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to send approval request') }
     finally { setApprovalLoading(false) }
   }
 
@@ -984,24 +1079,57 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
         // ══════════════════════════════════════════════════════════════════
         tab === 'overview' ? (
           <div className="space-y-5">
-            {!registered ? (
+            {needsIntake ? (
               <>
-                <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl">
-                  <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-semibold text-amber-800 mb-0.5">Not registered for AI calls</p>
-                    <p className="text-xs text-amber-700 leading-relaxed">Register this booking to start automated check-in calls. The AI bot uses the booking&apos;s itinerary, hotels, and passenger details to create personalised conversations.</p>
+                {cancelled ? (
+                  <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-100 rounded-xl">
+                    <XCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs font-semibold text-red-800 mb-0.5">AI calls cancelled — number removed</p>
+                      <p className="text-xs text-red-700 leading-relaxed">Enter a number below and register again to restart the calls, or bring the previous schedule back as it was.</p>
+                    </div>
+                    <button onClick={() => updateStatus('active')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-red-200 text-red-600 text-[11px] font-semibold hover:bg-red-100 transition-colors flex-shrink-0">
+                      <RefreshCw className="w-3 h-3" /> Reactivate previous
+                    </button>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl">
+                    <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold text-amber-800 mb-0.5">Not registered for AI calls</p>
+                      <p className="text-xs text-amber-700 leading-relaxed">Register this booking to start automated check-in calls. The AI bot uses the booking&apos;s itinerary, hotels, and passenger details to create personalised conversations.</p>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   <div>
                     <label className="form-label">Customer Phone *</label>
                     <div className="flex gap-2">
-                      <input className="form-input flex-1 font-mono" placeholder="94771234567" value={intakeForm.phone} onChange={e => setIntakeForm(f => ({ ...f, phone: e.target.value }))} />
+                      <input className="form-input flex-1 font-mono" placeholder="94771234567" value={intakeForm.phone}
+                        onChange={e => setIntakeForm(f => ({ ...f, phone: e.target.value }))} />
                       {leadName && <div className="flex items-center gap-1.5 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 font-medium flex-shrink-0"><User className="w-3.5 h-3.5 text-slate-400" />{leadName.split(' ')[0]}</div>}
                     </div>
+                    {/* Numbers already on the booking — one tap instead of retyping. */}
+                    {phoneOptions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                        <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">From booking</span>
+                        {phoneOptions.map(c => {
+                          const active = digitsOnly(intakeForm.phone) === c.value
+                          return (
+                            <button key={c.value} type="button"
+                              onClick={() => setIntakeForm(f => ({ ...f, phone: c.value }))}
+                              className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
+                              {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                     <p className="text-[10px] text-slate-400 mt-1">International format without + (e.g. 94 = Sri Lanka · 91 = India)</p>
+                    {intakeForm.phone.trim().startsWith('0') && (
+                      <p className="text-[10px] text-amber-600 mt-1 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> Looks like a local number — replace the leading 0 with the country code.</p>
+                    )}
                   </div>
 
                   <div>
@@ -1093,12 +1221,15 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   {permChip()}
                   <button onClick={registerBooking} disabled={intakeLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-60 transition-colors shadow-sm">
-                    {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> Register for AI Calls</>}
+                    {intakeLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Registering…</> : <><PhoneIncoming className="w-4 h-4" /> {cancelled ? 'Register with this number' : 'Register for AI Calls'}</>}
                   </button>
                   <button onClick={() => sendApproval()} disabled={approvalLoading}
                     className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-green-600 text-white text-sm font-semibold hover:bg-green-700 disabled:opacity-60 transition-colors">
                     {approvalLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><MessageSquare className="w-4 h-4" /> WhatsApp Approval</>}
                   </button>
+                  {perm?.allowed !== true && (
+                    <span className="text-[10px] text-slate-400 w-full">Registering also sends the WhatsApp call-approval request to this number automatically.</span>
+                  )}
                 </div>
               </>
             ) : editOpen ? (
@@ -1166,7 +1297,7 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   {service!.status === 'active' ? (
                     <>
                       <button onClick={() => updateStatus('completed')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-semibold hover:bg-emerald-100 transition-colors border border-emerald-100"><CheckCircle2 className="w-3.5 h-3.5" /> Mark Completed</button>
-                      <button onClick={() => updateStatus('cancelled')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-semibold hover:bg-red-100 transition-colors border border-red-100"><XCircle className="w-3.5 h-3.5" /> Cancel</button>
+                      <button onClick={cancelService} title="Stop the calls and remove this number from the service" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-semibold hover:bg-red-100 transition-colors border border-red-100"><XCircle className="w-3.5 h-3.5" /> Cancel</button>
                     </>
                   ) : (
                     <button onClick={() => updateStatus('active')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-50 text-violet-600 text-xs font-semibold hover:bg-violet-100 transition-colors border border-violet-100"><RefreshCw className="w-3.5 h-3.5" /> Reactivate</button>
@@ -1410,6 +1541,21 @@ export default function TravellerExperiencePanel({ bookingRef, booking }: Props)
                   value={quickForm.to}
                   onChange={e => setQuickForm(f => ({ ...f, to: e.target.value }))}
                 />
+                {phoneOptions.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">From booking</span>
+                    {phoneOptions.map(c => {
+                      const active = digitsOnly(quickForm.to) === c.value
+                      return (
+                        <button key={c.value} type="button"
+                          onClick={() => setQuickForm(f => ({ ...f, to: c.value }))}
+                          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-1 rounded-full border transition-colors ${active ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-violet-300 hover:text-violet-700'}`}>
+                          {active && <CheckCircle2 className="w-3 h-3" />}{c.label}: <span className="font-mono">{c.value}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
                 <p className="text-[10px] text-slate-400 mt-1">International format without + (94 = Sri Lanka · 91 = India)</p>
                 {quickForm.to.replace(/\D/g, '') === permPhone && <div className="mt-1.5">{permChip()}</div>}
               </div>

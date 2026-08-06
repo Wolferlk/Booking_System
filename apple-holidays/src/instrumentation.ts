@@ -26,6 +26,13 @@ export async function register() {
       // minute and evaluates due times itself rather than baking in a cron expr.
       const { startReportScheduler } = await import('@/lib/reports/report-scheduler')
       startReportScheduler()
+
+      // Booking Team Query Monitor — hourly sweep of the file-handler mailboxes
+      // into the SharePoint query sheet. Interval is a runtime setting, so this
+      // also ticks every minute and evaluates due-ness itself. Gated by the
+      // query_monitor_enabled switch inside the tick.
+      const { startQueryMonitorScheduler } = await import('@/lib/query-monitor/scheduler')
+      startQueryMonitorScheduler()
     }
   }
 }
