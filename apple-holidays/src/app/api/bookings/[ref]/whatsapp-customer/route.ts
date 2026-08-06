@@ -16,6 +16,12 @@ import {
   TAG_DAILY_BRIEFING,
   TAG_FEEDBACK_REQUEST,
 } from '@/lib/customer-whatsapp-automation'
+import {
+  sendPortalLinkForBooking,
+  portalSendStatus,
+  portalLinkUrl,
+  FALLBACK_NUMBERS,
+} from '@/lib/portal-link-whatsapp'
 
 export const dynamic = 'force-dynamic'
 const ALLOWED: UserRole[] = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
@@ -99,6 +105,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   }
 
   const feedbackSend = sends.find(s => s.senderName?.startsWith(TAG_FEEDBACK_REQUEST))
+  const portal = await portalSendStatus(params.ref)
 
   return buildApiSuccess({
     bookingRef:   booking.bookingRef,
@@ -110,6 +117,12 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
     days,
     feedbackRequestSentAt: feedbackSend?.createdAt.toISOString() ?? null,
     feedback: booking.guestFeedback,
+    // Customer trip-portal link: the URL itself plus when each stage last went out.
+    // With no guest number the link is instead pushed to the ops fallback numbers.
+    portalLink:             portalLinkUrl(booking.bookingRef),
+    portalWelcomeSentAt:    portal.welcomeSentAt,
+    portalReminderSentAt:   portal.reminderSentAt,
+    portalFallbackNumbers:  FALLBACK_NUMBERS,
     recentSends: sends.slice(0, 20).map(s => ({
       id: s.id,
       type: s.senderName?.startsWith(TAG_FEEDBACK_REQUEST) ? 'feedback' : 'briefing',
@@ -128,8 +141,24 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   const body = await req.json().catch(() => null) as
     | { action: 'briefing'; date: string }
     | { action: 'feedback' }
+    | { action: 'portal'; stage: 'welcome' | 'reminder'; to?: string }
     | null
   if (!body) return buildApiError('Invalid request body')
+
+  if (body.action === 'portal') {
+    if (body.stage !== 'welcome' && body.stage !== 'reminder') {
+      return buildApiError('stage must be "welcome" or "reminder"')
+    }
+    // Manual sends always force — staff deliberately chose to (re)send this link.
+    const r = await sendPortalLinkForBooking(params.ref, body.stage, { force: true, to: body.to })
+    if (!r.ok) return buildApiError(r.reason ?? 'Send failed')
+    return buildApiSuccess(
+      { sentTo: r.sentTo, usedFallback: r.usedFallback, link: r.link },
+      r.usedFallback
+        ? `No guest number on this booking — the portal link was sent to the ops numbers (${r.sentTo?.join(', ')}) to pass on to the guest.`
+        : `Portal link sent to ${r.sentTo?.join(', ')}`,
+    )
+  }
 
   if (body.action === 'briefing') {
     if (!body.date || !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) return buildApiError('A valid date is required')
