@@ -19,12 +19,16 @@ export async function GET(req: NextRequest) {
   const sync   = p.get('sync')         // PENDING | SYNCED | DIRTY | FAILED
   const handler = (p.get('handler') ?? '').trim()
   const days   = Number(p.get('days') ?? '30')
+  // QUERY (the default) | EXCLUDED | ALL — which worksheet the mail belongs to.
+  const kind   = (p.get('kind') ?? 'QUERY').toUpperCase()
 
   const and: Prisma.QueryMonitorEntryWhereInput[] = []
 
   if (Number.isFinite(days) && days > 0) {
     and.push({ receivedAt: { gte: new Date(Date.now() - days * 86_400_000) } })
   }
+  if (kind === 'QUERY')         and.push({ mailKind: 'QUERY' })
+  else if (kind === 'EXCLUDED') and.push({ mailKind: 'EXCLUDED' })
   if (status) and.push({ replyStatus: status })
   if (sync)   and.push({ syncStatus: sync })
   if (handler) and.push({ handlerNames: { contains: handler } })
@@ -44,7 +48,13 @@ export async function GET(req: NextRequest) {
 
   const where: Prisma.QueryMonitorEntryWhereInput = and.length ? { AND: and } : {}
 
-  const [entries, total, statusCounts, syncCounts] = await Promise.all([
+  // The kind tallies ignore the kind filter — they are what the two tabs' badges
+  // count, so each must stay visible while looking at the other.
+  const kindWhere: Prisma.QueryMonitorEntryWhereInput = and.length
+    ? { AND: and.filter(clause => !('mailKind' in clause)) }
+    : {}
+
+  const [entries, total, statusCounts, syncCounts, kindCounts] = await Promise.all([
     prisma.queryMonitorEntry.findMany({
       where, take, skip,
       orderBy: { receivedAt: 'desc' },
@@ -53,10 +63,12 @@ export async function GET(req: NextRequest) {
     prisma.queryMonitorEntry.count({ where }),
     prisma.queryMonitorEntry.groupBy({ by: ['replyStatus'], where, _count: { _all: true } }),
     prisma.queryMonitorEntry.groupBy({ by: ['syncStatus'],  where, _count: { _all: true } }),
+    prisma.queryMonitorEntry.groupBy({ by: ['mailKind'], where: kindWhere, _count: { _all: true } }),
   ])
 
   const replyTally = new Map(statusCounts.map(r => [r.replyStatus, r._count._all]))
   const syncTally  = new Map(syncCounts.map(r => [r.syncStatus, r._count._all]))
+  const kindTally  = new Map(kindCounts.map(r => [r.mailKind, r._count._all]))
   const at = (map: Map<string, number>, key: string) => map.get(key) ?? 0
 
   return buildApiSuccess({
@@ -69,6 +81,8 @@ export async function GET(req: NextRequest) {
       synced:       at(syncTally, 'SYNCED'),
       awaitingSync: at(syncTally, 'PENDING') + at(syncTally, 'DIRTY'),
       failed:       at(syncTally, 'FAILED'),
+      queries:      at(kindTally, 'QUERY'),
+      excluded:     at(kindTally, 'EXCLUDED'),
     },
   })
 }

@@ -56,6 +56,34 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 Dates are written as real Excel serials with the same number formats as the
 manual rows, so sorting and the team's pivots keep working.
 
+### Mail that is not a query
+
+Much of what reaches the file handlers is not new business: hotel vouchers,
+on-ground incidents, refund chases, availability checks, bare booking
+references. Those must not sit in the query sheet, whose pivots measure response
+time on enquiries — but they are not noise either, so nothing is discarded.
+
+Every mail is classified on the subject line alone (bodies carry quoted threads,
+which would exclude a genuine query written under an old voucher mail):
+
+- **QUERY** → appended to the query sheet, columns A–M, as above.
+- **EXCLUDED** → appended to a second tab, default **“Other Mails”**, columns
+  A–I: Date · Received time · Subject · Sender · Sender Email · File Handler ·
+  Reason · Destination · CNTL. The tab is created with its header on first use.
+
+The pattern list is the `query_monitor_exclude_patterns` setting, edited under
+*Configuration → Mail that is not a query*. One pattern per line: `#` comments,
+`/…/flags` regular expressions, anything else a case-insensitive phrase. The
+seed list covers vouchers, on/on-ground, discrepancy, refund, complaint, avail
+checks, bare `NL…` references and mailer auto-replies.
+
+Excluded mail costs no GPT call and is never chased for a reply. It appears in
+the dashboard under *Queries → Other mail*, with the pattern that caught it. A
+mail can be moved between the two tabs by hand **before** it is written; after
+that the API refuses, because this app never deletes rows and the move would
+strand one on the old tab. *Re-check unwritten mail* re-applies an edited pattern
+list to the backlog that has not been written yet.
+
 ### Deduplication
 
 The same mail reaching five handlers is **one** entry. The key is the RFC
@@ -66,8 +94,11 @@ CC'd — the entry's row is rewritten in place rather than appended again.
 
 ## Safety properties
 
-- **Columns A–M only.** Column N onward holds the team's lookup lists and pivot
-  helpers and is never written.
+- **Columns A–M only** on the query sheet. Column N onward holds the team's
+  lookup lists and pivot helpers and is never written. (The other-mail tab is
+  created by the app and uses A–I.)
+- **The two tabs must differ.** Saving the same name for both is rejected —
+  nine-column rows appended to the query sheet would wreck it.
 - **Append point is found by scanning column C from the bottom**, not from
   `usedRange` — the sheet carries formatted-but-empty rows past the last entry.
 - **Every written row's number is stored** on the entry, so a row can be traced,

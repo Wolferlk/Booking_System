@@ -37,7 +37,47 @@ export const SETTINGS = {
   lastRunAt:          'query_monitor_last_run_at',
   /** Guard so two processes can't sweep at once. */
   runLock:            'query_monitor_run_lock',
+  /** Divert mail whose subject matches an exclusion pattern to the second tab. */
+  excludeEnabled:     'query_monitor_exclude_enabled',
+  /** Newline-separated subject patterns that mark a mail as "not a query". */
+  excludePatterns:    'query_monitor_exclude_patterns',
+  /** Worksheet tab that receives the excluded mail. */
+  excludedSheetName:  'query_monitor_excluded_sheet_name',
 } as const
+
+/**
+ * Subjects that are not new sales queries: post-booking traffic, vouchers,
+ * on-ground incidents, availability checks and mailer noise. They are still
+ * collected and still shown in the dashboard — they just land on the second
+ * worksheet instead of the query sheet, so the team's SLA pivots stay clean.
+ *
+ * One pattern per line. `#` starts a comment, `/…/flags` is a regular
+ * expression, anything else is a case-insensitive substring. Matched against
+ * the SUBJECT only — matching bodies would catch every quoted thread.
+ */
+export const DEFAULT_EXCLUDE_PATTERNS = [
+  '# Post-booking / on-ground traffic — not a new query',
+  'hotel voucher',
+  '/\\bon[\\s-]?ground\\b/i',
+  'discrepancy',
+  'guest expects',
+  'refund',
+  'complaint',
+  '',
+  '# Availability checks are handled outside the query sheet',
+  'avail check',
+  'availability check',
+  '',
+  '# Bare booking reference, no question in it (e.g. NL2221756007048)',
+  '/^(?:re|fw|fwd)?\\s*:?\\s*[A-Z]{2}\\d{8,}\\s*$/i',
+  '',
+  '# Mailer noise that slips past the sender filter',
+  'automatic reply',
+  'auto-reply',
+  'out of office',
+  'undeliverable',
+  'delivery has failed',
+].join('\n')
 
 export const DEFAULTS = {
   enabled:           'false',
@@ -51,6 +91,9 @@ export const DEFAULTS = {
   aiEnabled:         'true',
   slaHours:          '2',
   replyChaseDays:    '7',
+  excludeEnabled:    'true',
+  excludePatterns:   DEFAULT_EXCLUDE_PATTERNS,
+  excludedSheetName: 'Other Mails',
 } as const
 
 // ── Sheet layout ─────────────────────────────────────────────────────────────
@@ -84,6 +127,34 @@ export const SHEET_NUMBER_FORMATS = [
   'General',              // K CNTL
   'General',              // L Amendment
   'General',              // M Region
+] as const
+
+// ── Second tab: excluded mail ────────────────────────────────────────────────
+
+/**
+ * Layout of the "Other Mails" tab, columns A–I. This tab is created by the app
+ * (it has no legacy formulas to respect), so it carries the columns that make an
+ * excluded mail traceable rather than mirroring the query sheet: what it was,
+ * who got it, and why it was kept out.
+ */
+export const EXCLUDED_SHEET_COLUMNS = [
+  'Date', 'Received time', 'Subject', 'Sender', 'Sender Email',
+  'File Handler', 'Reason', 'Destination', 'CNTL',
+] as const
+
+export const EXCLUDED_SHEET_FIRST_COLUMN = 'A'
+export const EXCLUDED_SHEET_LAST_COLUMN  = 'I'
+
+export const EXCLUDED_SHEET_NUMBER_FORMATS = [
+  '[$-en-US]dd-mmm-yy;@', // A Date
+  'm/d/yyyy h:mm',        // B Received time
+  'General',              // C Subject
+  'General',              // D Sender
+  'General',              // E Sender Email
+  'General',              // F File Handler
+  'General',              // G Reason
+  'General',              // H Destination
+  'General',              // I CNTL
 ] as const
 
 // ── Domain ignore list ───────────────────────────────────────────────────────
@@ -146,6 +217,8 @@ export const UNMATCHED_SALES_PERSON = 'Others'
 
 // ── Status vocabulary ────────────────────────────────────────────────────────
 
+/** QUERY → the master query sheet. EXCLUDED → the second "other mail" tab. */
+export type MailKind    = 'QUERY' | 'EXCLUDED'
 export type ReplyStatus = 'REPLIED' | 'PENDING' | 'OVERDUE'
 export type SyncStatus  = 'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
 export type RunStatus   = 'RUNNING' | 'SUCCESS' | 'PARTIAL' | 'FAILED' | 'SKIPPED'

@@ -1337,6 +1337,11 @@ model QueryMonitorEntry {
   fromAddress      String
   fromName         String
   fromDomain       String
+  /// QUERY → the master query sheet. EXCLUDED → the "other mail" tab: vouchers,
+  /// on-ground incidents, avail checks and the like, kept out of the SLA pivots.
+  mailKind         String              @default("QUERY")
+  /// The exclusion pattern that diverted it, written to the second tab's Reason column.
+  excludeReason    String?
   receivedAt       DateTime // sheet column D — "Allocation time"
   repliedAt        DateTime? // sheet column E — "Replied time"
   replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
@@ -1356,6 +1361,8 @@ model QueryMonitorEntry {
   /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
   manualOverrides  Json?
   sheetRow         Int?
+  /// Which worksheet `sheetRow` refers to — the two tabs number their rows separately.
+  sheetTab         String?
   syncStatus       String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
   syncError        String?             @db.Text
   syncedAt         DateTime?
@@ -1369,6 +1376,7 @@ model QueryMonitorEntry {
   @@index([replyStatus])
   @@index([conversationId])
   @@index([fromDomain])
+  @@index([mailKind])
   @@map("query_monitor_entries")
 }
 

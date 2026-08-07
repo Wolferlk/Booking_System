@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, CheckCircle2, ExternalLink, Loader2, Mail, Plug, Plus,
-  Save, Table2, Tags, Trash2, Users,
+  AlertTriangle, CheckCircle2, ExternalLink, FilterX, Loader2, Mail, Plug, Plus,
+  RefreshCw, Save, Table2, Tags, Trash2, Users,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -27,6 +27,7 @@ export default function ConfigTab({
     <div className="space-y-6">
       <ScheduleCard config={config} onConfigChange={onConfigChange} />
       <SheetCard config={config} onConfigChange={onConfigChange} onSheetChange={onSheetChange} />
+      <ExclusionCard config={config} onConfigChange={onConfigChange} />
       <MailboxesCard />
       <SenderRulesCard />
     </div>
@@ -311,6 +312,149 @@ function SheetCard({
             )}
           </>
         )}
+      </div>
+    </Card>
+  )
+}
+
+// ── Mail that is not a query ─────────────────────────────────────────────────
+
+/**
+ * The gate in front of the query sheet. Everything a pattern catches is still
+ * collected and still visible under Queries → Other mail; it is simply written
+ * to a second tab so the query sheet stays a measure of new business.
+ */
+function ExclusionCard({
+  config, onConfigChange,
+}: { config: QmConfig | null; onConfigChange: (c: QmConfig) => void }) {
+  const [patterns, setPatterns] = useState('')
+  const [tab, setTab]           = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [probe, setProbe]       = useState('')
+  const [verdict, setVerdict]   = useState<{ kind: string; reason: string | null } | null>(null)
+
+  useEffect(() => {
+    if (!config) return
+    setPatterns(config.excludePatterns)
+    setTab(config.excludedSheetName)
+  }, [config])
+
+  async function save(patch: Partial<QmConfig>) {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/query-monitor/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      onConfigChange(d.data.config)
+      toast.success('Saved')
+    } finally { setSaving(false) }
+  }
+
+  /** Bring the not-yet-written backlog in line with the patterns just saved. */
+  async function apply() {
+    setApplying(true)
+    try {
+      const res = await fetch('/api/query-monitor/reclassify', { method: 'POST' })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Re-checked')
+    } finally { setApplying(false) }
+  }
+
+  async function test() {
+    if (!probe.trim()) return
+    const res = await fetch(`/api/query-monitor/reclassify?subject=${encodeURIComponent(probe)}`)
+    const d = await res.json()
+    if (!d.success) { toast.error(d.error); return }
+    setVerdict({ kind: d.data.kind, reason: d.data.reason })
+  }
+
+  if (!config) {
+    return <Card icon={<FilterX className="w-4 h-4" />} title="Mail that is not a query">
+      <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+    </Card>
+  }
+
+  return (
+    <Card
+      icon={<FilterX className="w-4 h-4" />}
+      title="Mail that is not a query"
+      description="Vouchers, on-ground issues, refund chases and avail checks go to their own tab instead of the query sheet — nothing is thrown away."
+    >
+      <div className="space-y-4">
+        <Toggle
+          checked={config.excludeEnabled}
+          onChange={v => save({ excludeEnabled: v })}
+          label="Sort this mail onto a second tab"
+          description="Off = every mail goes to the query sheet, exactly as before."
+        />
+
+        <Field label="Tab for the excluded mail" hint="Created automatically on the first write if the workbook has no such tab.">
+          <input
+            value={tab} onChange={e => setTab(e.target.value)}
+            onBlur={() => tab.trim() && tab !== config.excludedSheetName && save({ excludedSheetName: tab })}
+            className={inputCls}
+          />
+        </Field>
+
+        <Field
+          label="Subject patterns"
+          hint="One per line, matched against the subject only. # starts a comment, /…/ is a regular expression, anything else is a case-insensitive phrase."
+        >
+          <textarea
+            value={patterns} onChange={e => setPatterns(e.target.value)}
+            rows={14} spellCheck={false}
+            className={cn(inputCls, 'font-mono text-xs leading-relaxed')}
+          />
+        </Field>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => save({ excludePatterns: patterns })} disabled={saving}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save patterns
+          </button>
+          <button
+            onClick={apply} disabled={applying}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-50"
+          >
+            {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Re-check unwritten mail
+          </button>
+          <span className="text-xs text-slate-400">
+            Mail already written to a sheet keeps its tab — moving it would leave an orphan row behind.
+          </span>
+        </div>
+
+        {/* The team's own subjects are the only real test of a pattern list. */}
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+          <p className="text-xs font-semibold text-slate-600">Try a subject</p>
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={probe} onChange={e => { setProbe(e.target.value); setVerdict(null) }}
+              onKeyDown={e => e.key === 'Enter' && test()}
+              placeholder="RE: Hotel Voucher: Fairway Colombo/480604#"
+              className={cn(inputCls, 'flex-1 min-w-[16rem] bg-white')}
+            />
+            <button onClick={test}
+              className="px-3 py-2 rounded-lg text-sm font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100">
+              Test
+            </button>
+          </div>
+          {verdict && (
+            <p className={cn('text-xs font-semibold inline-flex items-center gap-1.5',
+              verdict.kind === 'EXCLUDED' ? 'text-slate-700' : 'text-emerald-700')}>
+              {verdict.kind === 'EXCLUDED'
+                ? <><FilterX className="w-3.5 h-3.5" /> Goes to “{config.excludedSheetName}” — matched {verdict.reason}</>
+                : <><CheckCircle2 className="w-3.5 h-3.5" /> Treated as a query — goes to “{config.sheetName}”</>}
+            </p>
+          )}
+          <p className="text-[11px] text-slate-400">Tests against the patterns as last saved, not the unsaved text above.</p>
+        </div>
       </div>
     </Card>
   )

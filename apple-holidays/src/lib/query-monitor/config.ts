@@ -19,6 +19,9 @@ export interface QueryMonitorConfig {
   aiEnabled:         boolean
   slaHours:          number
   replyChaseDays:    number
+  excludeEnabled:    boolean
+  excludePatterns:   string
+  excludedSheetName: string
   lastRunAt:         string | null
 }
 
@@ -61,6 +64,10 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     aiEnabled:         bool(SETTINGS.aiEnabled,         DEFAULTS.aiEnabled),
     slaHours:          Math.max(1, num(SETTINGS.slaHours,       DEFAULTS.slaHours)),
     replyChaseDays:    Math.max(1, num(SETTINGS.replyChaseDays, DEFAULTS.replyChaseDays)),
+    excludeEnabled:    bool(SETTINGS.excludeEnabled, DEFAULTS.excludeEnabled),
+    excludePatterns:   str(SETTINGS.excludePatterns,   DEFAULTS.excludePatterns),
+    excludedSheetName: str(SETTINGS.excludedSheetName, DEFAULTS.excludedSheetName)
+                       || DEFAULTS.excludedSheetName,
     lastRunAt:         map.get(SETTINGS.lastRunAt) ?? null,
   }
 }
@@ -83,6 +90,13 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.aiEnabled         !== undefined) put(SETTINGS.aiEnabled,         !!patch.aiEnabled)
   if (patch.slaHours          !== undefined) put(SETTINGS.slaHours,          Math.max(1, Number(patch.slaHours) || 2))
   if (patch.replyChaseDays    !== undefined) put(SETTINGS.replyChaseDays,    Math.max(1, Number(patch.replyChaseDays) || 7))
+  if (patch.excludeEnabled    !== undefined) put(SETTINGS.excludeEnabled,    !!patch.excludeEnabled)
+  // Kept verbatim — one pattern per line, and a trailing blank line is harmless.
+  if (patch.excludePatterns   !== undefined) put(SETTINGS.excludePatterns,   String(patch.excludePatterns))
+  if (patch.excludedSheetName !== undefined) {
+    const tab = String(patch.excludedSheetName).trim()
+    if (tab) put(SETTINGS.excludedSheetName, tab)
+  }
 
   if (patch.sheetUrl !== undefined) {
     const url = String(patch.sheetUrl).trim()

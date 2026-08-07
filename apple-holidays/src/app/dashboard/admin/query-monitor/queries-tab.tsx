@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  Inbox, Loader2, Mail, Pencil, Search, Trash2, Users, Zap,
+  FilterX, Inbox, Loader2, Mail, Pencil, Search, Trash2, Undo2, Users, Zap,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -51,6 +51,10 @@ export default function QueriesTab({
   const [reply, setReply]   = useState('')
   const [sync, setSync]     = useState('')
   const [days, setDays]     = useState('30')
+  // Which worksheet's mail is on screen — the queries, or everything the
+  // exclusion patterns diverted to the other tab.
+  const [kind, setKind]     = useState<'QUERY' | 'EXCLUDED'>('QUERY')
+  const [counts, setCounts] = useState({ queries: 0, excluded: 0 })
 
   const [editing, setEditing] = useState<QmEntry | null>(null)
   const [viewing, setViewing] = useState<QmEntry | null>(null)
@@ -58,7 +62,7 @@ export default function QueriesTab({
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ days, limit: '200' })
+      const params = new URLSearchParams({ days, limit: '200', kind })
       if (search) params.set('search', search)
       if (reply)  params.set('status', reply)
       if (sync)   params.set('sync', sync)
@@ -68,9 +72,11 @@ export default function QueriesTab({
       if (!d.success) { toast.error(d.error); return }
       setEntries(d.data.entries)
       setTotal(d.data.total)
-      onStats(d.data.stats)
+      setCounts({ queries: d.data.stats.queries, excluded: d.data.stats.excluded })
+      // The headline tiles measure the SLA, so they only ever reflect real queries.
+      if (kind === 'QUERY') onStats(d.data.stats)
     } finally { setLoading(false) }
-  }, [search, reply, sync, days, onStats])
+  }, [search, reply, sync, days, kind, onStats])
 
   // Debounced so typing in the search box doesn't fire a query per keystroke.
   useEffect(() => {
@@ -100,6 +106,21 @@ export default function QueriesTab({
     void load()
   }
 
+  /** Send one mail to the other worksheet — only possible before it is written. */
+  async function moveKind(entry: QmEntry) {
+    const next = entry.mailKind === 'EXCLUDED' ? 'QUERY' : 'EXCLUDED'
+    const res = await fetch(`/api/query-monitor/entries/${entry.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mailKind: next, excludeReason: 'Moved by hand' }),
+    })
+    const d = await res.json()
+    if (!d.success) { toast.error(d.error); return }
+    toast.success(next === 'EXCLUDED'
+      ? 'Moved to the other-mail tab — it will not reach the query sheet'
+      : 'Moved back to the query sheet')
+    void load()
+  }
+
   async function remove(entry: QmEntry) {
     if (!confirm(`Delete "${entry.subject.slice(0, 60)}"? It will be picked up again if the mail is still in the lookback window.`)) return
     const res = await fetch(`/api/query-monitor/entries/${entry.id}`, { method: 'DELETE' })
@@ -111,6 +132,35 @@ export default function QueriesTab({
 
   return (
     <div className="space-y-4">
+      {/* ── Which worksheet ──────────────────────────────────────────── */}
+      <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+        {([
+          { id: 'QUERY',    label: 'Queries',      count: counts.queries },
+          { id: 'EXCLUDED', label: 'Other mail',   count: counts.excluded },
+        ] as const).map(t => (
+          <button
+            key={t.id} onClick={() => { setKind(t.id); setReply('') }}
+            className={cn(
+              'inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold transition-colors',
+              kind === t.id ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50',
+            )}
+          >
+            {t.id === 'EXCLUDED' && <FilterX className="w-3.5 h-3.5" />}
+            {t.label}
+            <span className={cn('text-[11px]', kind === t.id ? 'text-slate-300' : 'text-slate-400')}>
+              {t.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {kind === 'EXCLUDED' && (
+        <p className="text-xs text-slate-500 -mt-1">
+          Vouchers, on-ground issues, avail checks and the like. These are kept out of the query sheet and
+          written to the separate tab instead — edit the patterns under Configuration → Mail that is not a query.
+        </p>
+      )}
+
       {/* ── Filters ──────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[14rem]">
@@ -122,17 +172,20 @@ export default function QueriesTab({
           />
         </div>
 
-        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
-          {REPLY_FILTERS.map(f => (
-            <button
-              key={f.id} onClick={() => setReply(f.id)}
-              className={cn(
-                'px-3 py-2 text-xs font-semibold transition-colors',
-                reply === f.id ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50',
-              )}
-            >{f.label}</button>
-          ))}
-        </div>
+        {/* Reply SLA only means something for real queries. */}
+        {kind === 'QUERY' && (
+          <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+            {REPLY_FILTERS.map(f => (
+              <button
+                key={f.id} onClick={() => setReply(f.id)}
+                className={cn(
+                  'px-3 py-2 text-xs font-semibold transition-colors',
+                  reply === f.id ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50',
+                )}
+              >{f.label}</button>
+            ))}
+          </div>
+        )}
 
         <select value={sync} onChange={e => setSync(e.target.value)} className={cn(inputCls, 'w-auto')}>
           {SYNC_FILTERS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
@@ -176,7 +229,7 @@ export default function QueriesTab({
               <thead className="bg-slate-50 border-b border-slate-200 text-left">
                 <tr className="text-[11px] uppercase tracking-wide text-slate-500">
                   <th className="px-3 py-2.5 font-semibold">Received</th>
-                  <th className="px-3 py-2.5 font-semibold">Status</th>
+                  <th className="px-3 py-2.5 font-semibold">{kind === 'EXCLUDED' ? 'Kept out by' : 'Status'}</th>
                   <th className="px-3 py-2.5 font-semibold min-w-[18rem]">Subject</th>
                   <th className="px-3 py-2.5 font-semibold">File handler</th>
                   <th className="px-3 py-2.5 font-semibold">Sales person</th>
@@ -196,7 +249,19 @@ export default function QueriesTab({
                       <td className="px-3 py-2.5 whitespace-nowrap text-slate-500 text-xs">
                         {formatDateTime(entry.receivedAt)}
                       </td>
-                      <td className="px-3 py-2.5"><ReplyStatusBadge status={entry.replyStatus} /></td>
+                      <td className="px-3 py-2.5">
+                        {entry.mailKind === 'EXCLUDED'
+                          ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-semibold max-w-[11rem]"
+                              title={entry.excludeReason ?? 'Not a query'}
+                            >
+                              <FilterX className="w-3 h-3 flex-shrink-0" />
+                              <span className="truncate">{entry.excludeReason ?? 'Not a query'}</span>
+                            </span>
+                          )
+                          : <ReplyStatusBadge status={entry.replyStatus} />}
+                      </td>
                       <td className="px-3 py-2.5">
                         <button onClick={() => setViewing(entry)} className="text-left group">
                           <span className="flex items-center gap-1.5">
@@ -239,6 +304,11 @@ export default function QueriesTab({
                       </td>
                       <td className="px-3 py-2.5">
                         <SyncStatusBadge status={entry.syncStatus} sheetRow={entry.sheetRow} />
+                        {entry.sheetTab && (
+                          <p className="text-[10px] text-slate-400 mt-0.5 max-w-[12rem] truncate" title={entry.sheetTab}>
+                            {entry.sheetTab}
+                          </p>
+                        )}
                         {entry.syncError && (
                           <p className="text-[10px] text-rose-500 mt-0.5 max-w-[12rem] truncate" title={entry.syncError}>
                             {entry.syncError}
@@ -247,6 +317,21 @@ export default function QueriesTab({
                       </td>
                       <td className="px-3 py-2.5">
                         <div className="flex items-center justify-end gap-1">
+                          {/* Only offered before the row is written — moving it
+                              afterwards would strand a row on the other tab. */}
+                          {!entry.sheetRow && (
+                            <button
+                              onClick={() => moveKind(entry)}
+                              title={entry.mailKind === 'EXCLUDED'
+                                ? 'Treat as a real query — write it to the query sheet'
+                                : 'Not a query — send it to the other-mail tab instead'}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                            >
+                              {entry.mailKind === 'EXCLUDED'
+                                ? <Undo2 className="w-4 h-4" />
+                                : <FilterX className="w-4 h-4" />}
+                            </button>
+                          )}
                           <button
                             onClick={() => setEditing(entry)} title="Edit"
                             className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 hover:bg-emerald-50"
@@ -268,7 +353,8 @@ export default function QueriesTab({
 
       {!loading && entries.length > 0 && (
         <p className="text-xs text-slate-400">
-          Showing {entries.length} of {total.toLocaleString()} quer{total === 1 ? 'y' : 'ies'}
+          Showing {entries.length} of {total.toLocaleString()}{' '}
+          {kind === 'EXCLUDED' ? `mail${total === 1 ? '' : 's'} kept out of the query sheet` : `quer${total === 1 ? 'y' : 'ies'}`}
         </p>
       )}
 
@@ -296,7 +382,15 @@ export default function QueriesTab({
               <Detail label="Region" value={viewing.region ?? '—'} />
               <Detail label="CNTL" value={viewing.cntl ?? '—'} />
               <Detail label="Amendment" value={viewing.amendment ?? '—'} />
-              <Detail label="Sheet row" value={viewing.sheetRow ? String(viewing.sheetRow) : 'Not written yet'} />
+              <Detail
+                label="Sheet row"
+                value={viewing.sheetRow
+                  ? `${viewing.sheetTab ?? 'Query sheet'} · row ${viewing.sheetRow}`
+                  : 'Not written yet'}
+              />
+              {viewing.mailKind === 'EXCLUDED' && (
+                <Detail label="Kept out of the query sheet by" value={viewing.excludeReason ?? 'Not a query'} />
+              )}
             </div>
 
             <div>
