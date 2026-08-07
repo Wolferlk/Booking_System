@@ -7,6 +7,7 @@ import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
+import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@prisma/client'
 
@@ -157,6 +158,12 @@ export async function GET(req: NextRequest) {
         },
       })
     }
+  }
+
+  // Operational quick filter (on ground / arriving today / …) from the stat cards.
+  const quick = searchParams.get('quick')
+  if (quick && isQuickFilter(quick)) {
+    andClauses.push(quickFilterWhere(quick) as Record<string, unknown>)
   }
 
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}

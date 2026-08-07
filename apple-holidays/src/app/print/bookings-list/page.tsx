@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import { formatDate, formatCurrency } from '@/lib/utils'
+import { isQuickFilter, QUICK_FILTER_LABELS, type QuickFilter } from '@/lib/booking-quick-filters'
 
 interface Booking {
   id: string
@@ -49,7 +50,7 @@ function PrintContent() {
   useEffect(() => {
     const params = new URLSearchParams()
     const passthrough = ['search', 'refSearch', 'contentSearch', 'status', 'dateFilter', 'dateField',
-      'dateFrom', 'dateTo', 'sortBy', 'sortDir', 'country']
+      'dateFrom', 'dateTo', 'sortBy', 'sortDir', 'country', 'source', 'quick']
     passthrough.forEach(k => { const v = sp.get(k); if (v) params.set(k, v) })
     params.set('limit', '500')
     params.set('page', '1')
@@ -79,6 +80,9 @@ function PrintContent() {
   if (sp.get('contentSearch')) activeFilters.push(`Content: "${sp.get('contentSearch')}"`)
   if (sp.get('status'))        activeFilters.push(`Status: ${STATUS_LABEL[sp.get('status')!] ?? sp.get('status')}`)
   if (sp.get('dateFilter'))    activeFilters.push(`Period: ${sp.get('dateFilter')?.replace('_', ' ')}`)
+  if (sp.get('quick') && isQuickFilter(sp.get('quick')!)) {
+    activeFilters.push(`View: ${QUICK_FILTER_LABELS[sp.get('quick') as QuickFilter]}`)
+  }
   if (sp.get('dateFrom') || sp.get('dateTo')) {
     activeFilters.push(`Created: ${sp.get('dateFrom') ?? '…'} → ${sp.get('dateTo') ?? '…'}`)
   }

@@ -19,8 +19,9 @@ import {
   formatReportDate, PERIOD_LABEL, type ReportWindow,
 } from './report-window'
 import type {
-  BookingLine, ComplaintLine, CountryRow, ReportData, TourLine,
+  BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReportData, TourLine,
 } from './report-data'
+import type { ReadinessCheck } from '@/lib/booking-readiness'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,12 @@ table{border-collapse:collapse;}
 .b{font-weight:700;color:${C.ink};}
 .nw{white-space:nowrap;}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;line-height:1.5;white-space:nowrap;}
+.ok{background:#ecfdf5;color:#065f46;}
+.wn{background:#fffbeb;color:#92400e;}
+.bd{background:#fef2f2;color:#991b1b;}
+.na{color:${C.faint};}
+.sb{background:${C.b2b};color:#ffffff;}
+.sc{background:${C.b2c};color:#ffffff;}
 .note{font-size:13px;line-height:1.6;color:${C.faint};padding:14px 0;text-align:center;background:${C.wash};border-radius:8px;}
 .more{font-size:11px;line-height:1.5;color:${C.faint};padding-top:10px;}
 .cmp{border:1px solid ${C.line};border-radius:8px;margin-bottom:10px;}
@@ -117,10 +124,11 @@ const SEVERITY_PILL: Record<string, string> = {
   low: pill('LOW', '#ffffff', C.faint),
 }
 
+/** Classed, not inline: this one renders on every booking row in three tables. */
 function sourcePill(source: string): string {
   return source === 'B2C'
-    ? pill('B2C', '#ffffff', C.b2c)
-    : pill('B2B', '#ffffff', C.b2b)
+    ? '<span class="pill sc">B2C</span>'
+    : '<span class="pill sb">B2B</span>'
 }
 
 /** Percentage-of-total bar used in the country breakdowns. */
@@ -318,6 +326,105 @@ function onGroundSection(d: ReportData): string {
   )
 }
 
+/**
+ * One checklist cell. Green when done, amber part-done, red outstanding, grey
+ * when the check does not apply — every cell also carries the words, so colour
+ * is never the only signal.
+ *
+ * Classed rather than inline-styled: this cell is emitted four times per row and
+ * the inline palette alone cost ~7 KB on a busy day, which is real money against
+ * Gmail's ~102 KB clipping threshold (see the note at the top of this file).
+ */
+function checkCell(c: ReadinessCheck): string {
+  const cls = c.state === 'DONE' ? 'ok' : c.state === 'PARTIAL' ? 'wn' : 'bd'
+  if (c.state === 'NA') return `<span class="na">${esc(c.short === 'None' ? 'None' : '—')}</span>`
+  return `<span class="pill ${cls}">${esc(c.short === 'Confirmed' ? 'DONE' : c.short)}</span>`
+}
+
+function readinessSection(d: ReportData): string {
+  const r = d.readiness
+
+  const kpis = kpiRow([
+    { label: 'Arriving in 3 days', value: num(r.total), note: `${num(r.pax)} guests`, color: C.brand },
+    { label: 'Tomorrow', value: num(r.tomorrow), note: r.tomorrowNotReady ? `${num(r.tomorrowNotReady)} not ready` : 'all ready', color: r.tomorrowNotReady ? C.bad : C.good },
+    { label: 'Fully ready', value: num(r.ready), color: C.good },
+    { label: 'Needs action', value: num(r.notReady), color: r.notReady ? C.bad : C.ink },
+  ])
+
+  const banner = r.tomorrowNotReady
+    ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#991b1b;">
+         ${num(r.tomorrowNotReady)} tour${r.tomorrowNotReady === 1 ? '' : 's'} arriving tomorrow ${r.tomorrowNotReady === 1 ? 'is' : 'are'} not fully ready — clear ${r.tomorrowNotReady === 1 ? 'it' : 'them'} first.
+       </div>`
+    : ''
+
+  // What is outstanding, counted per check — tells the desk which queue to work.
+  const gaps: { label: string; count: number }[] = [
+    { label: 'Client confirmation', count: r.pendingClient },
+    { label: 'Driver allocation', count: r.pendingDriver },
+    { label: 'Tickets', count: r.pendingTickets },
+    { label: 'QC', count: r.pendingQc },
+  ]
+  const gapTable = r.total
+    ? `<div class="h3">Outstanding by check</div>` +
+      tableOpen([{ text: 'Check' }, { text: 'Bookings pending', align: 'right', width: '120' }, { text: '', width: '130' }]) +
+      gaps.map(g => `<tr>
+        ${td(esc(g.label), { bold: true, color: C.ink })}
+        ${td(num(g.count), { align: 'right', bold: g.count > 0, color: g.count ? C.bad : C.good })}
+        ${td(bar(g.count, r.total, g.count ? C.bad : C.line))}
+      </tr>`).join('') + TABLE_CLOSE
+    : ''
+
+  const dayTable = r.total
+    ? `<div style="padding-top:18px;"><div class="h3">By arrival day</div>` +
+      tableOpen([
+        { text: 'Arrives' }, { text: 'Tours', align: 'right', width: '60' },
+        { text: 'Pax', align: 'right', width: '55' },
+        { text: 'Ready', align: 'right', width: '60' }, { text: 'Not ready', align: 'right', width: '75' },
+      ]) + r.byDay.map(day => `<tr>
+        ${td(`${esc(day.label)}${day.label === 'Tomorrow' ? ` <span style="color:${C.faint};">${esc(formatReportDate(day.date))}</span>` : ''}`, { bold: true, color: C.ink, nowrap: true })}
+        ${td(num(day.bookings), { align: 'right', bold: true, color: C.ink })}
+        ${td(num(day.pax), { align: 'right' })}
+        ${td(num(day.ready), { align: 'right', color: C.good })}
+        ${td(num(day.notReady), { align: 'right', bold: day.notReady > 0, color: day.notReady ? C.bad : C.body })}
+      </tr>`).join('') + TABLE_CLOSE + '</div>'
+    : ''
+
+  const list = r.bookings.length
+    ? tableOpen([
+        { text: 'Ref' }, { text: 'Arrives' }, { text: 'Country' },
+        { text: 'Pax', align: 'right', width: '40' },
+        { text: 'Client', align: 'center' }, { text: 'Driver', align: 'center' },
+        { text: 'Tickets', align: 'center' }, { text: 'QC', align: 'center' },
+      ]) + r.bookings.map((b: ReadinessLine) => {
+        const arrives = b.daysToArrival === 1 ? 'Tomorrow' : formatReportDate(b.arrivalDate, { weekday: true })
+        const guest = b.leadPassenger ?? b.destination
+        return `<tr>
+          ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
+          ${td(esc(arrives), { nowrap: true, color: b.daysToArrival === 1 ? C.bad : C.body, bold: b.daysToArrival === 1 })}
+          ${td(esc(b.countryLabel), { nowrap: true })}
+          ${td(num(b.pax), { align: 'right' })}
+          ${td(checkCell(b.readiness.client), { align: 'center', nowrap: true })}
+          ${td(checkCell(b.readiness.driver), { align: 'center', nowrap: true })}
+          ${td(checkCell(b.readiness.tickets), { align: 'center', nowrap: true })}
+          ${td(checkCell(b.readiness.qc), { align: 'center', nowrap: true })}
+        </tr>`
+      }).join('') + TABLE_CLOSE + moreNote(r.bookings.length, r.total, 'arrivals')
+    : emptyNote('No tours arrive in the next three days.')
+
+  const legend = r.bookings.length
+    ? `<div class="more">Driver and ticket cells read “done / total”. Red is nothing done, amber is part-done, green is complete; “—” or “None” means the check does not apply — no transfers, or no tickets on the booking.</div>`
+    : ''
+
+  return section(
+    'Arriving next 3 days — readiness',
+    `${formatReportDate(r.fromDate, { weekday: true })} to ${formatReportDate(r.toDate, { weekday: true })} · client confirmation, drivers, tickets and QC`,
+    C.warn,
+    banner + kpis + gapTable + dayTable +
+      `<div style="padding-top:18px;"><div class="h3">Booking-by-booking checklist</div>${list}${legend}</div>` +
+      (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : ''),
+  )
+}
+
 function complaintCard(c: ComplaintLine): string {
   const resolved = c.status === 'resolved'
   const edge = resolved ? C.good : c.severity === 'high' ? C.bad : C.warn
@@ -455,7 +562,7 @@ function upcomingSection(d: ReportData): string {
 
 export interface RenderOptions {
   /** Which sections to include, in the order they appear. */
-  sections?: { created?: boolean; onGround?: boolean; complaints?: boolean; upcoming?: boolean }
+  sections?: { created?: boolean; onGround?: boolean; readiness?: boolean; complaints?: boolean; upcoming?: boolean }
   /** Optional AI-written paragraph placed above the sections. */
   narrative?: string | null
   /** Absolute dashboard URL for the footer link. */
@@ -488,13 +595,14 @@ function summaryStrip(d: ReportData): string {
   const cells = [
     { label: 'Created', value: num(d.created.total), sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C` },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
+    { label: 'Next 3 days', value: num(d.readiness.total), sub: `${num(d.readiness.notReady)} not ready` },
     { label: 'Complaints', value: num(d.complaints.total), sub: `${num(d.complaints.open)} open` },
     { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} in 7d` },
   ]
   return `
   <tr><td style="background:#0b3d3a;padding:14px 18px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      ${cells.map(c => `<td width="25%" align="center" style="padding:2px 4px;">
+      ${cells.map(c => `<td width="${Math.floor(100 / cells.length)}%" align="center" style="padding:2px 4px;">
         <div style="font:800 22px/1.2 ${FONT};color:#ffffff;">${c.value}</div>
         <div style="font:700 10px/1.4 ${FONT};color:rgba(255,255,255,.66);text-transform:uppercase;letter-spacing:.08em;padding-top:3px;">${esc(c.label)}</div>
         <div style="font:400 10px/1.4 ${FONT};color:rgba(255,255,255,.45);padding-top:2px;">${esc(c.sub)}</div>
@@ -518,6 +626,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
   const want = {
     created: opts.sections?.created !== false,
     onGround: opts.sections?.onGround !== false,
+    readiness: opts.sections?.readiness !== false,
     complaints: opts.sections?.complaints !== false,
     upcoming: opts.sections?.upcoming !== false,
   }
@@ -540,6 +649,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
   const body = [
     want.created ? createdSection(d) : '',
     want.onGround ? onGroundSection(d) : '',
+    want.readiness ? readinessSection(d) : '',
     want.complaints ? complaintsSection(d) : '',
     want.upcoming ? upcomingSection(d) : '',
   ].join('')
@@ -557,7 +667,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.complaints.open)} open complaints.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.complaints.open)} open complaints.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -589,6 +699,7 @@ export function renderReportSubject(d: ReportData, opts: { prefix?: string; test
     `${d.created.total} new`,
     `${d.onGround.total} on ground`,
   ]
+  if (d.readiness.notReady > 0) parts.push(`${d.readiness.notReady} not ready in 3d`)
   if (d.complaints.open > 0) parts.push(`${d.complaints.open} open complaint${d.complaints.open === 1 ? '' : 's'}`)
   const range = d.window.period === 'DAILY'
     ? formatReportDate(d.window.fromDate)
@@ -622,6 +733,18 @@ export function renderReportCsv(d: ReportData): string {
 
   block(`On ground ${d.onGround.date}`, ['Ref', 'Source', 'Country', 'Lead guest', 'Day', 'Total days', 'Pax', 'Status'],
     d.onGround.tours.map(t => [t.bookingRef, t.source, t.countryLabel, t.leadPassenger ?? '', t.dayNo, t.totalDays, t.pax, t.status].map(String)))
+
+  block(`Arriving ${d.readiness.fromDate} to ${d.readiness.toDate} — readiness`,
+    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Days to arrival', 'Pax', 'Status', 'Client confirmed', 'Driver allocation', 'Driver detail', 'Tickets', 'Ticket detail', 'QC stage', 'Ready', 'Outstanding'],
+    d.readiness.bookings.map(b => [
+      b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, b.daysToArrival, b.pax, b.status,
+      b.readiness.client.state === 'DONE' ? 'Yes' : 'No',
+      b.readiness.driver.short, b.readiness.driver.detail,
+      b.readiness.tickets.short, b.readiness.tickets.detail,
+      b.readiness.qc.short,
+      b.readiness.ready ? 'Yes' : 'No',
+      b.readiness.outstanding.join('; '),
+    ].map(String)))
 
   block('Complaints', ['Raised at', 'Ref', 'Customer', 'Country', 'Category', 'Severity', 'Status', 'Title', 'Details', 'Resolution', 'Resolved at', 'Hours to resolve'],
     [...d.complaints.items, ...d.complaints.carriedOpen].map(c => [c.createdAt, c.bookingRef ?? '', c.customerName ?? '', c.countryLabel, c.category, c.severity, c.status, c.title ?? '', c.details ?? '', c.resolutionNote ?? '', c.resolvedAt ?? '', c.resolutionHours ?? ''].map(String)))

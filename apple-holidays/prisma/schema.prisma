@@ -87,86 +87,86 @@ model MailMessage {
 }
 
 model Booking {
-  id                     String             @id @default(cuid())
-  bookingRef             String             @unique
+  id                     String                    @id @default(cuid())
+  bookingRef             String                    @unique
   agentBookingId         String?
   agent                  String?
   fileHandler            String?
-  version                Int                @default(1)
-  amendmentNote          String?            @db.Text
-  status                 BookingStatus      @default(DRAFT)
+  version                Int                       @default(1)
+  amendmentNote          String?                   @db.Text
+  status                 BookingStatus             @default(DRAFT)
   arrivalDate            DateTime
   departureDate          DateTime
-  paxAdults              Int                @default(0)
-  paxChildren            Int                @default(0)
-  quotedTotal            Decimal?           @db.Decimal(10, 2)
-  currency               String             @default("USD")
+  paxAdults              Int                       @default(0)
+  paxChildren            Int                       @default(0)
+  quotedTotal            Decimal?                  @db.Decimal(10, 2)
+  currency               String                    @default("USD")
   cancellationDeadline   DateTime?
-  terms                  String?            @db.Text
-  exclusions             String?            @db.Text
-  policyNotes            String?            @db.Text
-  sourceDocUrl           String?            @db.Text
+  terms                  String?                   @db.Text
+  exclusions             String?                   @db.Text
+  policyNotes            String?                   @db.Text
+  sourceDocUrl           String?                   @db.Text
   sourceDocName          String?
   clientPortalUnlockedAt DateTime?
   recheckCompletedAt     DateTime?
   recheckCompletedBy     String?
   createdById            String
   clientUserId           String?
-  createdAt              DateTime           @default(now())
-  updatedAt              DateTime           @updatedAt
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
   agentEmail             String?
   agentPhone             String?
   agentWhatsapp          String?
   agentCountry           String?
-  agentAddress           String?            @db.Text
+  agentAddress           String?                   @db.Text
   contactEmail           String?
   contactPhone           String?
   contactWhatsapp        String?
   contactCountry         String?
-  contactAddress         String?            @db.Text
+  contactAddress         String?                   @db.Text
   qcAutoEmailSentAt      DateTime?
   qcAutoWaSentAt         DateTime?
   qcPassedAt             DateTime?
   operationCountry       OperationCountry?
-  chauffeurContact       String?            @db.Text
+  chauffeurContact       String?                   @db.Text
   checkedBy              String?
   dealName               String?
   isNumber               String?
   languagePreference     String?
   reconfirmBy            String?
-  specialOccasions       String?            @db.Text
+  specialOccasions       String?                   @db.Text
   tourDestination        String?
-  onedriveFolderUrl      String?            @db.Text
-  clientRequest          String?            @db.Text
+  onedriveFolderUrl      String?                   @db.Text
+  clientRequest          String?                   @db.Text
   cntlNumber             String?
-  importantNotes         String?            @db.Text
-  otherNote              String?            @db.Text
-  packageExcludes        String?            @db.Text
-  packageIncludes        String?            @db.Text
-  tips                   String?            @db.Text
-  valueAddedServices     String?            @db.Text
-  paxInfants             Int                @default(0)
+  importantNotes         String?                   @db.Text
+  otherNote              String?                   @db.Text
+  packageExcludes        String?                   @db.Text
+  packageIncludes        String?                   @db.Text
+  tips                   String?                   @db.Text
+  valueAddedServices     String?                   @db.Text
+  paxInfants             Int                       @default(0)
   cancelledAt            DateTime?
   cancelledById          String?
   cancelledByName        String?
   cancelledByEmail       String?
-  cancellationReason     String?            @db.Text
+  cancellationReason     String?                   @db.Text
   // Cancellation fees captured on the request form. `cancellationFees` is a JSON
   // array of { note, amount } lines; `cancellationFeeTotal` is the server-computed sum.
   cancellationFees       Json?
-  cancellationFeeTotal   Decimal?           @db.Decimal(12, 2)
+  cancellationFeeTotal   Decimal?                  @db.Decimal(12, 2)
   // Accounts-team approval trail for a cancellation request.
   cancelRequestedAt      DateTime?
   cancelPrevStatus       BookingStatus?
   cancelDecidedAt        DateTime?
   cancelDecidedByName    String?
   cancelDecidedByEmail   String?
-  cancelDecisionNote     String?            @db.Text
+  cancelDecisionNote     String?                   @db.Text
   cancelMailSentAt       DateTime?
   accommodations         Accommodation[]
   versions               BookingVersion[]
-  clientUser             User?              @relation("ClientUser", fields: [clientUserId], references: [id])
-  createdBy              User               @relation("CreatedBy", fields: [createdById], references: [id])
+  clientUser             User?                     @relation("ClientUser", fields: [clientUserId], references: [id])
+  createdBy              User                      @relation("CreatedBy", fields: [createdById], references: [id])
   changeRequests         ChangeRequest[]
   contactLogs            ContactLog[]
   customerFeedback       CustomerFeedback?
@@ -238,18 +238,19 @@ model Flight {
 }
 
 model Accommodation {
-  id        String   @id @default(cuid())
-  bookingId String
-  city      String
-  hotel     String
-  checkIn   DateTime
-  checkOut  DateTime
-  address   String?  @db.Text
-  contact   String?
-  nights    Int
-  roomType  String?
-  mealType  String?
-  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  bookingId      String
+  city           String
+  hotel          String
+  checkIn        DateTime
+  checkOut       DateTime
+  address        String?  @db.Text
+  contact        String?
+  nights         Int
+  roomType       String?
+  mealType       String?
+  ownArrangement Boolean  @default(false)
+  booking        Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([bookingId], map: "accommodations_bookingId_fkey")
   @@map("accommodations")
@@ -519,29 +520,29 @@ model Reminder {
 }
 
 model Driver {
-  id             String            @id @default(cuid())
+  id             String                     @id @default(cuid())
   name           String
   phone          String
   email          String?
   licenseNo      String?
-  isActive       Boolean           @default(true)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  advanceBalance Decimal           @default(0.00) @db.Decimal(10, 2)
+  isActive       Boolean                    @default(true)
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+  advanceBalance Decimal                    @default(0.00) @db.Decimal(10, 2)
   bankAccountNo  String?
   bankBranch     String?
   bankCode       String?
   bankHolder     String?
   bankName       String?
-  vehicleId      String?           @unique
-  photoUrl       String?           @db.Text
+  vehicleId      String?                    @unique
+  photoUrl       String?                    @db.Text
   country        OperationCountry?
   vendorId       String?
   assignments    Assignment[]
   driverPayments DriverPayment[]
   slAllocations  SriLankaDriverAllocation[]
-  vehicle        Vehicle?          @relation(fields: [vehicleId], references: [id])
-  vendorOwner    VehicleVendor?    @relation("VendorDrivers", fields: [vendorId], references: [id])
+  vehicle        Vehicle?                   @relation(fields: [vehicleId], references: [id])
+  vendorOwner    VehicleVendor?             @relation("VendorDrivers", fields: [vendorId], references: [id])
 
   @@index([vendorId], map: "drivers_vendorId_fkey")
   @@map("drivers")
@@ -569,16 +570,16 @@ model Vehicle {
 }
 
 model VehicleVendor {
-  id            String            @id @default(cuid())
+  id            String                     @id @default(cuid())
   name          String
   phone         String?
   email         String?
   address       String?
-  isActive      Boolean           @default(true)
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  isActive      Boolean                    @default(true)
+  createdAt     DateTime                   @default(now())
+  updatedAt     DateTime                   @updatedAt
   country       OperationCountry?
-  isRegistered  Boolean           @default(false)
+  isRegistered  Boolean                    @default(false)
   password      String?
   whatsappPhone String?
   bankName      String?
@@ -587,7 +588,7 @@ model VehicleVendor {
   bankBranch    String?
   bankCode      String?
   assignments   Assignment[]
-  drivers       Driver[]          @relation("VendorDrivers")
+  drivers       Driver[]                   @relation("VendorDrivers")
   vehicles      Vehicle[]
   slAllocations SriLankaDriverAllocation[]
 
@@ -702,7 +703,7 @@ model DriverLog {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  booking     Booking   @relation(fields: [bookingRef], references: [bookingRef], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingRef], references: [bookingRef], onDelete: Cascade)
 
   @@map("driver_logs")
 }
@@ -911,18 +912,18 @@ model tbl_te_campaign {
 }
 
 model tbl_te_feedback {
-  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
-  service_id  BigInt    @db.UnsignedBigInt
-  schedule_id BigInt?   @db.UnsignedBigInt
-  booking_ref String    @db.VarChar(64)
-  day_no      Int?
-  call_date   DateTime? @db.Date
-  sentiment   String?   @db.VarChar(16)
-  highlights  String?   @db.Text
-  hotel_ok    String?   @db.VarChar(12)
-  meals_ok    String?   @db.VarChar(12)
-  driver_ok   String?   @db.VarChar(12)
-  vehicle_ok  String?   @db.VarChar(12)
+  id              BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  service_id      BigInt    @db.UnsignedBigInt
+  schedule_id     BigInt?   @db.UnsignedBigInt
+  booking_ref     String    @db.VarChar(64)
+  day_no          Int?
+  call_date       DateTime? @db.Date
+  sentiment       String?   @db.VarChar(16)
+  highlights      String?   @db.Text
+  hotel_ok        String?   @db.VarChar(12)
+  meals_ok        String?   @db.VarChar(12)
+  driver_ok       String?   @db.VarChar(12)
+  vehicle_ok      String?   @db.VarChar(12)
   issues          String?   @db.Text
   summary         String?   @db.Text
   transcript      Json?
@@ -938,25 +939,25 @@ model tbl_te_feedback {
 // One row per pre-trip reconfirmation call (uk_schedule keeps it to one row per
 // schedule row — live capture + post-call transcript pass merge into the same record).
 model tbl_te_reconfirmation {
-  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
-  service_id       BigInt    @db.UnsignedBigInt
-  schedule_id      BigInt?   @db.UnsignedBigInt
-  booking_ref      String    @db.VarChar(64)
-  conversation_id  String?   @db.VarChar(128)
-  dates_ok         String?   @db.VarChar(12)
-  flight_ok        String?   @db.VarChar(12)
-  pax_ok           String?   @db.VarChar(12)
-  contact_ok       String?   @db.VarChar(12)
-  requested_change String?   @db.Text
-  special_requests String?   @db.Text
-  notes            String?   @db.Text
-  outcome          String?   @db.VarChar(24)
-  sentiment        String?   @db.VarChar(16)
-  summary          String?   @db.Text
+  id               BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  service_id       BigInt   @db.UnsignedBigInt
+  schedule_id      BigInt?  @db.UnsignedBigInt
+  booking_ref      String   @db.VarChar(64)
+  conversation_id  String?  @db.VarChar(128)
+  dates_ok         String?  @db.VarChar(12)
+  flight_ok        String?  @db.VarChar(12)
+  pax_ok           String?  @db.VarChar(12)
+  contact_ok       String?  @db.VarChar(12)
+  requested_change String?  @db.Text
+  special_requests String?  @db.Text
+  notes            String?  @db.Text
+  outcome          String?  @db.VarChar(24)
+  sentiment        String?  @db.VarChar(16)
+  summary          String?  @db.Text
   transcript       Json?
   raw              Json?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
-  updated_at       DateTime  @default(now()) @db.Timestamp(0)
+  created_at       DateTime @default(now()) @db.Timestamp(0)
+  updated_at       DateTime @default(now()) @db.Timestamp(0)
 
   @@unique([schedule_id], map: "uk_schedule")
   @@index([service_id, created_at], map: "idx_service")
@@ -967,24 +968,24 @@ model tbl_te_reconfirmation {
 // One row per post-tour feedback call (uk_schedule). `rating` is 0–10; the 1–5
 // star value is derived on read and never stored.
 model tbl_te_post_tour {
-  id                  BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
-  service_id          BigInt    @db.UnsignedBigInt
-  schedule_id         BigInt?   @db.UnsignedBigInt
-  booking_ref         String    @db.VarChar(64)
-  conversation_id     String?   @db.VarChar(128)
+  id                  BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  service_id          BigInt   @db.UnsignedBigInt
+  schedule_id         BigInt?  @db.UnsignedBigInt
+  booking_ref         String   @db.VarChar(64)
+  conversation_id     String?  @db.VarChar(128)
   rating              Int?
   reached_home_safely Boolean?
   would_recommend     Boolean?
-  best_moment         String?   @db.Text
-  improvements        String?   @db.Text
-  comment             String?   @db.Text
-  outcome             String?   @db.VarChar(24)
-  sentiment           String?   @db.VarChar(16)
-  summary             String?   @db.Text
+  best_moment         String?  @db.Text
+  improvements        String?  @db.Text
+  comment             String?  @db.Text
+  outcome             String?  @db.VarChar(24)
+  sentiment           String?  @db.VarChar(16)
+  summary             String?  @db.Text
   transcript          Json?
   raw                 Json?
-  created_at          DateTime  @default(now()) @db.Timestamp(0)
-  updated_at          DateTime  @default(now()) @db.Timestamp(0)
+  created_at          DateTime @default(now()) @db.Timestamp(0)
+  updated_at          DateTime @default(now()) @db.Timestamp(0)
 
   @@unique([schedule_id], map: "uk_schedule")
   @@index([service_id, created_at], map: "idx_service")
@@ -1049,25 +1050,25 @@ model tbl_te_quick_call {
 }
 
 model tbl_te_service {
-  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
-  booking_ref       String    @unique(map: "uk_booking_ref") @db.VarChar(64)
-  customer_name     String?   @db.VarChar(255)
-  customer_phone    String?   @db.VarChar(32)
-  trip_label        String?   @db.VarChar(255)
-  arrival_date      DateTime? @db.Date
-  departure_date    DateTime? @db.Date
-  pax               Int?
-  status            String    @default("active") @db.VarChar(24)
-  snapshot          Json?
-  created_at        DateTime  @default(now()) @db.Timestamp(0)
-  updated_at        DateTime  @default(now()) @db.Timestamp(0)
-  call_phone        String?   @db.VarChar(32)
-  call_time         String    @default("18:00") @db.VarChar(5)
-  schedule_mode     String    @default("agenda") @db.VarChar(12)
-  interval_count    Int?
-  interval_unit     String?   @db.VarChar(10)
-  interval_start_at DateTime? @db.DateTime(0)
-  retry_gap_min     Int?
+  id                    BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  booking_ref           String    @unique(map: "uk_booking_ref") @db.VarChar(64)
+  customer_name         String?   @db.VarChar(255)
+  customer_phone        String?   @db.VarChar(32)
+  trip_label            String?   @db.VarChar(255)
+  arrival_date          DateTime? @db.Date
+  departure_date        DateTime? @db.Date
+  pax                   Int?
+  status                String    @default("active") @db.VarChar(24)
+  snapshot              Json?
+  created_at            DateTime  @default(now()) @db.Timestamp(0)
+  updated_at            DateTime  @default(now()) @db.Timestamp(0)
+  call_phone            String?   @db.VarChar(32)
+  call_time             String    @default("18:00") @db.VarChar(5)
+  schedule_mode         String    @default("agenda") @db.VarChar(12)
+  interval_count        Int?
+  interval_unit         String?   @db.VarChar(10)
+  interval_start_at     DateTime? @db.DateTime(0)
+  retry_gap_min         Int?
   reconfirm_enabled     Boolean   @default(false)
   reconfirm_days_before Int?
   reconfirm_call_time   String?   @db.VarChar(5)
@@ -1269,4 +1270,181 @@ enum FeedbackPurpose {
   BUSINESS
   LEISURE
   BOTH
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Booking Team Query Monitor
+//
+// Hourly Microsoft Graph sweep of the booking team's file-handler mailboxes.
+// Every inbound sales query is deduplicated across handlers, enriched (sales
+// person / agent / destination / travel date), stored here as the source of
+// truth, and appended to the "Query Entry Sheet" tab of the SharePoint master
+// workbook. Nothing in this cluster touches the booking pipeline — it is a
+// read-only observer of the mailboxes plus a writer to one spreadsheet.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A file-handler mailbox that is swept each run. `displayName` is what gets
+/// written into the sheet's "File Handler" column (the team uses first names
+/// there, e.g. abdul.rahman@aahaas.com → "Abdul"), so it is editable per row.
+model QueryMonitorMailbox {
+  id            String              @id @default(cuid())
+  email         String              @unique
+  displayName   String
+  isActive      Boolean             @default(true)
+  sortOrder     Int                 @default(0)
+  lastCheckedAt DateTime?
+  lastMessageAt DateTime?
+  lastError     String?             @db.Text
+  totalSeen     Int                 @default(0)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  matches       QueryMonitorMatch[]
+
+  @@map("query_monitor_mailboxes")
+}
+
+/// Sender → sales person / agent mapping. Matched by full email first, then by
+/// domain, highest `priority` wins. Unmatched external senders still produce a
+/// row (sales person "Others") when `query_monitor_capture_unmatched` is on.
+model QueryMonitorSenderRule {
+  id            String    @id @default(cuid())
+  matchType     String    @default("DOMAIN") // DOMAIN | EMAIL
+  pattern       String    @unique
+  salesPerson   String
+  agent         String
+  region        String?
+  destination   String?
+  isActive      Boolean   @default(true)
+  priority      Int       @default(0)
+  matchCount    Int       @default(0)
+  lastMatchedAt DateTime?
+  notes         String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([matchType, isActive])
+  @@map("query_monitor_sender_rules")
+}
+
+/// One row per unique inbound query = one row in the spreadsheet. When the same
+/// mail reaches several file handlers it stays a single entry; each recipient is
+/// recorded as a QueryMonitorMatch, their names fill the TO List cell, and
+/// exactly one of them is chosen as the File Handler who owns the query.
+model QueryMonitorEntry {
+  id               String              @id @default(cuid())
+  dedupKey         String              @unique // internetMessageId, else conversationId+subject hash
+  conversationId   String?
+  subject          String              @db.Text
+  fromAddress      String
+  fromName         String
+  fromDomain       String
+  /// QUERY → the master query sheet. EXCLUDED → the "other mail" tab: vouchers,
+  /// on-ground incidents, avail checks and the like, kept out of the SLA pivots.
+  mailKind         String              @default("QUERY")
+  /// The exclusion pattern that diverted it, written to the second tab's Reason column.
+  excludeReason    String?
+  receivedAt       DateTime // sheet column D — "Allocation time"
+  repliedAt        DateTime? // sheet column E — "Replied time"
+  replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
+  /// Sheet column F — the ONE handler who owns this query. Empty until it can be
+  /// known: filled straight away when the mail reached a single mailbox, on the
+  /// first reply with whoever answered, or by hand from the TO-list dropdown.
+  handlerNames     String              @db.Text
+  /// Sheet column G — every mailbox the mail actually reached, comma-joined.
+  /// `handlerNames` is always one of these names.
+  ///
+  /// VarChar with a default, not Text: MySQL forbids defaults on TEXT, and a
+  /// required column with no default cannot be added to a populated table —
+  /// Prisma would demand a database reset. A handful of first names never
+  /// approaches 500 characters.
+  toList           String              @default("") @db.VarChar(500)
+  salesPerson      String?
+  agent            String?
+  destination      String?
+  travelDate       DateTime?
+  travelDateText   String?
+  cntl             String?
+  amendment        String?
+  region           String?
+  isUrgent         Boolean             @default(false)
+  bodySnippet      String              @db.Text
+  extractionSource String              @default("RULE") // RULE | AI | MANUAL
+  aiConfidence     Float?
+  /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
+  manualOverrides  Json?
+  sheetRow         Int?
+  /// Which worksheet `sheetRow` refers to — the two tabs number their rows separately.
+  sheetTab         String?
+  syncStatus       String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
+  syncError        String?             @db.Text
+  syncedAt         DateTime?
+  /// The standby workbook numbers its rows independently of the primary, so it
+  /// carries its own row pointer and its own sync state — a backup that fails to
+  /// write must be retried without re-appending to the primary.
+  backupSheetRow   Int?
+  backupSyncStatus String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
+  backupSyncError  String?             @db.Text
+  firstRunId       String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  matches          QueryMonitorMatch[]
+
+  @@index([receivedAt])
+  @@index([syncStatus])
+  @@index([replyStatus])
+  @@index([conversationId])
+  @@index([fromDomain])
+  @@index([mailKind])
+  @@index([backupSyncStatus])
+  @@map("query_monitor_entries")
+}
+
+/// The per-mailbox sighting of an entry. Its existence is what makes "one mail,
+/// many file handlers" collapse into a single sheet row instead of duplicates.
+model QueryMonitorMatch {
+  id          String              @id @default(cuid())
+  entryId     String
+  mailboxId   String
+  graphId     String
+  handlerName String
+  receivedAt  DateTime
+  repliedAt   DateTime?
+  folder      String?
+  createdAt   DateTime            @default(now())
+  entry       QueryMonitorEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  mailbox     QueryMonitorMailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@unique([entryId, mailboxId])
+  @@index([graphId])
+  @@index([mailboxId])
+  @@map("query_monitor_matches")
+}
+
+/// One record per sweep — the "View log" feed. `steps` holds the full ordered
+/// trace (mailbox fetches, rule matches, AI calls, sheet writes) as JSON.
+model QueryMonitorRun {
+  id               String    @id @default(cuid())
+  trigger          String    @default("CRON") // CRON | MANUAL | BOOT
+  status           String    @default("RUNNING") // RUNNING | SUCCESS | PARTIAL | FAILED | SKIPPED
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
+  durationMs       Int?
+  windowFrom       DateTime?
+  windowTo         DateTime?
+  mailboxesScanned Int       @default(0)
+  messagesSeen     Int       @default(0)
+  entriesCreated   Int       @default(0)
+  entriesUpdated   Int       @default(0)
+  repliesDetected  Int       @default(0)
+  rowsAppended     Int       @default(0)
+  rowsUpdated      Int       @default(0)
+  aiCalls          Int       @default(0)
+  errors           Int       @default(0)
+  errorMessage     String?   @db.Text
+  triggeredBy      String?
+  steps            String?   @db.LongText
+
+  @@index([startedAt])
+  @@index([status])
+  @@map("query_monitor_runs")
 }

@@ -128,6 +128,18 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
     range: `${d.window.fromDate} to ${d.window.toDate}`,
     created: { total: d.created.total, previous: d.created.previousTotal, b2b: d.created.channel.b2b, b2c: d.created.channel.b2c, byCountry: d.created.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
     onGround: { total: d.onGround.total, pax: d.onGround.pax, byCountry: d.onGround.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
+    arrivingNext3Days: {
+      total: d.readiness.total,
+      tomorrow: d.readiness.tomorrow,
+      notReady: d.readiness.notReady,
+      tomorrowNotReady: d.readiness.tomorrowNotReady,
+      pending: {
+        clientConfirmation: d.readiness.pendingClient,
+        driverAllocation: d.readiness.pendingDriver,
+        tickets: d.readiness.pendingTickets,
+        qc: d.readiness.pendingQc,
+      },
+    },
     complaints: { total: d.complaints.total, open: d.complaints.open, resolved: d.complaints.resolved, highOpen: d.complaints.highSeverityOpen, topCategories: d.complaints.byCategory.slice(0, 3) },
     upcoming: { total: d.upcoming.total, next7: d.upcoming.next7, next30: d.upcoming.next30 },
   }
@@ -143,8 +155,9 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
           content: 'You write the opening summary of a travel operations report for senior managers. '
             + 'Exactly three sentences, plain English, no markdown, no bullet points, no greeting. '
             + 'Sentence 1: booking intake and how it compares with the previous period. '
-            + 'Sentence 2: what is happening on the ground and what is coming. '
-            + 'Sentence 3: the single thing that needs attention today, or state that nothing is outstanding. '
+            + 'Sentence 2: what is happening on the ground and what arrives in the next three days. '
+            + 'Sentence 3: the single thing that needs attention today — prefer an unready arrival '
+            + '(missing client confirmation, driver, tickets or QC) over anything else, or state that nothing is outstanding. '
             + 'Only use the numbers given. Never invent a figure.',
         },
         { role: 'user', content: JSON.stringify(facts) },
@@ -198,7 +211,10 @@ export async function buildReport(
 
 /** True when the window holds nothing worth anyone's inbox. */
 function isEmptyReport(d: ReportData): boolean {
-  return d.created.total === 0 && d.complaints.total === 0 && d.onGround.total === 0
+  // Imminent arrivals count as content even on a dead day — an unallocated
+  // driver for a tour landing tomorrow is exactly the mail nobody should miss.
+  return d.created.total === 0 && d.complaints.total === 0
+    && d.onGround.total === 0 && d.readiness.total === 0
 }
 
 // ─── Running ──────────────────────────────────────────────────────────────────

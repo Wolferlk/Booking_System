@@ -11,7 +11,7 @@ import {
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
-  PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck,
+  PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
   ChevronDown, Zap,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
@@ -35,7 +35,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
-  XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck,
+  XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -147,6 +147,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drive Bookings',     href: '/dashboard/admin/onedrive/bookings',     icon: 'FolderOpen' },
     { label: 'Users',              href: '/dashboard/admin/users',                 icon: 'Users' },
     { label: 'File Handlers',      href: '/dashboard/admin/file-handlers',         icon: 'PlaneTakeoff' },
+    { label: 'Query Monitor',      href: '/dashboard/admin/query-monitor',        icon: 'Inbox' },
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
@@ -212,6 +213,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drive Bookings',     href: '/dashboard/admin/onedrive/bookings',     icon: 'FolderOpen' },
     { label: 'Users',              href: '/dashboard/admin/users',                 icon: 'Users' },
     { label: 'File Handlers',      href: '/dashboard/admin/file-handlers',         icon: 'PlaneTakeoff' },
+    { label: 'Query Monitor',      href: '/dashboard/admin/query-monitor',        icon: 'Inbox' },
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
@@ -284,6 +286,7 @@ function classifyNavItem(item: NavItem): NavGroupId {
   if (h.startsWith('/dashboard/whatsapp')) return 'comms'
   if (h.startsWith('/dashboard/admin/mail-inbox')) return 'comms'
   if (h.startsWith('/dashboard/admin/onedrive')) return 'comms'
+  if (h.startsWith('/dashboard/admin/query-monitor')) return 'comms'
   if (h.startsWith('/dashboard/mc-report')) return 'reports'
   if (h.startsWith('/dashboard/reports')) return 'reports'
   if (h.startsWith('/dashboard/bookings')) return 'bookings'
