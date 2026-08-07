@@ -849,10 +849,26 @@ export default function TicketsPage() {
         )}
 
         {/* ── Global selection action bar ──────────────────────────────────── */}
-        {canCreate && selectedIds.size > 0 && (
-          <div className="flex items-center gap-3 px-4 py-2.5 bg-brand-50 border border-brand-200 rounded-xl">
-            <span className="text-sm font-semibold text-brand-800">{selectedIds.size} ticket{selectedIds.size > 1 ? 's' : ''} selected</span>
-            <div className="flex items-center gap-2 ml-auto">
+        {canCreate && tickets.length > 0 && (
+          <div className={`flex items-center gap-3 px-4 py-2.5 border rounded-xl ${
+            selectedIds.size > 0 ? 'bg-brand-50 border-brand-200' : 'bg-slate-50 border-slate-200'
+          }`}>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-slate-300 accent-brand-500"
+                checked={selectedIds.size === tickets.length}
+                ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < tickets.length }}
+                onChange={() => toggleSelectAll(tickets.map(t => t.id))}
+                title="Select all tickets"
+              />
+              <span className={`text-sm font-semibold ${selectedIds.size > 0 ? 'text-brand-800' : 'text-slate-600'}`}>
+                {selectedIds.size > 0
+                  ? `${selectedIds.size} ticket${selectedIds.size > 1 ? 's' : ''} selected`
+                  : `Select all (${tickets.length})`}
+              </span>
+            </label>
+            <div className={`flex items-center gap-2 ml-auto ${selectedIds.size === 0 ? 'hidden' : ''}`}>
               <button
                 onClick={() => bulkReceiptRef.current?.click()}
                 disabled={bulkReceiptUploading}
@@ -1072,22 +1088,20 @@ export default function TicketsPage() {
         {/* ── Active Tickets ─────────────────────────────────────────────────── */}
         {otherActive.length > 0 && (
           <div>
-            {(inactive.length > 0 || mealTickets.length > 0) && (
-              <div className="flex items-center gap-2 mb-3">
-                {canCreate && (
-                  <input
-                    type="checkbox"
-                    className="w-4 h-4 rounded border-slate-300 accent-brand-500"
-                    checked={otherActive.every(t => selectedIds.has(t.id)) && otherActive.length > 0}
-                    onChange={() => toggleSelectAll(otherActive.map(t => t.id))}
-                    title="Select all active"
-                  />
-                )}
-                <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-green-500" /> Active Tickets
-                </h2>
-              </div>
-            )}
+            <div className="flex items-center gap-2 mb-3">
+              {canCreate && (
+                <input
+                  type="checkbox"
+                  className="w-4 h-4 rounded border-slate-300 accent-brand-500"
+                  checked={otherActive.every(t => selectedIds.has(t.id)) && otherActive.length > 0}
+                  onChange={() => toggleSelectAll(otherActive.map(t => t.id))}
+                  title="Select all active"
+                />
+              )}
+              <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-green-500" /> Active Tickets
+              </h2>
+            </div>
             <div className="space-y-3">
               {otherActive.map(t => {
                 const cat    = effectiveCat(t)

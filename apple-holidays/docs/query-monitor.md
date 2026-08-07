@@ -123,8 +123,10 @@ having both active is harmless.
 
 ```
 src/lib/query-monitor/
-  constants.ts   setting keys, sheet layout, seed mailboxes + rules
+  constants.ts   setting keys, both sheet layouts, seed mailboxes + rules,
+                 the default exclusion patterns
   config.ts      settings / mailboxes / rules accessors and seeding
+  classify.ts    "is this a query?" — exclusion pattern parsing and matching
   dates.ts       Excel serial conversion in the sheet timezone
   collect.ts     Graph inbox + sent-items reads, sender filtering
   extract.ts     destination / travel date / CNTL parsing, GPT fallback
@@ -133,10 +135,11 @@ src/lib/query-monitor/
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation
+prisma/sql/query-monitor-mail-kind.sql    mailKind / excludeReason / sheetTab columns
 ```
 
 ## Known gaps

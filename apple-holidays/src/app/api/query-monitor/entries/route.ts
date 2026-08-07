@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
     ? { AND: and.filter(clause => !('mailKind' in clause)) }
     : {}
 
-  const [entries, total, statusCounts, syncCounts, kindCounts] = await Promise.all([
+  const [entries, total, statusCounts, syncCounts, kindCounts, syncCountsAllKinds] = await Promise.all([
     prisma.queryMonitorEntry.findMany({
       where, take, skip,
       orderBy: { receivedAt: 'desc' },
@@ -64,11 +64,14 @@ export async function GET(req: NextRequest) {
     prisma.queryMonitorEntry.groupBy({ by: ['replyStatus'], where, _count: { _all: true } }),
     prisma.queryMonitorEntry.groupBy({ by: ['syncStatus'],  where, _count: { _all: true } }),
     prisma.queryMonitorEntry.groupBy({ by: ['mailKind'], where: kindWhere, _count: { _all: true } }),
+    // Both tabs' backlog — what the header's "Sync to sheet" button counts.
+    prisma.queryMonitorEntry.groupBy({ by: ['syncStatus'], where: kindWhere, _count: { _all: true } }),
   ])
 
   const replyTally = new Map(statusCounts.map(r => [r.replyStatus, r._count._all]))
   const syncTally  = new Map(syncCounts.map(r => [r.syncStatus, r._count._all]))
   const kindTally  = new Map(kindCounts.map(r => [r.mailKind, r._count._all]))
+  const allSync    = new Map(syncCountsAllKinds.map(r => [r.syncStatus, r._count._all]))
   const at = (map: Map<string, number>, key: string) => map.get(key) ?? 0
 
   return buildApiSuccess({
@@ -79,7 +82,9 @@ export async function GET(req: NextRequest) {
       pending:      at(replyTally, 'PENDING'),
       overdue:      at(replyTally, 'OVERDUE'),
       synced:       at(syncTally, 'SYNCED'),
-      awaitingSync: at(syncTally, 'PENDING') + at(syncTally, 'DIRTY'),
+      // Counts both tabs: the Sync button writes the whole backlog, not just
+      // whichever list is on screen.
+      awaitingSync: at(allSync, 'PENDING') + at(allSync, 'DIRTY'),
       failed:       at(syncTally, 'FAILED'),
       queries:      at(kindTally, 'QUERY'),
       excluded:     at(kindTally, 'EXCLUDED'),
