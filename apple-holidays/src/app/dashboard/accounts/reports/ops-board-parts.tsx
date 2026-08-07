@@ -9,9 +9,10 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Check, Minus, AlertTriangle, Clock } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { Check, Minus, AlertTriangle, Clock, Car, PhoneCall, Ticket, ShieldCheck, Users, PlaneLanding, PlaneTakeoff } from 'lucide-react'
+import { cn, formatDate } from '@/lib/utils'
 import type { ReadinessState } from '@/lib/booking-readiness'
+import type { OpsDayRow } from '@/lib/reports/ops-day-data'
 
 // ─── Shared vocabulary ────────────────────────────────────────────────────────
 
@@ -191,6 +192,111 @@ export function SegmentBar({
 }
 
 // ─── Legend ───────────────────────────────────────────────────────────────────
+
+/**
+ * The seven things the board can be drilled into: the four readiness checks and
+ * the three movement views. One union, because the modal, the tiles and the
+ * gauges all address the same set and a mismatch between them would be a silent
+ * routing bug.
+ */
+export type FocusKey =
+  | 'reconfirm' | 'driver' | 'tickets' | 'qc'
+  | 'onground' | 'arrivals' | 'departures'
+
+export const FOCUS_META: Record<FocusKey, {
+  label: string
+  hint: string
+  icon: typeof Check
+  /** Movement views describe *who* is on the board; checks describe *readiness*. */
+  kind: 'check' | 'movement'
+}> = {
+  reconfirm:  { label: 'Reconfirmation',    hint: 'Client confirm or pre-tour call',        icon: PhoneCall,    kind: 'check' },
+  driver:     { label: 'Driver Allocation', hint: 'Every transfer has a driver or vendor',  icon: Car,          kind: 'check' },
+  tickets:    { label: 'Tickets Issued',    hint: 'Every active ticket purchased or paid',  icon: Ticket,       kind: 'check' },
+  qc:         { label: 'QC1 / QC2',         hint: 'Both quality rounds signed off',         icon: ShieldCheck,  kind: 'check' },
+  onground:   { label: 'On Ground',         hint: 'Every tour running in the window',       icon: Users,        kind: 'movement' },
+  arrivals:   { label: 'Arrivals',          hint: 'Guests landing in the window',           icon: PlaneLanding, kind: 'movement' },
+  departures: { label: 'Departures',        hint: 'Guests leaving in the window',           icon: PlaneTakeoff, kind: 'movement' },
+}
+
+// ─── Row-level status derivation ──────────────────────────────────────────────
+// Shared by the board table and the drill-down so a booking can never show as
+// amber on one and red on the other.
+
+/**
+ * Reconfirmation is two independent signals and the board treats either one as
+ * enough — a guest who has confirmed in writing does not also need a call, and a
+ * completed pre-tour call reconfirms a booking whose status has not caught up.
+ * Both signals in is the only fully-green state.
+ */
+export function reconfirmState(r: OpsDayRow): ReadinessState {
+  if (r.clientConfirmed && r.preTourCall) return 'DONE'
+  if (r.clientConfirmed || r.preTourCall) return 'PARTIAL'
+  return 'PENDING'
+}
+
+export function reconfirmText(r: OpsDayRow): string {
+  if (r.clientConfirmed && r.preTourCall) return 'Confirmed + called'
+  if (r.clientConfirmed) return 'Client confirmed'
+  if (r.preTourCall) return 'Pre-tour call'
+  return 'Not reconfirmed'
+}
+
+export function reconfirmDetail(r: OpsDayRow): string {
+  return [
+    r.clientConfirmed ? 'Client has confirmed the booking' : 'Client confirmation outstanding',
+    r.preTourCall
+      ? `Pre-tour call logged ${formatDate(r.preTourCall.at)}${r.preTourCall.outcome ? ` — ${r.preTourCall.outcome}` : ''}`
+      : 'No pre-tour call logged',
+  ].join(' · ')
+}
+
+/** QC1 and QC2 are shown as two separate ticks; both come off the one stage. */
+export function qcTick(r: OpsDayRow, round: 1 | 2): ReadinessState {
+  if (r.qc.stage === 'QC2') return 'DONE'
+  if (r.qc.stage === 'QC1') return round === 1 ? 'DONE' : 'PENDING'
+  return 'PENDING'
+}
+
+/** The state a row contributes to a given focus. Movement views grade on overall readiness. */
+export function stateForFocus(focus: FocusKey, r: OpsDayRow): ReadinessState {
+  switch (focus) {
+    case 'reconfirm': return reconfirmState(r)
+    case 'driver': return r.driver.state
+    case 'tickets': return r.tickets.state
+    case 'qc': return r.qc.state
+    default: return r.ready ? 'DONE' : 'PENDING'
+  }
+}
+
+/** Short cell text for a focus. */
+export function textForFocus(focus: FocusKey, r: OpsDayRow): string {
+  switch (focus) {
+    case 'reconfirm': return reconfirmText(r)
+    case 'driver': return r.driver.short
+    case 'tickets': return r.tickets.short
+    case 'qc': return r.qc.short
+    default: return r.ready ? 'Ready' : 'Outstanding'
+  }
+}
+
+/** Sentence-length explanation for a focus. */
+export function detailForFocus(focus: FocusKey, r: OpsDayRow): string {
+  switch (focus) {
+    case 'reconfirm': return reconfirmDetail(r)
+    case 'driver': return r.driver.detail
+    case 'tickets': return r.tickets.detail
+    case 'qc': return r.qc.detail
+    default: return r.ready ? 'Nothing outstanding' : `Outstanding: ${r.outstanding.join(', ')}`
+  }
+}
+
+/** Does this row belong in the focus's row set at all? */
+export function inFocus(focus: FocusKey, r: OpsDayRow): boolean {
+  if (focus === 'arrivals') return r.isArrival
+  if (focus === 'departures') return r.isDeparture
+  return true
+}
 
 export function StateLegend() {
   return (
