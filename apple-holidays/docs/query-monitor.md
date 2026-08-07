@@ -18,8 +18,8 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 
 ## First-time setup
 
-1. **Create the tables** (additive — five new tables, nothing existing is
-   altered; never `prisma db push` against live, it would fight the schema drift):
+1. **Create the tables.** Additive — new tables and columns, nothing existing is
+   altered:
 
    ```bash
    npx prisma db execute --file prisma/sql/query-monitor.sql --schema prisma/schema.prisma
@@ -27,6 +27,20 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    npx prisma db execute --file prisma/sql/query-monitor-to-list.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
+
+   > **Never `prisma db push` against live.** The live database carries schema
+   > drift that push tries to "correct", and on a populated table it offers a
+   > full reset — *“To apply this change we need to reset the database, all data
+   > will be lost”*. **Answer no.** Every column here is instead added by the SQL
+   > above, which is guarded by `information_schema` and safe to re-run.
+   >
+   > This is also why `toList` is `VARCHAR(500) DEFAULT ''` rather than `TEXT`:
+   > MySQL forbids defaults on `TEXT`, and a required column with no default
+   > cannot be added to a table that already has rows — which is exactly the
+   > reset prompt above. With the default it applies in place.
+   >
+   > If a deploy script runs the schema sync for you, decline the reset, then run
+   > the three `db execute` lines and `prisma generate` by hand.
 
 2. **Check the Azure app permissions.** The monitor reuses the existing
    `Azure_CLIENT_ID` registration. It needs, as *application* permissions:
@@ -150,14 +164,44 @@ workbook*. The Configuration panel shows whether the mirror has kept up.
 
 Changing the URL is only half the move — every entry still remembers the row it
 owns in the **old** file, so sweeps would keep rewriting rows nobody reads.
+In order, on the Configuration tab:
 
-1. Save the new *Share link* (and *Backup workbook*, and *Start from*).
-2. Press **Move rows here** (`POST /api/query-monitor/rebase`). Entries from the
-   start date onwards forget their row numbers and go back to `PENDING`; older
-   ones are retired as `SKIPPED`.
-3. Press **Sync to sheet**.
+1. **Save** the new *Share link*, the *Backup workbook*, and *Start from*.
+   Saving a changed URL drops the cached drive/item id, so the next call
+   resolves the new file.
+2. **Prepare** (`POST /api/query-monitor/prepare`) — creates both tabs and writes
+   the expected header. This is the fix for *“Column mismatch”*.
+3. **Move rows here** (`POST /api/query-monitor/rebase`) — entries from the start
+   date onwards forget their row numbers and go back to `PENDING`; older ones are
+   retired as `SKIPPED`.
+4. **Sync to sheet**.
 
 Nothing is deleted from the old workbook.
+
+### “Column mismatch”
+
+The tab's header is not the expected 14 columns — almost always a file copied
+from the old 13-column sheet, which has no **TO List**. Press **Prepare**.
+
+The header is only rewritten while the tab holds **no data rows**. Above real
+rows it is left alone and reported instead: relabelling columns without moving
+the values underneath would silently change what every cell means. A tab in that
+state needs a human — clear it, or point at a clean one.
+
+The sync applies the same rule. It refuses to append into a mismatched tab rather
+than writing 14 columns under a 13-column header, where everything from column G
+on would land one column left of where it belongs.
+
+### The backup must be a different file
+
+Two share links can resolve to the same workbook. If they do, the mirror would
+append every row to that one file twice, and the two sets of row numbers would
+collide so later rewrites would land on the wrong rows.
+
+Identical URLs are rejected on save; identical *drive items* (a copied or
+re-shared link to the same file) are caught at sync time by comparing the
+resolved `driveId`/`itemId`, and the backup pass is skipped with a warning in the
+run log.
 
 ## Safety properties
 

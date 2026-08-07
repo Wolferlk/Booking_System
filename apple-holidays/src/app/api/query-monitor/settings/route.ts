@@ -34,9 +34,25 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json() as Record<string, unknown>
 
-  if (body.sheetUrl !== undefined) {
-    const url = String(body.sheetUrl).trim()
+  for (const field of ['sheetUrl', 'backupSheetUrl'] as const) {
+    if (body[field] === undefined) continue
+    const url = String(body[field]).trim()
     if (url && !/^https?:\/\//i.test(url)) return buildApiError('Workbook URL must start with https://')
+  }
+
+  // A backup that is the same file as the live workbook is not a backup: every
+  // row would be appended to it twice, and the two sets of row numbers would
+  // collide so later rewrites would land on the wrong rows.
+  if (body.sheetUrl !== undefined || body.backupSheetUrl !== undefined) {
+    const current = await getConfig()
+    const primary = String(body.sheetUrl       ?? current.sheetUrl).trim()
+    const backup  = String(body.backupSheetUrl ?? current.backupSheetUrl).trim()
+    if (primary && backup && primary === backup) {
+      return buildApiError(
+        'The backup workbook must be a different file from the live one — '
+        + 'the same link is in both boxes.',
+      )
+    }
   }
   if (body.intervalMinutes !== undefined && Number(body.intervalMinutes) < 5) {
     return buildApiError('Interval must be at least 5 minutes — Graph throttles tighter loops')
