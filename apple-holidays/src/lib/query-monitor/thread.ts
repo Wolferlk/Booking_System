@@ -31,7 +31,7 @@ const REPLY_PREFIX = /^(?:\s*(?:re|fw|fwd|aw|tr)\s*(?:\[\d+\])?\s*:)+\s*/i
  * 2027" is a subject template, not an identifier, and two agents can write it
  * about two different groups.
  */
-function hasReference(subject: string): boolean {
+export function hasReference(subject: string): boolean {
   const runs = subject.match(/\d{4,}/g)
   if (!runs) return false
   return runs.some(run => run.length > 4 || Number(run) < 1900 || Number(run) > 2099)
