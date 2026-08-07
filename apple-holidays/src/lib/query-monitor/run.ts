@@ -831,13 +831,25 @@ async function syncOneWorkbook(
   const note = (level: StepLevel, msg: string, meta?: Record<string, unknown>) =>
     log?.add(level, plan.target === 'backup' ? `Backup — ${msg}` : msg, meta)
 
+  const config = await getConfig()
+
+  /**
+   * The cut-off is enforced on the *write*, not just when entries are collected.
+   * An entry from before it may still carry a row number belonging to the
+   * previous workbook; rewriting "its" row here would land on an unrelated row of
+   * the current file. Filtering by date makes that impossible whatever state the
+   * entry is in.
+   */
+  const cutoff = startDateBoundary(config.startDate)
+  const inRange = cutoff ? { receivedAt: { gte: cutoff } } : {}
+
   const pending = await prisma.queryMonitorEntry.findMany({
-    where:   { [plan.statusField]: 'PENDING' },
+    where:   { ...inRange, [plan.statusField]: 'PENDING' },
     orderBy: { receivedAt: 'asc' },
     take:    limit,
   })
   const dirty = await prisma.queryMonitorEntry.findMany({
-    where:   { [plan.statusField]: 'DIRTY', [plan.rowField]: { not: null } },
+    where:   { ...inRange, [plan.statusField]: 'DIRTY', [plan.rowField]: { not: null } },
     orderBy: { receivedAt: 'asc' },
     take:    limit,
   })
@@ -845,11 +857,9 @@ async function syncOneWorkbook(
   const blank: WorkbookSyncResult = { target: plan.target, appended: 0, updated: 0, failed: 0 }
 
   if (pending.length === 0 && dirty.length === 0) {
-    note('info', `${plan.label === 'workbook' ? 'Sheet' : 'Backup'} already up to date — nothing to write`)
+    note('info', 'Already up to date — nothing to write')
     return blank
   }
-
-  const config = await getConfig()
   let ref: SheetRef
   try {
     ref = await resolveSheetRef(false, plan.target)
@@ -1053,10 +1063,16 @@ export async function rebaseToNewWorkbook(): Promise<RebaseResult> {
     },
   })
 
+  // Older entries keep their place in the *previous* file, but that row number
+  // means nothing here — held onto, it would aim a later rewrite at an unrelated
+  // row of the new workbook.
   const retired = cutoff
     ? await prisma.queryMonitorEntry.updateMany({
         where: { receivedAt: { lt: cutoff } },
-        data:  { syncStatus: 'SKIPPED', backupSyncStatus: 'SKIPPED' },
+        data: {
+          syncStatus: 'SKIPPED', backupSyncStatus: 'SKIPPED',
+          sheetRow: null, sheetTab: null, backupSheetRow: null,
+        },
       })
     : { count: 0 }
 
