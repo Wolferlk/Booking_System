@@ -20,8 +20,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
-  PlaneLanding, PlaneTakeoff, Users, Car, PhoneCall, Ticket, ShieldCheck,
-  ChevronDown, MapPin, CircleAlert, Sparkles, Info,
+  PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
+  Sparkles, Info, Maximize2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -32,7 +32,10 @@ import type { OpsDayBoard, OpsDayRow } from '@/lib/reports/ops-day-data'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import {
   CountUp, ProgressRing, SegmentBar, StateLegend, StatePill, STATE_STYLE,
+  FOCUS_META, reconfirmState, reconfirmText, reconfirmDetail, qcTick,
+  type FocusKey,
 } from './ops-board-parts'
+import OpsDrilldown from './ops-drilldown'
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
 
@@ -65,41 +68,6 @@ function dayOfMonth(date: string): string {
   return date.slice(8, 10)
 }
 
-/**
- * Reconfirmation is two independent signals and the board treats either one as
- * enough — a guest who has confirmed in writing does not also need a call, and a
- * completed pre-tour call reconfirms a booking whose status has not caught up.
- */
-function reconfirmState(r: OpsDayRow): ReadinessState {
-  if (r.clientConfirmed && r.preTourCall) return 'DONE'
-  if (r.clientConfirmed || r.preTourCall) return 'PARTIAL'
-  return 'PENDING'
-}
-
-function reconfirmText(r: OpsDayRow): string {
-  if (r.clientConfirmed && r.preTourCall) return 'Confirmed + called'
-  if (r.clientConfirmed) return 'Client confirmed'
-  if (r.preTourCall) return 'Pre-tour call'
-  return 'Not reconfirmed'
-}
-
-function reconfirmDetail(r: OpsDayRow): string {
-  const bits = [
-    r.clientConfirmed ? 'Client has confirmed the booking' : 'Client confirmation outstanding',
-    r.preTourCall
-      ? `Pre-tour call logged ${formatDate(r.preTourCall.at)}${r.preTourCall.outcome ? ` — ${r.preTourCall.outcome}` : ''}`
-      : 'No pre-tour call logged',
-  ]
-  return bits.join(' · ')
-}
-
-/** QC1 and QC2 are shown as two separate ticks; both come off the one stage. */
-function qcTick(r: OpsDayRow, round: 1 | 2): ReadinessState {
-  if (r.qc.stage === 'QC2') return 'DONE'
-  if (r.qc.stage === 'QC1') return round === 1 ? 'DONE' : 'PENDING'
-  return 'PENDING'
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OperationsBoardPage() {
@@ -113,6 +81,8 @@ export default function OperationsBoardPage() {
   const [segment, setSegment] = useState<Segment>('ONGROUND')
   const [onlyOutstanding, setOnlyOutstanding] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+  /** Which card the drill-down is open on; null when it is closed. */
+  const [focus, setFocus] = useState<FocusKey | null>(null)
 
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     if (!opts.silent) setLoading(true)
@@ -166,36 +136,15 @@ export default function OperationsBoardPage() {
       return { counts, scope, pct, state }
     }
 
-    return [
-      {
-        key: 'reconfirm',
-        label: 'Reconfirmation',
-        hint: 'Client confirm or pre-tour call',
-        icon: PhoneCall,
-        ...tally(reconfirmState),
-      },
-      {
-        key: 'driver',
-        label: 'Driver Allocation',
-        hint: 'Every transfer has a driver or vendor',
-        icon: Car,
-        ...tally(r => r.driver.state),
-      },
-      {
-        key: 'tickets',
-        label: 'Tickets Issued',
-        hint: 'Every active ticket purchased or paid',
-        icon: Ticket,
-        ...tally(r => r.tickets.state),
-      },
-      {
-        key: 'qc',
-        label: 'QC1 / QC2',
-        hint: 'Both quality rounds signed off',
-        icon: ShieldCheck,
-        ...tally(r => r.qc.state),
-      },
-    ]
+    // Labels and icons come from FOCUS_META so the card and the drill-down it
+    // opens are guaranteed to describe the same thing.
+    return ([
+      ['reconfirm', reconfirmState],
+      ['driver', (r: OpsDayRow) => r.driver.state],
+      ['tickets', (r: OpsDayRow) => r.tickets.state],
+      ['qc', (r: OpsDayRow) => r.qc.state],
+    ] as [FocusKey, (r: OpsDayRow) => ReadinessState][])
+      .map(([key, pick]) => ({ key, ...FOCUS_META[key], ...tally(pick) }))
   }, [visible])
 
   const readyCount = visible.filter(r => r.ready).length
@@ -351,63 +300,78 @@ export default function OperationsBoardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
             {
-              key: 'ONGROUND' as Segment, label: 'On Ground', icon: Users,
+              key: 'ONGROUND' as Segment, focus: 'onground' as FocusKey, label: 'On Ground', icon: Users,
               value: board?.summary.onGround ?? 0, pax: board?.summary.paxOnGround ?? 0,
               from: 'from-navy-600', to: 'to-navy-800',
             },
             {
-              key: 'ARRIVALS' as Segment, label: 'Arrivals', icon: PlaneLanding,
+              key: 'ARRIVALS' as Segment, focus: 'arrivals' as FocusKey, label: 'Arrivals', icon: PlaneLanding,
               value: board?.summary.arrivals ?? 0, pax: board?.summary.paxArriving ?? 0,
               from: 'from-emerald-500', to: 'to-emerald-700',
             },
             {
-              key: 'DEPARTURES' as Segment, label: 'Departures', icon: PlaneTakeoff,
+              key: 'DEPARTURES' as Segment, focus: 'departures' as FocusKey, label: 'Departures', icon: PlaneTakeoff,
               value: board?.summary.departures ?? 0, pax: board?.summary.paxDeparting ?? 0,
               from: 'from-sky-500', to: 'to-sky-700',
             },
           ].map((k, i) => (
-            <motion.button
+            <motion.div
               key={k.key}
-              onClick={() => setSegment(k.key)}
               {...fade}
               transition={reduce ? { duration: 0 } : { delay: i * 0.06, duration: 0.35 }}
               whileHover={reduce ? undefined : { y: -3 }}
               className={cn(
-                'relative text-left rounded-2xl p-5 overflow-hidden bg-gradient-to-br text-white shadow-lg transition-shadow',
+                'relative rounded-2xl overflow-hidden bg-gradient-to-br text-white shadow-lg transition-shadow',
                 k.from, k.to,
                 segment === k.key ? 'ring-2 ring-offset-2 ring-slate-900' : 'hover:shadow-xl',
               )}
             >
               {/* Decorative wash — keeps the tiles from reading as flat blocks. */}
-              <span className="absolute -right-6 -top-8 w-32 h-32 rounded-full bg-white/10" />
-              <span className="absolute -right-12 top-6 w-32 h-32 rounded-full bg-white/5" />
+              <span className="absolute -right-6 -top-8 w-32 h-32 rounded-full bg-white/10 pointer-events-none" />
+              <span className="absolute -right-12 top-6 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
 
-              <div className="relative flex items-start justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-white/70 font-semibold">{k.label}</div>
-                  <div className="text-4xl font-extrabold leading-none mt-2">
-                    <CountUp value={k.value} />
+              {/* The tile body switches the list below; the corner button opens
+                  the drill-down. Two actions, so the tile is not a single button. */}
+              <button onClick={() => setSegment(k.key)} className="relative w-full text-left p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-white/70 font-semibold">{k.label}</div>
+                    <div className="text-4xl font-extrabold leading-none mt-2">
+                      <CountUp value={k.value} />
+                    </div>
+                    <div className="text-xs text-white/80 mt-2 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" />
+                      <CountUp value={k.pax} /> pax
+                    </div>
                   </div>
-                  <div className="text-xs text-white/80 mt-2 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5" />
-                    <CountUp value={k.pax} /> pax
-                  </div>
+                  <k.icon className="w-8 h-8 text-white/40 mr-8" />
                 </div>
-                <k.icon className="w-8 h-8 text-white/50" />
-              </div>
-            </motion.button>
+              </button>
+
+              <button
+                onClick={() => setFocus(k.focus)}
+                title={`Open ${k.label} detail`}
+                className="absolute right-3 top-3 p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/15 transition-colors"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            </motion.div>
           ))}
         </div>
 
         {/* ── Readiness gauges ────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {gauges.map((g, i) => (
-            <motion.div
+            <motion.button
               key={g.key}
               {...fade}
               transition={reduce ? { duration: 0 } : { delay: 0.15 + i * 0.06, duration: 0.35 }}
-              className="bg-white rounded-2xl border border-slate-200 shadow-card p-4 hover:shadow-card-hover transition-shadow"
+              whileHover={reduce ? undefined : { y: -3 }}
+              onClick={() => setFocus(g.key)}
+              title={`Open ${g.label} detail`}
+              className="group relative text-left bg-white rounded-2xl border border-slate-200 shadow-card p-4 hover:shadow-card-hover hover:border-slate-300 transition-all"
             >
+              <Maximize2 className="absolute right-3 top-3 w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-colors" />
               <div className="flex items-center gap-4">
                 <ProgressRing pct={g.pct} color={STATE_STYLE[g.state].ring}>
                   <span className="text-sm font-extrabold text-slate-900 leading-none">
@@ -420,7 +384,7 @@ export default function OperationsBoardPage() {
                     <g.icon className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                     <span className="text-sm font-bold text-slate-900 truncate">{g.label}</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{g.hint}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-snug pr-4">{g.hint}</p>
                   <div className="mt-2 space-y-1.5">
                     <SegmentBar
                       total={visible.length}
@@ -442,7 +406,7 @@ export default function OperationsBoardPage() {
                   </div>
                 </div>
               </div>
-            </motion.div>
+            </motion.button>
           ))}
         </div>
 
@@ -781,6 +745,22 @@ export default function OperationsBoardPage() {
           )}
         </Card>
       </div>
+
+      {/* ── Drill-down ────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {focus && (
+          <OpsDrilldown
+            key={focus}
+            focus={focus}
+            anchorDate={date}
+            countryFilter={countryFilter}
+            // Reuse the loaded day only when the board is unfiltered; otherwise
+            // the modal would open showing a search the user did not type in it.
+            initialBoard={search.trim() ? null : board}
+            onClose={() => setFocus(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

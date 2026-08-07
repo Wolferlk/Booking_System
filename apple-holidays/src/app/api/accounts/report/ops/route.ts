@@ -41,7 +41,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const board = await collectOpsDay({
+      // `date` is the single-day shorthand the board itself uses; `from`/`to`
+      // is the range the drill-down asks for.
       date: req.nextUrl.searchParams.get('date'),
+      from: req.nextUrl.searchParams.get('from'),
+      to: req.nextUrl.searchParams.get('to'),
       country,
       search: req.nextUrl.searchParams.get('search'),
     })
