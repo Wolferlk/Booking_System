@@ -35,9 +35,10 @@ interface MovementItem {
   id: string; date: string; location: string; fromPoint: string | null; toPoint: string | null
   details: string | null; timeFrom: string | null; timeTo: string | null; serviceType: string
   assignment: {
-    driverName: string | null; vehicleType: string | null; vehiclePlate: string | null
+    driverName: string | null; driverPhone: string | null; vendorName: string | null
+    vehicleType: string | null; vehiclePlate: string | null
     driver: { id: string; name: string; phone: string } | null
-    vendor: { id: string; name: string } | null
+    vendor: { id: string; name: string; phone: string | null } | null
   } | null
 }
 interface DriverInfo {
@@ -112,13 +113,53 @@ function vehicleMeta(v: string | null | undefined) {
   return VEHICLE_OPTIONS.find(o => o.value === v) ?? null
 }
 
-function allocationStatus(b: SLBooking): 'assigned' | 'vendor' | 'pending' | 'emergency' {
+/** Who is actually driving this file — the allocation row, or failing that the
+ *  Movement Chart. A driver named on the chart without a driver/vendor record
+ *  (a vendor's own man, typed in by hand) has nowhere to live on the allocation
+ *  row, so the chart stays the fallback source rather than reading as pending. */
+interface EffectiveDriver {
+  kind: 'driver' | 'vendor'
+  name: string
+  phone: string | null
+  plate: string | null
+  fromAgenda: boolean
+}
+
+function effectiveDriver(b: SLBooking): EffectiveDriver | null {
   const a = b.slDriverAllocation
-  if (!a) return 'pending'
-  if (a.isEmergency) return 'emergency'
-  if (a.driverId)    return 'assigned'
-  if (a.vendorId)    return 'vendor'
-  return 'pending'
+  if (a?.driver) {
+    return { kind: 'driver', name: a.driver.name, phone: a.driver.phone, plate: a.driver.vehicle?.plateNo ?? null, fromAgenda: false }
+  }
+  if (a?.vendor) {
+    return { kind: 'vendor', name: a.vendor.name, phone: a.vendor.phone, plate: null, fromAgenda: false }
+  }
+  for (const m of b.tourAgenda?.items ?? []) {
+    const asg = m.assignment
+    if (!asg) continue
+    const name = asg.driver?.name ?? asg.driverName ?? asg.vendor?.name ?? asg.vendorName
+    if (!name) continue
+    return {
+      kind:  asg.driver || asg.driverName ? 'driver' : 'vendor',
+      name,
+      phone: asg.driver?.phone ?? asg.driverPhone ?? asg.vendor?.phone ?? null,
+      plate: asg.vehiclePlate ?? null,
+      fromAgenda: true,
+    }
+  }
+  return null
+}
+
+/** Vehicle type shown on the board — allocation first, then the chart. */
+function effectiveVehicleType(b: SLBooking): string | null {
+  if (b.slDriverAllocation?.vehicleType) return b.slDriverAllocation.vehicleType
+  return b.tourAgenda?.items.find(m => m.assignment?.vehicleType)?.assignment?.vehicleType ?? null
+}
+
+function allocationStatus(b: SLBooking): 'assigned' | 'vendor' | 'pending' | 'emergency' {
+  if (b.slDriverAllocation?.isEmergency) return 'emergency'
+  const eff = effectiveDriver(b)
+  if (!eff) return 'pending'
+  return eff.kind === 'driver' ? 'assigned' : 'vendor'
 }
 
 function fmt(dt: string) {
@@ -242,6 +283,7 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
   const leadPax  = booking.passengers[0] ?? null
   const arrFlight = booking.flights[0] ?? null
   const status   = allocationStatus(booking)
+  const panelDriver = effectiveDriver(booking)
   const paxTotal = booking.paxAdults + booking.paxChildren
 
   return (
@@ -323,16 +365,21 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
                 status === 'vendor'    ? 'bg-blue-500/5 border-blue-500/25' :
                 status === 'emergency' ? 'bg-red-500/5 border-red-500/30' : 'bg-slate-800/40 border-slate-700/40')}>
                 <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold mb-3 flex items-center gap-1.5"><Car className="w-3 h-3" />Driver Allocation</p>
-                {booking.slDriverAllocation?.vehicleType && <div className="mb-2"><VehiclePill type={booking.slDriverAllocation.vehicleType} /></div>}
-                {booking.slDriverAllocation?.driver ? (
+                {effectiveVehicleType(booking) && <div className="mb-2"><VehiclePill type={effectiveVehicleType(booking)} /></div>}
+                {panelDriver ? (
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center"><UserCheck className="w-4 h-4 text-emerald-400" /></div>
-                    <div><p className="text-white font-bold text-sm">{booking.slDriverAllocation.driver.name}</p><p className="text-slate-400 text-xs">{booking.slDriverAllocation.driver.phone}</p>{booking.slDriverAllocation.driver.vehicle && <p className="text-slate-500 text-[11px]">{booking.slDriverAllocation.driver.vehicle.type} · {booking.slDriverAllocation.driver.vehicle.plateNo}</p>}</div>
-                  </div>
-                ) : booking.slDriverAllocation?.vendor ? (
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-blue-500/15 border border-blue-500/25 flex items-center justify-center"><Truck className="w-4 h-4 text-blue-400" /></div>
-                    <div><p className="text-white font-bold text-sm">{booking.slDriverAllocation.vendor.name}</p>{booking.slDriverAllocation.vendor.phone && <p className="text-slate-400 text-xs">{booking.slDriverAllocation.vendor.phone}</p>}</div>
+                    <div className={cn('w-9 h-9 rounded-full border flex items-center justify-center',
+                      panelDriver.kind === 'driver' ? 'bg-emerald-500/15 border-emerald-500/25' : 'bg-blue-500/15 border-blue-500/25')}>
+                      {panelDriver.kind === 'driver'
+                        ? <UserCheck className="w-4 h-4 text-emerald-400" />
+                        : <Truck className="w-4 h-4 text-blue-400" />}
+                    </div>
+                    <div>
+                      <p className="text-white font-bold text-sm">{panelDriver.name}</p>
+                      {panelDriver.phone && <p className="text-slate-400 text-xs">{panelDriver.phone}</p>}
+                      {panelDriver.plate && <p className="text-slate-500 text-[11px]">{panelDriver.plate}</p>}
+                      {panelDriver.fromAgenda && <p className="text-slate-500 text-[11px] italic">set on the movement chart</p>}
+                    </div>
                   </div>
                 ) : <p className="text-slate-500 text-sm italic">No driver assigned yet</p>}
                 {booking.slDriverAllocation?.isEmergency && (
@@ -635,7 +682,8 @@ export default function SriLankaDriverAllocationPage() {
         (b.fileHandler ?? '').toLowerCase().includes(q) ||
         b.passengers.some(p => p.name.toLowerCase().includes(q)) ||
         (b.slDriverAllocation?.driver?.name ?? '').toLowerCase().includes(q) ||
-        (b.slDriverAllocation?.vendor?.name ?? '').toLowerCase().includes(q)
+        (b.slDriverAllocation?.vendor?.name ?? '').toLowerCase().includes(q) ||
+        (effectiveDriver(b)?.name ?? '').toLowerCase().includes(q)
       )
     }
 
@@ -646,7 +694,7 @@ export default function SriLankaDriverAllocationPage() {
 
     // Vehicle
     if (vehicleFilter) {
-      list = list.filter(b => b.slDriverAllocation?.vehicleType === vehicleFilter)
+      list = list.filter(b => effectiveVehicleType(b) === vehicleFilter)
     }
 
     // Date range
@@ -1000,6 +1048,7 @@ export default function SriLankaDriverAllocationPage() {
                 <tbody className="divide-y divide-slate-800/50">
                   {displayBookings.map((b, i) => {
                     const status    = allocationStatus(b)
+                    const driver    = effectiveDriver(b)
                     const arrFlight = b.flights[0] ?? null
                     const depFlight = b.flights.at(-1) ?? null
                     const leadPax   = b.passengers[0] ?? null
@@ -1047,22 +1096,30 @@ export default function SriLankaDriverAllocationPage() {
 
                         {/* Vehicle */}
                         <td className="px-4 py-3.5">
-                          <VehicleSelector current={b.slDriverAllocation?.vehicleType ?? null} onChange={v => handleVehicleChange(b, v)} />
+                          <VehicleSelector current={effectiveVehicleType(b)} onChange={v => handleVehicleChange(b, v)} />
                         </td>
 
                         {/* Driver / Vendor */}
                         <td className="px-4 py-3.5">
-                          {b.slDriverAllocation?.driver ? (
+                          {driver ? (
                             <button onClick={() => setAssignBooking(b)} className="group/d flex items-start gap-2 text-left">
-                              <div className="w-7 h-7 rounded-full bg-emerald-500/15 border border-emerald-500/25 flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-black text-emerald-300">{b.slDriverAllocation.driver.name.slice(0, 2).toUpperCase()}</div>
-                              <div><p className="text-emerald-300 font-bold text-xs group-hover/d:text-emerald-200 transition-colors">{b.slDriverAllocation.driver.name}</p><p className="text-slate-500 text-[10px]">{b.slDriverAllocation.driver.phone}</p>{b.slDriverAllocation.driver.vehicle && <p className="text-slate-600 text-[10px]">{b.slDriverAllocation.driver.vehicle.plateNo}</p>}</div>
+                              <div className={cn('w-7 h-7 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-black',
+                                driver.kind === 'driver'
+                                  ? 'bg-emerald-500/15 border-emerald-500/25 text-emerald-300'
+                                  : 'bg-blue-500/15 border-blue-500/25 text-blue-300')}>
+                                {driver.name.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <p className={cn('font-bold text-xs transition-colors',
+                                  driver.kind === 'driver' ? 'text-emerald-300 group-hover/d:text-emerald-200' : 'text-blue-300 group-hover/d:text-blue-200')}>
+                                  {driver.name}
+                                </p>
+                                {driver.phone && <p className="text-slate-500 text-[10px]">{driver.phone}</p>}
+                                {driver.plate && <p className="text-slate-600 text-[10px]">{driver.plate}</p>}
+                                {/* Set on the Movement Chart, not from this board */}
+                                {driver.fromAgenda && <p className="text-slate-600 text-[10px] italic">from movement chart</p>}
+                              </div>
                               <Edit2 className="w-3 h-3 text-slate-600 group-hover/d:text-slate-400 mt-1 opacity-0 group-hover/d:opacity-100 transition-all" />
-                            </button>
-                          ) : b.slDriverAllocation?.vendor ? (
-                            <button onClick={() => setAssignBooking(b)} className="group/v flex items-start gap-2 text-left">
-                              <div className="w-7 h-7 rounded-full bg-blue-500/15 border border-blue-500/25 flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-black text-blue-300">{b.slDriverAllocation.vendor.name.slice(0, 2).toUpperCase()}</div>
-                              <div><p className="text-blue-300 font-bold text-xs group-hover/v:text-blue-200">{b.slDriverAllocation.vendor.name}</p>{b.slDriverAllocation.vendor.phone && <p className="text-slate-500 text-[10px]">{b.slDriverAllocation.vendor.phone}</p>}</div>
-                              <Edit2 className="w-3 h-3 text-slate-600 group-hover/v:text-slate-400 mt-1 opacity-0 group-hover/v:opacity-100 transition-all" />
                             </button>
                           ) : (
                             <button onClick={() => setAssignBooking(b)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-slate-700/60 text-slate-500 hover:text-teal-400 hover:border-teal-500/40 hover:bg-teal-500/5 transition-all text-xs font-semibold">

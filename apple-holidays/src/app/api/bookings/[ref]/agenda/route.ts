@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { normalisePhone } from '@/lib/whatsapp'
+import { syncSlAllocationFromAgenda, syncSlAllocationFromAgendaByRef } from '@/lib/sl-driver-allocation-sync'
 import {
   sendDriverAssignment,
   sendDriverCancellation,
@@ -189,6 +190,14 @@ export async function POST(
     }),
   )
 
+  // Drivers set on the chart must also show on the Sri Lanka Driver Allocation
+  // board, which reads the booking-level allocation row. Non-fatal.
+  try {
+    await syncSlAllocationFromAgenda(booking.id)
+  } catch (syncErr) {
+    console.error('[Agenda POST] SL allocation sync failed (non-fatal):', syncErr)
+  }
+
   // ── Driver WhatsApp notifications ──────────────────────────────────────────
   // Sent on Save as well as from the Assign Driver dialog (see PUT). Both paths
   // go through driver-assignment-whatsapp.ts, so a driver is messaged once per
@@ -316,6 +325,13 @@ export async function PUT(
         console.error('[agenda PUT] assignment upsert failed:', msg)
         return buildApiError(`Assignment save failed: ${msg}`, 500)
       }
+    }
+
+    // Keep the SL Driver Allocation board in step with the chart. Non-fatal.
+    try {
+      await syncSlAllocationFromAgendaByRef(params.ref)
+    } catch (syncErr) {
+      console.error('[Agenda PUT] SL allocation sync failed (non-fatal):', syncErr)
     }
 
     // ── Driver WhatsApp notification ─────────────────────────────────────────
