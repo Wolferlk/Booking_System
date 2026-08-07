@@ -99,7 +99,6 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
   const [autoSend, setAutoSend]   = useState(false)
   const [saving, setSaving]       = useState(false)
 
-  const [downloading, setDownloading] = useState(false)
   const [sending, setSending]         = useState(false)
 
   // Display-currency conversion (view-only; stored amounts stay in base currency)
@@ -245,26 +244,15 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
   }
 
   // ── Download PDF ──────────────────────────────────────────────────────────
-  async function downloadPdf() {
-    setDownloading(true)
-    try {
-      const res = await fetch(`/api/bookings/${bookingRef}/driver-log/pdf`)
-      if (!res.ok) {
-        const j = await res.json().catch(() => null)
-        throw new Error(j?.error ?? `PDF failed (${res.status})`)
-      }
-      const blob = await res.blob()
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a')
-      a.href = url
-      a.download = `DriverAdvance-${bookingRef}.pdf`
-      document.body.appendChild(a); a.click(); a.remove()
-      URL.revokeObjectURL(url)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Download failed')
-    } finally {
-      setDownloading(false)
-    }
+  /**
+   * Opens the sheet's HTML view in a new tab, which fires the browser's print
+   * dialog — "Save as PDF" from there. The browser does the rendering, so this
+   * never depends on server-side Chromium (unavailable on the arm64 serverless
+   * host, where the old direct-PDF download failed with a 500).
+   */
+  function downloadPdf() {
+    const win = window.open(`/api/bookings/${bookingRef}/driver-log/print`, '_blank', 'noopener')
+    if (!win) toast.error('Allow pop-ups for this site to open the printable sheet')
   }
 
   // ── Send WhatsApp ───────────────────────────────────────────────────────────
@@ -329,10 +317,11 @@ export default function DriverLogPanel({ bookingRef, role, defaultOpen = false }
               <>
                 <button
                   onClick={downloadPdf}
-                  disabled={downloading || !view}
+                  disabled={!view}
+                  title="Opens the printable sheet — choose &quot;Save as PDF&quot; in the print dialog"
                   className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 disabled:opacity-50 transition-colors"
                 >
-                  {downloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                  <Download className="w-3 h-3" />
                   PDF
                 </button>
                 {canEdit && (

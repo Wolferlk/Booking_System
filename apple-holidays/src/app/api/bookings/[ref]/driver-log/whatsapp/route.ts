@@ -25,5 +25,9 @@ export async function POST(
   if (!res.ok) {
     return buildApiError(res.reason ?? 'Failed to send Driver Log', 502)
   }
-  return buildApiSuccess({ phone: res.phone }, `Driver Advance Sheet sent to ${res.phone}`)
+  const how = res.channel === 'template' ? ' (template + PDF)' : ' with PDF'
+  return buildApiSuccess(
+    { phone: res.phone, channel: res.channel },
+    `Driver Advance Sheet sent to ${res.phone}${how}`,
+  )
 }

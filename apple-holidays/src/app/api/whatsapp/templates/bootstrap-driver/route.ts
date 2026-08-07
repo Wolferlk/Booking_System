@@ -16,7 +16,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { createMetaTemplate, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
+import { createMetaTemplate, uploadTemplateHeaderHandle, WHATSAPP_STAFF_ROLES } from '@/lib/whatsapp'
 import {
   TEMPLATE_DRIVER_ASSIGN,
   TEMPLATE_DRIVER_CANCEL,
@@ -24,12 +24,21 @@ import {
   DRIVER_CANCEL_BODY,
   DRIVER_TEMPLATE_LANG,
 } from '@/lib/driver-assignment-whatsapp'
+import { TEMPLATE_DRIVER_ADVANCE, DRIVER_ADVANCE_BODY } from '@/lib/driver-log-notify'
+import { sampleAdvanceSheetPdf } from '@/lib/generate-driver-log-pdf'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
 /** Meta requires an example value for every {{n}} placeholder before it reviews a template. */
-const TEMPLATES = [
+const TEMPLATES: {
+  name: string
+  bodyText: string
+  bodyExamples: string[]
+  footerText: string
+  /** DOCUMENT-header templates carry the generated PDF; needs a sample attachment. */
+  headerFormat?: 'DOCUMENT'
+}[] = [
   {
     name:     TEMPLATE_DRIVER_ASSIGN,
     bodyText: DRIVER_ASSIGN_BODY,
@@ -48,6 +57,21 @@ const TEMPLATES = [
     bodyText:     DRIVER_CANCEL_BODY,
     bodyExamples: ['Sunil', 'IS48305'],
     footerText:   'AppleHolidays Operations',
+  },
+  {
+    name:         TEMPLATE_DRIVER_ADVANCE,
+    bodyText:     DRIVER_ADVANCE_BODY,
+    headerFormat: 'DOCUMENT',
+    bodyExamples: [
+      'Sunil',
+      'IS48305',
+      '30 Jun 2026',
+      'Mr. Harre (2A/0C)',
+      'LKR 116,251.63 (100%)',
+      'LKR 0.00 (30%)',
+      'LKR 116,251.63',
+    ],
+    footerText: 'AppleHolidays Operations',
   },
 ]
 
@@ -71,6 +95,11 @@ export async function POST(_req: NextRequest) {
   const results: { name: string; ok: boolean; status?: string; error?: string }[] = []
   for (const t of TEMPLATES) {
     try {
+      // A media header needs an uploaded sample before Meta will review it.
+      const headerHandle = t.headerFormat === 'DOCUMENT'
+        ? await uploadTemplateHeaderHandle(await sampleAdvanceSheetPdf(), 'DriverAdvanceSheet-sample.pdf')
+        : undefined
+
       const created = await createMetaTemplate({
         name:         t.name,
         category:     'UTILITY',
@@ -78,6 +107,7 @@ export async function POST(_req: NextRequest) {
         bodyText:     t.bodyText,
         bodyExamples: t.bodyExamples,
         footerText:   t.footerText,
+        ...(t.headerFormat ? { headerFormat: t.headerFormat, headerHandle } : {}),
       })
       results.push({ name: created.name, ok: true, status: created.status })
     } catch (err) {
@@ -88,6 +118,6 @@ export async function POST(_req: NextRequest) {
   const okCount = results.filter(r => r.ok).length
   return buildApiSuccess(
     results,
-    `${okCount}/${TEMPLATES.length} driver-assignment template(s) submitted to Meta for review`,
+    `${okCount}/${TEMPLATES.length} driver template(s) submitted to Meta for review`,
   )
 }
