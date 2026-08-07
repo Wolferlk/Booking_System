@@ -76,6 +76,30 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     touched.push('replyStatus')
   }
 
+  // Moving a mail between the two worksheets. Only possible before it is
+  // written: the row it already owns lives on the other tab and this app never
+  // deletes rows, so the move would leave an orphan behind.
+  if ('mailKind' in body) {
+    const kind = String(body.mailKind ?? '').toUpperCase()
+    if (!['QUERY', 'EXCLUDED'].includes(kind)) {
+      return buildApiError('mailKind must be QUERY or EXCLUDED')
+    }
+    if (kind !== entry.mailKind) {
+      if (entry.sheetRow) {
+        return buildApiError(
+          `This mail is already written to row ${entry.sheetRow} of "${entry.sheetTab ?? 'the query sheet'}". `
+          + 'Clear that row in Excel first, then move it.',
+          409,
+        )
+      }
+      data.mailKind = kind
+      data.excludeReason = kind === 'EXCLUDED'
+        ? (asText(body.excludeReason) ?? 'Moved by hand')
+        : null
+      touched.push('mailKind')
+    }
+  }
+
   if (touched.length === 0) return buildApiError('No editable fields supplied')
 
   // Editing the reply time implies the query is answered, unless told otherwise.

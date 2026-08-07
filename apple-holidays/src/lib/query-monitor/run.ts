@@ -22,6 +22,7 @@ import {
   type ReplyStatus, type RunStatus, type RunTrigger,
 } from './constants'
 import { getConfig, listActiveMailboxes, setSetting } from './config'
+import { classifySubject, parseExcludePatterns } from './classify'
 import {
   fetchInboxSince, fetchSentConversationMap, findReplyForConversation,
   type MonitoredMessage,
@@ -29,8 +30,9 @@ import {
 import { extractByRules, extractWithAi } from './extract'
 import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
 import {
-  appendRows, closeSession, openSession, resolveSheetRef, updateRow,
-  type SheetRef, type SheetRowValues,
+  EXCLUDED_LAYOUT, appendExcludedRows, appendRows, closeSession, ensureWorksheet,
+  openSession, resolveSheetRef, updateExcludedRow, updateRow,
+  type ExcludedRowValues, type SheetRef, type SheetRowValues,
 } from './sheet'
 
 // ── Run log ──────────────────────────────────────────────────────────────────
@@ -166,6 +168,21 @@ export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): S
     cntl:           entry.cntl ?? '',
     amendment:      entry.amendment ?? '',
     region:         entry.region ?? '',
+  }
+}
+
+/** The same entry as a row on the second tab. */
+export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
+  return {
+    date:         toExcelDateSerial(entry.receivedAt),
+    receivedTime: toExcelDateTimeSerial(entry.receivedAt),
+    subject:      entry.subject.slice(0, 500),
+    sender:       entry.fromName || entry.fromDomain,
+    senderEmail:  entry.fromAddress,
+    fileHandler:  entry.handlerNames,
+    reason:       entry.excludeReason ?? 'Not a query',
+    destination:  entry.destination ?? '',
+    cntl:         entry.cntl ?? '',
   }
 }
 
@@ -323,6 +340,10 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
 
     // ── 2. Upsert entries ───────────────────────────────────────────────────
     const rules = await loadSenderRules()
+    const excludePatterns = config.excludeEnabled
+      ? parseExcludePatterns(config.excludePatterns)
+      : []
+    let excludedThisRun = 0
     const ordered = Array.from(groups.values()).sort(
       (a, b) => a.message.receivedAt.getTime() - b.message.receivedAt.getTime(),
     )
@@ -378,6 +399,11 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         }
 
         // ── New entry ─────────────────────────────────────────────────────
+        // Vouchers, on-ground incidents and avail checks are recorded like
+        // anything else but routed to the second tab, so the query sheet stays
+        // a measure of new business only.
+        const { kind, reason } = classifySubject(message.subject, excludePatterns)
+
         const sender = resolveSender(message.fromAddress, message.fromDomain, message.fromName, rules)
         const fields = extractByRules(message.subject, message.bodyText, message.receivedAt)
 
@@ -393,7 +419,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         if (!destination) missing.push('destination')
         if (!travelDate)  missing.push('travelDate')
 
-        if (config.aiEnabled && missing.length > 0) {
+        // No AI spend on mail that is not going into the query sheet.
+        if (config.aiEnabled && missing.length > 0 && kind === 'QUERY') {
           const ai = await extractWithAi(message.subject, message.bodyText, message.receivedAt, missing)
           if (ai.ok) {
             counters.aiCalls += 1
@@ -411,6 +438,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           data: {
             dedupKey:       group.dedupKey,
             conversationId: message.conversationId,
+            mailKind:       kind,
+            excludeReason:  reason?.slice(0, 180) ?? null,
             subject:        message.subject.slice(0, 2000),
             fromAddress:    message.fromAddress,
             fromName:       message.fromName.slice(0, 180),
@@ -450,9 +479,17 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         }
 
         counters.entriesCreated += 1
-        log.add('success', `New query "${created.subject.slice(0, 60)}" — ${handlerNames} · ${sender.salesPerson}`, {
-          entryId: created.id, destination, travelDate: travelDate?.toISOString() ?? null, source,
-        })
+
+        if (kind === 'EXCLUDED') {
+          excludedThisRun += 1
+          log.add('info', `Not a query — "${created.subject.slice(0, 60)}" → "${config.excludedSheetName}" (matched ${reason})`, {
+            entryId: created.id, reason,
+          })
+        } else {
+          log.add('success', `New query "${created.subject.slice(0, 60)}" — ${handlerNames} · ${sender.salesPerson}`, {
+            entryId: created.id, destination, travelDate: travelDate?.toISOString() ?? null, source,
+          })
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         log.add('error', `Failed to record "${group.message.subject.slice(0, 60)}": ${msg}`)
@@ -477,7 +514,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
 
     log.add(status === 'SUCCESS' ? 'success' : 'warn',
       `Sweep finished in ${(durationMs / 1000).toFixed(1)}s — `
-      + `${counters.entriesCreated} new, ${counters.entriesUpdated} updated, `
+      + `${counters.entriesCreated} new (${excludedThisRun} not a query), `
+      + `${counters.entriesUpdated} updated, `
       + `${counters.repliesDetected} replies, ${counters.rowsAppended} row(s) appended`)
 
     await prisma.queryMonitorRun.update({
@@ -529,8 +567,9 @@ async function detectReplies(
 ): Promise<number> {
   const since = new Date(Date.now() - chaseDays * 86_400_000)
 
+  // Excluded mail is not measured against the SLA, so it never costs a lookup.
   const open = await prisma.queryMonitorEntry.findMany({
-    where:   { replyStatus: { not: 'REPLIED' }, receivedAt: { gte: since } },
+    where:   { mailKind: 'QUERY', replyStatus: { not: 'REPLIED' }, receivedAt: { gte: since } },
     include: { matches: { include: { mailbox: true } } },
     orderBy: { receivedAt: 'asc' },
     take:    500,
@@ -609,8 +648,12 @@ export interface SyncResult {
 
 /**
  * Write everything outstanding to the workbook: PENDING entries are appended in
- * one contiguous block (cheap — a single range PATCH), DIRTY entries are
- * rewritten in place at the row they already own.
+ * one contiguous block per tab (cheap — a single range PATCH each), DIRTY
+ * entries are rewritten in place at the row they already own.
+ *
+ * Two destinations, one pass. Entries classified QUERY go to the master query
+ * sheet; everything the exclusion patterns caught goes to the "other mail" tab,
+ * which is created on first use if the workbook has no such tab yet.
  *
  * Safe to call by hand from the UI, which is how a review-first team gets rows
  * into the sheet while auto-write is still off.
@@ -644,47 +687,78 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
     return { appended: 0, updated: 0, failed: pending.length + dirty.length }
   }
 
+  const isExcluded = (e: QueryMonitorEntry) => e.mailKind === 'EXCLUDED'
+  const pendingQueries  = pending.filter(e => !isExcluded(e))
+  const pendingExcluded = pending.filter(isExcluded)
+
   const sessionId = await openSession(ref)
   let appended = 0
   let updated  = 0
   let failed   = 0
 
-  try {
-    if (pending.length > 0) {
-      try {
-        const rows = pending.map(e => buildSheetRow(e, config.writeStatusColumn))
-        const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
+  /** Mark a whole failed block, so the next sync retries it rather than losing it. */
+  const failBlock = async (entries: QueryMonitorEntry[], msg: string, what: string) => {
+    failed += entries.length
+    await prisma.queryMonitorEntry.updateMany({
+      where: { id: { in: entries.map(e => e.id) } },
+      data:  { syncStatus: 'FAILED', syncError: msg.slice(0, 500) },
+    })
+    note('error', `Append failed for ${entries.length} ${what} row(s): ${msg}`)
+  }
 
+  const recordRows = async (entries: QueryMonitorEntry[], firstRow: number, tab: string) =>
+    Promise.all(entries.map((entry, i) =>
+      prisma.queryMonitorEntry.update({
+        where: { id: entry.id },
+        data: {
+          sheetRow:   firstRow + i,
+          sheetTab:   tab,
+          syncStatus: 'SYNCED',
+          syncedAt:   new Date(),
+          syncError:  null,
+        },
+      }),
+    ))
+
+  try {
+    if (pendingQueries.length > 0) {
+      try {
+        const rows = pendingQueries.map(e => buildSheetRow(e, config.writeStatusColumn))
+        const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
         // Row numbers are stored per entry so a row can be rewritten later.
-        await Promise.all(pending.map((entry, i) =>
-          prisma.queryMonitorEntry.update({
-            where: { id: entry.id },
-            data: {
-              sheetRow:   result.firstRow + i,
-              syncStatus: 'SYNCED',
-              syncedAt:   new Date(),
-              syncError:  null,
-            },
-          }),
-        ))
-        appended = result.rows
+        await recordRows(pendingQueries, result.firstRow, config.sheetName)
+        appended += result.rows
         note('success', `Appended ${result.rows} row(s) to "${config.sheetName}" at rows ${result.firstRow}–${result.lastRow}`)
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        failed += pending.length
-        await prisma.queryMonitorEntry.updateMany({
-          where: { id: { in: pending.map(e => e.id) } },
-          data:  { syncStatus: 'FAILED', syncError: msg.slice(0, 500) },
-        })
-        note('error', `Append failed for ${pending.length} row(s): ${msg}`)
+        await failBlock(pendingQueries, err instanceof Error ? err.message : String(err), 'query')
+      }
+    }
+
+    if (pendingExcluded.length > 0) {
+      try {
+        const { created } = await ensureWorksheet(ref, config.excludedSheetName, EXCLUDED_LAYOUT, sessionId)
+        if (created) note('info', `Created the "${config.excludedSheetName}" tab for mail that is not a query`)
+
+        const rows = pendingExcluded.map(buildExcludedRow)
+        const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
+        await recordRows(pendingExcluded, result.firstRow, config.excludedSheetName)
+        appended += result.rows
+        note('success', `Appended ${result.rows} non-query mail(s) to "${config.excludedSheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+      } catch (err) {
+        await failBlock(pendingExcluded, err instanceof Error ? err.message : String(err), 'non-query')
       }
     }
 
     for (const entry of dirty) {
+      // Entries written before the two-tab split have no sheetTab — they can
+      // only be on the query sheet, which is where they are rewritten.
+      const tab = entry.sheetTab ?? config.sheetName
       try {
-        await updateRow(entry.sheetRow!, buildSheetRow(entry, config.writeStatusColumn), {
-          sessionId, ref, sheetName: config.sheetName,
-        })
+        if (isExcluded(entry)) {
+          await updateExcludedRow(entry.sheetRow!, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
+        } else {
+          await updateRow(entry.sheetRow!, buildSheetRow(entry, config.writeStatusColumn), { sessionId, ref, sheetName: tab })
+        }
         await prisma.queryMonitorEntry.update({
           where: { id: entry.id },
           data:  { syncStatus: 'SYNCED', syncedAt: new Date(), syncError: null },
@@ -697,7 +771,7 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
           where: { id: entry.id },
           data:  { syncStatus: 'FAILED', syncError: msg.slice(0, 500) },
         }).catch(() => {})
-        note('error', `Row ${entry.sheetRow} update failed: ${msg}`)
+        note('error', `"${tab}" row ${entry.sheetRow} update failed: ${msg}`)
       }
     }
 
@@ -707,6 +781,41 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
   }
 
   return { appended, updated, failed }
+}
+
+/**
+ * Re-run the exclusion patterns over entries that have not been written yet.
+ *
+ * Editing the pattern list should fix the backlog too, but only where it is
+ * still safe: an entry already in a sheet keeps its classification, because
+ * moving it would leave an orphan row behind on the other tab.
+ */
+export async function reclassifyUnsyncedEntries(): Promise<{ toExcluded: number; toQuery: number; scanned: number }> {
+  const config   = await getConfig()
+  const patterns = config.excludeEnabled ? parseExcludePatterns(config.excludePatterns) : []
+
+  const entries = await prisma.queryMonitorEntry.findMany({
+    where:  { sheetRow: null, syncStatus: { in: ['PENDING', 'DIRTY', 'FAILED'] } },
+    select: { id: true, subject: true, mailKind: true },
+    take:   2000,
+  })
+
+  let toExcluded = 0
+  let toQuery    = 0
+
+  for (const entry of entries) {
+    const { kind, reason } = classifySubject(entry.subject, patterns)
+    if (kind === entry.mailKind) continue
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data:  { mailKind: kind, excludeReason: reason?.slice(0, 180) ?? null, syncStatus: 'PENDING', syncError: null },
+    })
+    if (kind === 'EXCLUDED') toExcluded += 1
+    else toQuery += 1
+  }
+
+  return { toExcluded, toQuery, scanned: entries.length }
 }
 
 /** Re-queue an entry for the sheet after a hand edit in the dashboard. */

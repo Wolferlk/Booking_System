@@ -14,6 +14,8 @@
  */
 import { graphFetch, getGraphToken } from '@/lib/graph-client'
 import {
+  EXCLUDED_SHEET_COLUMNS, EXCLUDED_SHEET_FIRST_COLUMN, EXCLUDED_SHEET_LAST_COLUMN,
+  EXCLUDED_SHEET_NUMBER_FORMATS,
   SETTINGS, SHEET_COLUMNS, SHEET_FIRST_COLUMN, SHEET_LAST_COLUMN,
   SHEET_NUMBER_FORMATS,
 } from './constants'
@@ -61,6 +63,52 @@ export function rowToCells(row: SheetRowValues): (string | number)[] {
     row.fileHandler, row.salesPerson, row.destination, row.agent,
     row.travelDate, row.cntl, row.amendment, row.region,
   ]
+}
+
+/** A row on the second tab, columns A–I. See EXCLUDED_SHEET_COLUMNS. */
+export interface ExcludedRowValues {
+  date:         number | ''  // A — Excel date serial
+  receivedTime: number | ''  // B — Excel datetime serial
+  subject:      string       // C
+  sender:       string       // D
+  senderEmail:  string       // E
+  fileHandler:  string       // F
+  reason:       string       // G — the pattern that kept it out of the query sheet
+  destination:  string       // H
+  cntl:         string       // I
+}
+
+export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] {
+  return [
+    row.date, row.receivedTime, row.subject, row.sender, row.senderEmail,
+    row.fileHandler, row.reason, row.destination, row.cntl,
+  ]
+}
+
+/** Where a set of rows is written: which tab, and over which columns. */
+export interface SheetLayout {
+  firstColumn:   string
+  lastColumn:    string
+  /** Column scanned bottom-up to find the append point — must always be filled. */
+  keyColumn:     string
+  header:        readonly string[]
+  numberFormats: readonly string[]
+}
+
+export const QUERY_LAYOUT: SheetLayout = {
+  firstColumn:   SHEET_FIRST_COLUMN,
+  lastColumn:    SHEET_LAST_COLUMN,
+  keyColumn:     'C', // Subject
+  header:        SHEET_COLUMNS,
+  numberFormats: SHEET_NUMBER_FORMATS,
+}
+
+export const EXCLUDED_LAYOUT: SheetLayout = {
+  firstColumn:   EXCLUDED_SHEET_FIRST_COLUMN,
+  lastColumn:    EXCLUDED_SHEET_LAST_COLUMN,
+  keyColumn:     'C', // Subject
+  header:        EXCLUDED_SHEET_COLUMNS,
+  numberFormats: EXCLUDED_SHEET_NUMBER_FORMATS,
 }
 
 // ── Share-URL resolution ─────────────────────────────────────────────────────
@@ -180,14 +228,16 @@ async function readRange(
  */
 export async function findLastDataRow(
   ref: SheetRef, sheetName: string, sessionId: string | null = null,
+  layout: SheetLayout = QUERY_LAYOUT,
 ): Promise<number> {
   const used = await workbookFetch<{ address: string; rowCount: number }>(
-    `${worksheetPath(ref, sheetName)}/range(address='${SHEET_FIRST_COLUMN}:${SHEET_LAST_COLUMN}')/usedRange(valuesOnly=true)?$select=address,rowCount`,
+    `${worksheetPath(ref, sheetName)}/range(address='${layout.firstColumn}:${layout.lastColumn}')/usedRange(valuesOnly=true)?$select=address,rowCount`,
     sessionId,
   )
 
   const upperBound = Math.max(used.rowCount, 2)
-  const column = await readRange(ref, sheetName, `C1:C${upperBound}`, sessionId)
+  const key = layout.keyColumn
+  const column = await readRange(ref, sheetName, `${key}1:${key}${upperBound}`, sessionId)
 
   let last = 1 // header row
   column.values.forEach((cell, i) => {
@@ -249,17 +299,41 @@ export async function appendRows(
   rows: SheetRowValues[],
   opts: { sessionId?: string | null; ref?: SheetRef; sheetName?: string } = {},
 ): Promise<AppendResult> {
+  const cfg = await getConfig()
+  return appendCells(rows.map(rowToCells), QUERY_LAYOUT, {
+    ...opts,
+    sheetName: opts.sheetName ?? cfg.sheetName,
+  })
+}
+
+/** The excluded-mail equivalent, against the second tab's A–I layout. */
+export async function appendExcludedRows(
+  rows: ExcludedRowValues[],
+  opts: { sessionId?: string | null; ref?: SheetRef; sheetName?: string } = {},
+): Promise<AppendResult> {
+  const cfg = await getConfig()
+  return appendCells(rows.map(excludedRowToCells), EXCLUDED_LAYOUT, {
+    ...opts,
+    sheetName: opts.sheetName ?? cfg.excludedSheetName,
+  })
+}
+
+/** The shared mechanics: find the append point, PATCH one contiguous block. */
+async function appendCells(
+  rows: (string | number)[][],
+  layout: SheetLayout,
+  opts: { sessionId?: string | null; ref?: SheetRef; sheetName: string },
+): Promise<AppendResult> {
   if (rows.length === 0) return { firstRow: 0, lastRow: 0, rows: 0 }
 
-  const cfg       = await getConfig()
   const ref       = opts.ref ?? await resolveSheetRef()
-  const sheetName = opts.sheetName ?? cfg.sheetName
+  const sheetName = opts.sheetName
   const sessionId = opts.sessionId ?? null
 
-  const lastDataRow = await findLastDataRow(ref, sheetName, sessionId)
+  const lastDataRow = await findLastDataRow(ref, sheetName, sessionId, layout)
   const firstRow    = lastDataRow + 1
   const lastRow     = lastDataRow + rows.length
-  const address     = `${SHEET_FIRST_COLUMN}${firstRow}:${SHEET_LAST_COLUMN}${lastRow}`
+  const address     = `${layout.firstColumn}${firstRow}:${layout.lastColumn}${lastRow}`
 
   await workbookFetch(
     `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')`,
@@ -267,13 +341,58 @@ export async function appendRows(
     {
       method: 'PATCH',
       body: JSON.stringify({
-        values:       rows.map(rowToCells),
-        numberFormat: rows.map(() => [...SHEET_NUMBER_FORMATS]),
+        values:       rows,
+        numberFormat: rows.map(() => [...layout.numberFormats]),
       }),
     },
   )
 
   return { firstRow, lastRow, rows: rows.length }
+}
+
+/**
+ * Make sure a tab exists with our header on row 1, creating it if the workbook
+ * has never had one. Only ever called for the excluded-mail tab: the query sheet
+ * is the team's own file and must be found, not conjured.
+ */
+export async function ensureWorksheet(
+  ref: SheetRef, sheetName: string, layout: SheetLayout, sessionId: string | null = null,
+): Promise<{ created: boolean }> {
+  const sheets = await workbookFetch<{ value: { name: string }[] }>(
+    `/drives/${ref.driveId}/items/${ref.itemId}/workbook/worksheets?$select=name`,
+    sessionId,
+  )
+  const exists = (sheets.value ?? []).some(w => w.name.toLowerCase() === sheetName.toLowerCase())
+
+  if (!exists) {
+    await workbookFetch(
+      `/drives/${ref.driveId}/items/${ref.itemId}/workbook/worksheets/add`,
+      sessionId,
+      { method: 'POST', body: JSON.stringify({ name: sheetName }) },
+    )
+  }
+
+  // Write the header when row 1 is blank — on a tab we just made, and on one an
+  // admin created by hand and left empty.
+  const headerAddress = `${layout.firstColumn}1:${layout.lastColumn}1`
+  const header = await readRange(ref, sheetName, headerAddress, sessionId)
+  const isEmpty = (header.values[0] ?? []).every(cell => String(cell ?? '').trim() === '')
+
+  if (isEmpty) {
+    await workbookFetch(
+      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(headerAddress)}')`,
+      sessionId,
+      { method: 'PATCH', body: JSON.stringify({ values: [[...layout.header]] }) },
+    )
+    // Bold is cosmetic — a failure here must not stop the rows going in.
+    await workbookFetch(
+      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(headerAddress)}')/format/font`,
+      sessionId,
+      { method: 'PATCH', body: JSON.stringify({ bold: true }) },
+    ).catch(() => {})
+  }
+
+  return { created: !exists }
 }
 
 /**
@@ -285,19 +404,41 @@ export async function updateRow(
   row: SheetRowValues,
   opts: { sessionId?: string | null; ref?: SheetRef; sheetName?: string } = {},
 ): Promise<void> {
-  const cfg       = await getConfig()
-  const ref       = opts.ref ?? await resolveSheetRef()
-  const sheetName = opts.sheetName ?? cfg.sheetName
-  const address   = `${SHEET_FIRST_COLUMN}${rowNumber}:${SHEET_LAST_COLUMN}${rowNumber}`
+  const cfg = await getConfig()
+  await updateCells(rowNumber, rowToCells(row), QUERY_LAYOUT, {
+    ...opts, sheetName: opts.sheetName ?? cfg.sheetName,
+  })
+}
+
+/** Rewrite a row on the second tab — the handler list is what usually changes. */
+export async function updateExcludedRow(
+  rowNumber: number,
+  row: ExcludedRowValues,
+  opts: { sessionId?: string | null; ref?: SheetRef; sheetName?: string } = {},
+): Promise<void> {
+  const cfg = await getConfig()
+  await updateCells(rowNumber, excludedRowToCells(row), EXCLUDED_LAYOUT, {
+    ...opts, sheetName: opts.sheetName ?? cfg.excludedSheetName,
+  })
+}
+
+async function updateCells(
+  rowNumber: number,
+  cells: (string | number)[],
+  layout: SheetLayout,
+  opts: { sessionId?: string | null; ref?: SheetRef; sheetName: string },
+): Promise<void> {
+  const ref     = opts.ref ?? await resolveSheetRef()
+  const address = `${layout.firstColumn}${rowNumber}:${layout.lastColumn}${rowNumber}`
 
   await workbookFetch(
-    `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')`,
+    `${worksheetPath(ref, opts.sheetName)}/range(address='${encodeURIComponent(address)}')`,
     opts.sessionId ?? null,
     {
       method: 'PATCH',
       body: JSON.stringify({
-        values:       [rowToCells(row)],
-        numberFormat: [[...SHEET_NUMBER_FORMATS]],
+        values:       [cells],
+        numberFormat: [[...layout.numberFormats]],
       }),
     },
   )

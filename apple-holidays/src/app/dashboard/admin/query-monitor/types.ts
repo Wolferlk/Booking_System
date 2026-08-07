@@ -19,6 +19,10 @@ export interface QmEntry {
   amendment:        string | null
   region:           string | null
   isUrgent:         boolean
+  /** QUERY → the master query sheet · EXCLUDED → the other-mail tab. */
+  mailKind:         'QUERY' | 'EXCLUDED'
+  excludeReason:    string | null
+  sheetTab:         string | null
   bodySnippet:      string
   extractionSource: 'RULE' | 'AI' | 'MANUAL'
   aiConfidence:     number | null
@@ -37,6 +41,9 @@ export interface QmStats {
   synced:       number
   awaitingSync: number
   failed:       number
+  /** Split by destination tab — both counts stay live whichever tab is shown. */
+  queries:      number
+  excluded:     number
 }
 
 export interface QmMailbox {
@@ -78,6 +85,9 @@ export interface QmConfig {
   aiEnabled:         boolean
   slaHours:          number
   replyChaseDays:    number
+  excludeEnabled:    boolean
+  excludePatterns:   string
+  excludedSheetName: string
   lastRunAt:         string | null
 }
 
