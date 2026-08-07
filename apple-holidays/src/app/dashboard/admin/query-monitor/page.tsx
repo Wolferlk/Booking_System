@@ -175,7 +175,8 @@ export default function QueryMonitorPage() {
             tone={(stats?.overdue ?? 0) > 0 ? 'rose' : 'emerald'}
             label="Open queries"
             value={(stats?.pending ?? 0) + (stats?.overdue ?? 0)}
-            hint={`${stats?.overdue ?? 0} past the ${config?.slaHours ?? 2}h SLA · ${stats?.replied ?? 0} replied`}
+            hint={`${stats?.overdue ?? 0} past the ${config?.slaHours ?? 2}h SLA · ${stats?.replied ?? 0} replied`
+              + ((stats?.unassigned ?? 0) > 0 ? ` · ${stats?.unassigned} unassigned` : '')}
           />
           <Stat
             icon={sheetError ? <AlertTriangle className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
@@ -211,7 +212,8 @@ export default function QueryMonitorPage() {
             <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-rose-900">
               <span className="font-semibold">Column mismatch.</span>{' '}
-              The header on “{sheet.sheetName}” no longer matches the expected Date / Status / Subject … Region layout.
+              The header on “{sheet.sheetName}” no longer matches the expected
+              Date / Status / Subject / … / File Handler / TO List / … / Region layout.
               Writing now would put values in the wrong columns — check the Configuration tab before syncing.
             </p>
           </div>

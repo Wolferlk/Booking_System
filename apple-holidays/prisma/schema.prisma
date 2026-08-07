@@ -1328,7 +1328,8 @@ model QueryMonitorSenderRule {
 
 /// One row per unique inbound query = one row in the spreadsheet. When the same
 /// mail reaches several file handlers it stays a single entry; each recipient is
-/// recorded as a QueryMonitorMatch and their names are joined into one cell.
+/// recorded as a QueryMonitorMatch, their names fill the TO List cell, and
+/// exactly one of them is chosen as the File Handler who owns the query.
 model QueryMonitorEntry {
   id               String              @id @default(cuid())
   dedupKey         String              @unique // internetMessageId, else conversationId+subject hash
@@ -1345,7 +1346,13 @@ model QueryMonitorEntry {
   receivedAt       DateTime // sheet column D — "Allocation time"
   repliedAt        DateTime? // sheet column E — "Replied time"
   replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
-  handlerNames     String              @db.Text // denormalised, comma-joined, sheet column F
+  /// Sheet column F — the ONE handler who owns this query. Empty until it can be
+  /// known: filled straight away when the mail reached a single mailbox, on the
+  /// first reply with whoever answered, or by hand from the TO-list dropdown.
+  handlerNames     String              @db.Text
+  /// Sheet column G — every mailbox the mail actually reached, comma-joined.
+  /// `handlerNames` is always one of these names.
+  toList           String              @db.Text
   salesPerson      String?
   agent            String?
   destination      String?
@@ -1366,6 +1373,12 @@ model QueryMonitorEntry {
   syncStatus       String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
   syncError        String?             @db.Text
   syncedAt         DateTime?
+  /// The standby workbook numbers its rows independently of the primary, so it
+  /// carries its own row pointer and its own sync state — a backup that fails to
+  /// write must be retried without re-appending to the primary.
+  backupSheetRow   Int?
+  backupSyncStatus String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
+  backupSyncError  String?             @db.Text
   firstRunId       String?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
@@ -1377,6 +1390,7 @@ model QueryMonitorEntry {
   @@index([conversationId])
   @@index([fromDomain])
   @@index([mailKind])
+  @@index([backupSyncStatus])
   @@map("query_monitor_entries")
 }
 

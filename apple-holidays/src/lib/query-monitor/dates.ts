@@ -57,6 +57,23 @@ export function fromExcelSerial(serial: number): Date {
   return new Date(EXCEL_EPOCH_UTC + Math.round(serial * MS_PER_DAY))
 }
 
+/**
+ * The instant at which `2026-08-05` begins in the sheet's timezone.
+ *
+ * The offset is inverted rather than hard-coded: read the UTC midnight guess
+ * back as a wall clock in `tz`, and the difference is the offset to undo. Sri
+ * Lanka has no DST, so one pass settles it.
+ */
+export function startOfDayInTz(isoDay: string, tz = SHEET_TZ): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDay)) return null
+  const guess = new Date(`${isoDay}T00:00:00Z`)
+  if (Number.isNaN(guess.getTime())) return null
+
+  const w = wallClockInTz(guess, tz)
+  const offset = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second) - guess.getTime()
+  return new Date(guess.getTime() - offset)
+}
+
 /** `2026-08-06` in the sheet timezone — for grouping and day filters. */
 export function isoDateInTz(date: Date, tz = SHEET_TZ): string {
   return new Intl.DateTimeFormat('en-CA', {

@@ -24,9 +24,17 @@ export async function POST() {
     )
   }
 
+  // The headline numbers are the live workbook's. The backup is reported only
+  // when it went wrong — a mirror that worked is not news.
+  const backup = result.workbooks.find(w => w.target === 'backup')
+  const backupNote = backup && (backup.failed > 0 || backup.error)
+    ? ` — backup lagging: ${backup.error ?? `${backup.failed} row(s) failed`}`
+    : ''
+
   return buildApiSuccess(
     result,
     `${result.appended} row(s) appended, ${result.updated} updated`
-    + (result.failed ? `, ${result.failed} failed` : ''),
+    + (result.failed ? `, ${result.failed} failed` : '')
+    + backupNote,
   )
 }

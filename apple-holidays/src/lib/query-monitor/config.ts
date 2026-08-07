@@ -6,6 +6,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { DEFAULTS, SEED_MAILBOXES, SEED_SENDER_RULES, SETTINGS } from './constants'
+import { startOfDayInTz } from './dates'
 
 export interface QueryMonitorConfig {
   enabled:           boolean
@@ -22,7 +23,20 @@ export interface QueryMonitorConfig {
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
+  /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
+  startDate:         string
+  backupEnabled:     boolean
+  backupSheetUrl:    string
   lastRunAt:         string | null
+}
+
+/**
+ * The instant the cut-off date begins, in the sheet's timezone — a mail at
+ * 02:00 local on the 5th is a 5th-of-August query and must not be filtered out.
+ * Null when the setting is blank, which means "no cut-off".
+ */
+export function startDateBoundary(startDate: string): Date | null {
+  return startOfDayInTz(startDate.trim())
 }
 
 // ── Settings ─────────────────────────────────────────────────────────────────
@@ -68,6 +82,9 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     excludePatterns:   str(SETTINGS.excludePatterns,   DEFAULTS.excludePatterns),
     excludedSheetName: str(SETTINGS.excludedSheetName, DEFAULTS.excludedSheetName)
                        || DEFAULTS.excludedSheetName,
+    startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
+    backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
+    backupSheetUrl:    str(SETTINGS.backupSheetUrl, DEFAULTS.backupSheetUrl),
     lastRunAt:         map.get(SETTINGS.lastRunAt) ?? null,
   }
 }
@@ -98,12 +115,26 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
     if (tab) put(SETTINGS.excludedSheetName, tab)
   }
 
-  if (patch.sheetUrl !== undefined) {
-    const url = String(patch.sheetUrl).trim()
-    const current = await getSetting(SETTINGS.sheetUrl)
-    put(SETTINGS.sheetUrl, url)
+  if (patch.backupEnabled !== undefined) put(SETTINGS.backupEnabled, !!patch.backupEnabled)
+  if (patch.startDate     !== undefined) {
+    // Blank is legal and means "no cut-off"; anything else must be a real day.
+    const day = String(patch.startDate).trim()
+    if (day && !/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error('Start date must be YYYY-MM-DD')
+    put(SETTINGS.startDate, day)
+  }
+
+  // Both workbook URLs drop their cached drive/item reference when they change,
+  // so the next write resolves the new file instead of the old one.
+  for (const [field, urlKey, refKey] of [
+    ['sheetUrl',       SETTINGS.sheetUrl,       SETTINGS.sheetRef],
+    ['backupSheetUrl', SETTINGS.backupSheetUrl, SETTINGS.backupSheetRef],
+  ] as const) {
+    if (patch[field] === undefined) continue
+    const url = String(patch[field]).trim()
+    const current = await getSetting(urlKey)
+    put(urlKey, url)
     if (current && current !== url) {
-      await prisma.systemSetting.deleteMany({ where: { key: SETTINGS.sheetRef } })
+      await prisma.systemSetting.deleteMany({ where: { key: refKey } })
     }
   }
 

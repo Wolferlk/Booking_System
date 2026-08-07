@@ -21,7 +21,7 @@ import {
   REPLY_STATUS_SHEET_LABEL, SETTINGS, UNMATCHED_SALES_PERSON,
   type ReplyStatus, type RunStatus, type RunTrigger,
 } from './constants'
-import { getConfig, listActiveMailboxes, setSetting } from './config'
+import { getConfig, listActiveMailboxes, setSetting, startDateBoundary } from './config'
 import { classifySubject, parseExcludePatterns } from './classify'
 import {
   fetchInboxSince, fetchSentConversationMap, findReplyForConversation,
@@ -30,9 +30,9 @@ import {
 import { extractByRules, extractWithAi } from './extract'
 import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
 import {
-  EXCLUDED_LAYOUT, appendExcludedRows, appendRows, closeSession, ensureWorksheet,
-  openSession, resolveSheetRef, updateExcludedRow, updateRow,
-  type ExcludedRowValues, type SheetRef, type SheetRowValues,
+  EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
+  ensureWorksheet, openSession, resolveSheetRef, updateExcludedRow, updateRow,
+  type ExcludedRowValues, type SheetRef, type SheetRowValues, type WorkbookTarget,
 } from './sheet'
 
 // ── Run log ──────────────────────────────────────────────────────────────────
@@ -160,7 +160,10 @@ export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): S
     subject:        entry.subject.slice(0, 500),
     allocationTime: toExcelDateTimeSerial(entry.receivedAt),
     repliedTime:    toExcelDateTimeSerial(entry.repliedAt),
+    // One owner in F, everyone who received it in G. Blank F is deliberate: it
+    // is the team's cue that nobody has picked the query up yet.
     fileHandler:    entry.handlerNames,
+    toList:         entry.toList,
     salesPerson:    entry.salesPerson ?? '',
     destination:    entry.destination ?? '',
     agent:          entry.agent ?? '',
@@ -180,16 +183,63 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
     sender:       entry.fromName || entry.fromDomain,
     senderEmail:  entry.fromAddress,
     fileHandler:  entry.handlerNames,
+    toList:       entry.toList,
     reason:       entry.excludeReason ?? 'Not a query',
     destination:  entry.destination ?? '',
     cntl:         entry.cntl ?? '',
   }
 }
 
+// ── File handler ─────────────────────────────────────────────────────────────
+
+/** The TO list as a clean, de-duplicated, comma-joined cell. */
+export function joinHandlers(names: string[]): string {
+  return names
+    .map(n => n.trim())
+    .filter(Boolean)
+    .filter((name, i, all) => all.indexOf(name) === i)
+    .join(', ')
+}
+
+export function splitHandlers(list: string): string[] {
+  return list.split(',').map(s => s.trim()).filter(Boolean)
+}
+
+/**
+ * Who owns a query, given everyone it was sent to.
+ *
+ * A mail that reached exactly one mailbox has an obvious owner and is assigned
+ * straight away. A mail that reached several has none yet — the cell stays blank
+ * until the first reply names one (see `detectReplies`) or an admin picks from
+ * the TO-list dropdown. Guessing here is worse than leaving it empty: a wrong
+ * name in the File Handler column is invisible, an empty one is a to-do.
+ */
+export function autoFileHandler(toList: string[]): string {
+  return toList.length === 1 ? toList[0] : ''
+}
+
 function computeReplyStatus(receivedAt: Date, repliedAt: Date | null, slaHours: number): ReplyStatus {
   if (repliedAt) return 'REPLIED'
   const ageHours = (Date.now() - receivedAt.getTime()) / 3_600_000
   return ageHours > slaHours ? 'OVERDUE' : 'PENDING'
+}
+
+/**
+ * Queue a changed entry for both workbooks.
+ *
+ * A row already written must be *rewritten* in place; one not yet written just
+ * stays pending and carries the change out with its first append. The two
+ * workbooks are tracked separately because they number their rows independently
+ * and either can fail on its own.
+ */
+export function dirtyPatch(entry: {
+  sheetRow: number | null; syncStatus: string
+  backupSheetRow: number | null; backupSyncStatus: string
+}): { syncStatus: string; backupSyncStatus: string } {
+  return {
+    syncStatus:       entry.sheetRow       ? 'DIRTY' : entry.syncStatus,
+    backupSyncStatus: entry.backupSheetRow ? 'DIRTY' : entry.backupSyncStatus,
+  }
 }
 
 function overrideSet(entry: { manualOverrides: Prisma.JsonValue | null }): Set<string> {
@@ -249,7 +299,11 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
   }
 
   const lookbackHours = options.lookbackHours ?? config.lookbackHours
-  const windowFrom = new Date(Date.now() - lookbackHours * 3_600_000)
+  // The workbook starts on a given day, so there is no point reading mail from
+  // before it — a wide catch-up lookback is clamped rather than refused.
+  const cutoff     = startDateBoundary(config.startDate)
+  const lookedBack = new Date(Date.now() - lookbackHours * 3_600_000)
+  const windowFrom = cutoff && cutoff > lookedBack ? cutoff : lookedBack
   const windowTo   = new Date()
 
   const run = await prisma.queryMonitorRun.create({
@@ -267,6 +321,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
   try {
     log.add('info', `Sweep started — window ${windowFrom.toISOString()} → ${windowTo.toISOString()}`, {
       trigger, lookbackHours, autoWrite: config.autoWrite,
+      startDate: config.startDate || null, backup: config.backupEnabled,
     })
 
     // ── 1. Read the mailboxes ───────────────────────────────────────────────
@@ -351,10 +406,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
     for (const group of ordered) {
       try {
         const { message } = group
-        const handlerNames = group.handlers
-          .map(h => h.handlerName)
-          .filter((name, i, all) => all.indexOf(name) === i)
-          .join(', ')
+        const toList = joinHandlers(group.handlers.map(h => h.handlerName))
 
         const existing = await prisma.queryMonitorEntry.findUnique({
           where:   { dedupKey: group.dedupKey },
@@ -362,8 +414,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         })
 
         if (existing) {
-          // Already known — only the handler list can grow (a colleague was
-          // CC'd late, or their mailbox was activated after the first sweep).
+          // Already known — only the TO list can grow (a colleague was CC'd
+          // late, or their mailbox was activated after the first sweep).
           const newHandlers = group.handlers.filter(
             h => !existing.matches.some(m => m.mailboxId === h.mailboxId),
           )
@@ -380,21 +432,26 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             skipDuplicates: true,
           })
 
-          const merged = [
-            ...existing.handlerNames.split(',').map(s => s.trim()).filter(Boolean),
+          const merged = joinHandlers([
+            ...splitHandlers(existing.toList),
             ...newHandlers.map(h => h.handlerName),
-          ].filter((name, i, all) => all.indexOf(name) === i).join(', ')
+          ])
+
+          // A second recipient means the owner is no longer obvious, but an owner
+          // already chosen — by a reply or by hand — is never taken back.
+          const owner = existing.handlerNames.trim() || autoFileHandler(splitHandlers(merged))
 
           await prisma.queryMonitorEntry.update({
             where: { id: existing.id },
             data: {
-              handlerNames: merged,
-              // Already in the sheet? Mark it for a rewrite rather than a new row.
-              syncStatus:   existing.sheetRow ? 'DIRTY' : existing.syncStatus,
+              toList:       merged,
+              handlerNames: owner,
+              // Already in a sheet? Mark it for a rewrite rather than a new row.
+              ...dirtyPatch(existing),
             },
           })
           counters.entriesUpdated += 1
-          log.add('info', `Handler added to existing query "${message.subject.slice(0, 60)}" → ${merged}`)
+          log.add('info', `TO list grew on "${message.subject.slice(0, 60)}" → ${merged}`)
           continue
         }
 
@@ -446,7 +503,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             fromDomain:     message.fromDomain,
             receivedAt:     message.receivedAt,
             replyStatus:    computeReplyStatus(message.receivedAt, null, config.slaHours),
-            handlerNames,
+            toList,
+            handlerNames:   autoFileHandler(splitHandlers(toList)),
             salesPerson:    sender.salesPerson,
             agent:          sender.agent?.slice(0, 180) ?? null,
             destination,
@@ -486,8 +544,9 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             entryId: created.id, reason,
           })
         } else {
-          log.add('success', `New query "${created.subject.slice(0, 60)}" — ${handlerNames} · ${sender.salesPerson}`, {
-            entryId: created.id, destination, travelDate: travelDate?.toISOString() ?? null, source,
+          log.add('success', `New query "${created.subject.slice(0, 60)}" — to ${toList} · ${sender.salesPerson}`, {
+            entryId: created.id, fileHandler: created.handlerNames || '(unassigned)',
+            destination, travelDate: travelDate?.toISOString() ?? null, source,
           })
         }
       } catch (err) {
@@ -558,6 +617,12 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
  * map first (free), then falls back to a per-thread lookup for the handful of
  * older threads that fell outside it. Anything past the SLA with no reply is
  * flipped to OVERDUE so the sheet shows it in red.
+ *
+ * This is what keeps yesterday's rows honest. A query raised at 16:00 and
+ * answered at 09:00 the next morning is out of every lookback window by the time
+ * the reply lands, so replies are chased for `chaseDays` regardless of when the
+ * mail arrived: the reply time, the status **and** the file handler are all
+ * written back into rows that were appended days ago.
  */
 async function detectReplies(
   sentMaps: Map<string, Map<string, Date>>,
@@ -610,15 +675,25 @@ async function detectReplies(
     }
 
     const nextStatus = computeReplyStatus(entry.receivedAt, repliedAt, slaHours)
-    if (!repliedAt && nextStatus === entry.replyStatus) continue
+
+    // Whoever answered owns the query. This is how a mail sent to six handlers
+    // gets a File Handler without anyone touching the dashboard — but a name
+    // already chosen by hand is left alone.
+    const overrides = overrideSet(entry)
+    const newOwner = repliedBy && !entry.handlerNames.trim() && !overrides.has('handlerNames')
+      ? repliedBy
+      : null
+
+    if (!repliedAt && !newOwner && nextStatus === entry.replyStatus) continue
 
     await prisma.queryMonitorEntry.update({
       where: { id: entry.id },
       data: {
         repliedAt:   repliedAt ?? entry.repliedAt,
         replyStatus: nextStatus,
-        // A row already in the sheet needs its Status / Replied time rewritten.
-        syncStatus:  entry.sheetRow ? 'DIRTY' : entry.syncStatus,
+        ...(newOwner ? { handlerNames: newOwner } : {}),
+        // A row already in a sheet needs its Status / Replied time rewritten.
+        ...dirtyPatch(entry),
       },
     })
 
@@ -630,6 +705,7 @@ async function detectReplies(
       }).catch(() => {})
       log.add('info', `Reply found for "${entry.subject.slice(0, 50)}" by ${repliedBy ?? 'team'}`, {
         entryId: entry.id, repliedAt: repliedAt.toISOString(),
+        ...(newOwner ? { fileHandlerAssigned: newOwner } : {}),
       })
     }
   }
@@ -640,56 +716,163 @@ async function detectReplies(
 
 // ── Sheet sync ───────────────────────────────────────────────────────────────
 
-export interface SyncResult {
+export interface WorkbookSyncResult {
+  target:   WorkbookTarget
   appended: number
   updated:  number
   failed:   number
+  /** Set when the workbook could not be reached at all. */
+  error?:   string
+}
+
+export interface SyncResult {
+  /** The live workbook's numbers — what the run log and the UI report. */
+  appended:  number
+  updated:   number
+  failed:    number
+  /** Per-workbook detail, live first, standby second when it is switched on. */
+  workbooks: WorkbookSyncResult[]
 }
 
 /**
- * Write everything outstanding to the workbook: PENDING entries are appended in
- * one contiguous block per tab (cheap — a single range PATCH each), DIRTY
+ * Where one workbook's row pointers and sync state live on the entry. The two
+ * workbooks number their rows independently — the backup can be appended to
+ * while the live file is locked, and vice versa — so neither may read the
+ * other's columns.
+ */
+interface WorkbookPlan {
+  target:      WorkbookTarget
+  label:       string
+  rowField:    'sheetRow' | 'backupSheetRow'
+  statusField: 'syncStatus' | 'backupSyncStatus'
+  errorField:  'syncError' | 'backupSyncError'
+}
+
+const PRIMARY_PLAN: WorkbookPlan = {
+  target: 'primary', label: 'workbook',
+  rowField: 'sheetRow', statusField: 'syncStatus', errorField: 'syncError',
+}
+
+const BACKUP_PLAN: WorkbookPlan = {
+  target: 'backup', label: 'backup workbook',
+  rowField: 'backupSheetRow', statusField: 'backupSyncStatus', errorField: 'backupSyncError',
+}
+
+/**
+ * Write everything outstanding to both workbooks: PENDING entries are appended
+ * in one contiguous block per tab (cheap — a single range PATCH each), DIRTY
  * entries are rewritten in place at the row they already own.
  *
- * Two destinations, one pass. Entries classified QUERY go to the master query
- * sheet; everything the exclusion patterns caught goes to the "other mail" tab,
- * which is created on first use if the workbook has no such tab yet.
+ * Two tabs, two files, one pass. Entries classified QUERY go to the query sheet;
+ * everything the exclusion patterns caught goes to the "other mail" tab. Both
+ * tabs are created with their header on first use.
+ *
+ * The backup is a full mirror, written in the same sweep, so it is never more
+ * than one sweep behind the live file. It is deliberately a separate pass with
+ * its own row numbers and its own failure state: a locked backup must never stop
+ * the team's live sheet being updated, and a retry must not double-append.
  *
  * Safe to call by hand from the UI, which is how a review-first team gets rows
  * into the sheet while auto-write is still off.
  */
 export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<SyncResult> {
-  const note = (level: StepLevel, msg: string, meta?: Record<string, unknown>) => log?.add(level, msg, meta)
+  const config = await getConfig()
+  await skipEntriesBeforeStartDate(config.startDate, log)
+
+  const workbooks: WorkbookSyncResult[] = [await syncOneWorkbook(PRIMARY_PLAN, log, limit)]
+
+  if (config.backupEnabled) {
+    workbooks.push(await syncOneWorkbook(BACKUP_PLAN, log, limit))
+  }
+
+  const primary = workbooks[0]
+  return {
+    appended: primary.appended, updated: primary.updated, failed: primary.failed,
+    workbooks,
+  }
+}
+
+/**
+ * Retire the backlog that predates the workbook.
+ *
+ * The team moved to a new file on a given day; everything collected before it
+ * belongs to the old sheet and is already there. Left PENDING it would be
+ * appended to the new file on the next sync and would sit in the "awaiting
+ * write" count forever, so it is closed off as SKIPPED instead.
+ */
+async function skipEntriesBeforeStartDate(startDate: string, log?: RunLog): Promise<void> {
+  const cutoff = startDateBoundary(startDate)
+  if (!cutoff) return
+
+  const stale = await prisma.queryMonitorEntry.updateMany({
+    where: {
+      receivedAt: { lt: cutoff },
+      OR: [
+        { syncStatus:       { in: ['PENDING', 'DIRTY', 'FAILED'] } },
+        { backupSyncStatus: { in: ['PENDING', 'DIRTY', 'FAILED'] } },
+      ],
+    },
+    data: {
+      syncStatus:       'SKIPPED',
+      backupSyncStatus: 'SKIPPED',
+      syncError:        `Received before the workbook's start date (${startDate})`,
+    },
+  })
+
+  if (stale.count > 0) {
+    log?.add('info', `${stale.count} entr${stale.count === 1 ? 'y' : 'ies'} predate ${startDate} — left out of the new workbook`)
+  }
+}
+
+/** One workbook's share of the work. See `syncEntriesToSheet`. */
+async function syncOneWorkbook(
+  plan: WorkbookPlan, log?: RunLog, limit = 200,
+): Promise<WorkbookSyncResult> {
+  const note = (level: StepLevel, msg: string, meta?: Record<string, unknown>) =>
+    log?.add(level, plan.target === 'backup' ? `Backup — ${msg}` : msg, meta)
 
   const pending = await prisma.queryMonitorEntry.findMany({
-    where:   { syncStatus: 'PENDING' },
+    where:   { [plan.statusField]: 'PENDING' },
     orderBy: { receivedAt: 'asc' },
     take:    limit,
   })
   const dirty = await prisma.queryMonitorEntry.findMany({
-    where:   { syncStatus: 'DIRTY', sheetRow: { not: null } },
+    where:   { [plan.statusField]: 'DIRTY', [plan.rowField]: { not: null } },
     orderBy: { receivedAt: 'asc' },
     take:    limit,
   })
 
+  const blank: WorkbookSyncResult = { target: plan.target, appended: 0, updated: 0, failed: 0 }
+
   if (pending.length === 0 && dirty.length === 0) {
-    note('info', 'Sheet already up to date — nothing to write')
-    return { appended: 0, updated: 0, failed: 0 }
+    note('info', `${plan.label === 'workbook' ? 'Sheet' : 'Backup'} already up to date — nothing to write`)
+    return blank
   }
 
   const config = await getConfig()
   let ref: SheetRef
   try {
-    ref = await resolveSheetRef()
+    ref = await resolveSheetRef(false, plan.target)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    note('error', `Cannot reach the workbook: ${msg}`)
-    return { appended: 0, updated: 0, failed: pending.length + dirty.length }
+    note('error', `Cannot reach the ${plan.label}: ${msg}`)
+    return { ...blank, failed: pending.length + dirty.length, error: msg }
   }
 
   const isExcluded = (e: QueryMonitorEntry) => e.mailKind === 'EXCLUDED'
   const pendingQueries  = pending.filter(e => !isExcluded(e))
   const pendingExcluded = pending.filter(isExcluded)
+
+  /**
+   * Which tab a row lives on. The primary remembers it per entry (rows written
+   * before the two-tab split have none, and can only be on the query sheet); the
+   * backup mirrors the primary's tab names, and an entry's kind cannot change
+   * once it is written, so its kind is enough.
+   */
+  const tabFor = (entry: QueryMonitorEntry) => {
+    const byKind = isExcluded(entry) ? config.excludedSheetName : config.sheetName
+    return plan.target === 'primary' ? (entry.sheetTab ?? byKind) : byKind
+  }
 
   const sessionId = await openSession(ref)
   let appended = 0
@@ -701,7 +884,7 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
     failed += entries.length
     await prisma.queryMonitorEntry.updateMany({
       where: { id: { in: entries.map(e => e.id) } },
-      data:  { syncStatus: 'FAILED', syncError: msg.slice(0, 500) },
+      data:  { [plan.statusField]: 'FAILED', [plan.errorField]: msg.slice(0, 500) },
     })
     note('error', `Append failed for ${entries.length} ${what} row(s): ${msg}`)
   }
@@ -711,11 +894,11 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
       prisma.queryMonitorEntry.update({
         where: { id: entry.id },
         data: {
-          sheetRow:   firstRow + i,
-          sheetTab:   tab,
-          syncStatus: 'SYNCED',
-          syncedAt:   new Date(),
-          syncError:  null,
+          [plan.rowField]:    firstRow + i,
+          [plan.statusField]: 'SYNCED',
+          [plan.errorField]:  null,
+          // The tab and the "when" belong to the live file; the backup follows it.
+          ...(plan.target === 'primary' ? { sheetTab: tab, syncedAt: new Date() } : {}),
         },
       }),
     ))
@@ -723,6 +906,11 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
   try {
     if (pendingQueries.length > 0) {
       try {
+        // Both workbooks were created empty for this system, so the query tab is
+        // laid out here rather than assumed to exist.
+        const { created } = await ensureWorksheet(ref, config.sheetName, QUERY_LAYOUT, sessionId)
+        if (created) note('info', `Created the "${config.sheetName}" tab`)
+
         const rows = pendingQueries.map(e => buildSheetRow(e, config.writeStatusColumn))
         const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
         // Row numbers are stored per entry so a row can be rewritten later.
@@ -750,18 +938,21 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
     }
 
     for (const entry of dirty) {
-      // Entries written before the two-tab split have no sheetTab — they can
-      // only be on the query sheet, which is where they are rewritten.
-      const tab = entry.sheetTab ?? config.sheetName
+      const tab = tabFor(entry)
+      const rowNumber = entry[plan.rowField]!
       try {
         if (isExcluded(entry)) {
-          await updateExcludedRow(entry.sheetRow!, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
+          await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
         } else {
-          await updateRow(entry.sheetRow!, buildSheetRow(entry, config.writeStatusColumn), { sessionId, ref, sheetName: tab })
+          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn), { sessionId, ref, sheetName: tab })
         }
         await prisma.queryMonitorEntry.update({
           where: { id: entry.id },
-          data:  { syncStatus: 'SYNCED', syncedAt: new Date(), syncError: null },
+          data: {
+            [plan.statusField]: 'SYNCED',
+            [plan.errorField]:  null,
+            ...(plan.target === 'primary' ? { syncedAt: new Date() } : {}),
+          },
         })
         updated += 1
       } catch (err) {
@@ -769,18 +960,20 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
         failed += 1
         await prisma.queryMonitorEntry.update({
           where: { id: entry.id },
-          data:  { syncStatus: 'FAILED', syncError: msg.slice(0, 500) },
+          data:  { [plan.statusField]: 'FAILED', [plan.errorField]: msg.slice(0, 500) },
         }).catch(() => {})
-        note('error', `"${tab}" row ${entry.sheetRow} update failed: ${msg}`)
+        note('error', `"${tab}" row ${rowNumber} update failed: ${msg}`)
       }
     }
 
-    if (updated > 0) note('success', `Rewrote ${updated} existing row(s) with new reply times`)
+    if (updated > 0) {
+      note('success', `Rewrote ${updated} existing row(s) with the current handler, reply time and status`)
+    }
   } finally {
     await closeSession(ref, sessionId)
   }
 
-  return { appended, updated, failed }
+  return { target: plan.target, appended, updated, failed }
 }
 
 /**
@@ -794,8 +987,13 @@ export async function reclassifyUnsyncedEntries(): Promise<{ toExcluded: number;
   const config   = await getConfig()
   const patterns = config.excludeEnabled ? parseExcludePatterns(config.excludePatterns) : []
 
+  // Unwritten in *both* workbooks — a row that exists anywhere would be orphaned
+  // on its old tab by the move.
   const entries = await prisma.queryMonitorEntry.findMany({
-    where:  { sheetRow: null, syncStatus: { in: ['PENDING', 'DIRTY', 'FAILED'] } },
+    where: {
+      sheetRow: null, backupSheetRow: null,
+      syncStatus: { in: ['PENDING', 'DIRTY', 'FAILED'] },
+    },
     select: { id: true, subject: true, mailKind: true },
     take:   2000,
   })
@@ -809,7 +1007,13 @@ export async function reclassifyUnsyncedEntries(): Promise<{ toExcluded: number;
 
     await prisma.queryMonitorEntry.update({
       where: { id: entry.id },
-      data:  { mailKind: kind, excludeReason: reason?.slice(0, 180) ?? null, syncStatus: 'PENDING', syncError: null },
+      data: {
+        mailKind: kind, excludeReason: reason?.slice(0, 180) ?? null,
+        // Neither workbook has it yet (the query filters on that), so both are
+        // simply re-queued for the tab the new classification points at.
+        syncStatus: 'PENDING', syncError: null,
+        backupSyncStatus: 'PENDING', backupSyncError: null,
+      },
     })
     if (kind === 'EXCLUDED') toExcluded += 1
     else toQuery += 1
@@ -818,13 +1022,57 @@ export async function reclassifyUnsyncedEntries(): Promise<{ toExcluded: number;
   return { toExcluded, toQuery, scanned: entries.length }
 }
 
-/** Re-queue an entry for the sheet after a hand edit in the dashboard. */
+export interface RebaseResult {
+  requeued:  number
+  retired:   number
+  startDate: string
+}
+
+/**
+ * Point the collected mail at a freshly configured workbook.
+ *
+ * Changing the workbook URL alone is not enough: every entry still remembers the
+ * row it owns in the *old* file, so the next sweep would try to rewrite rows in
+ * a workbook nothing is reading any more. This forgets those row numbers for
+ * everything from the start date onwards, so the entries are appended to the new
+ * file as if for the first time, and retires the older backlog.
+ *
+ * Nothing is deleted from the old workbook — it stays exactly as the team left
+ * it. Run this once, after saving the new URLs.
+ */
+export async function rebaseToNewWorkbook(): Promise<RebaseResult> {
+  const config = await getConfig()
+  const cutoff = startDateBoundary(config.startDate)
+
+  const requeued = await prisma.queryMonitorEntry.updateMany({
+    where: cutoff ? { receivedAt: { gte: cutoff } } : {},
+    data: {
+      sheetRow: null, sheetTab: null, syncStatus: 'PENDING', syncError: null,
+      syncedAt: null,
+      backupSheetRow: null, backupSyncStatus: 'PENDING', backupSyncError: null,
+    },
+  })
+
+  const retired = cutoff
+    ? await prisma.queryMonitorEntry.updateMany({
+        where: { receivedAt: { lt: cutoff } },
+        data:  { syncStatus: 'SKIPPED', backupSyncStatus: 'SKIPPED' },
+      })
+    : { count: 0 }
+
+  return { requeued: requeued.count, retired: retired.count, startDate: config.startDate }
+}
+
+/** Re-queue an entry for both workbooks after a hand edit in the dashboard. */
 export async function markEntryDirty(entryId: string): Promise<void> {
   const entry = await prisma.queryMonitorEntry.findUnique({ where: { id: entryId } })
   if (!entry) return
   await prisma.queryMonitorEntry.update({
     where: { id: entryId },
-    data:  { syncStatus: entry.sheetRow ? 'DIRTY' : 'PENDING' },
+    data: {
+      syncStatus:       entry.sheetRow       ? 'DIRTY' : 'PENDING',
+      backupSyncStatus: entry.backupSheetRow ? 'DIRTY' : 'PENDING',
+    },
   })
 }
 

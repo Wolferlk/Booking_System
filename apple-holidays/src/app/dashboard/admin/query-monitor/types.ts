@@ -9,7 +9,10 @@ export interface QmEntry {
   receivedAt:       string
   repliedAt:        string | null
   replyStatus:      'REPLIED' | 'PENDING' | 'OVERDUE'
+  /** Sheet column F — the ONE handler who owns this query, '' while unclaimed. */
   handlerNames:     string
+  /** Sheet column G — every handler the mail reached, comma-joined. */
+  toList:           string
   salesPerson:      string | null
   agent:            string | null
   destination:      string | null
@@ -30,6 +33,10 @@ export interface QmEntry {
   syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
   syncError:        string | null
   syncedAt:         string | null
+  /** The standby workbook's own row and state — it numbers rows independently. */
+  backupSheetRow:   number | null
+  backupSyncStatus: 'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
+  backupSyncError:  string | null
   createdAt:        string
   matches?:         { handlerName: string; repliedAt: string | null; mailboxId: string }[]
 }
@@ -44,6 +51,8 @@ export interface QmStats {
   /** Split by destination tab — both counts stay live whichever tab is shown. */
   queries:      number
   excluded:     number
+  /** Queries with nobody picked out of the TO list yet. */
+  unassigned:   number
 }
 
 export interface QmMailbox {
@@ -88,6 +97,10 @@ export interface QmConfig {
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
+  /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
+  startDate:         string
+  backupEnabled:     boolean
+  backupSheetUrl:    string
   lastRunAt:         string | null
 }
 
@@ -119,6 +132,11 @@ export interface QmRunStep {
   msg:   string
   meta?: Record<string, unknown>
 }
+
+/** The standby workbook's state, reported alongside the live one. */
+export type QmBackupInfo =
+  | { ok: true;  info: QmSheetInfo }
+  | { ok: false; error: string }
 
 export interface QmSheetInfo {
   driveId:       string

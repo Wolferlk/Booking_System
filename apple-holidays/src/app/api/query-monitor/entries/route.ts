@@ -18,6 +18,8 @@ export async function GET(req: NextRequest) {
   const status = p.get('status')       // REPLIED | PENDING | OVERDUE
   const sync   = p.get('sync')         // PENDING | SYNCED | DIRTY | FAILED
   const handler = (p.get('handler') ?? '').trim()
+  // none = nobody has been picked out of the TO list yet | any = owned
+  const assigned = p.get('assigned')
   const days   = Number(p.get('days') ?? '30')
   // QUERY (the default) | EXCLUDED | ALL — which worksheet the mail belongs to.
   const kind   = (p.get('kind') ?? 'QUERY').toUpperCase()
@@ -31,17 +33,25 @@ export async function GET(req: NextRequest) {
   else if (kind === 'EXCLUDED') and.push({ mailKind: 'EXCLUDED' })
   if (status) and.push({ replyStatus: status })
   if (sync)   and.push({ syncStatus: sync })
-  if (handler) and.push({ handlerNames: { contains: handler } })
+  // "Show me Sajid's queries" means every mail that reached him, whether or not
+  // he ended up owning it — so the TO list counts, not just the File Handler.
+  if (handler) {
+    and.push({ OR: [{ handlerNames: { contains: handler } }, { toList: { contains: handler } }] })
+  }
+  if (assigned === 'none')     and.push({ handlerNames: '' })
+  else if (assigned === 'any') and.push({ handlerNames: { not: '' } })
   if (search) {
     and.push({
       OR: [
-        { subject:     { contains: search } },
-        { fromAddress: { contains: search } },
-        { fromName:    { contains: search } },
-        { agent:       { contains: search } },
-        { salesPerson: { contains: search } },
-        { destination: { contains: search } },
-        { cntl:        { contains: search } },
+        { subject:      { contains: search } },
+        { fromAddress:  { contains: search } },
+        { fromName:     { contains: search } },
+        { agent:        { contains: search } },
+        { salesPerson:  { contains: search } },
+        { destination:  { contains: search } },
+        { cntl:         { contains: search } },
+        { handlerNames: { contains: search } },
+        { toList:       { contains: search } },
       ],
     })
   }
@@ -54,7 +64,12 @@ export async function GET(req: NextRequest) {
     ? { AND: and.filter(clause => !('mailKind' in clause)) }
     : {}
 
-  const [entries, total, statusCounts, syncCounts, kindCounts, syncCountsAllKinds] = await Promise.all([
+  // Queries nobody has claimed out of the TO list — the screen's own to-do list.
+  const unassignedWhere: Prisma.QueryMonitorEntryWhereInput = {
+    AND: [...and.filter(c => !('handlerNames' in c)), { mailKind: 'QUERY' }, { handlerNames: '' }],
+  }
+
+  const [entries, total, statusCounts, syncCounts, kindCounts, syncCountsAllKinds, unassigned] = await Promise.all([
     prisma.queryMonitorEntry.findMany({
       where, take, skip,
       orderBy: { receivedAt: 'desc' },
@@ -66,6 +81,7 @@ export async function GET(req: NextRequest) {
     prisma.queryMonitorEntry.groupBy({ by: ['mailKind'], where: kindWhere, _count: { _all: true } }),
     // Both tabs' backlog — what the header's "Sync to sheet" button counts.
     prisma.queryMonitorEntry.groupBy({ by: ['syncStatus'], where: kindWhere, _count: { _all: true } }),
+    prisma.queryMonitorEntry.count({ where: unassignedWhere }),
   ])
 
   const replyTally = new Map(statusCounts.map(r => [r.replyStatus, r._count._all]))
@@ -88,6 +104,7 @@ export async function GET(req: NextRequest) {
       failed:       at(syncTally, 'FAILED'),
       queries:      at(kindTally, 'QUERY'),
       excluded:     at(kindTally, 'EXCLUDED'),
+      unassigned,
     },
   })
 }

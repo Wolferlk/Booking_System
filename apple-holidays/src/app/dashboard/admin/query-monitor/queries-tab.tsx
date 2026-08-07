@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  FilterX, Inbox, Loader2, Mail, Pencil, Search, Trash2, Undo2, Users, Zap,
+  FilterX, Inbox, Loader2, Mail, Pencil, Search, Trash2, Undo2, UserPlus, Users, Zap,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -37,6 +37,54 @@ const DAY_RANGES = [
   { id: '90', label: '90 days' },
 ]
 
+const ASSIGNED_FILTERS = [
+  { id: '',     label: 'Anyone' },
+  { id: 'none', label: 'Unassigned' },
+  { id: 'any',  label: 'Assigned' },
+]
+
+export const splitNames = (list: string) => list.split(',').map(s => s.trim()).filter(Boolean)
+
+/**
+ * The File Handler cell: one name, chosen from the people the mail was actually
+ * sent to. Rendered as a plain `<select>` because it is used dozens of times a
+ * day on a dense table — a modal per row would be a worse tool.
+ *
+ * Blank is a legitimate value and reads as "nobody has picked this up", so it is
+ * styled as a prompt rather than as missing data.
+ */
+function HandlerPicker({
+  entry, options, onPick,
+}: {
+  entry: QmEntry
+  options: string[]
+  onPick: (name: string) => void
+}) {
+  const current = entry.handlerNames.trim()
+
+  if (options.length === 0) {
+    return <span className="text-slate-300">—</span>
+  }
+
+  return (
+    <select
+      value={current}
+      onChange={e => onPick(e.target.value)}
+      title={current ? `Owned by ${current}` : 'Nobody has picked this query up yet'}
+      className={cn(
+        'w-full max-w-[9rem] px-2 py-1 rounded-lg border text-xs font-semibold',
+        'focus:outline-none focus:ring-2 focus:ring-emerald-500/40',
+        current
+          ? 'border-slate-200 bg-white text-slate-800'
+          : 'border-dashed border-amber-300 bg-amber-50 text-amber-700',
+      )}
+    >
+      <option value="">Unassigned…</option>
+      {options.map(name => <option key={name} value={name}>{name}</option>)}
+    </select>
+  )
+}
+
 export default function QueriesTab({
   refreshKey, onStats,
 }: {
@@ -51,6 +99,7 @@ export default function QueriesTab({
   const [reply, setReply]   = useState('')
   const [sync, setSync]     = useState('')
   const [days, setDays]     = useState('30')
+  const [assigned, setAssigned] = useState('')
   // Which worksheet's mail is on screen — the queries, or everything the
   // exclusion patterns diverted to the other tab.
   const [kind, setKind]     = useState<'QUERY' | 'EXCLUDED'>('QUERY')
@@ -63,9 +112,10 @@ export default function QueriesTab({
     setLoading(true)
     try {
       const params = new URLSearchParams({ days, limit: '200', kind })
-      if (search) params.set('search', search)
-      if (reply)  params.set('status', reply)
-      if (sync)   params.set('sync', sync)
+      if (search)   params.set('search', search)
+      if (reply)    params.set('status', reply)
+      if (sync)     params.set('sync', sync)
+      if (assigned) params.set('assigned', assigned)
 
       const res = await fetch(`/api/query-monitor/entries?${params}`)
       const d = await res.json()
@@ -76,7 +126,7 @@ export default function QueriesTab({
       // The headline tiles measure the SLA, so they only ever reflect real queries.
       if (kind === 'QUERY') onStats(d.data.stats)
     } finally { setLoading(false) }
-  }, [search, reply, sync, days, kind, onStats])
+  }, [search, reply, sync, days, kind, assigned, onStats])
 
   // Debounced so typing in the search box doesn't fire a query per keystroke.
   useEffect(() => {
@@ -84,15 +134,49 @@ export default function QueriesTab({
     return () => clearTimeout(id)
   }, [load, search, refreshKey])
 
+  /**
+   * Who is carrying what. Two numbers per person: the queries they own, and the
+   * ones that merely landed in their inbox — before the File Handler column
+   * meant one person, only the second was knowable.
+   */
   const handlerTally = useMemo(() => {
-    const tally = new Map<string, number>()
-    for (const entry of entries) {
-      for (const name of entry.handlerNames.split(',').map(s => s.trim()).filter(Boolean)) {
-        tally.set(name, (tally.get(name) ?? 0) + 1)
-      }
+    const tally = new Map<string, { owned: number; received: number }>()
+    const bump = (name: string, key: 'owned' | 'received') => {
+      const row = tally.get(name) ?? { owned: 0, received: 0 }
+      row[key] += 1
+      tally.set(name, row)
     }
-    return Array.from(tally.entries()).sort((a, b) => b[1] - a[1])
+    for (const entry of entries) {
+      for (const name of splitNames(entry.toList)) bump(name, 'received')
+      const owner = entry.handlerNames.trim()
+      if (owner) bump(owner, 'owned')
+    }
+    return Array.from(tally.entries()).sort((a, b) => b[1].received - a[1].received)
   }, [entries])
+
+  const unassignedShown = useMemo(
+    () => entries.filter(e => e.mailKind === 'QUERY' && !e.handlerNames.trim()).length,
+    [entries],
+  )
+
+  /** Pick the one handler who owns a query, straight from the table. */
+  async function assignHandler(entry: QmEntry, name: string) {
+    // Optimistic: the dropdown must not snap back while the PATCH is in flight.
+    setEntries(list => list.map(e => (e.id === entry.id ? { ...e, handlerNames: name } : e)))
+
+    const res = await fetch(`/api/query-monitor/entries/${entry.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ handlerNames: name }),
+    })
+    const d = await res.json()
+    if (!d.success) {
+      toast.error(d.error)
+      setEntries(list => list.map(e => (e.id === entry.id ? { ...e, handlerNames: entry.handlerNames } : e)))
+      return
+    }
+    toast.success(name ? `File handler set to ${name}` : 'File handler cleared')
+    void load()
+  }
 
   async function saveEdit(patch: Record<string, unknown>) {
     if (!editing) return
@@ -187,6 +271,16 @@ export default function QueriesTab({
           </div>
         )}
 
+        {kind === 'QUERY' && (
+          <select
+            value={assigned} onChange={e => setAssigned(e.target.value)}
+            title="Whether a file handler has been picked out of the TO list"
+            className={cn(inputCls, 'w-auto')}
+          >
+            {ASSIGNED_FILTERS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+        )}
+
         <select value={sync} onChange={e => setSync(e.target.value)} className={cn(inputCls, 'w-auto')}>
           {SYNC_FILTERS.map(f => <option key={f.id} value={f.id}>{f.label}</option>)}
         </select>
@@ -196,19 +290,39 @@ export default function QueriesTab({
         </select>
       </div>
 
-      {/* Per-handler load for the current filter — the "who is busy" read. */}
+      {/* Per-handler load for the current filter — the "who is busy" read.
+          Owned first, because that is the number that means accountability. */}
       {handlerTally.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1 text-[11px] uppercase tracking-wide font-semibold text-slate-400">
             <Users className="w-3.5 h-3.5" /> Load
           </span>
           {handlerTally.map(([name, count]) => (
-            <span key={name} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-slate-200 text-xs">
+            <button
+              key={name} onClick={() => setSearch(name)}
+              title={`${count.owned} owned · ${count.received} received — click to filter`}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-slate-200 text-xs hover:border-emerald-300 hover:bg-emerald-50"
+            >
               <span className="font-semibold text-slate-700">{name}</span>
-              <span className="text-slate-400">{count}</span>
-            </span>
+              <span className="font-semibold text-emerald-600">{count.owned}</span>
+              <span className="text-slate-300">/</span>
+              <span className="text-slate-400">{count.received}</span>
+            </button>
           ))}
+          <span className="text-[11px] text-slate-400">owned / received</span>
         </div>
+      )}
+
+      {/* The screen's own to-do: mail that reached several handlers and that
+          nobody has claimed. Its File Handler cell is blank in the workbook. */}
+      {kind === 'QUERY' && unassignedShown > 0 && assigned !== 'none' && (
+        <button
+          onClick={() => setAssigned('none')}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+        >
+          <UserPlus className="w-3.5 h-3.5" />
+          {unassignedShown} quer{unassignedShown === 1 ? 'y has' : 'ies have'} no file handler picked yet — show them
+        </button>
       )}
 
       {/* ── Table ────────────────────────────────────────────────────── */}
@@ -232,6 +346,7 @@ export default function QueriesTab({
                   <th className="px-3 py-2.5 font-semibold">{kind === 'EXCLUDED' ? 'Kept out by' : 'Status'}</th>
                   <th className="px-3 py-2.5 font-semibold min-w-[18rem]">Subject</th>
                   <th className="px-3 py-2.5 font-semibold">File handler</th>
+                  <th className="px-3 py-2.5 font-semibold">TO list</th>
                   <th className="px-3 py-2.5 font-semibold">Sales person</th>
                   <th className="px-3 py-2.5 font-semibold">Agent</th>
                   <th className="px-3 py-2.5 font-semibold">Destination</th>
@@ -243,7 +358,7 @@ export default function QueriesTab({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {entries.map(entry => {
-                  const handlers = entry.handlerNames.split(',').map(s => s.trim()).filter(Boolean)
+                  const toList = splitNames(entry.toList)
                   return (
                     <tr key={entry.id} className="hover:bg-slate-50/70">
                       <td className="px-3 py-2.5 whitespace-nowrap text-slate-500 text-xs">
@@ -275,14 +390,26 @@ export default function QueriesTab({
                           </span>
                         </button>
                       </td>
+                      {/* One owner, picked out of the TO list. Editable right in
+                          the row — this is the field the team touches most. */}
                       <td className="px-3 py-2.5">
-                        {/* One mail can reach several handlers — every name shows here,
-                            but it is still a single row, in the sheet as on screen. */}
+                        <HandlerPicker
+                          entry={entry} options={toList}
+                          onPick={name => assignHandler(entry, name)}
+                        />
+                      </td>
+                      <td className="px-3 py-2.5">
+                        {/* Everyone the mail actually reached. One row, never duplicated. */}
                         <div className="flex flex-wrap gap-1 max-w-[12rem]">
-                          {handlers.length === 0
+                          {toList.length === 0
                             ? <span className="text-slate-300">—</span>
-                            : handlers.map(name => (
-                                <span key={name} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-[11px] font-medium">
+                            : toList.map(name => (
+                                <span key={name} className={cn(
+                                  'px-1.5 py-0.5 rounded text-[11px] font-medium',
+                                  name === entry.handlerNames
+                                    ? 'bg-emerald-100 text-emerald-700'
+                                    : 'bg-slate-100 text-slate-600',
+                                )}>
                                   {name}
                                 </span>
                               ))}
@@ -374,7 +501,11 @@ export default function QueriesTab({
               <Detail label="Allocation time" value={formatDateTime(viewing.receivedAt)} />
               <Detail label="Replied time" value={viewing.repliedAt ? formatDateTime(viewing.repliedAt) : 'Not yet'} />
               <Detail label="Status" value={<ReplyStatusBadge status={viewing.replyStatus} />} />
-              <Detail label="File handlers" value={viewing.handlerNames || '—'} />
+              <Detail
+                label="File handler"
+                value={viewing.handlerNames || <span className="text-amber-600">Not picked yet</span>}
+              />
+              <Detail label="TO list" value={viewing.toList || '—'} />
               <Detail label="Sales person" value={viewing.salesPerson ?? '—'} />
               <Detail label="Agent" value={viewing.agent ?? '—'} />
               <Detail label="Destination" value={viewing.destination ?? '—'} />
@@ -387,6 +518,10 @@ export default function QueriesTab({
                 value={viewing.sheetRow
                   ? `${viewing.sheetTab ?? 'Query sheet'} · row ${viewing.sheetRow}`
                   : 'Not written yet'}
+              />
+              <Detail
+                label="Backup row"
+                value={viewing.backupSheetRow ? `Row ${viewing.backupSheetRow}` : 'Not mirrored yet'}
               />
               {viewing.mailKind === 'EXCLUDED' && (
                 <Detail label="Kept out of the query sheet by" value={viewing.excludeReason ?? 'Not a query'} />
@@ -403,7 +538,7 @@ export default function QueriesTab({
             {viewing.matches && viewing.matches.length > 1 && (
               <p className="text-xs text-slate-500">
                 This mail reached {viewing.matches.length} handlers and is deliberately kept as one row —
-                every name is listed in the File Handler column instead of duplicating the query.
+                every name goes in the TO List column, and one of them owns it in the File Handler column.
               </p>
             )}
           </div>
@@ -439,6 +574,7 @@ function EditEntryModal({
     if (!entry) return
     setForm({
       handlerNames: entry.handlerNames,
+      toList:       entry.toList,
       salesPerson:  entry.salesPerson ?? '',
       agent:        entry.agent ?? '',
       destination:  entry.destination ?? '',
@@ -482,8 +618,35 @@ function EditEntryModal({
       }
     >
       <div className="grid sm:grid-cols-2 gap-3">
-        <Field label="File handler(s)" hint="Comma-separated — exactly what goes in the sheet cell">
-          <input value={form.handlerNames ?? ''} onChange={set('handlerNames')} className={inputCls} />
+        {/* One owner, chosen from the TO list — sheet column F takes a single
+            name. Editing the TO list below widens what can be chosen here. */}
+        <Field label="File handler" hint="One person, picked from the TO list. Leave unassigned if nobody has taken it.">
+          <select
+            value={form.handlerNames ?? ''}
+            onChange={e => setForm(f => ({ ...f, handlerNames: e.target.value }))}
+            className={inputCls}
+          >
+            <option value="">Unassigned…</option>
+            {splitNames(form.toList ?? '').map(name => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="TO list" hint="Everyone the mail reached, comma-separated — sheet column G">
+          <input
+            value={form.toList ?? ''}
+            onChange={e => {
+              const toList = e.target.value
+              // Never leave an owner who is no longer on the mail: the API would
+              // reject the save, so drop the name here rather than fail later.
+              setForm(f => {
+                const stillListed = splitNames(toList)
+                  .some(n => n.toLowerCase() === (f.handlerNames ?? '').trim().toLowerCase())
+                return { ...f, toList, handlerNames: stillListed ? f.handlerNames : '' }
+              })
+            }}
+            className={inputCls}
+          />
         </Field>
         <Field label="Sales person">
           <input value={form.salesPerson ?? ''} onChange={set('salesPerson')} className={inputCls} />
