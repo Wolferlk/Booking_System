@@ -6,11 +6,15 @@
  * cycle and without ever locking the file.
  *
  * Two rules the rest of the code depends on:
- *   1. Writes are confined to columns A–M. Column N onwards holds the team's
- *      lookup lists and pivot helpers — touching them would corrupt the sheet.
+ *   1. Writes are confined to the layout's own columns (A–N on the query sheet,
+ *      A–J on the other-mail tab). Anything further right belongs to the team's
+ *      lookup lists and pivot helpers, and touching it would corrupt the sheet.
  *   2. The append row is found by scanning column C (Subject) from the bottom,
  *      not from `usedRange`: the used range extends past the real data because
  *      of trailing formatted-but-empty rows.
+ *
+ * Every call can be aimed at either workbook — the live one the team reads, or
+ * the standby copy that mirrors it.
  */
 import { graphFetch, getGraphToken } from '@/lib/graph-client'
 import {
@@ -40,48 +44,50 @@ export interface SheetInfo extends SheetRef {
   lastModified:   string | null
 }
 
-/** A row as it will be laid down in columns A–M. */
+/** A row as it will be laid down in columns A–N. */
 export interface SheetRowValues {
   date:           number | ''  // A — Excel date serial
   status:         string       // B
   subject:        string       // C
   allocationTime: number | ''  // D — Excel datetime serial
   repliedTime:    number | ''  // E — Excel datetime serial
-  fileHandler:    string       // F
-  salesPerson:    string       // G
-  destination:    string       // H
-  agent:          string       // I
-  travelDate:     number | ''  // J — Excel date serial
-  cntl:           string       // K
-  amendment:      string       // L
-  region:         string       // M
+  fileHandler:    string       // F — exactly one name, or blank until chosen
+  toList:         string       // G — every handler the mail reached
+  salesPerson:    string       // H
+  destination:    string       // I
+  agent:          string       // J
+  travelDate:     number | ''  // K — Excel date serial
+  cntl:           string       // L
+  amendment:      string       // M
+  region:         string       // N
 }
 
 export function rowToCells(row: SheetRowValues): (string | number)[] {
   return [
     row.date, row.status, row.subject, row.allocationTime, row.repliedTime,
-    row.fileHandler, row.salesPerson, row.destination, row.agent,
+    row.fileHandler, row.toList, row.salesPerson, row.destination, row.agent,
     row.travelDate, row.cntl, row.amendment, row.region,
   ]
 }
 
-/** A row on the second tab, columns A–I. See EXCLUDED_SHEET_COLUMNS. */
+/** A row on the second tab, columns A–J. See EXCLUDED_SHEET_COLUMNS. */
 export interface ExcludedRowValues {
   date:         number | ''  // A — Excel date serial
   receivedTime: number | ''  // B — Excel datetime serial
   subject:      string       // C
   sender:       string       // D
   senderEmail:  string       // E
-  fileHandler:  string       // F
-  reason:       string       // G — the pattern that kept it out of the query sheet
-  destination:  string       // H
-  cntl:         string       // I
+  fileHandler:  string       // F — one name, or blank
+  toList:       string       // G — every handler the mail reached
+  reason:       string       // H — the pattern that kept it out of the query sheet
+  destination:  string       // I
+  cntl:         string       // J
 }
 
 export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] {
   return [
     row.date, row.receivedTime, row.subject, row.sender, row.senderEmail,
-    row.fileHandler, row.reason, row.destination, row.cntl,
+    row.fileHandler, row.toList, row.reason, row.destination, row.cntl,
   ]
 }
 
@@ -119,13 +125,21 @@ export function encodeShareUrl(url: string): string {
     .replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-')
 }
 
+/** Which of the two workbooks a call is aimed at. */
+export type WorkbookTarget = 'primary' | 'backup'
+
 /**
- * Resolve the configured share URL to a drive/item pair, caching the result —
- * the lookup costs a round-trip and the IDs are stable for the life of the file.
+ * Resolve a configured share URL to a drive/item pair, caching the result — the
+ * lookup costs a round-trip and the IDs are stable for the life of the file.
+ *
+ * The backup workbook is resolved and cached exactly like the primary, under its
+ * own setting keys, so a change to one never invalidates the other.
  */
-export async function resolveSheetRef(force = false): Promise<SheetRef> {
+export async function resolveSheetRef(force = false, target: WorkbookTarget = 'primary'): Promise<SheetRef> {
+  const refKey = target === 'backup' ? SETTINGS.backupSheetRef : SETTINGS.sheetRef
+
   if (!force) {
-    const cached = await getSetting(SETTINGS.sheetRef)
+    const cached = await getSetting(refKey)
     if (cached) {
       try {
         const parsed = JSON.parse(cached) as SheetRef
@@ -134,21 +148,29 @@ export async function resolveSheetRef(force = false): Promise<SheetRef> {
     }
   }
 
-  const { sheetUrl } = await getConfig()
-  if (!sheetUrl) throw new Error('No workbook URL configured — set it in Query Monitor → Configuration')
+  const config = await getConfig()
+  const url = target === 'backup' ? config.backupSheetUrl : config.sheetUrl
+  if (!url) {
+    throw new Error(target === 'backup'
+      ? 'No backup workbook URL configured — set it in Query Monitor → Configuration'
+      : 'No workbook URL configured — set it in Query Monitor → Configuration')
+  }
 
   const item = await graphFetch<{
     id: string; name: string; webUrl: string
     parentReference?: { driveId?: string }
-  }>(`/shares/${encodeShareUrl(sheetUrl)}/driveItem?$select=id,name,webUrl,parentReference`)
+  }>(`/shares/${encodeShareUrl(url)}/driveItem?$select=id,name,webUrl,parentReference`)
 
   const driveId = item.parentReference?.driveId
   if (!driveId) throw new Error('Graph returned the workbook without a driveId — is the link a file share?')
 
   const ref: SheetRef = { driveId, itemId: item.id, fileName: item.name, webUrl: item.webUrl }
-  await setSetting(SETTINGS.sheetRef, JSON.stringify(ref))
+  await setSetting(refKey, JSON.stringify(ref))
   return ref
 }
+
+/** Convenience wrapper — the standby copy that mirrors every write. */
+export const resolveBackupSheetRef = (force = false) => resolveSheetRef(force, 'backup')
 
 // ── Low-level workbook calls ─────────────────────────────────────────────────
 
@@ -246,9 +268,15 @@ export async function findLastDataRow(
   return last
 }
 
-export async function getSheetInfo(force = false): Promise<SheetInfo> {
+export async function getSheetInfo(force = false, target: WorkbookTarget = 'primary'): Promise<SheetInfo> {
   const { sheetName } = await getConfig()
-  const ref = await resolveSheetRef(force)
+  const ref = await resolveSheetRef(force, target)
+
+  // Both workbooks were created empty for this system, so the query tab may not
+  // exist yet on a first look. Making it here means "Test" prepares the file
+  // rather than failing on it — the old 2026 sheet was the team's own and had to
+  // be found, but these two are ours to lay out.
+  await ensureWorksheet(ref, sheetName, QUERY_LAYOUT).catch(() => {})
 
   const header = await readRange(ref, sheetName, `A1:${SHEET_LAST_COLUMN}1`)
   const headerCells = (header.text?.[0] ?? header.values[0]?.map(v => String(v ?? '')) ?? [])
@@ -352,8 +380,8 @@ async function appendCells(
 
 /**
  * Make sure a tab exists with our header on row 1, creating it if the workbook
- * has never had one. Only ever called for the excluded-mail tab: the query sheet
- * is the team's own file and must be found, not conjured.
+ * has never had one. Called for both tabs of both workbooks: all four are files
+ * this system lays out itself, so an empty workbook is a valid starting point.
  */
 export async function ensureWorksheet(
   ref: SheetRef, sheetName: string, layout: SheetLayout, sessionId: string | null = null,
@@ -447,10 +475,10 @@ async function updateCells(
 /** Read rows back — powers the "verify what's in the sheet" panel in the UI. */
 export async function readRows(
   firstRow: number, lastRow: number,
-  opts: { ref?: SheetRef; sheetName?: string } = {},
+  opts: { ref?: SheetRef; sheetName?: string; target?: WorkbookTarget } = {},
 ): Promise<string[][]> {
   const cfg       = await getConfig()
-  const ref       = opts.ref ?? await resolveSheetRef()
+  const ref       = opts.ref ?? await resolveSheetRef(false, opts.target ?? 'primary')
   const sheetName = opts.sheetName ?? cfg.sheetName
   const address   = `${SHEET_FIRST_COLUMN}${firstRow}:${SHEET_LAST_COLUMN}${lastRow}`
   const range     = await readRange(ref, sheetName, address)
@@ -458,8 +486,10 @@ export async function readRows(
 }
 
 /** Names of every tab in the workbook — lets the UI offer a tab picker. */
-export async function listWorksheets(): Promise<{ name: string; visibility: string }[]> {
-  const ref = await resolveSheetRef()
+export async function listWorksheets(
+  target: WorkbookTarget = 'primary',
+): Promise<{ name: string; visibility: string }[]> {
+  const ref = await resolveSheetRef(false, target)
   const res = await graphFetch<{ value: { name: string; visibility: string }[] }>(
     `/drives/${ref.driveId}/items/${ref.itemId}/workbook/worksheets?$select=name,visibility`,
   )

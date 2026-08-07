@@ -43,6 +43,14 @@ export const SETTINGS = {
   excludePatterns:    'query_monitor_exclude_patterns',
   /** Worksheet tab that receives the excluded mail. */
   excludedSheetName:  'query_monitor_excluded_sheet_name',
+  /** `YYYY-MM-DD` — mail received before this never reaches either workbook. */
+  startDate:          'query_monitor_start_date',
+  /** Mirror every append and rewrite into a second, standby workbook. */
+  backupEnabled:      'query_monitor_backup_enabled',
+  /** Share URL of the backup workbook. */
+  backupSheetUrl:     'query_monitor_backup_sheet_url',
+  /** Resolved {driveId, itemId} cache for the backup URL — cleared when it changes. */
+  backupSheetRef:     'query_monitor_backup_sheet_ref',
 } as const
 
 /**
@@ -79,12 +87,25 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
   'delivery has failed',
 ].join('\n')
 
+/**
+ * The workbook the team moved to on 5 Aug 2026, and its standby copy. Both are
+ * empty files created for this system, so the app writes their headers itself —
+ * unlike the 2026 sheet it replaced, which had to be found, never conjured.
+ */
+export const NEW_SHEET_URL =
+  'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQAHRf-77PFGRYZA9wgzEGeZAbny2k-Dyws0GbBsZxoPaPc?e=cddk42'
+export const BACKUP_SHEET_URL =
+  'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQBQuzZaKQ-FRoO2Y7xxMEqSAY1ms3HhMEMhmrlp79pUE78?e=Cf9aaW'
+
+/** Nothing received before this date is written to the new workbook. */
+export const DEFAULT_START_DATE = '2026-08-05'
+
 export const DEFAULTS = {
   enabled:           'false',
   intervalMinutes:   '60',
   lookbackHours:     '3',
   autoWrite:         'false',
-  sheetUrl:          'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQDe6rioPeb-RKOaBK0wPN06ATQvYzfrYFKyi0I4O-dPDmo?e=g5mkDb',
+  sheetUrl:          NEW_SHEET_URL,
   sheetName:         'Query Entry Sheet',
   writeStatusColumn: 'true',
   captureUnmatched:  'true',
@@ -94,39 +115,50 @@ export const DEFAULTS = {
   excludeEnabled:    'true',
   excludePatterns:   DEFAULT_EXCLUDE_PATTERNS,
   excludedSheetName: 'Other Mails',
+  startDate:         DEFAULT_START_DATE,
+  backupEnabled:     'true',
+  backupSheetUrl:    BACKUP_SHEET_URL,
 } as const
 
 // ── Sheet layout ─────────────────────────────────────────────────────────────
 
 /**
- * Columns A–M of "Query Entry Sheet", in order. Column N onwards holds the
- * team's lookup lists and pivot helpers — writes must never reach past M.
+ * Columns A–N of "Query Entry Sheet", in order.
+ *
+ * **File Handler (F) holds exactly one name** — the person who owns the query.
+ * Every mailbox the mail actually reached is listed in **TO List (G)**, and the
+ * handler is chosen out of that list: automatically when the mail hit only one
+ * mailbox or when someone replies, otherwise by hand from the dashboard's
+ * dropdown. The old sheet comma-joined every recipient into F, which made the
+ * team's "who owns this" pivots unusable.
  */
 export const SHEET_COLUMNS = [
   'Date', 'Status', 'Subject', 'Allocation time', 'Replied time', 'File Handler',
-  'Sales Person', 'Destination', 'Agent', 'Travel Date', 'CNTL', 'Amendment', 'Region',
+  'TO List', 'Sales Person', 'Destination', 'Agent', 'Travel Date', 'CNTL',
+  'Amendment', 'Region',
 ] as const
 
 export const SHEET_FIRST_COLUMN = 'A'
-export const SHEET_LAST_COLUMN  = 'M'
+export const SHEET_LAST_COLUMN  = 'N'
 /** Row 1 is the header; data starts at row 2. */
 export const SHEET_HEADER_ROW   = 1
 
-/** Number formats copied from the existing manual rows so new rows look identical. */
+/** Number formats matching the layout the team reads, so rows look hand-made. */
 export const SHEET_NUMBER_FORMATS = [
   '[$-en-US]dd-mmm-yy;@', // A Date
   'General',              // B Status
   'General',              // C Subject
   'm/d/yyyy h:mm',        // D Allocation time
   'm/d/yyyy h:mm',        // E Replied time
-  'General',              // F File Handler
-  'General',              // G Sales Person
-  'General',              // H Destination
-  'General',              // I Agent
-  'm/d/yyyy',             // J Travel Date
-  'General',              // K CNTL
-  'General',              // L Amendment
-  'General',              // M Region
+  'General',              // F File Handler — one name
+  'General',              // G TO List — every recipient
+  'General',              // H Sales Person
+  'General',              // I Destination
+  'General',              // J Agent
+  'm/d/yyyy',             // K Travel Date
+  'General',              // L CNTL
+  'General',              // M Amendment
+  'General',              // N Region
 ] as const
 
 // ── Second tab: excluded mail ────────────────────────────────────────────────
@@ -139,11 +171,11 @@ export const SHEET_NUMBER_FORMATS = [
  */
 export const EXCLUDED_SHEET_COLUMNS = [
   'Date', 'Received time', 'Subject', 'Sender', 'Sender Email',
-  'File Handler', 'Reason', 'Destination', 'CNTL',
+  'File Handler', 'TO List', 'Reason', 'Destination', 'CNTL',
 ] as const
 
 export const EXCLUDED_SHEET_FIRST_COLUMN = 'A'
-export const EXCLUDED_SHEET_LAST_COLUMN  = 'I'
+export const EXCLUDED_SHEET_LAST_COLUMN  = 'J'
 
 export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   '[$-en-US]dd-mmm-yy;@', // A Date
@@ -151,10 +183,11 @@ export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   'General',              // C Subject
   'General',              // D Sender
   'General',              // E Sender Email
-  'General',              // F File Handler
-  'General',              // G Reason
-  'General',              // H Destination
-  'General',              // I CNTL
+  'General',              // F File Handler — one name
+  'General',              // G TO List — every recipient
+  'General',              // H Reason
+  'General',              // I Destination
+  'General',              // J CNTL
 ] as const
 
 // ── Domain ignore list ───────────────────────────────────────────────────────

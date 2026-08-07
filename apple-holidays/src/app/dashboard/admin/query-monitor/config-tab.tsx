@@ -8,13 +8,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, CheckCircle2, ExternalLink, FilterX, Loader2, Mail, Plug, Plus,
-  RefreshCw, Save, Table2, Tags, Trash2, Users,
+  AlertTriangle, ArrowRightLeft, CheckCircle2, Copy, ExternalLink, FilterX, Loader2,
+  Mail, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Users,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDateTime } from '@/lib/utils'
 import { Field, Toggle, inputCls } from './ui'
-import type { QmConfig, QmMailbox, QmRule, QmSheetInfo } from './types'
+import type { QmBackupInfo, QmConfig, QmMailbox, QmRule, QmSheetInfo } from './types'
 
 export default function ConfigTab({
   config, onConfigChange, onSheetChange,
@@ -121,6 +121,12 @@ function ScheduleCard({
           label="AI fallback for destination & travel date"
           description="Only for mails the parser cannot read — costs a gpt-4o-mini call each."
         />
+        <Toggle
+          checked={draft.backupEnabled}
+          onChange={v => save({ backupEnabled: v })}
+          label="Mirror to the backup workbook"
+          description="Every append and rewrite goes to the standby copy in the same sweep."
+        />
 
         <div className="grid grid-cols-2 gap-3 md:col-span-2">
           <Field label="Sweep every (minutes)" hint="60 = hourly. Minimum 5.">
@@ -171,20 +177,26 @@ function SheetCard({
   onConfigChange: (c: QmConfig) => void
   onSheetChange: (info: QmSheetInfo | null) => void
 }) {
-  const [url, setUrl]   = useState('')
-  const [name, setName] = useState('')
+  const [url, setUrl]           = useState('')
+  const [backupUrl, setBackup]  = useState('')
+  const [name, setName]         = useState('')
+  const [startDate, setStart]   = useState('')
   const [info, setInfo] = useState<QmSheetInfo | null>(null)
+  const [backupInfo, setBackupInfo] = useState<QmBackupInfo | null>(null)
   const [expected, setExpected] = useState<string[]>([])
   const [tail, setTail] = useState<string[][]>([])
   const [tailFirstRow, setTailFirstRow] = useState(0)
   const [worksheets, setWorksheets] = useState<{ name: string; visibility: string }[]>([])
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
+  const [moving, setMoving] = useState(false)
 
   useEffect(() => {
     if (!config) return
     setUrl(config.sheetUrl)
+    setBackup(config.backupSheetUrl)
     setName(config.sheetName)
+    setStart(config.startDate)
   }, [config])
 
   const check = useCallback(async (refresh = false) => {
@@ -192,8 +204,9 @@ function SheetCard({
     try {
       const res = await fetch(`/api/query-monitor/sheet?tail=6${refresh ? '&refresh=1' : ''}`)
       const d = await res.json()
-      if (!d.success) { setError(d.error); setInfo(null); onSheetChange(null); return }
+      if (!d.success) { setError(d.error); setInfo(null); setBackupInfo(null); onSheetChange(null); return }
       setInfo(d.data.info)
+      setBackupInfo(d.data.backup ?? null)
       setExpected(d.data.expectedColumns)
       setTail(d.data.tailRows)
       setTailFirstRow(d.data.tailFirstRow)
@@ -207,13 +220,35 @@ function SheetCard({
   async function save() {
     const res = await fetch('/api/query-monitor/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sheetUrl: url, sheetName: name }),
+      body: JSON.stringify({ sheetUrl: url, sheetName: name, backupSheetUrl: backupUrl, startDate }),
     })
     const d = await res.json()
     if (!d.success) { toast.error(d.error); return }
     onConfigChange(d.data.config)
     toast.success('Workbook target saved')
     await check(true)
+  }
+
+  /**
+   * After pointing the system at a different file, the entries still remember
+   * the rows they own in the old one. This forgets those, so everything from the
+   * start date is appended to the new workbook as if for the first time.
+   */
+  async function move() {
+    if (!confirm(
+      'Queue every query from the start date onwards for the workbook configured above?\n\n'
+      + 'Rows already written to the previous file are left exactly where they are — '
+      + 'nothing is deleted. Press "Sync to sheet" afterwards to write them.',
+    )) return
+
+    setMoving(true)
+    try {
+      const res = await fetch('/api/query-monitor/rebase', { method: 'POST' })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Queued for the new workbook')
+      await check(true)
+    } finally { setMoving(false) }
   }
 
   return (
@@ -233,6 +268,20 @@ function SheetCard({
       <div className="space-y-4">
         <Field label="Share link" hint="Any SharePoint/OneDrive share URL for the .xlsx — the app resolves it with Graph.">
           <input value={url} onChange={e => setUrl(e.target.value)} className={inputCls} />
+        </Field>
+
+        <Field
+          label="Backup workbook"
+          hint="Mirrored on every sweep: the same rows, the same rewrites, one sweep behind at most."
+        >
+          <input value={backupUrl} onChange={e => setBackup(e.target.value)} className={inputCls} />
+        </Field>
+
+        <Field
+          label="Start from"
+          hint="Mail received before this day is left in the previous sheet — it is never appended here. Blank means no cut-off."
+        >
+          <input type="date" value={startDate} onChange={e => setStart(e.target.value)} className={cn(inputCls, 'w-auto')} />
         </Field>
 
         <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
@@ -283,8 +332,48 @@ function SheetCard({
                   : <><AlertTriangle className="w-3.5 h-3.5" /> Header does not match: expected {expected.join(', ')}</>}
               </p>
               <p className="text-slate-400">
-                Only columns A–M are ever written. The lookup lists and pivots from column N onwards are left untouched.
+                Only columns A–N are ever written. File Handler (F) carries one name; TO List (G) carries everyone
+                the mail reached.
               </p>
+            </div>
+
+            {/* The standby copy, and whether it has kept up. */}
+            <div className={cn(
+              'rounded-lg border p-3 text-xs space-y-1',
+              !config?.backupEnabled ? 'border-slate-200 bg-slate-50 text-slate-500'
+                : backupInfo?.ok     ? 'border-emerald-200 bg-emerald-50/60 text-emerald-900'
+                                     : 'border-amber-200 bg-amber-50 text-amber-900',
+            )}>
+              <p className="font-semibold inline-flex items-center gap-1.5">
+                <Copy className="w-3.5 h-3.5" /> Backup workbook
+              </p>
+              {!config?.backupEnabled
+                ? <p>Mirroring is off — only the workbook above is written.</p>
+                : backupInfo?.ok
+                  ? <p>
+                      {backupInfo.info.fileName} · {backupInfo.info.dataRowCount.toLocaleString()} data rows ·
+                      next append lands on row {backupInfo.info.nextAppendRow}
+                    </p>
+                  : <p>{backupInfo?.error ?? 'Not checked yet — press Test.'}</p>}
+            </div>
+
+            {/* Pointing at a new file is only half the move: the entries still
+                remember the rows they own in the old one. */}
+            <div className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-slate-700">Moved to a new workbook?</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Queues every query from {startDate || 'the beginning'} for the file above, as if it had never been
+                  written. Rows in the previous file are left untouched.
+                </p>
+              </div>
+              <button
+                onClick={move} disabled={moving}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-50"
+              >
+                {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
+                Move rows here
+              </button>
             </div>
 
             {tail.length > 0 && (

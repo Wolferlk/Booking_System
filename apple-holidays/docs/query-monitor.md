@@ -1,8 +1,12 @@
 # Booking Team Query Monitor
 
 Hourly sweep of the booking team's file-handler mailboxes into the SharePoint
-master workbook (**“AutoUpdating SL Query and Confirmation Entry Sheet 2026 …”**,
-tab **Query Entry Sheet**).
+query workbook (tab **Query Entry Sheet**), mirrored into a standby backup
+workbook on every sweep.
+
+Since **5 Aug 2026** both are new, empty files created for this system — the app
+writes their headers itself. Mail received before that date belongs to the
+previous sheet and is never appended here (`query_monitor_start_date`).
 
 It is a self-contained observer: it reads mailboxes and writes one spreadsheet.
 It does **not** touch bookings, P&L, the mail-inbox pipeline, or OneDrive
@@ -19,6 +23,8 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 
    ```bash
    npx prisma db execute --file prisma/sql/query-monitor.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/query-monitor-mail-kind.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/query-monitor-to-list.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
 
@@ -44,17 +50,34 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 | C Subject | Mail subject |
 | D Allocation time | Mail received timestamp |
 | E Replied time | First reply in the same conversation from the handler's Sent Items |
-| F File Handler | **All** handlers who received the mail, comma-joined — one row, never duplicated |
-| G Sales Person | Sender rule (domain or exact address) → falls back to `Others` |
-| H Destination | Regex over subject/body, then GPT fallback, then the rule's default |
-| I Agent | Sender rule → falls back to the sender's display name |
-| J Travel Date | Regex over subject/body (day-first), then GPT fallback |
-| K CNTL | `CNTL 12345`, `12345 CNTL`, or a labelled CRM/reference id |
-| L Amendment | Blank unless hand-edited |
-| M Region | Only when the mail states it outright, or the rule sets a default |
+| F File Handler | **One** name — who owns the query. See below. |
+| G TO List | **Every** handler the mail reached, comma-joined — one row, never duplicated |
+| H Sales Person | Sender rule (domain or exact address) → falls back to `Others` |
+| I Destination | Regex over subject/body, then GPT fallback, then the rule's default |
+| J Agent | Sender rule → falls back to the sender's display name |
+| K Travel Date | Regex over subject/body (day-first), then GPT fallback |
+| L CNTL | `CNTL 12345`, `12345 CNTL`, or a labelled CRM/reference id |
+| M Amendment | Blank unless hand-edited |
+| N Region | Only when the mail states it outright, or the rule sets a default |
 
 Dates are written as real Excel serials with the same number formats as the
 manual rows, so sorting and the team's pivots keep working.
+
+### One file handler, chosen from the TO list
+
+Column F used to comma-join every recipient, which made "whose query is this?"
+unanswerable. It now holds exactly one name, taken from the TO list in G:
+
+1. **One recipient** → assigned immediately, there is nothing to decide.
+2. **Several recipients** → left **blank**, and filled in with whoever replies
+   first. A blank cell is the team's cue that nobody has picked the query up.
+3. **By hand** at any time, from the dropdown in the dashboard's File handler
+   column. The dropdown only offers names on the TO list, and the API rejects
+   anything else — a file handler who was never on the mail is a data error.
+
+A name chosen by hand is a manual override: no later reply or sweep takes it
+back. The Queries tab has an *Unassigned* filter and a banner counting queries
+still waiting for an owner.
 
 ### Mail that is not a query
 
@@ -66,10 +89,11 @@ time on enquiries — but they are not noise either, so nothing is discarded.
 Every mail is classified on the subject line alone (bodies carry quoted threads,
 which would exclude a genuine query written under an old voucher mail):
 
-- **QUERY** → appended to the query sheet, columns A–M, as above.
+- **QUERY** → appended to the query sheet, columns A–N, as above.
 - **EXCLUDED** → appended to a second tab, default **“Other Mails”**, columns
-  A–I: Date · Received time · Subject · Sender · Sender Email · File Handler ·
-  Reason · Destination · CNTL. The tab is created with its header on first use.
+  A–J: Date · Received time · Subject · Sender · Sender Email · File Handler ·
+  TO List · Reason · Destination · CNTL. The tab is created with its header on
+  first use.
 
 The pattern list is the `query_monitor_exclude_patterns` setting, edited under
 *Configuration → Mail that is not a query*. One pattern per line: `#` comments,
@@ -88,15 +112,60 @@ list to the backlog that has not been written yet.
 
 The same mail reaching five handlers is **one** entry. The key is the RFC
 `internetMessageId` (falling back to conversation + normalised subject). Each
-recipient is stored as a `QueryMonitorMatch`; their names are joined into the
-File Handler cell. If a handler is added later — mailbox activated, colleague
-CC'd — the entry's row is rewritten in place rather than appended again.
+recipient is stored as a `QueryMonitorMatch`; their names are joined into the TO
+List cell. If a handler is added later — mailbox activated, colleague CC'd — the
+entry's row is rewritten in place rather than appended again.
+
+### Replies land the next day
+
+A query raised at 16:00 and answered at 09:00 the next morning is outside every
+lookback window by the time the reply exists. So replies are chased for
+`replyChaseDays` (default 7) regardless of when the mail arrived, and each sweep
+writes back into rows appended days ago:
+
+- **Replied time** (E) — the first reply in the thread from any recipient's Sent
+  Items.
+- **Status** (B) — `Pending` → `Overdue` once the SLA passes with no reply, and
+  → `Replied` when one lands.
+- **File Handler** (F) — filled in with whoever replied, if still blank.
+
+Every such change marks the entry `DIRTY`, which rewrites its row in **both**
+workbooks in place. Nothing is ever appended twice.
+
+## The backup workbook
+
+A second workbook mirrors the first: same rows, same rewrites, written in the
+same sweep, so it is at most one sweep behind. It is a separate pass with its own
+row numbers (`backupSheetRow`) and its own state (`backupSyncStatus`) because:
+
+- a locked or unreachable backup must never stop the team's live sheet updating;
+- the two files number their rows independently, so one cannot use the other's
+  pointers;
+- a retry of a failed backup write must not re-append to the live file.
+
+Toggle it with *Mirror to the backup workbook*; its URL sits under *Target
+workbook*. The Configuration panel shows whether the mirror has kept up.
+
+## Moving to a new workbook
+
+Changing the URL is only half the move — every entry still remembers the row it
+owns in the **old** file, so sweeps would keep rewriting rows nobody reads.
+
+1. Save the new *Share link* (and *Backup workbook*, and *Start from*).
+2. Press **Move rows here** (`POST /api/query-monitor/rebase`). Entries from the
+   start date onwards forget their row numbers and go back to `PENDING`; older
+   ones are retired as `SKIPPED`.
+3. Press **Sync to sheet**.
+
+Nothing is deleted from the old workbook.
 
 ## Safety properties
 
-- **Columns A–M only** on the query sheet. Column N onward holds the team's
-  lookup lists and pivot helpers and is never written. (The other-mail tab is
-  created by the app and uses A–I.)
+- **Columns A–N only** on the query sheet; anything further right belongs to the
+  team's lookup lists and pivots and is never written. (The other-mail tab uses
+  A–J.)
+- **The File Handler is always someone on the TO list**, or blank. Enforced by
+  the API, not just the UI.
 - **The two tabs must differ.** Saving the same name for both is rejected —
   nine-column rows appended to the query sheet would wreck it.
 - **Append point is found by scanning column C from the bottom**, not from
@@ -135,11 +204,12 @@ src/lib/query-monitor/
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation
 prisma/sql/query-monitor-mail-kind.sql    mailKind / excludeReason / sheetTab columns
+prisma/sql/query-monitor-to-list.sql      toList + backup row/state columns
 ```
 
 ## Known gaps
