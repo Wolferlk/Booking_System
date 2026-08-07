@@ -1,10 +1,22 @@
 /**
  * Driver Log (Sri Lanka) — WhatsApp delivery + auto-send job.
  *
- * `sendDriverLog()` builds the advance sheet, renders it to a PDF, drops it in
- * the public uploads folder (so Meta can fetch it by link), and sends the driver
- * a text summary + the PDF document. It also logs to WhatsAppMessage and stamps
- * `waSentAt` on the saved snapshot so re-sends are traceable and de-duplicated.
+ * `sendDriverLog()` builds the advance sheet, renders it to a PDF, uploads the
+ * bytes straight to Meta's media store, and delivers it to the driver:
+ *
+ *   - Outside WhatsApp's 24h customer-service window (the normal case — drivers
+ *     never message the ops number) the sheet goes out as an APPROVED TEMPLATE
+ *     with the PDF in its DOCUMENT header. Free-form text/media to such a number
+ *     is accepted by our code but silently dropped by Meta, which is what made
+ *     "sent" sends never arrive.
+ *   - Inside the window, the richer free-form summary + document is used.
+ *
+ * The PDF is also archived through the shared storage layer (S3, disk fallback);
+ * that copy is a convenience, never a delivery dependency — the old code wrote it
+ * to `public/uploads` and failed the whole send with EROFS on the serverless host.
+ *
+ * It logs to WhatsAppMessage and stamps `waSentAt` on the saved snapshot so
+ * re-sends are traceable and de-duplicated.
  *
  * `runDriverLogAutoSend()` is the scheduler entry point — invoked from the
  * always-on Node process (see driver-log-scheduler.ts), NOT Vercel/OS cron. When
@@ -13,25 +25,69 @@
  * Asia/Colombo). A booking is skipped if its saved snapshot opts out
  * (`autoSend === false`) or was already sent for this tour.
  */
-import path from 'path'
-import { mkdir, writeFile } from 'fs/promises'
 import { prisma } from '@/lib/prisma'
-import { sendWhatsAppText, sendWhatsAppMedia, normalisePhone } from '@/lib/whatsapp'
-import { generateDriverLogPdf } from '@/lib/generate-driver-log-pdf'
+import {
+  sendViaMetaApi, sendViaMetaTemplate, uploadMetaMedia,
+  isWithin24hWindow, normalisePhone,
+} from '@/lib/whatsapp'
+import { putUpload } from '@/lib/storage'
+import { generateDriverLogPdf, formatSheetMoney } from '@/lib/generate-driver-log-pdf'
 import { buildDriverLogView, readSnapshot, saveSnapshot, type DriverLogView } from '@/lib/driver-log-server'
 import { SETTING_AUTO_SEND, type DriverLogSnapshot } from '@/lib/driver-log'
 
-function money(n: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(n)
+/** Shared with the PDF/HTML renderers — tolerates non-ISO currency labels ("Rs."). */
+const money = formatSheetMoney
+
+// ── Template config ──────────────────────────────────────────────────────────
+
+/**
+ * Approved template carrying the advance sheet. Register it once via
+ * POST /api/whatsapp/templates/bootstrap-driver (or WhatsApp Manager).
+ */
+export const TEMPLATE_DRIVER_ADVANCE =
+  process.env.WHATSAPP_DRIVER_ADVANCE_TEMPLATE?.trim() || 'apple_holidays_driver_advance_sheet'
+export const DRIVER_ADVANCE_TEMPLATE_LANG =
+  process.env.WHATSAPP_DRIVER_TEMPLATE_LANG?.trim() || 'en'
+
+/** The exact approved body — kept here so the message log shows what the driver sees. */
+export const DRIVER_ADVANCE_BODY =
+  '*AppleHolidays - Driver Advance Sheet*\n\n' +
+  'Hi {{1}}, here is your advance sheet for booking {{2}}.\n\n' +
+  'Tour start: {{3}}\n' +
+  'Guest: {{4}}\n' +
+  'Tour advance: {{5}}\n' +
+  'Fuel advance: {{6}}\n' +
+  'Total advance: {{7}}\n\n' +
+  'The full breakdown is in the attached PDF. Please reply CONFIRM once you have received it.'
+
+/** Render {{1}}, {{2}}… locally for the message log / previews. */
+export function renderTemplateBody(body: string, params: string[]): string {
+  return body.replace(/\{\{(\d+)\}\}/g, (_m, i) => params[Number(i) - 1] ?? '')
 }
 
-function publicBaseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-    process.env.APP_URL?.trim() ||
-    process.env.NEXTAUTH_URL?.trim() ||
-    'http://localhost:3000'
-  ).replace(/\/+$/, '')
+/**
+ * The seven body parameters, in order. Meta rejects a parameter containing a
+ * newline, tab or 4+ consecutive spaces, so each one is flattened.
+ */
+export function driverAdvanceParams(view: DriverLogView): string[] {
+  const c = view.computation
+  const cur = c.currency
+  const clean = (s: string, fallback = '-') => {
+    const out = s.replace(/[\n\r\t]+/g, ' ').replace(/ {4,}/g, ' ').trim()
+    return out || fallback
+  }
+  const start = view.arrivalDate
+    ? new Date(view.arrivalDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : '-'
+  return [
+    clean(view.driverName ?? '', 'Driver'),
+    clean(view.bookingRef),
+    clean(start),
+    clean(`${view.leadPassenger ?? '-'} (${view.paxAdults ?? 0}A/${view.paxChildren ?? 0}C)`),
+    clean(`${money(c.tourAdvance, cur)} (${c.tourPct}%)`),
+    clean(`${money(c.fuelAdvance, cur)} (${c.fuelPct}%)`),
+    clean(money(c.grandAdvance, cur)),
+  ]
 }
 
 /** Human-readable text summary that accompanies the PDF. */
@@ -64,6 +120,8 @@ export interface SendResult {
   ok: boolean
   reason?: string
   phone?: string
+  /** How it went out — a template (cold) or free-form (inside the 24h window). */
+  channel?: 'template' | 'freeform'
 }
 
 /**
@@ -80,28 +138,76 @@ export async function sendDriverLog(
   const phone = normalisePhone(opts.phoneOverride || view.driverPhone || '')
   if (!phone) return { ok: false, reason: 'no driver phone' }
 
-  let filename = ''
-  let fileUrl = ''
+  // 1. Render the sheet.
+  let pdf: { buffer: Buffer; filename: string }
   try {
-    const pdf = await generateDriverLogPdf(view)
-    filename = pdf.filename
-    const dir = path.join(process.cwd(), 'public', 'uploads', 'driver-logs')
-    await mkdir(dir, { recursive: true })
-    await writeFile(path.join(dir, filename), pdf.buffer)
-    fileUrl = `${publicBaseUrl()}/uploads/driver-logs/${encodeURIComponent(filename)}`
+    pdf = await generateDriverLogPdf(view)
   } catch (err) {
     return { ok: false, reason: `pdf failed: ${err instanceof Error ? err.message : err}`, phone }
   }
 
-  const message = formatDriverLogMessage(view)
-  const textOk = await sendWhatsAppText(phone, message, view.driverName ?? undefined)
-  // Media send only works over Meta (link-based); best-effort.
-  const docOk = await sendWhatsAppMedia(phone, fileUrl, 'document', {
-    filename,
-    caption: `Driver Advance Sheet — ${view.bookingRef}`,
+  // Archive copy — handy for support, never a delivery dependency.
+  await putUpload(`driver-logs/${pdf.filename}`, pdf.buffer, 'application/pdf').catch(err => {
+    console.warn(`[DriverLog] archive copy failed for ${pdf.filename}:`, err instanceof Error ? err.message : err)
   })
 
-  if (!textOk && !docOk) return { ok: false, reason: 'whatsapp send failed', phone }
+  // 2. Upload the bytes to Meta once; the id serves both delivery paths.
+  let mediaId: string
+  try {
+    mediaId = await uploadMetaMedia(pdf.buffer, pdf.filename)
+  } catch (err) {
+    return { ok: false, reason: `whatsapp media upload failed: ${err instanceof Error ? err.message : err}`, phone }
+  }
+
+  // 3. Deliver. Free-form only reaches a driver who messaged us in the last 24h;
+  //    everyone else needs the approved template, PDF in its DOCUMENT header.
+  const windowOpen = await isWithin24hWindow(phone).catch(() => false)
+  const bodyParams = driverAdvanceParams(view)
+
+  let message: string
+  let channel: 'template' | 'freeform'
+  let sendResult: unknown
+
+  try {
+    if (windowOpen) {
+      message = formatDriverLogMessage(view)
+      channel = 'freeform'
+      const res = await sendViaMetaApi({
+        to: phone,
+        message,
+        media: {
+          buffer:   pdf.buffer,
+          filename: pdf.filename,
+          kind:     'document' as const,
+          caption:  `Driver Advance Sheet — ${view.bookingRef}`,
+        },
+      })
+      if (!res) return { ok: false, reason: 'WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured', phone }
+      sendResult = res.text
+    } else {
+      message = renderTemplateBody(DRIVER_ADVANCE_BODY, bodyParams)
+      channel = 'template'
+      const res = await sendViaMetaTemplate({
+        to:             phone,
+        templateName:   TEMPLATE_DRIVER_ADVANCE,
+        lang:           DRIVER_ADVANCE_TEMPLATE_LANG,
+        bodyParams,
+        headerDocument: { id: mediaId, filename: pdf.filename },
+      })
+      if (!res) return { ok: false, reason: 'WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured', phone }
+      sendResult = res.template
+    }
+  } catch (err) {
+    let reason = err instanceof Error ? err.message : String(err)
+    // The commonest first-run failure: the template was never registered.
+    if (/template name does not exist|132001|does not exist in .*locale/i.test(reason)) {
+      reason =
+        `WhatsApp template "${TEMPLATE_DRIVER_ADVANCE}" (${DRIVER_ADVANCE_TEMPLATE_LANG}) is not approved on this ` +
+        `WhatsApp account — register it via POST /api/whatsapp/templates/bootstrap-driver, then retry. (${reason})`
+    }
+    console.error(`[DriverLog] send failed for ${phone} / ${bookingRef}:`, reason)
+    return { ok: false, reason, phone }
+  }
 
   // Log + stamp snapshot so re-sends are visible and de-duplicated.
   const now = new Date().toISOString()
@@ -109,10 +215,11 @@ export async function sendDriverLog(
     data: {
       bookingRef,
       phone,
-      direction:  'outbound',
-      body:       message,
-      status:     'sent',
-      senderName: opts.senderTag ?? `[DRIVER-LOG] ${view.driverName ?? phone}`,
+      direction:   'outbound',
+      body:        message,
+      waMessageId: (sendResult as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null,
+      status:      'sent',
+      senderName:  opts.senderTag ?? `[DRIVER-LOG] ${view.driverName ?? phone}`,
     },
   }).catch(() => {})
 
@@ -133,7 +240,8 @@ export async function sendDriverLog(
       }
   await saveSnapshot(bookingRef, snap).catch(() => {})
 
-  return { ok: true, phone }
+  console.log(`[DriverLog] ${channel} sent to ${view.driverName ?? phone} (${phone}) for ${bookingRef}`)
+  return { ok: true, phone, channel }
 }
 
 // ── Auto-send job (called by the Node scheduler) ────────────────────────────

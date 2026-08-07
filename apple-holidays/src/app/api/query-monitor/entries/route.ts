@@ -24,7 +24,11 @@ export async function GET(req: NextRequest) {
   // QUERY (the default) | EXCLUDED | ALL — which worksheet the mail belongs to.
   const kind   = (p.get('kind') ?? 'QUERY').toUpperCase()
 
-  const and: Prisma.QueryMonitorEntryWhereInput[] = []
+  // Follow-ups never appear as rows of their own: they are later mail of a
+  // thread another entry already stands for, and that entry carries their
+  // handlers and their count. Listing them here would put back on screen exactly
+  // the duplication the sheet was cleaned of.
+  const and: Prisma.QueryMonitorEntryWhereInput[] = [{ mergedIntoId: null }]
 
   if (Number.isFinite(days) && days > 0) {
     and.push({ receivedAt: { gte: new Date(Date.now() - days * 86_400_000) } })

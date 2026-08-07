@@ -1334,6 +1334,24 @@ model QueryMonitorEntry {
   id               String              @id @default(cuid())
   dedupKey         String              @unique // internetMessageId, else conversationId+subject hash
   conversationId   String?
+  /// Thread identity: Graph's `conversationId` when there is one, else
+  /// `subjectKey`. Every later mail of the same thread folds into the first
+  /// entry rather than taking a row of its own — one query, one sheet row.
+  threadKey        String?             @db.VarChar(190)
+  /// Fallback thread identity, for mail Graph gives no conversationId for:
+  /// `fromDomain|subject`, with the Re:/Fw: prefixes and spacing stripped.
+  /// Only set when the subject carries a 4-digit-or-longer reference, so two
+  /// unrelated "Urgent quote required" mails can never collapse into one row.
+  subjectKey       String?             @db.VarChar(190)
+  /// Set on a follow-up: the entry whose sheet row already stands for this
+  /// thread. Such entries are kept (their dedupKey is what stops the mail being
+  /// looked at again) but are never written — their sync state is MERGED.
+  mergedIntoId     String?
+  /// How many later mails of the thread folded into this row.
+  followUpCount    Int                 @default(0)
+  /// When the newest mail of the thread arrived. `receivedAt` stays the first
+  /// one: the SLA is measured from when the query was originally asked.
+  lastMessageAt    DateTime?
   subject          String              @db.Text
   fromAddress      String
   fromName         String
@@ -1375,7 +1393,10 @@ model QueryMonitorEntry {
   sheetRow         Int?
   /// Which worksheet `sheetRow` refers to — the two tabs number their rows separately.
   sheetTab         String?
-  syncStatus       String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
+  /// PENDING | SYNCED | DIRTY | FAILED | SKIPPED | MERGED.
+  /// MERGED is terminal: the mail belongs to a thread another row already
+  /// carries, so it is deliberately never appended anywhere.
+  syncStatus       String              @default("PENDING")
   syncError        String?             @db.Text
   syncedAt         DateTime?
   /// The standby workbook numbers its rows independently of the primary, so it
@@ -1393,6 +1414,9 @@ model QueryMonitorEntry {
   @@index([syncStatus])
   @@index([replyStatus])
   @@index([conversationId])
+  @@index([threadKey])
+  @@index([subjectKey])
+  @@index([mergedIntoId])
   @@index([fromDomain])
   @@index([mailKind])
   @@index([backupSyncStatus])

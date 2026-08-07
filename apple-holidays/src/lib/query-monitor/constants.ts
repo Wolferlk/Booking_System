@@ -33,6 +33,10 @@ export const SETTINGS = {
   slaHours:           'query_monitor_sla_hours',
   /** How many days back to keep re-checking unanswered entries for a reply. */
   replyChaseDays:     'query_monitor_reply_chase_days',
+  /** Fold later mail of a thread into the row the query already owns. */
+  threadMergeEnabled: 'query_monitor_thread_merge_enabled',
+  /** How far back a sweep looks for the row a follow-up belongs to, in days. */
+  threadWindowDays:   'query_monitor_thread_window_days',
   /** ISO timestamp of the last completed sweep — drives the interval tick. */
   lastRunAt:          'query_monitor_last_run_at',
   /** Guard so two processes can't sweep at once. */
@@ -112,6 +116,8 @@ export const DEFAULTS = {
   aiEnabled:         'true',
   slaHours:          '2',
   replyChaseDays:    '7',
+  threadMergeEnabled: 'true',
+  threadWindowDays:   '30',
   excludeEnabled:    'true',
   excludePatterns:   DEFAULT_EXCLUDE_PATTERNS,
   excludedSheetName: 'Other Mails',

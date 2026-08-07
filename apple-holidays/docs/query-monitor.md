@@ -25,6 +25,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    npx prisma db execute --file prisma/sql/query-monitor.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-mail-kind.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-to-list.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/query-monitor-thread-merge.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
 
@@ -40,7 +41,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    > reset prompt above. With the default it applies in place.
    >
    > If a deploy script runs the schema sync for you, decline the reset, then run
-   > the three `db execute` lines and `prisma generate` by hand.
+   > the `db execute` lines above and `prisma generate` by hand.
 
 2. **Check the Azure app permissions.** The monitor reuses the existing
    `Azure_CLIENT_ID` registration. It needs, as *application* permissions:
@@ -130,6 +131,53 @@ recipient is stored as a `QueryMonitorMatch`; their names are joined into the TO
 List cell. If a handler is added later — mailbox activated, colleague CC'd — the
 entry's row is rewritten in place rather than appended again.
 
+### One row per query, not per mail
+
+That key recognises one mail in five inboxes. It does **not** recognise the
+*next* mail of the same conversation — the chaser, the "any update?", the agent
+replying into their own thread. Each of those is a different `internetMessageId`,
+so before thread merging each took a row of its own and the sheet showed
+
+```
+Re: URGENT QUOTE | 3501051 | Naga Suresh Naidu    12:24
+Re: URGENT QUOTE | 3501051 | Naga Suresh Naidu    12:24
+Re: URGENT QUOTE | 3501051 | Naga Suresh Naidu    12:24
+```
+
+three times over for one question. With **One row per thread** on (default), a
+follow-up folds into the row the query already owns: the TO list grows if it
+reached one more handler, `followUpCount` goes up, and the row is **rewritten**
+in place. A follow-up whose arrival changes no cell costs no Graph call at all.
+
+Two mails are the same thread when Graph gives them the same `conversationId`,
+or — for mail that has none — when the normalised subject *and* sender domain
+match **and** that subject carries a reference number — 5+ digits, or 4 that do
+not read as a year. That condition is the safety of the fallback: agencies send
+"Urgent quote required" several times a day and "SRILANKA // 15 ADULTS // JAN
+3RD WEEK 2027" is a template, not an identifier; collapsing those would hide
+real queries, which is worse than a duplicate.
+
+What a merge deliberately does **not** touch:
+
+- **Allocation time (D)** stays the first mail's — the SLA is measured from when
+  the query was asked, so a chaser cannot reset the clock.
+- **Replied time (E) and Status (B)** stay as they are. "Replied" records that
+  the team answered; an agent writing again does not un-answer it.
+
+The follow-up is still stored as an entry — its `dedupKey` is what stops the next
+sweep looking at the same mail again — with `mergedIntoId` pointing at the row it
+belongs to and a sync state of `MERGED`, which is terminal: it is never written
+to either workbook, and the dashboard lists it under its query rather than beside
+it. `threadWindowDays` (default 30) caps how far back a follow-up may reach, and
+never past the workbook's start date — a row in the *previous* file cannot be
+rewritten.
+
+**Duplicates already in the sheet** are cleaned up by *Configuration → Duplicate
+rows → Merge duplicates*. It keeps the earliest row of each thread, brings it up
+to date, deletes the later ones from both workbooks and renumbers every stored
+row pointer below them. Only columns A–N are deleted and shifted up, so the
+lists the team keeps to the right stay where they are.
+
 ### Replies land the next day
 
 A query raised at 16:00 and answered at 09:00 the next morning is outside every
@@ -215,7 +263,10 @@ run log.
 - **Append point is found by scanning column C from the bottom**, not from
   `usedRange` — the sheet carries formatted-but-empty rows past the last entry.
 - **Every written row's number is stored** on the entry, so a row can be traced,
-  re-read, or corrected in place.
+  re-read, or corrected in place. The duplicate clean-up is the only thing that
+  deletes rows, and it renumbers those pointers in the same pass.
+- **A follow-up never starts a row.** Merged entries are terminal (`MERGED`);
+  neither a sync, a rebase nor a reclassify can put them back in the queue.
 - **Hand edits win.** Any field corrected in the dashboard is recorded in
   `manualOverrides` and is never overwritten by a later sweep.
 - **A run lock** (`query_monitor_run_lock`, 15-min TTL) stops the in-process
@@ -242,18 +293,20 @@ src/lib/query-monitor/
   classify.ts    "is this a query?" — exclusion pattern parsing and matching
   dates.ts       Excel serial conversion in the sheet timezone
   collect.ts     Graph inbox + sent-items reads, sender filtering
+  thread.ts      thread identity — conversation, or subject+domain with a ref
   extract.ts     destination / travel date / CNTL parsing, GPT fallback
   sheet.ts       workbook resolution, append, in-place update, tail read
   run.ts         the sweep: collect → dedup → enrich → write, with the run log
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation
 prisma/sql/query-monitor-mail-kind.sql    mailKind / excludeReason / sheetTab columns
 prisma/sql/query-monitor-to-list.sql      toList + backup row/state columns
+prisma/sql/query-monitor-thread-merge.sql thread keys, mergedIntoId, followUpCount
 ```
 
 ## Known gaps
