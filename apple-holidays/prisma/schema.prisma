@@ -1352,7 +1352,12 @@ model QueryMonitorEntry {
   handlerNames     String              @db.Text
   /// Sheet column G — every mailbox the mail actually reached, comma-joined.
   /// `handlerNames` is always one of these names.
-  toList           String              @db.Text
+  ///
+  /// VarChar with a default, not Text: MySQL forbids defaults on TEXT, and a
+  /// required column with no default cannot be added to a populated table —
+  /// Prisma would demand a database reset. A handful of first names never
+  /// approaches 500 characters.
+  toList           String              @default("") @db.VarChar(500)
   salesPerson      String?
   agent            String?
   destination      String?

@@ -13,10 +13,13 @@
 -- Each statement is guarded by information_schema and prepared dynamically, so
 -- the whole file is safe to re-run.
 
--- toList: every mailbox the mail reached, comma-joined (sheet column G)
+-- toList: every mailbox the mail reached, comma-joined (sheet column G).
+-- VARCHAR with a default, not TEXT: MySQL forbids defaults on TEXT, and a
+-- NOT NULL column with no default cannot be added to a table that already has
+-- rows without a destructive rebuild.
 SET @sql := (
   SELECT IF(COUNT(*) = 0,
-    'ALTER TABLE `query_monitor_entries` ADD COLUMN `toList` TEXT NOT NULL',
+    'ALTER TABLE `query_monitor_entries` ADD COLUMN `toList` VARCHAR(500) NOT NULL DEFAULT ''''',
     'SELECT 1')
   FROM information_schema.COLUMNS
   WHERE TABLE_SCHEMA = DATABASE()
@@ -78,7 +81,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- rows get their owner from the first reply, or from the dashboard dropdown.
 
 UPDATE `query_monitor_entries`
-   SET `toList` = `handlerNames`
+   SET `toList` = LEFT(`handlerNames`, 500)
  WHERE `toList` = '';
 
 UPDATE `query_monitor_entries`
