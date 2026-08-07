@@ -178,6 +178,34 @@ to date, deletes the later ones from both workbooks and renumbers every stored
 row pointer below them. Only columns A–N are deleted and shifted up, so the
 lists the team keeps to the right stay where they are.
 
+### Rows the database never knew about
+
+`appendRows` puts a block in the workbook; the database write that records which
+row each entry landed on is a **separate** call. A sync that dies between the two
+— a Lambda timing out — leaves the rows on the sheet with their entries still
+`PENDING`, and the next sync appends them again. No amount of thread merging
+helps: nothing in the database points at the first copy.
+
+Both ends of that are covered.
+
+- **Before appending**, the tail of the tab (last 200 rows) is read and any
+  pending row already standing there is *claimed* — the entry is pointed at the
+  row it turns out to own and drops out of the append. Identity is the date
+  serial, the timestamp serial and the subject: the three cells nothing else
+  edits. A tail that cannot be read is not fatal; the block is written, because
+  a missing query is worse than a duplicate row.
+- **Afterwards**, *Remove duplicates* in the page header reads the sheet itself
+  and deletes repeated lines whether or not any entry claims them. Two lines
+  count as repeats only when the date and subject match *and* the subject
+  carries a reference number, or when every written cell is identical — so two
+  unrelated "Urgent quote required" mails on one morning are never folded. The
+  earliest line stays; entries that owned a deleted row become `MERGED` (never
+  `PENDING`, which is what would put the row straight back) and pointers below
+  are renumbered. `GET` the same route for a count without touching the file.
+
+`mergeDuplicateEntries` works from the database outwards, this works from the
+sheet inwards; they are separate on purpose.
+
 ### Replies land the next day
 
 A query raised at 16:00 and answered at 09:00 the next morning is outside every
@@ -296,11 +324,12 @@ src/lib/query-monitor/
   thread.ts      thread identity — conversation, or subject+domain with a ref
   extract.ts     destination / travel date / CNTL parsing, GPT fallback
   sheet.ts       workbook resolution, append, in-place update, tail read
+  sheet-dedupe.ts  duplicate *rows* on the tab, incl. ones no entry claims
   run.ts         the sweep: collect → dedup → enrich → write, with the run log
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe,sheet-dedupe}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation

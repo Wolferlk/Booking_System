@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   Activity, AlertTriangle, CheckCircle2, Clock, CloudUpload, ExternalLink,
-  Inbox, Loader2, PlayCircle, RefreshCw, ScrollText, Settings2, Table2, Zap,
+  Inbox, Layers, Loader2, PlayCircle, RefreshCw, ScrollText, Settings2, Table2, Zap,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -39,7 +39,7 @@ export default function QueryMonitorPage() {
   const [sheet, setSheet]       = useState<QmSheetInfo | null>(null)
   const [sheetError, setSheetError] = useState<string | null>(null)
 
-  const [busy, setBusy]       = useState<null | 'run' | 'sync' | 'toggle'>(null)
+  const [busy, setBusy]       = useState<null | 'run' | 'sync' | 'toggle' | 'dedupe'>(null)
   const [refreshKey, bump]    = useState(0)
 
   const loadSettings = useCallback(async () => {
@@ -112,6 +112,40 @@ export default function QueryMonitorPage() {
     } finally { setBusy(null) }
   }
 
+  /**
+   * Take repeated lines out of the workbook by hand.
+   *
+   * Counted first and confirmed with the number, because the alternative is an
+   * admin pressing a button that silently deletes rows from the live sheet.
+   */
+  async function removeDuplicates() {
+    setBusy('dedupe')
+    try {
+      const preview = await fetch('/api/query-monitor/sheet-dedupe').then(r => r.json())
+      if (!preview.success) { toast.error(preview.error); return }
+
+      const count = preview.data.removed as number
+      if (count === 0) { toast.success(preview.message ?? 'No duplicate rows found'); return }
+
+      const ok = confirm(
+        `${count} duplicate row(s) found on the sheet.\n\n`
+        + 'The earliest line of each repeated query is kept; the later ones are deleted and '
+        + 'everything below them moves up. Only columns A–N are touched.\n\n'
+        + 'A row folded away takes any hand-typed edit on it with it. Remove them?',
+      )
+      if (!ok) return
+
+      const res = await fetch('/api/query-monitor/sheet-dedupe', { method: 'POST' })
+      const d   = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Duplicate rows removed')
+      bump(k => k + 1)
+      await loadSheet()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Duplicate sweep failed')
+    } finally { setBusy(null) }
+  }
+
   const awaiting = stats?.awaitingSync ?? 0
 
   return (
@@ -129,6 +163,14 @@ export default function QueryMonitorPage() {
                 <Table2 className="w-4 h-4" /> Open sheet <ExternalLink className="w-3 h-3" />
               </a>
             )}
+            <button
+              onClick={removeDuplicates} disabled={busy !== null}
+              title="Delete repeated lines from the workbook, keeping the earliest of each query"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-50"
+            >
+              {busy === 'dedupe' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+              Remove duplicates
+            </button>
             <button
               onClick={syncNow} disabled={busy !== null}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50"

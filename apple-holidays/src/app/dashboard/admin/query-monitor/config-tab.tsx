@@ -537,6 +537,12 @@ function DuplicatesCard({
               Keeps the earliest row of each thread, deletes the rest and renumbers everything below
               them. Run it once — it is safe to repeat, but it edits the live workbook.
             </p>
+            <p className="text-[11px] text-slate-500 mt-1">
+              This works from the queries below. For repeated lines the monitor has no record of —
+              a row written twice by an interrupted sync — use{' '}
+              <span className="font-semibold">Remove duplicates</span> at the top of the page, which
+              reads the sheet itself.
+            </p>
           </div>
           <button
             onClick={mergeNow} disabled={merging}

@@ -32,8 +32,8 @@ import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
 import { subjectKeyFor, threadKeyFor } from './thread'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
-  deleteRowsAt, ensureWorksheet, openSession, remapRowNumber, resolveSheetRef,
-  updateExcludedRow, updateRow,
+  deleteRowsAt, ensureWorksheet, findLastDataRow, openSession, readValuesRange,
+  remapRowNumber, resolveSheetRef, updateExcludedRow, updateRow,
   type ExcludedRowValues, type SheetLayout, type SheetRef, type SheetRowValues,
   type WorkbookTarget,
 } from './sheet'
@@ -1019,6 +1019,101 @@ async function skipEntriesBeforeStartDate(startDate: string, log?: RunLog): Prom
   }
 }
 
+/**
+ * Identity of a row for the append guard: the day, the timestamp and the
+ * subject — the three cells nothing else on the sheet edits.
+ *
+ * Serials are rounded to five decimals (under a second) because a double that
+ * has been through Excel and back is equal to the one we sent only to within
+ * the precision Graph reports it at.
+ */
+function writtenRowKey(
+  date: number | '', time: number | '', subject: string,
+): string {
+  const serial = (v: number | '') => (v === '' ? '' : v.toFixed(5))
+  return `${serial(date)}|${serial(time)}|${subject.trim().toLowerCase()}`
+}
+
+/** The same identity, read back off a row that is already on the sheet. */
+function sheetRowKey(
+  cells: (string | number | boolean | null)[], layout: SheetLayout,
+): string {
+  // Query tab: A date, D allocation time, C subject.
+  // Other-mail tab: A date, B received time, C subject.
+  const timeIndex = layout === EXCLUDED_LAYOUT ? 1 : 3
+  const num = (v: unknown) => (typeof v === 'number' ? v : '')
+  return writtenRowKey(num(cells[0]), num(cells[timeIndex]), String(cells[2] ?? ''))
+}
+
+/**
+ * Rows already on the tab that the pending block is about to write again.
+ *
+ * The hole this closes: `appendRows` puts the block in the workbook and the
+ * database write that records the row numbers is a separate call. If the
+ * process dies between the two — a Lambda timing out mid-sync — the rows are on
+ * the sheet and the entries are still PENDING, so the next sync appends them a
+ * second time. Nothing downstream can tell those two lines apart afterwards.
+ *
+ * So before appending, the tail of the tab is read and any pending row already
+ * standing there is claimed rather than written again: the entry is pointed at
+ * the row it turns out to own, and drops out of the append.
+ *
+ * Only the tail is read. A row this sync is about to append can only have been
+ * written by a sync that got as far as the workbook, which puts it at the
+ * bottom — scanning the whole sheet every time would cost far more than it
+ * could ever find.
+ */
+async function claimAlreadyWrittenRows(
+  entries: QueryMonitorEntry[],
+  keyOf: (entry: QueryMonitorEntry) => string,
+  ref: SheetRef, tab: string, layout: SheetLayout, sessionId: string | null,
+  plan: WorkbookPlan,
+  tailRows = 200,
+): Promise<{ toAppend: QueryMonitorEntry[]; claimed: number }> {
+  if (entries.length === 0) return { toAppend: entries, claimed: 0 }
+
+  let rows: (string | number | boolean | null)[][]
+  let firstRow: number
+  try {
+    const lastDataRow = await findLastDataRow(ref, tab, sessionId, layout)
+    if (lastDataRow < 2) return { toAppend: entries, claimed: 0 }
+    firstRow = Math.max(2, lastDataRow - tailRows + 1)
+    rows = await readValuesRange(ref, tab, firstRow, lastDataRow, layout, sessionId)
+  } catch {
+    // The guard is an optimisation over correctness of the append itself. If the
+    // tail cannot be read, write the block — a duplicate row is recoverable,
+    // a query missing from the sheet is what the team actually notices.
+    return { toAppend: entries, claimed: 0 }
+  }
+
+  const rowByKey = new Map<string, number>()
+  rows.forEach((cells, i) => {
+    const key = sheetRowKey(cells, layout)
+    if (!rowByKey.has(key)) rowByKey.set(key, firstRow + i)
+  })
+
+  const toAppend: QueryMonitorEntry[] = []
+  let claimed = 0
+
+  for (const entry of entries) {
+    const row = rowByKey.get(keyOf(entry))
+    if (row === undefined) { toAppend.push(entry); continue }
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data: {
+        [plan.rowField]:    row,
+        [plan.statusField]: 'SYNCED',
+        [plan.errorField]:  null,
+        ...(plan.target === 'primary' ? { sheetTab: tab, syncedAt: new Date() } : {}),
+      },
+    })
+    claimed += 1
+  }
+
+  return { toAppend, claimed }
+}
+
 /** One workbook's share of the work. See `syncEntriesToSheet`. */
 async function syncOneWorkbook(
   plan: WorkbookPlan, log?: RunLog, limit = 200,
@@ -1125,12 +1220,28 @@ async function syncOneWorkbook(
           )
         }
 
-        const rows = pendingQueries.map(e => buildSheetRow(e, config.writeStatusColumn))
-        const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
-        // Row numbers are stored per entry so a row can be rewritten later.
-        await recordRows(pendingQueries, result.firstRow, config.sheetName)
-        appended += result.rows
-        note('success', `Appended ${result.rows} row(s) to "${config.sheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        // Anything a previous sync already put on the sheet is claimed, not
+        // written twice — see claimAlreadyWrittenRows.
+        const { toAppend, claimed } = await claimAlreadyWrittenRows(
+          pendingQueries,
+          e => {
+            const row = buildSheetRow(e, config.writeStatusColumn)
+            return writtenRowKey(row.date, row.allocationTime, row.subject)
+          },
+          ref, config.sheetName, QUERY_LAYOUT, sessionId, plan,
+        )
+        if (claimed > 0) {
+          note('warn', `${claimed} row(s) were already on "${config.sheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
+        }
+
+        const rows = toAppend.map(e => buildSheetRow(e, config.writeStatusColumn))
+        if (rows.length > 0) {
+          const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
+          // Row numbers are stored per entry so a row can be rewritten later.
+          await recordRows(toAppend, result.firstRow, config.sheetName)
+          appended += result.rows
+          note('success', `Appended ${result.rows} row(s) to "${config.sheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        }
       } catch (err) {
         await failBlock(pendingQueries, err instanceof Error ? err.message : String(err), 'query')
       }
@@ -1146,11 +1257,25 @@ async function syncOneWorkbook(
           )
         }
 
-        const rows = pendingExcluded.map(buildExcludedRow)
-        const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
-        await recordRows(pendingExcluded, result.firstRow, config.excludedSheetName)
-        appended += result.rows
-        note('success', `Appended ${result.rows} non-query mail(s) to "${config.excludedSheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        const { toAppend, claimed } = await claimAlreadyWrittenRows(
+          pendingExcluded,
+          e => {
+            const row = buildExcludedRow(e)
+            return writtenRowKey(row.date, row.receivedTime, row.subject)
+          },
+          ref, config.excludedSheetName, EXCLUDED_LAYOUT, sessionId, plan,
+        )
+        if (claimed > 0) {
+          note('warn', `${claimed} row(s) were already on "${config.excludedSheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
+        }
+
+        const rows = toAppend.map(buildExcludedRow)
+        if (rows.length > 0) {
+          const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
+          await recordRows(toAppend, result.firstRow, config.excludedSheetName)
+          appended += result.rows
+          note('success', `Appended ${result.rows} non-query mail(s) to "${config.excludedSheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        }
       } catch (err) {
         await failBlock(pendingExcluded, err instanceof Error ? err.message : String(err), 'non-query')
       }
@@ -1411,7 +1536,7 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
  * above it. Left unadjusted, the next "reply landed" rewrite would overwrite an
  * unrelated query.
  */
-async function renumberAfterDelete(
+export async function renumberAfterDelete(
   target: WorkbookTarget, tab: string, deleted: number[],
   cfg: { sheetName: string; excludedSheetName: string },
 ): Promise<void> {

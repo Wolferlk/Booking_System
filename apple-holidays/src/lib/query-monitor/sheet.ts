@@ -578,6 +578,59 @@ export async function readRows(
   return range.text ?? range.values.map(r => r.map(c => String(c ?? '')))
 }
 
+/**
+ * Read a block of rows off any tab, as the text Excel displays.
+ *
+ * `readRows` above is fixed to the query layout and the configured tab; this one
+ * is aimed anywhere, takes a session, and pages the request so a long sheet is
+ * not asked for in a single range call. Text — not values — because the
+ * duplicate sweep compares what the team sees, and a date read as a serial
+ * number would differ between a typed cell and a written one.
+ */
+export async function readRowsRange(
+  ref: SheetRef, sheetName: string, firstRow: number, lastRow: number,
+  layout: SheetLayout = QUERY_LAYOUT, sessionId: string | null = null,
+  chunkSize = 500,
+): Promise<string[][]> {
+  const ranges = await readRangeChunks(ref, sheetName, firstRow, lastRow, layout, sessionId, chunkSize)
+  return ranges.flatMap(range =>
+    range.text ?? range.values.map(r => r.map(c => String(c ?? ''))),
+  )
+}
+
+/**
+ * The same block as the underlying cell values — dates as Excel serials rather
+ * than as the strings they are formatted into.
+ *
+ * The append guard compares what is on the sheet against what it is about to
+ * write, and what it is about to write are serials. Comparing against formatted
+ * text would mean re-implementing the workbook's date formats.
+ */
+export async function readValuesRange(
+  ref: SheetRef, sheetName: string, firstRow: number, lastRow: number,
+  layout: SheetLayout = QUERY_LAYOUT, sessionId: string | null = null,
+  chunkSize = 500,
+): Promise<(string | number | boolean | null)[][]> {
+  const ranges = await readRangeChunks(ref, sheetName, firstRow, lastRow, layout, sessionId, chunkSize)
+  return ranges.flatMap(range => range.values)
+}
+
+/** Page a tall range into requests Graph will answer. */
+async function readRangeChunks(
+  ref: SheetRef, sheetName: string, firstRow: number, lastRow: number,
+  layout: SheetLayout, sessionId: string | null, chunkSize: number,
+): Promise<RangeResponse[]> {
+  if (lastRow < firstRow) return []
+
+  const out: RangeResponse[] = []
+  for (let start = firstRow; start <= lastRow; start += chunkSize) {
+    const end     = Math.min(start + chunkSize - 1, lastRow)
+    const address = `${layout.firstColumn}${start}:${layout.lastColumn}${end}`
+    out.push(await readRange(ref, sheetName, address, sessionId))
+  }
+  return out
+}
+
 /** Names of every tab in the workbook — lets the UI offer a tab picker. */
 export async function listWorksheets(
   target: WorkbookTarget = 'primary',
