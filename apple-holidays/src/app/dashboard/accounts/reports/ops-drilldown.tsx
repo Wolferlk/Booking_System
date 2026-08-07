@@ -86,13 +86,16 @@ const STATE_RANK: Record<ReadinessState, number> = { PENDING: 0, PARTIAL: 1, NA:
 export default function OpsDrilldown({
   focus,
   anchorDate,
+  anchorEnd,
   countryFilter,
   initialBoard,
   onClose,
 }: {
   focus: FocusKey
-  /** The board's current date — the range starts as this single day. */
+  /** The board's window start — the range opens on this day. */
   anchorDate: string
+  /** The board's window end. Omitted (or equal) when the board shows one day. */
+  anchorEnd?: string
   /** Global country scope, passed straight through to the API. */
   countryFilter: string
   /** The board's already-loaded single-day data, shown until a range is chosen. */
@@ -103,7 +106,7 @@ export default function OpsDrilldown({
   const meta = FOCUS_META[focus]
 
   const [from, setFrom] = useState(anchorDate)
-  const [to, setTo] = useState(anchorDate)
+  const [to, setTo] = useState(anchorEnd ?? anchorDate)
   const [board, setBoard] = useState<OpsDayBoard | null>(initialBoard)
   const [loading, setLoading] = useState(false)
   const [countries, setCountries] = useState<Set<string>>(new Set())
