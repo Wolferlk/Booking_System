@@ -9,7 +9,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowRightLeft, CheckCircle2, Copy, ExternalLink, FilterX, Loader2,
-  Mail, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Users,
+  Mail, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Users, Wrench,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -190,6 +190,7 @@ function SheetCard({
   const [error, setError] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
   const [moving, setMoving] = useState(false)
+  const [preparing, setPreparing] = useState(false)
 
   useEffect(() => {
     if (!config) return
@@ -227,6 +228,22 @@ function SheetCard({
     onConfigChange(d.data.config)
     toast.success('Workbook target saved')
     await check(true)
+  }
+
+  /**
+   * Create the tabs and write the expected headers. This is the fix for a
+   * "Column mismatch" on a new or copied file — it never touches a header that
+   * already has rows under it.
+   */
+  async function prepare() {
+    setPreparing(true)
+    try {
+      const res = await fetch('/api/query-monitor/prepare', { method: 'POST' })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Workbook ready')
+      await check(true)
+    } finally { setPreparing(false) }
   }
 
   /**
@@ -277,6 +294,19 @@ function SheetCard({
           <input value={backupUrl} onChange={e => setBackup(e.target.value)} className={inputCls} />
         </Field>
 
+        {/* Same link in both boxes = every row appended twice to one file, with
+            two sets of row numbers fighting over it. Caught before it saves. */}
+        {backupUrl.trim() !== '' && backupUrl.trim() === url.trim() && (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>
+              <span className="font-semibold">This is the same file as the live workbook.</span>{' '}
+              A backup has to be a second file — otherwise every row is written to it twice.
+              Paste the backup workbook’s own share link, or turn mirroring off.
+            </span>
+          </div>
+        )}
+
         <Field
           label="Start from"
           hint="Mail received before this day is left in the previous sheet — it is never appended here. Blank means no cut-off."
@@ -303,6 +333,11 @@ function SheetCard({
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-50">
               {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />} Test
             </button>
+            <button onClick={prepare} disabled={preparing}
+              title="Create the tabs and write the expected header. Skips any tab that already holds rows."
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-50">
+              {preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />} Prepare
+            </button>
             <button onClick={save}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700">
               <Save className="w-4 h-4" /> Save
@@ -328,9 +363,16 @@ function SheetCard({
               <p className={cn('inline-flex items-center gap-1 font-semibold',
                 info.headerMatches ? 'text-emerald-700' : 'text-rose-700')}>
                 {info.headerMatches
-                  ? <><CheckCircle2 className="w-3.5 h-3.5" /> Columns A–M match the expected layout</>
+                  ? <><CheckCircle2 className="w-3.5 h-3.5" /> Columns A–N match the expected layout</>
                   : <><AlertTriangle className="w-3.5 h-3.5" /> Header does not match: expected {expected.join(', ')}</>}
               </p>
+              {!info.headerMatches && (
+                <p className="text-slate-500">
+                  Press <span className="font-semibold">Prepare</span> to write it — safe while the tab has no rows.
+                  {info.dataRowCount > 0 && ' This tab already has rows, so the header will not be touched: '
+                    + 'point at a clean tab instead.'}
+                </p>
+              )}
               <p className="text-slate-400">
                 Only columns A–N are ever written. File Handler (F) carries one name; TO List (G) carries everyone
                 the mail reached.

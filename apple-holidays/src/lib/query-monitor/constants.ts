@@ -93,7 +93,7 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
  * unlike the 2026 sheet it replaced, which had to be found, never conjured.
  */
 export const NEW_SHEET_URL =
-  'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQAHRf-77PFGRYZA9wgzEGeZAbny2k-Dyws0GbBsZxoPaPc?e=cddk42'
+  'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQAHRf-77PFGRYZA9wgzEGeZATxx0cyX0-Sh-tpg3VfPFqY?e=hawnx9'
 export const BACKUP_SHEET_URL =
   'https://aahaas-my.sharepoint.com/:x:/p/sasindu/IQBQuzZaKQ-FRoO2Y7xxMEqSAY1ms3HhMEMhmrlp79pUE78?e=Cf9aaW'
 

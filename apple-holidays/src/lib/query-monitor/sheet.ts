@@ -274,9 +274,9 @@ export async function getSheetInfo(force = false, target: WorkbookTarget = 'prim
 
   // Both workbooks were created empty for this system, so the query tab may not
   // exist yet on a first look. Making it here means "Test" prepares the file
-  // rather than failing on it — the old 2026 sheet was the team's own and had to
-  // be found, but these two are ours to lay out.
-  await ensureWorksheet(ref, sheetName, QUERY_LAYOUT).catch(() => {})
+  // rather than failing on it. It reports a wrong header rather than correcting
+  // one — that is what the explicit "Prepare" action is for.
+  await ensureWorksheet(ref, sheetName, QUERY_LAYOUT, null, { repair: false }).catch(() => {})
 
   const header = await readRange(ref, sheetName, `A1:${SHEET_LAST_COLUMN}1`)
   const headerCells = (header.text?.[0] ?? header.values[0]?.map(v => String(v ?? '')) ?? [])
@@ -382,10 +382,23 @@ async function appendCells(
  * Make sure a tab exists with our header on row 1, creating it if the workbook
  * has never had one. Called for both tabs of both workbooks: all four are files
  * this system lays out itself, so an empty workbook is a valid starting point.
+ *
+ * A header that is present but *wrong* — most often a file copied from the old
+ * 13-column sheet, which has no TO List — is corrected only while the tab holds
+ * no data rows. With rows below it, the header describes real cells: rewriting
+ * it would relabel columns without moving anything, silently shifting every
+ * value's meaning. That case is reported instead, and a human decides.
  */
 export async function ensureWorksheet(
   ref: SheetRef, sheetName: string, layout: SheetLayout, sessionId: string | null = null,
-): Promise<{ created: boolean }> {
+  /**
+   * Whether a wrong-but-present header may be corrected. Off for the read-only
+   * status panel: pressing "Test" should report a mismatch, not quietly change
+   * the file. On for "Prepare" and for the sync, which are asking to write.
+   */
+  opts: { repair?: boolean } = {},
+): Promise<{ created: boolean; headerWritten: boolean; headerMismatch: boolean }> {
+  const repair = opts.repair ?? true
   const sheets = await workbookFetch<{ value: { name: string }[] }>(
     `/drives/${ref.driveId}/items/${ref.itemId}/workbook/worksheets?$select=name`,
     sessionId,
@@ -400,27 +413,71 @@ export async function ensureWorksheet(
     )
   }
 
-  // Write the header when row 1 is blank — on a tab we just made, and on one an
-  // admin created by hand and left empty.
   const headerAddress = `${layout.firstColumn}1:${layout.lastColumn}1`
-  const header = await readRange(ref, sheetName, headerAddress, sessionId)
-  const isEmpty = (header.values[0] ?? []).every(cell => String(cell ?? '').trim() === '')
+  const header  = await readRange(ref, sheetName, headerAddress, sessionId)
+  const cells   = (header.text?.[0] ?? header.values[0]?.map(v => String(v ?? '')) ?? [])
+    .map(h => String(h ?? '').trim())
 
-  if (isEmpty) {
-    await workbookFetch(
-      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(headerAddress)}')`,
-      sessionId,
-      { method: 'PATCH', body: JSON.stringify({ values: [[...layout.header]] }) },
-    )
-    // Bold is cosmetic — a failure here must not stop the rows going in.
-    await workbookFetch(
-      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(headerAddress)}')/format/font`,
-      sessionId,
-      { method: 'PATCH', body: JSON.stringify({ bold: true }) },
-    ).catch(() => {})
+  const isEmpty  = cells.every(cell => cell === '')
+  const matches  = layout.header.every((expected, i) => (cells[i] ?? '').toLowerCase() === expected.toLowerCase())
+
+  if (matches) return { created: !exists, headerWritten: false, headerMismatch: false }
+
+  // A blank row 1 is always filled in — there is no existing header to respect.
+  // A wrong one is only replaced when asked, and only above an empty sheet.
+  if (!isEmpty) {
+    if (!repair) return { created: !exists, headerWritten: false, headerMismatch: true }
+
+    const lastDataRow = await findLastDataRow(ref, sheetName, sessionId, layout)
+    if (lastDataRow > 1) {
+      return { created: !exists, headerWritten: false, headerMismatch: true }
+    }
   }
 
-  return { created: !exists }
+  await workbookFetch(
+    `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(headerAddress)}')`,
+    sessionId,
+    { method: 'PATCH', body: JSON.stringify({ values: [[...layout.header]] }) },
+  )
+  // Bold is cosmetic — a failure here must not stop the rows going in.
+  await workbookFetch(
+    `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(headerAddress)}')/format/font`,
+    sessionId,
+    { method: 'PATCH', body: JSON.stringify({ bold: true }) },
+  ).catch(() => {})
+
+  return { created: !exists, headerWritten: true, headerMismatch: false }
+}
+
+/**
+ * Lay out a workbook so it is ready to receive rows: both tabs present, both
+ * headers correct. Safe to run repeatedly, and it never touches a tab that
+ * already holds data under a different header — that is reported back for a
+ * human to resolve.
+ */
+export async function prepareWorkbook(
+  target: WorkbookTarget = 'primary',
+): Promise<{
+  fileName: string
+  tabs: { name: string; created: boolean; headerWritten: boolean; headerMismatch: boolean }[]
+}> {
+  const cfg = await getConfig()
+  const ref = await resolveSheetRef(false, target)
+  const sessionId = await openSession(ref)
+
+  try {
+    const tabs = []
+    for (const [name, layout] of [
+      [cfg.sheetName,         QUERY_LAYOUT],
+      [cfg.excludedSheetName, EXCLUDED_LAYOUT],
+    ] as const) {
+      const result = await ensureWorksheet(ref, name, layout, sessionId)
+      tabs.push({ name, ...result })
+    }
+    return { fileName: ref.fileName, tabs }
+  } finally {
+    await closeSession(ref, sessionId)
+  }
 }
 
 /**

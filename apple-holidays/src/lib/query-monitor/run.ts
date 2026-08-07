@@ -781,7 +781,7 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
 
   const workbooks: WorkbookSyncResult[] = [await syncOneWorkbook(PRIMARY_PLAN, log, limit)]
 
-  if (config.backupEnabled) {
+  if (config.backupEnabled && await backupIsADistinctFile(log)) {
     workbooks.push(await syncOneWorkbook(BACKUP_PLAN, log, limit))
   }
 
@@ -789,6 +789,36 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
   return {
     appended: primary.appended, updated: primary.updated, failed: primary.failed,
     workbooks,
+  }
+}
+
+/**
+ * Refuse to mirror a workbook into itself.
+ *
+ * Two share links can resolve to the same file — a copied link, a re-shared one,
+ * the same URL pasted into both boxes. Mirroring then means appending every row
+ * twice to one workbook and, worse, the "backup" row numbers would collide with
+ * the primary's, so later rewrites would land on the wrong rows. The drive item
+ * is the identity that matters, not the URL text.
+ */
+async function backupIsADistinctFile(log?: RunLog): Promise<boolean> {
+  try {
+    const [primary, backup] = await Promise.all([
+      resolveSheetRef(false, 'primary'),
+      resolveSheetRef(false, 'backup'),
+    ])
+    if (primary.driveId === backup.driveId && primary.itemId === backup.itemId) {
+      log?.add('warn',
+        `Backup skipped — the backup link points at the same file as the live workbook ("${primary.fileName}"). `
+        + 'Set a different file, or turn mirroring off.')
+      return false
+    }
+    return true
+  } catch (err) {
+    // Unreachable is the backup pass's own problem to report, not a reason to
+    // decide the files are the same.
+    log?.add('warn', `Could not compare the two workbooks: ${err instanceof Error ? err.message : String(err)}`)
+    return true
   }
 }
 
@@ -918,8 +948,17 @@ async function syncOneWorkbook(
       try {
         // Both workbooks were created empty for this system, so the query tab is
         // laid out here rather than assumed to exist.
-        const { created } = await ensureWorksheet(ref, config.sheetName, QUERY_LAYOUT, sessionId)
+        const { created, headerMismatch } = await ensureWorksheet(ref, config.sheetName, QUERY_LAYOUT, sessionId)
         if (created) note('info', `Created the "${config.sheetName}" tab`)
+        if (headerMismatch) {
+          // Columns are written by position. Under the old 13-column header every
+          // value from G onwards would land one column left of where it belongs.
+          throw new Error(
+            `"${config.sheetName}" has data under a header that is not the expected `
+            + `${QUERY_LAYOUT.header.length}-column layout (File Handler, TO List, …). `
+            + 'Nothing was written — fix the header, or point at a clean tab, then sync again.',
+          )
+        }
 
         const rows = pendingQueries.map(e => buildSheetRow(e, config.writeStatusColumn))
         const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
@@ -934,8 +973,13 @@ async function syncOneWorkbook(
 
     if (pendingExcluded.length > 0) {
       try {
-        const { created } = await ensureWorksheet(ref, config.excludedSheetName, EXCLUDED_LAYOUT, sessionId)
+        const { created, headerMismatch } = await ensureWorksheet(ref, config.excludedSheetName, EXCLUDED_LAYOUT, sessionId)
         if (created) note('info', `Created the "${config.excludedSheetName}" tab for mail that is not a query`)
+        if (headerMismatch) {
+          throw new Error(
+            `"${config.excludedSheetName}" has data under an unexpected header. Nothing was written.`,
+          )
+        }
 
         const rows = pendingExcluded.map(buildExcludedRow)
         const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
