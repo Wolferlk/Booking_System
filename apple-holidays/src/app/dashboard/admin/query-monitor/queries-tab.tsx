@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  FilterX, Inbox, Loader2, Mail, Pencil, Search, Trash2, Undo2, UserPlus, Users, Zap,
+  FilterX, Inbox, Layers, Loader2, Mail, Pencil, Search, Trash2, Undo2, UserPlus, Users, Zap,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -384,9 +384,21 @@ export default function QueriesTab({
                             <span className="font-medium text-slate-800 group-hover:text-emerald-700 line-clamp-1">
                               {entry.subject}
                             </span>
+                            {/* Later mail of the same thread shares this row
+                                instead of repeating the subject underneath it. */}
+                            {entry.followUpCount > 0 && (
+                              <span
+                                title={`${entry.followUpCount} later mail(s) in this thread — folded into this row`}
+                                className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold"
+                              >
+                                <Layers className="w-3 h-3" /> +{entry.followUpCount}
+                              </span>
+                            )}
                           </span>
                           <span className="block text-[11px] text-slate-400 truncate">
                             {entry.fromName || entry.fromAddress} · {entry.fromDomain}
+                            {entry.lastMessageAt && entry.followUpCount > 0
+                              && ` · last mail ${formatDateTime(entry.lastMessageAt)}`}
                           </span>
                         </button>
                       </td>

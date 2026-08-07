@@ -20,6 +20,10 @@ export interface QueryMonitorConfig {
   aiEnabled:         boolean
   slaHours:          number
   replyChaseDays:    number
+  /** One row per thread: a follow-up rewrites the query's row instead of adding one. */
+  threadMergeEnabled: boolean
+  /** How far back a follow-up may reach to find the row it belongs to, in days. */
+  threadWindowDays:   number
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
@@ -78,6 +82,8 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     aiEnabled:         bool(SETTINGS.aiEnabled,         DEFAULTS.aiEnabled),
     slaHours:          Math.max(1, num(SETTINGS.slaHours,       DEFAULTS.slaHours)),
     replyChaseDays:    Math.max(1, num(SETTINGS.replyChaseDays, DEFAULTS.replyChaseDays)),
+    threadMergeEnabled: bool(SETTINGS.threadMergeEnabled, DEFAULTS.threadMergeEnabled),
+    threadWindowDays:   Math.max(1, num(SETTINGS.threadWindowDays, DEFAULTS.threadWindowDays)),
     excludeEnabled:    bool(SETTINGS.excludeEnabled, DEFAULTS.excludeEnabled),
     excludePatterns:   str(SETTINGS.excludePatterns,   DEFAULTS.excludePatterns),
     excludedSheetName: str(SETTINGS.excludedSheetName, DEFAULTS.excludedSheetName)
@@ -107,6 +113,8 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.aiEnabled         !== undefined) put(SETTINGS.aiEnabled,         !!patch.aiEnabled)
   if (patch.slaHours          !== undefined) put(SETTINGS.slaHours,          Math.max(1, Number(patch.slaHours) || 2))
   if (patch.replyChaseDays    !== undefined) put(SETTINGS.replyChaseDays,    Math.max(1, Number(patch.replyChaseDays) || 7))
+  if (patch.threadMergeEnabled !== undefined) put(SETTINGS.threadMergeEnabled, !!patch.threadMergeEnabled)
+  if (patch.threadWindowDays   !== undefined) put(SETTINGS.threadWindowDays,   Math.max(1, Number(patch.threadWindowDays) || 30))
   if (patch.excludeEnabled    !== undefined) put(SETTINGS.excludeEnabled,    !!patch.excludeEnabled)
   // Kept verbatim — one pattern per line, and a trailing blank line is harmless.
   if (patch.excludePatterns   !== undefined) put(SETTINGS.excludePatterns,   String(patch.excludePatterns))

@@ -529,6 +529,42 @@ async function updateCells(
   )
 }
 
+/**
+ * Remove rows from a tab and close the gap behind them.
+ *
+ * Only the layout's own columns are shifted up. A whole-row delete would drag
+ * the team's lookup lists and pivot helpers — which live to the right of column
+ * N and are not aligned to our rows — up with them.
+ *
+ * Deletion runs bottom-up so that the row numbers still to be deleted keep
+ * meaning what they meant when they were collected. Every row below a deleted
+ * one moves up by one, so the caller must renumber the row pointers it holds;
+ * `remapRowNumber` does that arithmetic.
+ */
+export async function deleteRowsAt(
+  ref: SheetRef, sheetName: string, rowNumbers: number[], layout: SheetLayout,
+  sessionId: string | null = null,
+): Promise<number> {
+  const rows = Array.from(new Set(rowNumbers))
+    .filter(r => Number.isInteger(r) && r > 1) // never the header
+    .sort((a, b) => b - a)
+
+  for (const row of rows) {
+    const address = `${layout.firstColumn}${row}:${layout.lastColumn}${row}`
+    await workbookFetch(
+      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')/delete`,
+      sessionId,
+      { method: 'POST', body: JSON.stringify({ shift: 'Up' }) },
+    )
+  }
+  return rows.length
+}
+
+/** Where a row ends up once `deleted` rows above it have been removed. */
+export function remapRowNumber(row: number, deleted: number[]): number {
+  return row - deleted.filter(d => d < row).length
+}
+
 /** Read rows back — powers the "verify what's in the sheet" panel in the UI. */
 export async function readRows(
   firstRow: number, lastRow: number,

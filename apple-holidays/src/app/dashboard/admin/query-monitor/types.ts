@@ -7,6 +7,10 @@ export interface QmEntry {
   fromName:         string
   fromDomain:       string
   receivedAt:       string
+  /** Newest mail of the thread; `receivedAt` stays the first one. */
+  lastMessageAt:    string | null
+  /** Later mails of the same thread that share this row instead of adding one. */
+  followUpCount:    number
   repliedAt:        string | null
   replyStatus:      'REPLIED' | 'PENDING' | 'OVERDUE'
   /** Sheet column F — the ONE handler who owns this query, '' while unclaimed. */
@@ -30,12 +34,13 @@ export interface QmEntry {
   extractionSource: 'RULE' | 'AI' | 'MANUAL'
   aiConfidence:     number | null
   sheetRow:         number | null
-  syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
+  /** MERGED = a follow-up sharing another query's row; never written anywhere. */
+  syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED' | 'MERGED'
   syncError:        string | null
   syncedAt:         string | null
   /** The standby workbook's own row and state — it numbers rows independently. */
   backupSheetRow:   number | null
-  backupSyncStatus: 'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
+  backupSyncStatus: 'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED' | 'MERGED'
   backupSyncError:  string | null
   createdAt:        string
   matches?:         { handlerName: string; repliedAt: string | null; mailboxId: string }[]
@@ -94,6 +99,10 @@ export interface QmConfig {
   aiEnabled:         boolean
   slaHours:          number
   replyChaseDays:    number
+  /** One row per thread: a follow-up rewrites the query's row instead of adding one. */
+  threadMergeEnabled: boolean
+  /** How far back a follow-up may reach to find the row it belongs to, in days. */
+  threadWindowDays:   number
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string

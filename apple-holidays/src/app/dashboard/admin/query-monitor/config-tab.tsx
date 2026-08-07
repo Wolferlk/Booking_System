@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, ArrowRightLeft, CheckCircle2, Copy, ExternalLink, FilterX, Loader2,
-  Mail, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Users, Wrench,
+  AlertTriangle, ArrowRightLeft, CheckCircle2, Copy, ExternalLink, FilterX, Layers,
+  Loader2, Mail, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Users, Wrench,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -27,6 +27,7 @@ export default function ConfigTab({
     <div className="space-y-6">
       <ScheduleCard config={config} onConfigChange={onConfigChange} />
       <SheetCard config={config} onConfigChange={onConfigChange} onSheetChange={onSheetChange} />
+      <DuplicatesCard config={config} onConfigChange={onConfigChange} />
       <ExclusionCard config={config} onConfigChange={onConfigChange} />
       <MailboxesCard />
       <SenderRulesCard />
@@ -443,6 +444,116 @@ function SheetCard({
             )}
           </>
         )}
+      </div>
+    </Card>
+  )
+}
+
+// ── Duplicate rows ───────────────────────────────────────────────────────────
+
+/**
+ * One row per query, not one per mail.
+ *
+ * An agent who chases the same quote three times has asked one question; before
+ * thread merging each chase took a row of its own and the sheet showed the same
+ * subject three times over. The clean-up here fixes what was written that way.
+ */
+function DuplicatesCard({
+  config, onConfigChange,
+}: { config: QmConfig | null; onConfigChange: (c: QmConfig) => void }) {
+  const [days, setDays]       = useState(30)
+  const [saving, setSaving]   = useState(false)
+  const [merging, setMerging] = useState(false)
+
+  useEffect(() => { if (config) setDays(config.threadWindowDays) }, [config])
+
+  async function save(patch: Partial<QmConfig>) {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/query-monitor/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      onConfigChange(d.data.config)
+      toast.success('Saved')
+    } finally { setSaving(false) }
+  }
+
+  /** Fold the duplicates already written, and take their rows out of the sheet. */
+  async function mergeNow() {
+    if (!confirm(
+      'Fold every duplicate written so far onto the query it belongs to?\n\n'
+      + 'The earliest row of each thread is kept and brought up to date; the later ones are '
+      + 'deleted from the workbook and the rows below them move up. Only columns A–N are '
+      + 'touched — anything you keep to the right of them stays where it is.',
+    )) return
+
+    setMerging(true)
+    try {
+      const res = await fetch('/api/query-monitor/dedupe', { method: 'POST' })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Duplicates merged')
+    } finally { setMerging(false) }
+  }
+
+  if (!config) {
+    return <Card icon={<Layers className="w-4 h-4" />} title="Duplicate rows">
+      <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+    </Card>
+  }
+
+  return (
+    <Card
+      icon={<Layers className="w-4 h-4" />}
+      title="Duplicate rows"
+      description="A chaser belongs on the query's own row — the sheet keeps one line per query"
+    >
+      <div className="space-y-4">
+        <Toggle
+          checked={config.threadMergeEnabled}
+          onChange={v => save({ threadMergeEnabled: v })}
+          label="One row per thread"
+          description="Later mail of a conversation rewrites the row the query already owns instead of adding another line with the same subject."
+        />
+
+        <Field
+          label="Look back for the query (days)"
+          hint="How far back a follow-up may reach for its row. Never past the workbook's start date — a row in the previous file cannot be rewritten."
+        >
+          <input
+            type="number" min={1} className={cn(inputCls, 'w-32')}
+            value={days}
+            onChange={e => setDays(Number(e.target.value))}
+            onBlur={() => days !== config.threadWindowDays && save({ threadWindowDays: days })}
+          />
+        </Field>
+
+        <div className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-slate-700">Already have duplicates in the sheet?</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Keeps the earliest row of each thread, deletes the rest and renumbers everything below
+              them. Run it once — it is safe to repeat, but it edits the live workbook.
+            </p>
+          </div>
+          <button
+            onClick={mergeNow} disabled={merging}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200 disabled:opacity-50"
+          >
+            {merging ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+            Merge duplicates
+          </button>
+        </div>
+
+        <p className="text-[11px] text-slate-400">
+          Threads are matched on the mail conversation, or on an identical subject from the same
+          domain when that subject carries a reference number — two unrelated “Urgent quote
+          required” mails are never collapsed into one row.
+        </p>
+
+        {saving && <p className="text-xs text-slate-400 inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Saving…</p>}
       </div>
     </Card>
   )

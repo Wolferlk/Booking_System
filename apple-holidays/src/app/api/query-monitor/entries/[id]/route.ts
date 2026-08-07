@@ -167,6 +167,16 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     )
   }
 
+  // The follow-ups that folded into this row go with it. Left behind they would
+  // point at nothing, and their dedup keys would stop the mail they stand for
+  // ever being collected again.
+  const followUps = await prisma.queryMonitorEntry.deleteMany({ where: { mergedIntoId: entry.id } })
   await prisma.queryMonitorEntry.delete({ where: { id: entry.id } })
-  return buildApiSuccess(null, 'Entry deleted')
+
+  return buildApiSuccess(
+    null,
+    followUps.count > 0
+      ? `Entry deleted, along with ${followUps.count} follow-up(s) that shared its row`
+      : 'Entry deleted',
+  )
 }
