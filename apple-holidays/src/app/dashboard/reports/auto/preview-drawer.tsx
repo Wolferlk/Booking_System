@@ -10,9 +10,11 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  AlertTriangle, Download, Loader2, Mail, Monitor, Smartphone, X,
+  AlertTriangle, ChevronLeft, ChevronRight, Download, Loader2, Mail, Monitor,
+  RotateCcw, Smartphone, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { dateInTz, shiftDate } from '@/lib/reports/report-window'
 import type { Schedule } from './types'
 
 export interface PreviewRequest {
@@ -23,6 +25,8 @@ export interface PreviewRequest {
   aiSummary?: boolean
   maxRows?: number
   title?: string
+  /** `yyyy-mm-dd` to back-date the preview to; empty means the latest period. */
+  date?: string
 }
 
 /** Build the query the preview endpoint expects from either a saved id or a draft. */
@@ -36,6 +40,9 @@ export function previewQuery(req: PreviewRequest): string {
     if (req.aiSummary) p.set('aiSummary', 'true')
     if (req.maxRows) p.set('maxRows', String(req.maxRows))
   }
+  // Applies to both shapes — a saved schedule can be previewed for a past day
+  // without touching what it will send tomorrow morning.
+  if (req.date) p.set('date', req.date)
   return p.toString()
 }
 
@@ -75,8 +82,16 @@ export default function PreviewDrawer({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop')
+  // Empty = whatever the schedule would send right now. Held here rather than on
+  // the request so stepping through days does not disturb the caller's draft.
+  const [date, setDate] = useState('')
 
-  const query = useMemo(() => (request ? previewQuery(request) : ''), [request])
+  useEffect(() => { setDate(request?.date ?? '') }, [request])
+
+  const query = useMemo(
+    () => (request ? previewQuery({ ...request, date }) : ''),
+    [request, date],
+  )
 
   useEffect(() => {
     if (!request) { setSummary(null); setError(null); return }
@@ -109,6 +124,17 @@ export default function PreviewDrawer({
   if (!request) return null
 
   const d = summary?.data
+  // Stepping moves a whole period at a time, taken from the range the server
+  // actually returned — so one click back on a weekly report is a whole week,
+  // with no period arithmetic duplicated on the client.
+  const tz = d?.window.timezone ?? 'Asia/Colombo'
+  const maxDate = dateInTz(new Date(), tz)
+  const canStepForward = !!d && d.window.toDate < maxDate
+  const step = (dir: -1 | 1) => {
+    if (!d) return
+    setDate(dir === -1 ? shiftDate(d.window.fromDate, -1) : shiftDate(d.window.toDate, 1))
+  }
+
   const stats = d ? [
     { label: 'Created', value: d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
     { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
@@ -128,8 +154,47 @@ export default function PreviewDrawer({
               <span className="truncate">{summary?.subject ?? request.title ?? 'Report preview'}</span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5 truncate">
-              {d ? `${d.window.label} · times in ${d.window.timezone}` : 'Building the report…'}
+              {d
+                ? `${d.window.label} · times in ${d.window.timezone}${date ? ' · back-dated view' : ''}`
+                : 'Building the report…'}
             </p>
+          </div>
+
+          {/* Report date — step by period, or pick any past day */}
+          <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100">
+            <button
+              onClick={() => step(-1)}
+              disabled={!d || loading}
+              className="p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+              title="Previous period"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <input
+              type="date"
+              value={date || d?.window.fromDate || ''}
+              max={maxDate}
+              onChange={e => setDate(e.target.value)}
+              className="bg-white rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+              title="Report date"
+            />
+            <button
+              onClick={() => step(1)}
+              disabled={!d || loading || !canStepForward}
+              className="p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-slate-900 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+              title="Next period"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            {date && (
+              <button
+                onClick={() => setDate('')}
+                className="p-1.5 rounded-md text-slate-500 hover:bg-white hover:text-slate-900 transition-colors"
+                title="Back to the latest report"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="hidden sm:flex items-center gap-1 p-1 rounded-lg bg-slate-100">

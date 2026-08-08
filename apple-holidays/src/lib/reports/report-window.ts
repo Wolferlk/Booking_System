@@ -36,6 +36,11 @@ export interface ReportWindow {
   end: Date
   /** Local "today" the report was generated for, `yyyy-mm-dd`. */
   today: string
+  /**
+   * True when the range was pinned to a chosen date rather than derived from
+   * the real clock — a back-dated view, not what a scheduled send would produce.
+   */
+  anchored: boolean
   timezone: string
   /** Human label, e.g. "Yesterday — Thu 30 Jul 2026". */
   label: string
@@ -127,6 +132,32 @@ export function formatClock(hour: number, minute: number): string {
 
 // ─── Window construction ──────────────────────────────────────────────────────
 
+export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/** Is `yyyy-mm-dd` a real calendar date? Guards user-supplied anchors. */
+export function isValidDate(date: string): boolean {
+  if (!ISO_DATE.test(date)) return false
+  const [y, m, d] = date.split('-').map(Number)
+  const at = new Date(Date.UTC(y, m - 1, d))
+  return at.getUTCFullYear() === y && at.getUTCMonth() === m - 1 && at.getUTCDate() === d
+}
+
+/** The whole period containing `anchor` — the range itself, without labels. */
+function periodAround(period: ReportPeriod, anchor: string): { fromDate: string; toDate: string } {
+  if (period === 'DAILY') return { fromDate: anchor, toDate: anchor }
+
+  if (period === 'WEEKLY') {
+    const monday = shiftDate(anchor, -((dayOfWeek(anchor) + 6) % 7))
+    return { fromDate: monday, toDate: shiftDate(monday, 6) }
+  }
+
+  const y = Number(anchor.slice(0, 4))
+  const m = Number(anchor.slice(5, 7))
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate()
+  const mm = String(m).padStart(2, '0')
+  return { fromDate: `${y}-${mm}-01`, toDate: `${y}-${mm}-${String(last).padStart(2, '0')}` }
+}
+
 /**
  * The range a report covers when generated on `today` (local date).
  *
@@ -137,39 +168,46 @@ export function formatClock(hour: number, minute: number): string {
  *  - DAILY   → yesterday
  *  - WEEKLY  → the previous Mon–Sun week
  *  - MONTHLY → the previous calendar month
+ *
+ * `anchorDate` re-points that at a chosen past day: the report then covers the
+ * day, week or month *containing* that date. It exists for the dashboard's date
+ * picker — "show me the 07 Aug report" — and scheduled sends never pass it.
+ *
+ * An anchored window also moves `today` to the morning after the range ends,
+ * because the forward-looking sections ("on ground today", "arriving next three
+ * days") are written from the point of view of the reader opening the mail. Left
+ * at the real today they would show this week's operations stapled to a report
+ * about a month ago, which reads as a bug and is worse than useless.
  */
 export function buildReportWindow(
   period: ReportPeriod,
   timezone: string,
   now: Date = new Date(),
+  anchorDate?: string | null,
 ): ReportWindow {
-  const today = dateInTz(now, timezone)
+  const realToday = dateInTz(now, timezone)
+  const anchored = !!anchorDate && isValidDate(anchorDate)
 
-  let fromDate: string
-  let toDate: string
-  let label: string
+  // Default anchor: any date inside the previous period. Yesterday sits in it
+  // for every period — the day before this month's 1st is last month, the day
+  // before this week's Monday is last week.
+  const defaultAnchor = period === 'DAILY'
+    ? shiftDate(realToday, -1)
+    : period === 'WEEKLY'
+      ? shiftDate(realToday, -(((dayOfWeek(realToday) + 6) % 7) + 1))
+      : shiftDate(`${realToday.slice(0, 7)}-01`, -1)
 
-  if (period === 'DAILY') {
-    fromDate = toDate = shiftDate(today, -1)
-    label = `Yesterday — ${formatReportDate(fromDate, { weekday: true })}`
-  } else if (period === 'WEEKLY') {
-    // Back up to the Monday of this week, then take the seven days before it.
-    const dow = dayOfWeek(today)
-    const mondayThisWeek = shiftDate(today, -((dow + 6) % 7))
-    fromDate = shiftDate(mondayThisWeek, -7)
-    toDate = shiftDate(mondayThisWeek, -1)
-    label = `Last week — ${formatReportDate(fromDate)} to ${formatReportDate(toDate)}`
-  } else {
-    const y = Number(today.slice(0, 4))
-    const m = Number(today.slice(5, 7))
-    const prevMonth = m === 1 ? 12 : m - 1
-    const prevYear = m === 1 ? y - 1 : y
-    const last = new Date(Date.UTC(prevYear, prevMonth, 0)).getUTCDate()
-    fromDate = `${prevYear}-${String(prevMonth).padStart(2, '0')}-01`
-    toDate = `${prevYear}-${String(prevMonth).padStart(2, '0')}-${String(last).padStart(2, '0')}`
-    label = `Last month — ${new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' })
-      .format(new Date(Date.UTC(prevYear, prevMonth - 1, 1)))}`
-  }
+  const anchor = anchored ? anchorDate! : defaultAnchor
+  const { fromDate, toDate } = periodAround(period, anchor)
+
+  // "Yesterday" / "Last week" only make sense relative to the real today; a
+  // picked date is labelled as the plain range it is.
+  const label = period === 'DAILY'
+    ? `${anchored ? '' : 'Yesterday — '}${formatReportDate(fromDate, { weekday: true })}`
+    : period === 'WEEKLY'
+      ? `${anchored ? 'Week of ' : 'Last week — '}${formatReportDate(fromDate)} to ${formatReportDate(toDate)}`
+      : `${anchored ? '' : 'Last month — '}${new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' })
+        .format(new Date(Date.UTC(Number(fromDate.slice(0, 4)), Number(fromDate.slice(5, 7)) - 1, 1)))}`
 
   return {
     period,
@@ -177,7 +215,8 @@ export function buildReportWindow(
     toDate,
     start: zonedDayStart(fromDate, timezone),
     end: zonedDayStart(shiftDate(toDate, 1), timezone),
-    today,
+    today: anchored ? shiftDate(toDate, 1) : realToday,
+    anchored,
     timezone,
     label,
   }

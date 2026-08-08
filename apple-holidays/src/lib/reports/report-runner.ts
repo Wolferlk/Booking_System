@@ -183,13 +183,14 @@ export interface BuiltReport {
 
 export async function buildReport(
   s: Pick<ReportSchedule, 'name' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'>,
-  opts: { now?: Date; testSend?: boolean } = {},
+  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null } = {},
 ): Promise<BuiltReport> {
   const data = await collectReportData({
     period: s.period,
     timezone: s.timezone,
     countries: s.countries,
     now: opts.now,
+    anchorDate: opts.anchorDate,
     maxRows: s.maxRows,
   })
 

@@ -210,6 +210,11 @@ export interface CollectOptions {
   /** Empty = every country, including unassigned. */
   countries?: string[]
   now?: Date
+  /**
+   * `yyyy-mm-dd` inside the period to report on — back-dates the whole report.
+   * Omitted for scheduled sends, which always report the period just closed.
+   */
+  anchorDate?: string | null
   /** Cap on the per-section detail tables. */
   maxRows?: number
 }
@@ -789,7 +794,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const now = opts.now ?? new Date()
   const countries = (opts.countries ?? []).filter(Boolean)
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
-  const window = buildReportWindow(opts.period, opts.timezone, now)
+  const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
 
   const [created, onGround, readiness, complaints, upcoming] = await Promise.all([
     collectCreated(window, countries, maxRows),

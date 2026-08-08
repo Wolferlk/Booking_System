@@ -662,9 +662,15 @@ export interface RenderOptions {
 }
 
 function headerBlock(w: ReportWindow, opts: RenderOptions): string {
-  const badge = opts.testSend
-    ? `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">TEST SEND</span>`
-    : ''
+  // A back-dated view says so on its face: the counts are for the chosen period,
+  // but the forward-looking sections read from today's booking records, so it is
+  // not the mail that went out that morning and must not be mistaken for it.
+  const badge = [
+    opts.testSend ? 'TEST SEND' : '',
+    w.anchored ? `BACK-DATED TO ${formatReportDate(w.toDate).toUpperCase()}` : '',
+  ].filter(Boolean).map(text =>
+    `<span style="display:inline-block;margin-left:5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
+  ).join('')
   return `
   <tr><td style="background:${C.brandDeep};background-image:linear-gradient(135deg,${C.brandDeep} 0%,${C.brand} 100%);padding:26px 24px;border-radius:16px 16px 0 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
