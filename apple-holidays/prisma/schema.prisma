@@ -323,12 +323,28 @@ model Assignment {
   driverRate   Decimal?       @db.Decimal(10, 2)
   rateCurrency String?        @default("USD")
   waSentAt     DateTime?
+  /// Tour guide on this movement. `guideId` points at a registered Guide;
+  /// the denormalised name/phone also cover ad-hoc guides typed straight into
+  /// the movement chart (those are still saved to `guides` on first use, so the
+  /// second booking can pick them from the list).
+  guideId         String?
+  guideName       String?
+  guidePhone      String?
+  /// Local tour vendor / supplier handling this movement — same registered vs
+  /// ad-hoc rule as the guide above.
+  tourVendorId    String?
+  tourVendorName  String?
+  tourVendorPhone String?
   agendaItem   AgendaItem     @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
   driver       Driver?        @relation(fields: [driverId], references: [id])
   vendor       VehicleVendor? @relation(fields: [vendorId], references: [id])
+  guide        Guide?         @relation(fields: [guideId], references: [id])
+  tourVendor   TourVendor?    @relation(fields: [tourVendorId], references: [id])
 
   @@index([driverId], map: "assignments_driverId_fkey")
   @@index([vendorId], map: "assignments_vendorId_fkey")
+  @@index([guideId], map: "assignments_guideId_fkey")
+  @@index([tourVendorId], map: "assignments_tourVendorId_fkey")
   @@map("assignments")
 }
 
@@ -593,6 +609,67 @@ model VehicleVendor {
   slAllocations SriLankaDriverAllocation[]
 
   @@map("vehicle_vendors")
+}
+
+/// Tour guide. Registers through the public link (`/register/guide?country=…`)
+/// exactly like a driver does, or is entered by Ground staff. Guides only
+/// appear in the movement chart for countries switched on in Settings
+/// (`guide_countries` — see src/lib/partner-directory.ts).
+model Guide {
+  id             String            @id @default(cuid())
+  name           String
+  country        OperationCountry?
+  phone          String
+  whatsappPhone  String?
+  email          String?
+  photoUrl       String?           @db.Text
+  nicNo          String?
+  languages      String?           @db.Text
+  additionalInfo String?           @db.Text
+  specialNote    String?           @db.Text
+  bankName       String?
+  bankAccountNo  String?
+  bankHolder     String?
+  bankBranch     String?
+  bankCode       String?
+  /// Self-registrations land inactive and are activated by Ground after review.
+  isActive       Boolean           @default(true)
+  source         PartnerSource     @default(STAFF)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  assignments    Assignment[]
+
+  @@index([country], map: "guides_country_idx")
+  @@map("guides")
+}
+
+/// Local tour vendor / supplier (excursions, activities, sub-contracted tours).
+/// Distinct from `VehicleVendor`, which supplies drivers and vehicles only.
+model TourVendor {
+  id             String            @id @default(cuid())
+  name           String
+  country        OperationCountry?
+  phone          String
+  whatsappPhone  String?
+  email          String?
+  photoUrl       String?           @db.Text
+  nicNo          String?
+  services       String?           @db.Text
+  additionalInfo String?           @db.Text
+  specialNote    String?           @db.Text
+  bankName       String?
+  bankAccountNo  String?
+  bankHolder     String?
+  bankBranch     String?
+  bankCode       String?
+  isActive       Boolean           @default(true)
+  source         PartnerSource     @default(STAFF)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  assignments    Assignment[]
+
+  @@index([country], map: "tour_vendors_country_idx")
+  @@map("tour_vendors")
 }
 
 model DriverPayment {
@@ -1216,6 +1293,16 @@ enum PNLCategory {
   TAX_FEES
   FLIGHT_TICKETS
   OTHER
+}
+
+/// How a guide / tour vendor record entered the system.
+enum PartnerSource {
+  /// Added by Ground staff from the directory page.
+  STAFF
+  /// Submitted through the public registration link.
+  SELF_REGISTERED
+  /// Typed ad-hoc into a movement chart and auto-saved for reuse.
+  MANUAL_ENTRY
 }
 
 enum DriverPaymentType {
