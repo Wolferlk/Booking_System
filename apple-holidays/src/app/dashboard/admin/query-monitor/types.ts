@@ -113,6 +113,8 @@ export interface QmConfig {
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
+  /** Tab the OpenAI spend report is rewritten onto. */
+  aiUsageSheetName:  string
   /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
   startDate:         string
   backupEnabled:     boolean

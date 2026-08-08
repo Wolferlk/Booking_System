@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   Activity, AlertTriangle, CheckCircle2, Clock, CloudUpload, ExternalLink,
-  Inbox, Layers, Loader2, PlayCircle, RefreshCw, ScrollText, Settings2, Table2, Zap,
+  Inbox, Layers, Loader2, PlayCircle, RefreshCw, ScrollText, Settings2, Sparkles, Table2, Zap,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -19,12 +19,14 @@ import { Stat } from './ui'
 import QueriesTab from './queries-tab'
 import ConfigTab from './config-tab'
 import LogsTab from './logs-tab'
+import AiUsageTab from './ai-usage-tab'
 import type { QmConfig, QmSheetInfo, QmStats } from './types'
 
-type TabId = 'queries' | 'config' | 'logs'
+type TabId = 'queries' | 'config' | 'logs' | 'usage'
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'queries', label: 'Queries',       icon: <Inbox className="w-4 h-4" /> },
+  { id: 'usage',   label: 'AI Usage',      icon: <Sparkles className="w-4 h-4" /> },
   { id: 'config',  label: 'Configuration', icon: <Settings2 className="w-4 h-4" /> },
   { id: 'logs',    label: 'Run Log',       icon: <ScrollText className="w-4 h-4" /> },
 ]
@@ -286,6 +288,7 @@ export default function QueryMonitorPage() {
         </div>
 
         {tab === 'queries' && <QueriesTab refreshKey={refreshKey} onStats={setStats} />}
+        {tab === 'usage'   && <AiUsageTab refreshKey={refreshKey} />}
         {tab === 'config'  && <ConfigTab config={config} onConfigChange={setConfig} onSheetChange={setSheet} />}
         {tab === 'logs'    && <LogsTab refreshKey={refreshKey} />}
       </div>
