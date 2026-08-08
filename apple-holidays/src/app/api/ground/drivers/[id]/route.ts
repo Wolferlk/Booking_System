@@ -38,7 +38,7 @@ export async function PUT(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+  if (!['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
     return buildApiError('Forbidden', 403)
   }
 
@@ -104,7 +104,7 @@ export async function DELETE(
   if (!session) return buildApiError('Unauthorized', 401)
 
   const role = session.user.role as UserRole
-  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+  if (!['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
     return buildApiError('Forbidden', 403)
   }
 

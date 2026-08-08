@@ -13,6 +13,27 @@ const MAIL_INBOX_ROLES: UserRole[] = [
   'ULTRA_SUPER_ADMIN',
 ]
 
+/**
+ * Vietnam Ground Team — Limited (`GT_VN_USER`).
+ *
+ * Unlike every other staff role this one is allow-listed rather than
+ * deny-listed: it may only reach the pages below, and any other /dashboard
+ * path bounces back to the dashboard. Keep this in sync with the GT_VN_USER
+ * nav list in components/layout/sidebar.tsx.
+ */
+const GT_VN_ALLOWED_PAGES = [
+  '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
+  '/dashboard/accounts/reports',  // Ops Board
+] as const
+
+function isGtVnPageAllowed(pathname: string): boolean {
+  if (pathname === '/dashboard') return true
+  // Creating bookings and the per-booking P&L are outside the limited scope.
+  if (pathname.startsWith('/dashboard/bookings/new')) return false
+  if (/^\/dashboard\/bookings\/[^/]+\/pnl/.test(pathname)) return false
+  return GT_VN_ALLOWED_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))
+}
+
 export default withAuth(
   function middleware(req) {
     const token = req.nextauth.token
@@ -31,6 +52,12 @@ export default withAuth(
     // Client users can only access the portal
     if (role === 'CLIENT' && pathname.startsWith('/dashboard')) {
       return NextResponse.redirect(new URL('/portal', req.url))
+    }
+
+    // Vietnam Ground (Limited) — allow-listed pages only. API calls are left to
+    // the per-route role checks so the allowed pages can still load their data.
+    if (role === 'GT_VN_USER' && pathname.startsWith('/dashboard') && !isGtVnPageAllowed(pathname)) {
+      return NextResponse.redirect(new URL('/dashboard', req.url))
     }
 
     // Non-client users trying to access portal without admin privileges

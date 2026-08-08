@@ -77,7 +77,7 @@ export async function GET(
     createdAt:     v.createdAt,
     isActive:      v.versionNo === booking.version,
   }))
-  if (role === 'GT_USER' && !isClientPortalUnlocked(booking.arrivalDate)) {
+  if ((role === 'GT_USER' || role === 'GT_VN_USER') && !isClientPortalUnlocked(booking.arrivalDate)) {
     responseData.pnl = null
   }
 

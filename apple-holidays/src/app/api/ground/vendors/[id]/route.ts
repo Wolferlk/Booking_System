@@ -8,7 +8,7 @@ import type { OperationCountry, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
-const ALLOWED_ROLES = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED_ROLES = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
@@ -62,7 +62,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN', 'GT_USER'].includes(session.user.role)) return buildApiError('Forbidden', 403)
+  if (!['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN', 'GT_USER', 'GT_VN_USER'].includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   try {
     await prisma.$transaction(async tx => {

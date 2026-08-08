@@ -1133,6 +1133,7 @@ model FileHandlerLog {
 enum UserRole {
   BT_USER
   GT_USER
+  GT_VN_USER
   TE_USER
   GT_TE_USER
   AC_USER

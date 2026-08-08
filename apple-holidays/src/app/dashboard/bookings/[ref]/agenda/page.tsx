@@ -249,8 +249,8 @@ export default function AgendaPage() {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  const canEdit   = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const canAssign = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canEdit   = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canAssign = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   async function sendAgenda() {
     // WhatsApp numbers must be digits-only (no "+" / spaces); e-mail keeps its raw value.

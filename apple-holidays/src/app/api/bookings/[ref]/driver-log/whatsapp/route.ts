@@ -6,7 +6,7 @@ import { sendDriverLog } from '@/lib/driver-log-notify'
 
 export const dynamic = 'force-dynamic'
 
-const SEND_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const SEND_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 /** POST — send the Driver Advance Sheet (text + PDF) to the driver on WhatsApp. */
 export async function POST(
