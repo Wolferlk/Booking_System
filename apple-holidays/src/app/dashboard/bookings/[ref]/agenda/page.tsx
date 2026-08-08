@@ -10,7 +10,7 @@ import {
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
-  ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree,
+  ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, Store,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -19,6 +19,8 @@ import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import Modal from '@/components/ui/modal'
 import DriverVendorModal from '@/components/shared/driver-vendor-modal'
+import PartnerAssignPicker, { EMPTY_SELECTION, type PartnerSelection } from '@/components/partners/partner-assign-picker'
+import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
 import { formatDate } from '@/lib/utils'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import type { UserRole } from '@prisma/client'
@@ -117,7 +119,63 @@ interface AgendaItem {
     vehiclePlate?: string
     driverRate?: number | null
     rateCurrency?: string | null
+    /** Tour guide — `guideId` set when picked from the directory, null when typed in. */
+    guideId?: string | null
+    guideName?: string | null
+    guidePhone?: string | null
+    /** Local tour vendor / supplier for this movement. */
+    tourVendorId?: string | null
+    tourVendorName?: string | null
+    tourVendorPhone?: string | null
   } | null
+}
+
+/**
+ * Guide / tour-vendor chips for a movement. Rendered next to the driver
+ * allocation in both the edit and read views, so who is running the movement
+ * reads as one line rather than being buried in the assign dialog.
+ */
+function PartnerChips({ assignment }: { assignment: AgendaItem['assignment'] }) {
+  if (!assignment?.guideName && !assignment?.tourVendorName) return null
+
+  const chips = [
+    assignment.guideName && {
+      key: 'guide',
+      icon: <Sparkles className="w-3 h-3 text-indigo-500" />,
+      label: PARTNER_CONFIG.guide.label,
+      name: assignment.guideName,
+      phone: assignment.guidePhone,
+      className: 'bg-indigo-50 border-indigo-100 text-indigo-700',
+    },
+    assignment.tourVendorName && {
+      key: 'tourVendor',
+      icon: <Store className="w-3 h-3 text-teal-500" />,
+      label: PARTNER_CONFIG.tourVendor.label,
+      name: assignment.tourVendorName,
+      phone: assignment.tourVendorPhone,
+      className: 'bg-teal-50 border-teal-100 text-teal-700',
+    },
+  ].filter(Boolean) as {
+    key: string; icon: React.ReactNode; label: string
+    name: string; phone?: string | null; className: string
+  }[]
+
+  return (
+    <>
+      {chips.map(chip => (
+        <div key={chip.key} className={`flex items-center gap-2 text-xs border rounded-lg px-3 py-2 w-fit ${chip.className}`}>
+          {chip.icon}
+          <span className="text-[10px] font-bold uppercase tracking-wide opacity-60">{chip.label}</span>
+          <span className="font-medium text-slate-700">{chip.name}</span>
+          {chip.phone && (
+            <span className="text-slate-500 flex items-center gap-1">
+              <Phone className="w-3 h-3" />{chip.phone}
+            </span>
+          )}
+        </div>
+      ))}
+    </>
+  )
 }
 
 interface PnlRateSuggestion {
@@ -233,6 +291,10 @@ export default function AgendaPage() {
   const [rateCurrencyInput, setRateCurrencyInput] = useState('USD')
   const [pnlRates,          setPnlRates]         = useState<PnlRateSuggestion[]>([])
   const [vendorSearch,      setVendorSearch]      = useState('')
+  // Which partner kinds this booking's country operates with (Settings-driven).
+  const [partnerCountries,  setPartnerCountries]  = useState<Record<PartnerKind, string[]>>({ guide: [], tourVendor: [] })
+  const [guideSel,          setGuideSel]          = useState<PartnerSelection>(EMPTY_SELECTION)
+  const [tourVendorSel,     setTourVendorSel]     = useState<PartnerSelection>(EMPTY_SELECTION)
 
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const autoGenFired  = useRef(false)
@@ -251,6 +313,19 @@ export default function AgendaPage() {
 
   const canEdit   = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canAssign = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  // Guides / tour vendors are only used in some countries, so the controls
+  // appear on a movement only when this booking's country is switched on.
+  useEffect(() => {
+    fetch('/api/public/partner-settings')
+      .then(r => r.json())
+      .then(json => { if (json.success) setPartnerCountries(json.data) })
+      .catch(() => { /* leave both off — the chart works exactly as before */ })
+  }, [])
+
+  const partnerCountry     = booking?.operationCountry ?? null
+  const guidesEnabled      = isPartnerEnabledForCountry(partnerCountries.guide, partnerCountry)
+  const tourVendorsEnabled = isPartnerEnabledForCountry(partnerCountries.tourVendor, partnerCountry)
 
   async function sendAgenda() {
     // WhatsApp numbers must be digits-only (no "+" / spaces); e-mail keeps its raw value.
@@ -613,6 +688,16 @@ export default function AgendaPage() {
     })
     setRateInput(existing?.driverRate != null ? String(existing.driverRate) : '')
     setRateCurrencyInput(existing?.rateCurrency ?? 'USD')
+    setGuideSel({
+      id:    existing?.guideId    ?? null,
+      name:  existing?.guideName  ?? '',
+      phone: existing?.guidePhone ?? '',
+    })
+    setTourVendorSel({
+      id:    existing?.tourVendorId    ?? null,
+      name:  existing?.tourVendorName  ?? '',
+      phone: existing?.tourVendorPhone ?? '',
+    })
     loadDriversForDate(items[idx]?.date ?? '')
     loadVendors()
     if (vid) loadVendorDrivers(vid)
@@ -1467,7 +1552,8 @@ export default function AgendaPage() {
                       </div>
 
                       {canAssign && (
-                        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-3">
+                        <div className="mt-3 pt-3 border-t border-slate-100 flex items-start justify-between gap-3">
+                          <div className="flex flex-wrap items-center gap-2 min-w-0">
                           {item.isLeisure ? (
                             <span className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-700 font-medium">
                               <Palmtree className="w-3.5 h-3.5 text-amber-500" />
@@ -1526,6 +1612,8 @@ export default function AgendaPage() {
                           ) : (
                             <span className="text-xs text-slate-400 italic">No driver assigned</span>
                           )}
+                          {!item.isLeisure && <PartnerChips assignment={item.assignment} />}
+                          </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <button
                               type="button"
@@ -1675,6 +1763,12 @@ export default function AgendaPage() {
                             </button>
                           )
                         )}
+
+                        {!item.isLeisure && (item.assignment?.guideName || item.assignment?.tourVendorName) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <PartnerChips assignment={item.assignment} />
+                          </div>
+                        )}
                       </div>
                       {canAssign && (
                         <div className="flex items-center gap-2 flex-shrink-0">
@@ -1733,13 +1827,18 @@ export default function AgendaPage() {
           footer={
             <div className="flex items-center justify-between w-full">
               <div>
-                {(items[assigningIdx]?.assignment?.driverName || items[assigningIdx]?.assignment?.vendorId) && (
+                {(items[assigningIdx]?.assignment?.driverName
+                  || items[assigningIdx]?.assignment?.vendorId
+                  || items[assigningIdx]?.assignment?.guideName
+                  || items[assigningIdx]?.assignment?.tourVendorName) && (
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={() => {
                       const idx = assigningIdx
                       const it  = items[idx]
+                      setGuideSel(EMPTY_SELECTION)
+                      setTourVendorSel(EMPTY_SELECTION)
                       if (!it?.id) {
                         setItems(is => is.map((x, j) => j === idx ? { ...x, assignment: null } : x))
                         setAssigningIdx(null)
@@ -1760,9 +1859,24 @@ export default function AgendaPage() {
                     const idx = assigningIdx
                     const it  = items[idx]
                     if (!it?.id) { toast.error('Save the agenda first before assigning'); return }
+
+                    // The guide / tour-vendor pickers hold their own state, so
+                    // their values are merged in here rather than in the item —
+                    // both modes must carry them or switching tabs would drop
+                    // a guide the user had already chosen.
+                    const partnerFields = {
+                      guideId:         guideSel.id,
+                      guideName:       guideSel.name.trim()  || null,
+                      guidePhone:      guideSel.phone.trim() || null,
+                      tourVendorId:    tourVendorSel.id,
+                      tourVendorName:  tourVendorSel.name.trim()  || null,
+                      tourVendorPhone: tourVendorSel.phone.trim() || null,
+                    }
+
+                    let next: AgendaItem['assignment']
                     if (assignMode === 'vendor' && selectedVendorId) {
                       const vendor = vendors.find(v => v.id === selectedVendorId)
-                      const vendorAssignment: AgendaItem['assignment'] = {
+                      next = {
                         driverId:     null,
                         vendorId:     selectedVendorId,
                         vendorName:   vendor?.name ?? '',
@@ -1772,11 +1886,17 @@ export default function AgendaPage() {
                         vehiclePlate: vendorDriverForm.vehiclePlate || undefined,
                         driverRate:   rateInput ? Number(rateInput) : null,
                         rateCurrency: rateCurrencyInput || 'USD',
+                        ...partnerFields,
                       }
-                      saveAssignment(it.id, idx, vendorAssignment)
                     } else {
-                      saveAssignment(it.id, idx)
+                      next = { ...(it.assignment ?? {}), ...partnerFields }
                     }
+
+                    // Nobody left on the movement — clear it rather than saving
+                    // an empty row, which is also what releases a dropped driver.
+                    const isEmpty = !next.driverId && !next.vendorId && !next.driverName
+                      && !next.guideName && !next.tourVendorName
+                    saveAssignment(it.id, idx, isEmpty ? null : next)
                   }}
                 >
                   Save Assignment
@@ -1791,6 +1911,27 @@ export default function AgendaPage() {
               <p className="text-xs text-slate-400 -mt-2">
                 Availability check for <strong className="text-slate-600">{formatDate(items[assigningIdx].date)}</strong>
               </p>
+            )}
+
+            {/* ── Guide / tour vendor ──
+                Shown only for countries Settings has switched them on for, and
+                kept above the driver tabs because they apply to the movement
+                whichever way transport is arranged. */}
+            {(guidesEnabled || tourVendorsEnabled) && (
+              <div className="space-y-2">
+                {guidesEnabled && (
+                  <PartnerAssignPicker
+                    kind="guide" country={partnerCountry}
+                    value={guideSel} onChange={setGuideSel}
+                  />
+                )}
+                {tourVendorsEnabled && (
+                  <PartnerAssignPicker
+                    kind="tourVendor" country={partnerCountry}
+                    value={tourVendorSel} onChange={setTourVendorSel}
+                  />
+                )}
+              </div>
             )}
 
             {/* Mode tabs */}

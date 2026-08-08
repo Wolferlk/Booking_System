@@ -29,6 +29,8 @@ export interface QueryMonitorConfig {
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
+  /** Tab the OpenAI spend report is rewritten onto — owned entirely by the app. */
+  aiUsageSheetName:  string
   /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
   startDate:         string
   backupEnabled:     boolean
@@ -91,6 +93,8 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     excludePatterns:   str(SETTINGS.excludePatterns,   DEFAULTS.excludePatterns),
     excludedSheetName: str(SETTINGS.excludedSheetName, DEFAULTS.excludedSheetName)
                        || DEFAULTS.excludedSheetName,
+    aiUsageSheetName:  str(SETTINGS.aiUsageSheetName, DEFAULTS.aiUsageSheetName)
+                       || DEFAULTS.aiUsageSheetName,
     startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
     backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
     backupSheetUrl:    str(SETTINGS.backupSheetUrl, DEFAULTS.backupSheetUrl),
@@ -125,6 +129,10 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.excludedSheetName !== undefined) {
     const tab = String(patch.excludedSheetName).trim()
     if (tab) put(SETTINGS.excludedSheetName, tab)
+  }
+  if (patch.aiUsageSheetName !== undefined) {
+    const tab = String(patch.aiUsageSheetName).trim()
+    if (tab) put(SETTINGS.aiUsageSheetName, tab)
   }
 
   if (patch.backupEnabled !== undefined) put(SETTINGS.backupEnabled, !!patch.backupEnabled)

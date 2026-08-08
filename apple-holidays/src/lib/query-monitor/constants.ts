@@ -49,6 +49,8 @@ export const SETTINGS = {
   excludePatterns:    'query_monitor_exclude_patterns',
   /** Worksheet tab that receives the excluded mail. */
   excludedSheetName:  'query_monitor_excluded_sheet_name',
+  /** Worksheet tab the OpenAI spend report is rewritten onto. */
+  aiUsageSheetName:   'query_monitor_ai_usage_sheet_name',
   /** `YYYY-MM-DD` — mail received before this never reaches either workbook. */
   startDate:          'query_monitor_start_date',
   /** Mirror every append and rewrite into a second, standby workbook. */
@@ -126,6 +128,7 @@ export const DEFAULTS = {
   excludeEnabled:    'true',
   excludePatterns:   DEFAULT_EXCLUDE_PATTERNS,
   excludedSheetName: 'Other Mails',
+  aiUsageSheetName:  'AI Usage',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
   backupSheetUrl:    BACKUP_SHEET_URL,

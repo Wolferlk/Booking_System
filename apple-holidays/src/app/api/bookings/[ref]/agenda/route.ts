@@ -13,9 +13,27 @@ import {
   type DriverMovement,
   type DriverSendResult,
 } from '@/lib/driver-assignment-whatsapp'
+import { upsertManualPartner } from '@/lib/partner-directory-server'
 import type { UserRole, ServiceType } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Everyone running a movement: driver + vehicle, vehicle vendor, guide and
+ * tour vendor. Shared by all three reads in this file so the movement chart
+ * never receives a half-populated assignment depending on which one answered.
+ */
+const ASSIGNMENT_INCLUDE = {
+  driver: { include: { vehicle: true } },
+  vendor: { select: { id: true, name: true, phone: true } },
+  guide: {
+    select: { id: true, name: true, phone: true, whatsappPhone: true, photoUrl: true, languages: true },
+  },
+  tourVendor: {
+    select: { id: true, name: true, phone: true, whatsappPhone: true, photoUrl: true, services: true },
+  },
+} as const
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { ref: string } },
@@ -31,22 +49,7 @@ export async function GET(
           items: {
             orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
             include: {
-              assignment: {
-                include: {
-                  driver: {
-                    include: {
-                      vehicle: true,
-                    },
-                  },
-                  vendor: {
-                    select: {
-                      id: true,
-                      name: true,
-                      phone: true,
-                    },
-                  },
-                },
-              },
+              assignment: { include: ASSIGNMENT_INCLUDE },
               tickets: true,
             },
           },
@@ -153,14 +156,23 @@ export async function POST(
             vehicleType?: string | null
             vehiclePlate?: string | null
             notes?: string | null
+            guideId?: string | null
+            guideName?: string | null
+            guidePhone?: string | null
+            tourVendorId?: string | null
+            tourVendorName?: string | null
+            tourVendorPhone?: string | null
           }
         | null
         | undefined
 
       if (!assignment) return Promise.resolve()
 
-      // Skip if nothing meaningful is set
-      const hasData = assignment.driverId || assignment.vendorId || assignment.vendorName || assignment.driverName
+      // Skip if nothing meaningful is set. A movement with only a guide or only
+      // a tour vendor counts — otherwise saving the chart would drop them, since
+      // the rows above were recreated from scratch.
+      const hasData = assignment.driverId || assignment.vendorId || assignment.vendorName
+        || assignment.driverName || assignment.guideName || assignment.tourVendorName
       if (!hasData) return Promise.resolve()
 
       const agendaItem = createdItems[index]
@@ -177,6 +189,12 @@ export async function POST(
         notes:        assignment.notes        || null,
         driverRate:   (assignment as any).driverRate != null ? Number((assignment as any).driverRate) : null,
         rateCurrency: (assignment as any).rateCurrency || 'USD',
+        guideId:         assignment.guideId         || null,
+        guideName:       assignment.guideName       || null,
+        guidePhone:      assignment.guidePhone      || null,
+        tourVendorId:    assignment.tourVendorId    || null,
+        tourVendorName:  assignment.tourVendorName  || null,
+        tourVendorPhone: assignment.tourVendorPhone || null,
       }
 
       return prisma.assignment.upsert({
@@ -302,6 +320,35 @@ export async function PUT(
     if (assignment === null) {
       await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
     } else {
+      // A guide or tour vendor typed by hand — rather than picked from the
+      // directory — is saved into the directory here, so the next booking can
+      // select them instead of retyping. Non-fatal: a failure to file them away
+      // must never block the movement from being assigned.
+      let guideId      = assignment.guideId      || null
+      let tourVendorId = assignment.tourVendorId || null
+      try {
+        const partnerCountry = await prisma.booking.findUnique({
+          where:  { bookingRef: params.ref },
+          select: { operationCountry: true },
+        })
+        if (!guideId && assignment.guideName?.trim()) {
+          guideId = await upsertManualPartner('guide', {
+            name:    assignment.guideName,
+            phone:   assignment.guidePhone,
+            country: partnerCountry?.operationCountry ?? null,
+          })
+        }
+        if (!tourVendorId && assignment.tourVendorName?.trim()) {
+          tourVendorId = await upsertManualPartner('tourVendor', {
+            name:    assignment.tourVendorName,
+            phone:   assignment.tourVendorPhone,
+            country: partnerCountry?.operationCountry ?? null,
+          })
+        }
+      } catch (partnerErr) {
+        console.error('[Agenda PUT] Saving ad-hoc guide/tour vendor failed (non-fatal):', partnerErr)
+      }
+
       const data = {
         driverId:     assignment.driverId     || null,
         vendorId:     assignment.vendorId     || null,
@@ -313,6 +360,12 @@ export async function PUT(
         notes:        assignment.notes        || null,
         driverRate:   assignment.driverRate   != null ? Number(assignment.driverRate) : null,
         rateCurrency: assignment.rateCurrency || 'USD',
+        guideId,
+        guideName:       assignment.guideName?.trim()       || null,
+        guidePhone:      assignment.guidePhone?.trim()      || null,
+        tourVendorId,
+        tourVendorName:  assignment.tourVendorName?.trim()  || null,
+        tourVendorPhone: assignment.tourVendorPhone?.trim() || null,
       }
       try {
         await prisma.assignment.upsert({
@@ -398,24 +451,7 @@ export async function PUT(
 
     const updated = await prisma.agendaItem.findUnique({
       where: { id: itemId },
-      include: {
-        assignment: {
-          include: {
-            driver: {
-              include: {
-                vehicle: true,
-              },
-            },
-            vendor: {
-              select: {
-                id: true,
-                name: true,
-                phone: true,
-              },
-            },
-          },
-        },
-      },
+      include: { assignment: { include: ASSIGNMENT_INCLUDE } },
     })
     // The toast reports whether the driver was actually messaged, so staff never
     // assume a notification went out when the template send was skipped/failed.
@@ -452,24 +488,7 @@ export async function PUT(
       ...(body.meetingTime !== undefined && { meetingTime: body.meetingTime }),
       ...(body.serviceType && { serviceType: body.serviceType }),
     },
-    include: {
-      assignment: {
-        include: {
-          driver: {
-            include: {
-              vehicle: true,
-            },
-          },
-          vendor: {
-            select: {
-              id: true,
-              name: true,
-              phone: true,
-            },
-          },
-        },
-      },
-    },
+    include: { assignment: { include: ASSIGNMENT_INCLUDE } },
   })
 
   return buildApiSuccess(updated, 'Agenda item updated')

@@ -12,7 +12,7 @@ import {
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
-  ChevronDown, Zap,
+  ChevronDown, Zap, Sparkles, Store,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -36,6 +36,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
+  Sparkles, Store,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -56,6 +57,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Driver Logs',    href: '/dashboard/driver-log',                icon: 'Navigation2' },
     { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',     href: '/dashboard/admin/mail-inbox',          icon: 'Mail' },
+    { label: 'Query Monitor',  href: '/dashboard/admin/query-monitor',       icon: 'Inbox' },
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',            icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',   icon: 'FolderOpen' },
   ],
@@ -68,17 +70,21 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',        href: '/dashboard/ground/drivers',           icon: 'Car' },
     { label: 'Driver Logs',    href: '/dashboard/driver-log',               icon: 'Navigation2' },
     { label: 'Vendors',        href: '/dashboard/ground/vendors',           icon: 'Truck' },
+    { label: 'Guides',         href: '/dashboard/ground/guides',            icon: 'Sparkles' },
+    { label: 'Tour Vendors',   href: '/dashboard/ground/tour-vendors',      icon: 'Store' },
     { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',     href: '/dashboard/admin/mail-inbox',         icon: 'Mail' },
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
   ],
-  // Vietnam Ground Team — Limited. Deliberately only three entries: the Vietnam
-  // dashboard, the bookings list and the Ops Board. Middleware blocks everything
-  // else, so nothing extra should be added here without widening that allowlist.
+  // Vietnam Ground Team — Limited. Deliberately only four entries: the Vietnam
+  // dashboard, the bookings list, the Ops Board and the MC Report. Middleware
+  // blocks everything else, so nothing extra should be added here without
+  // widening that allowlist.
   GT_VN_USER: [
     { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
+    { label: 'MC Report',         href: '/dashboard/mc-report',        icon: 'Table2' },
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
   ],
   TE_USER: [
@@ -159,6 +165,8 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
+    { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
@@ -183,6 +191,8 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',                  icon: 'Navigation2' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
+    { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',                 icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
@@ -225,6 +235,8 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
+    { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },

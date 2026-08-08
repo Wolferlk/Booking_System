@@ -13,6 +13,14 @@ const MAIL_INBOX_ROLES: UserRole[] = [
   'ULTRA_SUPER_ADMIN',
 ]
 
+// The Query Monitor lives under /dashboard/admin but is a Booking Team tool, so
+// BT_USER reaches it too. Keep in sync with lib/query-monitor/auth.ts.
+const QUERY_MONITOR_ROLES: UserRole[] = [
+  'BT_USER',
+  'SUPER_ADMIN',
+  'ULTRA_SUPER_ADMIN',
+]
+
 /**
  * Vietnam Ground Team — Limited (`GT_VN_USER`).
  *
@@ -24,6 +32,7 @@ const MAIL_INBOX_ROLES: UserRole[] = [
 const GT_VN_ALLOWED_PAGES = [
   '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
   '/dashboard/accounts/reports',  // Ops Board
+  '/dashboard/mc-report',         // MC Report
 ] as const
 
 function isGtVnPageAllowed(pathname: string): boolean {
@@ -76,6 +85,11 @@ export default withAuth(
     if (pathname.startsWith('/dashboard/admin')) {
       // Mail Inbox is available to all internal staff roles
       if (pathname.startsWith('/dashboard/admin/mail-inbox') && MAIL_INBOX_ROLES.includes(role)) {
+        return NextResponse.next()
+      }
+
+      // Query Monitor is a Booking Team tool that happens to live under /admin
+      if (pathname.startsWith('/dashboard/admin/query-monitor') && QUERY_MONITOR_ROLES.includes(role)) {
         return NextResponse.next()
       }
 
