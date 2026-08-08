@@ -13,6 +13,36 @@ const MAIL_INBOX_ROLES: UserRole[] = [
   'ULTRA_SUPER_ADMIN',
 ]
 
+// The Query Monitor lives under /dashboard/admin but is a Booking Team tool, so
+// BT_USER reaches it too. Keep in sync with lib/query-monitor/auth.ts.
+const QUERY_MONITOR_ROLES: UserRole[] = [
+  'BT_USER',
+  'SUPER_ADMIN',
+  'ULTRA_SUPER_ADMIN',
+]
+
+/**
+ * Vietnam Ground Team — Limited (`GT_VN_USER`).
+ *
+ * Unlike every other staff role this one is allow-listed rather than
+ * deny-listed: it may only reach the pages below, and any other /dashboard
+ * path bounces back to the dashboard. Keep this in sync with the GT_VN_USER
+ * nav list in components/layout/sidebar.tsx.
+ */
+const GT_VN_ALLOWED_PAGES = [
+  '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
+  '/dashboard/accounts/reports',  // Ops Board
+  '/dashboard/mc-report',         // MC Report
+] as const
+
+function isGtVnPageAllowed(pathname: string): boolean {
+  if (pathname === '/dashboard') return true
+  // Creating bookings and the per-booking P&L are outside the limited scope.
+  if (pathname.startsWith('/dashboard/bookings/new')) return false
+  if (/^\/dashboard\/bookings\/[^/]+\/pnl/.test(pathname)) return false
+  return GT_VN_ALLOWED_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))
+}
+
 export default withAuth(
   function middleware(req) {
     const token = req.nextauth.token
@@ -33,6 +63,12 @@ export default withAuth(
       return NextResponse.redirect(new URL('/portal', req.url))
     }
 
+    // Vietnam Ground (Limited) — allow-listed pages only. API calls are left to
+    // the per-route role checks so the allowed pages can still load their data.
+    if (role === 'GT_VN_USER' && pathname.startsWith('/dashboard') && !isGtVnPageAllowed(pathname)) {
+      return NextResponse.redirect(new URL('/dashboard', req.url))
+    }
+
     // Non-client users trying to access portal without admin privileges
     if (pathname.startsWith('/portal') && role !== 'CLIENT' && !ADMIN_ROLES.includes(role)) {
       return NextResponse.redirect(new URL('/dashboard', req.url))
@@ -49,6 +85,11 @@ export default withAuth(
     if (pathname.startsWith('/dashboard/admin')) {
       // Mail Inbox is available to all internal staff roles
       if (pathname.startsWith('/dashboard/admin/mail-inbox') && MAIL_INBOX_ROLES.includes(role)) {
+        return NextResponse.next()
+      }
+
+      // Query Monitor is a Booking Team tool that happens to live under /admin
+      if (pathname.startsWith('/dashboard/admin/query-monitor') && QUERY_MONITOR_ROLES.includes(role)) {
         return NextResponse.next()
       }
 

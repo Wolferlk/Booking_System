@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import AiUsageMonitor from '@/components/settings/ai-usage-monitor'
+import {
+  PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
+} from '@/lib/partner-directory'
 
 const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
 const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
@@ -34,6 +37,110 @@ interface Settings {
   driver_log_auto_send_enabled?: string
   // Live Screen (office TV) dashboard — public token-gated /view link
   view_dashboard_token?: string
+  // Countries that require a guide / tour vendor (JSON array of country codes)
+  guide_countries?: string
+  tour_vendor_countries?: string
+}
+
+/**
+ * Which countries operate with guides / tour vendors.
+ *
+ * Only a handful of destinations use them, and the switch drives three things
+ * at once: whether the movement chart shows the controls, whether the public
+ * registration link accepts submissions, and which country links the directory
+ * page offers. One place to change, so those three can never disagree.
+ */
+function PartnerCountriesCard({
+  settings, saving, onSave,
+}: {
+  settings: Settings
+  saving: string | null
+  onSave: (key: string, value: string) => Promise<void>
+}) {
+  const kinds = [
+    { kind: 'guide' as const, config: PARTNER_CONFIG.guide, icon: Sparkles, tint: 'text-indigo-500' },
+    { kind: 'tourVendor' as const, config: PARTNER_CONFIG.tourVendor, icon: Store, tint: 'text-teal-500' },
+  ]
+
+  function toggle(settingKey: string, current: string[], country: string) {
+    const next = current.includes(country)
+      ? current.filter(c => c !== country)
+      : [...current, country]
+    void onSave(settingKey, JSON.stringify(next))
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-slate-400" /> Guides &amp; Tour Vendors
+        </h3>
+      </CardHeader>
+      <CardBody className="p-5 space-y-6">
+        <p className="text-xs text-slate-500 leading-relaxed">
+          Only some destinations operate with guides and local tour vendors. Switch on the
+          countries that need them — the movement chart shows the controls only for those
+          countries, and the public registration links only accept registrations for them.
+        </p>
+
+        {kinds.map(({ kind, config, icon: Icon, tint }) => {
+          const selected = parseCountryList(settings[config.settingKey])
+          const busy = saving === config.settingKey
+          return (
+            <div key={kind} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Icon className={`w-4 h-4 ${tint}`} />
+                <p className="text-sm font-semibold text-slate-800">{config.labelPlural}</p>
+                <span className="text-xs text-slate-400">
+                  {selected.length === 0 ? 'Off everywhere' : `${selected.length} country${selected.length !== 1 ? 'ies' : ''}`}
+                </span>
+                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400" />}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {PARTNER_COUNTRIES.map(country => {
+                  const on = selected.includes(country)
+                  return (
+                    <button
+                      key={country}
+                      onClick={() => toggle(config.settingKey, selected, country)}
+                      disabled={busy}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
+                        on
+                          ? 'border-brand-300 bg-brand-50 text-brand-700'
+                          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>{COUNTRY_FLAGS[country]}</span>
+                      {COUNTRY_LABELS[country]}
+                      {on && <CheckCircle2 className="w-3.5 h-3.5" />}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <a href={config.dashboardPath} className="inline-flex items-center gap-1.5 font-medium text-blue-600 hover:text-blue-700">
+                  <ExternalLink className="w-3.5 h-3.5" /> Manage {config.labelPlural.toLowerCase()}
+                </a>
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}${config.registerPath}`
+                    navigator.clipboard.writeText(url)
+                      .then(() => toast.success('Registration link copied'))
+                      .catch(() => prompt('Copy this link:', url))
+                  }}
+                  className="inline-flex items-center gap-1.5 font-medium text-slate-500 hover:text-slate-700"
+                >
+                  <Link2 className="w-3.5 h-3.5" /> Copy registration link
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </CardBody>
+    </Card>
+  )
 }
 
 function LiveScreenCard() {
@@ -259,6 +366,9 @@ export default function ConfigPage() {
 
         {/* Live Screen Dashboard link */}
         <LiveScreenCard />
+
+        {/* Which countries operate with guides / tour vendors */}
+        <PartnerCountriesCard settings={settings} saving={saving} onSave={saveSetting} />
 
         {/* Data Mode Toggle */}
         <Card>

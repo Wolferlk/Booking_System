@@ -40,25 +40,25 @@ export const TRANSITIONS: Transition[] = [
   {
     from: 'GT_REVIEW',
     to: 'GT_VERIFIED',
-    allowedRoles: ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Client Confirmed',
   },
   {
     from: 'GT_VERIFIED',
     to: 'OPERATIONS_READY',
-    allowedRoles: ['GT_USER', 'TE_USER', 'GT_TE_USER' , 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER' , 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Mark Operations Ready',
   },
   {
     from: 'OPERATIONS_READY',
     to: 'CLIENT_LIVE',
-    allowedRoles: ['GT_USER', 'TE_USER', 'GT_TE_USER' , 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER' , 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Open Client Portal',
   },
   {
     from: 'CLIENT_LIVE',
     to: 'IN_PROGRESS',
-    allowedRoles: ['GT_USER', 'GT_TE_USER' ,'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['GT_USER', 'GT_VN_USER', 'GT_TE_USER' ,'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Mark In Progress',
   },
   // ── Post-trip operations checklist ──────────────────────────────────────
@@ -71,7 +71,7 @@ export const TRANSITIONS: Transition[] = [
   {
     from: 'TE_REVIEWED',
     to: 'DRIVER_ALLOCATED',
-    allowedRoles: ['GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Driver Allocated',
   },
   {

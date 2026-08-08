@@ -33,7 +33,7 @@ export async function POST(
   if (!itemId || !itemName || !mode) return buildApiError('itemId, itemName and mode are required')
 
   // Only GT/AC/TE and admins can process drive files
-  const allowed = ['GT_USER', 'TE_USER', 'BT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+  const allowed = ['GT_USER', 'GT_VN_USER', 'TE_USER', 'BT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
   if (!allowed.includes(session.user.role)) return buildApiError('Forbidden', 403)
 
   // Resolve the booking's drive folder

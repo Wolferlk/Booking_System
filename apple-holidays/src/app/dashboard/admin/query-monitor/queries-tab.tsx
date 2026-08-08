@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  FilterX, Inbox, Loader2, Mail, Pencil, Search, Trash2, Undo2, UserPlus, Users, Zap,
+  FilterX, Inbox, Layers, Loader2, Mail, Pencil, Search, Trash2, Undo2, UserPlus, Users, Zap,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -384,9 +384,29 @@ export default function QueriesTab({
                             <span className="font-medium text-slate-800 group-hover:text-emerald-700 line-clamp-1">
                               {entry.subject}
                             </span>
+                            {/* Later mail of the same thread shares this row
+                                instead of repeating the subject underneath it. */}
+                            {entry.followUpCount > 0 && (
+                              <span
+                                title={`${entry.followUpCount} later mail(s) in this thread — folded into this row`}
+                                className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold"
+                              >
+                                <Layers className="w-3 h-3" /> +{entry.followUpCount}
+                              </span>
+                            )}
                           </span>
+                          {/* The one-line read of the mail, when the AI switch
+                              wrote one — the same sentence that goes in the
+                              sheet's AI Summary column. */}
+                          {entry.aiSummary && (
+                            <span className="block text-[11px] text-slate-500 italic line-clamp-1">
+                              {entry.aiSummary}
+                            </span>
+                          )}
                           <span className="block text-[11px] text-slate-400 truncate">
                             {entry.fromName || entry.fromAddress} · {entry.fromDomain}
+                            {entry.lastMessageAt && entry.followUpCount > 0
+                              && ` · last mail ${formatDateTime(entry.lastMessageAt)}`}
                           </span>
                         </button>
                       </td>
@@ -501,6 +521,19 @@ export default function QueriesTab({
               <Detail label="Allocation time" value={formatDateTime(viewing.receivedAt)} />
               <Detail label="Replied time" value={viewing.repliedAt ? formatDateTime(viewing.repliedAt) : 'Not yet'} />
               <Detail label="Status" value={<ReplyStatusBadge status={viewing.replyStatus} />} />
+              <Detail label="Replied by" value={viewing.repliedBy ?? '—'} />
+              <Detail
+                label="Response time"
+                value={viewing.repliedAt
+                  ? `${((new Date(viewing.repliedAt).getTime() - new Date(viewing.receivedAt).getTime()) / 3_600_000).toFixed(2)} h`
+                  : '—'}
+              />
+              <Detail
+                label="Mails in thread"
+                value={viewing.followUpCount > 0
+                  ? `${viewing.followUpCount + 1} · last ${formatDateTime(viewing.lastMessageAt ?? viewing.receivedAt)}`
+                  : '1'}
+              />
               <Detail
                 label="File handler"
                 value={viewing.handlerNames || <span className="text-amber-600">Not picked yet</span>}
@@ -527,6 +560,15 @@ export default function QueriesTab({
                 <Detail label="Kept out of the query sheet by" value={viewing.excludeReason ?? 'Not a query'} />
               )}
             </div>
+
+            {viewing.aiSummary && (
+              <div>
+                <p className="text-xs font-semibold text-slate-600 mb-1">AI summary</p>
+                <p className="text-sm text-slate-700 bg-emerald-50/60 border border-emerald-100 rounded-lg p-3">
+                  {viewing.aiSummary}
+                </p>
+              </div>
+            )}
 
             <div>
               <p className="text-xs font-semibold text-slate-600 mb-1">Mail extract</p>

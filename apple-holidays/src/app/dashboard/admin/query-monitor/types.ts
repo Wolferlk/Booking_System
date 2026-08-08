@@ -7,7 +7,13 @@ export interface QmEntry {
   fromName:         string
   fromDomain:       string
   receivedAt:       string
+  /** Newest mail of the thread; `receivedAt` stays the first one. */
+  lastMessageAt:    string | null
+  /** Later mails of the same thread that share this row instead of adding one. */
+  followUpCount:    number
   repliedAt:        string | null
+  /** Sheet column O — whose Sent Items the reply was found in. */
+  repliedBy:        string | null
   replyStatus:      'REPLIED' | 'PENDING' | 'OVERDUE'
   /** Sheet column F — the ONE handler who owns this query, '' while unclaimed. */
   handlerNames:     string
@@ -29,13 +35,17 @@ export interface QmEntry {
   bodySnippet:      string
   extractionSource: 'RULE' | 'AI' | 'MANUAL'
   aiConfidence:     number | null
+  /** Sheet column T — one sentence, written only while the AI-read switch is on. */
+  aiSummary:        string | null
+  aiSummaryAt:      string | null
   sheetRow:         number | null
-  syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
+  /** MERGED = a follow-up sharing another query's row; never written anywhere. */
+  syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED' | 'MERGED'
   syncError:        string | null
   syncedAt:         string | null
   /** The standby workbook's own row and state — it numbers rows independently. */
   backupSheetRow:   number | null
-  backupSyncStatus: 'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED'
+  backupSyncStatus: 'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED' | 'MERGED'
   backupSyncError:  string | null
   createdAt:        string
   matches?:         { handlerName: string; repliedAt: string | null; mailboxId: string }[]
@@ -92,11 +102,19 @@ export interface QmConfig {
   writeStatusColumn: boolean
   captureUnmatched:  boolean
   aiEnabled:         boolean
+  /** GPT reads every new mail and writes a one-sentence summary into the sheet. */
+  aiSummaryEnabled:  boolean
   slaHours:          number
   replyChaseDays:    number
+  /** One row per thread: a follow-up rewrites the query's row instead of adding one. */
+  threadMergeEnabled: boolean
+  /** How far back a follow-up may reach to find the row it belongs to, in days. */
+  threadWindowDays:   number
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
+  /** Tab the OpenAI spend report is rewritten onto. */
+  aiUsageSheetName:  string
   /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
   startDate:         string
   backupEnabled:     boolean
@@ -146,6 +164,8 @@ export interface QmSheetInfo {
   sheetName:     string
   header:        string[]
   headerMatches: boolean
+  /** New columns the next write will add to row 1, if row 1 is an older layout. */
+  headerPendingColumns?: string[]
   lastDataRow:   number
   nextAppendRow: number
   dataRowCount:  number

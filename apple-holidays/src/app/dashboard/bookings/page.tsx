@@ -519,7 +519,9 @@ function BookingsPageInner() {
   }
 
   const role      = session?.user?.role
-  const canCreate = !!role && role !== 'CLIENT'
+  // GT_VN_USER is read-only on this list — /dashboard/bookings/new is blocked
+  // for them in middleware, so the New Booking button would be a dead end.
+  const canCreate = !!role && role !== 'CLIENT' && role !== 'GT_VN_USER'
   const canDelete = role === 'SUPER_ADMIN' || role === 'ULTRA_SUPER_ADMIN'
 
   function buildPrintUrl(mode: 'full' | 'numbers') {

@@ -9,7 +9,7 @@ import { resolveIsLeisure } from '@/lib/leisure-day'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 // Merges optional search + country conditions into a single booking WHERE clause
 function buildBookingWhere(

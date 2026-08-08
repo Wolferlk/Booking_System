@@ -20,8 +20,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
-  PlaneLanding, PlaneTakeoff, Users, Car, PhoneCall, Ticket, ShieldCheck,
-  ChevronDown, MapPin, CircleAlert, Sparkles, Info,
+  PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
+  Sparkles, Info, Maximize2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -32,7 +32,10 @@ import type { OpsDayBoard, OpsDayRow } from '@/lib/reports/ops-day-data'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import {
   CountUp, ProgressRing, SegmentBar, StateLegend, StatePill, STATE_STYLE,
+  FOCUS_META, reconfirmState, reconfirmText, reconfirmDetail, qcTick,
+  type FocusKey,
 } from './ops-board-parts'
+import OpsDrilldown from './ops-drilldown'
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
 
@@ -65,40 +68,44 @@ function dayOfMonth(date: string): string {
   return date.slice(8, 10)
 }
 
-/**
- * Reconfirmation is two independent signals and the board treats either one as
- * enough — a guest who has confirmed in writing does not also need a call, and a
- * completed pre-tour call reconfirms a booking whose status has not caught up.
- */
-function reconfirmState(r: OpsDayRow): ReadinessState {
-  if (r.clientConfirmed && r.preTourCall) return 'DONE'
-  if (r.clientConfirmed || r.preTourCall) return 'PARTIAL'
-  return 'PENDING'
+/** Inclusive whole days between two `yyyy-mm-dd` dates. */
+function daySpan(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`)
+  const b = Date.parse(`${to}T00:00:00Z`)
+  if (isNaN(a) || isNaN(b)) return 1
+  return Math.round((b - a) / 86_400_000) + 1
 }
 
-function reconfirmText(r: OpsDayRow): string {
-  if (r.clientConfirmed && r.preTourCall) return 'Confirmed + called'
-  if (r.clientConfirmed) return 'Client confirmed'
-  if (r.preTourCall) return 'Pre-tour call'
-  return 'Not reconfirmed'
+/** Last day of the month `date` falls in. */
+function endOfMonth(date: string): string {
+  const [y, m] = date.split('-').map(Number)
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
 }
 
-function reconfirmDetail(r: OpsDayRow): string {
-  const bits = [
-    r.clientConfirmed ? 'Client has confirmed the booking' : 'Client confirmation outstanding',
-    r.preTourCall
-      ? `Pre-tour call logged ${formatDate(r.preTourCall.at)}${r.preTourCall.outcome ? ` — ${r.preTourCall.outcome}` : ''}`
-      : 'No pre-tour call logged',
-  ]
-  return bits.join(' · ')
+function startOfMonth(date: string): string {
+  return `${date.slice(0, 7)}-01`
 }
 
-/** QC1 and QC2 are shown as two separate ticks; both come off the one stage. */
-function qcTick(r: OpsDayRow, round: 1 | 2): ReadinessState {
-  if (r.qc.stage === 'QC2') return 'DONE'
-  if (r.qc.stage === 'QC1') return round === 1 ? 'DONE' : 'PENDING'
-  return 'PENDING'
-}
+/** Mirrors MAX_WINDOW_DAYS in ops-day-data — the server clamps past this. */
+const MAX_RANGE_DAYS = 92
+
+const RANGE_PRESETS: { label: string; build: (today: string) => [string, string] }[] = [
+  { label: 'Today',      build: t => [t, t] },
+  { label: 'Next 7 days', build: t => [t, shift(t, 6)] },
+  { label: 'This month',  build: t => [startOfMonth(t), endOfMonth(t)] },
+  { label: 'Next 30 days', build: t => [t, shift(t, 29)] },
+]
+
+/** Row filters applied client-side, on top of what the server already scoped. */
+type CheckFilter = 'ALL' | 'reconfirm' | 'driver' | 'tickets' | 'qc'
+
+const CHECK_FILTERS: { key: CheckFilter; label: string }[] = [
+  { key: 'ALL',       label: 'Any check' },
+  { key: 'reconfirm', label: 'Reconfirm outstanding' },
+  { key: 'driver',    label: 'Driver outstanding' },
+  { key: 'tickets',   label: 'Tickets outstanding' },
+  { key: 'qc',        label: 'QC outstanding' },
+]
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -107,17 +114,32 @@ export default function OperationsBoardPage() {
   const reduce = useReducedMotion()
 
   const [date, setDate] = useState(todayLocal())
+  /** Range mode keeps its own pair so switching modes does not lose either one. */
+  const [mode, setMode] = useState<'DAY' | 'RANGE'>('DAY')
+  const [rangeFrom, setRangeFrom] = useState(todayLocal())
+  const [rangeTo, setRangeTo] = useState(() => shift(todayLocal(), 6))
   const [search, setSearch] = useState('')
   const [board, setBoard] = useState<OpsDayBoard | null>(null)
   const [loading, setLoading] = useState(true)
   const [segment, setSegment] = useState<Segment>('ONGROUND')
   const [onlyOutstanding, setOnlyOutstanding] = useState(false)
+  const [checkFilter, setCheckFilter] = useState<CheckFilter>('ALL')
+  const [statusFilter, setStatusFilter] = useState('ALL')
+  const [countryRowFilter, setCountryRowFilter] = useState('ALL')
   const [expanded, setExpanded] = useState<string | null>(null)
+  /** Which card the drill-down is open on; null when it is closed. */
+  const [focus, setFocus] = useState<FocusKey | null>(null)
+
+  // The window actually queried. A reversed range is swapped here so the inputs
+  // stay forgiving; the server swaps too, but the labels below need it as well.
+  const [from, to] = mode === 'DAY'
+    ? [date, date]
+    : rangeFrom <= rangeTo ? [rangeFrom, rangeTo] : [rangeTo, rangeFrom]
 
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     if (!opts.silent) setLoading(true)
     try {
-      const params = new URLSearchParams({ date })
+      const params = new URLSearchParams({ from, to })
       if (search.trim()) params.set('search', search.trim())
       if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
 
@@ -130,7 +152,7 @@ export default function OperationsBoardPage() {
     } finally {
       setLoading(false)
     }
-  }, [date, search, countryFilter])
+  }, [from, to, search, countryFilter])
 
   // Date and country reload immediately; the search box is debounced so typing a
   // booking ref does not fire a query per keystroke.
@@ -139,15 +161,68 @@ export default function OperationsBoardPage() {
     return () => clearTimeout(t)
   }, [load]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { setExpanded(null) }, [segment, date])
+  useEffect(() => { setExpanded(null) }, [segment, from, to])
+
+  /** Status and country choices come from the loaded window, so the dropdowns
+   *  only ever offer values that can actually match something. */
+  const statusOptions = useMemo(() => {
+    const set = new Map<string, string>()
+    for (const r of board?.rows ?? []) set.set(r.status, r.statusLabel)
+    return Array.from(set, ([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [board])
+
+  const countryOptions = useMemo(
+    () => (board?.summary.byCountry ?? []).map(c => ({ value: c.country, label: c.label })),
+    [board],
+  )
+
+  // A dropped option (window changed, value no longer present) falls back to All
+  // rather than silently filtering the list down to nothing.
+  useEffect(() => {
+    if (statusFilter !== 'ALL' && !statusOptions.some(o => o.value === statusFilter)) {
+      setStatusFilter('ALL')
+    }
+  }, [statusOptions, statusFilter])
+
+  useEffect(() => {
+    if (countryRowFilter !== 'ALL' && !countryOptions.some(o => o.value === countryRowFilter)) {
+      setCountryRowFilter('ALL')
+    }
+  }, [countryOptions, countryRowFilter])
 
   const visible = useMemo(() => {
-    const bySegment = (board?.rows ?? []).filter(r =>
-      segment === 'ARRIVALS' ? r.isArrival
-        : segment === 'DEPARTURES' ? r.isDeparture
-          : true)
-    return onlyOutstanding ? bySegment.filter(r => !r.ready) : bySegment
-  }, [board, segment, onlyOutstanding])
+    const outstandingCheck = (r: OpsDayRow): boolean => {
+      switch (checkFilter) {
+        case 'reconfirm': return reconfirmState(r) !== 'DONE'
+        case 'driver':    return r.driver.state !== 'DONE' && r.driver.state !== 'NA'
+        case 'tickets':   return r.tickets.state !== 'DONE' && r.tickets.state !== 'NA'
+        case 'qc':        return r.qc.state !== 'DONE' && r.qc.state !== 'NA'
+        default:          return true
+      }
+    }
+
+    return (board?.rows ?? []).filter(r => {
+      if (segment === 'ARRIVALS' && !r.isArrival) return false
+      if (segment === 'DEPARTURES' && !r.isDeparture) return false
+      if (onlyOutstanding && r.ready) return false
+      if (statusFilter !== 'ALL' && r.status !== statusFilter) return false
+      if (countryRowFilter !== 'ALL' && r.country !== countryRowFilter) return false
+      return outstandingCheck(r)
+    })
+  }, [board, segment, onlyOutstanding, checkFilter, statusFilter, countryRowFilter])
+
+  const filtersActive =
+    onlyOutstanding || checkFilter !== 'ALL' || statusFilter !== 'ALL'
+    || countryRowFilter !== 'ALL' || search.trim().length > 0
+
+  function clearFilters() {
+    setOnlyOutstanding(false)
+    setCheckFilter('ALL')
+    setStatusFilter('ALL')
+    setCountryRowFilter('ALL')
+    setSearch('')
+  }
 
   // ── The four gauges ────────────────────────────────────────────────────────
   // Computed over the *visible* rows so the rings describe exactly the list
@@ -166,36 +241,15 @@ export default function OperationsBoardPage() {
       return { counts, scope, pct, state }
     }
 
-    return [
-      {
-        key: 'reconfirm',
-        label: 'Reconfirmation',
-        hint: 'Client confirm or pre-tour call',
-        icon: PhoneCall,
-        ...tally(reconfirmState),
-      },
-      {
-        key: 'driver',
-        label: 'Driver Allocation',
-        hint: 'Every transfer has a driver or vendor',
-        icon: Car,
-        ...tally(r => r.driver.state),
-      },
-      {
-        key: 'tickets',
-        label: 'Tickets Issued',
-        hint: 'Every active ticket purchased or paid',
-        icon: Ticket,
-        ...tally(r => r.tickets.state),
-      },
-      {
-        key: 'qc',
-        label: 'QC1 / QC2',
-        hint: 'Both quality rounds signed off',
-        icon: ShieldCheck,
-        ...tally(r => r.qc.state),
-      },
-    ]
+    // Labels and icons come from FOCUS_META so the card and the drill-down it
+    // opens are guaranteed to describe the same thing.
+    return ([
+      ['reconfirm', reconfirmState],
+      ['driver', (r: OpsDayRow) => r.driver.state],
+      ['tickets', (r: OpsDayRow) => r.tickets.state],
+      ['qc', (r: OpsDayRow) => r.qc.state],
+    ] as [FocusKey, (r: OpsDayRow) => ReadinessState][])
+      .map(([key, pick]) => ({ key, ...FOCUS_META[key], ...tally(pick) }))
   }, [visible])
 
   const readyCount = visible.filter(r => r.ready).length
@@ -207,6 +261,21 @@ export default function OperationsBoardPage() {
     [date],
   )
   const today = todayLocal()
+  const spanDays = daySpan(from, to)
+  const overMax = spanDays > MAX_RANGE_DAYS
+
+  /** Step the whole range by its own length, so paging never changes the span. */
+  function shiftRange(dir: 1 | -1) {
+    const step = spanDays * dir
+    setRangeFrom(shift(from, step))
+    setRangeTo(shift(to, step))
+  }
+
+  function applyPreset(build: (t: string) => [string, string]) {
+    const [f, t] = build(today)
+    setRangeFrom(f)
+    setRangeTo(t)
+  }
 
   function exportCSV() {
     if (!visible.length) { toast.error('Nothing to export'); return }
@@ -234,7 +303,7 @@ export default function OperationsBoardPage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `ops-board-${date}-${segment.toLowerCase()}.csv`
+    a.download = `ops-board-${from}${from === to ? '' : `_to_${to}`}-${segment.toLowerCase()}.csv`
     a.click()
     URL.revokeObjectURL(url)
     toast.success(`Exported ${visible.length} tours`)
@@ -270,9 +339,111 @@ export default function OperationsBoardPage() {
 
       <div className="p-4 sm:p-8 space-y-6">
 
-        {/* ── Date rail ───────────────────────────────────────────────────── */}
+        {/* ── Date rail / range picker ────────────────────────────────────── */}
         <Card className="overflow-hidden">
-          <CardBody className="p-3 sm:p-4">
+          <CardBody className="p-3 sm:p-4 space-y-3">
+
+            {/* Day vs range. Both keep their own dates, so toggling back and
+                forth never loses what was set on the other side. */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100">
+                {([['DAY', 'Single day'], ['RANGE', 'Date range']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setMode(key)}
+                    className={cn(
+                      'relative px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                      mode === key ? 'text-slate-900' : 'text-slate-500 hover:text-slate-700',
+                    )}
+                  >
+                    {mode === key && (
+                      <motion.span
+                        layoutId="date-mode-pill"
+                        className="absolute inset-0 rounded-lg bg-white shadow-sm"
+                        transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 420, damping: 34 }}
+                      />
+                    )}
+                    <span className="relative">{label}</span>
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-slate-500">
+                {board?.label ?? `${formatDate(from)}${from === to ? '' : ` → ${formatDate(to)}`}`}
+                {spanDays > 1 && (
+                  <span className="ml-2 font-semibold text-slate-700">{spanDays} days</span>
+                )}
+              </span>
+              {overMax && (
+                <span className="text-[11px] font-semibold text-amber-700">
+                  Capped at {MAX_RANGE_DAYS} days — showing {from} → {shift(from, MAX_RANGE_DAYS - 1)}
+                </span>
+              )}
+              {board?.truncated && (
+                <span className="text-[11px] font-semibold text-amber-700">
+                  Row cap reached — narrow the window for a complete picture
+                </span>
+              )}
+            </div>
+
+            {mode === 'RANGE' ? (
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <button
+                  onClick={() => shiftRange(-1)}
+                  className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                  title={`Previous ${spanDays} days`}
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="w-4 h-4 text-slate-400" />
+                  <input
+                    type="date"
+                    className="form-input py-1.5 text-xs w-36"
+                    value={rangeFrom}
+                    max={rangeTo}
+                    onChange={e => e.target.value && setRangeFrom(e.target.value)}
+                  />
+                  <span className="text-slate-400 text-xs">→</span>
+                  <input
+                    type="date"
+                    className="form-input py-1.5 text-xs w-36"
+                    value={rangeTo}
+                    min={rangeFrom}
+                    onChange={e => e.target.value && setRangeTo(e.target.value)}
+                  />
+                </div>
+
+                <button
+                  onClick={() => shiftRange(1)}
+                  className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors"
+                  title={`Next ${spanDays} days`}
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
+
+                <div className="flex flex-wrap items-center gap-1.5 sm:pl-3 sm:border-l border-slate-200">
+                  {RANGE_PRESETS.map(p => {
+                    const [pf, pt] = p.build(today)
+                    const active = pf === from && pt === to
+                    return (
+                      <button
+                        key={p.label}
+                        onClick={() => applyPreset(p.build)}
+                        className={cn(
+                          'px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors',
+                          active
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setDate(d => shift(d, -1))}
@@ -344,6 +515,7 @@ export default function OperationsBoardPage() {
                 </button>
               </div>
             </div>
+            )}
           </CardBody>
         </Card>
 
@@ -351,63 +523,78 @@ export default function OperationsBoardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
             {
-              key: 'ONGROUND' as Segment, label: 'On Ground', icon: Users,
+              key: 'ONGROUND' as Segment, focus: 'onground' as FocusKey, label: 'On Ground', icon: Users,
               value: board?.summary.onGround ?? 0, pax: board?.summary.paxOnGround ?? 0,
               from: 'from-navy-600', to: 'to-navy-800',
             },
             {
-              key: 'ARRIVALS' as Segment, label: 'Arrivals', icon: PlaneLanding,
+              key: 'ARRIVALS' as Segment, focus: 'arrivals' as FocusKey, label: 'Arrivals', icon: PlaneLanding,
               value: board?.summary.arrivals ?? 0, pax: board?.summary.paxArriving ?? 0,
               from: 'from-emerald-500', to: 'to-emerald-700',
             },
             {
-              key: 'DEPARTURES' as Segment, label: 'Departures', icon: PlaneTakeoff,
+              key: 'DEPARTURES' as Segment, focus: 'departures' as FocusKey, label: 'Departures', icon: PlaneTakeoff,
               value: board?.summary.departures ?? 0, pax: board?.summary.paxDeparting ?? 0,
               from: 'from-sky-500', to: 'to-sky-700',
             },
           ].map((k, i) => (
-            <motion.button
+            <motion.div
               key={k.key}
-              onClick={() => setSegment(k.key)}
               {...fade}
               transition={reduce ? { duration: 0 } : { delay: i * 0.06, duration: 0.35 }}
               whileHover={reduce ? undefined : { y: -3 }}
               className={cn(
-                'relative text-left rounded-2xl p-5 overflow-hidden bg-gradient-to-br text-white shadow-lg transition-shadow',
+                'relative rounded-2xl overflow-hidden bg-gradient-to-br text-white shadow-lg transition-shadow',
                 k.from, k.to,
                 segment === k.key ? 'ring-2 ring-offset-2 ring-slate-900' : 'hover:shadow-xl',
               )}
             >
               {/* Decorative wash — keeps the tiles from reading as flat blocks. */}
-              <span className="absolute -right-6 -top-8 w-32 h-32 rounded-full bg-white/10" />
-              <span className="absolute -right-12 top-6 w-32 h-32 rounded-full bg-white/5" />
+              <span className="absolute -right-6 -top-8 w-32 h-32 rounded-full bg-white/10 pointer-events-none" />
+              <span className="absolute -right-12 top-6 w-32 h-32 rounded-full bg-white/5 pointer-events-none" />
 
-              <div className="relative flex items-start justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-wider text-white/70 font-semibold">{k.label}</div>
-                  <div className="text-4xl font-extrabold leading-none mt-2">
-                    <CountUp value={k.value} />
+              {/* The tile body switches the list below; the corner button opens
+                  the drill-down. Two actions, so the tile is not a single button. */}
+              <button onClick={() => setSegment(k.key)} className="relative w-full text-left p-5">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="text-xs uppercase tracking-wider text-white/70 font-semibold">{k.label}</div>
+                    <div className="text-4xl font-extrabold leading-none mt-2">
+                      <CountUp value={k.value} />
+                    </div>
+                    <div className="text-xs text-white/80 mt-2 flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5" />
+                      <CountUp value={k.pax} /> pax
+                    </div>
                   </div>
-                  <div className="text-xs text-white/80 mt-2 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5" />
-                    <CountUp value={k.pax} /> pax
-                  </div>
+                  <k.icon className="w-8 h-8 text-white/40 mr-8" />
                 </div>
-                <k.icon className="w-8 h-8 text-white/50" />
-              </div>
-            </motion.button>
+              </button>
+
+              <button
+                onClick={() => setFocus(k.focus)}
+                title={`Open ${k.label} detail`}
+                className="absolute right-3 top-3 p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/15 transition-colors"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            </motion.div>
           ))}
         </div>
 
         {/* ── Readiness gauges ────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {gauges.map((g, i) => (
-            <motion.div
+            <motion.button
               key={g.key}
               {...fade}
               transition={reduce ? { duration: 0 } : { delay: 0.15 + i * 0.06, duration: 0.35 }}
-              className="bg-white rounded-2xl border border-slate-200 shadow-card p-4 hover:shadow-card-hover transition-shadow"
+              whileHover={reduce ? undefined : { y: -3 }}
+              onClick={() => setFocus(g.key)}
+              title={`Open ${g.label} detail`}
+              className="group relative text-left bg-white rounded-2xl border border-slate-200 shadow-card p-4 hover:shadow-card-hover hover:border-slate-300 transition-all"
             >
+              <Maximize2 className="absolute right-3 top-3 w-3.5 h-3.5 text-slate-300 group-hover:text-slate-500 transition-colors" />
               <div className="flex items-center gap-4">
                 <ProgressRing pct={g.pct} color={STATE_STYLE[g.state].ring}>
                   <span className="text-sm font-extrabold text-slate-900 leading-none">
@@ -420,7 +607,7 @@ export default function OperationsBoardPage() {
                     <g.icon className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                     <span className="text-sm font-bold text-slate-900 truncate">{g.label}</span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{g.hint}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5 leading-snug pr-4">{g.hint}</p>
                   <div className="mt-2 space-y-1.5">
                     <SegmentBar
                       total={visible.length}
@@ -442,7 +629,7 @@ export default function OperationsBoardPage() {
                   </div>
                 </div>
               </div>
-            </motion.div>
+            </motion.button>
           ))}
         </div>
 
@@ -494,6 +681,44 @@ export default function OperationsBoardPage() {
                   />
                   Outstanding only
                 </label>
+
+                <select
+                  className="form-input py-1.5 text-xs w-40"
+                  value={checkFilter}
+                  onChange={e => setCheckFilter(e.target.value as CheckFilter)}
+                  title="Show only tours where this check is not clear"
+                >
+                  {CHECK_FILTERS.map(f => (
+                    <option key={f.key} value={f.key}>{f.label}</option>
+                  ))}
+                </select>
+
+                <select
+                  className="form-input py-1.5 text-xs w-36"
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                  title="Booking status"
+                >
+                  <option value="ALL">All statuses</option>
+                  {statusOptions.map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+
+                {countryOptions.length > 1 && (
+                  <select
+                    className="form-input py-1.5 text-xs w-32"
+                    value={countryRowFilter}
+                    onChange={e => setCountryRowFilter(e.target.value)}
+                    title="Country"
+                  >
+                    <option value="ALL">All countries</option>
+                    {countryOptions.map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                )}
+
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
                   <input
@@ -503,6 +728,12 @@ export default function OperationsBoardPage() {
                     onChange={e => setSearch(e.target.value)}
                   />
                 </div>
+
+                {filtersActive && (
+                  <button onClick={clearFilters} className="btn btn-secondary btn-sm">
+                    Clear filters
+                  </button>
+                )}
               </div>
             }
           >
@@ -552,7 +783,9 @@ export default function OperationsBoardPage() {
                 <span className="text-sm">
                   {onlyOutstanding
                     ? 'Nothing outstanding — every tour on this list is ready'
-                    : 'No tours match this date and filter'}
+                    : filtersActive
+                      ? 'No tours match these filters'
+                      : `No tours in ${from === to ? 'this day' : 'this date range'}`}
                 </span>
               </div>
             ) : (
@@ -781,6 +1014,23 @@ export default function OperationsBoardPage() {
           )}
         </Card>
       </div>
+
+      {/* ── Drill-down ────────────────────────────────────────────────────── */}
+      <AnimatePresence>
+        {focus && (
+          <OpsDrilldown
+            key={focus}
+            focus={focus}
+            anchorDate={from}
+            anchorEnd={to}
+            countryFilter={countryFilter}
+            // Reuse the loaded window only when the board is unfiltered; otherwise
+            // the modal would open showing a search the user did not type in it.
+            initialBoard={search.trim() ? null : board}
+            onClose={() => setFocus(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   )
 }

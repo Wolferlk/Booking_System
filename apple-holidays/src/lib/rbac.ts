@@ -4,6 +4,7 @@ import type { OperationCountry } from './country-detection'
 export const ROLES = {
   BT_USER:           'BT_USER',
   GT_USER:           'GT_USER',
+  GT_VN_USER:        'GT_VN_USER',
   TE_USER:           'TE_USER',
   GT_TE_USER:        'GT_TE_USER',
   AC_USER:           'AC_USER',
@@ -16,6 +17,7 @@ export const ROLES = {
 export const ROLE_LABELS: Record<UserRole, string> = {
   BT_USER:           'Booking Team',
   GT_USER:           'Ground Team',
+  GT_VN_USER:        'Vietnam Ground (Limited)',
   TE_USER:           'Travel Experience',
   GT_TE_USER:        'Ground & Travel Experience',
   AC_USER:           'Accounts Team',
@@ -27,6 +29,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 export const ROLE_COLORS: Record<UserRole, string> = {
   BT_USER:           'blue',
   GT_USER:           'green',
+  GT_VN_USER:        'green',
   TE_USER:           'purple',
   GT_TE_USER:        'teal',
   AC_USER:           'orange',
@@ -39,6 +42,7 @@ export const ROLE_COLORS: Record<UserRole, string> = {
 export const ROLE_COUNTRY_SCOPE: Record<UserRole, OperationCountry[]> = {
   BT_USER:           ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA'],
   GT_USER:           ['VIETNAM'],
+  GT_VN_USER:        ['VIETNAM'],
   TE_USER:           ['VIETNAM'],
   GT_TE_USER:        ['SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA'],
   AC_USER:           ['ALL'],
@@ -98,6 +102,15 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'assignment:create', 'assignment:edit',
     'ticket:create', 'ticket:read', 'ticket:purchase',
     'pnl:read',
+  ],
+  // Vietnam Ground Team — Limited. Same ground work as GT_USER (agenda, driver
+  // allocation, tickets) but a locked-down surface: dashboard, bookings list,
+  // booking detail and the Ops Board only. No P&L, no vendors, no admin tools.
+  GT_VN_USER: [
+    'booking:read',
+    'agenda:create', 'agenda:read', 'agenda:edit',
+    'assignment:create', 'assignment:edit',
+    'ticket:create', 'ticket:read', 'ticket:purchase',
   ],
   TE_USER: [
     'booking:create', 'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
@@ -216,6 +229,11 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'My Assignments', href: '/dashboard/ground/assignments', icon: 'MapPin' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',   icon: 'Ticket' },
     { label: 'Drivers',        href: '/dashboard/ground/drivers',   icon: 'Car' },
+  ],
+  GT_VN_USER: [
+    { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
+    { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
+    { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
   ],
   TE_USER: [
     { label: 'Dashboard',  href: '/dashboard',              icon: 'LayoutDashboard' },

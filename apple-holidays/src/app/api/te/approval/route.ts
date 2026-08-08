@@ -16,7 +16,7 @@ import { normalizePhone, tePost } from '@/lib/te/te-api'
 
 export const dynamic = 'force-dynamic'
 
-const ALLOWED_ROLES = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED_ROLES = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 interface ApprovalResponse {
   already_allowed?: boolean

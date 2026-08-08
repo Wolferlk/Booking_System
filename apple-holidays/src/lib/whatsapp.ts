@@ -55,6 +55,33 @@ export async function findBookingByPhone(phone: string) {
  * call. Shared by the booking-scoped composer and the global inbox so there's
  * one implementation of the Meta send flow instead of two.
  */
+/**
+ * Upload a file to Meta's media store and return its media id (valid ~30 days).
+ *
+ * Uploading the bytes is strictly better than handing Meta a link: no public URL
+ * has to exist, so nothing depends on the serverless host's read-only disk or on
+ * the CDN having the file yet. The id works for both free-form media messages
+ * and a template's DOCUMENT/IMAGE header. Throws on a Graph API error.
+ */
+export async function uploadMetaMedia(buffer: Buffer, filename: string): Promise<string> {
+  const { accessToken, phoneNumberId } = getMetaCreds()
+  if (!accessToken || !phoneNumberId) throw new Error('WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID not configured')
+
+  const form = new FormData()
+  form.append('messaging_product', 'whatsapp')
+  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+  form.append('file', new Blob([arrayBuffer], { type: contentTypeFor(filename) }), filename)
+
+  const res = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/media`, {
+    method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form,
+  })
+  const body = await res.text()
+  if (!res.ok) throw new Error(`Meta media upload failed ${res.status}: ${body.slice(0, 300)}`)
+  const json = JSON.parse(body) as { id?: string }
+  if (!json.id) throw new Error('Meta media upload returned no media id')
+  return json.id
+}
+
 export async function sendViaMetaApi(params: {
   to: string
   message?: string
@@ -91,20 +118,11 @@ export async function sendViaMetaApi(params: {
   let mediaResult: unknown = null
   if (params.media) {
     const { buffer, filename, kind, caption } = params.media
-    const mediaForm = new FormData()
-    mediaForm.append('messaging_product', 'whatsapp')
-    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
-    mediaForm.append('file', new Blob([arrayBuffer], { type: contentTypeFor(filename) }), filename)
-
-    const uploadRes = await fetch(`${baseUrl}/media`, { method: 'POST', headers, body: mediaForm })
-    const uploadBody = await uploadRes.text()
-    if (!uploadRes.ok) throw new Error(`Meta media upload failed ${uploadRes.status}: ${uploadBody.slice(0, 300)}`)
-    const uploadJson = JSON.parse(uploadBody) as { id?: string }
-    if (!uploadJson.id) throw new Error('Meta media upload returned no media id')
+    const mediaId = await uploadMetaMedia(buffer, filename)
 
     const mediaPayload: Record<string, unknown> = kind === 'document'
-      ? { id: uploadJson.id, filename, ...(caption ? { caption } : {}) }
-      : { id: uploadJson.id, ...(caption ? { caption } : {}) }
+      ? { id: mediaId, filename, ...(caption ? { caption } : {}) }
+      : { id: mediaId, ...(caption ? { caption } : {}) }
 
     const sendRes = await fetch(`${baseUrl}/messages`, {
       method: 'POST',
@@ -141,6 +159,12 @@ export async function sendViaMetaTemplate(params: {
   lang?:         string
   bodyParams?:   string[]
   headerParams?: string[]
+  /**
+   * Fills a DOCUMENT-header template — the only way to deliver a PDF to a number
+   * outside the 24h window. `id` comes from uploadMetaMedia(); `link` must be a
+   * publicly fetchable HTTPS URL. Mutually exclusive with `headerParams`.
+   */
+  headerDocument?: { id?: string; link?: string; filename?: string }
 }): Promise<{ channel: 'meta'; template: unknown } | null> {
   const { accessToken, phoneNumberId } = getMetaCreds()
   if (!accessToken || !phoneNumberId) return null
@@ -149,7 +173,19 @@ export async function sendViaMetaTemplate(params: {
   if (!to) return null
 
   const components: Record<string, unknown>[] = []
-  if (params.headerParams && params.headerParams.length) {
+  if (params.headerDocument && (params.headerDocument.id || params.headerDocument.link)) {
+    const { id, link, filename } = params.headerDocument
+    components.push({
+      type: 'header',
+      parameters: [{
+        type: 'document',
+        document: {
+          ...(id ? { id } : { link }),
+          ...(filename ? { filename } : {}),
+        },
+      }],
+    })
+  } else if (params.headerParams && params.headerParams.length) {
     components.push({ type: 'header', parameters: params.headerParams.map(text => ({ type: 'text', text })) })
   }
   if (params.bodyParams && params.bodyParams.length) {
@@ -270,6 +306,50 @@ export async function listMetaTemplates(status = 'APPROVED'): Promise<WaTemplate
  * createMessageTemplate() — same Graph API shape, same WABA. Throws on any
  * validation failure or Graph API error.
  */
+/**
+ * Get a template header handle for a media (DOCUMENT/IMAGE) header, via Meta's
+ * resumable upload API. Template *creation* will not accept a media id — it needs
+ * this app-scoped handle, which is why an app id is required here but nowhere
+ * else. Only needed to register a template; sending uses uploadMetaMedia().
+ */
+export async function uploadTemplateHeaderHandle(
+  buffer: Buffer,
+  filename: string,
+  mimeType = 'application/pdf',
+): Promise<string> {
+  const { accessToken } = getWabaCreds()
+  const appId = (process.env.WHATSAPP_APP_ID || process.env.FACEBOOK_APP_ID || process.env.META_APP_ID)?.trim()
+  if (!accessToken) throw new Error('WHATSAPP_ACCESS_TOKEN not configured')
+  if (!appId) {
+    throw new Error(
+      'WHATSAPP_APP_ID is not set — a media-header template can only be registered from the API with an app id. ' +
+      'Set WHATSAPP_APP_ID, or create the template once in WhatsApp Manager instead.',
+    )
+  }
+
+  const startRes = await fetch(
+    `https://graph.facebook.com/${META_API_VERSION}/${appId}/uploads` +
+      `?file_name=${encodeURIComponent(filename)}&file_length=${buffer.byteLength}&file_type=${encodeURIComponent(mimeType)}`,
+    { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` } },
+  )
+  const startBody = await startRes.text()
+  if (!startRes.ok) throw new Error(`Upload session failed ${startRes.status}: ${startBody.slice(0, 300)}`)
+  const sessionId = (JSON.parse(startBody) as { id?: string }).id
+  if (!sessionId) throw new Error('Upload session returned no id')
+
+  const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer
+  const putRes = await fetch(`https://graph.facebook.com/${META_API_VERSION}/${sessionId}`, {
+    method: 'POST',
+    headers: { Authorization: `OAuth ${accessToken}`, file_offset: '0' },
+    body: arrayBuffer,
+  })
+  const putBody = await putRes.text()
+  if (!putRes.ok) throw new Error(`Header upload failed ${putRes.status}: ${putBody.slice(0, 300)}`)
+  const handle = (JSON.parse(putBody) as { h?: string }).h
+  if (!handle) throw new Error('Header upload returned no handle')
+  return handle
+}
+
 export async function createMetaTemplate(params: {
   name: string
   category?: string
@@ -278,6 +358,9 @@ export async function createMetaTemplate(params: {
   bodyExamples?: string[]
   headerText?: string | null
   headerExamples?: string[]
+  /** Media header (e.g. a PDF attachment slot). Requires `headerHandle`. */
+  headerFormat?: 'DOCUMENT' | 'IMAGE' | 'VIDEO'
+  headerHandle?: string
   footerText?: string | null
 }): Promise<{ id: string | null; status: string; category: string; name: string }> {
   const { accessToken, businessAccountId } = getWabaCreds()
@@ -291,7 +374,16 @@ export async function createMetaTemplate(params: {
 
   const components: Record<string, unknown>[] = []
   const headerText = (params.headerText || '').trim()
-  if (headerText) {
+  if (params.headerFormat) {
+    if (!params.headerHandle) {
+      throw new Error(`A ${params.headerFormat} header needs an uploaded example — see uploadTemplateHeaderHandle()`)
+    }
+    components.push({
+      type: 'HEADER',
+      format: params.headerFormat,
+      example: { header_handle: [params.headerHandle] },
+    })
+  } else if (headerText) {
     const hVars = countPlaceholders(headerText)
     const headerComp: Record<string, unknown> = { type: 'HEADER', format: 'TEXT', text: headerText }
     if (hVars > 0) {

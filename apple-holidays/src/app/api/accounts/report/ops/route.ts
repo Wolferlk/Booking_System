@@ -21,7 +21,7 @@ import type { UserRole } from '@prisma/client'
 export const dynamic = 'force-dynamic'
 
 /** Same role set as the financial report this page replaced. */
-const ALLOWED: UserRole[] = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED: UserRole[] = ['AC_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -41,7 +41,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const board = await collectOpsDay({
+      // `date` is the single-day shorthand the board itself uses; `from`/`to`
+      // is the range the drill-down asks for.
       date: req.nextUrl.searchParams.get('date'),
+      from: req.nextUrl.searchParams.get('from'),
+      to: req.nextUrl.searchParams.get('to'),
       country,
       search: req.nextUrl.searchParams.get('search'),
     })

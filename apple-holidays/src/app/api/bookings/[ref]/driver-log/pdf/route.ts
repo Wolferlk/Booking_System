@@ -7,7 +7,7 @@ import { generateDriverLogPdf } from '@/lib/generate-driver-log-pdf'
 
 export const dynamic = 'force-dynamic'
 
-const READ_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const READ_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 /** GET — download the Driver Advance Sheet as a PDF. */
 export async function GET(

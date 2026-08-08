@@ -485,7 +485,7 @@ function DailyCallsPanel({ data }: { data: ReportData }) {
         {[
           { icon: ShieldCheck,   label: 'WhatsApp approved', value: t.approval.approved,      note: 'accepting AI calls',    cls: 'text-emerald-600' },
           { icon: Clock,         label: 'Awaiting approval', value: t.approval.pending,       note: 'message sent, no reply', cls: 'text-amber-600' },
-          { icon: Mail,          label: 'Approval not sent', value: t.approval.not_requested, note: 'cannot be called yet',  cls: 'text-slate-500' },
+          { icon: Mail,          label: 'Guest Not Approved', value: t.approval.not_requested, note: 'cannot be called yet',  cls: 'text-slate-500' },
           { icon: AlertTriangle, label: 'Urgent bookings',   value: t.urgentBookings,         note: `${t.openAlerts} open alerts`, cls: t.urgentBookings ? 'text-red-600' : 'text-slate-400' },
         ].map(s => (
           <div key={s.label} className="rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3 flex items-center gap-3">

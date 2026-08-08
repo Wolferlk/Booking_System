@@ -18,11 +18,19 @@ export interface QueryMonitorConfig {
   writeStatusColumn: boolean
   captureUnmatched:  boolean
   aiEnabled:         boolean
+  /** GPT reads every new mail and writes a one-sentence summary into the sheet. */
+  aiSummaryEnabled:  boolean
   slaHours:          number
   replyChaseDays:    number
+  /** One row per thread: a follow-up rewrites the query's row instead of adding one. */
+  threadMergeEnabled: boolean
+  /** How far back a follow-up may reach to find the row it belongs to, in days. */
+  threadWindowDays:   number
   excludeEnabled:    boolean
   excludePatterns:   string
   excludedSheetName: string
+  /** Tab the OpenAI spend report is rewritten onto — owned entirely by the app. */
+  aiUsageSheetName:  string
   /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
   startDate:         string
   backupEnabled:     boolean
@@ -76,12 +84,17 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     writeStatusColumn: bool(SETTINGS.writeStatusColumn, DEFAULTS.writeStatusColumn),
     captureUnmatched:  bool(SETTINGS.captureUnmatched,  DEFAULTS.captureUnmatched),
     aiEnabled:         bool(SETTINGS.aiEnabled,         DEFAULTS.aiEnabled),
+    aiSummaryEnabled:  bool(SETTINGS.aiSummaryEnabled,  DEFAULTS.aiSummaryEnabled),
     slaHours:          Math.max(1, num(SETTINGS.slaHours,       DEFAULTS.slaHours)),
     replyChaseDays:    Math.max(1, num(SETTINGS.replyChaseDays, DEFAULTS.replyChaseDays)),
+    threadMergeEnabled: bool(SETTINGS.threadMergeEnabled, DEFAULTS.threadMergeEnabled),
+    threadWindowDays:   Math.max(1, num(SETTINGS.threadWindowDays, DEFAULTS.threadWindowDays)),
     excludeEnabled:    bool(SETTINGS.excludeEnabled, DEFAULTS.excludeEnabled),
     excludePatterns:   str(SETTINGS.excludePatterns,   DEFAULTS.excludePatterns),
     excludedSheetName: str(SETTINGS.excludedSheetName, DEFAULTS.excludedSheetName)
                        || DEFAULTS.excludedSheetName,
+    aiUsageSheetName:  str(SETTINGS.aiUsageSheetName, DEFAULTS.aiUsageSheetName)
+                       || DEFAULTS.aiUsageSheetName,
     startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
     backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
     backupSheetUrl:    str(SETTINGS.backupSheetUrl, DEFAULTS.backupSheetUrl),
@@ -105,14 +118,21 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.writeStatusColumn !== undefined) put(SETTINGS.writeStatusColumn, !!patch.writeStatusColumn)
   if (patch.captureUnmatched  !== undefined) put(SETTINGS.captureUnmatched,  !!patch.captureUnmatched)
   if (patch.aiEnabled         !== undefined) put(SETTINGS.aiEnabled,         !!patch.aiEnabled)
+  if (patch.aiSummaryEnabled  !== undefined) put(SETTINGS.aiSummaryEnabled,  !!patch.aiSummaryEnabled)
   if (patch.slaHours          !== undefined) put(SETTINGS.slaHours,          Math.max(1, Number(patch.slaHours) || 2))
   if (patch.replyChaseDays    !== undefined) put(SETTINGS.replyChaseDays,    Math.max(1, Number(patch.replyChaseDays) || 7))
+  if (patch.threadMergeEnabled !== undefined) put(SETTINGS.threadMergeEnabled, !!patch.threadMergeEnabled)
+  if (patch.threadWindowDays   !== undefined) put(SETTINGS.threadWindowDays,   Math.max(1, Number(patch.threadWindowDays) || 30))
   if (patch.excludeEnabled    !== undefined) put(SETTINGS.excludeEnabled,    !!patch.excludeEnabled)
   // Kept verbatim — one pattern per line, and a trailing blank line is harmless.
   if (patch.excludePatterns   !== undefined) put(SETTINGS.excludePatterns,   String(patch.excludePatterns))
   if (patch.excludedSheetName !== undefined) {
     const tab = String(patch.excludedSheetName).trim()
     if (tab) put(SETTINGS.excludedSheetName, tab)
+  }
+  if (patch.aiUsageSheetName !== undefined) {
+    const tab = String(patch.aiUsageSheetName).trim()
+    if (tab) put(SETTINGS.aiUsageSheetName, tab)
   }
 
   if (patch.backupEnabled !== undefined) put(SETTINGS.backupEnabled, !!patch.backupEnabled)

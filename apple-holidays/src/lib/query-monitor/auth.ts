@@ -2,12 +2,13 @@
  * Access guard for the Query Monitor API.
  *
  * The monitor exposes whole mailboxes and writes to a shared master workbook, so
- * it is admin-only — the same bar as Mail Inbox and OneDrive Access.
+ * it is admin-only — the same bar as Mail Inbox and OneDrive Access — plus the
+ * Booking Team, who own the queries the sweep collects.
  */
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 
-const ALLOWED_ROLES = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED_ROLES = ['BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export interface Guard {
   ok:    boolean

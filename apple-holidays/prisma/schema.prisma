@@ -323,12 +323,28 @@ model Assignment {
   driverRate   Decimal?       @db.Decimal(10, 2)
   rateCurrency String?        @default("USD")
   waSentAt     DateTime?
+  /// Tour guide on this movement. `guideId` points at a registered Guide;
+  /// the denormalised name/phone also cover ad-hoc guides typed straight into
+  /// the movement chart (those are still saved to `guides` on first use, so the
+  /// second booking can pick them from the list).
+  guideId         String?
+  guideName       String?
+  guidePhone      String?
+  /// Local tour vendor / supplier handling this movement — same registered vs
+  /// ad-hoc rule as the guide above.
+  tourVendorId    String?
+  tourVendorName  String?
+  tourVendorPhone String?
   agendaItem   AgendaItem     @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
   driver       Driver?        @relation(fields: [driverId], references: [id])
   vendor       VehicleVendor? @relation(fields: [vendorId], references: [id])
+  guide        Guide?         @relation(fields: [guideId], references: [id])
+  tourVendor   TourVendor?    @relation(fields: [tourVendorId], references: [id])
 
   @@index([driverId], map: "assignments_driverId_fkey")
   @@index([vendorId], map: "assignments_vendorId_fkey")
+  @@index([guideId], map: "assignments_guideId_fkey")
+  @@index([tourVendorId], map: "assignments_tourVendorId_fkey")
   @@map("assignments")
 }
 
@@ -593,6 +609,67 @@ model VehicleVendor {
   slAllocations SriLankaDriverAllocation[]
 
   @@map("vehicle_vendors")
+}
+
+/// Tour guide. Registers through the public link (`/register/guide?country=…`)
+/// exactly like a driver does, or is entered by Ground staff. Guides only
+/// appear in the movement chart for countries switched on in Settings
+/// (`guide_countries` — see src/lib/partner-directory.ts).
+model Guide {
+  id             String            @id @default(cuid())
+  name           String
+  country        OperationCountry?
+  phone          String
+  whatsappPhone  String?
+  email          String?
+  photoUrl       String?           @db.Text
+  nicNo          String?
+  languages      String?           @db.Text
+  additionalInfo String?           @db.Text
+  specialNote    String?           @db.Text
+  bankName       String?
+  bankAccountNo  String?
+  bankHolder     String?
+  bankBranch     String?
+  bankCode       String?
+  /// Self-registrations land inactive and are activated by Ground after review.
+  isActive       Boolean           @default(true)
+  source         PartnerSource     @default(STAFF)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  assignments    Assignment[]
+
+  @@index([country], map: "guides_country_idx")
+  @@map("guides")
+}
+
+/// Local tour vendor / supplier (excursions, activities, sub-contracted tours).
+/// Distinct from `VehicleVendor`, which supplies drivers and vehicles only.
+model TourVendor {
+  id             String            @id @default(cuid())
+  name           String
+  country        OperationCountry?
+  phone          String
+  whatsappPhone  String?
+  email          String?
+  photoUrl       String?           @db.Text
+  nicNo          String?
+  services       String?           @db.Text
+  additionalInfo String?           @db.Text
+  specialNote    String?           @db.Text
+  bankName       String?
+  bankAccountNo  String?
+  bankHolder     String?
+  bankBranch     String?
+  bankCode       String?
+  isActive       Boolean           @default(true)
+  source         PartnerSource     @default(STAFF)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  assignments    Assignment[]
+
+  @@index([country], map: "tour_vendors_country_idx")
+  @@map("tour_vendors")
 }
 
 model DriverPayment {
@@ -1133,6 +1210,7 @@ model FileHandlerLog {
 enum UserRole {
   BT_USER
   GT_USER
+  GT_VN_USER
   TE_USER
   GT_TE_USER
   AC_USER
@@ -1215,6 +1293,16 @@ enum PNLCategory {
   TAX_FEES
   FLIGHT_TICKETS
   OTHER
+}
+
+/// How a guide / tour vendor record entered the system.
+enum PartnerSource {
+  /// Added by Ground staff from the directory page.
+  STAFF
+  /// Submitted through the public registration link.
+  SELF_REGISTERED
+  /// Typed ad-hoc into a movement chart and auto-saved for reuse.
+  MANUAL_ENTRY
 }
 
 enum DriverPaymentType {
@@ -1334,6 +1422,24 @@ model QueryMonitorEntry {
   id               String              @id @default(cuid())
   dedupKey         String              @unique // internetMessageId, else conversationId+subject hash
   conversationId   String?
+  /// Thread identity: Graph's `conversationId` when there is one, else
+  /// `subjectKey`. Every later mail of the same thread folds into the first
+  /// entry rather than taking a row of its own — one query, one sheet row.
+  threadKey        String?             @db.VarChar(190)
+  /// Fallback thread identity, for mail Graph gives no conversationId for:
+  /// `fromDomain|subject`, with the Re:/Fw: prefixes and spacing stripped.
+  /// Only set when the subject carries a 4-digit-or-longer reference, so two
+  /// unrelated "Urgent quote required" mails can never collapse into one row.
+  subjectKey       String?             @db.VarChar(190)
+  /// Set on a follow-up: the entry whose sheet row already stands for this
+  /// thread. Such entries are kept (their dedupKey is what stops the mail being
+  /// looked at again) but are never written — their sync state is MERGED.
+  mergedIntoId     String?
+  /// How many later mails of the thread folded into this row.
+  followUpCount    Int                 @default(0)
+  /// When the newest mail of the thread arrived. `receivedAt` stays the first
+  /// one: the SLA is measured from when the query was originally asked.
+  lastMessageAt    DateTime?
   subject          String              @db.Text
   fromAddress      String
   fromName         String
@@ -1345,6 +1451,10 @@ model QueryMonitorEntry {
   excludeReason    String?
   receivedAt       DateTime // sheet column D — "Allocation time"
   repliedAt        DateTime? // sheet column E — "Replied time"
+  /// Sheet column O — the handler whose Sent Items the reply was found in. Kept
+  /// apart from `handlerNames`: the owner of a query and the person who happened
+  /// to answer it are usually but not always the same, and the team wants both.
+  repliedBy        String?
   replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
   /// Sheet column F — the ONE handler who owns this query. Empty until it can be
   /// known: filled straight away when the mail reached a single mailbox, on the
@@ -1370,12 +1480,21 @@ model QueryMonitorEntry {
   bodySnippet      String              @db.Text
   extractionSource String              @default("RULE") // RULE | AI | MANUAL
   aiConfidence     Float?
+  /// Sheet column T — one sentence describing what the mail is asking for,
+  /// written by gpt-4o-mini when the "AI reads every new mail" switch is on.
+  /// Null means it was never summarised, which is the normal state with the
+  /// switch off — it is not backfilled over history.
+  aiSummary        String?             @db.Text
+  aiSummaryAt      DateTime?
   /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
   manualOverrides  Json?
   sheetRow         Int?
   /// Which worksheet `sheetRow` refers to — the two tabs number their rows separately.
   sheetTab         String?
-  syncStatus       String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
+  /// PENDING | SYNCED | DIRTY | FAILED | SKIPPED | MERGED.
+  /// MERGED is terminal: the mail belongs to a thread another row already
+  /// carries, so it is deliberately never appended anywhere.
+  syncStatus       String              @default("PENDING")
   syncError        String?             @db.Text
   syncedAt         DateTime?
   /// The standby workbook numbers its rows independently of the primary, so it
@@ -1393,6 +1512,9 @@ model QueryMonitorEntry {
   @@index([syncStatus])
   @@index([replyStatus])
   @@index([conversationId])
+  @@index([threadKey])
+  @@index([subjectKey])
+  @@index([mergedIntoId])
   @@index([fromDomain])
   @@index([mailKind])
   @@index([backupSyncStatus])

@@ -29,10 +29,16 @@ export const SETTINGS = {
   captureUnmatched:   'query_monitor_capture_unmatched',
   /** Use GPT to pull destination / travel date when the regexes come up empty. */
   aiEnabled:          'query_monitor_ai_enabled',
+  /** Have GPT read every new mail and write a one-sentence summary into the sheet. */
+  aiSummaryEnabled:   'query_monitor_ai_summary_enabled',
   /** Hours without a reply before an entry is flagged OVERDUE. */
   slaHours:           'query_monitor_sla_hours',
   /** How many days back to keep re-checking unanswered entries for a reply. */
   replyChaseDays:     'query_monitor_reply_chase_days',
+  /** Fold later mail of a thread into the row the query already owns. */
+  threadMergeEnabled: 'query_monitor_thread_merge_enabled',
+  /** How far back a sweep looks for the row a follow-up belongs to, in days. */
+  threadWindowDays:   'query_monitor_thread_window_days',
   /** ISO timestamp of the last completed sweep — drives the interval tick. */
   lastRunAt:          'query_monitor_last_run_at',
   /** Guard so two processes can't sweep at once. */
@@ -43,6 +49,8 @@ export const SETTINGS = {
   excludePatterns:    'query_monitor_exclude_patterns',
   /** Worksheet tab that receives the excluded mail. */
   excludedSheetName:  'query_monitor_excluded_sheet_name',
+  /** Worksheet tab the OpenAI spend report is rewritten onto. */
+  aiUsageSheetName:   'query_monitor_ai_usage_sheet_name',
   /** `YYYY-MM-DD` — mail received before this never reaches either workbook. */
   startDate:          'query_monitor_start_date',
   /** Mirror every append and rewrite into a second, standby workbook. */
@@ -110,11 +118,17 @@ export const DEFAULTS = {
   writeStatusColumn: 'true',
   captureUnmatched:  'true',
   aiEnabled:         'true',
+  // Off until the team asks for it: it is a GPT call on *every* new mail, not
+  // only on the ones the parser could not read.
+  aiSummaryEnabled:  'false',
   slaHours:          '2',
   replyChaseDays:    '7',
+  threadMergeEnabled: 'true',
+  threadWindowDays:   '30',
   excludeEnabled:    'true',
   excludePatterns:   DEFAULT_EXCLUDE_PATTERNS,
   excludedSheetName: 'Other Mails',
+  aiUsageSheetName:  'AI Usage',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
   backupSheetUrl:    BACKUP_SHEET_URL,
@@ -136,10 +150,23 @@ export const SHEET_COLUMNS = [
   'Date', 'Status', 'Subject', 'Allocation time', 'Replied time', 'File Handler',
   'TO List', 'Sales Person', 'Destination', 'Agent', 'Travel Date', 'CNTL',
   'Amendment', 'Region',
+  // ── Added Aug 2026, to the right of the columns already in use ─────────────
+  'Replied By', 'Response (hrs)', 'SLA', 'Mails in Thread', 'Last Mail',
+  'AI Summary',
 ] as const
 
+/**
+ * The A–N layout the workbook was started with, before the reply-detail and
+ * AI-summary columns were added.
+ *
+ * Kept so `ensureWorksheet` can tell "an older header of ours, with room to the
+ * right" apart from "somebody else's header" — the first is extended in place
+ * over live data, the second is refused. See `headerExtension`.
+ */
+export const LEGACY_SHEET_COLUMNS = SHEET_COLUMNS.slice(0, 14)
+
 export const SHEET_FIRST_COLUMN = 'A'
-export const SHEET_LAST_COLUMN  = 'N'
+export const SHEET_LAST_COLUMN  = 'T'
 /** Row 1 is the header; data starts at row 2. */
 export const SHEET_HEADER_ROW   = 1
 
@@ -159,6 +186,12 @@ export const SHEET_NUMBER_FORMATS = [
   'General',              // L CNTL
   'General',              // M Amendment
   'General',              // N Region
+  'General',              // O Replied By
+  '0.00',                 // P Response (hrs) — a real number, so it averages
+  'General',              // Q SLA — Met / Missed
+  '0',                    // R Mails in Thread
+  'm/d/yyyy h:mm',        // S Last Mail
+  'General',              // T AI Summary
 ] as const
 
 // ── Second tab: excluded mail ────────────────────────────────────────────────
@@ -172,10 +205,16 @@ export const SHEET_NUMBER_FORMATS = [
 export const EXCLUDED_SHEET_COLUMNS = [
   'Date', 'Received time', 'Subject', 'Sender', 'Sender Email',
   'File Handler', 'TO List', 'Reason', 'Destination', 'CNTL',
+  // Added Aug 2026 — an on-ground incident in one line is the whole point of
+  // reading this tab, so it carries the summary too.
+  'AI Summary',
 ] as const
 
+/** The A–J layout this tab was created with. See `LEGACY_SHEET_COLUMNS`. */
+export const LEGACY_EXCLUDED_SHEET_COLUMNS = EXCLUDED_SHEET_COLUMNS.slice(0, 10)
+
 export const EXCLUDED_SHEET_FIRST_COLUMN = 'A'
-export const EXCLUDED_SHEET_LAST_COLUMN  = 'J'
+export const EXCLUDED_SHEET_LAST_COLUMN  = 'K'
 
 export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   '[$-en-US]dd-mmm-yy;@', // A Date
@@ -188,6 +227,7 @@ export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   'General',              // H Reason
   'General',              // I Destination
   'General',              // J CNTL
+  'General',              // K AI Summary
 ] as const
 
 // ── Domain ignore list ───────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
 
 import { cn } from '@/lib/utils'
 import {
-  CheckCircle2, Clock, AlertTriangle, CloudUpload, CloudOff, RefreshCw, XCircle, Sparkles, Hand, Filter,
+  CheckCircle2, Clock, AlertTriangle, CloudUpload, CloudOff, Layers, RefreshCw, XCircle, Sparkles, Hand, Filter,
 } from 'lucide-react'
 
 // ── Stat tile ────────────────────────────────────────────────────────────────
@@ -76,6 +76,8 @@ export function SyncStatusBadge({ status, sheetRow }: { status: string; sheetRow
     DIRTY:   { label: 'Needs rewrite',   cls: 'bg-violet-100 text-violet-700', icon: <RefreshCw className="w-3 h-3" /> },
     FAILED:  { label: 'Write failed',    cls: 'bg-rose-100 text-rose-700',   icon: <XCircle className="w-3 h-3" /> },
     SKIPPED: { label: 'Skipped',         cls: 'bg-slate-100 text-slate-500', icon: null },
+    // A follow-up sharing the query's row — it is never written on its own.
+    MERGED:  { label: 'Same query',      cls: 'bg-slate-100 text-slate-500', icon: <Layers className="w-3 h-3" /> },
   }
   const m = meta[status] ?? { label: status, cls: 'bg-slate-100 text-slate-600', icon: null }
   return (

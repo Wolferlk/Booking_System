@@ -6,7 +6,7 @@ import { sendDriverLog } from '@/lib/driver-log-notify'
 
 export const dynamic = 'force-dynamic'
 
-const SEND_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const SEND_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 /** POST — send the Driver Advance Sheet (text + PDF) to the driver on WhatsApp. */
 export async function POST(
@@ -25,5 +25,9 @@ export async function POST(
   if (!res.ok) {
     return buildApiError(res.reason ?? 'Failed to send Driver Log', 502)
   }
-  return buildApiSuccess({ phone: res.phone }, `Driver Advance Sheet sent to ${res.phone}`)
+  const how = res.channel === 'template' ? ' (template + PDF)' : ' with PDF'
+  return buildApiSuccess(
+    { phone: res.phone, channel: res.channel },
+    `Driver Advance Sheet sent to ${res.phone}${how}`,
+  )
 }

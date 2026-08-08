@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
+import { backfillSlAllocationsFromAgenda } from '@/lib/sl-driver-allocation-sync'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -60,6 +61,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // Files whose driver was set on the Movement Chart carry the assignment on the
+    // agenda only. Adopt those onto the allocation row before reading, so the board
+    // (and its status filters and counters) sees the driver that is already on the
+    // trip rather than reporting the file as pending.
+    try {
+      await backfillSlAllocationsFromAgenda()
+    } catch (syncErr) {
+      console.error('[SL driver-allocation GET] agenda backfill failed (non-fatal):', syncErr)
+    }
+
     const bookings = await prisma.booking.findMany({
       where: { AND: andClauses },
       select: {
@@ -113,9 +124,10 @@ export async function GET(req: NextRequest) {
                 timeFrom: true, timeTo: true, serviceType: true,
                 assignment: {
                   select: {
-                    driverName: true, vehicleType: true, vehiclePlate: true,
+                    driverName: true, driverPhone: true, vendorName: true,
+                    vehicleType: true, vehiclePlate: true,
                     driver: { select: { id: true, name: true, phone: true } },
-                    vendor: { select: { id: true, name: true } },
+                    vendor: { select: { id: true, name: true, phone: true } },
                   },
                 },
               },
@@ -222,15 +234,21 @@ export async function POST(req: NextRequest) {
     const driverRec = allocation.driver
     const vendorRec = allocation.vendor
 
-    const assignmentData = {
-      driverId:     driverId   ?? null,
-      vendorId:     vendorId   ?? null,
-      driverName:   driverRec?.name   ?? vendorRec?.name   ?? null,
-      driverPhone:  driverRec?.phone  ?? vendorRec?.phone  ?? null,
-      vehicleType:  vehicleType ?? driverRec?.vehicle?.type ?? null,
-      vehiclePlate: driverRec?.vehicle?.plateNo ?? null,
-      vendorName:   vendorRec?.name ?? null,
-    }
+    // A vehicle-type change carries no driver or vendor. It must not blank the
+    // drivers already set per movement on the chart — only the vehicle travels.
+    const isDriverChange = !!(driverId || vendorId)
+
+    const assignmentData = isDriverChange
+      ? {
+          driverId:     driverId   ?? null,
+          vendorId:     vendorId   ?? null,
+          driverName:   driverRec?.name   ?? vendorRec?.name   ?? null,
+          driverPhone:  driverRec?.phone  ?? vendorRec?.phone  ?? null,
+          vehicleType:  vehicleType ?? driverRec?.vehicle?.type ?? null,
+          vehiclePlate: driverRec?.vehicle?.plateNo ?? null,
+          vendorName:   vendorRec?.name ?? null,
+        }
+      : { vehicleType: vehicleType ?? null }
 
     const agenda = await prisma.tourAgenda.findUnique({
       where: { bookingId },
@@ -240,11 +258,18 @@ export async function POST(req: NextRequest) {
     if (agenda?.items.length) {
       await Promise.all(
         agenda.items.map(item =>
-          prisma.assignment.upsert({
-            where:  { agendaItemId: item.id },
-            create: { agendaItemId: item.id, ...assignmentData },
-            update: assignmentData,
-          })
+          isDriverChange
+            ? prisma.assignment.upsert({
+                where:  { agendaItemId: item.id },
+                create: { agendaItemId: item.id, ...assignmentData },
+                update: assignmentData,
+              })
+            // No driver in play — touch the vehicle on movements that already
+            // have an assignment rather than creating empty ones.
+            : prisma.assignment.updateMany({
+                where: { agendaItemId: item.id },
+                data:  assignmentData,
+              })
         )
       )
     }

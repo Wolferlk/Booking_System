@@ -25,6 +25,8 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    npx prisma db execute --file prisma/sql/query-monitor.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-mail-kind.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-to-list.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/query-monitor-thread-merge.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/query-monitor-reply-detail-ai-summary.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
 
@@ -40,7 +42,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    > reset prompt above. With the default it applies in place.
    >
    > If a deploy script runs the schema sync for you, decline the reset, then run
-   > the three `db execute` lines and `prisma generate` by hand.
+   > the `db execute` lines above and `prisma generate` by hand.
 
 2. **Check the Azure app permissions.** The monitor reuses the existing
    `Azure_CLIENT_ID` registration. It needs, as *application* permissions:
@@ -61,7 +63,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 |---|---|
 | A Date | Mail received date, in `QUERY_MONITOR_TZ` |
 | B Status | `Replied` / `Pending` / `Overdue` (SLA configurable, default 2 h). Can be left blank. |
-| C Subject | Mail subject |
+| C Subject | Mail subject, with the `Re:` / `Fw:` chain stripped — the query's title, not its forwarding history |
 | D Allocation time | Mail received timestamp |
 | E Replied time | First reply in the same conversation from the handler's Sent Items |
 | F File Handler | **One** name — who owns the query. See below. |
@@ -73,6 +75,12 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 | L CNTL | `CNTL 12345`, `12345 CNTL`, or a labelled CRM/reference id |
 | M Amendment | Blank unless hand-edited |
 | N Region | Only when the mail states it outright, or the rule sets a default |
+| O Replied By | The handler whose Sent Items the reply was found in |
+| P Response (hrs) | `E − D` in hours, to 2 dp. A **number**, so the team can average and sort it. Blank while open |
+| Q SLA | `Met` / `Missed` against the SLA hours, blank while open — Status says where a query stands *now*, this remembers whether it was answered in time |
+| R Mails in Thread | 1 + the chasers folded into this row |
+| S Last Mail | Timestamp of the newest mail in the thread (D stays the first one) |
+| T AI Summary | One sentence, written only while *AI reads every new mail* is on |
 
 Dates are written as real Excel serials with the same number formats as the
 manual rows, so sorting and the team's pivots keep working.
@@ -103,11 +111,11 @@ time on enquiries — but they are not noise either, so nothing is discarded.
 Every mail is classified on the subject line alone (bodies carry quoted threads,
 which would exclude a genuine query written under an old voucher mail):
 
-- **QUERY** → appended to the query sheet, columns A–N, as above.
+- **QUERY** → appended to the query sheet, columns A–T, as above.
 - **EXCLUDED** → appended to a second tab, default **“Other Mails”**, columns
-  A–J: Date · Received time · Subject · Sender · Sender Email · File Handler ·
-  TO List · Reason · Destination · CNTL. The tab is created with its header on
-  first use.
+  A–K: Date · Received time · Subject · Sender · Sender Email · File Handler ·
+  TO List · Reason · Destination · CNTL · AI Summary. The tab is created with its
+  header on first use.
 
 The pattern list is the `query_monitor_exclude_patterns` setting, edited under
 *Configuration → Mail that is not a query*. One pattern per line: `#` comments,
@@ -115,12 +123,43 @@ The pattern list is the `query_monitor_exclude_patterns` setting, edited under
 seed list covers vouchers, on/on-ground, discrepancy, refund, complaint, avail
 checks, bare `NL…` references and mailer auto-replies.
 
-Excluded mail costs no GPT call and is never chased for a reply. It appears in
+Excluded mail costs no *extraction* GPT call and is never chased for a reply. It
+does get a summary when the AI-read switch is on — "what is this on-ground
+incident about" is the question this tab is opened to answer. It appears in
 the dashboard under *Queries → Other mail*, with the pattern that caught it. A
 mail can be moved between the two tabs by hand **before** it is written; after
 that the API refuses, because this app never deletes rows and the move would
 strand one on the old tab. *Re-check unwritten mail* re-applies an edited pattern
 list to the backlog that has not been written yet.
+
+### The two AI switches
+
+They are separate settings and they do different jobs.
+
+| Switch | Default | What it costs |
+|---|---|---|
+| *AI fallback for destination & travel date* | on | A `gpt-4o-mini` call **only** for mails whose destination or travel date the regexes could not read, and only for mail bound for the query sheet |
+| *AI reads every new mail* | **off** | A `gpt-4o-mini` call for **every** new mail, on both tabs, to write column T |
+
+The second one is off by default precisely because it is per-mail rather than
+per-gap. When it is on, each newly recorded mail gets one sentence saying what is
+being asked for — pax, nights, dates when the mail states them — with the model
+told not to open with "This email is a request regarding…". The sentence is
+flattened to a single line before it reaches the cell.
+
+Three properties worth knowing:
+
+- **A sweep is capped at 60 summaries.** A catch-up run over a long lookback, or
+  a mailbox just switched on that returns a week of mail, would otherwise make
+  hundreds of calls in one pass and time the function out before it reached the
+  workbook. What is left over stays blank on an otherwise complete row.
+- **A failure is a blank cell, never a lost row.** Nothing in the summary path
+  can fail the sweep.
+- **History is not backfilled.** Turning the switch on starts summarising the
+  mail that arrives *afterwards*; rows already on the sheet keep an empty T.
+
+Both are logged to `AiUsageLog` (`query_monitor_extraction` and
+`query_monitor_summary`), so the spend is separable per switch.
 
 ### Deduplication
 
@@ -129,6 +168,86 @@ The same mail reaching five handlers is **one** entry. The key is the RFC
 recipient is stored as a `QueryMonitorMatch`; their names are joined into the TO
 List cell. If a handler is added later — mailbox activated, colleague CC'd — the
 entry's row is rewritten in place rather than appended again.
+
+### One row per query, not per mail
+
+That key recognises one mail in five inboxes. It does **not** recognise the
+*next* mail of the same conversation — the chaser, the "any update?", the agent
+replying into their own thread. Each of those is a different `internetMessageId`,
+so before thread merging each took a row of its own and the sheet showed
+
+```
+Re: URGENT QUOTE | 3501051 | Naga Suresh Naidu    12:24
+Re: URGENT QUOTE | 3501051 | Naga Suresh Naidu    12:24
+Re: URGENT QUOTE | 3501051 | Naga Suresh Naidu    12:24
+```
+
+three times over for one question. With **One row per thread** on (default), a
+follow-up folds into the row the query already owns: the TO list grows if it
+reached one more handler, `followUpCount` goes up, and the row is **rewritten**
+in place. A follow-up whose arrival changes no cell costs no Graph call at all.
+
+Two mails are the same thread when Graph gives them the same `conversationId`,
+or — for mail that has none — when the normalised subject *and* sender domain
+match **and** that subject carries a reference number — 5+ digits, or 4 that do
+not read as a year. That condition is the safety of the fallback: agencies send
+"Urgent quote required" several times a day and "SRILANKA // 15 ADULTS // JAN
+3RD WEEK 2027" is a template, not an identifier; collapsing those would hide
+real queries, which is worse than a duplicate.
+
+What a merge deliberately does **not** touch:
+
+- **Allocation time (D)** stays the first mail's — the SLA is measured from when
+  the query was asked, so a chaser cannot reset the clock.
+- **Replied time (E) and Status (B)** stay as they are. "Replied" records that
+  the team answered; an agent writing again does not un-answer it.
+
+What it **does** record, so that folding a chaser away never hides it: **Mails in
+Thread (R)** goes up by one and **Last Mail (S)** moves to the new mail's
+timestamp. Every follow-up therefore rewrites its row — that is the price of one
+line per query, and it is paid in a single range PATCH.
+
+The follow-up is still stored as an entry — its `dedupKey` is what stops the next
+sweep looking at the same mail again — with `mergedIntoId` pointing at the row it
+belongs to and a sync state of `MERGED`, which is terminal: it is never written
+to either workbook, and the dashboard lists it under its query rather than beside
+it. `threadWindowDays` (default 30) caps how far back a follow-up may reach, and
+never past the workbook's start date — a row in the *previous* file cannot be
+rewritten.
+
+**Duplicates already in the sheet** are cleaned up by *Configuration → Duplicate
+rows → Merge duplicates*. It keeps the earliest row of each thread, brings it up
+to date, deletes the later ones from both workbooks and renumbers every stored
+row pointer below them. Only columns A–N are deleted and shifted up, so the
+lists the team keeps to the right stay where they are.
+
+### Rows the database never knew about
+
+`appendRows` puts a block in the workbook; the database write that records which
+row each entry landed on is a **separate** call. A sync that dies between the two
+— a Lambda timing out — leaves the rows on the sheet with their entries still
+`PENDING`, and the next sync appends them again. No amount of thread merging
+helps: nothing in the database points at the first copy.
+
+Both ends of that are covered.
+
+- **Before appending**, the tail of the tab (last 200 rows) is read and any
+  pending row already standing there is *claimed* — the entry is pointed at the
+  row it turns out to own and drops out of the append. Identity is the date
+  serial, the timestamp serial and the subject: the three cells nothing else
+  edits. A tail that cannot be read is not fatal; the block is written, because
+  a missing query is worse than a duplicate row.
+- **Afterwards**, *Remove duplicates* in the page header reads the sheet itself
+  and deletes repeated lines whether or not any entry claims them. Two lines
+  count as repeats only when the date and subject match *and* the subject
+  carries a reference number, or when every written cell is identical — so two
+  unrelated "Urgent quote required" mails on one morning are never folded. The
+  earliest line stays; entries that owned a deleted row become `MERGED` (never
+  `PENDING`, which is what would put the row straight back) and pointers below
+  are renumbered. `GET` the same route for a count without touching the file.
+
+`mergeDuplicateEntries` works from the database outwards, this works from the
+sheet inwards; they are separate on purpose.
 
 ### Replies land the next day
 
@@ -178,19 +297,38 @@ In order, on the Configuration tab:
 
 Nothing is deleted from the old workbook.
 
+### Growing the layout over a sheet already in use
+
+Columns O–T (and K on the other-mail tab) were added in August 2026 to a workbook
+the team was already reading. Nothing was migrated and nothing was rewritten:
+
+- Row 1 is **widened, not replaced**. `headerExtension` accepts a header that is
+  a *prefix* of the current layout with every cell after it blank, and then
+  writes only those blank cells. Not one existing column name changes, so not one
+  existing value changes meaning.
+- Before widening, the rows below are read across the new columns. If **anything**
+  is already standing there — a lookup list, a pivot helper — the widening is
+  refused and reported. Once those columns are ours, every append and rewrite
+  writes over them, so that has to be a person's decision.
+- Rows already on the sheet keep O–T blank until something makes them dirty: a
+  reply landing, a chaser arriving, a hand edit. History is not backfilled; the
+  detail starts from the day the columns went in.
+
 ### “Column mismatch”
 
-The tab's header is not the expected 14 columns — almost always a file copied
-from the old 13-column sheet, which has no **TO List**. Press **Prepare**.
+The tab's header is neither the expected layout nor an older layout of ours that
+can be widened into it — almost always a file copied from an earlier sheet.
+Press **Prepare**.
 
-The header is only rewritten while the tab holds **no data rows**. Above real
-rows it is left alone and reported instead: relabelling columns without moving
-the values underneath would silently change what every cell means. A tab in that
-state needs a human — clear it, or point at a clean one.
+A header that is genuinely *wrong* (rather than merely short) is only rewritten
+while the tab holds **no data rows**. Above real rows it is left alone and
+reported instead: relabelling columns without moving the values underneath would
+silently change what every cell means. A tab in that state needs a human — clear
+it, or point at a clean one.
 
 The sync applies the same rule. It refuses to append into a mismatched tab rather
-than writing 14 columns under a 13-column header, where everything from column G
-on would land one column left of where it belongs.
+than writing the full layout under a shorter header, where every value past the
+break would land in the wrong column.
 
 ### The backup must be a different file
 
@@ -205,9 +343,10 @@ run log.
 
 ## Safety properties
 
-- **Columns A–N only** on the query sheet; anything further right belongs to the
+- **Columns A–T only** on the query sheet; anything further right belongs to the
   team's lookup lists and pivots and is never written. (The other-mail tab uses
-  A–J.)
+  A–K.) The layout can only grow into columns verified empty first — see
+  *Growing the layout over a sheet already in use*.
 - **The File Handler is always someone on the TO list**, or blank. Enforced by
   the API, not just the UI.
 - **The two tabs must differ.** Saving the same name for both is rejected —
@@ -215,7 +354,10 @@ run log.
 - **Append point is found by scanning column C from the bottom**, not from
   `usedRange` — the sheet carries formatted-but-empty rows past the last entry.
 - **Every written row's number is stored** on the entry, so a row can be traced,
-  re-read, or corrected in place.
+  re-read, or corrected in place. The duplicate clean-up is the only thing that
+  deletes rows, and it renumbers those pointers in the same pass.
+- **A follow-up never starts a row.** Merged entries are terminal (`MERGED`);
+  neither a sync, a rebase nor a reclassify can put them back in the queue.
 - **Hand edits win.** Any field corrected in the dashboard is recorded in
   `manualOverrides` and is never overwritten by a later sweep.
 - **A run lock** (`query_monitor_run_lock`, 15-min TTL) stops the in-process
@@ -242,18 +384,24 @@ src/lib/query-monitor/
   classify.ts    "is this a query?" — exclusion pattern parsing and matching
   dates.ts       Excel serial conversion in the sheet timezone
   collect.ts     Graph inbox + sent-items reads, sender filtering
+  thread.ts      thread identity — conversation, or subject+domain with a ref
   extract.ts     destination / travel date / CNTL parsing, GPT fallback
+  summarize.ts   the one-sentence summary behind "AI reads every new mail"
   sheet.ts       workbook resolution, append, in-place update, tail read
+  sheet-dedupe.ts  duplicate *rows* on the tab, incl. ones no entry claims
   run.ts         the sweep: collect → dedup → enrich → write, with the run log
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe,sheet-dedupe}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation
 prisma/sql/query-monitor-mail-kind.sql    mailKind / excludeReason / sheetTab columns
 prisma/sql/query-monitor-to-list.sql      toList + backup row/state columns
+prisma/sql/query-monitor-thread-merge.sql thread keys, mergedIntoId, followUpCount
+prisma/sql/query-monitor-reply-detail-ai-summary.sql
+                                          repliedBy, aiSummary, aiSummaryAt
 ```
 
 ## Known gaps

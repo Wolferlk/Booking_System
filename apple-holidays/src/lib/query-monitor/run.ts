@@ -29,10 +29,14 @@ import {
 } from './collect'
 import { extractByRules, extractWithAi } from './extract'
 import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
+import { displaySubject, subjectKeyFor, threadKeyFor } from './thread'
+import { summarizeMail } from './summarize'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
-  ensureWorksheet, openSession, resolveSheetRef, updateExcludedRow, updateRow,
-  type ExcludedRowValues, type SheetRef, type SheetRowValues, type WorkbookTarget,
+  deleteRowsAt, ensureWorksheet, findLastDataRow, openSession, readValuesRange,
+  remapRowNumber, resolveSheetRef, updateExcludedRow, updateRow,
+  type ExcludedRowValues, type SheetLayout, type SheetRef, type SheetRowValues,
+  type WorkbookTarget,
 } from './sheet'
 
 // ── Run log ──────────────────────────────────────────────────────────────────
@@ -147,9 +151,171 @@ export function dedupKeyFor(message: MonitoredMessage): string {
   return `${message.conversationId ?? 'no-conv'}|${subject}`.slice(0, 190)
 }
 
+// ── Threads ──────────────────────────────────────────────────────────────────
+
+type EntryWithMatches = Prisma.QueryMonitorEntryGetPayload<{ include: { matches: true } }>
+
+/**
+ * The row that already stands for this mail's thread, if there is one.
+ *
+ * `dedupKeyFor` recognises one mail seen in several inboxes; this recognises the
+ * *next* mail of a conversation the sheet already carries — the chaser, the
+ * "any update?", the agent replying into their own thread. Without it each of
+ * those takes a row of its own and the sheet shows the same subject three times.
+ *
+ * The earliest match wins: that entry is the query as it was first asked, and it
+ * is the one whose Allocation time the SLA is measured from.
+ */
+async function findThreadRoot(
+  message: MonitoredMessage, subjectKey: string | null, since: Date,
+): Promise<EntryWithMatches | null> {
+  const identities: Prisma.QueryMonitorEntryWhereInput[] = []
+  if (message.conversationId) identities.push({ conversationId: message.conversationId })
+  if (subjectKey)             identities.push({ subjectKey })
+  if (identities.length === 0) return null
+
+  return prisma.queryMonitorEntry.findFirst({
+    // A follow-up folds into the thread's own root, never into another
+    // follow-up — merged entries own no row to rewrite.
+    where:   { mergedIntoId: null, receivedAt: { gte: since }, OR: identities },
+    orderBy: { receivedAt: 'asc' },
+    include: { matches: true },
+  })
+}
+
+/**
+ * Fold a follow-up into the row its thread already owns.
+ *
+ * The follow-up is still recorded — its `dedupKey` is what stops the next sweep
+ * treating the same mail as new — but it is born MERGED and is never written to
+ * a workbook. What reaches the sheet is a *rewrite* of the existing row, and
+ * only when something the sheet shows has actually changed: a rewrite that
+ * changes no cell is a Graph call for nothing.
+ *
+ * Reply state is deliberately left alone. "Replied time" records when the team
+ * answered the query, and an agent writing again does not un-answer it.
+ */
+async function mergeFollowUp(
+  root: EntryWithMatches, group: MessageGroup, runId: string,
+): Promise<{ toList: string; rewrite: boolean }> {
+  const { message } = group
+
+  await prisma.queryMonitorEntry.create({
+    data: {
+      dedupKey:       group.dedupKey,
+      conversationId: message.conversationId,
+      threadKey:      root.threadKey ?? threadKeyFor(message),
+      subjectKey:     subjectKeyFor(message),
+      mergedIntoId:   root.id,
+      mailKind:       root.mailKind,
+      subject:        message.subject.slice(0, 2000),
+      fromAddress:    message.fromAddress,
+      fromName:       message.fromName.slice(0, 180),
+      fromDomain:     message.fromDomain,
+      receivedAt:     message.receivedAt,
+      lastMessageAt:  message.receivedAt,
+      replyStatus:    root.replyStatus,
+      toList:         joinHandlers(group.handlers.map(h => h.handlerName)),
+      // The owner lives on the root — this entry is not a query of its own.
+      handlerNames:   '',
+      salesPerson:    root.salesPerson,
+      agent:          root.agent,
+      destination:    root.destination,
+      travelDate:     root.travelDate,
+      cntl:           root.cntl,
+      region:         root.region,
+      bodySnippet:    (message.bodyPreview || message.bodyText).slice(0, 1200),
+      // Nothing was extracted for it: every field above is the root's.
+      extractionSource: 'RULE',
+      syncStatus:       'MERGED',
+      backupSyncStatus: 'MERGED',
+      firstRunId:       runId,
+      matches: {
+        create: group.handlers.map(h => ({
+          mailboxId:   h.mailboxId,
+          graphId:     h.graphId,
+          handlerName: h.handlerName,
+          receivedAt:  h.receivedAt,
+        })),
+      },
+    },
+  })
+
+  // A chaser often reaches one more handler than the original did.
+  const newHandlers = group.handlers.filter(
+    h => !root.matches.some(m => m.mailboxId === h.mailboxId),
+  )
+  if (newHandlers.length > 0) {
+    await prisma.queryMonitorMatch.createMany({
+      data: newHandlers.map(h => ({
+        entryId:     root.id,
+        mailboxId:   h.mailboxId,
+        graphId:     h.graphId,
+        handlerName: h.handlerName,
+        receivedAt:  h.receivedAt,
+      })),
+      skipDuplicates: true,
+    })
+  }
+
+  const toList = joinHandlers([
+    ...splitHandlers(root.toList),
+    ...newHandlers.map(h => h.handlerName),
+  ])
+  const owner = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList))
+
+  // The row always changes now: "Mails in Thread" goes up by one and "Last Mail"
+  // moves to this mail's timestamp. That is the whole trade for not giving the
+  // chaser a line of its own — the row has to say that the chaser happened.
+  await prisma.queryMonitorEntry.update({
+    where: { id: root.id },
+    data: {
+      toList,
+      handlerNames:  owner,
+      followUpCount: { increment: 1 },
+      lastMessageAt: message.receivedAt,
+      ...dirtyPatch(root),
+    },
+  })
+
+  return { toList, rewrite: true }
+}
+
 // ── Sheet row assembly ───────────────────────────────────────────────────────
 
-export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): SheetRowValues {
+/**
+ * How long the team took to answer, in hours to two decimals.
+ *
+ * A number, not "2h 15m": the column exists so the team can average it and sort
+ * on it, which text cannot do. Blank while the query is still open — a zero
+ * there would drag every average down and read as "answered instantly".
+ */
+export function responseHours(receivedAt: Date, repliedAt: Date | null): number | '' {
+  if (!repliedAt) return ''
+  const hours = (repliedAt.getTime() - receivedAt.getTime()) / 3_600_000
+  // Clock skew between Graph's received and sent stamps can put a fast reply a
+  // hair before the mail it answers; floor at zero rather than show a negative.
+  return Number(Math.max(0, hours).toFixed(2))
+}
+
+/**
+ * Met / Missed, which the Status column cannot say.
+ *
+ * Status is where the query stands *now* — Replied, Pending, Overdue. This is
+ * whether the SLA was honoured, and the two come apart on exactly the row that
+ * matters: a query answered six hours late reads "Replied" forever, and only
+ * this column remembers that it was late.
+ */
+export function slaOutcome(
+  receivedAt: Date, repliedAt: Date | null, slaHours: number,
+): string {
+  if (!repliedAt) return ''
+  return repliedAt.getTime() - receivedAt.getTime() <= slaHours * 3_600_000 ? 'Met' : 'Missed'
+}
+
+export function buildSheetRow(
+  entry: QueryMonitorEntry, writeStatus: boolean, slaHours = 2,
+): SheetRowValues {
   const status = writeStatus
     ? (REPLY_STATUS_SHEET_LABEL[entry.replyStatus as ReplyStatus] ?? '')
     : ''
@@ -157,7 +323,9 @@ export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): S
   return {
     date:           toExcelDateSerial(entry.receivedAt),
     status,
-    subject:        entry.subject.slice(0, 500),
+    // The thread's title, not the newest envelope: "Re: Re: Fw:" in front of a
+    // subject is how the same query ends up looking like three.
+    subject:        displaySubject(entry.subject).slice(0, 500),
     allocationTime: toExcelDateTimeSerial(entry.receivedAt),
     repliedTime:    toExcelDateTimeSerial(entry.repliedAt),
     // One owner in F, everyone who received it in G. Blank F is deliberate: it
@@ -171,6 +339,14 @@ export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): S
     cntl:           entry.cntl ?? '',
     amendment:      entry.amendment ?? '',
     region:         entry.region ?? '',
+    repliedBy:      entry.repliedBy ?? '',
+    responseHours:  responseHours(entry.receivedAt, entry.repliedAt),
+    sla:            slaOutcome(entry.receivedAt, entry.repliedAt, slaHours),
+    // The chasers that did not get rows of their own are counted here instead,
+    // so nothing is hidden — the sheet says "3 mails" on one line.
+    threadCount:    entry.followUpCount + 1,
+    lastMail:       toExcelDateTimeSerial(entry.lastMessageAt ?? entry.receivedAt),
+    aiSummary:      entry.aiSummary ?? '',
   }
 }
 
@@ -179,7 +355,7 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
   return {
     date:         toExcelDateSerial(entry.receivedAt),
     receivedTime: toExcelDateTimeSerial(entry.receivedAt),
-    subject:      entry.subject.slice(0, 500),
+    subject:      displaySubject(entry.subject).slice(0, 500),
     sender:       entry.fromName || entry.fromDomain,
     senderEmail:  entry.fromAddress,
     fileHandler:  entry.handlerNames,
@@ -187,6 +363,7 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
     reason:       entry.excludeReason ?? 'Not a query',
     destination:  entry.destination ?? '',
     cntl:         entry.cntl ?? '',
+    aiSummary:    entry.aiSummary ?? '',
   }
 }
 
@@ -399,9 +576,27 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
       ? parseExcludePatterns(config.excludePatterns)
       : []
     let excludedThisRun = 0
+
+    // How far back a follow-up may reach for the row it belongs to. Never past
+    // the workbook's start date: a row in the *previous* file cannot be
+    // rewritten, so mail whose thread began there has to start a fresh row here.
+    const windowStart = new Date(Date.now() - config.threadWindowDays * 86_400_000)
+    const threadWindowFrom = cutoff && cutoff > windowStart ? cutoff : windowStart
+
     const ordered = Array.from(groups.values()).sort(
       (a, b) => a.message.receivedAt.getTime() - b.message.receivedAt.getTime(),
     )
+
+    /**
+     * Summaries are the one AI call that fires on *every* new mail, so the sweep
+     * carries a ceiling for them. A catch-up run over a long lookback, or a
+     * mailbox that has just been switched on and returns a week of mail, would
+     * otherwise make hundreds of calls in one pass and time the function out
+     * long before it reached the workbook. What is left over stays unsummarised
+     * — a blank cell, on a row that is otherwise complete.
+     */
+    let summaryBudget = config.aiSummaryEnabled ? 60 : 0
+    let summarised = 0
 
     for (const group of ordered) {
       try {
@@ -455,6 +650,25 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           continue
         }
 
+        // ── A later mail of a thread the sheet already carries ────────────
+        // One query, one row: the chaser rewrites that row instead of adding a
+        // second line with the same subject under it.
+        const subjectKey = subjectKeyFor(message)
+        const root = config.threadMergeEnabled
+          ? await findThreadRoot(message, subjectKey, threadWindowFrom)
+          : null
+
+        if (root) {
+          const { toList: mergedList } = await mergeFollowUp(root, group, run.id)
+          counters.entriesUpdated += 1
+          log.add('info',
+            `Follow-up on "${displaySubject(message.subject).slice(0, 60)}" — folded into `
+            + (root.sheetRow ? `row ${root.sheetRow}` : 'the query it belongs to')
+            + `, now ${root.followUpCount + 2} mail(s) on one row (TO list ${mergedList})`,
+            { entryId: root.id, followUps: root.followUpCount + 1 })
+          continue
+        }
+
         // ── New entry ─────────────────────────────────────────────────────
         // Vouchers, on-ground incidents and avail checks are recorded like
         // anything else but routed to the second tab, so the query sheet stays
@@ -491,10 +705,29 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           }
         }
 
+        // One sentence saying what the mail actually wants — written for both
+        // tabs, because "what is this on-ground incident about" is exactly the
+        // question the other-mail tab is opened to answer.
+        let aiSummary: string | null = null
+        if (summaryBudget > 0) {
+          summaryBudget -= 1
+          aiSummary = await summarizeMail(
+            message.subject, message.bodyText || message.bodyPreview, kind,
+          )
+          if (aiSummary) {
+            summarised += 1
+            counters.aiCalls += 1
+          }
+        }
+
         const created = await prisma.queryMonitorEntry.create({
           data: {
             dedupKey:       group.dedupKey,
             conversationId: message.conversationId,
+            // What every later mail of this thread will find it by.
+            threadKey:      threadKeyFor(message),
+            subjectKey,
+            lastMessageAt:  message.receivedAt,
             mailKind:       kind,
             excludeReason:  reason?.slice(0, 180) ?? null,
             subject:        message.subject.slice(0, 2000),
@@ -516,6 +749,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             bodySnippet:    (message.bodyPreview || message.bodyText).slice(0, 1200),
             extractionSource: source,
             aiConfidence:   confidence,
+            aiSummary,
+            aiSummaryAt:    aiSummary ? new Date() : null,
             syncStatus:     'PENDING',
             firstRunId:     run.id,
             matches: {
@@ -553,6 +788,14 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         const msg = err instanceof Error ? err.message : String(err)
         log.add('error', `Failed to record "${group.message.subject.slice(0, 60)}": ${msg}`)
       }
+    }
+
+    if (config.aiSummaryEnabled) {
+      log.add(summaryBudget > 0 ? 'info' : 'warn',
+        `AI read ${summarised} new mail(s) and wrote a one-line summary`
+        + (summaryBudget > 0
+          ? ''
+          : ' — the per-sweep ceiling of 60 was reached, the rest were left blank'))
     }
 
     // ── 3. Reply detection ──────────────────────────────────────────────────
@@ -632,9 +875,13 @@ async function detectReplies(
 ): Promise<number> {
   const since = new Date(Date.now() - chaseDays * 86_400_000)
 
-  // Excluded mail is not measured against the SLA, so it never costs a lookup.
+  // Excluded mail is not measured against the SLA, so it never costs a lookup —
+  // nor do follow-ups, whose reply state is the root row's to carry.
   const open = await prisma.queryMonitorEntry.findMany({
-    where:   { mailKind: 'QUERY', replyStatus: { not: 'REPLIED' }, receivedAt: { gte: since } },
+    where: {
+      mailKind: 'QUERY', mergedIntoId: null,
+      replyStatus: { not: 'REPLIED' }, receivedAt: { gte: since },
+    },
     include: { matches: { include: { mailbox: true } } },
     orderBy: { receivedAt: 'asc' },
     take:    500,
@@ -691,6 +938,9 @@ async function detectReplies(
       data: {
         repliedAt:   repliedAt ?? entry.repliedAt,
         replyStatus: nextStatus,
+        // Who actually answered, kept whether or not they became the owner —
+        // on a mail sent to six handlers this is the only record of it.
+        ...(repliedBy ? { repliedBy } : {}),
         ...(newOwner ? { handlerNames: newOwner } : {}),
         // A row already in a sheet needs its Status / Replied time rewritten.
         ...dirtyPatch(entry),
@@ -854,6 +1104,101 @@ async function skipEntriesBeforeStartDate(startDate: string, log?: RunLog): Prom
   }
 }
 
+/**
+ * Identity of a row for the append guard: the day, the timestamp and the
+ * subject — the three cells nothing else on the sheet edits.
+ *
+ * Serials are rounded to five decimals (under a second) because a double that
+ * has been through Excel and back is equal to the one we sent only to within
+ * the precision Graph reports it at.
+ */
+function writtenRowKey(
+  date: number | '', time: number | '', subject: string,
+): string {
+  const serial = (v: number | '') => (v === '' ? '' : v.toFixed(5))
+  return `${serial(date)}|${serial(time)}|${subject.trim().toLowerCase()}`
+}
+
+/** The same identity, read back off a row that is already on the sheet. */
+function sheetRowKey(
+  cells: (string | number | boolean | null)[], layout: SheetLayout,
+): string {
+  // Query tab: A date, D allocation time, C subject.
+  // Other-mail tab: A date, B received time, C subject.
+  const timeIndex = layout === EXCLUDED_LAYOUT ? 1 : 3
+  const num = (v: unknown) => (typeof v === 'number' ? v : '')
+  return writtenRowKey(num(cells[0]), num(cells[timeIndex]), String(cells[2] ?? ''))
+}
+
+/**
+ * Rows already on the tab that the pending block is about to write again.
+ *
+ * The hole this closes: `appendRows` puts the block in the workbook and the
+ * database write that records the row numbers is a separate call. If the
+ * process dies between the two — a Lambda timing out mid-sync — the rows are on
+ * the sheet and the entries are still PENDING, so the next sync appends them a
+ * second time. Nothing downstream can tell those two lines apart afterwards.
+ *
+ * So before appending, the tail of the tab is read and any pending row already
+ * standing there is claimed rather than written again: the entry is pointed at
+ * the row it turns out to own, and drops out of the append.
+ *
+ * Only the tail is read. A row this sync is about to append can only have been
+ * written by a sync that got as far as the workbook, which puts it at the
+ * bottom — scanning the whole sheet every time would cost far more than it
+ * could ever find.
+ */
+async function claimAlreadyWrittenRows(
+  entries: QueryMonitorEntry[],
+  keyOf: (entry: QueryMonitorEntry) => string,
+  ref: SheetRef, tab: string, layout: SheetLayout, sessionId: string | null,
+  plan: WorkbookPlan,
+  tailRows = 200,
+): Promise<{ toAppend: QueryMonitorEntry[]; claimed: number }> {
+  if (entries.length === 0) return { toAppend: entries, claimed: 0 }
+
+  let rows: (string | number | boolean | null)[][]
+  let firstRow: number
+  try {
+    const lastDataRow = await findLastDataRow(ref, tab, sessionId, layout)
+    if (lastDataRow < 2) return { toAppend: entries, claimed: 0 }
+    firstRow = Math.max(2, lastDataRow - tailRows + 1)
+    rows = await readValuesRange(ref, tab, firstRow, lastDataRow, layout, sessionId)
+  } catch {
+    // The guard is an optimisation over correctness of the append itself. If the
+    // tail cannot be read, write the block — a duplicate row is recoverable,
+    // a query missing from the sheet is what the team actually notices.
+    return { toAppend: entries, claimed: 0 }
+  }
+
+  const rowByKey = new Map<string, number>()
+  rows.forEach((cells, i) => {
+    const key = sheetRowKey(cells, layout)
+    if (!rowByKey.has(key)) rowByKey.set(key, firstRow + i)
+  })
+
+  const toAppend: QueryMonitorEntry[] = []
+  let claimed = 0
+
+  for (const entry of entries) {
+    const row = rowByKey.get(keyOf(entry))
+    if (row === undefined) { toAppend.push(entry); continue }
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data: {
+        [plan.rowField]:    row,
+        [plan.statusField]: 'SYNCED',
+        [plan.errorField]:  null,
+        ...(plan.target === 'primary' ? { sheetTab: tab, syncedAt: new Date() } : {}),
+      },
+    })
+    claimed += 1
+  }
+
+  return { toAppend, claimed }
+}
+
 /** One workbook's share of the work. See `syncEntriesToSheet`. */
 async function syncOneWorkbook(
   plan: WorkbookPlan, log?: RunLog, limit = 200,
@@ -955,17 +1300,35 @@ async function syncOneWorkbook(
           // value from G onwards would land one column left of where it belongs.
           throw new Error(
             `"${config.sheetName}" has data under a header that is not the expected `
-            + `${QUERY_LAYOUT.header.length}-column layout (File Handler, TO List, …). `
-            + 'Nothing was written — fix the header, or point at a clean tab, then sync again.',
+            + `${QUERY_LAYOUT.header.length}-column layout (A–${QUERY_LAYOUT.lastColumn}: … Replied By, `
+            + 'Response (hrs), SLA, Mails in Thread, Last Mail, AI Summary). Nothing was written. '
+            + "Either row 1 is somebody else's header, or the columns the new layout needs "
+            + 'already hold data of yours — clear them, or point at a clean tab, then sync again.',
           )
         }
 
-        const rows = pendingQueries.map(e => buildSheetRow(e, config.writeStatusColumn))
-        const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
-        // Row numbers are stored per entry so a row can be rewritten later.
-        await recordRows(pendingQueries, result.firstRow, config.sheetName)
-        appended += result.rows
-        note('success', `Appended ${result.rows} row(s) to "${config.sheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        // Anything a previous sync already put on the sheet is claimed, not
+        // written twice — see claimAlreadyWrittenRows.
+        const { toAppend, claimed } = await claimAlreadyWrittenRows(
+          pendingQueries,
+          e => {
+            const row = buildSheetRow(e, config.writeStatusColumn, config.slaHours)
+            return writtenRowKey(row.date, row.allocationTime, row.subject)
+          },
+          ref, config.sheetName, QUERY_LAYOUT, sessionId, plan,
+        )
+        if (claimed > 0) {
+          note('warn', `${claimed} row(s) were already on "${config.sheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
+        }
+
+        const rows = toAppend.map(e => buildSheetRow(e, config.writeStatusColumn, config.slaHours))
+        if (rows.length > 0) {
+          const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
+          // Row numbers are stored per entry so a row can be rewritten later.
+          await recordRows(toAppend, result.firstRow, config.sheetName)
+          appended += result.rows
+          note('success', `Appended ${result.rows} row(s) to "${config.sheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        }
       } catch (err) {
         await failBlock(pendingQueries, err instanceof Error ? err.message : String(err), 'query')
       }
@@ -981,11 +1344,25 @@ async function syncOneWorkbook(
           )
         }
 
-        const rows = pendingExcluded.map(buildExcludedRow)
-        const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
-        await recordRows(pendingExcluded, result.firstRow, config.excludedSheetName)
-        appended += result.rows
-        note('success', `Appended ${result.rows} non-query mail(s) to "${config.excludedSheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        const { toAppend, claimed } = await claimAlreadyWrittenRows(
+          pendingExcluded,
+          e => {
+            const row = buildExcludedRow(e)
+            return writtenRowKey(row.date, row.receivedTime, row.subject)
+          },
+          ref, config.excludedSheetName, EXCLUDED_LAYOUT, sessionId, plan,
+        )
+        if (claimed > 0) {
+          note('warn', `${claimed} row(s) were already on "${config.excludedSheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
+        }
+
+        const rows = toAppend.map(buildExcludedRow)
+        if (rows.length > 0) {
+          const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
+          await recordRows(toAppend, result.firstRow, config.excludedSheetName)
+          appended += result.rows
+          note('success', `Appended ${result.rows} non-query mail(s) to "${config.excludedSheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+        }
       } catch (err) {
         await failBlock(pendingExcluded, err instanceof Error ? err.message : String(err), 'non-query')
       }
@@ -998,7 +1375,7 @@ async function syncOneWorkbook(
         if (isExcluded(entry)) {
           await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
         } else {
-          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn), { sessionId, ref, sheetName: tab })
+          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn, config.slaHours), { sessionId, ref, sheetName: tab })
         }
         await prisma.queryMonitorEntry.update({
           where: { id: entry.id },
@@ -1076,6 +1453,199 @@ export async function reclassifyUnsyncedEntries(): Promise<{ toExcluded: number;
   return { toExcluded, toQuery, scanned: entries.length }
 }
 
+// ── Duplicate clean-up ───────────────────────────────────────────────────────
+
+export interface DuplicateSweepResult {
+  scanned:     number
+  merged:      number
+  rowsRemoved: number
+  /** Per workbook and tab: what was taken out, or why it could not be. */
+  workbooks:   { target: WorkbookTarget; tab: string; rows: number; error?: string }[]
+}
+
+/** Which tab an entry's row lives on in a given workbook. Mirrors `syncOneWorkbook`. */
+function tabOf(
+  entry: QueryMonitorEntry, cfg: { sheetName: string; excludedSheetName: string },
+  target: WorkbookTarget,
+): string {
+  const byKind = entry.mailKind === 'EXCLUDED' ? cfg.excludedSheetName : cfg.sheetName
+  return target === 'primary' ? (entry.sheetTab ?? byKind) : byKind
+}
+
+/**
+ * Fold the duplicates that are already in the workbook onto one row each.
+ *
+ * Thread merging only stops *new* duplicates. The rows written before it existed
+ * — three lines of "Re: URGENT QUOTE | 3501051 | …" one under the other — are
+ * cleaned up here: the earliest row of each thread is kept and updated, the rest
+ * are deleted from the sheet and their entries marked MERGED.
+ *
+ * Deleting shifts every row below up by one, so the stored row pointers are
+ * renumbered in the same pass; get that wrong and later rewrites would land on
+ * the wrong rows. Only columns A–N move — the lists the team keeps to the right
+ * of them are not aligned to our rows and are left where they are.
+ *
+ * Deliberately an admin action, not something a sweep does on its own.
+ */
+export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
+  const cfg    = await getConfig()
+  const cutoff = startDateBoundary(cfg.startDate)
+
+  const entries = await prisma.queryMonitorEntry.findMany({
+    where:   { mergedIntoId: null, ...(cutoff ? { receivedAt: { gte: cutoff } } : {}) },
+    orderBy: { receivedAt: 'asc' },
+    include: { matches: true },
+    take:    5000,
+  })
+
+  /** Thread identity → the entry that keeps the row. Both keys point at it. */
+  const roots = new Map<string, EntryWithMatches>()
+  const duplicates: { entry: EntryWithMatches; root: EntryWithMatches }[] = []
+  /** Root id → what the merge has accumulated onto it. */
+  const growth = new Map<string, { toList: string[]; followUps: number; lastMessageAt: Date }>()
+
+  for (const entry of entries) {
+    const subjectKey = subjectKeyFor(entry)
+    const keys = [entry.conversationId, subjectKey].filter((k): k is string => !!k)
+    const root = keys.map(k => roots.get(k)).find(Boolean)
+
+    if (!root) {
+      // First mail of this thread — it keeps its row, and answers to both keys.
+      for (const key of keys) roots.set(key, entry)
+      continue
+    }
+
+    // A duplicate can carry a key the root has never been seen under (the same
+    // subject sent as a fresh mail), so its keys join the root's.
+    for (const key of keys) if (!roots.has(key)) roots.set(key, root)
+
+    duplicates.push({ entry, root })
+    const acc = growth.get(root.id) ?? {
+      toList: splitHandlers(root.toList), followUps: root.followUpCount,
+      lastMessageAt: root.lastMessageAt ?? root.receivedAt,
+    }
+    acc.toList.push(...splitHandlers(entry.toList))
+    acc.followUps += 1
+    if (entry.receivedAt > acc.lastMessageAt) acc.lastMessageAt = entry.receivedAt
+    growth.set(root.id, acc)
+  }
+
+  /** target → tab → the row numbers this clean-up frees up. */
+  const removals = new Map<WorkbookTarget, Map<string, number[]>>()
+  const noteRemoval = (target: WorkbookTarget, tab: string, row: number) => {
+    const byTab = removals.get(target) ?? new Map<string, number[]>()
+    byTab.set(tab, [...(byTab.get(tab) ?? []), row])
+    removals.set(target, byTab)
+  }
+
+  for (const { entry, root } of duplicates) {
+    if (entry.sheetRow)       noteRemoval('primary', tabOf(entry, cfg, 'primary'), entry.sheetRow)
+    if (entry.backupSheetRow) noteRemoval('backup',  tabOf(entry, cfg, 'backup'),  entry.backupSheetRow)
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data: {
+        mergedIntoId:     root.id,
+        threadKey:        root.threadKey ?? threadKeyFor(root),
+        subjectKey:       subjectKeyFor(entry),
+        syncStatus:       'MERGED',
+        backupSyncStatus: 'MERGED',
+        syncError:        null,
+        backupSyncError:  null,
+        // The row it used to own is about to be deleted from the workbook.
+        sheetRow:         null,
+        sheetTab:         null,
+        backupSheetRow:   null,
+      },
+    })
+  }
+
+  // The kept rows inherit everything their duplicates knew.
+  for (const [rootId, acc] of Array.from(growth.entries())) {
+    const root = entries.find(e => e.id === rootId)!
+    const toList = joinHandlers(acc.toList)
+    const owner  = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList))
+    await prisma.queryMonitorEntry.update({
+      where: { id: rootId },
+      data: {
+        toList,
+        handlerNames:  owner,
+        followUpCount: acc.followUps,
+        lastMessageAt: acc.lastMessageAt,
+        threadKey:     root.threadKey ?? threadKeyFor(root),
+        subjectKey:    subjectKeyFor(root),
+        ...(toList !== root.toList || owner !== root.handlerNames ? dirtyPatch(root) : {}),
+      },
+    })
+  }
+
+  const workbooks: DuplicateSweepResult['workbooks'] = []
+  let rowsRemoved = 0
+
+  for (const [target, byTab] of Array.from(removals.entries())) {
+    if (target === 'backup' && !cfg.backupEnabled) continue
+
+    let ref: SheetRef
+    try {
+      ref = await resolveSheetRef(false, target)
+    } catch (err) {
+      for (const [tab, rows] of Array.from(byTab.entries())) {
+        workbooks.push({ target, tab, rows: 0, error: err instanceof Error ? err.message : String(err) })
+      }
+      continue
+    }
+
+    const sessionId = await openSession(ref)
+    try {
+      for (const [tab, rows] of Array.from(byTab.entries())) {
+        const layout: SheetLayout = tab === cfg.excludedSheetName ? EXCLUDED_LAYOUT : QUERY_LAYOUT
+        try {
+          const removed = await deleteRowsAt(ref, tab, rows, layout, sessionId)
+          await renumberAfterDelete(target, tab, rows, cfg)
+          rowsRemoved += removed
+          workbooks.push({ target, tab, rows: removed })
+        } catch (err) {
+          workbooks.push({ target, tab, rows: 0, error: err instanceof Error ? err.message : String(err) })
+        }
+      }
+    } finally {
+      await closeSession(ref, sessionId)
+    }
+  }
+
+  return { scanned: entries.length, merged: duplicates.length, rowsRemoved, workbooks }
+}
+
+/**
+ * Pull the stored row pointers up behind rows that were just deleted.
+ *
+ * Everything that sat below a deleted row is now one row higher per deletion
+ * above it. Left unadjusted, the next "reply landed" rewrite would overwrite an
+ * unrelated query.
+ */
+export async function renumberAfterDelete(
+  target: WorkbookTarget, tab: string, deleted: number[],
+  cfg: { sheetName: string; excludedSheetName: string },
+): Promise<void> {
+  const rowField = target === 'primary' ? 'sheetRow' : 'backupSheetRow'
+
+  const survivors = await prisma.queryMonitorEntry.findMany({
+    where: { [rowField]: { not: null } },
+  })
+
+  for (const entry of survivors) {
+    if (tabOf(entry, cfg, target) !== tab) continue
+    const row = entry[rowField]
+    if (row === null) continue
+    const next = remapRowNumber(row, deleted)
+    if (next === row) continue
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data:  { [rowField]: next },
+    })
+  }
+}
+
 export interface RebaseResult {
   requeued:  number
   retired:   number
@@ -1098,8 +1668,10 @@ export async function rebaseToNewWorkbook(): Promise<RebaseResult> {
   const config = await getConfig()
   const cutoff = startDateBoundary(config.startDate)
 
+  // Follow-ups are left MERGED: they never owned a row in the old file and must
+  // not be given one in the new one — their thread's root carries them.
   const requeued = await prisma.queryMonitorEntry.updateMany({
-    where: cutoff ? { receivedAt: { gte: cutoff } } : {},
+    where: { mergedIntoId: null, ...(cutoff ? { receivedAt: { gte: cutoff } } : {}) },
     data: {
       sheetRow: null, sheetTab: null, syncStatus: 'PENDING', syncError: null,
       syncedAt: null,
@@ -1112,7 +1684,7 @@ export async function rebaseToNewWorkbook(): Promise<RebaseResult> {
   // row of the new workbook.
   const retired = cutoff
     ? await prisma.queryMonitorEntry.updateMany({
-        where: { receivedAt: { lt: cutoff } },
+        where: { mergedIntoId: null, receivedAt: { lt: cutoff } },
         data: {
           syncStatus: 'SKIPPED', backupSyncStatus: 'SKIPPED',
           sheetRow: null, sheetTab: null, backupSheetRow: null,

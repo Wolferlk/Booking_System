@@ -118,17 +118,25 @@ export interface OpsDaySummary {
 }
 
 export interface OpsDayBoard {
-  /** The local date the board describes, `yyyy-mm-dd`. */
+  /** First local date of the window, `yyyy-mm-dd`. Equals `to` for a single day. */
+  from: string
+  /** Last local date of the window, inclusive. */
+  to: string
+  /** Back-compat alias for `from` — the board's anchor date. */
   date: string
-  /** "Fri 07 Aug 2026". */
+  /** Whole days in the window, inclusive of both ends. */
+  days: number
+  /** "Fri 07 Aug 2026", or "01 Aug 2026 → 07 Aug 2026" for a range. */
   label: string
   timezone: string
-  /** True when `date` is today in the operations timezone. */
+  /** True when the window is exactly today in the operations timezone. */
   isToday: boolean
   /** False when the TE reconfirmation table could not be read. */
   callDataAvailable: boolean
   summary: OpsDaySummary
   rows: OpsDayRow[]
+  /** True when the row cap was hit and the window is showing a partial picture. */
+  truncated: boolean
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -136,7 +144,14 @@ export interface OpsDayBoard {
 /** A cancelled tour is not on the ground, whatever its dates say. */
 const DEAD_STATUSES: BookingStatus[] = ['CANCELLED']
 
-const MAX_ROWS = 1000
+const MAX_ROWS = 2000
+
+/**
+ * The widest window the board will build. A quarter covers every drill-down ops
+ * actually asks for ("this month", "next 30 days") while keeping one query
+ * bounded — an unbounded range would happily try to load the whole book.
+ */
+const MAX_WINDOW_DAYS = 92
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -224,8 +239,12 @@ async function loadPreTourCalls(
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export interface OpsDayOptions {
-  /** `yyyy-mm-dd`. Defaults to today in the operations timezone. */
+  /** Single-day shorthand: sets both ends of the window. `yyyy-mm-dd`. */
   date?: string | null
+  /** First day of the window, inclusive. Falls back to `date`, then today. */
+  from?: string | null
+  /** Last day of the window, inclusive. Falls back to `from`. */
+  to?: string | null
   /** A `CountryFilter` value; `ALL` or empty means no country restriction. */
   country?: string | null
   /** Free-text match on booking ref, agent, file handler or passenger name. */
@@ -233,17 +252,35 @@ export interface OpsDayOptions {
   timezone?: string
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/** A valid `yyyy-mm-dd` from the input, or null. */
+function asDate(v: string | null | undefined): string | null {
+  return v && ISO_DATE.test(v) ? v : null
+}
+
 export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoard> {
   const timezone = opts.timezone || DEFAULT_REPORT_TZ
   const today = dateInTz(new Date(), timezone)
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(opts.date ?? '') ? (opts.date as string) : today
 
-  const dayStart = zonedDayStart(date, timezone)
-  const dayEnd = zonedDayStart(shiftDate(date, 1), timezone)
+  // Resolve the window. Callers may pass a single `date`, a `from`/`to` pair, or
+  // nothing at all; a reversed pair is swapped rather than rejected, since a
+  // date picker makes that easy to do by accident.
+  const anchor = asDate(opts.from) ?? asDate(opts.date) ?? today
+  const other = asDate(opts.to) ?? asDate(opts.date) ?? anchor
+  const from = anchor <= other ? anchor : other
+  let to = anchor <= other ? other : anchor
+
+  if (daysBetween(from, to) + 1 > MAX_WINDOW_DAYS) {
+    to = shiftDate(from, MAX_WINDOW_DAYS - 1)
+  }
+
+  const dayStart = zonedDayStart(from, timezone)
+  const dayEnd = zonedDayStart(shiftDate(to, 1), timezone)
 
   const and: Prisma.BookingWhereInput[] = [
-    // On ground on `date`: landed on or before the day ends, leaves on or after
-    // it starts. Both bounds are half-open against the local day.
+    // On ground during the window: landed before the window ends, leaves on or
+    // after it starts. Both bounds are half-open against the local days.
     { arrivalDate: { lt: dayEnd } },
     { departureDate: { gte: dayStart } },
     { status: { notIn: DEAD_STATUSES } },
@@ -336,10 +373,12 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       paxAdults: b.paxAdults,
       paxChildren: b.paxChildren,
       paxInfants: b.paxInfants,
-      dayNo: daysBetween(arrivalDate, date) + 1,
+      // Day-of-tour is measured against the start of the window; a tour that
+      // began before it opened is clamped to day 1 rather than going negative.
+      dayNo: Math.max(1, daysBetween(arrivalDate, from) + 1),
       totalDays: daysBetween(arrivalDate, departureDate) + 1,
-      isArrival: arrivalDate === date,
-      isDeparture: departureDate === date,
+      isArrival: arrivalDate >= from && arrivalDate <= to,
+      isDeparture: departureDate >= from && departureDate <= to,
       driver: readiness.driver,
       tickets: readiness.tickets,
       qc: readiness.qc,
@@ -385,13 +424,21 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       .sort((a, b) => b.bookings - a.bookings || a.label.localeCompare(b.label)),
   }
 
+  const days = daysBetween(from, to) + 1
+
   return {
-    date,
-    label: formatReportDate(date, { weekday: true }),
+    from,
+    to,
+    date: from,
+    days,
+    label: days === 1
+      ? formatReportDate(from, { weekday: true })
+      : `${formatReportDate(from)} → ${formatReportDate(to)}`,
     timezone,
-    isToday: date === today,
+    isToday: from === today && to === today,
     callDataAvailable,
     summary,
     rows,
+    truncated: bookings.length >= MAX_ROWS,
   }
 }

@@ -8,8 +8,8 @@ import { clampPct, type DriverLogLine, type DriverLogSnapshot, type LineDetailMe
 export const dynamic = 'force-dynamic'
 
 // Roles that may view / edit the Driver Advance Sheet (operations + finance + admin).
-const READ_ROLES  = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
-const WRITE_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const READ_ROLES  = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const WRITE_ROLES = ['AC_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 /** GET — effective Driver Log view (saved snapshot merged with PNL + settings). */
 export async function GET(
