@@ -1229,9 +1229,9 @@ export default function UsersPage() {
               <p className="text-[11px] text-blue-600 mt-0.5">
                 {form.role === 'ULTRA_SUPER_ADMIN' && '🌐 System owner — all-countries access, all modules, user management & danger zone. Requires critical password on login.'}
                 {form.role === 'SUPER_ADMIN' && 'Full country access — user management, danger zone, and all admin functions for the assigned country.'}
-                {form.role === 'BT_USER'     && 'Booking creation, confirmation, P&L management, and mail inbox.'}
+                {form.role === 'BT_USER'     && 'Booking creation, confirmation, P&L management, mail inbox, and query monitor.'}
                 {form.role === 'GT_USER'     && 'Ground operations: assignments, tickets, drivers, vendors, and MC report. (Vietnam only)'}
-                {form.role === 'GT_VN_USER'  && 'Vietnam ground team, limited: Vietnam dashboard, bookings list, booking details (agenda, tickets, drivers, PDF) and the Ops Board. Nothing else. (Vietnam only)'}
+                {form.role === 'GT_VN_USER'  && 'Vietnam ground team, limited: Vietnam dashboard, bookings list, booking details (agenda, tickets, drivers, PDF), the MC Report and the Ops Board. Nothing else. (Vietnam only)'}
                 {form.role === 'GT_TE_USER'  && 'Combined ground + travel experience — assignments, reminders, payments. (Sri Lanka & Singapore/Malaysia)'}
                 {form.role === 'TE_USER'     && 'Travel experience: live overview, analytics, ticket & voucher management. (Vietnam only)'}
                 {form.role === 'AC_USER'     && 'Accounts: P&L management, profit dashboard, credit agents, and reports.'}

@@ -56,6 +56,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Driver Logs',    href: '/dashboard/driver-log',                icon: 'Navigation2' },
     { ...WHATSAPP_NAV_ITEM },
     { label: 'Mail Inbox',     href: '/dashboard/admin/mail-inbox',          icon: 'Mail' },
+    { label: 'Query Monitor',  href: '/dashboard/admin/query-monitor',       icon: 'Inbox' },
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',            icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',   icon: 'FolderOpen' },
   ],
@@ -73,12 +74,14 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
   ],
-  // Vietnam Ground Team — Limited. Deliberately only three entries: the Vietnam
-  // dashboard, the bookings list and the Ops Board. Middleware blocks everything
-  // else, so nothing extra should be added here without widening that allowlist.
+  // Vietnam Ground Team — Limited. Deliberately only four entries: the Vietnam
+  // dashboard, the bookings list, the Ops Board and the MC Report. Middleware
+  // blocks everything else, so nothing extra should be added here without
+  // widening that allowlist.
   GT_VN_USER: [
     { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
+    { label: 'MC Report',         href: '/dashboard/mc-report',        icon: 'Table2' },
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
   ],
   TE_USER: [
