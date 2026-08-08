@@ -113,11 +113,27 @@ function sentimentLabel(s?: string | null) {
   return s ? (map[s] ?? s) : '—'
 }
 
-function ratingBadge(v?: string | null) {
-  if (!v) return '<span style="color:#94a3b8">—</span>'
-  const color = v === 'good' ? '#16a34a' : v === 'bad' ? '#dc2626' : '#64748b'
-  const bg    = v === 'good' ? '#f0fdf4' : v === 'bad' ? '#fef2f2' : '#f8fafc'
-  return `<span style="background:${bg};color:${color};font-weight:700;font-size:10px;padding:2px 7px;border-radius:20px;border:1px solid ${v === 'good' ? '#bbf7d0' : v === 'bad' ? '#fecaca' : '#e2e8f0'}">${v.toUpperCase()}</span>`
+function esc(s: unknown) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/** Single inline chip: "🏨 Hotel · Good" — readable at a glance, no nested table needed. */
+function ratingChip(icon: string, label: string, v?: string | null) {
+  const good = v === 'good'
+  const bad  = v === 'bad'
+  const bg     = good ? '#f0fdf4' : bad ? '#fef2f2' : '#f8fafc'
+  const color  = good ? '#15803d' : bad ? '#b91c1c' : '#94a3b8'
+  const border = good ? '#bbf7d0' : bad ? '#fecaca' : '#e2e8f0'
+  const value  = v ? (good ? 'Good' : bad ? 'Poor' : v) : 'Not asked'
+  return `<span style="display:inline-block;background:${bg};color:${color};border:1px solid ${border};font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;margin:0 6px 6px 0;white-space:nowrap">${icon} ${label} · ${esc(value)}</span>`
+}
+
+function moodFace(s?: string | null) {
+  if (s === 'positive' || s === 'happy') return { emoji: '😊', tint: '#f0fdf4', line: '#86efac', text: '#15803d' }
+  if (s === 'negative' || s === 'sad')   return { emoji: '😞', tint: '#fef2f2', line: '#fca5a5', text: '#b91c1c' }
+  if (s === 'neutral')                   return { emoji: '😐', tint: '#f8fafc', line: '#cbd5e1', text: '#475569' }
+  return { emoji: '📞', tint: '#f8fafc', line: '#e2e8f0', text: '#64748b' }
 }
 
 function fmtDateLong(iso: string) {
@@ -277,61 +293,89 @@ export function buildFeedbackSummaryEmail(opts: {
   const { ref, booking, service, feedback, schedule, aiNarrative, isAutoSend } = opts
   const agentName   = booking.agent ?? 'Agent'
 
-  // ── Day rows ──────────────────────────────────────────────────────────────
+  // ── Day cards ─────────────────────────────────────────────────────────────
+  // Full-width cards rather than a 5-column table: the summary/transcript text
+  // gets the entire 720px to breathe instead of a ~250px squeeze.
   const feedbackRows = feedback.map(fb => {
     const sched      = schedule.find(s => s.day_no === fb.day_no)
     const transcript = normaliseTranscript(fb.transcript)
-    const isGood     = sched?.status === 'answered' || sched?.status === 'done'
-    const dayBg      = isGood ? '#f0fdf4' : '#f8fafc'
-    const dayColor   = isGood ? '#16a34a' : '#64748b'
+    const mood       = moodFace(fb.sentiment)
+    const dateTxt    = fb.call_date ? fmtDateShort(fb.call_date) : fmtDateShort(fb.created_at)
 
     const transcriptHtml = transcript.length
-      ? `<div style="margin-top:12px;background:#faf5ff;border-left:3px solid #7c3aed;border-radius:0 8px 8px 0;padding:12px 14px">
-          <p style="margin:0 0 8px;font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:0.06em">Full Transcript</p>
-          ${transcript.map(t =>
-            t.speaker === 'Agent'
-              ? `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px">
-                   <span style="background:#7c3aed;color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;flex-shrink:0;margin-top:1px">AGENT</span>
-                   <p style="margin:0;font-size:12px;color:#4c1d95;line-height:1.5">${t.text}</p>
-                 </div>`
-              : `<div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;flex-direction:row-reverse">
-                   <span style="background:#1e293b;color:#fff;font-size:9px;font-weight:700;padding:2px 6px;border-radius:10px;flex-shrink:0;margin-top:1px">GUEST</span>
-                   <p style="margin:0;font-size:12px;color:#1e293b;line-height:1.5;text-align:right">${t.text}</p>
-                 </div>`
-          ).join('')}
-        </div>`
+      ? `<table role="presentation" width="100%" style="width:100%;border-collapse:collapse;margin-top:14px;background:#faf5ff;border:1px solid #ede9fe;border-radius:10px">
+          <tr><td style="padding:12px 16px 4px">
+            <p style="margin:0;font-size:10px;font-weight:700;color:#7c3aed;text-transform:uppercase;letter-spacing:0.08em">Call transcript · ${transcript.length} lines</p>
+          </td></tr>
+          ${transcript.map(t => {
+            const isAgent = t.speaker === 'Agent'
+            const chipBg  = isAgent ? '#7c3aed' : '#0f172a'
+            const bubBg   = isAgent ? '#ffffff' : '#eef2ff'
+            const bubTxt  = isAgent ? '#4c1d95' : '#1e293b'
+            const name    = isAgent ? 'AGENT' : t.speaker === 'Customer' ? 'GUEST' : t.speaker.toUpperCase()
+            return `<tr><td style="padding:0 16px 8px">
+              <table role="presentation" width="100%" style="width:100%;border-collapse:collapse">
+                <tr>
+                  <td width="58" valign="top" style="width:58px;padding-top:3px">
+                    <span style="display:inline-block;background:${chipBg};color:#ffffff;font-size:9px;font-weight:700;padding:3px 7px;border-radius:10px;letter-spacing:0.04em">${esc(name)}</span>
+                  </td>
+                  <td valign="top" style="background:${bubBg};border-radius:10px;padding:9px 13px">
+                    <p style="margin:0;font-size:13px;color:${bubTxt};line-height:1.6">${esc(t.text)}</p>
+                  </td>
+                </tr>
+              </table>
+            </td></tr>`
+          }).join('')}
+          <tr><td style="padding:0 0 8px"></td></tr>
+        </table>`
       : ''
 
-    return `<tr style="border-bottom:1px solid #f1f5f9">
-      <td style="padding:16px 12px;vertical-align:top;width:44px">
-        <div style="width:36px;height:36px;border-radius:10px;background:${dayBg};display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;color:${dayColor};text-align:center;line-height:36px">${fb.day_no ?? '?'}</div>
-      </td>
-      <td style="padding:16px 12px;vertical-align:top;width:110px">
-        <p style="margin:0;font-size:11px;font-weight:600;color:#475569;font-family:'Courier New',monospace">${fb.call_date ? fmtDateShort(fb.call_date) : fmtDateShort(fb.created_at)}</p>
-        ${sched?.day_brief ? `<p style="margin:3px 0 0;font-size:10px;color:#94a3b8;font-style:italic">${sched.day_brief}</p>` : ''}
-      </td>
-      <td style="padding:16px 12px;vertical-align:top;width:90px">
-        ${fb.sentiment ? `<span style="font-size:18px;display:block;margin-bottom:2px">${fb.sentiment === 'positive' || fb.sentiment === 'happy' ? '😊' : fb.sentiment === 'neutral' ? '😐' : '😞'}</span><span style="font-size:10px;color:#64748b;text-transform:capitalize">${fb.sentiment}</span>` : '<span style="color:#cbd5e1;font-size:12px">—</span>'}
-      </td>
-      <td style="padding:16px 12px;vertical-align:top;width:150px">
-        <table style="border-collapse:collapse">
-          <tbody>
-            ${[['🏨 Hotel', fb.hotel_ok], ['🍽️ Meals', fb.meals_ok], ['🚗 Driver', fb.driver_ok], ['🚌 Vehicle', fb.vehicle_ok]].map(([label, val]) =>
-              `<tr><td style="font-size:10px;color:#94a3b8;padding:1px 8px 1px 0;white-space:nowrap">${label}</td><td style="padding:1px 0">${ratingBadge(val)}</td></tr>`
-            ).join('')}
-          </tbody>
-        </table>
-      </td>
-      <td style="padding:16px 12px;vertical-align:top">
-        ${fb.summary ? `<p style="margin:0 0 6px;font-size:12px;color:#334155;line-height:1.6;font-weight:500">${fb.summary}</p>` : ''}
-        ${fb.highlights ? `<p style="margin:0 0 5px;font-size:11px;color:#64748b;line-height:1.5"><span style="font-weight:700;color:#7c3aed">✨ Highlights:</span> ${fb.highlights}</p>` : ''}
-        ${fb.issues ? `<p style="margin:0 0 5px;font-size:11px;color:#b91c1c;line-height:1.5;background:#fef2f2;padding:4px 8px;border-radius:6px;border-left:3px solid #f87171"><span style="font-weight:700">⚠️ Issue:</span> ${fb.issues}</p>` : ''}
-        ${transcriptHtml}
-      </td>
-    </tr>`
+    return `<table role="presentation" width="100%" style="width:100%;border-collapse:separate;border:1px solid #e2e8f0;border-radius:14px;margin-bottom:16px;overflow:hidden">
+      <!-- Card header: day, date, mood -->
+      <tr>
+        <td style="background:${mood.tint};border-bottom:1px solid ${mood.line};padding:12px 18px">
+          <table role="presentation" width="100%" style="width:100%;border-collapse:collapse">
+            <tr>
+              <td valign="middle" style="font-size:14px;font-weight:800;color:#0f172a">
+                <span style="display:inline-block;background:#0f172a;color:#ffffff;font-size:11px;font-weight:800;padding:4px 10px;border-radius:8px;letter-spacing:0.06em">DAY ${fb.day_no ?? '?'}</span>
+                <span style="margin-left:10px;font-size:13px;font-weight:700;color:#334155">${esc(dateTxt)}</span>
+              </td>
+              <td valign="middle" align="right" style="text-align:right;white-space:nowrap">
+                <span style="font-size:17px">${mood.emoji}</span>
+                <span style="font-size:12px;font-weight:700;color:${mood.text};text-transform:capitalize;margin-left:5px">${esc(fb.sentiment ?? 'Call logged')}</span>
+              </td>
+            </tr>
+          </table>
+          ${sched?.day_brief ? `<p style="margin:7px 0 0;font-size:11px;color:#64748b;font-style:italic">${esc(sched.day_brief)}</p>` : ''}
+        </td>
+      </tr>
+      <!-- Card body -->
+      <tr>
+        <td style="padding:16px 18px 18px;background:#ffffff">
+          <div style="margin-bottom:12px">
+            ${ratingChip('🏨', 'Hotel',   fb.hotel_ok)}
+            ${ratingChip('🍽️', 'Meals',   fb.meals_ok)}
+            ${ratingChip('🚗', 'Driver',  fb.driver_ok)}
+            ${ratingChip('🚌', 'Vehicle', fb.vehicle_ok)}
+          </div>
+          ${fb.summary ? `<p style="margin:0 0 12px;font-size:14px;color:#1e293b;line-height:1.7">${esc(fb.summary)}</p>` : ''}
+          ${fb.highlights ? `<table role="presentation" width="100%" style="width:100%;border-collapse:collapse;margin:0 0 10px"><tr>
+            <td style="background:#f5f3ff;border-left:4px solid #a78bfa;border-radius:0 10px 10px 0;padding:11px 14px">
+              <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#6d28d9;text-transform:uppercase;letter-spacing:0.07em">✨ Highlights</p>
+              <p style="margin:0;font-size:13px;color:#4c1d95;line-height:1.65">${esc(fb.highlights)}</p>
+            </td></tr></table>` : ''}
+          ${fb.issues ? `<table role="presentation" width="100%" style="width:100%;border-collapse:collapse;margin:0 0 10px"><tr>
+            <td style="background:#fef2f2;border-left:4px solid #f87171;border-radius:0 10px 10px 0;padding:11px 14px">
+              <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#b91c1c;text-transform:uppercase;letter-spacing:0.07em">⚠️ Needs attention</p>
+              <p style="margin:0;font-size:13px;color:#7f1d1d;line-height:1.65">${esc(fb.issues)}</p>
+            </td></tr></table>` : ''}
+          ${transcriptHtml}
+        </td>
+      </tr>
+    </table>`
   }).join('')
 
-  const noFeedbackRow = `<tr><td colspan="5" style="padding:32px;text-align:center;color:#94a3b8;font-style:italic;font-size:13px">No call feedback was recorded for this trip</td></tr>`
+  const noFeedbackRow = `<div style="padding:32px;text-align:center;color:#94a3b8;font-style:italic;font-size:13px;border:1px dashed #e2e8f0;border-radius:14px">No call feedback was recorded for this trip</div>`
 
   // ── Score badge ───────────────────────────────────────────────────────────
   const scoreHtml = aiNarrative?.overallScore
@@ -388,39 +432,30 @@ export function buildFeedbackSummaryEmail(opts: {
     ${aiNarrativeHtml}
 
     <!-- Day-by-day table -->
-    <h3 style="margin:0 0 14px;font-size:15px;font-weight:800;color:#1e293b;padding-bottom:10px;border-bottom:2px solid #e2e8f0;display:flex;align-items:center;gap:8px">
-      📋 Day-by-Day Call Report
-    </h3>
-    <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
-      <thead>
-        <tr style="background:#f8fafc">
-          <th style="text-align:left;padding:10px 12px;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid #e2e8f0">Day</th>
-          <th style="text-align:left;padding:10px 12px;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid #e2e8f0">Date</th>
-          <th style="text-align:left;padding:10px 12px;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid #e2e8f0">Mood</th>
-          <th style="text-align:left;padding:10px 12px;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid #e2e8f0">Ratings</th>
-          <th style="text-align:left;padding:10px 12px;font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.06em;border-bottom:2px solid #e2e8f0">Summary & Transcript</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${feedbackRows || noFeedbackRow}
-      </tbody>
-    </table>
+    <h3 style="margin:0 0 6px;font-size:15px;font-weight:800;color:#1e293b">📋 Day-by-Day Call Report</h3>
+    <p style="margin:0 0 16px;font-size:12px;color:#94a3b8;padding-bottom:12px;border-bottom:2px solid #e2e8f0">
+      One card per call — mood, service ratings, what the guest said, and the full transcript.
+    </p>
+    ${feedbackRows || noFeedbackRow}
 
     <!-- Footer note -->
-    <div style="margin-top:28px;padding:16px 20px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;display:flex;align-items:flex-start;gap:10px">
-      <span style="font-size:18px;flex-shrink:0">✅</span>
-      <p style="margin:0;font-size:12px;color:#166534;line-height:1.65">
-        This report was generated by the <strong>Apple Holidays AI Call Monitoring System</strong>. All calls were placed with the customer's prior WhatsApp consent.
-        ${service ? `<br>Service status: <strong>${service.status.toUpperCase()}</strong> · Number monitored: <strong>${service.call_phone}</strong>` : ''}
-      </p>
-    </div>
+    <table role="presentation" width="100%" style="width:100%;border-collapse:collapse;margin-top:28px">
+      <tr><td style="padding:16px 20px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px">
+        <p style="margin:0;font-size:12px;color:#166534;line-height:1.65">
+          ✅ This report was generated by the <strong>Apple Holidays AI Call Monitoring System</strong>. All calls were placed with the customer's prior WhatsApp consent.
+          ${service ? `<br>Service status: <strong>${esc(service.status).toUpperCase()}</strong> · Number monitored: <strong>${esc(service.call_phone)}</strong>` : ''}
+        </p>
+      </td></tr>
+    </table>
 
   </div>
 
-  <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:18px 36px;display:flex;align-items:center;justify-content:space-between">
-    <p style="margin:0;font-size:11px;color:#94a3b8">Apple Holidays · confirm.booking@aahaas.com</p>
-    <p style="margin:0;font-size:10px;color:#cbd5e1">Automated system report · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
-  </div>
+  <table role="presentation" width="100%" style="width:100%;border-collapse:collapse;background:#f8fafc;border-top:1px solid #e2e8f0">
+    <tr>
+      <td style="padding:18px 36px;font-size:11px;color:#94a3b8">Apple Holidays · confirm.booking@aahaas.com</td>
+      <td align="right" style="padding:18px 36px;font-size:10px;color:#cbd5e1;text-align:right">Automated system report · ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+    </tr>
+  </table>
 
 </div>
 </body>
