@@ -395,6 +395,14 @@ export default function QueriesTab({
                               </span>
                             )}
                           </span>
+                          {/* The one-line read of the mail, when the AI switch
+                              wrote one — the same sentence that goes in the
+                              sheet's AI Summary column. */}
+                          {entry.aiSummary && (
+                            <span className="block text-[11px] text-slate-500 italic line-clamp-1">
+                              {entry.aiSummary}
+                            </span>
+                          )}
                           <span className="block text-[11px] text-slate-400 truncate">
                             {entry.fromName || entry.fromAddress} · {entry.fromDomain}
                             {entry.lastMessageAt && entry.followUpCount > 0
@@ -513,6 +521,19 @@ export default function QueriesTab({
               <Detail label="Allocation time" value={formatDateTime(viewing.receivedAt)} />
               <Detail label="Replied time" value={viewing.repliedAt ? formatDateTime(viewing.repliedAt) : 'Not yet'} />
               <Detail label="Status" value={<ReplyStatusBadge status={viewing.replyStatus} />} />
+              <Detail label="Replied by" value={viewing.repliedBy ?? '—'} />
+              <Detail
+                label="Response time"
+                value={viewing.repliedAt
+                  ? `${((new Date(viewing.repliedAt).getTime() - new Date(viewing.receivedAt).getTime()) / 3_600_000).toFixed(2)} h`
+                  : '—'}
+              />
+              <Detail
+                label="Mails in thread"
+                value={viewing.followUpCount > 0
+                  ? `${viewing.followUpCount + 1} · last ${formatDateTime(viewing.lastMessageAt ?? viewing.receivedAt)}`
+                  : '1'}
+              />
               <Detail
                 label="File handler"
                 value={viewing.handlerNames || <span className="text-amber-600">Not picked yet</span>}
@@ -539,6 +560,15 @@ export default function QueriesTab({
                 <Detail label="Kept out of the query sheet by" value={viewing.excludeReason ?? 'Not a query'} />
               )}
             </div>
+
+            {viewing.aiSummary && (
+              <div>
+                <p className="text-xs font-semibold text-slate-600 mb-1">AI summary</p>
+                <p className="text-sm text-slate-700 bg-emerald-50/60 border border-emerald-100 rounded-lg p-3">
+                  {viewing.aiSummary}
+                </p>
+              </div>
+            )}
 
             <div>
               <p className="text-xs font-semibold text-slate-600 mb-1">Mail extract</p>

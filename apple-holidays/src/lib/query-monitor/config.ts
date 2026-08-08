@@ -18,6 +18,8 @@ export interface QueryMonitorConfig {
   writeStatusColumn: boolean
   captureUnmatched:  boolean
   aiEnabled:         boolean
+  /** GPT reads every new mail and writes a one-sentence summary into the sheet. */
+  aiSummaryEnabled:  boolean
   slaHours:          number
   replyChaseDays:    number
   /** One row per thread: a follow-up rewrites the query's row instead of adding one. */
@@ -80,6 +82,7 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     writeStatusColumn: bool(SETTINGS.writeStatusColumn, DEFAULTS.writeStatusColumn),
     captureUnmatched:  bool(SETTINGS.captureUnmatched,  DEFAULTS.captureUnmatched),
     aiEnabled:         bool(SETTINGS.aiEnabled,         DEFAULTS.aiEnabled),
+    aiSummaryEnabled:  bool(SETTINGS.aiSummaryEnabled,  DEFAULTS.aiSummaryEnabled),
     slaHours:          Math.max(1, num(SETTINGS.slaHours,       DEFAULTS.slaHours)),
     replyChaseDays:    Math.max(1, num(SETTINGS.replyChaseDays, DEFAULTS.replyChaseDays)),
     threadMergeEnabled: bool(SETTINGS.threadMergeEnabled, DEFAULTS.threadMergeEnabled),
@@ -111,6 +114,7 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.writeStatusColumn !== undefined) put(SETTINGS.writeStatusColumn, !!patch.writeStatusColumn)
   if (patch.captureUnmatched  !== undefined) put(SETTINGS.captureUnmatched,  !!patch.captureUnmatched)
   if (patch.aiEnabled         !== undefined) put(SETTINGS.aiEnabled,         !!patch.aiEnabled)
+  if (patch.aiSummaryEnabled  !== undefined) put(SETTINGS.aiSummaryEnabled,  !!patch.aiSummaryEnabled)
   if (patch.slaHours          !== undefined) put(SETTINGS.slaHours,          Math.max(1, Number(patch.slaHours) || 2))
   if (patch.replyChaseDays    !== undefined) put(SETTINGS.replyChaseDays,    Math.max(1, Number(patch.replyChaseDays) || 7))
   if (patch.threadMergeEnabled !== undefined) put(SETTINGS.threadMergeEnabled, !!patch.threadMergeEnabled)

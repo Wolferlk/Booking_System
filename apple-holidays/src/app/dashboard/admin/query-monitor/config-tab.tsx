@@ -123,6 +123,13 @@ function ScheduleCard({
           description="Only for mails the parser cannot read — costs a gpt-4o-mini call each."
         />
         <Toggle
+          checked={draft.aiSummaryEnabled}
+          onChange={v => save({ aiSummaryEnabled: v })}
+          tone="amber"
+          label="AI reads every new mail"
+          description="Writes a one-sentence summary into the AI Summary column — a gpt-4o-mini call per mail, capped at 60 a sweep."
+        />
+        <Toggle
           checked={draft.backupEnabled}
           onChange={v => save({ backupEnabled: v })}
           label="Mirror to the backup workbook"
