@@ -12,6 +12,8 @@ export interface QmEntry {
   /** Later mails of the same thread that share this row instead of adding one. */
   followUpCount:    number
   repliedAt:        string | null
+  /** Sheet column O — whose Sent Items the reply was found in. */
+  repliedBy:        string | null
   replyStatus:      'REPLIED' | 'PENDING' | 'OVERDUE'
   /** Sheet column F — the ONE handler who owns this query, '' while unclaimed. */
   handlerNames:     string
@@ -33,6 +35,9 @@ export interface QmEntry {
   bodySnippet:      string
   extractionSource: 'RULE' | 'AI' | 'MANUAL'
   aiConfidence:     number | null
+  /** Sheet column T — one sentence, written only while the AI-read switch is on. */
+  aiSummary:        string | null
+  aiSummaryAt:      string | null
   sheetRow:         number | null
   /** MERGED = a follow-up sharing another query's row; never written anywhere. */
   syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED' | 'MERGED'
@@ -97,6 +102,8 @@ export interface QmConfig {
   writeStatusColumn: boolean
   captureUnmatched:  boolean
   aiEnabled:         boolean
+  /** GPT reads every new mail and writes a one-sentence summary into the sheet. */
+  aiSummaryEnabled:  boolean
   slaHours:          number
   replyChaseDays:    number
   /** One row per thread: a follow-up rewrites the query's row instead of adding one. */
@@ -155,6 +162,8 @@ export interface QmSheetInfo {
   sheetName:     string
   header:        string[]
   headerMatches: boolean
+  /** New columns the next write will add to row 1, if row 1 is an older layout. */
+  headerPendingColumns?: string[]
   lastDataRow:   number
   nextAppendRow: number
   dataRowCount:  number

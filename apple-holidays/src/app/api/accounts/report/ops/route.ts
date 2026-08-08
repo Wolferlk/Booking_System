@@ -21,7 +21,7 @@ import type { UserRole } from '@prisma/client'
 export const dynamic = 'force-dynamic'
 
 /** Same role set as the financial report this page replaced. */
-const ALLOWED: UserRole[] = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED: UserRole[] = ['AC_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)

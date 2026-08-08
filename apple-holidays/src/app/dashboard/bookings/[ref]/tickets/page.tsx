@@ -248,9 +248,9 @@ export default function TicketsPage() {
   const [bulkReceiptUploading, setBulkReceiptUploading] = useState(false)
   const bulkReceiptRef = useRef<HTMLInputElement>(null)
 
-  const canCreate   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const canPurchase = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const canUpload   = ['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canCreate   = ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canPurchase = ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canUpload   = ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canPnlSync  = ['AC_USER', 'BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   // ── Accounts PNL import state ─────────────────────────────────────────────

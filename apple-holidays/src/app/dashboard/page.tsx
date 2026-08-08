@@ -197,6 +197,10 @@ export default function DashboardPage() {
 
   const isAdmin    = role === 'SUPER_ADMIN' || role === 'ULTRA_SUPER_ADMIN'
   const isAccounts = role === 'AC_USER'
+  // Vietnam Ground (Limited): a bookings-and-operations dashboard only — no
+  // driver/vendor roster and no AI call analytics, since those pages are not
+  // part of this role's access.
+  const isVnGroundLimited = role === 'GT_VN_USER'
   const isGround   = role === 'GT_USER' || role === 'GT_TE_USER' || isAdmin
   const isTE       = role === 'TE_USER' || role === 'GT_TE_USER' || isAdmin
 
@@ -281,7 +285,12 @@ export default function DashboardPage() {
                 <CountryFlag country={countryFilter} className="w-5 h-auto" />
                 {ROLE_LABELS[role ?? ''] ?? role} · {countryMeta.name} Operations
               </span>
-            : "Here's what's happening with your bookings today"
+            : isVnGroundLimited
+              ? <span className="inline-flex items-center gap-1.5">
+                  <CountryFlag country="VIETNAM" className="w-5 h-auto" />
+                  Vietnam Ground Operations
+                </span>
+              : "Here's what's happening with your bookings today"
         }
       />
 

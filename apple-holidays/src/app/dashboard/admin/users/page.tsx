@@ -45,7 +45,7 @@ type SortDir   = 'asc' | 'desc'
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ROLE_COLORS: Record<UserRole, 'blue' | 'green' | 'purple' | 'orange' | 'gray' | 'red'> = {
-  BT_USER: 'blue', GT_USER: 'green', TE_USER: 'purple',
+  BT_USER: 'blue', GT_USER: 'green', GT_VN_USER: 'green', TE_USER: 'purple',
   AC_USER: 'orange', CLIENT: 'gray', SUPER_ADMIN: 'red',
   GT_TE_USER: 'green', ULTRA_SUPER_ADMIN: 'orange',
 }
@@ -53,6 +53,7 @@ const ROLE_COLORS: Record<UserRole, 'blue' | 'green' | 'purple' | 'orange' | 'gr
 const ROLE_BG: Record<UserRole, string> = {
   BT_USER:           'bg-blue-500',
   GT_USER:           'bg-emerald-500',
+  GT_VN_USER:        'bg-emerald-600',
   TE_USER:           'bg-purple-500',
   AC_USER:           'bg-orange-500',
   CLIENT:            'bg-slate-400',
@@ -74,12 +75,12 @@ const COUNTRY_META: Record<OperationCountry, { label: string; color: string }> =
 
 // Roles available per country (used to filter the role dropdown when adding/editing)
 const COUNTRY_ROLES: Record<OperationCountry, UserRole[]> = {
-  VIETNAM:            ['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN'],
+  VIETNAM:            ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'SUPER_ADMIN'],
   SRILANKA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
   SINGAPORE:          ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
   MALAYSIA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
   SINGAPORE_MALAYSIA: ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
-  ALL:                ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+  ALL:                ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
 }
 
 const EMPTY_FORM = {
@@ -1230,6 +1231,7 @@ export default function UsersPage() {
                 {form.role === 'SUPER_ADMIN' && 'Full country access — user management, danger zone, and all admin functions for the assigned country.'}
                 {form.role === 'BT_USER'     && 'Booking creation, confirmation, P&L management, and mail inbox.'}
                 {form.role === 'GT_USER'     && 'Ground operations: assignments, tickets, drivers, vendors, and MC report. (Vietnam only)'}
+                {form.role === 'GT_VN_USER'  && 'Vietnam ground team, limited: Vietnam dashboard, bookings list, booking details (agenda, tickets, drivers, PDF) and the Ops Board. Nothing else. (Vietnam only)'}
                 {form.role === 'GT_TE_USER'  && 'Combined ground + travel experience — assignments, reminders, payments. (Sri Lanka & Singapore/Malaysia)'}
                 {form.role === 'TE_USER'     && 'Travel experience: live overview, analytics, ticket & voucher management. (Vietnam only)'}
                 {form.role === 'AC_USER'     && 'Accounts: P&L management, profit dashboard, credit agents, and reports.'}

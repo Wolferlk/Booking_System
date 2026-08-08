@@ -38,13 +38,15 @@ export interface SheetInfo extends SheetRef {
   sheetName:      string
   header:         string[]
   headerMatches:  boolean
+  /** Set when row 1 is an older layout of ours that the next write will widen. */
+  headerPendingColumns: string[]
   lastDataRow:    number
   nextAppendRow:  number
   dataRowCount:   number
   lastModified:   string | null
 }
 
-/** A row as it will be laid down in columns A–N. */
+/** A row as it will be laid down in columns A–T. */
 export interface SheetRowValues {
   date:           number | ''  // A — Excel date serial
   status:         string       // B
@@ -60,6 +62,12 @@ export interface SheetRowValues {
   cntl:           string       // L
   amendment:      string       // M
   region:         string       // N
+  repliedBy:      string       // O — whose Sent Items the reply was found in
+  responseHours:  number | ''  // P — allocation → reply, in hours
+  sla:            string       // Q — Met / Missed, blank while open
+  threadCount:    number | ''  // R — mails in the thread, this row included
+  lastMail:       number | ''  // S — Excel datetime serial of the newest mail
+  aiSummary:      string       // T — one sentence, when the AI switch is on
 }
 
 export function rowToCells(row: SheetRowValues): (string | number)[] {
@@ -67,10 +75,12 @@ export function rowToCells(row: SheetRowValues): (string | number)[] {
     row.date, row.status, row.subject, row.allocationTime, row.repliedTime,
     row.fileHandler, row.toList, row.salesPerson, row.destination, row.agent,
     row.travelDate, row.cntl, row.amendment, row.region,
+    row.repliedBy, row.responseHours, row.sla, row.threadCount, row.lastMail,
+    row.aiSummary,
   ]
 }
 
-/** A row on the second tab, columns A–J. See EXCLUDED_SHEET_COLUMNS. */
+/** A row on the second tab, columns A–K. See EXCLUDED_SHEET_COLUMNS. */
 export interface ExcludedRowValues {
   date:         number | ''  // A — Excel date serial
   receivedTime: number | ''  // B — Excel datetime serial
@@ -82,12 +92,14 @@ export interface ExcludedRowValues {
   reason:       string       // H — the pattern that kept it out of the query sheet
   destination:  string       // I
   cntl:         string       // J
+  aiSummary:    string       // K — one sentence, when the AI switch is on
 }
 
 export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] {
   return [
     row.date, row.receivedTime, row.subject, row.sender, row.senderEmail,
     row.fileHandler, row.toList, row.reason, row.destination, row.cntl,
+    row.aiSummary,
   ]
 }
 
@@ -115,6 +127,49 @@ export const EXCLUDED_LAYOUT: SheetLayout = {
   keyColumn:     'C', // Subject
   header:        EXCLUDED_SHEET_COLUMNS,
   numberFormats: EXCLUDED_SHEET_NUMBER_FORMATS,
+}
+
+// ── Header compatibility ─────────────────────────────────────────────────────
+
+/** `0 → "A"`, `14 → "O"`, `26 → "AA"`. */
+export function columnLetter(index: number): string {
+  let n = index
+  let out = ''
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out
+    n = Math.floor(n / 26) - 1
+  } while (n >= 0)
+  return out
+}
+
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * Can this header be grown into the current layout without relabelling a column
+ * that already describes real data?
+ *
+ * Yes exactly when what is on row 1 is a *prefix* of the layout — the columns
+ * the workbook was started with, in their original order — and every cell after
+ * it is blank. Then the missing names can be written into empty cells to the
+ * right and not one existing value changes meaning. This is what lets six new
+ * columns be added to a sheet the team is already using and reading.
+ *
+ * Returns the column index the extension starts at, or null when the header is
+ * complete, or genuinely someone else's.
+ */
+export function headerExtension(cells: string[], layout: SheetLayout): number | null {
+  const expected = layout.header
+
+  let filled = 0
+  while (filled < expected.length && (cells[filled] ?? '').trim() !== '') filled += 1
+  if (filled === 0 || filled >= expected.length) return null
+
+  // A prefix of ours, and nothing past it — including in the cells beyond the
+  // layout, which would mean the team put something of their own there.
+  const isPrefix = expected.slice(0, filled).every((name, i) => same(cells[i] ?? '', name))
+  const tailBlank = cells.slice(filled).every(cell => (cell ?? '').trim() === '')
+
+  return isPrefix && tailBlank ? filled : null
 }
 
 // ── Share-URL resolution ─────────────────────────────────────────────────────
@@ -282,9 +337,13 @@ export async function getSheetInfo(force = false, target: WorkbookTarget = 'prim
   const headerCells = (header.text?.[0] ?? header.values[0]?.map(v => String(v ?? '')) ?? [])
     .map(h => String(h ?? '').trim())
 
-  const headerMatches = SHEET_COLUMNS.every(
+  const exact = SHEET_COLUMNS.every(
     (expected, i) => (headerCells[i] ?? '').toLowerCase() === expected.toLowerCase(),
   )
+  // An older header of ours is not a mismatch — the next write fills the new
+  // column names in beside it. Only a header we cannot grow into is a problem.
+  const headerExtendsAt = exact ? null : headerExtension(headerCells, QUERY_LAYOUT)
+  const headerMatches   = exact || headerExtendsAt !== null
 
   const lastDataRow = await findLastDataRow(ref, sheetName)
 
@@ -301,6 +360,7 @@ export async function getSheetInfo(force = false, target: WorkbookTarget = 'prim
     sheetName,
     header:        headerCells,
     headerMatches,
+    headerPendingColumns: headerExtendsAt === null ? [] : [...SHEET_COLUMNS.slice(headerExtendsAt)],
     lastDataRow,
     nextAppendRow: lastDataRow + 1,
     dataRowCount:  Math.max(0, lastDataRow - 1),
@@ -422,6 +482,46 @@ export async function ensureWorksheet(
   const matches  = layout.header.every((expected, i) => (cells[i] ?? '').toLowerCase() === expected.toLowerCase())
 
   if (matches) return { created: !exists, headerWritten: false, headerMismatch: false }
+
+  // An earlier version of our own header, with empty cells where the newer
+  // columns go. Only those empty cells are written, so the rows below keep every
+  // value they have and every column keeps its meaning — this is how the layout
+  // grows over a workbook the team is already using.
+  const extendFrom = headerExtension(cells, layout)
+  if (extendFrom !== null) {
+    if (!repair) return { created: !exists, headerWritten: false, headerMismatch: false }
+
+    // A blank header cell does not prove the column is free. The team keeps
+    // lookup lists and pivot helpers to the right of the layout, and once these
+    // columns are ours every append and rewrite writes over them. So the rows
+    // below are read before the header goes in, and anything already standing
+    // there stops the widening — that is a decision for a person, not a sweep.
+    const lastDataRow = await findLastDataRow(ref, sheetName, sessionId, layout)
+    if (lastDataRow > 1) {
+      const occupied = await readRangeChunks(
+        ref, sheetName, 2, lastDataRow,
+        { ...layout, firstColumn: columnLetter(extendFrom) }, sessionId, 500,
+      )
+      const inUse = occupied.some(range =>
+        range.values.some(row => row.some(cell => String(cell ?? '').trim() !== '')),
+      )
+      if (inUse) return { created: !exists, headerWritten: false, headerMismatch: true }
+    }
+
+    const address = `${columnLetter(extendFrom)}1:${layout.lastColumn}1`
+    await workbookFetch(
+      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')`,
+      sessionId,
+      { method: 'PATCH', body: JSON.stringify({ values: [layout.header.slice(extendFrom)] }) },
+    )
+    await workbookFetch(
+      `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')/format/font`,
+      sessionId,
+      { method: 'PATCH', body: JSON.stringify({ bold: true }) },
+    ).catch(() => {})
+
+    return { created: !exists, headerWritten: true, headerMismatch: false }
+  }
 
   // A blank row 1 is always filled in — there is no existing header to respect.
   // A wrong one is only replaced when asked, and only above an empty sheet.

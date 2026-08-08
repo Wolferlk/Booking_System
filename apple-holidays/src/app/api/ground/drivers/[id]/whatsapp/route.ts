@@ -36,7 +36,7 @@ export async function POST(
 ) {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
-  if (!['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
+  if (!['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session.user.role)) {
     return buildApiError('Forbidden', 403)
   }
 

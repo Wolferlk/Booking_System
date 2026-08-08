@@ -24,7 +24,7 @@ import {
 } from '@/lib/portal-link-whatsapp'
 
 export const dynamic = 'force-dynamic'
-const ALLOWED: UserRole[] = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED: UserRole[] = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 function dateStr(d: Date | string): string {
   return new Date(d).toISOString().slice(0, 10)

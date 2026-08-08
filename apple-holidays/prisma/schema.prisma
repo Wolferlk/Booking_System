@@ -1133,6 +1133,7 @@ model FileHandlerLog {
 enum UserRole {
   BT_USER
   GT_USER
+  GT_VN_USER
   TE_USER
   GT_TE_USER
   AC_USER
@@ -1363,6 +1364,10 @@ model QueryMonitorEntry {
   excludeReason    String?
   receivedAt       DateTime // sheet column D — "Allocation time"
   repliedAt        DateTime? // sheet column E — "Replied time"
+  /// Sheet column O — the handler whose Sent Items the reply was found in. Kept
+  /// apart from `handlerNames`: the owner of a query and the person who happened
+  /// to answer it are usually but not always the same, and the team wants both.
+  repliedBy        String?
   replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
   /// Sheet column F — the ONE handler who owns this query. Empty until it can be
   /// known: filled straight away when the mail reached a single mailbox, on the
@@ -1388,6 +1393,12 @@ model QueryMonitorEntry {
   bodySnippet      String              @db.Text
   extractionSource String              @default("RULE") // RULE | AI | MANUAL
   aiConfidence     Float?
+  /// Sheet column T — one sentence describing what the mail is asking for,
+  /// written by gpt-4o-mini when the "AI reads every new mail" switch is on.
+  /// Null means it was never summarised, which is the normal state with the
+  /// switch off — it is not backfilled over history.
+  aiSummary        String?             @db.Text
+  aiSummaryAt      DateTime?
   /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
   manualOverrides  Json?
   sheetRow         Int?

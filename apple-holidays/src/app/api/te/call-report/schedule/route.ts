@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 /** Reading the schedule is operational; changing where guest data is mailed is not. */
-const READ_ROLES = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const READ_ROLES = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 const WRITE_ROLES = ['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 async function session(roles: string[]) {

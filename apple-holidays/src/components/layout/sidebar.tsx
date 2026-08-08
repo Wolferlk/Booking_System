@@ -73,6 +73,14 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'OneDrive',       href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
   ],
+  // Vietnam Ground Team — Limited. Deliberately only three entries: the Vietnam
+  // dashboard, the bookings list and the Ops Board. Middleware blocks everything
+  // else, so nothing extra should be added here without widening that allowlist.
+  GT_VN_USER: [
+    { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
+    { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
+    { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
+  ],
   TE_USER: [
     { label: 'Dashboard',          href: '/dashboard',                          icon: 'LayoutDashboard' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',            icon: 'PlusCircle' },

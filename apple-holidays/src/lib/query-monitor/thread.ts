@@ -37,6 +37,20 @@ export function hasReference(subject: string): boolean {
   return runs.some(run => run.length > 4 || Number(run) < 1900 || Number(run) > 2099)
 }
 
+/**
+ * The subject as the sheet should show it: the Re:/Fw:/Fwd: chain taken off,
+ * everything else — including the agent's capitalisation, which the team reads
+ * as emphasis — left exactly as sent.
+ *
+ * One query is one row, so the row is titled with the query, not with how many
+ * times it has been forwarded. Falls back to the original when stripping would
+ * leave nothing (a mail whose whole subject is "Re:").
+ */
+export function displaySubject(subject: string): string {
+  const stripped = subject.replace(REPLY_PREFIX, '').replace(/\s+/g, ' ').trim()
+  return stripped || subject.trim()
+}
+
 /** The subject with reply prefixes, padding and case differences taken out. */
 export function normalizeSubject(subject: string): string {
   return subject

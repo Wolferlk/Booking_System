@@ -13,7 +13,7 @@ import { countryScope } from '@/lib/country-detection'
 import type { UserRole, OperationCountry } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-const ALLOWED_ROLES: UserRole[] = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const ALLOWED_ROLES: UserRole[] = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)

@@ -6,7 +6,7 @@ import { prisma } from '@/lib/prisma'
 
 export const dynamic = 'force-dynamic'
 
-const STAFF_ROLES = ['TE_USER', 'BT_USER', 'GT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+const STAFF_ROLES = ['TE_USER', 'BT_USER', 'GT_USER', 'GT_VN_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 // GET — the Tour Confirmations currently QUEUED for this booking (waiting for the
 // customer to reply so their 24h window opens). Powers the "message still in the

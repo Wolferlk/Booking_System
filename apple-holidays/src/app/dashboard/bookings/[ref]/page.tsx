@@ -478,8 +478,13 @@ export default function BookingDetailPage() {
     booking.contactEmail ? { label: `Customer: ${booking.contactEmail}`, value: String(booking.contactEmail) } : null,
   ].filter((x): x is { label: string; value: string } => x !== null)
 
-  const canViewClientDetails = ['BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+  const canViewClientDetails = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canEditBooking = ['GT_USER', 'GT_TE_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  // Vietnam Ground (Limited) sees a cut-down booking page: Overview & Status,
+  // Tour Confirmation, QC, Passengers/Flights/Hotels, Contacts, Itinerary and
+  // Package & Notes — plus the Agenda / Tickets / Drivers / PDF buttons only.
+  const isVnGroundLimited = role === 'GT_VN_USER'
 
   const canEditFlights = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
@@ -1494,7 +1499,7 @@ Wishing you a wonderful trip! ✈️
               })}
 
               {/* Get Feedback — always visible after trip is in operational post-phase */}
-              {(['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS', 'COMPLETED'] as string[]).includes(status) && (
+              {!isVnGroundLimited && (['MSG_SENT_CUSTOMER', 'FEEDBACK_DONE', 'QC2_PASS', 'COMPLETED'] as string[]).includes(status) && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -1559,7 +1564,7 @@ Wishing you a wonderful trip! ✈️
                 <Ticket className="w-3.5 h-3.5" /> Tickets
               </Link>
               {/* Drivers — GT can assign drivers from the Agenda page */}
-              {['GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              {['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link
                   href={`/dashboard/bookings/${ref}/agenda`}
                   className={`btn btn-sm ${
@@ -1582,6 +1587,7 @@ Wishing you a wonderful trip! ✈️
                 </button>
               )}
               {/* AppleSystem: re-pull the itinerary, or inspect the raw upstream payload */}
+              {!isVnGroundLimited && (
               <AppleSystemActions
                 bookingRef={ref}
                 isNumber={booking.isNumber as string | null}
@@ -1589,7 +1595,8 @@ Wishing you a wonderful trip! ✈️
                 canViewRaw={['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
                 onRefetched={load}
               />
-              {['BT_USER', 'GT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              )}
+              {['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/print/booking/${ref}`} target="_blank" className="btn btn-secondary btn-sm">
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
@@ -1921,7 +1928,7 @@ Wishing you a wonderful trip! ✈️
         </section>
 
         {/* Customer Feedback — manual rating/comment saved by the TE team */}
-        {customerFeedback && (
+        {customerFeedback && !isVnGroundLimited && (
           <section data-nav="Customer Feedback" data-nav-icon="star">
           <Card>
             <CardHeader
@@ -1974,7 +1981,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* QC Panel — visible to operations/TE/admin */}
-        {['GT_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+        {['GT_USER', 'GT_VN_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <section data-nav="Quality Control" data-nav-icon="checklist">
           <BookingQCPanel
             booking={booking}
@@ -2011,7 +2018,7 @@ Wishing you a wonderful trip! ✈️
 
 
 
-        {changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
+        {!isVnGroundLimited && changeRequests.filter(cr => (cr as Record<string, unknown>).status === 'OPEN').length > 0 && (
           <div className="flex items-start gap-3 px-5 py-4 bg-orange-50 border border-orange-200 rounded-xl">
             <AlertCircle className="w-5 h-5 text-orange-500 flex-shrink-0 mt-0.5" />
             <div>
@@ -2507,7 +2514,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* Emergency Contacts (visible to staff, not clients) */}
-        {canViewClientDetails && emergencyContacts.length > 0 && (
+        {canViewClientDetails && !isVnGroundLimited && emergencyContacts.length > 0 && (
           <section data-nav="Emergency Contacts" data-nav-icon="emergency">
           <Card>
             <CardHeader>
@@ -2603,7 +2610,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* P&L Summary (if available + permitted) */}
-        {pnl && (
+        {pnl && !isVnGroundLimited && (
           <section data-nav="P&L Summary" data-nav-icon="pnl">
           <Card>
             <CardHeader
@@ -2655,6 +2662,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* Status history */}
+        {!isVnGroundLimited && (
         <section data-nav="Activity Log" data-nav-icon="history">
         <Card>
           <CardHeader><h3 className="text-sm font-semibold text-slate-900">Activity Log</h3></CardHeader>
@@ -2677,6 +2685,7 @@ Wishing you a wonderful trip! ✈️
           </CardBody>
         </Card>
         </section>
+        )}
       </div>
 
       {/* OneDrive folder picker */}

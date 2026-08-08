@@ -29,7 +29,8 @@ import {
 } from './collect'
 import { extractByRules, extractWithAi } from './extract'
 import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
-import { subjectKeyFor, threadKeyFor } from './thread'
+import { displaySubject, subjectKeyFor, threadKeyFor } from './thread'
+import { summarizeMail } from './summarize'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
   deleteRowsAt, ensureWorksheet, findLastDataRow, openSession, readValuesRange,
@@ -261,9 +262,11 @@ async function mergeFollowUp(
     ...splitHandlers(root.toList),
     ...newHandlers.map(h => h.handlerName),
   ])
-  const owner   = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList))
-  const rewrite = toList !== root.toList || owner !== root.handlerNames
+  const owner = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList))
 
+  // The row always changes now: "Mails in Thread" goes up by one and "Last Mail"
+  // moves to this mail's timestamp. That is the whole trade for not giving the
+  // chaser a line of its own — the row has to say that the chaser happened.
   await prisma.queryMonitorEntry.update({
     where: { id: root.id },
     data: {
@@ -271,16 +274,48 @@ async function mergeFollowUp(
       handlerNames:  owner,
       followUpCount: { increment: 1 },
       lastMessageAt: message.receivedAt,
-      ...(rewrite ? dirtyPatch(root) : {}),
+      ...dirtyPatch(root),
     },
   })
 
-  return { toList, rewrite }
+  return { toList, rewrite: true }
 }
 
 // ── Sheet row assembly ───────────────────────────────────────────────────────
 
-export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): SheetRowValues {
+/**
+ * How long the team took to answer, in hours to two decimals.
+ *
+ * A number, not "2h 15m": the column exists so the team can average it and sort
+ * on it, which text cannot do. Blank while the query is still open — a zero
+ * there would drag every average down and read as "answered instantly".
+ */
+export function responseHours(receivedAt: Date, repliedAt: Date | null): number | '' {
+  if (!repliedAt) return ''
+  const hours = (repliedAt.getTime() - receivedAt.getTime()) / 3_600_000
+  // Clock skew between Graph's received and sent stamps can put a fast reply a
+  // hair before the mail it answers; floor at zero rather than show a negative.
+  return Number(Math.max(0, hours).toFixed(2))
+}
+
+/**
+ * Met / Missed, which the Status column cannot say.
+ *
+ * Status is where the query stands *now* — Replied, Pending, Overdue. This is
+ * whether the SLA was honoured, and the two come apart on exactly the row that
+ * matters: a query answered six hours late reads "Replied" forever, and only
+ * this column remembers that it was late.
+ */
+export function slaOutcome(
+  receivedAt: Date, repliedAt: Date | null, slaHours: number,
+): string {
+  if (!repliedAt) return ''
+  return repliedAt.getTime() - receivedAt.getTime() <= slaHours * 3_600_000 ? 'Met' : 'Missed'
+}
+
+export function buildSheetRow(
+  entry: QueryMonitorEntry, writeStatus: boolean, slaHours = 2,
+): SheetRowValues {
   const status = writeStatus
     ? (REPLY_STATUS_SHEET_LABEL[entry.replyStatus as ReplyStatus] ?? '')
     : ''
@@ -288,7 +323,9 @@ export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): S
   return {
     date:           toExcelDateSerial(entry.receivedAt),
     status,
-    subject:        entry.subject.slice(0, 500),
+    // The thread's title, not the newest envelope: "Re: Re: Fw:" in front of a
+    // subject is how the same query ends up looking like three.
+    subject:        displaySubject(entry.subject).slice(0, 500),
     allocationTime: toExcelDateTimeSerial(entry.receivedAt),
     repliedTime:    toExcelDateTimeSerial(entry.repliedAt),
     // One owner in F, everyone who received it in G. Blank F is deliberate: it
@@ -302,6 +339,14 @@ export function buildSheetRow(entry: QueryMonitorEntry, writeStatus: boolean): S
     cntl:           entry.cntl ?? '',
     amendment:      entry.amendment ?? '',
     region:         entry.region ?? '',
+    repliedBy:      entry.repliedBy ?? '',
+    responseHours:  responseHours(entry.receivedAt, entry.repliedAt),
+    sla:            slaOutcome(entry.receivedAt, entry.repliedAt, slaHours),
+    // The chasers that did not get rows of their own are counted here instead,
+    // so nothing is hidden — the sheet says "3 mails" on one line.
+    threadCount:    entry.followUpCount + 1,
+    lastMail:       toExcelDateTimeSerial(entry.lastMessageAt ?? entry.receivedAt),
+    aiSummary:      entry.aiSummary ?? '',
   }
 }
 
@@ -310,7 +355,7 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
   return {
     date:         toExcelDateSerial(entry.receivedAt),
     receivedTime: toExcelDateTimeSerial(entry.receivedAt),
-    subject:      entry.subject.slice(0, 500),
+    subject:      displaySubject(entry.subject).slice(0, 500),
     sender:       entry.fromName || entry.fromDomain,
     senderEmail:  entry.fromAddress,
     fileHandler:  entry.handlerNames,
@@ -318,6 +363,7 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
     reason:       entry.excludeReason ?? 'Not a query',
     destination:  entry.destination ?? '',
     cntl:         entry.cntl ?? '',
+    aiSummary:    entry.aiSummary ?? '',
   }
 }
 
@@ -541,6 +587,17 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
       (a, b) => a.message.receivedAt.getTime() - b.message.receivedAt.getTime(),
     )
 
+    /**
+     * Summaries are the one AI call that fires on *every* new mail, so the sweep
+     * carries a ceiling for them. A catch-up run over a long lookback, or a
+     * mailbox that has just been switched on and returns a week of mail, would
+     * otherwise make hundreds of calls in one pass and time the function out
+     * long before it reached the workbook. What is left over stays unsummarised
+     * — a blank cell, on a row that is otherwise complete.
+     */
+    let summaryBudget = config.aiSummaryEnabled ? 60 : 0
+    let summarised = 0
+
     for (const group of ordered) {
       try {
         const { message } = group
@@ -602,12 +659,12 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           : null
 
         if (root) {
-          const { toList: mergedList, rewrite } = await mergeFollowUp(root, group, run.id)
+          const { toList: mergedList } = await mergeFollowUp(root, group, run.id)
           counters.entriesUpdated += 1
           log.add('info',
-            `Follow-up on "${message.subject.slice(0, 60)}" — folded into `
+            `Follow-up on "${displaySubject(message.subject).slice(0, 60)}" — folded into `
             + (root.sheetRow ? `row ${root.sheetRow}` : 'the query it belongs to')
-            + (rewrite ? `, which will be rewritten (TO list now ${mergedList})` : ', nothing on the row changed'),
+            + `, now ${root.followUpCount + 2} mail(s) on one row (TO list ${mergedList})`,
             { entryId: root.id, followUps: root.followUpCount + 1 })
           continue
         }
@@ -648,6 +705,21 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           }
         }
 
+        // One sentence saying what the mail actually wants — written for both
+        // tabs, because "what is this on-ground incident about" is exactly the
+        // question the other-mail tab is opened to answer.
+        let aiSummary: string | null = null
+        if (summaryBudget > 0) {
+          summaryBudget -= 1
+          aiSummary = await summarizeMail(
+            message.subject, message.bodyText || message.bodyPreview, kind,
+          )
+          if (aiSummary) {
+            summarised += 1
+            counters.aiCalls += 1
+          }
+        }
+
         const created = await prisma.queryMonitorEntry.create({
           data: {
             dedupKey:       group.dedupKey,
@@ -677,6 +749,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             bodySnippet:    (message.bodyPreview || message.bodyText).slice(0, 1200),
             extractionSource: source,
             aiConfidence:   confidence,
+            aiSummary,
+            aiSummaryAt:    aiSummary ? new Date() : null,
             syncStatus:     'PENDING',
             firstRunId:     run.id,
             matches: {
@@ -714,6 +788,14 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         const msg = err instanceof Error ? err.message : String(err)
         log.add('error', `Failed to record "${group.message.subject.slice(0, 60)}": ${msg}`)
       }
+    }
+
+    if (config.aiSummaryEnabled) {
+      log.add(summaryBudget > 0 ? 'info' : 'warn',
+        `AI read ${summarised} new mail(s) and wrote a one-line summary`
+        + (summaryBudget > 0
+          ? ''
+          : ' — the per-sweep ceiling of 60 was reached, the rest were left blank'))
     }
 
     // ── 3. Reply detection ──────────────────────────────────────────────────
@@ -856,6 +938,9 @@ async function detectReplies(
       data: {
         repliedAt:   repliedAt ?? entry.repliedAt,
         replyStatus: nextStatus,
+        // Who actually answered, kept whether or not they became the owner —
+        // on a mail sent to six handlers this is the only record of it.
+        ...(repliedBy ? { repliedBy } : {}),
         ...(newOwner ? { handlerNames: newOwner } : {}),
         // A row already in a sheet needs its Status / Replied time rewritten.
         ...dirtyPatch(entry),
@@ -1215,8 +1300,10 @@ async function syncOneWorkbook(
           // value from G onwards would land one column left of where it belongs.
           throw new Error(
             `"${config.sheetName}" has data under a header that is not the expected `
-            + `${QUERY_LAYOUT.header.length}-column layout (File Handler, TO List, …). `
-            + 'Nothing was written — fix the header, or point at a clean tab, then sync again.',
+            + `${QUERY_LAYOUT.header.length}-column layout (A–${QUERY_LAYOUT.lastColumn}: … Replied By, `
+            + 'Response (hrs), SLA, Mails in Thread, Last Mail, AI Summary). Nothing was written. '
+            + "Either row 1 is somebody else's header, or the columns the new layout needs "
+            + 'already hold data of yours — clear them, or point at a clean tab, then sync again.',
           )
         }
 
@@ -1225,7 +1312,7 @@ async function syncOneWorkbook(
         const { toAppend, claimed } = await claimAlreadyWrittenRows(
           pendingQueries,
           e => {
-            const row = buildSheetRow(e, config.writeStatusColumn)
+            const row = buildSheetRow(e, config.writeStatusColumn, config.slaHours)
             return writtenRowKey(row.date, row.allocationTime, row.subject)
           },
           ref, config.sheetName, QUERY_LAYOUT, sessionId, plan,
@@ -1234,7 +1321,7 @@ async function syncOneWorkbook(
           note('warn', `${claimed} row(s) were already on "${config.sheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
         }
 
-        const rows = toAppend.map(e => buildSheetRow(e, config.writeStatusColumn))
+        const rows = toAppend.map(e => buildSheetRow(e, config.writeStatusColumn, config.slaHours))
         if (rows.length > 0) {
           const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
           // Row numbers are stored per entry so a row can be rewritten later.
@@ -1288,7 +1375,7 @@ async function syncOneWorkbook(
         if (isExcluded(entry)) {
           await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
         } else {
-          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn), { sessionId, ref, sheetName: tab })
+          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn, config.slaHours), { sessionId, ref, sheetName: tab })
         }
         await prisma.queryMonitorEntry.update({
           where: { id: entry.id },
