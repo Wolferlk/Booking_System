@@ -53,10 +53,20 @@ export interface BookingReadiness {
   driver: ReadinessCheck
   tickets: ReadinessCheck
   qc: ReadinessCheck & { stage: QcStage }
-  /** True when nothing is outstanding — the booking can be left alone. */
+  /**
+   * True when nothing that stops the guest landing is outstanding — the booking
+   * can be left alone. QC is deliberately excluded; see `blocking`.
+   */
   ready: boolean
   /** Names of the checks still pending, for a one-line "what's missing". */
   outstanding: string[]
+  /**
+   * The subset of `outstanding` that actually blocks the arrival — client
+   * confirmation, drivers and tickets. QC is an internal sign-off that carries
+   * on after the tour is prepared, so a booking waiting on QC alone is still
+   * operationally ready and should not be chased as if it were not.
+   */
+  blocking: string[]
 }
 
 // ─── Input shape ──────────────────────────────────────────────────────────────
@@ -247,5 +257,7 @@ export function computeReadiness(b: ReadinessBooking): BookingReadiness {
     open(qc) ? 'QC' : null,
   ].filter((x): x is string => x !== null)
 
-  return { client, driver, tickets, qc, ready: outstanding.length === 0, outstanding }
+  const blocking = outstanding.filter(o => o !== 'QC')
+
+  return { client, driver, tickets, qc, ready: blocking.length === 0, outstanding, blocking }
 }

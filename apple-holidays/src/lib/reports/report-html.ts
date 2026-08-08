@@ -341,6 +341,83 @@ function checkCell(c: ReadinessCheck): string {
   return `<span class="pill ${cls}">${esc(c.short === 'Confirmed' ? 'DONE' : c.short)}</span>`
 }
 
+/**
+ * The blocking checks on one booking, spelled out — "Client not confirmed",
+ * "3 of 5 transfers still need a driver". QC never appears: it is an internal
+ * sign-off that does not stop the guest landing, so it is reported separately
+ * rather than mixed into tomorrow's chase list.
+ */
+function outstandingReasons(b: ReadinessLine): string {
+  const parts: { label: string; check: ReadinessCheck }[] = [
+    { label: 'Client', check: b.readiness.client },
+    { label: 'Drivers', check: b.readiness.driver },
+    { label: 'Tickets', check: b.readiness.tickets },
+  ].filter(p => p.check.state === 'PENDING' || p.check.state === 'PARTIAL')
+
+  if (!parts.length) return `<span style="color:${C.good};">Nothing blocking</span>`
+
+  return parts.map(p => {
+    const colour = p.check.state === 'PARTIAL' ? C.warn : C.bad
+    return `<div style="padding:1px 0;">
+      <strong style="color:${colour};">${esc(p.label)}:</strong>
+      <span style="color:${C.body};">${esc(p.check.detail)}</span>
+    </div>`
+  }).join('')
+}
+
+/**
+ * Splits an arrival list into a B2B block and a B2C block, each under its own
+ * channel pill and count.
+ *
+ * The two are worked by different desks — trade bookings by the agent-facing
+ * team, direct guests by the B2C desk — and a single mixed table buries the
+ * handful of B2C tours among dozens of B2B refs. Order within each block is
+ * whatever the caller sorted by; only the grouping happens here. A channel with
+ * no arrivals emits nothing rather than an empty table.
+ */
+function byChannel(
+  lines: ReadinessLine[],
+  render: (rows: ReadinessLine[], source: 'B2B' | 'B2C') => string,
+): string {
+  return (['B2B', 'B2C'] as const).map(source => {
+    const rows = lines.filter(l => l.source === source)
+    if (!rows.length) return ''
+    return `<div style="padding-top:14px;">
+      <div style="padding-bottom:6px;">${sourcePill(source)}
+        <span style="font:700 12px/1.4 ${FONT};color:${C.muted};">${num(rows.length)} tour${rows.length === 1 ? '' : 's'}</span>
+      </div>
+      ${render(rows, source)}
+    </div>`
+  }).join('')
+}
+
+/**
+ * Tomorrow's not-ready arrivals, one row each with the reason. The banner above
+ * says how many; this says which, and what to do about them — the desk has one
+ * day left on these, so they get the detail the three-day table cannot afford.
+ */
+function tomorrowGapTable(lines: ReadinessLine[]): string {
+  if (!lines.length) return ''
+  const table = (rows: ReadinessLine[]) =>
+    tableOpen([
+      { text: 'Ref' }, { text: 'Country' },
+      { text: 'Pax', align: 'right', width: '40' },
+      { text: 'Outstanding' }, { text: 'QC', align: 'center', width: '80' },
+    ]) + rows.map(b => `<tr>
+      ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${b.leadPassenger ? `<div style="color:${C.faint};font-size:11px;">${truncate(b.leadPassenger, 22)}</div>` : ''}`, { nowrap: true })}
+      ${td(esc(b.countryLabel), { nowrap: true })}
+      ${td(num(b.pax), { align: 'right' })}
+      ${td(outstandingReasons(b))}
+      ${td(checkCell(b.readiness.qc), { align: 'center', nowrap: true })}
+    </tr>`).join('') + TABLE_CLOSE
+
+  return `<div style="padding-top:18px;">
+    <div class="h3">Tomorrow — what is missing, tour by tour</div>
+    ${byChannel(lines, table)}
+    <div class="more">QC is shown for information only — a tour waiting on QC alone is counted as ready.</div>
+  </div>`
+}
+
 function readinessSection(d: ReportData): string {
   const r = d.readiness
 
@@ -354,24 +431,30 @@ function readinessSection(d: ReportData): string {
   const banner = r.tomorrowNotReady
     ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#991b1b;">
          ${num(r.tomorrowNotReady)} tour${r.tomorrowNotReady === 1 ? '' : 's'} arriving tomorrow ${r.tomorrowNotReady === 1 ? 'is' : 'are'} not fully ready — clear ${r.tomorrowNotReady === 1 ? 'it' : 'them'} first.
+         <div style="font-weight:400;padding-top:3px;">Missing client confirmation, drivers or tickets. QC is not counted.</div>
        </div>`
     : ''
 
   // What is outstanding, counted per check — tells the desk which queue to work.
-  const gaps: { label: string; count: number }[] = [
-    { label: 'Client confirmation', count: r.pendingClient },
-    { label: 'Driver allocation', count: r.pendingDriver },
-    { label: 'Tickets', count: r.pendingTickets },
-    { label: 'QC', count: r.pendingQc },
+  const gaps: { label: string; count: number; blocking: boolean }[] = [
+    { label: 'Client confirmation', count: r.pendingClient, blocking: true },
+    { label: 'Driver allocation', count: r.pendingDriver, blocking: true },
+    { label: 'Tickets', count: r.pendingTickets, blocking: true },
+    // Informational: QC does not hold up an arrival, so it is never counted as
+    // "not ready" — it is listed here only so the desk can see the backlog.
+    { label: 'QC (not blocking)', count: r.pendingQc, blocking: false },
   ]
   const gapTable = r.total
     ? `<div class="h3">Outstanding by check</div>` +
       tableOpen([{ text: 'Check' }, { text: 'Bookings pending', align: 'right', width: '120' }, { text: '', width: '130' }]) +
-      gaps.map(g => `<tr>
-        ${td(esc(g.label), { bold: true, color: C.ink })}
-        ${td(num(g.count), { align: 'right', bold: g.count > 0, color: g.count ? C.bad : C.good })}
-        ${td(bar(g.count, r.total, g.count ? C.bad : C.line))}
-      </tr>`).join('') + TABLE_CLOSE
+      gaps.map(g => {
+        const colour = !g.blocking ? C.muted : g.count ? C.bad : C.good
+        return `<tr>
+        ${td(esc(g.label), { bold: true, color: g.blocking ? C.ink : C.muted })}
+        ${td(num(g.count), { align: 'right', bold: g.blocking && g.count > 0, color: colour })}
+        ${td(bar(g.count, r.total, g.count ? colour : C.line))}
+      </tr>`
+      }).join('') + TABLE_CLOSE
     : ''
 
   const dayTable = r.total
@@ -389,26 +472,32 @@ function readinessSection(d: ReportData): string {
       </tr>`).join('') + TABLE_CLOSE + '</div>'
     : ''
 
+  // Each channel is capped separately upstream, so each carries its own
+  // "showing X of Y" note against that channel's arrival count.
+  const checklistTable = (rows: ReadinessLine[], source: 'B2B' | 'B2C') =>
+    tableOpen([
+      { text: 'Ref' }, { text: 'Arrives' }, { text: 'Country' },
+      { text: 'Pax', align: 'right', width: '40' },
+      { text: 'Client', align: 'center' }, { text: 'Driver', align: 'center' },
+      { text: 'Tickets', align: 'center' }, { text: 'QC', align: 'center' },
+    ]) + rows.map((b: ReadinessLine) => {
+      const arrives = b.daysToArrival === 1 ? 'Tomorrow' : formatReportDate(b.arrivalDate, { weekday: true })
+      const guest = b.leadPassenger ?? b.destination
+      return `<tr>
+        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
+        ${td(esc(arrives), { nowrap: true, color: b.daysToArrival === 1 ? C.bad : C.body, bold: b.daysToArrival === 1 })}
+        ${td(esc(b.countryLabel), { nowrap: true })}
+        ${td(num(b.pax), { align: 'right' })}
+        ${td(checkCell(b.readiness.client), { align: 'center', nowrap: true })}
+        ${td(checkCell(b.readiness.driver), { align: 'center', nowrap: true })}
+        ${td(checkCell(b.readiness.tickets), { align: 'center', nowrap: true })}
+        ${td(checkCell(b.readiness.qc), { align: 'center', nowrap: true })}
+      </tr>`
+    }).join('') + TABLE_CLOSE +
+    moreNote(rows.length, source === 'B2C' ? r.channel.b2c : r.channel.b2b, `${source} arrivals`)
+
   const list = r.bookings.length
-    ? tableOpen([
-        { text: 'Ref' }, { text: 'Arrives' }, { text: 'Country' },
-        { text: 'Pax', align: 'right', width: '40' },
-        { text: 'Client', align: 'center' }, { text: 'Driver', align: 'center' },
-        { text: 'Tickets', align: 'center' }, { text: 'QC', align: 'center' },
-      ]) + r.bookings.map((b: ReadinessLine) => {
-        const arrives = b.daysToArrival === 1 ? 'Tomorrow' : formatReportDate(b.arrivalDate, { weekday: true })
-        const guest = b.leadPassenger ?? b.destination
-        return `<tr>
-          ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
-          ${td(esc(arrives), { nowrap: true, color: b.daysToArrival === 1 ? C.bad : C.body, bold: b.daysToArrival === 1 })}
-          ${td(esc(b.countryLabel), { nowrap: true })}
-          ${td(num(b.pax), { align: 'right' })}
-          ${td(checkCell(b.readiness.client), { align: 'center', nowrap: true })}
-          ${td(checkCell(b.readiness.driver), { align: 'center', nowrap: true })}
-          ${td(checkCell(b.readiness.tickets), { align: 'center', nowrap: true })}
-          ${td(checkCell(b.readiness.qc), { align: 'center', nowrap: true })}
-        </tr>`
-      }).join('') + TABLE_CLOSE + moreNote(r.bookings.length, r.total, 'arrivals')
+    ? byChannel(r.bookings, checklistTable)
     : emptyNote('No tours arrive in the next three days.')
 
   const legend = r.bookings.length
@@ -417,9 +506,9 @@ function readinessSection(d: ReportData): string {
 
   return section(
     'Arriving next 3 days — readiness',
-    `${formatReportDate(r.fromDate, { weekday: true })} to ${formatReportDate(r.toDate, { weekday: true })} · client confirmation, drivers, tickets and QC`,
+    `${formatReportDate(r.fromDate, { weekday: true })} to ${formatReportDate(r.toDate, { weekday: true })} · client confirmation, drivers, tickets and QC · ${num(r.channel.b2b)} B2B and ${num(r.channel.b2c)} B2C, listed separately`,
     C.warn,
-    banner + kpis + gapTable + dayTable +
+    banner + kpis + tomorrowGapTable(r.tomorrowOutstanding) + gapTable + dayTable +
       `<div style="padding-top:18px;"><div class="h3">Booking-by-booking checklist</div>${list}${legend}</div>` +
       (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : ''),
   )
@@ -573,9 +662,15 @@ export interface RenderOptions {
 }
 
 function headerBlock(w: ReportWindow, opts: RenderOptions): string {
-  const badge = opts.testSend
-    ? `<span style="display:inline-block;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">TEST SEND</span>`
-    : ''
+  // A back-dated view says so on its face: the counts are for the chosen period,
+  // but the forward-looking sections read from today's booking records, so it is
+  // not the mail that went out that morning and must not be mistaken for it.
+  const badge = [
+    opts.testSend ? 'TEST SEND' : '',
+    w.anchored ? `BACK-DATED TO ${formatReportDate(w.toDate).toUpperCase()}` : '',
+  ].filter(Boolean).map(text =>
+    `<span style="display:inline-block;margin-left:5px;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.18);color:#ffffff;font:700 10px/1.5 ${FONT};letter-spacing:.08em;">${esc(text)}</span>`,
+  ).join('')
   return `
   <tr><td style="background:${C.brandDeep};background-image:linear-gradient(135deg,${C.brandDeep} 0%,${C.brand} 100%);padding:26px 24px;border-radius:16px 16px 0 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
@@ -735,7 +830,7 @@ export function renderReportCsv(d: ReportData): string {
     d.onGround.tours.map(t => [t.bookingRef, t.source, t.countryLabel, t.leadPassenger ?? '', t.dayNo, t.totalDays, t.pax, t.status].map(String)))
 
   block(`Arriving ${d.readiness.fromDate} to ${d.readiness.toDate} — readiness`,
-    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Days to arrival', 'Pax', 'Status', 'Client confirmed', 'Driver allocation', 'Driver detail', 'Tickets', 'Ticket detail', 'QC stage', 'Ready', 'Outstanding'],
+    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Days to arrival', 'Pax', 'Status', 'Client confirmed', 'Driver allocation', 'Driver detail', 'Tickets', 'Ticket detail', 'QC stage', 'Ready', 'Blocking', 'Outstanding'],
     d.readiness.bookings.map(b => [
       b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, b.daysToArrival, b.pax, b.status,
       b.readiness.client.state === 'DONE' ? 'Yes' : 'No',
@@ -743,8 +838,21 @@ export function renderReportCsv(d: ReportData): string {
       b.readiness.tickets.short, b.readiness.tickets.detail,
       b.readiness.qc.short,
       b.readiness.ready ? 'Yes' : 'No',
+      b.readiness.blocking.join('; '),
       b.readiness.outstanding.join('; '),
     ].map(String)))
+
+  // The mail caps the readiness list for size; tomorrow's chase list never is,
+  // so it gets its own uncapped block with the reason spelled out per booking.
+  if (d.readiness.tomorrowOutstanding.length) {
+    block(`Arriving ${d.readiness.fromDate} — not ready`,
+      ['Ref', 'Source', 'Country', 'Lead guest', 'Pax', 'Status', 'Blocking', 'Client', 'Drivers', 'Tickets', 'QC (not blocking)'],
+      d.readiness.tomorrowOutstanding.map(b => [
+        b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.pax, b.status,
+        b.readiness.blocking.join('; '),
+        b.readiness.client.detail, b.readiness.driver.detail, b.readiness.tickets.detail, b.readiness.qc.detail,
+      ].map(String)))
+  }
 
   block('Complaints', ['Raised at', 'Ref', 'Customer', 'Country', 'Category', 'Severity', 'Status', 'Title', 'Details', 'Resolution', 'Resolved at', 'Hours to resolve'],
     [...d.complaints.items, ...d.complaints.carriedOpen].map(c => [c.createdAt, c.bookingRef ?? '', c.customerName ?? '', c.countryLabel, c.category, c.severity, c.status, c.title ?? '', c.details ?? '', c.resolutionNote ?? '', c.resolvedAt ?? '', c.resolutionHours ?? ''].map(String)))

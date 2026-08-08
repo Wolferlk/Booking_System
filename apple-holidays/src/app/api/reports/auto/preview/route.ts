@@ -12,7 +12,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { buildReport } from '@/lib/reports/report-runner'
 import { getSchedule, normalizeSchedule, ScheduleValidationError } from '@/lib/reports/report-schedules'
-import { DEFAULT_REPORT_TZ, REPORT_PERIODS, type ReportPeriod } from '@/lib/reports/report-window'
+import { DEFAULT_REPORT_TZ, REPORT_PERIODS, dateInTz, isValidDate, type ReportPeriod } from '@/lib/reports/report-window'
 
 export const dynamic = 'force-dynamic'
 
@@ -54,7 +54,18 @@ export async function GET(req: NextRequest) {
 
   try {
     const shape = await resolveShape(req.nextUrl.searchParams)
-    const built = await buildReport(shape, { testSend: true })
+
+    // `?date=yyyy-mm-dd` back-dates the preview to the day, week or month that
+    // date falls in. Rejected rather than silently ignored: a typo'd date that
+    // quietly returned yesterday's numbers is exactly the kind of wrong nobody
+    // catches. Future dates are refused too — there is no business to report.
+    const date = req.nextUrl.searchParams.get('date')
+    if (date && !isValidDate(date)) throw new ScheduleValidationError('Report date must be a valid yyyy-mm-dd date.')
+    if (date && date > dateInTz(new Date(), shape.timezone)) {
+      throw new ScheduleValidationError('Report date cannot be in the future.')
+    }
+
+    const built = await buildReport(shape, { testSend: true, anchorDate: date })
     const format = req.nextUrl.searchParams.get('format')
 
     if (format === 'html') {
