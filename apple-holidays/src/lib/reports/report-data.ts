@@ -180,8 +180,17 @@ export interface ReadinessSection {
   pendingQc: number
   byDay: ReadinessDay[]
   byCountry: CountryRow[]
+  /** Arrivals split by trade channel — the two are worked by different desks. */
+  channel: ChannelSplit
   /** Not-ready first, soonest first — the work list. */
   bookings: ReadinessLine[]
+  /**
+   * Every tour landing tomorrow that is still not ready, so the mail can spell
+   * out what is missing on each one. Kept separate from `bookings` because that
+   * list is capped for message size and would otherwise hide the arrivals the
+   * desk has one day left to fix.
+   */
+  tomorrowOutstanding: ReadinessLine[]
 }
 
 export interface ReportData {
@@ -563,6 +572,26 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
   const tomorrow = lines.filter(l => l.arrivalDate === fromDate)
   const notReady = lines.filter(l => !l.readiness.ready)
 
+  // Anything outstanding first, then by arrival — the order the desk works in.
+  const byUrgency = (a: ReadinessLine, b: ReadinessLine) =>
+    Number(a.readiness.ready) - Number(b.readiness.ready) ||
+    a.arrivalDate.localeCompare(b.arrivalDate) ||
+    a.bookingRef.localeCompare(b.bookingRef)
+
+  // Eight columns a row makes the checklist the widest table in the mail, so it
+  // is capped tighter than the rest to keep the message under Gmail's clip. The
+  // cap is spent per channel rather than on one queue: B2C is a handful of
+  // bookings against dozens of B2B, and a straight top-25 would drop every one
+  // of them off a busy day's mail — the desk that works them would see nothing.
+  const cap = Math.min(maxRows, 25)
+  const ranked = lines.slice().sort(byUrgency)
+  const b2c = ranked.filter(l => l.source === 'B2C')
+  const b2b = ranked.filter(l => l.source === 'B2B')
+  // Half the cap is held for B2C; whatever it does not use goes back to B2B.
+  const b2cCount = Math.min(b2c.length, Math.max(Math.floor(cap / 2), cap - b2b.length))
+  const b2bCount = Math.min(b2b.length, cap - b2cCount)
+  const shown = [...b2c.slice(0, b2cCount), ...b2b.slice(0, b2bCount)].sort(byUrgency)
+
   return {
     fromDate,
     toDate,
@@ -578,15 +607,13 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     pendingQc: lines.filter(l => l.readiness.outstanding.includes('QC')).length,
     byDay: Array.from(dayMap.values()),
     byCountry: rollUpByCountry(lines),
-    // Anything outstanding first, then by arrival — the order the desk works in.
-    bookings: lines.slice()
+    channel: channelSplit(lines),
+    bookings: shown,
+    tomorrowOutstanding: tomorrow
+      .filter(l => !l.readiness.ready)
       .sort((a, b) =>
-        Number(a.readiness.ready) - Number(b.readiness.ready) ||
-        a.arrivalDate.localeCompare(b.arrivalDate) ||
-        a.bookingRef.localeCompare(b.bookingRef))
-      // Eight columns a row makes this the widest table in the mail, so it is
-      // capped tighter than the rest to keep the message under Gmail's clip.
-      .slice(0, Math.min(maxRows, 25)),
+        b.readiness.blocking.length - a.readiness.blocking.length ||
+        a.bookingRef.localeCompare(b.bookingRef)),
   }
 }
 
