@@ -9,14 +9,18 @@ import {
   FileText, RefreshCw, Loader2, Edit2, UserCheck,
   Navigation2, Building2, Route, Shield, Info, ChevronRight,
   ArrowRight, ArrowUpDown, ArrowUp, ArrowDown, Filter, SlidersHorizontal,
-  Eye, EyeOff,
+  Eye, EyeOff, Palmtree,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
+import {
+  HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver, resolveIsHotelOnly,
+} from '@/lib/driver-requirement'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type VehicleType = 'car' | 'flat_roof' | 'high_roof' | 'bus' | 'hotel_only'
+type AllocStatus = 'assigned' | 'vendor' | 'hotel_only' | 'pending' | 'emergency'
 type SortField   = 'arrivalDate' | 'departureDate' | 'createdAt' | 'agent' | 'isNumber' | 'pendingFirst'
 type SortDir     = 'asc' | 'desc'
 type DateField   = 'arrivalDate' | 'departureDate' | 'createdAt'
@@ -34,6 +38,8 @@ interface ItinDay  { id: string; dayNo: number; date: string; title: string; des
 interface MovementItem {
   id: string; date: string; location: string; fromPoint: string | null; toPoint: string | null
   details: string | null; timeFrom: string | null; timeTo: string | null; serviceType: string
+  /** No driver needed for this movement — a free day, or hotel only. */
+  isLeisure: boolean | null; isHotelOnly: boolean | null
   assignment: {
     driverName: string | null; driverPhone: string | null; vendorName: string | null
     vehicleType: string | null; vehiclePlate: string | null
@@ -93,18 +99,28 @@ const DATE_FIELD_OPTIONS: { value: DateField; label: string }[] = [
 ]
 
 const STATUS_OPTIONS = [
-  { value: 'all',       label: 'All',         short: 'All' },
-  { value: 'assigned',  label: 'Driver',       short: 'Driver' },
-  { value: 'vendor',    label: 'Vendor',       short: 'Vendor' },
-  { value: 'pending',   label: 'Pending',      short: 'Pending' },
-  { value: 'emergency', label: 'Emergency',    short: '⚠ Emergency' },
+  { value: 'all',        label: 'All',        short: 'All' },
+  { value: 'assigned',   label: 'Driver',     short: 'Driver' },
+  { value: 'vendor',     label: 'Vendor',     short: 'Vendor' },
+  { value: 'hotel_only', label: 'Hotel Only', short: '🏨 Hotel Only' },
+  { value: 'pending',    label: 'Pending',    short: 'Pending' },
+  { value: 'emergency',  label: 'Emergency',  short: '⚠ Emergency' },
 ]
 
 const STATUS_BADGE: Record<string, string> = {
-  assigned:  'bg-emerald-500/15 border-emerald-500/30 text-emerald-400',
-  vendor:    'bg-blue-500/15 border-blue-500/30 text-blue-400',
-  pending:   'bg-slate-700/50 border-slate-600/30 text-slate-400',
-  emergency: 'bg-red-500/15 border-red-500/30 text-red-400',
+  assigned:   'bg-emerald-500/15 border-emerald-500/30 text-emerald-400',
+  vendor:     'bg-blue-500/15 border-blue-500/30 text-blue-400',
+  hotel_only: 'bg-pink-500/15 border-pink-500/30 text-pink-400',
+  pending:    'bg-slate-700/50 border-slate-600/30 text-slate-400',
+  emergency:  'bg-red-500/15 border-red-500/30 text-red-400',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  assigned:   'Driver',
+  vendor:     'Vendor',
+  hotel_only: 'Hotel Only',
+  pending:    'Pending',
+  emergency:  'Emergency',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -155,11 +171,24 @@ function effectiveVehicleType(b: SLBooking): string | null {
   return b.tourAgenda?.items.find(m => m.assignment?.vehicleType)?.assignment?.vehicleType ?? null
 }
 
-function allocationStatus(b: SLBooking): 'assigned' | 'vendor' | 'pending' | 'emergency' {
+/**
+ * True when this file still has to be given a driver. False for a Hotel Only
+ * booking, and for one whose every movement on the chart is a leisure day or
+ * marked Hotel Only — there is nothing to drive, so the allocation is complete.
+ */
+function needsDriver(b: SLBooking): boolean {
+  return bookingNeedsDriver({
+    vehicleType: effectiveVehicleType(b),
+    items:       b.tourAgenda?.items ?? [],
+  })
+}
+
+function allocationStatus(b: SLBooking): AllocStatus {
   if (b.slDriverAllocation?.isEmergency) return 'emergency'
   const eff = effectiveDriver(b)
-  if (!eff) return 'pending'
-  return eff.kind === 'driver' ? 'assigned' : 'vendor'
+  if (eff) return eff.kind === 'driver' ? 'assigned' : 'vendor'
+  // No driver, and none required — done, not pending.
+  return needsDriver(b) ? 'pending' : 'hotel_only'
 }
 
 function fmt(dt: string) {
@@ -361,9 +390,10 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
                 </div>
               )}
               <div className={cn('rounded-xl border p-4',
-                status === 'assigned'  ? 'bg-emerald-500/5 border-emerald-500/25' :
-                status === 'vendor'    ? 'bg-blue-500/5 border-blue-500/25' :
-                status === 'emergency' ? 'bg-red-500/5 border-red-500/30' : 'bg-slate-800/40 border-slate-700/40')}>
+                status === 'assigned'   ? 'bg-emerald-500/5 border-emerald-500/25' :
+                status === 'vendor'     ? 'bg-blue-500/5 border-blue-500/25' :
+                status === 'hotel_only' ? 'bg-pink-500/5 border-pink-500/25' :
+                status === 'emergency'  ? 'bg-red-500/5 border-red-500/30' : 'bg-slate-800/40 border-slate-700/40')}>
                 <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold mb-3 flex items-center gap-1.5"><Car className="w-3 h-3" />Driver Allocation</p>
                 {effectiveVehicleType(booking) && <div className="mb-2"><VehiclePill type={effectiveVehicleType(booking)} /></div>}
                 {panelDriver ? (
@@ -379,6 +409,18 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
                       {panelDriver.phone && <p className="text-slate-400 text-xs">{panelDriver.phone}</p>}
                       {panelDriver.plate && <p className="text-slate-500 text-[11px]">{panelDriver.plate}</p>}
                       {panelDriver.fromAgenda && <p className="text-slate-500 text-[11px] italic">set on the movement chart</p>}
+                    </div>
+                  </div>
+                ) : status === 'hotel_only' ? (
+                  <div className="flex items-start gap-2">
+                    <Building2 className="w-4 h-4 text-pink-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-pink-400 font-bold text-sm">No driver needed</p>
+                      <p className="text-pink-300/60 text-[11px] mt-0.5">
+                        {effectiveVehicleType(booking) === HOTEL_ONLY_VEHICLE
+                          ? 'Hotel Only booking — this file carries no transport.'
+                          : 'Every movement on the chart is a leisure day or hotel only.'}
+                      </p>
                     </div>
                   </div>
                 ) : <p className="text-slate-500 text-sm italic">No driver assigned yet</p>}
@@ -417,7 +459,14 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
                       </div>
                     </div>
                     {m.details && <p className="text-slate-400 text-xs leading-relaxed line-clamp-3 mt-1">{m.details}</p>}
-                    {m.assignment && <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center gap-2 text-xs"><Car className="w-3 h-3 text-slate-500" /><span className="text-slate-400">{m.assignment.driverName ?? m.assignment.driver?.name ?? m.assignment.vendor?.name ?? '—'}</span>{m.assignment.vehicleType && <VehiclePill type={m.assignment.vehicleType} compact />}</div>}
+                    {/* Same no-driver markers the Movement Chart shows, so the two screens read alike */}
+                    {!movementNeedsDriver(m) ? (
+                      <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center gap-2 text-xs">
+                        {resolveIsHotelOnly(m)
+                          ? <><Building2 className="w-3 h-3 text-pink-400" /><span className="text-pink-400 font-semibold">Hotel only — no driver required</span></>
+                          : <><Palmtree className="w-3 h-3 text-amber-400" /><span className="text-amber-400 font-semibold">Leisure day — no driver required</span></>}
+                      </div>
+                    ) : m.assignment && <div className="mt-2 pt-2 border-t border-slate-700/40 flex items-center gap-2 text-xs"><Car className="w-3 h-3 text-slate-500" /><span className="text-slate-400">{m.assignment.driverName ?? m.assignment.driver?.name ?? m.assignment.vendor?.name ?? '—'}</span>{m.assignment.vehicleType && <VehiclePill type={m.assignment.vehicleType} compact />}</div>}
                   </div>
                 </div>
               ))}
@@ -712,7 +761,10 @@ export default function SriLankaDriverAllocationPage() {
     // Sort
     list.sort((a, b) => {
       if (sortBy === 'pendingFirst') {
-        const order = { pending: 0, emergency: 1, vendor: 2, assigned: 3 }
+        // Hotel Only files sort last — they need no driver, so they are the
+        // least urgent thing on a board sorted by outstanding work.
+        const order: Record<AllocStatus, number> =
+          { pending: 0, emergency: 1, vendor: 2, assigned: 3, hotel_only: 4 }
         const diff = order[allocationStatus(a)] - order[allocationStatus(b)]
         if (diff !== 0) return diff
         return new Date(a.arrivalDate).getTime() - new Date(b.arrivalDate).getTime()
@@ -767,6 +819,7 @@ export default function SriLankaDriverAllocationPage() {
     total:     bookings.length,
     assigned:  bookings.filter(b => allocationStatus(b) === 'assigned').length,
     vendor:    bookings.filter(b => allocationStatus(b) === 'vendor').length,
+    hotelOnly: bookings.filter(b => allocationStatus(b) === 'hotel_only').length,
     pending:   bookings.filter(b => allocationStatus(b) === 'pending').length,
     emergency: bookings.filter(b => allocationStatus(b) === 'emergency').length,
   }), [bookings])
@@ -782,7 +835,18 @@ export default function SriLankaDriverAllocationPage() {
         body: JSON.stringify({ bookingId: booking.id, vehicleType, driverId: booking.slDriverAllocation?.driverId ?? null, vendorId: booking.slDriverAllocation?.vendorId ?? null, notes: booking.slDriverAllocation?.notes ?? null, isEmergency: booking.slDriverAllocation?.isEmergency ?? false, changeReason: booking.slDriverAllocation?.changeReason ?? null }),
       })
       if (!res.ok) throw new Error('Save failed')
-      toast.success('Vehicle type updated')
+
+      // Switching in or out of Hotel Only rewrites the movement chart server-side
+      // (every movement marked / unmarked, drivers released). Re-read so the board
+      // shows the same picture the chart now holds rather than a stale one.
+      const hotelOnlyChanged =
+        (vehicleType === HOTEL_ONLY_VEHICLE) !==
+        (booking.slDriverAllocation?.vehicleType === HOTEL_ONLY_VEHICLE)
+      if (hotelOnlyChanged) await fetchBookings(true)
+
+      toast.success(vehicleType === HOTEL_ONLY_VEHICLE
+        ? 'Hotel Only — no driver required for this booking'
+        : 'Vehicle type updated')
     } catch { setBookings(prev); toast.error('Failed to update vehicle type') }
   }
 
@@ -865,10 +929,11 @@ export default function SriLankaDriverAllocationPage() {
         </div>
 
         {/* ── Clickable Stats ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <StatCard label="Total Bookings"  value={stats.total}     color="border-slate-700/40 text-slate-300"    icon={FileText}      onClick={() => setStatusFilter('all')}       active={statusFilter === 'all'} />
           <StatCard label="Driver Assigned" value={stats.assigned}  color="border-emerald-500/30 text-emerald-400" icon={UserCheck}     onClick={() => setStatusFilter('assigned')}  active={statusFilter === 'assigned'} />
           <StatCard label="Vendor Assigned" value={stats.vendor}    color="border-blue-500/30 text-blue-400"       icon={Truck}         onClick={() => setStatusFilter('vendor')}    active={statusFilter === 'vendor'} />
+          <StatCard label="Hotel Only"      value={stats.hotelOnly} color="border-pink-500/30 text-pink-400"       icon={Building2}     onClick={() => setStatusFilter('hotel_only')} active={statusFilter === 'hotel_only'} />
           <StatCard label="Pending"         value={stats.pending}   color="border-amber-500/30 text-amber-400"     icon={Clock}         onClick={() => setStatusFilter('pending')}   active={statusFilter === 'pending'} />
           <StatCard label="Emergency"       value={stats.emergency} color="border-red-500/30 text-red-400"         icon={AlertTriangle} onClick={() => setStatusFilter('emergency')} active={statusFilter === 'emergency'} />
         </div>
@@ -1121,6 +1186,12 @@ export default function SriLankaDriverAllocationPage() {
                               </div>
                               <Edit2 className="w-3 h-3 text-slate-600 group-hover/d:text-slate-400 mt-1 opacity-0 group-hover/d:opacity-100 transition-all" />
                             </button>
+                          ) : status === 'hotel_only' ? (
+                            // Nothing to drive on this file — the Assign prompt would
+                            // read as outstanding work that does not exist.
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-pink-500/25 bg-pink-500/5 text-pink-400 text-xs font-semibold">
+                              <Building2 className="w-3 h-3" />No driver needed
+                            </span>
                           ) : (
                             <button onClick={() => setAssignBooking(b)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-slate-700/60 text-slate-500 hover:text-teal-400 hover:border-teal-500/40 hover:bg-teal-500/5 transition-all text-xs font-semibold">
                               <Navigation2 className="w-3 h-3" />Assign
@@ -1132,8 +1203,11 @@ export default function SriLankaDriverAllocationPage() {
                         <td className="px-4 py-3.5">
                           <div className="flex flex-col items-start gap-1.5">
                             <span className={cn('px-2.5 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider', STATUS_BADGE[status])}>
-                              {status === 'assigned' ? 'Driver' : status === 'vendor' ? 'Vendor' : status === 'pending' ? 'Pending' : 'Emergency'}
+                              {STATUS_LABEL[status] ?? status}
                             </span>
+                            {status === 'hotel_only' && (
+                              <span className="text-pink-400/70 text-[10px]">No driver needed</span>
+                            )}
                             {status === 'emergency' && <AlertTriangle className="w-3.5 h-3.5 text-red-400" />}
                           </div>
                         </td>

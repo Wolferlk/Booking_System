@@ -17,6 +17,7 @@ import {
   ticketFileKind, categoryIcon, categoryLabel, paxLabel,
 } from '@/lib/ticket-notes'
 import { resolveIsLeisure } from '@/lib/leisure-day'
+import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 
 export const dynamic = 'force-dynamic'
 
@@ -416,12 +417,14 @@ export async function GET(
               meetDisplay = item.meetingTime
             }
 
-            // Leisure days carry no driver by design — say so rather than
-            // printing "Not assigned", which reads as an operational gap.
-            const isLeisure = resolveIsLeisure(item)
+            // Leisure and hotel-only days carry no driver by design — say so
+            // rather than printing "Not assigned", which reads as an operational gap.
+            const isLeisure   = resolveIsLeisure(item)
+            const isHotelOnly = resolveIsHotelOnly(item)
+            const noDriver    = isLeisure || isHotelOnly
 
-            let driverText = isLeisure ? 'No driver required' : 'Not assigned'
-            if (isLeisure) {
+            let driverText = noDriver ? 'No driver required' : 'Not assigned'
+            if (noDriver) {
               // no allocation to render
             } else if (displayVendorName) {
               driverText = displayVendorName
@@ -442,12 +445,12 @@ export async function GET(
               dCell(item.toPoint   || '—', { bold: true, shade }),
               dCell(normalizeMealPlan(item.mealPlan), { shade }),
               dCell(meetDisplay, { bold: meetDisplay !== '—', color: meetDisplay !== '—' ? CLR.green : CLR.muted, shade }),
-              dCell(isLeisure ? 'Leisure Day' : SVC_LABEL[svc] ?? svc, { shade }),
+              dCell(isHotelOnly ? 'Hotel Only' : isLeisure ? 'Leisure Day' : SVC_LABEL[svc] ?? svc, { shade }),
               driverCell(driverText, {
-                italic: isLeisure || driverText === 'Not assigned',
-                color: isLeisure || driverText === 'Not assigned' ? CLR.muted : undefined,
+                italic: noDriver || driverText === 'Not assigned',
+                color: noDriver || driverText === 'Not assigned' ? CLR.muted : undefined,
                 shade,
-                photo: isLeisure ? null : driverPhoto,
+                photo: noDriver ? null : driverPhoto,
               }),
             ]
 

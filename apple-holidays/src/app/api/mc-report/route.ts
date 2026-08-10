@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import { resolveIsLeisure } from '@/lib/leisure-day'
+import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -138,6 +139,8 @@ export async function GET(req: NextRequest) {
     serviceType:    item.serviceType,
     // Free day — shown as a "Leisure Day" marker instead of an empty driver cell.
     isLeisure:      resolveIsLeisure(item),
+    // Accommodation / own transport — same "no driver needed" marker.
+    isHotelOnly:    resolveIsHotelOnly(item),
     vendor:         item.assignment?.vendor?.name
                       ?? item.assignment?.vendorName
                       ?? item.assignment?.driver?.vehicle?.vendor?.name
