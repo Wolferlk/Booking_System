@@ -320,12 +320,13 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
             select: {
               serviceType: true,
               isLeisure: true,
+              isHotelOnly: true,
               assignment: { select: { driverId: true, vendorId: true } },
             },
           },
         },
       },
-      slDriverAllocation: { select: { driverId: true, vendorId: true } },
+      slDriverAllocation: { select: { driverId: true, vendorId: true, vehicleType: true } },
       tickets: { select: { activated: true, status: true } },
     },
   })
