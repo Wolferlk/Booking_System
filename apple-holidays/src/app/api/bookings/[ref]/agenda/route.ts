@@ -5,7 +5,10 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { normalisePhone } from '@/lib/whatsapp'
-import { syncSlAllocationFromAgenda, syncSlAllocationFromAgendaByRef } from '@/lib/sl-driver-allocation-sync'
+import {
+  syncSlAllocationFromAgenda, syncSlAllocationFromAgendaByRef,
+  syncHotelOnlyFromAgenda, syncHotelOnlyFromAgendaByRef,
+} from '@/lib/sl-driver-allocation-sync'
 import {
   sendDriverAssignment,
   sendDriverCancellation,
@@ -120,6 +123,7 @@ export async function POST(
             timeTo: item.timeTo as string | undefined,
             serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
             isLeisure: typeof item.isLeisure === 'boolean' ? item.isLeisure : null,
+            isHotelOnly: typeof item.isHotelOnly === 'boolean' ? item.isHotelOnly : null,
             sortOrder: index,
           },
         }),
@@ -142,9 +146,9 @@ export async function POST(
 
   await Promise.all(
     items.map((item: Record<string, unknown>, index: number) => {
-      // Leisure days carry no driver — the row above was recreated from scratch,
-      // so simply not writing an assignment leaves it unallocated.
-      if (item.isLeisure === true) return Promise.resolve()
+      // Leisure and hotel-only days carry no driver — the row above was recreated
+      // from scratch, so simply not writing an assignment leaves it unallocated.
+      if (item.isLeisure === true || item.isHotelOnly === true) return Promise.resolve()
 
       const assignment = item.assignment as
         | {
@@ -212,6 +216,9 @@ export async function POST(
   // board, which reads the booking-level allocation row. Non-fatal.
   try {
     await syncSlAllocationFromAgenda(booking.id)
+    // A chart where every movement is Hotel Only is a hotel-only file, and the
+    // board's vehicle type has to say so — otherwise it keeps reading as pending.
+    await syncHotelOnlyFromAgenda(booking.id)
   } catch (syncErr) {
     console.error('[Agenda POST] SL allocation sync failed (non-fatal):', syncErr)
   }
@@ -231,7 +238,7 @@ export async function POST(
     }>()
 
     for (const raw of items as Record<string, unknown>[]) {
-      if (raw.isLeisure === true) continue
+      if (raw.isLeisure === true || raw.isHotelOnly === true) continue
       const a = raw.assignment as { driverName?: string | null; driverPhone?: string | null; vehicleType?: string | null; vehiclePlate?: string | null } | null | undefined
       if (!a?.driverPhone || !a?.driverName) continue
       const phone = normalisePhone(a.driverPhone)
@@ -469,16 +476,22 @@ export async function PUT(
     )
   }
 
-  // Marking a movement as a leisure day also releases any driver already
-  // allocated to it — a free day must never hold a vehicle booking.
-  if (body.isLeisure === true) {
+  // Marking a movement as a leisure or hotel-only day also releases any driver
+  // already allocated to it — a day we do not drive must never hold a vehicle
+  // booking. The two are mutually exclusive: a movement carries one reason for
+  // having no driver, so setting either clears the other.
+  const markedNoDriver = body.isLeisure === true || body.isHotelOnly === true
+  if (markedNoDriver) {
     await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
   }
 
   const updated = await prisma.agendaItem.update({
     where: { id: itemId },
     data: {
-      ...(body.isLeisure !== undefined && { isLeisure: body.isLeisure }),
+      ...(body.isLeisure   !== undefined && { isLeisure:   body.isLeisure }),
+      ...(body.isHotelOnly !== undefined && { isHotelOnly: body.isHotelOnly }),
+      ...(body.isLeisure   === true && { isHotelOnly: false }),
+      ...(body.isHotelOnly === true && { isLeisure:   false }),
       ...(body.date && { date: new Date(body.date) }),
       ...(body.location !== undefined && { location: body.location }),
       ...(body.fromPoint !== undefined && { fromPoint: body.fromPoint }),
@@ -490,6 +503,16 @@ export async function PUT(
     },
     include: { assignment: { include: ASSIGNMENT_INCLUDE } },
   })
+
+  // A Hotel Only change on one movement can complete (or reopen) the whole file
+  // on the Sri Lanka Driver Allocation board. Non-fatal.
+  if (body.isHotelOnly !== undefined) {
+    try {
+      await syncHotelOnlyFromAgendaByRef(params.ref)
+    } catch (syncErr) {
+      console.error('[Agenda PUT] Hotel Only sync failed (non-fatal):', syncErr)
+    }
+  }
 
   return buildApiSuccess(updated, 'Agenda item updated')
 }

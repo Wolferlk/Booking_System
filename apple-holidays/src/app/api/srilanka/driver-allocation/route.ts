@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { backfillSlAllocationsFromAgenda } from '@/lib/sl-driver-allocation-sync'
+import { HOTEL_ONLY_VEHICLE } from '@/lib/driver-requirement'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -46,12 +47,17 @@ export async function GET(req: NextRequest) {
   } else if (statusFilter === 'vendor') {
     andClauses.push({ slDriverAllocation: { vendorId: { not: null }, driverId: null } })
   } else if (statusFilter === 'pending') {
+    // A Hotel Only file needs no driver, so it is complete — never pending.
+    // Charts where every movement is individually marked hotel-only or leisure
+    // are filtered out client-side, where the movements are already in hand.
     andClauses.push({
       OR: [
         { slDriverAllocation: null },
-        { slDriverAllocation: { driverId: null, vendorId: null } },
+        { slDriverAllocation: { driverId: null, vendorId: null, vehicleType: { not: HOTEL_ONLY_VEHICLE } } },
       ],
     })
+  } else if (statusFilter === 'hotel_only') {
+    andClauses.push({ slDriverAllocation: { vehicleType: HOTEL_ONLY_VEHICLE } })
   } else if (statusFilter === 'emergency') {
     andClauses.push({ slDriverAllocation: { isEmergency: true } })
   }
@@ -122,6 +128,9 @@ export async function GET(req: NextRequest) {
                 id: true, date: true, location: true,
                 fromPoint: true, toPoint: true, details: true,
                 timeFrom: true, timeTo: true, serviceType: true,
+                // Movements that need no driver — the board reads these to tell
+                // an unallocated file from one that simply isn't driven.
+                isLeisure: true, isHotelOnly: true,
                 assignment: {
                   select: {
                     driverName: true, driverPhone: true, vendorName: true,
@@ -197,6 +206,14 @@ export async function POST(req: NextRequest) {
     if (!booking) return buildApiError('Booking not found', 404)
     if (booking.operationCountry !== 'SRILANKA') return buildApiError('Not a Sri Lanka booking', 400)
 
+    // Read before the upsert overwrites it — the Hotel Only sync below acts on
+    // the *change* of vehicle type, not on its value, so that a plain driver
+    // assignment never disturbs hotel-only marks made on the movement chart.
+    const previous = await prisma.sriLankaDriverAllocation.findUnique({
+      where:  { bookingId },
+      select: { vehicleType: true },
+    })
+
     const allocation = await prisma.sriLankaDriverAllocation.upsert({
       where: { bookingId },
       create: {
@@ -255,7 +272,38 @@ export async function POST(req: NextRequest) {
       select: { items: { select: { id: true } } },
     })
 
-    if (agenda?.items.length) {
+    // ── Hotel Only ↔ Movement Chart ───────────────────────────────────────────
+    // Choosing Hotel Only on the board means the whole file carries no transport,
+    // so every movement is marked hotel-only and any driver already on the chart
+    // is released — the chart must not keep showing a driver for a file the board
+    // now reports as needing none. Switching back to a real vehicle lifts the mark
+    // off again, putting the Assign Driver controls back on every movement.
+    const isHotelOnly   = vehicleType === HOTEL_ONLY_VEHICLE
+    const wasHotelOnly  = previous?.vehicleType === HOTEL_ONLY_VEHICLE
+    if (agenda?.items.length && isHotelOnly !== wasHotelOnly) {
+      const itemIds = agenda.items.map(i => i.id)
+      await prisma.agendaItem.updateMany({
+        where: { id: { in: itemIds } },
+        data:  { isHotelOnly },
+      })
+      if (isHotelOnly) {
+        await prisma.assignment.deleteMany({ where: { agendaItemId: { in: itemIds } } })
+      }
+    }
+
+    // A hotel-only file holds no driver at booking level either.
+    if (isHotelOnly && (allocation.driverId || allocation.vendorId)) {
+      await prisma.sriLankaDriverAllocation.update({
+        where: { bookingId },
+        data:  { driverId: null, vendorId: null },
+      })
+      allocation.driverId = null
+      allocation.vendorId = null
+      allocation.driver   = null
+      allocation.vendor   = null
+    }
+
+    if (agenda?.items.length && !isHotelOnly) {
       await Promise.all(
         agenda.items.map(item =>
           isDriverChange

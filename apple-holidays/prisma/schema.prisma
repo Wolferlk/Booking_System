@@ -300,6 +300,12 @@ model AgendaItem {
   /// NULL means "never decided": rows saved before this column existed fall back
   /// to text detection (see src/lib/leisure-day.ts). true/false are explicit.
   isLeisure   Boolean?
+  /// Hotel-only movement — the guest arranges their own transport (or the file
+  /// is accommodation only), so no driver or vehicle is required. Distinct from
+  /// `isLeisure`: a leisure day is a free day, a hotel-only day may still be a
+  /// full day out that we simply do not drive. Both mean "no driver needed", so
+  /// the file counts as allocated. NULL / false = a driver IS required.
+  isHotelOnly Boolean?
   agenda      TourAgenda  @relation(fields: [agendaId], references: [id], onDelete: Cascade)
   assignment  Assignment?
   tickets     Ticket[]

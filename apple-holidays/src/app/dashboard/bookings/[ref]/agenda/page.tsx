@@ -23,6 +23,7 @@ import PartnerAssignPicker, { EMPTY_SELECTION, type PartnerSelection } from '@/c
 import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
 import { formatDate } from '@/lib/utils'
 import { resolveIsLeisure } from '@/lib/leisure-day'
+import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 
@@ -95,6 +96,63 @@ const SERVICE_STRIP: Record<string, { bg: string; iconBg: string; iconColor: str
   OWN_ARRANGEMENT: { bg: 'bg-slate-300',  iconBg: 'bg-slate-100',  iconColor: 'text-slate-500',  icon: Users },
 }
 
+/** A movement needs a driver unless it is a leisure day or hotel only. */
+function needsDriver(item: { isLeisure: boolean; isHotelOnly: boolean }) {
+  return !item.isLeisure && !item.isHotelOnly
+}
+
+/**
+ * The pair of "this movement needs no driver" toggles — Leisure Day and Hotel
+ * Only. Either one marks the movement as requiring no allocation, which is what
+ * completes the file on the Sri Lanka Driver Allocation board; they are mutually
+ * exclusive, so the one that is off is hidden while the other is on.
+ */
+function NoDriverButtons({
+  item, onToggle,
+}: {
+  item: { isLeisure: boolean; isHotelOnly: boolean }
+  onToggle: (kind: 'leisure' | 'hotel') => void
+}) {
+  return (
+    <>
+      {!item.isHotelOnly && (
+        <button
+          type="button"
+          onClick={() => onToggle('leisure')}
+          title={item.isLeisure
+            ? 'This day is marked as a leisure day. Click to make it a normal movement that needs a driver.'
+            : 'Mark this as a free / at-leisure day — no driver will be allocated.'}
+          className={`btn btn-sm flex items-center gap-1.5 ${
+            item.isLeisure
+              ? 'bg-amber-500 text-white border border-amber-600 hover:bg-amber-600'
+              : 'btn-secondary'
+          }`}
+        >
+          <Palmtree className="w-3.5 h-3.5" />
+          {item.isLeisure ? 'Leisure Day' : "It's Leisure Day"}
+        </button>
+      )}
+      {!item.isLeisure && (
+        <button
+          type="button"
+          onClick={() => onToggle('hotel')}
+          title={item.isHotelOnly
+            ? 'This movement is hotel only. Click to make it a normal movement that needs a driver.'
+            : 'Mark this as hotel only — accommodation or the guest’s own transport, so no driver will be allocated.'}
+          className={`btn btn-sm flex items-center gap-1.5 ${
+            item.isHotelOnly
+              ? 'bg-pink-500 text-white border border-pink-600 hover:bg-pink-600'
+              : 'btn-secondary'
+          }`}
+        >
+          <Hotel className="w-3.5 h-3.5" />
+          Hotel Only
+        </button>
+      )}
+    </>
+  )
+}
+
 interface AgendaItem {
   id?: string
   date: string
@@ -109,6 +167,12 @@ interface AgendaItem {
   serviceType: string
   /** Free day — no driver is allocated and the allocation controls are hidden. */
   isLeisure: boolean
+  /**
+   * Hotel only — accommodation, or the guest's own transport. Like a leisure day
+   * it needs no driver, so the Sri Lanka Driver Allocation board counts the file
+   * as allocated rather than pending. Mutually exclusive with `isLeisure`.
+   */
+  isHotelOnly: boolean
   assignment?: {
     driverId?: string | null
     vendorId?: string | null
@@ -398,7 +462,7 @@ export default function AgendaPage() {
             id: string; date: string; location: string; fromPoint: string
             toPoint: string; details: string; mealPlan: string
             meetingTime: string; timeFrom: string; timeTo: string
-            serviceType: string; isLeisure: boolean | null
+            serviceType: string; isLeisure: boolean | null; isHotelOnly: boolean | null
             assignment: AgendaItem['assignment']
           }>
           const serviceType = i.serviceType ?? 'PVT_TRANSFER'
@@ -414,6 +478,7 @@ export default function AgendaPage() {
               isLeisure: i.isLeisure, serviceType,
               location: i.location, toPoint: i.toPoint, details: i.details,
             }),
+            isHotelOnly: resolveIsHotelOnly({ isHotelOnly: i.isHotelOnly }),
             assignment: i.assignment,
           }
         }))
@@ -515,6 +580,7 @@ export default function AgendaPage() {
         meetingTime: item.meetingTime ?? '', timeFrom: (item as any).timeFrom ?? '',
         timeTo: (item as any).timeTo ?? '', serviceType,
         isLeisure: resolveIsLeisure({ ...item, serviceType }),
+        isHotelOnly: resolveIsHotelOnly(item),
       }
     })
   }
@@ -660,13 +726,13 @@ export default function AgendaPage() {
       driverName: driver.name, driverPhone: driver.phone,
       vehicleType: driver.vehicle?.type ?? '', vehiclePlate: driver.vehicle?.plateNo ?? '',
     }
-    // Leisure days are skipped — they carry no driver by definition.
-    const target = items.filter(x => !x.isLeisure).length
-    setItems(is => is.map(x => x.isLeisure ? x : { ...x, assignment }))
+    // Leisure and hotel-only movements are skipped — they carry no driver by definition.
+    const target = items.filter(needsDriver).length
+    setItems(is => is.map(x => needsDriver(x) ? { ...x, assignment } : x))
     const skipped = items.length - target
     toast.success(
       `${driver.name} set as driver for ${target} item${target !== 1 ? 's' : ''}`
-      + (skipped > 0 ? ` (${skipped} leisure day${skipped !== 1 ? 's' : ''} skipped)` : '')
+      + (skipped > 0 ? ` (${skipped} no-driver day${skipped !== 1 ? 's' : ''} skipped)` : '')
       + ' — save to confirm',
     )
     setAssigningIdx(null)
@@ -879,42 +945,56 @@ export default function AgendaPage() {
   }
 
   /**
-   * Flip a movement between "leisure day" (free day — no driver needed) and a
-   * normal serviced movement. Turning it on releases any driver already
-   * allocated; turning it off puts the allocation controls back.
+   * Flip a movement between one of the two "no driver needed" marks — leisure
+   * day (a free day) or hotel only (accommodation / the guest's own transport) —
+   * and a normal serviced movement.
+   *
+   * Turning either on releases any driver already allocated and clears the other
+   * mark: a movement carries one reason for having no driver, not two. Turning it
+   * off puts the allocation controls back. Both marks feed the Sri Lanka Driver
+   * Allocation board, which counts a file whose every movement is marked as
+   * allocated rather than pending.
    */
-  async function toggleLeisureDay(idx: number) {
+  async function toggleNoDriver(idx: number, kind: 'leisure' | 'hotel') {
     const item = items[idx]
     if (!item) return
-    const next     = !item.isLeisure
-    const previous = { isLeisure: item.isLeisure, assignment: item.assignment }
+
+    const field    = kind === 'leisure' ? 'isLeisure' : 'isHotelOnly'
+    const label    = kind === 'leisure' ? 'Leisure day' : 'Hotel only'
+    const next     = !item[field]
+    const previous = { isLeisure: item.isLeisure, isHotelOnly: item.isHotelOnly, assignment: item.assignment }
 
     setItems(is => is.map((x, j) => j === idx
-      ? { ...x, isLeisure: next, assignment: next ? null : x.assignment }
+      ? {
+          ...x,
+          isLeisure:   kind === 'leisure' ? next : (next ? false : x.isLeisure),
+          isHotelOnly: kind === 'hotel'   ? next : (next ? false : x.isHotelOnly),
+          assignment:  next ? null : x.assignment,
+        }
       : x))
     if (next && assigningIdx === idx) setAssigningIdx(null)
 
     // Rows that have never been saved have no server id yet — the flag rides
     // along with the next full Save instead.
     if (!item.id) {
-      toast.success(next ? 'Marked as leisure day — save to confirm' : 'Leisure day removed — save to confirm')
+      toast.success(next ? `Marked as ${label.toLowerCase()} — save to confirm` : `${label} removed — save to confirm`)
       return
     }
 
     try {
       const res  = await fetch(`/api/bookings/${ref}/agenda`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId: item.id, isLeisure: next }),
+        body: JSON.stringify({ itemId: item.id, [field]: next }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       toast.success(next
-        ? 'Marked as leisure day — no driver required'
-        : 'Leisure day removed — a driver can now be assigned')
+        ? `Marked as ${label.toLowerCase()} — no driver required`
+        : `${label} removed — a driver can now be assigned`)
       if (!next && item.date) loadDriversForDate(item.date)
     } catch (err: unknown) {
       setItems(is => is.map((x, j) => j === idx ? { ...x, ...previous } : x))
-      toast.error(err instanceof Error ? err.message : 'Failed to update leisure day')
+      toast.error(err instanceof Error ? err.message : `Failed to update ${label.toLowerCase()}`)
     }
   }
 
@@ -944,7 +1024,7 @@ export default function AgendaPage() {
       next.splice(index, 0, {
         date: dateHint, location: '', fromPoint: above?.toPoint || '', toPoint: '',
         details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: svcHint,
-        isLeisure: false,
+        isLeisure: false, isHotelOnly: false,
       })
       return next
     })
@@ -1554,7 +1634,12 @@ export default function AgendaPage() {
                       {canAssign && (
                         <div className="mt-3 pt-3 border-t border-slate-100 flex items-start justify-between gap-3">
                           <div className="flex flex-wrap items-center gap-2 min-w-0">
-                          {item.isLeisure ? (
+                          {item.isHotelOnly ? (
+                            <span className="flex items-center gap-2 text-xs bg-pink-50 border border-pink-200 rounded-lg px-3 py-2 text-pink-700 font-medium">
+                              <Hotel className="w-3.5 h-3.5 text-pink-500" />
+                              Hotel only — no driver required
+                            </span>
+                          ) : item.isLeisure ? (
                             <span className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-700 font-medium">
                               <Palmtree className="w-3.5 h-3.5 text-amber-500" />
                               Leisure day — no driver required
@@ -1612,25 +1697,11 @@ export default function AgendaPage() {
                           ) : (
                             <span className="text-xs text-slate-400 italic">No driver assigned</span>
                           )}
-                          {!item.isLeisure && <PartnerChips assignment={item.assignment} />}
+                          {needsDriver(item) && <PartnerChips assignment={item.assignment} />}
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => toggleLeisureDay(i)}
-                              title={item.isLeisure
-                                ? 'This day is marked as a leisure day. Click to make it a normal movement that needs a driver.'
-                                : 'Mark this as a free / at-leisure day — no driver will be allocated.'}
-                              className={`btn btn-sm flex items-center gap-1.5 ${
-                                item.isLeisure
-                                  ? 'bg-amber-500 text-white border border-amber-600 hover:bg-amber-600'
-                                  : 'btn-secondary'
-                              }`}
-                            >
-                              <Palmtree className="w-3.5 h-3.5" />
-                              {item.isLeisure ? 'Leisure Day' : "It's Leisure Day"}
-                            </button>
-                            {!item.isLeisure && (
+                            <NoDriverButtons item={item} onToggle={kind => toggleNoDriver(i, kind)} />
+                            {needsDriver(item) && (
                               <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
                                 onClick={() => openAssignPanel(i)}>
                                 {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
@@ -1660,6 +1731,12 @@ export default function AgendaPage() {
                             <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
                               <Palmtree className="w-3 h-3" />
                               Leisure Day
+                            </span>
+                          )}
+                          {item.isHotelOnly && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700 border border-pink-200">
+                              <Hotel className="w-3 h-3" />
+                              Hotel Only
                             </span>
                           )}
                           {/* Only show meal plan badge if it has a value */}
@@ -1711,8 +1788,15 @@ export default function AgendaPage() {
                           </div>
                         )}
 
+                        {item.isHotelOnly && (
+                          <div className="mt-2 flex items-center gap-2 text-xs bg-pink-50 border border-pink-200 rounded-lg px-3 py-2 w-fit text-pink-700 font-medium">
+                            <Hotel className="w-3.5 h-3.5 text-pink-500" />
+                            Hotel only — no driver required
+                          </div>
+                        )}
+
                         {/* Allocated driver — clickable to view full info */}
-                        {!item.isLeisure && (item.assignment?.driverName || item.assignment?.vendorId) && (
+                        {needsDriver(item) && (item.assignment?.driverName || item.assignment?.vendorId) && (
                           item.assignment.vendorId ? (
                             <div className="mt-2 flex items-center gap-2 text-xs bg-violet-50 border border-violet-100 rounded-lg px-3 py-2 w-fit">
                               <Building2 className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
@@ -1764,7 +1848,7 @@ export default function AgendaPage() {
                           )
                         )}
 
-                        {!item.isLeisure && (item.assignment?.guideName || item.assignment?.tourVendorName) && (
+                        {needsDriver(item) && (item.assignment?.guideName || item.assignment?.tourVendorName) && (
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <PartnerChips assignment={item.assignment} />
                           </div>
@@ -1772,22 +1856,8 @@ export default function AgendaPage() {
                       </div>
                       {canAssign && (
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => toggleLeisureDay(i)}
-                            title={item.isLeisure
-                              ? 'This day is marked as a leisure day. Click to make it a normal movement that needs a driver.'
-                              : 'Mark this as a free / at-leisure day — no driver will be allocated.'}
-                            className={`btn btn-sm flex items-center gap-1.5 ${
-                              item.isLeisure
-                                ? 'bg-amber-500 text-white border border-amber-600 hover:bg-amber-600'
-                                : 'btn-secondary'
-                            }`}
-                          >
-                            <Palmtree className="w-3.5 h-3.5" />
-                            {item.isLeisure ? 'Leisure Day' : "It's Leisure Day"}
-                          </button>
-                          {!item.isLeisure && (
+                          <NoDriverButtons item={item} onToggle={kind => toggleNoDriver(i, kind)} />
+                          {needsDriver(item) && (
                             <Button variant="secondary" size="sm" icon={<Car className="w-3.5 h-3.5" />}
                               onClick={() => openAssignPanel(i)}>
                               {(item.assignment?.driverName || item.assignment?.vendorId) ? 'Re-assign' : 'Assign Driver'}
@@ -1810,7 +1880,7 @@ export default function AgendaPage() {
             onClick={() => setItems(is => [...is, {
               date: '', location: '', fromPoint: '', toPoint: '',
               details: '', mealPlan: '', meetingTime: '', timeFrom: '', timeTo: '', serviceType: 'PVT_TRANSFER',
-              isLeisure: false,
+              isLeisure: false, isHotelOnly: false,
             }])}>
             Add Movement Item
           </Button>

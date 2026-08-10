@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { HOTEL_ONLY_VEHICLE, movementNeedsDriver } from '@/lib/driver-requirement'
 
 /**
  * Keeps the Sri Lanka booking-level driver allocation in step with the per-movement
@@ -119,6 +120,78 @@ export async function syncSlAllocationFromAgendaByRef(bookingRef: string): Promi
   })
   if (!booking) return false
   return syncSlAllocationFromAgenda(booking.id)
+}
+
+/**
+ * Mirrors the chart's "Hotel Only" marks up onto the booking-level vehicle type,
+ * so the two screens tell the same story.
+ *
+ *  • Every movement hotel-only → vehicle type becomes `hotel_only`, and the
+ *    board shows the file as allocated rather than pending.
+ *  • A file marked `hotel_only` that has gained a movement needing a driver →
+ *    the vehicle type is cleared, so the board stops claiming it is done.
+ *
+ * A mixed chart (some hotel-only rows, some driven) leaves the vehicle type
+ * alone — an operator's choice of Car/Bus for the driven part must survive.
+ * Non-Sri Lanka bookings are a no-op. Returns true when a row was written.
+ */
+export async function syncHotelOnlyFromAgenda(bookingId: string): Promise<boolean> {
+  const booking = await prisma.booking.findUnique({
+    where:  { id: bookingId },
+    select: {
+      operationCountry: true,
+      slDriverAllocation: { select: { vehicleType: true } },
+      tourAgenda: {
+        select: {
+          items: {
+            select: {
+              isLeisure: true, isHotelOnly: true, serviceType: true,
+              location: true, toPoint: true, details: true,
+            },
+          },
+        },
+      },
+    },
+  })
+
+  if (!booking || booking.operationCountry !== 'SRILANKA') return false
+
+  const items = booking.tourAgenda?.items ?? []
+  if (items.length === 0) return false
+
+  const current      = booking.slDriverAllocation?.vehicleType ?? null
+  const allHotelOnly = items.every(i => i.isHotelOnly === true)
+
+  // A whole chart of hotel-only rows is a hotel-only file.
+  if (allHotelOnly && current !== HOTEL_ONLY_VEHICLE) {
+    await prisma.sriLankaDriverAllocation.upsert({
+      where:  { bookingId },
+      create: { bookingId, vehicleType: HOTEL_ONLY_VEHICLE },
+      update: { vehicleType: HOTEL_ONLY_VEHICLE },
+    })
+    return true
+  }
+
+  // Was hotel-only, but something on the chart now has to be driven.
+  if (!allHotelOnly && current === HOTEL_ONLY_VEHICLE && items.some(movementNeedsDriver)) {
+    await prisma.sriLankaDriverAllocation.update({
+      where: { bookingId },
+      data:  { vehicleType: null },
+    })
+    return true
+  }
+
+  return false
+}
+
+/** Same as above, keyed by booking ref. */
+export async function syncHotelOnlyFromAgendaByRef(bookingRef: string): Promise<boolean> {
+  const booking = await prisma.booking.findUnique({
+    where:  { bookingRef },
+    select: { id: true },
+  })
+  if (!booking) return false
+  return syncHotelOnlyFromAgenda(booking.id)
 }
 
 /**

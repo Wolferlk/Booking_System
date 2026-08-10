@@ -5,7 +5,7 @@ import {
   Loader2, Download, Filter, X, Calendar, Search,
   Users, Truck, MapPin, Clock, ChevronUp, ChevronDown,
   ClipboardList, RefreshCw, Table2, Globe, FileText,
-  FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree,
+  FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -35,6 +35,8 @@ type MCRow = {
   serviceType:    ServiceType
   /** Free / at-leisure day — no driver is allocated for this movement. */
   isLeisure:      boolean
+  /** Hotel only — accommodation or own transport, so likewise no driver. */
+  isHotelOnly:    boolean
   vendor:         string | null
   driverId:       string | null
   vendorId:       string | null
@@ -195,6 +197,16 @@ function LeisureBadge() {
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold ring-1 bg-amber-100 text-amber-700 ring-amber-200 whitespace-nowrap">
       <Palmtree className="w-3 h-3" />
       Leisure Day
+    </span>
+  )
+}
+
+/** Marks a hotel-only movement, where no driver is allocated by design. */
+function HotelOnlyBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold ring-1 bg-pink-100 text-pink-700 ring-pink-200 whitespace-nowrap">
+      <Hotel className="w-3 h-3" />
+      Hotel Only
     </span>
   )
 }
@@ -360,6 +372,7 @@ export default function MCReportPage() {
   const sicCount      = displayedRows.filter(r => r.serviceType === 'SIC_TRANSFER').length
   const ownCount      = displayedRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = displayedRows.filter(r => r.isLeisure).length
+  const hotelOnlyCount = displayedRows.filter(r => r.isHotelOnly).length
 
   // ── CSV Export ────────────────────────────────────────────────────────────────
 
@@ -369,7 +382,7 @@ export default function MCReportPage() {
     const headers = [
       'Date', 'Tour Ref', 'IS Number', 'Agent ID', 'Location', 'Adults', 'Children',
       'From', 'To', 'Details', 'Meal Plan', 'Meeting Time',
-      'Service Type', 'Leisure Day', 'Vendor', 'Driver', 'Vehicle Type', 'Plate', 'Agent',
+      'Service Type', 'Leisure Day', 'Hotel Only', 'Vendor', 'Driver', 'Vehicle Type', 'Plate', 'Agent',
     ]
 
     const csvRows = displayedRows.map(r => [
@@ -379,6 +392,7 @@ export default function MCReportPage() {
       r.mealPlan ?? '', r.meetingTime ?? '',
       SERVICE_LABELS[r.serviceType] ?? r.serviceType,
       r.isLeisure ? 'Yes' : '',
+      r.isHotelOnly ? 'Yes' : '',
       r.vendor ?? '', r.driverName ?? '', r.vehicleType ?? '', r.vehiclePlate ?? '',
       r.agent ?? '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
@@ -410,7 +424,7 @@ export default function MCReportPage() {
       const headers = [
         'Date', 'Tour Ref', 'IS Number', 'Agent Booking ID', 'Location',
         'Adults', 'Children', 'From', 'To', 'Details',
-        'Meal Plan', 'Meeting Time', 'Service Type', 'Leisure Day',
+        'Meal Plan', 'Meeting Time', 'Service Type', 'Leisure Day', 'Hotel Only',
         'Vendor', 'Driver', 'Vehicle Type', 'Plate No', 'Agent', 'Booking Status',
       ]
 
@@ -421,6 +435,7 @@ export default function MCReportPage() {
         r.mealPlan ?? '', r.meetingTime ?? '',
         SERVICE_LABELS[r.serviceType] ?? r.serviceType,
         r.isLeisure ? 'Yes' : '',
+        r.isHotelOnly ? 'Yes' : '',
         r.vendor ?? '', r.driverName ?? '',
         r.vehicleType ?? '', r.vehiclePlate ?? '',
         r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
@@ -430,7 +445,7 @@ export default function MCReportPage() {
       ws['!cols'] = [
         { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 20 },
         { wch: 7  }, { wch: 8  }, { wch: 22 }, { wch: 22 }, { wch: 40 },
-        { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 },
+        { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
         { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 16 },
       ]
       XLSX.utils.book_append_sheet(wb, ws, 'Movements')
@@ -449,6 +464,7 @@ export default function MCReportPage() {
         ['SIC Transfers',    sicCount],
         ['Own Arrangements', ownCount],
         ['Leisure Days',     leisureCount],
+        ['Hotel Only',       hotelOnlyCount],
       ].filter(r => r.length > 0)
 
       const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
@@ -683,6 +699,7 @@ export default function MCReportPage() {
               { icon: <Truck className="w-4 h-4" />,   label: 'Private',   value: pvtCount,              color: 'text-emerald-700', bg: 'bg-emerald-50' },
               { icon: <Truck className="w-4 h-4" />,   label: 'SIC / Own', value: `${sicCount} / ${ownCount}`, color: 'text-amber-700', bg: 'bg-amber-50' },
               { icon: <Palmtree className="w-4 h-4" />, label: 'Leisure',  value: leisureCount,          color: 'text-amber-700', bg: 'bg-amber-50' },
+              { icon: <Hotel className="w-4 h-4" />, label: 'Hotel Only', value: hotelOnlyCount,       color: 'text-pink-700', bg: 'bg-pink-50' },
             ].map(stat => (
               <div key={stat.label} className={cn('rounded-xl p-4 border border-slate-200 flex items-center gap-3 shadow-sm', stat.bg)}>
                 <div className={cn('flex-shrink-0', stat.color)}>{stat.icon}</div>
@@ -879,12 +896,18 @@ export default function MCReportPage() {
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <ServiceBadge type={row.serviceType} />
                                 {row.isLeisure && <LeisureBadge />}
+                                {row.isHotelOnly && <HotelOnlyBadge />}
                               </div>
                             </td>
 
                             {/* Driver / Vendor */}
                             <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
-                              {row.isLeisure ? (
+                              {row.isHotelOnly ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-pink-700 whitespace-nowrap">
+                                  <Hotel className="w-3 h-3 text-pink-500" />
+                                  No driver needed
+                                </span>
+                              ) : row.isLeisure ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 whitespace-nowrap">
                                   <Palmtree className="w-3 h-3 text-amber-500" />
                                   No driver needed
