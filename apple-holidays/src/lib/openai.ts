@@ -722,6 +722,9 @@ export async function extractFlightsFromImage(
   notes: string
 }>> {
   const isImage = mimeType.startsWith('image/')
+  // PDF text is readable here, so its years can be verified after extraction;
+  // for images there is nothing to check against, so the prompt is the guard.
+  const pdfText = isImage ? null : Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 3000)
   const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
     ? [
         {
@@ -733,13 +736,15 @@ export async function extractFlightsFromImage(
             },
             {
               type: 'text',
-              text: `This image contains a flight schedule or flight details table from a tour confirmation.
+              text: `${todayContext()}
+
+This image contains a flight schedule or flight details table from a tour confirmation.
 Extract all UNIQUE flight segments (deduplicate if same flight appears for multiple passengers).
 Return a JSON array of flight objects:
 [
   {
     "flightNo": "flight number e.g. 6E344, AI101 — use empty string if unknown",
-    "date": "YYYY-MM-DD format",
+    "date": "YYYY-MM-DD (use a year printed in the document; if none is printed use the current year given above — NEVER guess a past year)",
     "fromApt": "3-letter IATA code or city/airport name",
     "depTime": "HH:MM 24h format",
     "toApt": "3-letter IATA code or city/airport name",
@@ -760,7 +765,7 @@ Rules:
     : [
         {
           role: 'user',
-          content: `This is a PDF with flight details. Text content:\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 3000)}\n\nExtract unique flight segments as JSON array with fields: flightNo, date (YYYY-MM-DD), fromApt, depTime, toApt, arrTime, airline, notes. Return [] if none found. Return ONLY valid JSON array.`,
+          content: `${todayContext()}\n\nThis is a PDF with flight details. Text content:\n${pdfText}\n\nExtract unique flight segments as JSON array with fields: flightNo, date (YYYY-MM-DD — use a year printed in the document; if none is printed use the current year given above, never a past year), fromApt, depTime, toApt, arrTime, airline, notes. Return [] if none found. Return ONLY valid JSON array.`,
         },
       ]
 
@@ -776,7 +781,8 @@ Rules:
     const trimmed = content.trim()
     const jsonStr = trimmed.startsWith('[') ? trimmed : (trimmed.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
     const parsed = JSON.parse(jsonStr)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    return pdfText ? fixExtractedYears(parsed, pdfText, ['date']) : parsed
   } catch {
     return []
   }
@@ -812,7 +818,9 @@ export async function extractFlightsFromText(
       messages: [
         {
           role: 'user',
-          content: `The text below contains flight details pasted by a file handler. It may be messy,
+          content: `${todayContext()}
+
+The text below contains flight details pasted by a file handler. It may be messy,
 partial, or contain typos. Extract every UNIQUE flight segment and CORRECT the data.
 
 TEXT:
@@ -824,7 +832,7 @@ Return ONLY a JSON array of flight objects:
 [
   {
     "flightNo": "airline+number e.g. 6E344, AI101, EK654 — empty string if unknown",
-    "date": "YYYY-MM-DD (infer the year from context; if truly unknown use the current year)",
+    "date": "YYYY-MM-DD (use a year stated in the text; if no year is stated use the current year given above — NEVER guess a past year)",
     "fromApt": "3-letter IATA code (map obvious city names: Colombo→CMB, Chennai→MAA, Kolkata→CCU, Dubai→DXB, Singapore→SIN, Kuala Lumpur→KUL, Hanoi→HAN, Ho Chi Minh→SGN)",
     "depTime": "HH:MM 24-hour",
     "toApt": "3-letter IATA code (same mapping rules)",
@@ -846,7 +854,7 @@ Rules:
     const trimmed = content.trim()
     const jsonStr = trimmed.startsWith('[') ? trimmed : (trimmed.match(/\[[\s\S]*\]/)?.[0] ?? '[]')
     const parsed = JSON.parse(jsonStr)
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? fixExtractedYears(parsed, clean, ['date']) : []
   } catch {
     return []
   }
@@ -864,8 +872,10 @@ async function extractArrayFromDocument(
   mimeType: string,
   instruction: string,
   callType: string,
+  dateFields: string[] = [],
 ): Promise<Record<string, unknown>[]> {
   const isImage = mimeType.startsWith('image/')
+  const docText = isImage ? null : Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 6000)
   const messages: Parameters<typeof openai.chat.completions.create>[0]['messages'] = isImage
     ? [
         {
@@ -879,7 +889,7 @@ async function extractArrayFromDocument(
     : [
         {
           role: 'user',
-          content: `${instruction}\n\nDOCUMENT TEXT:\n"""\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 6000)}\n"""`,
+          content: `${instruction}\n\nDOCUMENT TEXT:\n"""\n${docText}\n"""`,
         },
       ]
 
@@ -891,7 +901,8 @@ async function extractArrayFromDocument(
       max_tokens: 1200,
     })
     await logAiUsage({ callType, model: 'gpt-4o', usage: response.usage, source: 'manual' })
-    return parseJsonArray(response.choices[0]?.message?.content)
+    const rows = parseJsonArray(response.choices[0]?.message?.content)
+    return docText && dateFields.length ? fixExtractedYears(rows, docText, dateFields) : rows
   } catch {
     return []
   }
@@ -902,6 +913,7 @@ async function extractArrayFromText(
   text: string,
   instruction: string,
   callType: string,
+  dateFields: string[] = [],
 ): Promise<Record<string, unknown>[]> {
   const clean = (text ?? '').trim().slice(0, 6000)
   if (!clean) return []
@@ -913,10 +925,61 @@ async function extractArrayFromText(
       messages: [{ role: 'user', content: `${instruction}\n\nTEXT:\n"""\n${clean}\n"""` }],
     })
     await logAiUsage({ callType, model: 'gpt-4o', usage: response.usage, source: 'manual' })
-    return parseJsonArray(response.choices[0]?.message?.content)
+    const rows = parseJsonArray(response.choices[0]?.message?.content)
+    return dateFields.length ? fixExtractedYears(rows, clean, dateFields) : rows
   } catch {
     return []
   }
+}
+
+// ─── Date grounding for extraction prompts ────────────────────────────────
+//
+// The models have no notion of "today" — left to themselves they date anything
+// with a missing year to their training era (2023). Every prompt that asks for
+// a date therefore states the real current date, and `fixExtractedYears()`
+// repairs whatever slips through.
+
+/** Today's date, stated for the model so "current year" means the real one. */
+function todayContext(): string {
+  const now = new Date()
+  return `Today's date is ${now.toISOString().slice(0, 10)}. The current year is ${now.getFullYear()}.`
+}
+
+const YEAR_IN_TEXT = /\b(19|20)\d{2}\b/
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+
+/**
+ * Rewrites the year on extracted ISO dates to the current year when the source
+ * material never mentioned a year — the model guessed it, so the guess is wrong.
+ * If the source does contain a 4-digit year the dates are left untouched, so
+ * genuinely historical documents still import correctly.
+ */
+function fixExtractedYears<T extends Record<string, unknown>>(
+  rows: T[],
+  sourceText: string,
+  dateFields: string[],
+): T[] {
+  if (YEAR_IN_TEXT.test(sourceText)) return rows
+
+  // Rows arrive in trip order, so a month/day that goes backwards means the
+  // itinerary crossed New Year — that segment belongs to the following year.
+  let year = new Date().getFullYear()
+  let prevMonthDay = ''
+
+  return rows.map((row) => {
+    const fixed = { ...row }
+    for (const field of dateFields) {
+      const value = fixed[field]
+      if (typeof value !== 'string') continue
+      const match = ISO_DATE.exec(value)
+      if (!match) continue
+      const monthDay = `${match[2]}-${match[3]}`
+      if (prevMonthDay && monthDay < prevMonthDay) year += 1
+      prevMonthDay = monthDay
+      ;(fixed as Record<string, unknown>)[field] = `${year}-${monthDay}`
+    }
+    return fixed
+  })
 }
 
 /** Pulls the first JSON array out of a model response; [] when there is none. */
@@ -951,7 +1014,9 @@ Rules:
 - Fix obvious OCR typos in names, but never invent a passenger.
 - Return [] if there is no passenger data. Return ONLY the JSON array.`
 
-const ACCOMMODATION_INSTRUCTION = `The source below contains hotel / accommodation details (a voucher, hotel list, or itinerary).
+const ACCOMMODATION_INSTRUCTION = () => `${todayContext()}
+
+The source below contains hotel / accommodation details (a voucher, hotel list, or itinerary).
 Extract every UNIQUE hotel stay and CORRECT the data.
 
 Return ONLY a JSON array of accommodation objects:
@@ -959,7 +1024,7 @@ Return ONLY a JSON array of accommodation objects:
   {
     "hotel": "hotel name",
     "city": "city the hotel is in",
-    "checkIn": "YYYY-MM-DD (infer the year from context; if truly unknown use the current year)",
+    "checkIn": "YYYY-MM-DD (use a year stated in the source; if none is stated use the current year given above — NEVER guess a past year)",
     "checkOut": "YYYY-MM-DD",
     "roomType": "room type e.g. Deluxe Twin — empty string if unknown",
     "mealType": "meal plan e.g. Bed & Breakfast, Half Board — empty string if unknown",
@@ -990,12 +1055,14 @@ export async function extractPassengersFromText(text: string): Promise<Extracted
   return await extractArrayFromText(text, PASSENGER_INSTRUCTION, 'extract_passengers_text') as ExtractedPassenger[]
 }
 
+const STAY_DATE_FIELDS = ['checkIn', 'checkOut']
+
 export async function extractAccommodationsFromDocument(fileBase64: string, mimeType: string): Promise<ExtractedAccommodation[]> {
-  return await extractArrayFromDocument(fileBase64, mimeType, ACCOMMODATION_INSTRUCTION, 'extract_accommodations_file') as ExtractedAccommodation[]
+  return await extractArrayFromDocument(fileBase64, mimeType, ACCOMMODATION_INSTRUCTION(), 'extract_accommodations_file', STAY_DATE_FIELDS) as ExtractedAccommodation[]
 }
 
 export async function extractAccommodationsFromText(text: string): Promise<ExtractedAccommodation[]> {
-  return await extractArrayFromText(text, ACCOMMODATION_INSTRUCTION, 'extract_accommodations_text') as ExtractedAccommodation[]
+  return await extractArrayFromText(text, ACCOMMODATION_INSTRUCTION(), 'extract_accommodations_text', STAY_DATE_FIELDS) as ExtractedAccommodation[]
 }
 
 export async function extractConfirmationTickets(
