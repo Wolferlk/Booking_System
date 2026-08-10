@@ -27,6 +27,7 @@
  */
 import type { BookingStatus } from '@prisma/client'
 import { getCurrentStep } from '@/lib/state-machine'
+import { HOTEL_ONLY_VEHICLE, resolveIsHotelOnly } from '@/lib/driver-requirement'
 
 /**
  * `PARTIAL` matters as much as the other three: a tour with three of five
@@ -74,6 +75,7 @@ export interface BookingReadiness {
 export interface ReadinessAgendaItem {
   serviceType?: string | null
   isLeisure?: boolean | null
+  isHotelOnly?: boolean | null
   assignment?: { driverId?: string | null; vendorId?: string | null } | null
 }
 
@@ -87,7 +89,12 @@ export interface ReadinessBooking {
   qcPassedAt?: Date | string | null
   tourAgenda?: { items?: ReadinessAgendaItem[] | null } | null
   /** Sri Lanka allocates one driver per booking rather than per agenda row. */
-  slDriverAllocation?: { driverId?: string | null; vendorId?: string | null } | null
+  slDriverAllocation?: {
+    driverId?: string | null
+    vendorId?: string | null
+    /** `hotel_only` means the whole file carries no transport. */
+    vehicleType?: string | null
+  } | null
   tickets?: ReadinessTicket[] | null
 }
 
@@ -120,9 +127,11 @@ function hasReached(status: string, target: BookingStatus): boolean {
  *
  * `OWN_ARRANGEMENT` rows are the guest's own time — no vehicle is booked for
  * them — which is the same rule the QC panel uses. An explicit leisure flag says
- * the same thing and is honoured too.
+ * the same thing and is honoured too, as does hotel-only: accommodation with the
+ * guest arranging their own transport (see `driver-requirement.ts`).
  */
 function needsDriver(item: ReadinessAgendaItem): boolean {
+  if (resolveIsHotelOnly(item)) return false
   if (item.isLeisure === true) return false
   return String(item.serviceType ?? '') !== 'OWN_ARRANGEMENT'
 }
@@ -147,6 +156,17 @@ function clientCheck(b: ReadinessBooking): ReadinessCheck {
 }
 
 function driverCheck(b: ReadinessBooking): ReadinessCheck {
+  // Hotel Only is an operator decision that the file carries no transport at
+  // all — the Driver Allocation board reads it as "no driver needed", so the
+  // report must not chase it as an unallocated tour.
+  if (b.slDriverAllocation?.vehicleType === HOTEL_ONLY_VEHICLE) {
+    return {
+      state: 'NA', short: 'Hotel only',
+      detail: 'Hotel only — no transport on this booking, so no driver is needed',
+      done: 0, required: 0,
+    }
+  }
+
   // Sri Lanka books one chauffeur for the whole tour, recorded on the booking
   // rather than on each movement. When that allocation exists the tour has its
   // driver, whatever the per-row assignments say.
@@ -168,8 +188,15 @@ function driverCheck(b: ReadinessBooking): ReadinessCheck {
 
   const serviced = items.filter(needsDriver)
   if (!serviced.length) {
+    // Every movement excused. Say which way when it was hotel-only, so the row
+    // reads the same as the Driver Allocation board rather than a bare dash.
+    const hotelOnly = items.every(resolveIsHotelOnly)
     return {
-      state: 'NA', short: '—', detail: 'No transfers in the agenda — nothing to allocate',
+      state: 'NA',
+      short: hotelOnly ? 'Hotel only' : '—',
+      detail: hotelOnly
+        ? 'Hotel only — no transport on this booking, so no driver is needed'
+        : 'No transfers in the agenda — nothing to allocate',
       done: 0, required: 0,
     }
   }
