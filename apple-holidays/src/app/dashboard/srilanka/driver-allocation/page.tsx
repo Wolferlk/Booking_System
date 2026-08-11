@@ -10,12 +10,17 @@ import {
   Navigation2, Building2, Route, Shield, Info, ChevronRight,
   ArrowRight, ArrowUpDown, ArrowUp, ArrowDown, Filter, SlidersHorizontal,
   Eye, EyeOff, Palmtree,
+  Wallet, Banknote, Calculator, PencilLine, History, ShieldCheck, MinusCircle,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
 import {
   HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver, resolveIsHotelOnly,
 } from '@/lib/driver-requirement'
+import {
+  CATEGORY_TONE, STAGE_TONE, lkr, money,
+  type DriverAdvanceCategory, type DriverAdvanceDetail, type DriverAdvanceSummary,
+} from '@/lib/driver-advance'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -190,6 +195,28 @@ function allocationStatus(b: SLBooking): AllocStatus {
   // No driver, and none required — done, not pending.
   return needsDriver(b) ? 'pending' : 'hotel_only'
 }
+
+/**
+ * The reference the accounts system is asked about for a booking.
+ *
+ * The IS number first, because that is what both systems put on a file and
+ * what the accounts resolver matches on most reliably; the control number is
+ * the fallback for a booking OPS holds before an IS number was issued. The
+ * booking ref is never sent — it is an OPS-internal id the accounts system has
+ * never seen, and asking about it would only produce a confident "not found".
+ */
+function advanceRefFor(b: SLBooking): string | null {
+  return (b.isNumber ?? b.cntlNumber ?? '').trim() || null
+}
+
+/**
+ * How many bookings go up per request.
+ *
+ * Small on purpose: each one is a full re-derivation on the accounts host, and
+ * a smaller chunk means the first figures appear sooner. The accounts endpoint
+ * itself accepts forty.
+ */
+const ADVANCE_CHUNK = 12
 
 function fmt(dt: string) {
   return new Date(dt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -526,6 +553,517 @@ function EmptyTab({ label, icon: Icon }: { label: string; icon: React.FC<{ class
   return <div className="flex flex-col items-center justify-center py-14 text-center"><div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700/40 flex items-center justify-center mb-3"><Icon className="w-5 h-5 text-slate-600" /></div><p className="text-slate-500 text-sm">{label}</p></div>
 }
 
+// ── Driver Advance: the board cell ────────────────────────────────────────────
+
+/**
+ * What the driver of this booking leaves with, as the accounts system works it
+ * out. One cell per booking, and a button into the full explanation.
+ *
+ * Deliberately quiet when there is nothing to say. A Sri Lanka file that the
+ * accounts system has not costed yet is normal — the P&L arrives after the
+ * booking does — and a red error on every such row would train people to
+ * ignore the column. Only a genuine failure to reach accounts is coloured.
+ */
+function DriverAdvanceCell({ summary, loading, onOpen }: {
+  summary: DriverAdvanceSummary | undefined
+  loading: boolean
+  onOpen: () => void
+}) {
+  if (!summary) {
+    return loading
+      ? <div className="flex items-center gap-1.5 text-slate-600 text-[11px]"><Loader2 className="w-3 h-3 animate-spin" />reading…</div>
+      : <span className="text-slate-700 text-xs">—</span>
+  }
+
+  if (summary.state === 'unavailable' || summary.state === 'error') {
+    return (
+      <span title={summary.message ?? undefined}
+        className="inline-flex items-center gap-1.5 text-amber-500/80 text-[11px]">
+        <AlertTriangle className="w-3 h-3" />unavailable
+      </span>
+    )
+  }
+
+  if (summary.state === 'no_pnl' || summary.state === 'no_lines') {
+    return (
+      <span title={summary.message ?? undefined} className="text-slate-600 text-[11px] italic">
+        {summary.state === 'no_pnl' ? 'no P&L yet' : 'not costed yet'}
+      </span>
+    )
+  }
+
+  const stage = summary.stage ?? 'advance_due'
+  const hasRate = summary.rate_available !== false && summary.amount_lkr !== null && summary.amount_lkr !== undefined
+
+  return (
+    <button onClick={onOpen}
+      className="group/adv flex flex-col items-start gap-1 text-left rounded-lg -mx-1.5 -my-1 px-1.5 py-1 hover:bg-emerald-500/5 transition-colors"
+      title="Show how this figure was calculated"
+    >
+      <span className="flex items-center gap-1.5">
+        <Wallet className="w-3 h-3 text-emerald-500/70 group-hover/adv:text-emerald-400 transition-colors" />
+        <span className="font-mono font-black text-xs text-emerald-300 group-hover/adv:text-emerald-200 transition-colors">
+          {hasRate ? lkr(summary.amount_lkr) : money(summary.amount, summary.currency)}
+        </span>
+        {summary.edited && (
+          <PencilLine className="w-3 h-3 text-amber-400" aria-label="Edited by hand" />
+        )}
+      </span>
+
+      <span className="flex items-center gap-1">
+        <span className={cn('px-1.5 py-px rounded border text-[9px] font-bold uppercase tracking-wide', STAGE_TONE[stage])}>
+          {stage === 'advance_due' ? 'to pay' : stage === 'rest_due' ? 'rest due' : stage === 'settled' ? 'settled' : 'empty'}
+        </span>
+        {/* The payment gate, not the arithmetic: Payable 1.0 will not release
+            money on a booking whose P&L nobody has approved. Worth seeing here,
+            because it is the reason a driver has not been paid. */}
+        {summary.payable === false && (
+          <span className="px-1.5 py-px rounded border border-orange-500/25 bg-orange-500/10 text-orange-300/90 text-[9px] font-bold uppercase tracking-wide">
+            P&amp;L {summary.pnl_approval ?? 'pending'}
+          </span>
+        )}
+      </span>
+
+      {!hasRate && <span className="text-slate-600 text-[9px]">no LKR rate on file</span>}
+    </button>
+  )
+}
+
+// ── Driver Advance: the explanation ───────────────────────────────────────────
+
+/**
+ * The whole calculation, opened from a cell.
+ *
+ * Reads top-down as the arithmetic actually runs: what the envelope comes to,
+ * which sections went into it and on what basis, every line inside them, what
+ * was deliberately left out, what a human changed, and what has already been
+ * handed over. Everything here was computed by the accounts system — this
+ * component formats, it does not add up.
+ */
+function DriverAdvanceModal({ booking, onClose }: { booking: SLBooking | null; onClose: () => void }) {
+  const [detail, setDetail]   = useState<DriverAdvanceDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError]     = useState<string | null>(null)
+  const [tab, setTab]         = useState<'summary' | 'lines' | 'payments'>('summary')
+
+  useEffect(() => {
+    if (!booking) { setDetail(null); setError(null); return }
+
+    const reference = advanceRefFor(booking)
+    if (!reference) { setError('This booking has no IS or control number to look up.'); return }
+
+    let cancelled = false
+    setLoading(true); setError(null); setDetail(null); setTab('summary')
+
+    const params = new URLSearchParams({ reference })
+    if (booking.cntlNumber) params.set('control', booking.cntlNumber)
+
+    fetch(`/api/srilanka/driver-advance?${params.toString()}`)
+      .then(async res => {
+        const json = await res.json().catch(() => null)
+        if (cancelled) return
+        if (!res.ok) { setError(json?.error ?? `The accounts system answered ${res.status}.`); return }
+        setDetail(json.data?.advance ?? null)
+      })
+      .catch(() => { if (!cancelled) setError('The accounts system could not be reached.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+
+    return () => { cancelled = true }
+  }, [booking])
+
+  if (!booking) return null
+
+  const usingLkr = detail?.lkr.available ?? false
+  /** One formatter for the whole window, so no two figures are quoted differently. */
+  const show = (lkrValue: number | null | undefined, native: number | null | undefined) =>
+    usingLkr ? lkr(lkrValue) : money(native, detail?.currency ?? 'USD')
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <div className="pointer-events-auto w-full max-w-4xl max-h-[92vh] flex flex-col bg-[#0c1225] border border-slate-800 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden">
+
+          {/* Header */}
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-800 flex-shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center flex-shrink-0">
+              <Wallet className="w-5 h-5 text-emerald-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white font-black text-base leading-tight">Driver Advance</p>
+              <p className="text-slate-400 text-xs mt-0.5 truncate">
+                {booking.isNumber ?? booking.bookingRef}
+                {booking.cntlNumber && <span className="text-slate-600"> · {booking.cntlNumber}</span>}
+                {detail?.client_name && <span> · {detail.client_name}</span>}
+              </p>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"><X className="w-4 h-4" /></button>
+          </div>
+
+          {loading && (
+            <div className="flex flex-col items-center justify-center py-20 gap-3">
+              <Loader2 className="w-7 h-7 text-slate-600 animate-spin" />
+              <p className="text-slate-500 text-xs">Re-deriving this booking in the accounts system…</p>
+            </div>
+          )}
+
+          {!loading && error && (
+            <div className="flex flex-col items-center justify-center py-20 px-8 text-center gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-slate-800 border border-slate-700/40 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-amber-500/70" />
+              </div>
+              <p className="text-slate-300 text-sm font-semibold">No driver advance to show</p>
+              <p className="text-slate-500 text-xs max-w-md">{error}</p>
+            </div>
+          )}
+
+          {!loading && !error && detail && (
+            <>
+              {/* The figure */}
+              <div className="px-6 py-5 border-b border-slate-800 bg-gradient-to-b from-emerald-500/5 to-transparent flex-shrink-0">
+                <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
+                  <div>
+                    <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Advance to hand over</p>
+                    <p className="text-emerald-300 text-3xl font-black font-mono leading-tight mt-1">
+                      {show(detail.lkr.effective, detail.effective)}
+                    </p>
+                    {usingLkr && detail.lkr.rate && (
+                      <p className="text-slate-600 text-[10px] mt-1">
+                        at USD 1 = {detail.lkr.rate.toFixed(4)}
+                        {detail.lkr.all_fixed ? ' · rate fixed' : ' · live rate'}
+                        {detail.lkr.partial && ' · some lines have no rate'}
+                      </p>
+                    )}
+                  </div>
+
+                  <Figure label="Whole tour will cost" value={show(detail.lkr.obligation, detail.obligation)} />
+                  <Figure label="Already paid" value={show(detail.lkr.paid, detail.paid)} tone="text-sky-300" />
+                  <Figure label="Advance still due" value={show(detail.lkr.advance_outstanding, detail.advance_outstanding)} tone="text-amber-300" />
+                  <Figure label="Rest after the tour" value={show(detail.lkr.rest_outstanding, detail.rest_outstanding)} tone="text-slate-300" />
+
+                  <div className="ml-auto flex flex-col items-end gap-1.5">
+                    <span className={cn('px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider', STAGE_TONE[detail.stage])}>
+                      {detail.stage_label}
+                    </span>
+                    {!detail.payable && (
+                      <span className="px-2.5 py-1 rounded-full border border-orange-500/25 bg-orange-500/10 text-orange-300 text-[10px] font-bold uppercase tracking-wider">
+                        P&amp;L {detail.pnl_approval} — not payable
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* How far through the whole obligation this booking is. */}
+                <div className="mt-4 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-emerald-500 to-sky-500 transition-all"
+                    style={{ width: `${Math.min(100, Math.max(0, detail.progress))}%` }} />
+                </div>
+                <p className="text-slate-600 text-[10px] mt-1.5">
+                  {detail.progress.toFixed(1)}% of the tour&apos;s {detail.line_count} costed line{detail.line_count === 1 ? '' : 's'} settled
+                  {detail.source === 'ledger' && ' · rebuilt from stored payable rows'}
+                </p>
+              </div>
+
+              {/* Tabs */}
+              <div className="flex border-b border-slate-800 flex-shrink-0">
+                {([
+                  { key: 'summary',  label: 'Calculation', icon: Calculator },
+                  { key: 'lines',    label: `Lines (${detail.lines.length})`, icon: FileText },
+                  { key: 'payments', label: `Payments (${detail.history.length})`, icon: History },
+                ] as const).map(({ key, label, icon: Icon }) => (
+                  <button key={key} onClick={() => setTab(key)}
+                    className={cn('flex-1 flex items-center justify-center gap-1.5 py-3 text-xs font-semibold transition-all border-b-2',
+                      tab === key ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-500 hover:text-slate-300')}
+                  ><Icon className="w-3.5 h-3.5" />{label}</button>
+                ))}
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                {tab === 'summary'  && <AdvanceCalculation detail={detail} usingLkr={usingLkr} />}
+                {tab === 'lines'    && <AdvanceLines detail={detail} />}
+                {tab === 'payments' && <AdvancePayments detail={detail} />}
+              </div>
+
+              <div className="px-6 py-3 border-t border-slate-800 flex items-center gap-2 flex-shrink-0">
+                <ShieldCheck className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" />
+                <p className="text-slate-600 text-[10px] leading-snug">
+                  Read-only. Calculated live by the Apple Accounts system (Payable 1.0 › Driver Settlements);
+                  money is released and edited there, never from this board.
+                  {detail.updated_at && ` Envelope last edited ${detail.updated_at}${detail.updated_by ? ` by ${detail.updated_by}` : ''}.`}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
+function Figure({ label, value, tone = 'text-white' }: { label: string; value: string; tone?: string }) {
+  return (
+    <div>
+      <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">{label}</p>
+      <p className={cn('text-sm font-black font-mono mt-1', tone)}>{value}</p>
+    </div>
+  )
+}
+
+/** The sections, the rule each was priced by, and what a human changed. */
+function AdvanceCalculation({ detail, usingLkr }: { detail: DriverAdvanceDetail; usingLkr: boolean }) {
+  const amount = (l: number, n: number) => usingLkr ? lkr(l) : money(n, detail.currency)
+  const included = detail.sections.filter(s => s.included)
+  const excluded = detail.sections.filter(s => !s.included)
+
+  return (
+    <div className="space-y-4">
+      {/* The rule, in words, before any numbers. */}
+      <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4">
+        <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold mb-2">How this is worked out</p>
+        <p className="text-slate-300 text-xs leading-relaxed">
+          The driver is handed <span className="text-emerald-300 font-semibold">
+            {detail.transport_basis === 'full' ? 'the whole transport bill' : `${detail.percent}% of the transport`}
+          </span>
+          {included.filter(s => s.code !== 'TRANSPORT').length > 0 && (
+            <> plus the full cost of {included.filter(s => s.code !== 'TRANSPORT').map(s => s.label.toLowerCase()).join(', ')}</>
+          )}
+          , because those are what he pays out on the road. Everything left over is settled with him after the tour.
+        </p>
+      </div>
+
+      {/* Included sections */}
+      <div className="space-y-2">
+        {included.map(s => (
+          <div key={s.code} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3.5">
+            <div className="flex items-start gap-3">
+              <span className={cn('px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wide flex-shrink-0 mt-0.5', CATEGORY_TONE[s.code])}>
+                {s.label}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-slate-400 text-[11px]">{s.basis_note}</p>
+                <p className="text-slate-600 text-[10px] mt-0.5">
+                  {s.line_count} line{s.line_count === 1 ? '' : 's'}
+                  {s.held_count > 0 && ` · ${s.held_count} on hold, excluded`}
+                  {' · costs '}{amount(s.lkr_total, s.total)}
+                  {s.paid > 0 && ` · ${amount(s.lkr_paid, s.paid)} already paid`}
+                </p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-white font-black font-mono text-sm">{amount(s.contribution_lkr, s.contribution)}</p>
+                {/* Transport is the only section that can put in less than it
+                    costs, so the subtraction is spelled out where it happens. */}
+                {s.code === 'TRANSPORT' && s.basis === 'advance' && s.total > s.contribution && (
+                  <p className="text-slate-600 text-[10px]">of {amount(s.lkr_total, s.total)}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* The total, as an addition rather than an assertion. */}
+        <div className="flex items-center gap-3 px-3.5 py-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5">
+          <Calculator className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <p className="text-emerald-200 text-xs font-bold flex-1">Computed advance</p>
+          <p className="text-emerald-300 font-black font-mono text-base">{amount(detail.lkr.computed, detail.computed)}</p>
+        </div>
+      </div>
+
+      {/* The override — shown as a correction to the figure above it. */}
+      {detail.override && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <PencilLine className="w-3.5 h-3.5 text-amber-400" />
+            <p className="text-amber-300 text-xs font-bold">Fixed by hand at {lkr(detail.override.amount_lkr)}</p>
+          </div>
+          <p className="text-slate-400 text-[11px] leading-relaxed">
+            {detail.override.reason || 'No reason was recorded.'}
+          </p>
+          <p className="text-slate-600 text-[10px] mt-2">
+            {detail.override.by ? `Set by ${detail.override.by}` : 'Author unknown'}
+            {detail.override.at && ` on ${detail.override.at}`}
+            {Math.abs(detail.override.drift_lkr) >= 0.01 && (
+              <> · the computed figure has since moved by {lkr(Math.abs(detail.override.drift_lkr))}
+                {detail.override.drift_lkr > 0 ? ' below' : ' above'} this one</>
+            )}
+          </p>
+          {detail.override.capped && (
+            <p className="text-red-300/90 text-[10px] mt-1.5">
+              This override is larger than the whole tour costs — the accounts system caps it at the obligation.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Sections deliberately left out */}
+      {excluded.length > 0 && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-3.5">
+          <div className="flex items-center gap-2 mb-2">
+            <MinusCircle className="w-3.5 h-3.5 text-slate-600" />
+            <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold">Not in the envelope</p>
+          </div>
+          <div className="space-y-1">
+            {excluded.map(s => (
+              <p key={s.code} className="text-slate-500 text-[11px] flex items-center gap-2">
+                <span className="w-20 flex-shrink-0">{s.label}</span>
+                <span className="text-slate-600">
+                  {s.line_count === 0
+                    ? 'nothing on this booking'
+                    : `${s.line_count} line${s.line_count === 1 ? '' : 's'} worth ${amount(s.lkr_total, s.total)} — settled by the office`}
+                </span>
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Held lines — costed, but not travelling with the driver yet. */}
+      {detail.held_lines.length > 0 && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-3.5">
+          <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold mb-2">
+            On hold — excluded until released ({detail.held_lines.length})
+          </p>
+          <div className="space-y-1">
+            {detail.held_lines.map((h, i) => (
+              <p key={h.line_key ?? i} className="text-slate-500 text-[11px] flex items-center gap-2">
+                <span className={cn('px-1.5 py-px rounded border text-[9px] font-bold uppercase flex-shrink-0', CATEGORY_TONE[h.category])}>{h.category_label}</span>
+                <span className="flex-1 truncate">{h.activity_name}</span>
+                <span className="font-mono text-slate-600">{lkr(h.lkr_amount)}</span>
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Where the transport figure came from — the same number Payable 1.0's
+          Transport panel quotes, so the two screens are visibly agreeing. */}
+      {detail.transport && (
+        <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-3.5">
+          <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold mb-2">Transport settlement</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <IB label="Transport total"  value={lkr(detail.transport.lkr_total)} />
+            <IB label={`${detail.percent}% advance`} value={lkr(detail.transport.lkr_advance_due)} />
+            <IB label="Paid"             value={money(detail.transport.paid, detail.currency)} />
+            <IB label="Outstanding"      value={money(detail.transport.outstanding, detail.currency)} />
+          </div>
+          {detail.transport.deduction_applied && (
+            <p className="text-slate-600 text-[10px] mt-2">
+              {lkr(detail.transport.deduction_lkr)} is held back from every booking&apos;s transport advance.
+            </p>
+          )}
+        </div>
+      )}
+
+      {detail.notes && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-3.5">
+          <p className="text-slate-500 text-[10px] uppercase tracking-wider font-bold mb-1.5">Notes</p>
+          <p className="text-slate-300 text-xs whitespace-pre-wrap leading-relaxed">{detail.notes}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Every line in the envelope, grouped the way the sections above list them. */
+function AdvanceLines({ detail }: { detail: DriverAdvanceDetail }) {
+  if (detail.lines.length === 0) {
+    return <EmptyTab label="No costed lines are in this driver's envelope" icon={FileText} />
+  }
+
+  const order = detail.sections.map(s => s.code)
+  const groups = order
+    .map(code => ({ code, lines: detail.lines.filter(l => l.category === code) }))
+    .filter(g => g.lines.length > 0)
+
+  return (
+    <div className="space-y-4">
+      {groups.map(({ code, lines }) => (
+        <div key={code}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={cn('px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wide', CATEGORY_TONE[code as DriverAdvanceCategory])}>
+              {detail.sections.find(s => s.code === code)?.label ?? code}
+            </span>
+            <span className="text-slate-600 text-[10px]">{lines.length} line{lines.length === 1 ? '' : 's'}</span>
+          </div>
+
+          <div className="overflow-x-auto rounded-xl border border-slate-800/60">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-800/60 bg-slate-900/40">
+                  {['Activity', 'Supplier', 'Status', 'Cost', 'In envelope', 'Paid', 'Balance'].map((h, i) => (
+                    <th key={h} className={cn('px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-slate-600 whitespace-nowrap',
+                      i >= 3 ? 'text-right' : 'text-left')}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/40">
+                {lines.map((l, i) => (
+                  <tr key={l.line_key ?? i} className={i % 2 ? 'bg-slate-900/20' : ''}>
+                    <td className="px-3 py-2 text-slate-200 max-w-[16rem] truncate" title={l.activity_name}>{l.activity_name}</td>
+                    <td className="px-3 py-2 text-slate-500 max-w-[10rem] truncate">{l.supplier_name ?? '—'}</td>
+                    <td className="px-3 py-2 text-slate-500">{l.status}</td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-300 whitespace-nowrap">
+                      {l.lkr_amount !== null ? lkr(l.lkr_amount) : money(l.actual_amount, l.currency)}
+                    </td>
+                    {/* What this line contributes to the advance. Lower than its
+                        cost on transport, which is pro-rated to the advance share. */}
+                    <td className="px-3 py-2 text-right font-mono text-emerald-300/90 whitespace-nowrap">
+                      {l.rate ? lkr(l.advance_weight * l.rate) : money(l.advance_weight, l.currency)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-sky-300/80 whitespace-nowrap">
+                      {l.paid_amount > 0 ? money(l.paid_amount, l.currency) : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-400 whitespace-nowrap">
+                      {l.lkr_balance !== null ? lkr(l.lkr_balance) : money(l.balance, l.currency)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** What has actually been handed over, newest first — one row per bank slip. */
+function AdvancePayments({ detail }: { detail: DriverAdvanceDetail }) {
+  if (detail.history.length === 0) {
+    return <EmptyTab label="Nothing has been paid to this driver yet" icon={Banknote} />
+  }
+
+  return (
+    <div className="space-y-2">
+      {detail.history.map(p => (
+        <div key={p.receipt_ref} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3.5">
+          <div className="flex items-start gap-3">
+            <div className={cn('w-8 h-8 rounded-lg border flex items-center justify-center flex-shrink-0',
+              p.stage === 'driver_advance'
+                ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                : 'bg-sky-500/10 border-sky-500/25 text-sky-400')}>
+              <Banknote className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white text-xs font-bold">{p.stage_label}</p>
+              <p className="text-slate-500 text-[10px] mt-0.5">
+                {p.date ?? 'undated'} · {p.line_count} line{p.line_count === 1 ? '' : 's'}
+                {p.reference && ` · ref ${p.reference}`}
+                {p.recorded_by && ` · by ${p.recorded_by}`}
+              </p>
+              {p.remarks && <p className="text-slate-500 text-[11px] mt-1 italic">{p.remarks}</p>}
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-white font-black font-mono text-sm">{lkr(p.amount_lkr)}</p>
+              <p className="text-slate-600 text-[10px] font-mono">{money(p.amount, p.currency)}</p>
+              <p className="text-slate-700 text-[9px] font-mono mt-0.5">{p.receipt_ref}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ── Driver Assign Modal ───────────────────────────────────────────────────────
 
 function DriverAssignModal({ booking, drivers, vendors, onClose, onSave }: {
@@ -680,6 +1218,27 @@ export default function SriLankaDriverAllocationPage() {
   // Modals
   const [detailBooking, setDetailBooking] = useState<SLBooking | null>(null)
   const [assignBooking, setAssignBooking] = useState<SLBooking | null>(null)
+  const [advanceBooking, setAdvanceBooking] = useState<SLBooking | null>(null)
+
+  // ── Driver advance (from the Apple Accounts system) ───────────────────────
+  //
+  // Held apart from `bookings` because it arrives on its own schedule: the
+  // figures are re-derived per booking on the accounts host, so the column
+  // fills in progressively rather than blocking the board. Keyed by the exact
+  // reference that was sent, which is the same string the accounts system
+  // echoes back — no second normalisation on this side to disagree with theirs.
+  const [advances, setAdvances] = useState<Record<string, DriverAdvanceSummary>>({})
+  const [advancesLoading, setAdvancesLoading] = useState(false)
+  const [advanceNotice, setAdvanceNotice] = useState<string | null>(null)
+
+  // References already asked about, so a filter change never re-fetches a
+  // figure that is already on screen. A ref rather than state: it must be read
+  // and written inside one pass of the loader without re-triggering it.
+  const askedRefs = useRef<Set<string>>(new Set())
+  const advanceRun = useRef(0)
+  // Loaders can overlap — clearing a filter reveals more rows while the first
+  // pass is still running — so the spinner is driven by a count, not a flag.
+  const advanceInFlight = useRef(0)
 
   // ── Fetch (no filter params — all filtering is client-side) ───────────────
 
@@ -782,6 +1341,88 @@ export default function SriLankaDriverAllocationPage() {
 
     return list
   }, [bookings, activeOnly, search, statusFilter, vehicleFilter, dateFrom, dateTo, dateField, sortBy, sortDir])
+
+  // ── Driver advance loader ─────────────────────────────────────────────────
+  //
+  // Only what is on screen, and only once. Each accounts-side lookup rebuilds a
+  // booking's whole payable position, so asking about every Sri Lanka booking
+  // the moment the page opens would put minutes of work on a live system for
+  // figures nobody is looking at. The board asks about the rows it is showing,
+  // in the order it is showing them, and remembers what it has asked.
+  //
+  // Chunks go out one after another rather than all at once, and each is
+  // merged as it lands, so the column fills top-down while the rest is still
+  // being derived.
+
+  const advanceRefs = useMemo(
+    () => displayBookings.map(advanceRefFor).filter((r): r is string => Boolean(r)),
+    [displayBookings],
+  )
+
+  const loadAdvances = useCallback(async (refs: string[], run: number) => {
+    if (refs.length === 0) return
+
+    advanceInFlight.current += 1
+    setAdvancesLoading(true)
+    try {
+      for (let i = 0; i < refs.length; i += ADVANCE_CHUNK) {
+        // A newer run (a refresh, or a filter that scrolled a different set into
+        // view) has taken over — stop rather than write stale figures over it.
+        if (advanceRun.current !== run) return
+
+        const chunk = refs.slice(i, i + ADVANCE_CHUNK)
+
+        const res = await fetch('/api/srilanka/driver-advance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ references: chunk }),
+        })
+
+        if (!res.ok) throw new Error(`Driver advance lookup failed (${res.status})`)
+
+        const json = await res.json()
+        const batch: DriverAdvanceSummary[] = json.data?.advances ?? []
+
+        if (advanceRun.current !== run) return
+
+        setAdvances(prev => {
+          const next = { ...prev }
+          for (const a of batch) next[a.reference] = a
+          return next
+        })
+
+        // One notice for the whole board, not one toast per booking: if the
+        // accounts system is down, every row says the same thing and the board
+        // should say it once, quietly, in the column header.
+        const down = batch.find(a => a.state === 'unavailable')
+        setAdvanceNotice(down?.message ?? null)
+      }
+    } catch (err) {
+      if (advanceRun.current !== run) return
+      console.error('[driver advance]', err)
+      setAdvanceNotice('Driver advances could not be read from the accounts system.')
+      // The references stay marked as asked; the Refresh button is the retry.
+    } finally {
+      advanceInFlight.current = Math.max(0, advanceInFlight.current - 1)
+      if (advanceInFlight.current === 0) setAdvancesLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    const pending = advanceRefs.filter(r => !askedRefs.current.has(r))
+    if (pending.length === 0) return
+
+    for (const r of pending) askedRefs.current.add(r)
+    void loadAdvances(pending, advanceRun.current)
+  }, [advanceRefs, loadAdvances])
+
+  /** Drop every cached figure and read them again — what Refresh does. */
+  const refreshAdvances = useCallback(() => {
+    advanceRun.current += 1
+    askedRefs.current.clear()
+    setAdvances({})
+    setAdvanceNotice(null)
+  }, [])
 
   // ── Active filter count ───────────────────────────────────────────────────
 
@@ -923,7 +1564,10 @@ export default function SriLankaDriverAllocationPage() {
             </button>
           </div>
 
-          <button onClick={() => fetchBookings(true)} disabled={refreshing}
+          {/* Refresh re-reads the advances too — a payment released in Payable
+              1.0 a moment ago should show here without a page reload, and this
+              is also the retry path when the accounts system was unreachable. */}
+          <button onClick={() => { refreshAdvances(); void fetchBookings(true) }} disabled={refreshing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800/60 border border-slate-700/40 text-slate-400 hover:text-white hover:bg-slate-800 transition-all text-sm font-medium"
           ><RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />Refresh</button>
         </div>
@@ -1091,6 +1735,7 @@ export default function SriLankaDriverAllocationPage() {
                       { key: 'departureDate', label: 'Departure',      sortable: true,  field: 'departureDate' as SortField },
                       { key: 'vehicle',       label: 'Vehicle',        sortable: false, field: null },
                       { key: 'driver',        label: 'Driver / Vendor',sortable: false, field: null },
+                      { key: 'advance',       label: 'Driver Advance', sortable: false, field: null },
                       { key: 'status',        label: 'Status',         sortable: false, field: null },
                     ].map(col => (
                       <th key={col.key}
@@ -1100,6 +1745,15 @@ export default function SriLankaDriverAllocationPage() {
                       >
                         <span className="flex items-center gap-1">
                           {col.label}
+                          {/* The advance column fills in behind the board, so it
+                              carries its own progress and its own bad news
+                              rather than interrupting the page with a toast. */}
+                          {col.key === 'advance' && advancesLoading && (
+                            <Loader2 className="w-3 h-3 animate-spin text-slate-600" />
+                          )}
+                          {col.key === 'advance' && !advancesLoading && advanceNotice && (
+                            <AlertTriangle className="w-3 h-3 text-amber-500/70" aria-label={advanceNotice} />
+                          )}
                           {col.sortable && col.field && (
                             sortBy === col.field
                               ? (sortDir === 'asc' ? <ArrowUp className="w-3 h-3 text-yellow-400" /> : <ArrowDown className="w-3 h-3 text-yellow-400" />)
@@ -1117,7 +1771,7 @@ export default function SriLankaDriverAllocationPage() {
                     const arrFlight = b.flights[0] ?? null
                     const depFlight = b.flights.at(-1) ?? null
                     const leadPax   = b.passengers[0] ?? null
-                    const isRef     = b.isNumber ?? b.cntlNumber ?? b.bookingRef
+                    const advanceRef = advanceRefFor(b)
                     return (
                       <tr key={b.id} className={cn('transition-colors group',
                         i % 2 === 0 ? 'bg-transparent' : 'bg-slate-900/30',
@@ -1199,6 +1853,15 @@ export default function SriLankaDriverAllocationPage() {
                           )}
                         </td>
 
+                        {/* Driver Advance — from the Apple Accounts system */}
+                        <td className="px-4 py-3.5">
+                          <DriverAdvanceCell
+                            summary={advanceRef ? advances[advanceRef] : undefined}
+                            loading={advancesLoading}
+                            onOpen={() => setAdvanceBooking(b)}
+                          />
+                        </td>
+
                         {/* Status */}
                         <td className="px-4 py-3.5">
                           <div className="flex flex-col items-start gap-1.5">
@@ -1227,6 +1890,7 @@ export default function SriLankaDriverAllocationPage() {
 
       <BookingDetailPanel booking={detailBooking} onClose={() => setDetailBooking(null)} />
       <DriverAssignModal booking={assignBooking} drivers={drivers} vendors={vendors} onClose={() => setAssignBooking(null)} onSave={handleDriverSave} />
+      <DriverAdvanceModal booking={advanceBooking} onClose={() => setAdvanceBooking(null)} />
     </div>
   )
 }
