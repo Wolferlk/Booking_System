@@ -166,6 +166,19 @@ export interface QmSheetInfo {
   headerMatches: boolean
   /** New columns the next write will add to row 1, if row 1 is an older layout. */
   headerPendingColumns?: string[]
+  /**
+   * Set when this tab keeps a header the team edited and the app was told to
+   * write under it as it stands. Null while the tab carries the app's layout.
+   */
+  custom?: {
+    adoptedAt: string
+    /** Row 1 changed after it was adopted — the mapping has to be taken again. */
+    stale:     boolean
+    /** Each app column and the letter it now lives under. */
+    columns:   { cell: string; column: string }[]
+    /** App columns this header has no place for — they are never written. */
+    missing:   string[]
+  } | null
   lastDataRow:   number
   nextAppendRow: number
   dataRowCount:  number

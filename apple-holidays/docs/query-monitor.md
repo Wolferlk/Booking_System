@@ -192,8 +192,16 @@ or — for mail that has none — when the normalised subject *and* sender domai
 match **and** that subject carries a reference number — 5+ digits, or 4 that do
 not read as a year. That condition is the safety of the fallback: agencies send
 "Urgent quote required" several times a day and "SRILANKA // 15 ADULTS // JAN
-3RD WEEK 2027" is a template, not an identifier; collapsing those would hide
-real queries, which is worse than a duplicate.
+3RD WEEK 2027" is a template, not an identifier; collapsing those *across
+senders* would hide real queries, which is worse than a duplicate.
+
+There is a third key, for the case neither of those sees: the **same address,
+same subject, same day**. A generic subject re-sent an hour later is a new
+`conversationId` and has no reference to thread on, so it used to become a second
+entry and a second line directly under the first. Same person, same day, same
+words is one query asked twice. The sender *address* is what makes this safe
+where the domain would not: two agents at one agency sending the same generic
+subject still keep a row each.
 
 What a merge deliberately does **not** touch:
 
@@ -221,6 +229,17 @@ to date, deletes the later ones from both workbooks and renumbers every stored
 row pointer below them. Only columns A–N are deleted and shifted up, so the
 lists the team keeps to the right stay where they are.
 
+*Remove duplicates* (the sheet-level sweep, `sheet-dedupe.ts`) works the other
+way round — from the rows rather than from the database — and folds two lines
+when either the subject names a reference and the day matches, or **every cell
+describing the query** matches: day, subject, TO list, file handler, sales
+person, destination, agent, travel date, CNTL, amendment, region. The
+timestamps, reply state, SLA, thread count and AI summary are left out of that
+comparison on purpose: they move after a row is written, so two copies of one
+query never agree on them, and a rule that included them would keep exactly the
+pairs the team is complaining about. Run it with *Preview* first — it reports
+what it would delete without touching the workbook.
+
 ### Rows the database never knew about
 
 `appendRows` puts a block in the workbook; the database write that records which
@@ -229,22 +248,39 @@ row each entry landed on is a **separate** call. A sync that dies between the tw
 `PENDING`, and the next sync appends them again. No amount of thread merging
 helps: nothing in the database points at the first copy.
 
-Both ends of that are covered.
+Every end of that is covered, and the guards are layered because each one sees
+something the others cannot.
 
+- **One writer at a time.** The write takes its own lock (`query_monitor_sync_lock`),
+  separate from the sweep lock. Both the sweep (auto-write on) and the *Sync to
+  sheet* button write the same `PENDING` block; pressed while a sweep was
+  writing, both read the same pending set, and the append guard below could not
+  help — it reads the tail *before* the other writer's rows have landed, so
+  neither saw the other. The second caller is now turned away with "a write is
+  already running" and its rows stay `PENDING` for the write already in flight.
+- **Within the block**, two pending entries that are the same query never become
+  two rows. The later one is folded into the earlier — `mergedIntoId` points at
+  it, its sync state becomes `MERGED`, and it counts towards the surviving row's
+  *Mails in Thread*. Nothing is deleted: the mail is still stored and still
+  listed in the dashboard under the query it belongs to. Same query means same
+  day and same normalised subject, with either a reference number in the subject
+  or the same sender address — the same test the collector uses, applied once
+  more at the last gate.
 - **Before appending**, the tail of the tab (last 200 rows) is read and any
   pending row already standing there is *claimed* — the entry is pointed at the
-  row it turns out to own and drops out of the append. Identity is the date
-  serial, the timestamp serial and the subject: the three cells nothing else
-  edits. A tail that cannot be read is not fatal; the block is written, because
-  a missing query is worse than a duplicate row.
+  row it turns out to own and drops out of the append. A row answers to the exact
+  identity (date serial, timestamp serial, subject — the three cells nothing else
+  edits) *and* to the reference-subject identity, so a repeat is caught whether
+  it is one write landing twice or one query written twice. The sender is not a
+  column on the query tab, so that key is applied inside the block instead, where
+  the entries are still to hand. A tail that cannot be read is not fatal; the
+  block is written, because a missing query is worse than a duplicate row.
 - **Afterwards**, *Remove duplicates* in the page header reads the sheet itself
-  and deletes repeated lines whether or not any entry claims them. Two lines
-  count as repeats only when the date and subject match *and* the subject
-  carries a reference number, or when every written cell is identical — so two
-  unrelated "Urgent quote required" mails on one morning are never folded. The
-  earliest line stays; entries that owned a deleted row become `MERGED` (never
-  `PENDING`, which is what would put the row straight back) and pointers below
-  are renumbered. `GET` the same route for a count without touching the file.
+  and deletes repeated lines whether or not any entry claims them — see the rule
+  under *One row per query*. The earliest line stays; entries that owned a
+  deleted row become `MERGED` (never `PENDING`, which is what would put the row
+  straight back) and pointers below are renumbered. `GET` the same route for a
+  count without touching the file.
 
 `mergeDuplicateEntries` works from the database outwards, this works from the
 sheet inwards; they are separate on purpose.
@@ -323,12 +359,55 @@ Press **Prepare**.
 A header that is genuinely *wrong* (rather than merely short) is only rewritten
 while the tab holds **no data rows**. Above real rows it is left alone and
 reported instead: relabelling columns without moving the values underneath would
-silently change what every cell means. A tab in that state needs a human — clear
-it, or point at a clean one.
+silently change what every cell means. A tab in that state needs a human, and
+the Configuration tab offers the two ways out described next.
 
 The sync applies the same rule. It refuses to append into a mismatched tab rather
 than writing the full layout under a shorter header, where every value past the
 break would land in the wrong column.
+
+### Keeping a header the team edited, or putting the layout back
+
+Both buttons sit under the mismatch message in **Configuration → Target
+workbook**, and both keep every row already on the sheet. They act on the live
+workbook and on the backup together, so the two files never end up on different
+layouts.
+
+**Keep this header** (`adopt`) changes *nothing* on the workbook — not row 1, not
+a cell. Each of our fields is matched to the column that now carries its name,
+by exact name first and then by a short alias list (`Handler` → File Handler,
+`Recipients` → TO List, `Thread count` → Mails in Thread…). That mapping is
+stored per workbook and tab, and from then on rows are written into those
+columns:
+
+- Columns of the team's *between* ours are never written to — a block goes out as
+  one range call per run of neighbouring mapped columns, not one call across the
+  span.
+- A field the header has no column for is simply not written, and is listed in
+  the status panel so nobody waits for a column that will never fill.
+- Reads project back into layout order, so the append guard, the duplicate sweep
+  and the dashboard preview are unaware the tab is laid out differently.
+- The header the mapping was taken from is stored with it. If row 1 changes
+  again, the mapping is stale and the sweep stops exactly as it does now, rather
+  than writing a column out — press the button again to re-read it.
+
+**Restore standard layout** (`restore`) puts our layout back, in this order:
+
+1. The tab is copied — values *and* number formats — to a new `… bak MMDD-hhmm`
+   tab. Everything the team had, including columns ours has no field for, is on
+   that tab afterwards.
+2. Every data row is moved into the columns the standard layout expects, matched
+   by the heading it was sitting under: a value under `Recipients` comes back
+   under TO List in column G.
+3. Row 1 is rewritten as our header and the mapping is dropped, so writing goes
+   back to being by position.
+
+Rows keep their row numbers and their order throughout, so the row pointer stored
+per entry still points at the same query: nothing is re-appended and nothing is
+re-synced. The one thing that does not survive on the *live* tab is a column of
+the team's that stood inside A–T — that column now carries one of our fields. It
+is intact on the archive tab, and the columns affected are named back in the
+confirmation message.
 
 ### The backup must be a different file
 
@@ -387,13 +466,16 @@ src/lib/query-monitor/
   thread.ts      thread identity — conversation, or subject+domain with a ref
   extract.ts     destination / travel date / CNTL parsing, GPT fallback
   summarize.ts   the one-sentence summary behind "AI reads every new mail"
-  sheet.ts       workbook resolution, append, in-place update, tail read
+  sheet.ts       workbook resolution, append, in-place update, tail read,
+                 adopting / restoring a hand-edited header
+  header-map.ts  matching a header the team edited to our fields, and the
+                 stored mapping the writes then go out under
   sheet-dedupe.ts  duplicate *rows* on the tab, incl. ones no entry claims
   run.ts         the sweep: collect → dedup → enrich → write, with the run log
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe,sheet-dedupe}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe,sheet-dedupe,sheet-header}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation

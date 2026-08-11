@@ -28,12 +28,16 @@ import {
   type MonitoredMessage,
 } from './collect'
 import { extractByRules, extractWithAi } from './extract'
-import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
-import { displaySubject, subjectKeyFor, threadKeyFor } from './thread'
+import {
+  isoDateInTz, startOfDayInTz, toExcelDateSerial, toExcelDateTimeSerial,
+} from './dates'
+import {
+  displaySubject, hasReference, normalizeSubject, subjectKeyFor, threadKeyFor,
+} from './thread'
 import { summarizeMail } from './summarize'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
-  deleteRowsAt, ensureWorksheet, findLastDataRow, openSession, readValuesRange,
+  deleteRowsAt, ensureWorksheet, findLastDataRow, layoutFor, openSession, readValuesRange,
   remapRowNumber, resolveSheetRef, updateExcludedRow, updateRow,
   type ExcludedRowValues, type SheetLayout, type SheetRef, type SheetRowValues,
   type WorkbookTarget,
@@ -172,15 +176,52 @@ async function findThreadRoot(
   const identities: Prisma.QueryMonitorEntryWhereInput[] = []
   if (message.conversationId) identities.push({ conversationId: message.conversationId })
   if (subjectKey)             identities.push({ subjectKey })
-  if (identities.length === 0) return null
 
-  return prisma.queryMonitorEntry.findFirst({
-    // A follow-up folds into the thread's own root, never into another
-    // follow-up — merged entries own no row to rewrite.
-    where:   { mergedIntoId: null, receivedAt: { gte: since }, OR: identities },
+  if (identities.length > 0) {
+    const root = await prisma.queryMonitorEntry.findFirst({
+      // A follow-up folds into the thread's own root, never into another
+      // follow-up — merged entries own no row to rewrite.
+      where:   { mergedIntoId: null, receivedAt: { gte: since }, OR: identities },
+      orderBy: { receivedAt: 'asc' },
+      include: { matches: true },
+    })
+    if (root) return root
+  }
+
+  return findSameDayResend(message)
+}
+
+/**
+ * The same mail again, from the same person, on the same day.
+ *
+ * Neither key above sees this one. `conversationId` differs because it is a new
+ * send rather than a reply, and `subjectKey` is null whenever the subject names
+ * no reference — "Srilanka Quote : DEC 2027 : URGENT : MANU X 4" has nothing in
+ * it that identifies one query, so it is not safe to thread *across senders* on.
+ *
+ * From the *same address* on the *same day* it is safe, and it is the case the
+ * team keeps seeing: two identical lines, one under the other. Two agents at one
+ * agency sending the same generic subject still keep a row each — that is the
+ * distinction the sender address draws and the domain would not.
+ */
+async function findSameDayResend(message: MonitoredMessage): Promise<EntryWithMatches | null> {
+  const day = startOfDayInTz(isoDateInTz(message.receivedAt))
+  if (!day || !message.fromAddress) return null
+
+  const nextDay = new Date(day.getTime() + 24 * 3_600_000)
+  const sameDay = await prisma.queryMonitorEntry.findMany({
+    where: {
+      mergedIntoId: null,
+      fromAddress:  message.fromAddress,
+      receivedAt:   { gte: day, lt: nextDay },
+    },
     orderBy: { receivedAt: 'asc' },
     include: { matches: true },
+    take:    50,
   })
+
+  const subject = normalizeSubject(message.subject)
+  return sameDay.find(entry => normalizeSubject(entry.subject) === subject) ?? null
 }
 
 /**
@@ -429,18 +470,18 @@ function overrideSet(entry: { manualOverrides: Prisma.JsonValue | null }): Set<s
 
 const LOCK_TTL_MS = 15 * 60 * 1000
 
-async function acquireLock(): Promise<boolean> {
-  const existing = await prisma.systemSetting.findUnique({ where: { key: SETTINGS.runLock } })
+async function acquireLock(key: string = SETTINGS.runLock, ttlMs = LOCK_TTL_MS): Promise<boolean> {
+  const existing = await prisma.systemSetting.findUnique({ where: { key } })
   if (existing) {
     const heldSince = new Date(existing.value).getTime()
-    if (Number.isFinite(heldSince) && Date.now() - heldSince < LOCK_TTL_MS) return false
+    if (Number.isFinite(heldSince) && Date.now() - heldSince < ttlMs) return false
   }
-  await setSetting(SETTINGS.runLock, new Date().toISOString())
+  await setSetting(key, new Date().toISOString())
   return true
 }
 
-async function releaseLock(): Promise<void> {
-  await prisma.systemSetting.deleteMany({ where: { key: SETTINGS.runLock } })
+async function releaseLock(key: string = SETTINGS.runLock): Promise<void> {
+  await prisma.systemSetting.deleteMany({ where: { key } })
 }
 
 // ── The sweep ────────────────────────────────────────────────────────────────
@@ -982,6 +1023,8 @@ export interface SyncResult {
   failed:    number
   /** Per-workbook detail, live first, standby second when it is switched on. */
   workbooks: WorkbookSyncResult[]
+  /** Nothing was attempted: another write held the lock. Not a failure. */
+  skipped?:  boolean
 }
 
 /**
@@ -1027,20 +1070,45 @@ const BACKUP_PLAN: WorkbookPlan = {
  */
 export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<SyncResult> {
   const config = await getConfig()
-  await skipEntriesBeforeStartDate(config.startDate, log)
 
-  const workbooks: WorkbookSyncResult[] = [await syncOneWorkbook(PRIMARY_PLAN, log, limit)]
-
-  if (config.backupEnabled && await backupIsADistinctFile(log)) {
-    workbooks.push(await syncOneWorkbook(BACKUP_PLAN, log, limit))
+  /**
+   * One writer at a time.
+   *
+   * Both callers write the same PENDING block: the sweep when auto-write is on,
+   * and the "Sync to sheet" button. Pressed while a sweep is writing, both read
+   * the same set of pending entries and both append it — the append guard reads
+   * the tail *before* the other writer's rows land, so it cannot see them. That
+   * is how the sheet ended up with the same query on two rows in a row.
+   *
+   * The second caller is turned away rather than queued: its rows are still
+   * PENDING, and whichever write is in flight is already putting them down.
+   */
+  if (!await acquireLock(SETTINGS.syncLock, SYNC_LOCK_TTL_MS)) {
+    log?.add('warn', 'Another write to the workbook is already running — this one was skipped so the rows are not appended twice')
+    return { appended: 0, updated: 0, failed: 0, skipped: true, workbooks: [] }
   }
 
-  const primary = workbooks[0]
-  return {
-    appended: primary.appended, updated: primary.updated, failed: primary.failed,
-    workbooks,
+  try {
+    await skipEntriesBeforeStartDate(config.startDate, log)
+
+    const workbooks: WorkbookSyncResult[] = [await syncOneWorkbook(PRIMARY_PLAN, log, limit)]
+
+    if (config.backupEnabled && await backupIsADistinctFile(log)) {
+      workbooks.push(await syncOneWorkbook(BACKUP_PLAN, log, limit))
+    }
+
+    const primary = workbooks[0]
+    return {
+      appended: primary.appended, updated: primary.updated, failed: primary.failed,
+      workbooks,
+    }
+  } finally {
+    await releaseLock(SETTINGS.syncLock).catch(() => {})
   }
 }
+
+/** A write runs to at most 300 s (`maxDuration`); past that the lock is stale. */
+const SYNC_LOCK_TTL_MS = 6 * 60 * 1000
 
 /**
  * Refuse to mirror a workbook into itself.
@@ -1119,15 +1187,131 @@ function writtenRowKey(
   return `${serial(date)}|${serial(time)}|${subject.trim().toLowerCase()}`
 }
 
-/** The same identity, read back off a row that is already on the sheet. */
-function sheetRowKey(
+/**
+ * The looser identity: *one query*, however many mails carried it.
+ *
+ * The exact key above is about one write landing twice. This one is about the
+ * thing the team actually sees — two lines with the same date and the same
+ * subject, one under the other. Two mails are the same query when they arrived
+ * on the same day with the same subject and either
+ *
+ *   • the subject names a reference ("… ORN014IRMLT - #1209104"), which is one
+ *     specific query whoever sent it, or
+ *   • they came from the same address — the agent who sent the same thing twice.
+ *
+ * A generic subject from *different* senders is deliberately not folded: two
+ * agents at one agency both send "Urgent quote required" about two different
+ * groups, and hiding one of those is worse than a repeated line. That is the
+ * same rule the sheet-level duplicate sweep applies, kept in step on purpose.
+ */
+function sameQueryKeys(
+  date: number | '', subject: string, fromAddress: string | null,
+): string[] {
+  const day     = date === '' ? '' : String(Math.floor(date))
+  const cleaned = normalizeSubject(subject)
+  if (!day || !cleaned) return []
+
+  const keys: string[] = []
+  if (hasReference(cleaned)) keys.push(`ref|${day}|${cleaned}`)
+  if (fromAddress) keys.push(`from|${day}|${cleaned}|${fromAddress.trim().toLowerCase()}`)
+  return keys
+}
+
+/**
+ * Every identity a row already on the sheet answers to.
+ *
+ * The exact one, plus the reference-subject one — a line whose subject names a
+ * query is that query, and a second line for it is the duplicate the team is
+ * looking at. The sender is not on the query tab, so the same-sender key cannot
+ * be read back off a row; it is applied inside the block instead, where the
+ * entries are still to hand.
+ */
+function sheetRowKeys(
   cells: (string | number | boolean | null)[], layout: SheetLayout,
-): string {
+): string[] {
   // Query tab: A date, D allocation time, C subject.
   // Other-mail tab: A date, B received time, C subject.
-  const timeIndex = layout === EXCLUDED_LAYOUT ? 1 : 3
+  // Cells arrive in layout order whatever columns they were read from, so a
+  // hand-edited header does not change these indexes — see projectRows.
+  const timeIndex = layout.kind === 'excluded' ? 1 : 3
   const num = (v: unknown) => (typeof v === 'number' ? v : '')
-  return writtenRowKey(num(cells[0]), num(cells[timeIndex]), String(cells[2] ?? ''))
+  const subject = String(cells[2] ?? '')
+
+  return [
+    writtenRowKey(num(cells[0]), num(cells[timeIndex]), subject),
+    ...sameQueryKeys(num(cells[0]), subject, null),
+  ]
+}
+
+/**
+ * Two pending entries that are the same query — before either becomes a row.
+ *
+ * Thread merging catches this when the mails are recognisably one thread: same
+ * conversation, or same subject carrying a reference. What it cannot catch is a
+ * pair it has no key for — the agent who re-sent the same generic subject an
+ * hour later from the same address, a mail that reached us twice through two
+ * routes with two message ids. Both entries are then legitimately PENDING, both
+ * go in the same block, and the sheet gets two identical lines next to each
+ * other. This is the last gate before the append.
+ *
+ * The later one is folded into the earlier: `mergedIntoId` points at it, its
+ * sync state becomes MERGED, and the row it would have taken is never written.
+ * Nothing is deleted — the mail is still there, still readable in the dashboard,
+ * and it counts towards the surviving row's "Mails in Thread".
+ */
+async function foldDuplicatesInBlock(
+  entries: QueryMonitorEntry[],
+  keysOf: (entry: QueryMonitorEntry) => string[],
+  note: (level: StepLevel, msg: string, meta?: Record<string, unknown>) => void,
+): Promise<QueryMonitorEntry[]> {
+  if (entries.length < 2) return entries
+
+  const winnerByKey = new Map<string, QueryMonitorEntry>()
+  const kept: QueryMonitorEntry[] = []
+
+  for (const entry of entries) {
+    const keys   = keysOf(entry)
+    const winner = keys.map(k => winnerByKey.get(k)).find(Boolean)
+
+    if (!winner) {
+      for (const key of keys) if (!winnerByKey.has(key)) winnerByKey.set(key, entry)
+      kept.push(entry)
+      continue
+    }
+
+    // The winner answers to this one's keys too, so a third copy folds as well.
+    for (const key of keys) if (!winnerByKey.has(key)) winnerByKey.set(key, winner)
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data: {
+        // Already merged into something else? Leave that pointer alone.
+        ...(entry.mergedIntoId ? {} : { mergedIntoId: winner.id }),
+        syncStatus:       'MERGED',
+        backupSyncStatus: 'MERGED',
+        syncError:        null,
+        backupSyncError:  null,
+      },
+    })
+
+    // The surviving row has to say the second mail happened — that is the whole
+    // trade for not giving it a line of its own.
+    winner.followUpCount += 1
+    const last = winner.lastMessageAt ?? winner.receivedAt
+    if (entry.receivedAt > last) winner.lastMessageAt = entry.receivedAt
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: winner.id },
+      data:  { followUpCount: winner.followUpCount, lastMessageAt: winner.lastMessageAt },
+    })
+
+    note('warn',
+      `Same query twice — "${displaySubject(entry.subject).slice(0, 60)}" folded into the row `
+      + 'the earlier mail gets, instead of a second line under it',
+      { entryId: entry.id, mergedInto: winner.id })
+  }
+
+  return kept
 }
 
 /**
@@ -1150,7 +1334,7 @@ function sheetRowKey(
  */
 async function claimAlreadyWrittenRows(
   entries: QueryMonitorEntry[],
-  keyOf: (entry: QueryMonitorEntry) => string,
+  keysOf: (entry: QueryMonitorEntry) => string[],
   ref: SheetRef, tab: string, layout: SheetLayout, sessionId: string | null,
   plan: WorkbookPlan,
   tailRows = 200,
@@ -1171,17 +1355,20 @@ async function claimAlreadyWrittenRows(
     return { toAppend: entries, claimed: 0 }
   }
 
+  // A row answers to more than one key: the exact one (this write landing
+  // twice) and the "same query" ones (the team seeing the same line twice).
   const rowByKey = new Map<string, number>()
   rows.forEach((cells, i) => {
-    const key = sheetRowKey(cells, layout)
-    if (!rowByKey.has(key)) rowByKey.set(key, firstRow + i)
+    for (const key of sheetRowKeys(cells, layout)) {
+      if (!rowByKey.has(key)) rowByKey.set(key, firstRow + i)
+    }
   })
 
   const toAppend: QueryMonitorEntry[] = []
   let claimed = 0
 
   for (const entry of entries) {
-    const row = rowByKey.get(keyOf(entry))
+    const row = keysOf(entry).map(k => rowByKey.get(k)).find(r => r !== undefined)
     if (row === undefined) { toAppend.push(entry); continue }
 
     await prisma.queryMonitorEntry.update({
@@ -1302,20 +1489,29 @@ async function syncOneWorkbook(
             `"${config.sheetName}" has data under a header that is not the expected `
             + `${QUERY_LAYOUT.header.length}-column layout (A–${QUERY_LAYOUT.lastColumn}: … Replied By, `
             + 'Response (hrs), SLA, Mails in Thread, Last Mail, AI Summary). Nothing was written. '
-            + "Either row 1 is somebody else's header, or the columns the new layout needs "
-            + 'already hold data of yours — clear them, or point at a clean tab, then sync again.',
+            + 'In Configuration → Target workbook, press "Keep this header" to carry on writing into '
+            + 'the columns as they stand, or "Restore standard layout" to put the layout back with '
+            + 'every existing row copied to an archive tab first.',
           )
         }
+        const queryLayout = await layoutFor(ref, config.sheetName, QUERY_LAYOUT)
 
-        // Anything a previous sync already put on the sheet is claimed, not
+        /** Every identity this entry's row would answer to. */
+        const queryKeys = (e: QueryMonitorEntry) => {
+          const row = buildSheetRow(e, config.writeStatusColumn, config.slaHours)
+          return [
+            writtenRowKey(row.date, row.allocationTime, row.subject),
+            ...sameQueryKeys(row.date, row.subject, e.fromAddress),
+          ]
+        }
+
+        // Two pending entries for one query never become two rows…
+        const block = await foldDuplicatesInBlock(pendingQueries, queryKeys, note)
+
+        // …and anything a previous sync already put on the sheet is claimed, not
         // written twice — see claimAlreadyWrittenRows.
         const { toAppend, claimed } = await claimAlreadyWrittenRows(
-          pendingQueries,
-          e => {
-            const row = buildSheetRow(e, config.writeStatusColumn, config.slaHours)
-            return writtenRowKey(row.date, row.allocationTime, row.subject)
-          },
-          ref, config.sheetName, QUERY_LAYOUT, sessionId, plan,
+          block, queryKeys, ref, config.sheetName, queryLayout, sessionId, plan,
         )
         if (claimed > 0) {
           note('warn', `${claimed} row(s) were already on "${config.sheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
@@ -1323,7 +1519,7 @@ async function syncOneWorkbook(
 
         const rows = toAppend.map(e => buildSheetRow(e, config.writeStatusColumn, config.slaHours))
         if (rows.length > 0) {
-          const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName })
+          const result = await appendRows(rows, { sessionId, ref, sheetName: config.sheetName, layout: queryLayout })
           // Row numbers are stored per entry so a row can be rewritten later.
           await recordRows(toAppend, result.firstRow, config.sheetName)
           appended += result.rows
@@ -1340,17 +1536,24 @@ async function syncOneWorkbook(
         if (created) note('info', `Created the "${config.excludedSheetName}" tab for mail that is not a query`)
         if (headerMismatch) {
           throw new Error(
-            `"${config.excludedSheetName}" has data under an unexpected header. Nothing was written.`,
+            `"${config.excludedSheetName}" has data under an unexpected header. Nothing was written. `
+            + 'Use "Keep this header" or "Restore standard layout" in Configuration → Target workbook.',
           )
         }
+        const excludedLayout = await layoutFor(ref, config.excludedSheetName, EXCLUDED_LAYOUT)
+
+        const excludedKeys = (e: QueryMonitorEntry) => {
+          const row = buildExcludedRow(e)
+          return [
+            writtenRowKey(row.date, row.receivedTime, row.subject),
+            ...sameQueryKeys(row.date, row.subject, e.fromAddress),
+          ]
+        }
+
+        const block = await foldDuplicatesInBlock(pendingExcluded, excludedKeys, note)
 
         const { toAppend, claimed } = await claimAlreadyWrittenRows(
-          pendingExcluded,
-          e => {
-            const row = buildExcludedRow(e)
-            return writtenRowKey(row.date, row.receivedTime, row.subject)
-          },
-          ref, config.excludedSheetName, EXCLUDED_LAYOUT, sessionId, plan,
+          block, excludedKeys, ref, config.excludedSheetName, excludedLayout, sessionId, plan,
         )
         if (claimed > 0) {
           note('warn', `${claimed} row(s) were already on "${config.excludedSheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
@@ -1358,7 +1561,9 @@ async function syncOneWorkbook(
 
         const rows = toAppend.map(buildExcludedRow)
         if (rows.length > 0) {
-          const result = await appendExcludedRows(rows, { sessionId, ref, sheetName: config.excludedSheetName })
+          const result = await appendExcludedRows(rows, {
+            sessionId, ref, sheetName: config.excludedSheetName, layout: excludedLayout,
+          })
           await recordRows(toAppend, result.firstRow, config.excludedSheetName)
           appended += result.rows
           note('success', `Appended ${result.rows} non-query mail(s) to "${config.excludedSheetName}" at rows ${result.firstRow}–${result.lastRow}`)
@@ -1598,7 +1803,8 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
     const sessionId = await openSession(ref)
     try {
       for (const [tab, rows] of Array.from(byTab.entries())) {
-        const layout: SheetLayout = tab === cfg.excludedSheetName ? EXCLUDED_LAYOUT : QUERY_LAYOUT
+        const base: SheetLayout = tab === cfg.excludedSheetName ? EXCLUDED_LAYOUT : QUERY_LAYOUT
+        const layout = await layoutFor(ref, tab, base)
         try {
           const removed = await deleteRowsAt(ref, tab, rows, layout, sessionId)
           await renumberAfterDelete(target, tab, rows, cfg)

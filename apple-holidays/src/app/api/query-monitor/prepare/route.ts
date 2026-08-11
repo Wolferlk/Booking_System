@@ -47,7 +47,8 @@ export async function POST() {
     if (blocked.length > 0) {
       return buildApiError(
         `${blocked.map(t => `"${t.name}"`).join(' and ')} already hold rows under a different header. `
-        + 'Nothing was changed — clear those tabs (or point at a clean workbook) and try again.',
+        + 'Nothing was changed. Use "Keep this header" to write into the columns as they stand, or '
+        + '"Restore standard layout" to put the layout back with every row copied to an archive tab first.',
         409,
       )
     }

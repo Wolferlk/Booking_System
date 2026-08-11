@@ -258,7 +258,10 @@ export default function QueryMonitorPage() {
               <span className="font-semibold">Column mismatch.</span>{' '}
               The header on “{sheet.sheetName}” no longer matches the expected
               Date / Status / Subject / … / File Handler / TO List / … / Region layout.
-              Writing now would put values in the wrong columns — check the Configuration tab before syncing.
+              Writing now would put values in the wrong columns, so nothing is written. In{' '}
+              <span className="font-semibold">Configuration → Target workbook</span> either keep the header as it is
+              and have the app write into your columns, or restore the standard layout — both keep every row that is
+              already on the sheet.
             </p>
           </div>
         )}

@@ -17,6 +17,16 @@ export async function POST() {
 
   const result = await syncEntriesToSheet()
 
+  // A sweep is writing the same rows right now. Saying so beats appending them
+  // a second time, which is what pressing this mid-sweep used to do.
+  if (result.skipped) {
+    return buildApiSuccess(
+      result,
+      'A write to the workbook is already running — nothing was written twice. '
+      + 'Give it a moment and check the sheet.',
+    )
+  }
+
   if (result.failed > 0 && result.appended === 0 && result.updated === 0) {
     return buildApiError(
       `Nothing was written — ${result.failed} row(s) failed. Open the log for the Graph error.`,
