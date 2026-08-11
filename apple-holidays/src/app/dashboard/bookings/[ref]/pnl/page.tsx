@@ -15,6 +15,7 @@ import { formatCurrency, formatDateTime, computePNLLineTotal, isCreditAgent } fr
 import FileUpload from '@/components/shared/file-upload'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
+import DetailedPnlPanel from '@/components/bookings/detailed-pnl-panel'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 
@@ -713,6 +714,12 @@ export default function PNLPage() {
         {/* Accounts PNL (Reetha) — live external record linked to this booking */}
         {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <ExternalPnlPanel bookingRef={ref} role={role} />
+        )}
+
+        {/* The Accounts system's costing sheet for this booking, matched on the
+            IS number. This is what tickets are costed from. */}
+        {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <DetailedPnlPanel bookingRef={ref} role={role} />
         )}
 
         {/* IS PNL Breakdown Panel */}

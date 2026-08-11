@@ -7,7 +7,7 @@ import {
   findPnlByIdentifiers, fetchPnlById, fetchPnlVersionsForBooking,
   type PnlRecord,
 } from '@/lib/accounts-db'
-import { syncTicketsFromPnl, type PnlItemLike } from '@/lib/ext-pnl-tickets'
+import { loadDetailedPnl, isLoaded, syncTicketsFromDetailed } from '@/lib/detailed-pnl'
 import type { ExternalPnlLink } from '@prisma/client'
 import type { UserRole } from '@prisma/client'
 
@@ -45,8 +45,23 @@ async function autoMoveToLatest(
       lastFetchedAt: new Date(),
     },
   })
-  // Bring DRAFT tickets in line with the new amendment; purchased/paid untouched.
-  await syncTicketsFromPnl(bookingId, full.items as unknown as PnlItemLike[], { resync: true })
+  // Bring DRAFT tickets in line with the new amendment; purchased/paid
+  // untouched. Costed off the Detailed P&L, the same source the explicit
+  // "create tickets" action uses — an amendment must not re-introduce the flat
+  // invoice lines that action no longer produces. A booking whose costing sheet
+  // cannot be read keeps its existing tickets rather than losing the re-point.
+  try {
+    const detailed = await loadDetailedPnl({
+      isNumber:      full.record.is_number,
+      tourRef:       full.record.tour_ref,
+      invoiceNumber: full.record.invoice_number,
+    })
+    if (isLoaded(detailed)) {
+      await syncTicketsFromDetailed(bookingId, detailed.detail, { resync: true })
+    }
+  } catch (err) {
+    console.error('[ext-pnl] ticket resync from the Detailed P&L failed:', err)
+  }
   return updated
 }
 

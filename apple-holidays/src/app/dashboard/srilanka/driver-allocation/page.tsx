@@ -18,7 +18,7 @@ import {
   HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver, resolveIsHotelOnly,
 } from '@/lib/driver-requirement'
 import {
-  CATEGORY_TONE, STAGE_TONE, lkr, money,
+  CATEGORY_TONE, STAGE_TONE, freshness, lkr, money,
   type DriverAdvanceCategory, type DriverAdvanceDetail, type DriverAdvanceSummary,
 } from '@/lib/driver-advance'
 
@@ -210,13 +210,13 @@ function advanceRefFor(b: SLBooking): string | null {
 }
 
 /**
- * How many bookings go up per request.
+ * How many bookings go into one lookup.
  *
- * Small on purpose: each one is a full re-derivation on the accounts host, and
- * a smaller chunk means the first figures appear sooner. The accounts endpoint
- * itself accepts forty.
+ * The figures are already computed and stored on the accounts side, so a batch
+ * is one indexed SELECT and can be generous; this size is about how soon the
+ * first cells appear, not about load.
  */
-const ADVANCE_CHUNK = 12
+const ADVANCE_CHUNK = 60
 
 function fmt(dt: string) {
   return new Date(dt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -594,11 +594,12 @@ function DriverAdvanceCell({ summary, loading, onOpen }: {
 
   const stage = summary.stage ?? 'advance_due'
   const hasRate = summary.rate_available !== false && summary.amount_lkr !== null && summary.amount_lkr !== undefined
+  const age = freshness(summary.computed_at)
 
   return (
     <button onClick={onOpen}
       className="group/adv flex flex-col items-start gap-1 text-left rounded-lg -mx-1.5 -my-1 px-1.5 py-1 hover:bg-emerald-500/5 transition-colors"
-      title="Show how this figure was calculated"
+      title={`Show how this figure was calculated${age ? ` · computed ${age}` : ''}`}
     >
       <span className="flex items-center gap-1.5">
         <Wallet className="w-3 h-3 text-emerald-500/70 group-hover/adv:text-emerald-400 transition-colors" />
@@ -642,12 +643,13 @@ function DriverAdvanceCell({ summary, loading, onOpen }: {
  */
 function DriverAdvanceModal({ booking, onClose }: { booking: SLBooking | null; onClose: () => void }) {
   const [detail, setDetail]   = useState<DriverAdvanceDetail | null>(null)
+  const [computedAt, setComputedAt] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState<string | null>(null)
   const [tab, setTab]         = useState<'summary' | 'lines' | 'payments'>('summary')
 
   useEffect(() => {
-    if (!booking) { setDetail(null); setError(null); return }
+    if (!booking) { setDetail(null); setError(null); setComputedAt(null); return }
 
     const reference = advanceRefFor(booking)
     if (!reference) { setError('This booking has no IS or control number to look up.'); return }
@@ -664,8 +666,9 @@ function DriverAdvanceModal({ booking, onClose }: { booking: SLBooking | null; o
         if (cancelled) return
         if (!res.ok) { setError(json?.error ?? `The accounts system answered ${res.status}.`); return }
         setDetail(json.data?.advance ?? null)
+        setComputedAt(json.data?.computed_at ?? null)
       })
-      .catch(() => { if (!cancelled) setError('The accounts system could not be reached.') })
+      .catch(() => { if (!cancelled) setError('The accounts database could not be reached.') })
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
@@ -787,8 +790,9 @@ function DriverAdvanceModal({ booking, onClose }: { booking: SLBooking | null; o
               <div className="px-6 py-3 border-t border-slate-800 flex items-center gap-2 flex-shrink-0">
                 <ShieldCheck className="w-3.5 h-3.5 text-slate-600 flex-shrink-0" />
                 <p className="text-slate-600 text-[10px] leading-snug">
-                  Read-only. Calculated live by the Apple Accounts system (Payable 1.0 › Driver Settlements);
-                  money is released and edited there, never from this board.
+                  Read-only. Calculated by the Apple Accounts system (Payable 1.0 › Driver Settlements)
+                  {freshness(computedAt) ? ` ${freshness(computedAt)}` : ''}; money is released and edited
+                  there, never from this board.
                   {detail.updated_at && ` Envelope last edited ${detail.updated_at}${detail.updated_by ? ` by ${detail.updated_by}` : ''}.`}
                 </p>
               </div>
@@ -1344,33 +1348,37 @@ export default function SriLankaDriverAllocationPage() {
 
   // ── Driver advance loader ─────────────────────────────────────────────────
   //
-  // Only what is on screen, and only once. Each accounts-side lookup rebuilds a
-  // booking's whole payable position, so asking about every Sri Lanka booking
-  // the moment the page opens would put minutes of work on a live system for
-  // figures nobody is looking at. The board asks about the rows it is showing,
-  // in the order it is showing them, and remembers what it has asked.
+  // One indexed SELECT on the accounts database per batch — the figures are
+  // already computed and stored there (see accounts-driver-advance-db.ts), so
+  // this is cheap and there is no reason to hold the board back for it. It
+  // still runs after the page paints rather than as part of it: the allocation
+  // work does not depend on the accounts system being up.
   //
-  // Chunks go out one after another rather than all at once, and each is
-  // merged as it lands, so the column fills top-down while the rest is still
-  // being derived.
+  // Chunked, and each chunk merged as it lands, so a board of several hundred
+  // rows fills top-down instead of appearing all at once at the end.
 
-  const advanceRefs = useMemo(
-    () => displayBookings.map(advanceRefFor).filter((r): r is string => Boolean(r)),
+  const advanceLookups = useMemo(
+    () => displayBookings
+      .map(b => ({ reference: advanceRefFor(b), controlNumber: b.cntlNumber }))
+      .filter((l): l is { reference: string; controlNumber: string | null } => Boolean(l.reference)),
     [displayBookings],
   )
 
-  const loadAdvances = useCallback(async (refs: string[], run: number) => {
-    if (refs.length === 0) return
+  const loadAdvances = useCallback(async (
+    lookups: { reference: string; controlNumber: string | null }[],
+    run: number,
+  ) => {
+    if (lookups.length === 0) return
 
     advanceInFlight.current += 1
     setAdvancesLoading(true)
     try {
-      for (let i = 0; i < refs.length; i += ADVANCE_CHUNK) {
+      for (let i = 0; i < lookups.length; i += ADVANCE_CHUNK) {
         // A newer run (a refresh, or a filter that scrolled a different set into
         // view) has taken over — stop rather than write stale figures over it.
         if (advanceRun.current !== run) return
 
-        const chunk = refs.slice(i, i + ADVANCE_CHUNK)
+        const chunk = lookups.slice(i, i + ADVANCE_CHUNK)
 
         const res = await fetch('/api/srilanka/driver-advance', {
           method: 'POST',
@@ -1392,15 +1400,15 @@ export default function SriLankaDriverAllocationPage() {
         })
 
         // One notice for the whole board, not one toast per booking: if the
-        // accounts system is down, every row says the same thing and the board
-        // should say it once, quietly, in the column header.
+        // accounts database is unreachable, every row says the same thing and
+        // the board should say it once, quietly, in the column header.
         const down = batch.find(a => a.state === 'unavailable')
         setAdvanceNotice(down?.message ?? null)
       }
     } catch (err) {
       if (advanceRun.current !== run) return
       console.error('[driver advance]', err)
-      setAdvanceNotice('Driver advances could not be read from the accounts system.')
+      setAdvanceNotice('Driver advances could not be read from the accounts database.')
       // The references stay marked as asked; the Refresh button is the retry.
     } finally {
       advanceInFlight.current = Math.max(0, advanceInFlight.current - 1)
@@ -1409,12 +1417,12 @@ export default function SriLankaDriverAllocationPage() {
   }, [])
 
   useEffect(() => {
-    const pending = advanceRefs.filter(r => !askedRefs.current.has(r))
+    const pending = advanceLookups.filter(l => !askedRefs.current.has(l.reference))
     if (pending.length === 0) return
 
-    for (const r of pending) askedRefs.current.add(r)
+    for (const l of pending) askedRefs.current.add(l.reference)
     void loadAdvances(pending, advanceRun.current)
-  }, [advanceRefs, loadAdvances])
+  }, [advanceLookups, loadAdvances])
 
   /** Drop every cached figure and read them again — what Refresh does. */
   const refreshAdvances = useCallback(() => {

@@ -64,6 +64,15 @@ export interface DriverAdvanceSummary {
   travel_end_date?: string | null
   allocated_to?: string | null
   updated_at?: string | null
+
+  /**
+   * When the accounts system last computed this figure.
+   *
+   * Always shown rather than hidden: the advance is derived on the accounts
+   * side by a scheduled job, so a figure here is minutes old by construction
+   * and the board should say so instead of implying it is live.
+   */
+  computed_at?: string | null
 }
 
 /** One section's contribution, and what it would contribute if switched on. */
@@ -232,6 +241,32 @@ export interface DriverAdvanceDetail {
 export function lkr(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—'
   return `LKR ${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/**
+ * "4 min ago" — how old a computed figure is.
+ *
+ * Coarse on purpose. The exact second a snapshot was written is noise; whether
+ * it is minutes or hours old is the thing that decides whether to trust it.
+ */
+export function freshness(computedAt: string | null | undefined): string | null {
+  if (!computedAt) return null
+
+  // The accounts system stores UTC without a zone marker; MySQL hands it back
+  // as "2026-08-11 17:04:22", which Date would otherwise read as local time.
+  const iso = computedAt.includes('T') ? computedAt : `${computedAt.replace(' ', 'T')}Z`
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return null
+
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60_000))
+  if (mins < 1)    return 'just now'
+  if (mins < 60)   return `${mins} min ago`
+
+  const hours = Math.round(mins / 60)
+  if (hours < 24)  return `${hours} hour${hours === 1 ? '' : 's'} ago`
+
+  const days = Math.round(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
 /** "USD 272.06" — the costed currency, for bookings with no rupee rate. */
