@@ -285,6 +285,29 @@ something the others cannot.
 `mergeDuplicateEntries` works from the database outwards, this works from the
 sheet inwards; they are separate on purpose.
 
+### When a write fails
+
+A failed write leaves the entry `FAILED` with the Graph error on it — a
+mismatched header, a locked file, a timeout — and **nothing picks it up again**:
+the sync looks for `PENDING` and `DIRTY` only. Fixing the cause is therefore not
+enough on its own; the backlog has to be put back in the queue.
+
+*Retry failed writes* (the banner on the Queries tab, `POST
+/api/query-monitor/retry`) does that and writes in one press. Which state each
+entry goes back to is the part that matters:
+
+- **no row number** in that workbook → `PENDING`, so it is appended;
+- **a row number already** → `DIRTY`, so its row is *rewritten in place*.
+
+Sending the second kind back as `PENDING` is exactly how a retry becomes a
+duplicate line — the row is already there, and appending puts a second one under
+it. The two workbooks are decided separately: the live file can be written and
+the backup behind, or the reverse.
+
+Entries received before the workbook's start date are left `FAILED` rather than
+requeued — the next write would only close them off as `SKIPPED` again — and are
+reported in the message so the count adds up.
+
 ### Replies land the next day
 
 A query raised at 16:00 and answered at 09:00 the next morning is outside every
@@ -475,7 +498,7 @@ src/lib/query-monitor/
   scheduler.ts   per-minute tick that decides when a sweep is due
   auth.ts        admin guard for the API routes
 
-src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe,sheet-dedupe,sheet-header}
+src/app/api/query-monitor/{entries,mailboxes,rules,runs,settings,run,sync,sheet,reclassify,rebase,dedupe,sheet-dedupe,sheet-header,retry}
 src/app/api/cron/query-monitor
 src/app/dashboard/admin/query-monitor/    page + queries / config / logs tabs
 prisma/sql/query-monitor.sql              table creation
