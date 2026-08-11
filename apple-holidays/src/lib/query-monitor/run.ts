@@ -1140,6 +1140,73 @@ async function backupIsADistinctFile(log?: RunLog): Promise<boolean> {
   }
 }
 
+export interface RetryFailedResult {
+  /** Never written to that workbook — queued to be appended. */
+  queued:   number
+  /** Already own a row there — queued to be rewritten in place, not appended. */
+  rewrites: number
+  /** Still FAILED: they predate the workbook's start date and never write. */
+  stale:    number
+}
+
+/**
+ * Put the failed writes back in the queue.
+ *
+ * A write that fails — a mismatched header, a locked file, Graph refusing —
+ * leaves the entry FAILED with the reason on it. Nothing picks those up again:
+ * the sync only looks for PENDING and DIRTY, so once the cause is fixed the rows
+ * would sit there forever. This is the "try again" for the whole backlog.
+ *
+ * Which state an entry goes back to matters more than it looks:
+ *
+ *   • no row number in that workbook → PENDING, so it is appended;
+ *   • a row number already → DIRTY, so that row is *rewritten in place*.
+ *
+ * Sending the second kind back as PENDING is how a retry turns into a duplicate
+ * line: the row is already on the sheet, and appending would put a second one
+ * under it. The two workbooks are decided separately — the live file can be
+ * written and the backup behind, or the other way round.
+ *
+ * Entries from before the workbook's start date are left alone: the next write
+ * would only close them off as SKIPPED again, and saying so is more use than
+ * moving them through a state that changes nothing.
+ */
+export async function retryFailedWrites(): Promise<RetryFailedResult> {
+  const config = await getConfig()
+  const cutoff = startDateBoundary(config.startDate)
+  const inRange = cutoff ? { receivedAt: { gte: cutoff } } : {}
+
+  let queued   = 0
+  let rewrites = 0
+
+  for (const plan of [PRIMARY_PLAN, BACKUP_PLAN]) {
+    // A row it already owns is rewritten, never appended a second time.
+    const rewrite = await prisma.queryMonitorEntry.updateMany({
+      where: { ...inRange, [plan.statusField]: 'FAILED', [plan.rowField]: { not: null } },
+      data:  { [plan.statusField]: 'DIRTY', [plan.errorField]: null },
+    })
+    const append = await prisma.queryMonitorEntry.updateMany({
+      where: { ...inRange, [plan.statusField]: 'FAILED', [plan.rowField]: null },
+      data:  { [plan.statusField]: 'PENDING', [plan.errorField]: null },
+    })
+
+    // The live workbook's numbers are the ones worth reporting; the backup is
+    // requeued in the same pass and rides along with the next write.
+    if (plan.target === 'primary') {
+      rewrites = rewrite.count
+      queued   = append.count
+    }
+  }
+
+  const stale = cutoff
+    ? await prisma.queryMonitorEntry.count({
+        where: { receivedAt: { lt: cutoff }, syncStatus: 'FAILED' },
+      })
+    : 0
+
+  return { queued, rewrites, stale }
+}
+
 /**
  * Retire the backlog that predates the workbook.
  *

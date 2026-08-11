@@ -41,7 +41,7 @@ export default function QueryMonitorPage() {
   const [sheet, setSheet]       = useState<QmSheetInfo | null>(null)
   const [sheetError, setSheetError] = useState<string | null>(null)
 
-  const [busy, setBusy]       = useState<null | 'run' | 'sync' | 'toggle' | 'dedupe'>(null)
+  const [busy, setBusy]       = useState<null | 'run' | 'sync' | 'toggle' | 'dedupe' | 'retry'>(null)
   const [refreshKey, bump]    = useState(0)
 
   const loadSettings = useCallback(async () => {
@@ -111,6 +111,28 @@ export default function QueryMonitorPage() {
       toast.success(d.message ?? 'Sheet updated')
       bump(k => k + 1)
       await loadSheet()
+    } finally { setBusy(null) }
+  }
+
+  /**
+   * Put the failed writes back in the queue and write them.
+   *
+   * Nothing else picks a FAILED row up — the sync looks for PENDING and DIRTY —
+   * so without this they stay on screen with their error forever once the cause
+   * is fixed. Rows that already own a line in the sheet go back as a rewrite,
+   * not an append, so pressing this cannot duplicate them.
+   */
+  async function retryFailed() {
+    setBusy('retry')
+    try {
+      const res = await fetch('/api/query-monitor/retry', { method: 'POST' })
+      const d   = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Failed rows retried', { duration: 8000 })
+      bump(k => k + 1)
+      await loadSheet()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Retry failed')
     } finally { setBusy(null) }
   }
 
@@ -247,6 +269,28 @@ export default function QueryMonitorPage() {
             >
               {busy === 'toggle' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
               Turn on auto-write
+            </button>
+          </div>
+        )}
+
+        {/* Failed writes go nowhere on their own: the sync only looks at PENDING
+            and DIRTY rows, so they need saying out loud and retrying by hand. */}
+        {(stats?.failed ?? 0) > 0 && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 flex flex-wrap items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+            <p className="text-sm text-rose-900 flex-1 min-w-[16rem]">
+              <span className="font-semibold">{stats?.failed} row(s) failed to write.</span>{' '}
+              They stay here until they are retried — no sweep picks them up again.
+              {sheet && !sheet.headerMatches
+                ? ' Sort the header out first (below), then retry.'
+                : ' Retry writes them all: rows that already have a line in the sheet are rewritten in place, not added twice.'}
+            </p>
+            <button
+              onClick={retryFailed} disabled={busy !== null}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+            >
+              {busy === 'retry' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              Retry failed writes
             </button>
           </div>
         )}
