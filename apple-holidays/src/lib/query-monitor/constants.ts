@@ -43,6 +43,13 @@ export const SETTINGS = {
   lastRunAt:          'query_monitor_last_run_at',
   /** Guard so two processes can't sweep at once. */
   runLock:            'query_monitor_run_lock',
+  /**
+   * Guard so two processes can't *write* at once — a hand-pressed "Sync to
+   * sheet" landing in the middle of the cron sweep's write is what appended the
+   * same block of rows twice. Separate from the sweep lock: the sweep holds
+   * that one while it calls the write.
+   */
+  syncLock:           'query_monitor_sync_lock',
   /** Divert mail whose subject matches an exclusion pattern to the second tab. */
   excludeEnabled:     'query_monitor_exclude_enabled',
   /** Newline-separated subject patterns that mark a mail as "not a query". */
@@ -59,6 +66,12 @@ export const SETTINGS = {
   backupSheetUrl:     'query_monitor_backup_sheet_url',
   /** Resolved {driveId, itemId} cache for the backup URL — cleared when it changes. */
   backupSheetRef:     'query_monitor_backup_sheet_ref',
+  /**
+   * Hand-edited headers this system has agreed to write under, as
+   * `{"<itemId>::<tab>": {map, header, adoptedAt}}`. See header-map.ts. Absent
+   * for a tab that still carries our own layout, which is written by position.
+   */
+  columnMap:          'query_monitor_column_map',
 } as const
 
 /**

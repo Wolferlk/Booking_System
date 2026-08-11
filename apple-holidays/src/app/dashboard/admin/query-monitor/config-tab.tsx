@@ -9,7 +9,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowRightLeft, CheckCircle2, Copy, ExternalLink, FilterX, Layers,
-  Loader2, Mail, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Users, Wrench,
+  Loader2, Mail, PenLine, Plug, Plus, RefreshCw, Save, Table2, Tags, Trash2, Undo2,
+  Users, Wrench,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDateTime } from '@/lib/utils'
@@ -199,6 +200,8 @@ function SheetCard({
   const [checking, setChecking] = useState(false)
   const [moving, setMoving] = useState(false)
   const [preparing, setPreparing] = useState(false)
+  const [adopting, setAdopting]   = useState(false)
+  const [restoring, setRestoring] = useState(false)
 
   useEffect(() => {
     if (!config) return
@@ -252,6 +255,61 @@ function SheetCard({
       toast.success(d.message ?? 'Workbook ready')
       await check(true)
     } finally { setPreparing(false) }
+  }
+
+  /**
+   * Keep the header the team edited, and write into it as it stands.
+   *
+   * Nothing on the sheet is touched — not row 1, not a cell of data. What
+   * changes is where the app puts the next row: into the columns their headings
+   * name, wherever those now are, and never into a column of the team's own.
+   */
+  async function keepHeader() {
+    if (!confirm(
+      'Keep the header exactly as it is on the sheet?\n\n'
+      + 'Nothing on the workbook is changed — no heading, no row. From now on the app writes '
+      + 'each value into the column that carries its name, and leaves your own columns alone.\n\n'
+      + 'Any app column your header has no place for is simply not written.',
+    )) return
+
+    setAdopting(true)
+    try {
+      const res = await fetch('/api/query-monitor/sheet-header', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'adopt' }),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Writing under your header')
+      await check(true)
+    } finally { setAdopting(false) }
+  }
+
+  /**
+   * Put the standard layout back without losing a row: the tab is copied to an
+   * archive tab first, then every row is moved into the columns the layout
+   * expects. Row numbers survive, so the sweep carries on where it stopped.
+   */
+  async function restoreHeader() {
+    if (!confirm(
+      'Put the standard layout back?\n\n'
+      + 'Every tab is copied to a new "bak" tab first, so nothing is lost — including any column '
+      + 'of your own that sits inside A–T.\n\n'
+      + 'Then each row is moved into the column its heading says it belongs in, row numbers unchanged, '
+      + 'and the app goes back to writing by position.',
+    )) return
+
+    setRestoring(true)
+    try {
+      const res = await fetch('/api/query-monitor/sheet-header', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore' }),
+      })
+      const d = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Layout restored', { duration: 10000 })
+      await check(true)
+    } finally { setRestoring(false) }
   }
 
   /**
@@ -371,15 +429,73 @@ function SheetCard({
               <p className={cn('inline-flex items-center gap-1 font-semibold',
                 info.headerMatches ? 'text-emerald-700' : 'text-rose-700')}>
                 {info.headerMatches
-                  ? <><CheckCircle2 className="w-3.5 h-3.5" /> Columns A–N match the expected layout</>
+                  ? info.custom
+                    ? <><CheckCircle2 className="w-3.5 h-3.5" /> Writing under your own header — {info.custom.columns.length} column(s) matched</>
+                    : <><CheckCircle2 className="w-3.5 h-3.5" /> Columns A–N match the expected layout</>
                   : <><AlertTriangle className="w-3.5 h-3.5" /> Header does not match: expected {expected.join(', ')}</>}
               </p>
-              {!info.headerMatches && (
+
+              {/* Adopted: say exactly where each value now goes, and what is not
+                  written at all, so nobody hunts for a column that never fills. */}
+              {info.headerMatches && info.custom && (
                 <p className="text-slate-500">
-                  Press <span className="font-semibold">Prepare</span> to write it — safe while the tab has no rows.
-                  {info.dataRowCount > 0 && ' This tab already has rows, so the header will not be touched: '
-                    + 'point at a clean tab instead.'}
+                  {info.custom.columns.map(c => `${c.cell} → ${c.column}`).join(' · ')}
+                  {info.custom.missing.length > 0 && (
+                    <> · <span className="text-amber-700 font-semibold">not written:</span> {info.custom.missing.join(', ')}</>
+                  )}
                 </p>
+              )}
+              {info.headerMatches && info.custom && (
+                <button
+                  onClick={restoreHeader} disabled={adopting || restoring}
+                  title="Copy the tab to an archive tab, move every row into the standard columns, and write the expected header."
+                  className="inline-flex items-center gap-1.5 mt-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {restoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <Undo2 className="w-3 h-3" />}
+                  Go back to the standard layout
+                </button>
+              )}
+
+              {!info.headerMatches && (
+                <>
+                  <p className="text-slate-500">
+                    {info.custom?.stale
+                      ? 'Row 1 has changed since the app was told to write under it. Nothing is written until '
+                        + 'you say which of the two below applies.'
+                      : <>
+                          Press <span className="font-semibold">Prepare</span> to write it — safe while the tab has no rows.
+                          {info.dataRowCount > 0 && ' This tab already has rows, so Prepare will not touch the header. '
+                            + 'Choose one of these two instead — both keep every row that is already there:'}
+                        </>}
+                  </p>
+
+                  <div className="flex flex-wrap gap-2 pt-1.5">
+                    <button
+                      onClick={keepHeader} disabled={adopting || restoring}
+                      title="Leave the sheet exactly as it is and write into the columns as they now stand."
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {adopting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PenLine className="w-3.5 h-3.5" />}
+                      Keep this header
+                    </button>
+                    <button
+                      onClick={restoreHeader} disabled={adopting || restoring}
+                      title="Copy the tab to an archive tab, move every row into the standard columns, and write the expected header."
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {restoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                      Restore standard layout
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    <span className="font-semibold">Keep this header</span> changes nothing on the sheet — your edits stay
+                    and rows carry on going in under the headings you wrote.{' '}
+                    <span className="font-semibold">Restore standard layout</span> copies the tab to a “bak” tab first,
+                    then moves each row into the column its heading belongs in. Neither deletes a row, and neither makes
+                    the app re-append anything.
+                  </p>
+                </>
               )}
               <p className="text-slate-400">
                 Only columns A–N are ever written. File Handler (F) carries one name; TO List (G) carries everyone
