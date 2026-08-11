@@ -69,6 +69,21 @@ async function q<T extends mysql.RowDataPacket>(
   }
 }
 
+/**
+ * Run one read-only query on a fresh Accounts DB connection.
+ *
+ * Exported for the Detailed P&L reader (src/lib/detailed-pnl), which needs the
+ * `as_payload` column and the content-catalogue cache rows this module has no
+ * other reason to touch. SELECT only — nothing in this app may write to the
+ * Accounts database.
+ */
+export async function accountsQuery<T extends mysql.RowDataPacket>(
+  sql: string,
+  params: unknown[] = [],
+): Promise<T[]> {
+  return q<T>(sql, params)
+}
+
 // ─── Exported types ───────────────────────────────────────────────────────────
 
 export interface PnlRecord {

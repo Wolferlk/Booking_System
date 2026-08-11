@@ -1,39 +1,36 @@
 /**
  * The Driver Allocation board's Driver Advance column and popup.
  *
- * Both verbs are a thin, authenticated pass-through to the Apple Accounts
- * system, which owns the arithmetic (see `src/lib/accounts-api.ts`). Nothing is
- * computed, cached or persisted here: OPS shows the accounts figure or it shows
- * why it cannot.
+ * Reads the accounts database directly — both systems share one MySQL instance
+ * — from `sl_driver_advance_snapshots`, which the accounts system writes with
+ * its own derivation code. See `src/lib/accounts-driver-advance-db.ts` for why
+ * the figure has to be written down rather than computed here.
  *
- *   POST  { references: string[] }        → one summary per reference
- *   GET   ?reference=IS48525&control=…    → the whole envelope, for the popup
+ *   POST  { references: [{ reference, controlNumber? }] } → one summary each
+ *   GET   ?reference=IS48525&control=…                    → the whole envelope
  *
- * A proxy rather than a browser-side call because the accounts credentials live
- * in the server environment and must not reach a browser, and because the OPS
- * session is what decides whether this user may see supplier money at all.
+ * A server route rather than a browser query because the accounts DB
+ * credentials live in the server environment, and because the OPS session is
+ * what decides whether this user may see supplier money at all.
  */
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
-import { AccountsApiError, accountsApi, accountsApiConfigured } from '@/lib/accounts-api'
-import type { DriverAdvanceDetail, DriverAdvanceSummary } from '@/lib/driver-advance'
+import {
+  fetchDriverAdvanceDetail, fetchDriverAdvances, type AdvanceLookup,
+} from '@/lib/accounts-driver-advance-db'
+import type { DriverAdvanceSummary } from '@/lib/driver-advance'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * The accounts endpoint's own ceiling. Larger asks are split and sent in
- * sequence — in sequence, not in parallel, because each chunk rebuilds whole
- * bookings on the accounts host and firing ten at once would be a self-inflicted
- * load spike on a live system.
+ * Never more than this in one request. One SELECT over an indexed key list is
+ * cheap, but an unbounded IN list from a client is not something to accept.
  */
-const UPSTREAM_CHUNK = 40
-
-/** Never more than this in one OPS request, whatever the client asks for. */
-const MAX_REFERENCES = 200
+const MAX_REFERENCES = 300
 
 /** Everyone who may read a booking may see what its driver is handed. */
 async function guard(): Promise<{ error: Response } | { ok: true }> {
@@ -46,22 +43,6 @@ async function guard(): Promise<{ error: Response } | { ok: true }> {
   return { ok: true }
 }
 
-/**
- * The accounts system is optional infrastructure from the board's point of
- * view: the allocation work must go on when it is down or unconfigured. Every
- * failure therefore comes back as a 200 carrying `state: 'unavailable'` rows,
- * so the column renders a reason instead of the page rendering an error.
- */
-function unavailable(references: string[], message: string): Response {
-  return buildApiSuccess({
-    available: false,
-    reason: message,
-    advances: references.map<DriverAdvanceSummary>(reference => ({
-      reference, found: false, state: 'unavailable', message,
-    })),
-  })
-}
-
 // ── POST — the column ─────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -72,7 +53,7 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json()
   } catch {
-    return buildApiError('Expected a JSON body of { references: string[] }.', 400)
+    return buildApiError('Expected a JSON body of { references: [...] }.', 400)
   }
 
   const raw = (body as { references?: unknown })?.references
@@ -80,44 +61,44 @@ export async function POST(req: NextRequest) {
     return buildApiError('references must be an array of booking references.', 400)
   }
 
-  // De-duplicated because a board can hold two rows of one booking, and empty
-  // strings dropped because a booking with no IS number has nothing to look up.
-  const references = Array.from(new Set(
-    raw.map(r => String(r ?? '').trim()).filter(Boolean),
-  )).slice(0, MAX_REFERENCES)
+  // Accepts bare strings as well as {reference, controlNumber} pairs, and
+  // de-duplicates on the reference — a board can hold two rows of one booking.
+  const seen = new Set<string>()
+  const lookups: AdvanceLookup[] = []
 
-  if (references.length === 0) return buildApiSuccess({ available: true, advances: [] })
+  for (const entry of raw) {
+    const lookup: AdvanceLookup = typeof entry === 'string'
+      ? { reference: entry.trim() }
+      : {
+          reference: String((entry as AdvanceLookup)?.reference ?? '').trim(),
+          controlNumber: (entry as AdvanceLookup)?.controlNumber ?? null,
+        }
 
-  if (!accountsApiConfigured()) {
-    return unavailable(references, 'The accounts system connection is not configured on this server.')
+    if (!lookup.reference || seen.has(lookup.reference)) continue
+    seen.add(lookup.reference)
+    lookups.push(lookup)
+
+    if (lookups.length >= MAX_REFERENCES) break
   }
 
-  const advances: DriverAdvanceSummary[] = []
+  if (lookups.length === 0) return buildApiSuccess({ available: true, advances: [] })
 
-  for (let i = 0; i < references.length; i += UPSTREAM_CHUNK) {
-    const chunk = references.slice(i, i + UPSTREAM_CHUNK)
+  try {
+    return buildApiSuccess({ available: true, advances: await fetchDriverAdvances(lookups) })
+  } catch (err) {
+    console.error('[SL driver-advance] batch read failed:', err)
 
-    try {
-      const res = await accountsApi<{ advances?: DriverAdvanceSummary[] }>('sl/driver-advances', {
-        method: 'POST',
-        body: { references: chunk },
-      })
-      advances.push(...(res.advances ?? []))
-    } catch (err) {
-      const message = err instanceof AccountsApiError
-        ? err.message
-        : 'The accounts system could not be reached.'
-      console.error('[SL driver-advance] batch failed:', err)
-
-      // Only this chunk is lost. The rest of the column still has its figures,
-      // which is the difference between a partly-loaded board and a blank one.
-      advances.push(...chunk.map<DriverAdvanceSummary>(reference => ({
-        reference, found: false, state: 'unavailable', message,
-      })))
-    }
+    // The accounts DB being unreachable must not take the allocation board down
+    // with it: every row comes back as a reason, and the column renders it.
+    const message = 'The accounts database could not be reached.'
+    return buildApiSuccess({
+      available: false,
+      reason: message,
+      advances: lookups.map<DriverAdvanceSummary>(l => ({
+        reference: l.reference, found: false, state: 'unavailable', message,
+      })),
+    })
   }
-
-  return buildApiSuccess({ available: true, advances })
 }
 
 // ── GET — the popup ───────────────────────────────────────────────────────────
@@ -131,26 +112,16 @@ export async function GET(req: NextRequest) {
 
   if (!reference) return buildApiError('A booking reference is required.', 400)
 
-  if (!accountsApiConfigured()) {
-    return buildApiError('The accounts system connection is not configured on this server.', 503)
-  }
-
   try {
-    const res = await accountsApi<{ advance?: DriverAdvanceDetail; rules?: unknown }>('sl/driver-advance', {
-      query: { reference, control_number: control || undefined },
-    })
+    const res = await fetchDriverAdvanceDetail({ reference, controlNumber: control || null })
 
-    if (!res.advance) return buildApiError('The accounts system returned no driver advance for this booking.', 502)
+    // "Not costed yet" and "no P&L" are real answers, not failures — the popup
+    // states them in words. 404 is the honest status for both.
+    if (!res.detail) return buildApiError(res.reason, 404)
 
-    return buildApiSuccess({ advance: res.advance, rules: res.rules ?? null })
+    return buildApiSuccess({ advance: res.detail, computed_at: res.computedAt })
   } catch (err) {
-    if (err instanceof AccountsApiError) {
-      // 404 is a real answer — this booking has no P&L, or no payable lines yet
-      // — and the popup says so in words. Anything else is our problem, not the
-      // user's, so it is reported as a gateway failure.
-      return buildApiError(err.message, err.status === 404 ? 404 : 502)
-    }
-    console.error('[SL driver-advance] detail failed:', err)
-    return buildApiError('The accounts system could not be reached.', 502)
+    console.error('[SL driver-advance] detail read failed:', err)
+    return buildApiError('The accounts database could not be reached.', 502)
   }
 }
