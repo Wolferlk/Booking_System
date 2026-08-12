@@ -405,7 +405,9 @@ function AccColumn({ label, items, muted }: { label: string; items: AccPreview[]
             className={cn('rounded-lg border px-3 py-2', muted ? 'border-slate-200 bg-slate-50' : 'border-emerald-200 bg-emerald-50')}
           >
             <p className="text-[11px] font-mono text-slate-500">{it.checkIn} → {it.checkOut} · {it.nights}n</p>
-            <p className="text-xs font-semibold text-slate-800">{it.hotel || 'Own Arrangement'}</p>
+            <p className="text-xs font-semibold text-slate-800">
+              {it.hotel || <span className="italic text-slate-400">Hotel not specified</span>}
+            </p>
             <p className="text-[11px] text-slate-600">
               {it.city}
               {it.roomType ? ` · ${it.roomType}` : ''}

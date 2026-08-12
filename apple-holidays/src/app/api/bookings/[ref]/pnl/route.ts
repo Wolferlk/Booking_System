@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
+import { buildApiError, buildApiSuccess, computePNLTotals, fitTicketType } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
@@ -188,7 +188,7 @@ export async function POST(
       data: ticketableLines.map(l => ({
         bookingId: booking.id,
         pnlLineId: l.id,
-        type:      `${TICKETABLE_CATEGORIES[l.category as PNLCategory]} — ${l.activity}`,
+        type:      fitTicketType(`${TICKETABLE_CATEGORIES[l.category as PNLCategory]} — ${l.activity}`),
         qty:       1,
         currency:  booking.currency ?? 'USD',
         activated: false,   // GT must activate before purchasing

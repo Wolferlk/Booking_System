@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildApiError, buildApiSuccess, computePNLLineTotal } from '@/lib/utils'
+import { buildApiError, buildApiSuccess, computePNLLineTotal, fitTicketType } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole, PNLCategory } from '@prisma/client'
 
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
         return {
           bookingId:   booking.id,
           pnlLineId:   l.id,
-          type:        `${TICKETABLE_CATEGORIES[l.category]} — ${l.activity}`,
+          type:        fitTicketType(`${TICKETABLE_CATEGORIES[l.category]} — ${l.activity}`),
           qty:         1,
           costPerUnit: cost,
           totalCost:   cost,
