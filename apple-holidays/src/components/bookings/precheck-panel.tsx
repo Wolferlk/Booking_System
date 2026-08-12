@@ -17,7 +17,7 @@ import Button from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import StayCard, { type StayEvent } from '@/components/precheck/stay-card'
 import HotelResolverModal from '@/components/precheck/hotel-resolver-modal'
-import { RECONFIRM_LEAD_DAYS, type PrecheckStay, type QueueStats } from '@/lib/hotel-precheck'
+import { RECONFIRM_LEAD_DAYS, type PrecheckStay, type QueueStats } from '@/lib/precheck-shared'
 
 interface PanelData {
   rows: PrecheckStay[]
