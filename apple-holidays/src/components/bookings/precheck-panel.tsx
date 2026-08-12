@@ -3,21 +3,31 @@
 /**
  * Pre-checking panel for the booking detail page.
  *
- * Shows every hotel stay on this one booking with its D-10 reconfirmation
- * state, so the operator working the booking never has to leave it to chase a
- * property. The standalone queue at /dashboard/precheck is the same data
- * across all bookings.
+ * Everything that has to be verified with a third party before the guest
+ * travels, in two tabs:
+ *
+ *  - **Hotels** — D-10 reconfirmation of every stay with the property.
+ *  - **Drivers** — a driver on every movement, and the automatic daily
+ *    WhatsApp briefing actually reaching them.
+ *
+ * The hotel queue across all bookings lives at /dashboard/precheck.
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { ClipboardCheck, Loader2, RefreshCw, AlertTriangle, ExternalLink } from 'lucide-react'
+import {
+  AlertTriangle, BedDouble, Car, ClipboardCheck, ExternalLink, Loader2, RefreshCw,
+} from 'lucide-react'
 import Link from 'next/link'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import StayCard, { type StayEvent } from '@/components/precheck/stay-card'
 import HotelResolverModal from '@/components/precheck/hotel-resolver-modal'
+import DriverPrecheck from '@/components/precheck/driver-precheck'
 import { RECONFIRM_LEAD_DAYS, type PrecheckStay, type QueueStats } from '@/lib/precheck-shared'
+import type { DriverPrecheckStats } from '@/lib/driver-precheck-shared'
+
+type Tab = 'hotels' | 'drivers'
 
 interface PanelData {
   rows: PrecheckStay[]
@@ -31,6 +41,9 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [resolving, setResolving] = useState<PrecheckStay | null>(null)
+  const [tab, setTab] = useState<Tab>('hotels')
+  // Reported up by the Drivers tab so its badge is accurate before it is opened.
+  const [driverStats, setDriverStats] = useState<DriverPrecheckStats | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -58,7 +71,9 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
   }, [data])
 
   const stats = data?.stats
-  const needsAction = (stats?.overdue ?? 0) + (stats?.dueToday ?? 0)
+  const hotelAction = (stats?.overdue ?? 0) + (stats?.dueToday ?? 0)
+  const driverAction = (driverStats?.unassigned ?? 0) + (driverStats?.missed ?? 0) + (driverStats?.noPhone ?? 0)
+  const needsAction = hotelAction + driverAction
 
   return (
     <div data-nav="Pre-checking" data-nav-icon="precheck">
@@ -80,9 +95,6 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
           <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
             <ClipboardCheck className="w-4 h-4 text-slate-400" />
             Pre-checking
-            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500">
-              D-{RECONFIRM_LEAD_DAYS}
-            </span>
             {needsAction > 0 && (
               <span className="rounded-md bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white animate-pulse">
                 {needsAction} need{needsAction === 1 ? 's' : ''} action
@@ -90,11 +102,28 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
             )}
           </h3>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Hotel reconfirmation — every stay is checked with the property ten days before check-in.
+            Everything to verify with a supplier before the guest travels — hotels reconfirmed,
+            drivers assigned and briefed.
           </p>
+
+          {/* Tabs */}
+          <div className="mt-3 flex items-center gap-1 border-b border-slate-200">
+            <TabButton
+              active={tab === 'hotels'} onClick={() => setTab('hotels')}
+              icon={BedDouble} label="Hotels"
+              badge={hotelAction || null} tone="rose"
+              hint={`D-${RECONFIRM_LEAD_DAYS} reconfirmation`}
+            />
+            <TabButton
+              active={tab === 'drivers'} onClick={() => setTab('drivers')}
+              icon={Car} label="Drivers"
+              badge={driverAction || null} tone="rose"
+              hint="Assignment & daily briefing"
+            />
+          </div>
         </CardHeader>
 
-        <CardBody className="space-y-3">
+        <CardBody className={cn('space-y-3', tab !== 'hotels' && 'hidden')}>
           {/* Progress strip */}
           {stats && stats.total > 0 && (
             <div className="flex flex-wrap items-center gap-3">
@@ -151,6 +180,15 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
             />
           ))}
         </CardBody>
+
+        {/*
+          Kept mounted and hidden rather than unmounted, so the Drivers tab
+          holds its loaded data (and its badge count stays live) when the
+          operator flicks back to Hotels.
+        */}
+        <CardBody className={cn(tab !== 'drivers' && 'hidden')}>
+          <DriverPrecheck bookingRef={bookingRef} onStats={setDriverStats} />
+        </CardBody>
       </Card>
 
       {resolving && (
@@ -162,6 +200,40 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
         />
       )}
     </div>
+  )
+}
+
+function TabButton({
+  active, onClick, icon: Icon, label, badge, tone, hint,
+}: {
+  active: boolean
+  onClick: () => void
+  icon: typeof BedDouble
+  label: string
+  badge: number | null
+  tone: 'rose'
+  hint: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={hint}
+      className={cn(
+        'inline-flex items-center gap-1.5 border-b-2 px-3 py-2 -mb-px text-xs font-semibold transition-colors',
+        active ? 'border-brand-500 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700',
+      )}
+    >
+      <Icon className="w-3.5 h-3.5" />
+      {label}
+      {badge != null && badge > 0 && (
+        <span className={cn(
+          'rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none',
+          tone === 'rose' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-600',
+        )}>
+          {badge}
+        </span>
+      )}
+    </button>
   )
 }
 
