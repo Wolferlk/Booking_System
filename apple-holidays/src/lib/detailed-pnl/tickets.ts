@@ -19,6 +19,7 @@
  * a resync, and nothing is ever deleted.
  */
 import { prisma } from '../prisma'
+import { fitTicketType, TICKET_TYPE_MAX } from '../utils'
 import { pnum } from './derive'
 import type { DetailedPnl } from './render'
 
@@ -209,7 +210,10 @@ export function ticketSpecsFromDetailed(detail: DetailedPnl): TicketSpec[] {
 export interface SyncResult { created: number; updated: number; skipped: number }
 
 function noteFor(spec: TicketSpec): string {
-  return [...spec.details, detailedTicketTag(spec.key)].filter(Boolean).join(' · ')
+  // A name too long for `Ticket.type` is not lost — it is kept in full here,
+  // where the column is TEXT.
+  const fullName = spec.name.length > TICKET_TYPE_MAX ? `Full name: ${spec.name}` : null
+  return [fullName, ...spec.details, detailedTicketTag(spec.key)].filter(Boolean).join(' · ')
 }
 
 /**
@@ -248,7 +252,7 @@ export async function syncTicketsFromDetailed(
     const tag = detailedTicketTag(spec.key)
     const found = tagToTicket.get(tag)
     const data = {
-      type:      spec.name,
+      type:      fitTicketType(spec.name),
       category:  spec.category,
       qty:       Math.max(1, Math.round(spec.qty)),
       totalCost: spec.totalCost,

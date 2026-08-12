@@ -58,7 +58,19 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
 
   if (!isLoaded(result)) return buildApiError(missMessage(result), 404)
 
-  const { created, updated, skipped } = await syncTicketsFromDetailed(booking.id, result.detail, { resync })
+  // A write that fails here used to escape as an unhandled throw, which reaches
+  // the browser as a 500 with an empty body — the panel then reported "Unexpected
+  // end of JSON input" and said nothing about what actually went wrong.
+  let sync
+  try {
+    sync = await syncTicketsFromDetailed(booking.id, result.detail, { resync })
+  } catch (err) {
+    console.error('[ext-pnl] Ticket sync failed for', params.ref, err)
+    const detail = err instanceof Error ? err.message.split('\n').pop()?.trim() : null
+    return buildApiError(`Could not write the tickets for this costing sheet.${detail ? ` ${detail}` : ''}`, 500)
+  }
+
+  const { created, updated, skipped } = sync
 
   const msg = resync
     ? `Re-synced from the Detailed P&L: ${created} created, ${updated} updated, ${skipped} skipped`

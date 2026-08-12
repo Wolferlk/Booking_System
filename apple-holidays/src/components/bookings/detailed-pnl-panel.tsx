@@ -157,8 +157,17 @@ export default function DetailedPnlPanel({
       `/api/bookings/${bookingRef}/ext-pnl/create-tickets${resync ? '?resync=true' : ''}`,
       { method: 'POST' },
     )
-    const json = await res.json()
-    if (!json.success) throw new Error(json.error || 'Failed to create tickets')
+    // A crashed route answers with an empty body, and res.json() then throws
+    // "Unexpected end of JSON input" — which tells whoever is looking at the
+    // page nothing at all. Read the text first and report the status instead.
+    const text = await res.text()
+    let json: { success?: boolean; error?: string; message?: string; data?: unknown }
+    try {
+      json = text ? JSON.parse(text) : {}
+    } catch {
+      throw new Error(`Ticket creation failed on the server (HTTP ${res.status}).`)
+    }
+    if (!json.success) throw new Error(json.error || `Failed to create tickets (HTTP ${res.status})`)
     const result = json.data as { created: number; updated: number; skipped: number }
     setLastSync(result)
     if (result.created > 0 || result.updated > 0) {

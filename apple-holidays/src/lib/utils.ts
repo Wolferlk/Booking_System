@@ -8,6 +8,24 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+// ─── Tickets ────────────────────────────────────────────────────────────
+
+/**
+ * `Ticket.type` is a Prisma `String`, which is VARCHAR(191) in MySQL/MariaDB.
+ * Costing-sheet product names run past that — "Sun World Ba Na Hills Full Day
+ * Tour from Da Nang (Golden Bridge…)" is 209 characters — and the server runs
+ * in strict mode, so an over-length insert is rejected outright rather than
+ * silently truncated. Every ticket write derived from a P&L goes through here.
+ *
+ * Callers keep the untruncated name in `notes`, where the column is TEXT.
+ */
+export const TICKET_TYPE_MAX = 191
+
+export function fitTicketType(name: string): string {
+  const text = String(name ?? '').trim()
+  return text.length <= TICKET_TYPE_MAX ? text : `${text.slice(0, TICKET_TYPE_MAX - 1).trimEnd()}…`
+}
+
 // ─── P&L calculations (mirrors the spreadsheet formula) ─────────────────
 
 export function computePNLLineTotal(
