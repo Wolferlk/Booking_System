@@ -1,336 +1,67 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+/**
+ * Booking P&L page.
+ *
+ * This screen shows one thing: the Accounts system's **Detailed P&L** costing
+ * sheet for the booking, expanded, and the tickets it produces.
+ *
+ * The old editable "P&L Line Items" grid, its pax-count inputs, the summary
+ * cards and the linked Accounts PNL record panel were removed from this view.
+ * The data behind them is untouched — no route, table or record was changed —
+ * but with the grid gone the "Save P&L" action is deliberately gone too: that
+ * endpoint replaces every stored line item with whatever the form holds, and an
+ * empty form would have wiped live rows.
+ */
+
+import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
+import Link from 'next/link'
 import { toast } from 'sonner'
-import { Plus, Trash2, Save, Loader2, CheckCircle, XCircle, Upload, Hash, Paperclip, X, Info, Sparkles, HardDrive, RefreshCw, FolderOpen, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react'
-import type { IsPnlData } from '@/lib/openai'
-import Modal from '@/components/ui/modal'
+import { Loader2, X, Info, HardDrive, RefreshCw, Ticket, ArrowRight } from 'lucide-react'
 import Header from '@/components/layout/header'
-import { Card, CardHeader, CardBody } from '@/components/ui/card'
-import Button from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { formatCurrency, formatDateTime, computePNLLineTotal, isCreditAgent } from '@/lib/utils'
-import FileUpload from '@/components/shared/file-upload'
-import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
-import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
+import { Card } from '@/components/ui/card'
+import { isCreditAgent } from '@/lib/utils'
 import DetailedPnlPanel from '@/components/bookings/detailed-pnl-panel'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 
-const CATEGORIES = ['HOTEL', 'TICKETS', 'GUIDES', 'MEALS', 'CRUISE', 'WATER', 'TRANSPORT', 'TAX_FEES', 'FLIGHT_TICKETS', 'OTHER']
-const VALUE_COLUMNS = [
-  { key: 'mmtRate', label: 'MMT Rate' },
-  { key: 'sicRate', label: 'SIC Rate' },
-  { key: 'pvtRatePP', label: 'PVT PP' },
-  { key: 'adEntrance', label: 'AD Entry' },
-  { key: 'chEntrance', label: 'CH Entry' },
-  { key: 'otherRate', label: 'Other' },
-] as const
-
-interface Line {
-  id?: string
-  sortOrder?: number
-  activity: string
-  category: string
-  mmtRate: string
-  sicRate: string
-  pvtRatePP: string
-  adEntrance: string
-  chEntrance: string
-  otherRate: string
-  paymentStatus?: string
-  paymentRefNumber?: string | null
-  paymentBillUrl?: string | null
-  paymentBillName?: string | null
-  paymentConfirmedAt?: string | null
-  paymentConfirmedBy?: string | null
-  notes: string
-  totalCost?: number
-}
-
-interface PNLRecord {
-  id: string
-  paxAdults: number
-  paxChildren: number
-  sourceDocUrl?: string | null
-  lockedAt?: string | null
-  createdAt?: string
-  updatedAt?: string
-  bookingAgent?: string | null
-  isNumber?: string | null
-  cntlNumber?: string | null
-  isPnlData?: IsPnlData | null
-  totalRevenue?: number
-  totalCost?: number
-  profit?: number
-  margin?: number
-  lineItems?: Line[]
-}
-
-// The isPnlData JSON blob is produced by AI extraction, so numeric fields can come
-// back as strings ("1250.00") or be missing entirely. Coerce once on load so every
-// downstream .toFixed() call is safe.
-function num(v: unknown): number {
-  const n = typeof v === 'string' ? Number(v.replace(/[^0-9.eE+-]/g, '')) : Number(v)
-  return Number.isFinite(n) ? n : 0
-}
-function numOrNull(v: unknown): number | null {
-  if (v === null || v === undefined || v === '') return null
-  return num(v)
-}
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function arr(v: unknown): any[] {
-  return Array.isArray(v) ? v : []
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normalizeIsPnlData(raw: any): IsPnlData | null {
-  if (!raw || typeof raw !== 'object') return null
-  return {
-    tourNo:   raw.tourNo   ?? null,
-    isNumber: raw.isNumber ?? null,
-    agent:    raw.agent    ?? null,
-    pax:          num(raw.pax),
-    nights:       num(raw.nights),
-    currency:     String(raw.currency ?? ''),
-    exchangeRate: num(raw.exchangeRate),
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    hotels: arr(raw.hotels).map((h: any) => ({
-      name: String(h?.name ?? ''),
-      sgl: num(h?.sgl), dbl: num(h?.dbl), tpl: num(h?.tpl),
-      cwb: num(h?.cwb), cnb: num(h?.cnb),
-      nights: num(h?.nights),
-      roomNightRate: num(h?.roomNightRate),
-      total: num(h?.total),
-    })),
-    hotelTotal: num(raw.hotelTotal),
-
-    transport: {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      items: arr(raw.transport?.items).map((t: any) => ({
-        expense: String(t?.expense ?? ''),
-        distanceDays: numOrNull(t?.distanceDays),
-        rate: numOrNull(t?.rate),
-        total: num(t?.total),
-      })),
-      total: num(raw.transport?.total),
-    },
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    attractions: arr(raw.attractions).map((a: any) => ({
-      name: String(a?.name ?? ''),
-      adultAttractionRate: num(a?.adultAttractionRate),
-      adultVehicleRate:    num(a?.adultVehicleRate),
-      childAttractionRate: num(a?.childAttractionRate),
-      childVehicleRate:    num(a?.childVehicleRate),
-      total: num(a?.total),
-    })),
-    attractionTotal: num(raw.attractionTotal),
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    tourTransfers: arr(raw.tourTransfers).map((t: any) => ({
-      name: String(t?.name ?? ''),
-      adultRate: num(t?.adultRate),
-      childRate: num(t?.childRate),
-      total: num(t?.total),
-    })),
-    tourTransferTotal: num(raw.tourTransferTotal),
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    otherRates: arr(raw.otherRates).map((o: any) => ({
-      name: String(o?.name ?? ''),
-      pax: numOrNull(o?.pax),
-      rate: numOrNull(o?.rate),
-      total: num(o?.total),
-    })),
-    otherRatesTotal: num(raw.otherRatesTotal),
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    meals: arr(raw.meals).map((m: any) => ({
-      day: m?.day ?? '',
-      breakfast: num(m?.breakfast),
-      lunch: num(m?.lunch),
-      dinner: num(m?.dinner),
-      total: num(m?.total),
-    })),
-    mealsTotal: num(raw.mealsTotal),
-
-    costPerPersonSingle: numOrNull(raw.costPerPersonSingle),
-    costPerPersonDouble: numOrNull(raw.costPerPersonDouble),
-    totalTourCost: num(raw.totalTourCost),
-    totalTourCostWithoutMarkup: num(raw.totalTourCostWithoutMarkup),
-    profitLoss: num(raw.profitLoss),
-  }
-}
-
-function IsPnlSection({ title, total, currency, open, onToggle, children }: {
-  title: string; total: number; currency: string
-  open: boolean; onToggle: () => void; children: React.ReactNode
-}) {
-  return (
-    <div className="border border-slate-200 rounded-xl overflow-hidden">
-      <button onClick={onToggle} className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left">
-        <div className="flex items-center gap-2">
-          {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-          <span className="text-sm font-semibold text-slate-800">{title}</span>
-        </div>
-        <span className="text-sm font-bold text-slate-700">{currency} {num(total).toFixed(2)}</span>
-      </button>
-      {open && <div className="overflow-x-auto">{children}</div>}
-    </div>
-  )
-}
+/** Roles allowed to read the Accounts costing sheet — unchanged from before. */
+const COSTING_ROLES = ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export default function PNLPage() {
   const { ref } = useParams<{ ref: string }>()
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole
 
-  const [pnl, setPnl] = useState<PNLRecord | null>(null)
   const [bookingAgent, setBookingAgent] = useState<string | null>(null)
-  const [isNumber, setIsNumber] = useState<string | null>(null)
+  const [isNumber, setIsNumber]     = useState<string | null>(null)
   const [cntlNumber, setCntlNumber] = useState<string | null>(null)
-  const [isPnlData, setIsPnlData] = useState<IsPnlData | null>(null)
-  const [isPnlSections, setIsPnlSections] = useState<Record<string, boolean>>({ hotels: true, transport: true, attractions: true, transfers: true, otherRates: true, meals: true })
-  const [paxAdults, setPaxAdults] = useState('2')
-  const [paxChildren, setPaxChildren] = useState('0')
-  const [lines, setLines] = useState<Line[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [confirmingLine, setConfirmingLine] = useState<string | null>(null)
-  const [showImportModal,  setShowImportModal]  = useState(false)
-  const [cloudPickerOpen,  setCloudPickerOpen]  = useState(false)
-  const [cloudProcessing,  setCloudProcessing]  = useState(false)
-  const [showAllValueColumns, setShowAllValueColumns] = useState(false)
-  const [showPaymentColumn, setShowPaymentColumn] = useState(false)
+  const [loading, setLoading]       = useState(true)
   const [syncingOneDrive, setSyncingOneDrive] = useState(false)
-  const [syncResult, setSyncResult]           = useState<{ found: boolean; message: string } | null>(null)
-  const [bookingFolderUrl, setBookingFolderUrl] = useState<string | null>(null)
+  const [syncResult, setSyncResult] = useState<{ found: boolean; message: string } | null>(null)
 
-  // Confirm modal state
-  const [confirmModal, setConfirmModal] = useState<{ lineId: string; action: 'CONFIRMED' | 'REJECTED'; activity: string } | null>(null)
-  const [refInput, setRefInput] = useState('')
-  const [billFile, setBillFile]   = useState<File | null>(null)
-  const [billUrl,  setBillUrl]    = useState<string | null>(null)
-  const [billName, setBillName]   = useState<string | null>(null)
-  const [uploadingBill, setUploadingBill] = useState(false)
+  const isCreditBk  = isCreditAgent(bookingAgent)
+  const canSeeSheet = COSTING_ROLES.includes(role)
 
-  // AI category auto-classification: tracks which line indices are currently classifying
-  const [classifyingLines, setClassifyingLines] = useState<Set<number>>(new Set())
-  const debounceTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
-
-  const canEdit           = ['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const canConfirmPayment = ['AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
-  const isCreditBk        = isCreditAgent(bookingAgent)
-  const paymentColumnEnabled = !isCreditBk && showPaymentColumn
-
-  const loadPNL = useCallback(async () => {
+  // Read-only: the page only needs the booking's identifiers for the header and
+  // the credit-agent notice.
+  const loadMeta = useCallback(async () => {
     try {
-      const [pnlRes, folderRes] = await Promise.all([
-        fetch(`/api/bookings/${ref}/pnl`),
-        fetch(`/api/onedrive/files/${ref}`),
-      ])
-      const [pnlJson, folderJson] = await Promise.all([pnlRes.json(), folderRes.json()])
-
-      if (pnlJson.success && pnlJson.data) {
-        const data = pnlJson.data as PNLRecord
-        setPnl(data)
-        setBookingAgent(data.bookingAgent ?? null)
-        setIsNumber(data.isNumber ?? null)
-        setCntlNumber(data.cntlNumber ?? null)
-        setIsPnlData(normalizeIsPnlData(data.isPnlData))
-        setPaxAdults(String(data.paxAdults ?? 2))
-        setPaxChildren(String(data.paxChildren ?? 0))
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        setLines(((data.lineItems ?? []) as any[]).map((l: any) => ({
-          id:               l.id as string,
-          sortOrder:        l.sortOrder as number | undefined,
-          activity:         l.activity as string,
-          category:         l.category as string,
-          mmtRate:          String(l.mmtRate),
-          sicRate:          String(l.sicRate),
-          pvtRatePP:        String(l.pvtRatePP),
-          adEntrance:       String(l.adEntrance),
-          chEntrance:       String(l.chEntrance),
-          otherRate:        String(l.otherRate),
-          paymentStatus:    l.paymentStatus as string,
-          paymentRefNumber: l.paymentRefNumber as string | null,
-          paymentBillUrl:   l.paymentBillUrl as string | null,
-          paymentBillName:  l.paymentBillName as string | null,
-          paymentConfirmedAt: l.paymentConfirmedAt as string | null,
-          paymentConfirmedBy: l.paymentConfirmedBy as string | null,
-          notes:            (l.notes as string) ?? '',
-          totalCost:        Number(l.totalCost ?? 0),
-        })))
-      }
-
-      if (folderJson.success) {
-        setBookingFolderUrl((folderJson.data?.folderUrl as string | null | undefined) ?? null)
+      const res  = await fetch(`/api/bookings/${ref}/pnl`)
+      const json = await res.json()
+      if (json.success && json.data) {
+        setBookingAgent(json.data.bookingAgent ?? null)
+        setIsNumber(json.data.isNumber ?? null)
+        setCntlNumber(json.data.cntlNumber ?? null)
       }
     } finally {
       setLoading(false)
     }
   }, [ref])
 
-  useEffect(() => { loadPNL() }, [loadPNL])
-
-  function computeTotal(line: Line) {
-    return computePNLLineTotal(
-      {
-        sicRate:    Number(line.sicRate    || 0) as unknown as import('@prisma/client').Prisma.Decimal,
-        pvtRatePP:  Number(line.pvtRatePP  || 0) as unknown as import('@prisma/client').Prisma.Decimal,
-        otherRate:  Number(line.otherRate  || 0) as unknown as import('@prisma/client').Prisma.Decimal,
-        adEntrance: Number(line.adEntrance || 0) as unknown as import('@prisma/client').Prisma.Decimal,
-        chEntrance: Number(line.chEntrance || 0) as unknown as import('@prisma/client').Prisma.Decimal,
-      },
-      Number(paxAdults || 0),
-      Number(paxChildren || 0),
-    )
-  }
-
-  const lineRevenue = lines.reduce((sum, l) => sum + Number(l.mmtRate || 0), 0)
-  const lineCost    = lines.reduce((sum, l) => sum + computeTotal(l), 0)
-  // For IS PNL, use the authoritative totals from the costing sheet summary
-  const totalRevenue = isPnlData ? (isPnlData.totalTourCost ?? lineRevenue) : lineRevenue
-  const totalCost    = isPnlData ? (isPnlData.totalTourCostWithoutMarkup ?? lineCost) : lineCost
-  const profit       = isPnlData ? (isPnlData.profitLoss ?? (totalRevenue - totalCost)) : (totalRevenue - totalCost)
-  const margin       = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0
-
-  const handleActivityChange = useCallback((idx: number, value: string) => {
-    setLines(ls => ls.map((l, j) => j === idx ? { ...l, activity: value } : l))
-
-    // Cancel any in-flight debounce for this row
-    const existing = debounceTimers.current.get(idx)
-    if (existing) clearTimeout(existing)
-
-    if (!value.trim()) return
-
-    // Debounce: wait 700ms after user stops typing, then classify
-    const timer = setTimeout(async () => {
-      setClassifyingLines(s => { const n = new Set(s); n.add(idx); return n })
-      try {
-        const res = await fetch('/api/ai/classify-category', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ activity: value }),
-        })
-        const json = await res.json()
-        if (json.success && json.data?.category) {
-          setLines(ls => ls.map((l, j) => j === idx ? { ...l, category: json.data.category } : l))
-        }
-      } catch {
-        // silently ignore — user can set manually
-      } finally {
-        setClassifyingLines(s => { const n = new Set(s); n.delete(idx); return n })
-        debounceTimers.current.delete(idx)
-      }
-    }, 700)
-
-    debounceTimers.current.set(idx, timer)
-  }, [])
+  useEffect(() => { loadMeta() }, [loadMeta])
 
   async function syncFromOneDrive() {
     setSyncingOneDrive(true)
@@ -352,7 +83,7 @@ export default function PNLPage() {
       if (pnlFound) {
         setSyncResult({ found: true, message: 'PNL synced from OneDrive successfully' })
         toast.success('PNL data loaded from OneDrive')
-        await loadPNL()
+        await loadMeta()
       } else if (errors > 0) {
         setSyncResult({ found: false, message: 'Sync completed with errors — check OneDrive Monitor for details' })
         toast.error('Sync encountered errors')
@@ -369,177 +100,6 @@ export default function PNLPage() {
     }
   }
 
-  async function savePNL() {
-    setSaving(true)
-    try {
-      const res = await fetch(`/api/bookings/${ref}/pnl`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paxAdults:  Number(paxAdults),
-          paxChildren: Number(paxChildren),
-          ...(isPnlData ? { isPnlData } : {}),
-          lineItems: lines.map(l => ({
-            activity:   l.activity,
-            category:   l.category,
-            mmtRate:    Number(l.mmtRate    || 0),
-            sicRate:    Number(l.sicRate    || 0),
-            pvtRatePP:  Number(l.pvtRatePP  || 0),
-            adEntrance: Number(l.adEntrance || 0),
-            chEntrance: Number(l.chEntrance || 0),
-            otherRate:  Number(l.otherRate  || 0),
-            notes:      l.notes,
-          })),
-        }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      toast.success('P&L saved')
-      await loadPNL()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Save failed')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  function openConfirm(lineId: string, action: 'CONFIRMED' | 'REJECTED', activity: string) {
-    setConfirmModal({ lineId, action, activity })
-    setRefInput('')
-    setBillFile(null)
-    setBillUrl(null)
-    setBillName(null)
-  }
-
-  async function uploadBill(lineId: string, file: File): Promise<{ url: string; name: string } | null> {
-    setUploadingBill(true)
-    try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const res  = await fetch(`/api/pnl-lines/${lineId}/upload-bill`, { method: 'POST', body: fd })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      return { url: json.data.fileUrl, name: json.data.fileName }
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Bill upload failed')
-      return null
-    } finally {
-      setUploadingBill(false)
-    }
-  }
-
-  async function confirmPayment() {
-    if (!confirmModal) return
-    if (confirmModal.action === 'CONFIRMED' && !refInput.trim()) {
-      toast.error('Reference number is required when confirming payment')
-      return
-    }
-    setConfirmingLine(confirmModal.lineId)
-    try {
-      let finalBillUrl  = billUrl
-      let finalBillName = billName
-
-      // Upload bill if one was selected
-      if (billFile) {
-        const uploaded = await uploadBill(confirmModal.lineId, billFile)
-        if (!uploaded) { setConfirmingLine(null); return }
-        finalBillUrl  = uploaded.url
-        finalBillName = uploaded.name
-      }
-
-      const res  = await fetch(`/api/pnl-lines/${confirmModal.lineId}/confirm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:    confirmModal.action,
-          refNumber: refInput.trim(),
-          billUrl:   finalBillUrl,
-          billName:  finalBillName,
-        }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      toast.success(confirmModal.action === 'CONFIRMED'
-        ? `Payment confirmed — Ref: ${refInput}`
-        : 'Payment rejected')
-      setConfirmModal(null)
-      setRefInput('')
-      setBillFile(null)
-      setBillUrl(null)
-      setBillName(null)
-      await loadPNL()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Action failed')
-    } finally {
-      setConfirmingLine(null)
-    }
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function handleAIParsed(data: any) {
-    // IS PNL — structured Sri Lanka costing sheet
-    if (data?.isPnlData) {
-      setIsPnlData(normalizeIsPnlData(data.isPnlData))
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items: any[] = data?.lineItems ?? []
-    if (items.length) {
-      setLines(items.map(l => ({
-        activity:   l.activity || '',
-        category:   l.category || 'OTHER',
-        mmtRate:    String(l.mmtRate || 0),
-        sicRate:    String(l.sicRate || 0),
-        pvtRatePP:  String(l.pvtRatePP || 0),
-        adEntrance: String(l.adEntrance || 0),
-        chEntrance: String(l.chEntrance || 0),
-        otherRate:  String(l.otherRate || 0),
-        notes:      '',
-      })))
-      if (data.paxAdults)     setPaxAdults(String(data.paxAdults))
-      if (data.paxChildren !== undefined) setPaxChildren(String(data.paxChildren))
-      const label = data?.isPnlData ? 'IS PNL imported!' : `${items.length} P&L lines imported from spreadsheet!`
-      toast.success(label)
-      setShowImportModal(false)
-    } else if (data?.isPnlData) {
-      toast.success('IS PNL data loaded — line items mapped automatically')
-      setShowImportModal(false)
-    } else {
-      toast.error('No line items found in the file')
-    }
-  }
-
-  async function handleCloudFileSelected(file: CloudFile) {
-    setCloudPickerOpen(false)
-    setCloudProcessing(true)
-    try {
-      const res  = await fetch(`/api/bookings/${ref}/cloud-files/process`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId: file.id, itemName: file.name, mode: 'pnl' }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-
-      // Image files return lineItems directly (not saved to DB — handed to the form)
-      if (Array.isArray(json.data?.lineItems)) {
-        handleAIParsed(json.data)
-        return
-      }
-
-      const { linesImported } = json.data as { linesImported: number }
-      toast.success(`P&L imported from "${file.name}": ${linesImported} line items`)
-      setShowImportModal(false)
-      await loadPNL()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Cloud import failed')
-    } finally { setCloudProcessing(false) }
-  }
-
-  const visibleValueColumns = VALUE_COLUMNS.filter(col => {
-    if (showAllValueColumns) return true
-    return lines.some(line => Number((line as unknown as Record<string, string>)[col.key]) !== 0)
-  })
-
   if (loading) return (
     <div className="flex justify-center h-64 pt-16">
       <LogoSpinner size={48} />
@@ -551,7 +111,7 @@ export default function PNLPage() {
       <Header
         title={`P&L — ${isNumber ?? ref}`}
         subtitle={[
-          'Profit & Loss Statement',
+          'Detailed P&L · Accounts costing sheet',
           isNumber && isNumber !== ref ? `Booking: ${ref}` : null,
           cntlNumber ? `CNTL: ${cntlNumber}` : null,
         ].filter(Boolean).join(' · ')}
@@ -568,36 +128,17 @@ export default function PNLPage() {
                 : <><HardDrive className="w-3.5 h-3.5" /><RefreshCw className="w-3 h-3 -ml-0.5" /> Sync from OneDrive</>
               }
             </button>
-            {canEdit && (
-              <>
-                <Button variant="secondary" size="sm" onClick={() => setShowImportModal(true)} icon={<Upload className="w-4 h-4" />}>
-                  Import P&L
-                </Button>
-                <Button size="sm" loading={saving} icon={<Save className="w-4 h-4" />} onClick={savePNL}>
-                  Save P&L
-                </Button>
-              </>
-            )}
+            <Link
+              href={`/dashboard/bookings/${ref}/tickets`}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand-500 text-white hover:bg-brand-600 transition-colors"
+            >
+              <Ticket className="w-3.5 h-3.5" /> Tickets <ArrowRight className="w-3 h-3" />
+            </Link>
           </div>
         }
       />
 
-      <div className="p-8 space-y-6 ">
-
-        {/* BT_USER info banner */}
-        {role === 'BT_USER' && (
-          <div className="flex items-start gap-3 p-4 bg-brand-50 border border-brand-200 rounded-xl">
-            <Info className="w-5 h-5 text-brand-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-brand-800">Upload P&L with your booking</p>
-              <p className="text-xs text-brand-600 mt-0.5">
-                Import the Excel spreadsheet or add lines manually, then click <strong>Save P&L</strong>.
-                Tickets and vouchers will be auto-created from Hotel, Cruise, Tickets, and other service lines —
-                the Ground Team will activate them before the trip.
-              </p>
-            </div>
-          </div>
-        )}
+      <div className="p-8 space-y-6">
 
         {/* OneDrive sync result banner */}
         {syncResult && (
@@ -620,654 +161,24 @@ export default function PNLPage() {
               <p className="text-sm font-semibold text-blue-800">Credit Agent — No Payment Approval Required</p>
               <p className="text-xs text-blue-600 mt-0.5">
                 <strong>{bookingAgent}</strong> settles payments in bulk on the 15th and 30th of each month.
-                Once P&L is saved this booking advances directly to Operations Ready.
               </p>
             </div>
           </div>
-        )}
-
-        {pnl && (
-          <Card className="p-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">P&L Record Details</h3>
-                <p className="text-xs text-slate-500 mt-1">Metadata and source document information for this booking P&L.</p>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Adults</p>
-                  <p className="font-semibold text-slate-900">{pnl.paxAdults}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Children</p>
-                  <p className="font-semibold text-slate-900">{pnl.paxChildren}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Locked</p>
-                  <p className="font-semibold text-slate-900">{pnl.lockedAt ? formatDateTime(pnl.lockedAt) : 'No'}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Source file</p>
-                  {pnl.sourceDocUrl ? (
-                    <a href={pnl.sourceDocUrl} target="_blank" rel="noreferrer" className="font-semibold text-brand-600 hover:underline">
-                      Open source document
-                    </a>
-                  ) : (
-                    <p className="font-semibold text-slate-900">Not stored</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Created</p>
-                  <p className="font-semibold text-slate-900">{pnl.createdAt ? formatDateTime(pnl.createdAt) : '—'}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Updated</p>
-                  <p className="font-semibold text-slate-900">{pnl.updatedAt ? formatDateTime(pnl.updatedAt) : '—'}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Revenue</p>
-                  <p className="font-semibold text-slate-900">{formatCurrency(pnl.totalRevenue ?? totalRevenue)}</p>
-                </div>
-                <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-400">Total Cost</p>
-                  <p className="font-semibold text-slate-900">{formatCurrency(pnl.totalCost ?? totalCost)}</p>
-                </div>
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[
-            { label: 'Total Revenue ', value: formatCurrency(totalRevenue), color: 'text-slate-900' },
-            { label: 'Total Cost (Apple Rate)',  value: formatCurrency(totalCost),    color: 'text-slate-900' },
-            { label: 'Profit',  value: formatCurrency(profit), color: profit >= 0 ? 'text-green-600' : 'text-red-600' },
-            { label: 'Margin',  value: `${margin.toFixed(1)}%`, color: margin >= 15 ? 'text-green-600' : 'text-orange-600' },
-          ].map(s => (
-            <Card key={s.label} className="p-5">
-              <p className="text-xs text-slate-500 font-medium">{s.label}</p>
-              <p className={`text-2xl font-bold mt-1 ${s.color}`}>{s.value}</p>
-            </Card>
-          ))}
-        </div>
-
-        {/* Pax counts */}
-        {canEdit && (
-          <Card className="p-4">
-            <div className="flex items-center gap-6">
-              <p className="text-sm font-medium text-slate-700">Pax counts (used in total calculation):</p>
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500">Adults</label>
-                <input type="number" min="0" className="form-input w-16 text-sm py-1" value={paxAdults}
-                  onChange={e => setPaxAdults(e.target.value)} />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs text-slate-500">Children</label>
-                <input type="number" min="0" className="form-input w-16 text-sm py-1" value={paxChildren}
-                  onChange={e => setPaxChildren(e.target.value)} />
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {/* Accounts PNL (Reetha) — live external record linked to this booking */}
-        {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <ExternalPnlPanel bookingRef={ref} role={role} />
         )}
 
         {/* The Accounts system's costing sheet for this booking, matched on the
-            IS number. This is what tickets are costed from. */}
-        {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <DetailedPnlPanel bookingRef={ref} role={role} />
+            IS number. This is what tickets are costed from — and they are
+            created from it automatically as soon as the sheet loads. */}
+        {canSeeSheet ? (
+          <DetailedPnlPanel bookingRef={ref} role={role} inline autoCreateTickets />
+        ) : (
+          <Card className="p-6">
+            <p className="text-sm text-slate-600">
+              The Accounts costing sheet for this booking is visible to the Booking, Accounts and Admin teams.
+            </p>
+          </Card>
         )}
-
-        {/* IS PNL Breakdown Panel */}
-        {isPnlData && (
-          <div className="space-y-3">
-            {/* IS PNL header */}
-            <div className="flex items-center justify-between p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
-              <div>
-                <p className="text-sm font-bold text-emerald-800">IS PNL — Sri Lanka Costing Sheet</p>
-                <p className="text-xs text-emerald-600 mt-0.5">
-                  {[isPnlData.tourNo && `Tour: ${isPnlData.tourNo}`, isPnlData.isNumber && `IS: ${isPnlData.isNumber}`, isPnlData.agent && `Agent: ${isPnlData.agent}`, isPnlData.pax && `${isPnlData.pax} Pax`, isPnlData.nights && `${isPnlData.nights} Nights`, isPnlData.currency].filter(Boolean).join(' · ')}
-                </p>
-              </div>
-              <div className="grid grid-cols-2 gap-3 text-right text-xs">
-                <div><p className="text-emerald-500">Cost Per Person</p><p className="font-bold text-emerald-900">{isPnlData.currency} {(isPnlData.costPerPersonDouble ?? isPnlData.costPerPersonSingle ?? 0).toFixed(2)}</p></div>
-                <div><p className="text-emerald-500">Profit/Loss</p><p className={`font-bold ${isPnlData.profitLoss >= 0 ? 'text-green-700' : 'text-red-600'}`}>{isPnlData.currency} {isPnlData.profitLoss.toFixed(2)}</p></div>
-              </div>
-            </div>
-
-            {/* Hotels/Cruises */}
-            {isPnlData.hotels?.length > 0 && (
-              <IsPnlSection title="Hotels / Cruises" total={isPnlData.hotelTotal} currency={isPnlData.currency}
-                open={isPnlSections.hotels} onToggle={() => setIsPnlSections(s => ({ ...s, hotels: !s.hotels }))}>
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Hotel</th><th className="px-2 py-2 text-right">SGL</th><th className="px-2 py-2 text-right">DBL</th><th className="px-2 py-2 text-right">TPL</th><th className="px-2 py-2 text-right">CWB</th><th className="px-2 py-2 text-right">CNB</th><th className="px-2 py-2 text-right">Nights</th><th className="px-2 py-2 text-right">Rate/Night</th><th className="px-2 py-2 text-right font-semibold">Total</th></tr></thead>
-                  <tbody>{isPnlData.hotels.map((h, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      <td className="px-3 py-2 font-medium">{h.name}</td>
-                      <td className="px-2 py-2 text-right text-slate-500">{h.sgl > 0 ? h.sgl.toFixed(2) : '—'}</td>
-                      <td className="px-2 py-2 text-right text-slate-500">{h.dbl > 0 ? h.dbl.toFixed(2) : '—'}</td>
-                      <td className="px-2 py-2 text-right text-slate-500">{h.tpl > 0 ? h.tpl.toFixed(2) : '—'}</td>
-                      <td className="px-2 py-2 text-right text-slate-500">{h.cwb > 0 ? h.cwb.toFixed(2) : '—'}</td>
-                      <td className="px-2 py-2 text-right text-slate-500">{h.cnb > 0 ? h.cnb.toFixed(2) : '—'}</td>
-                      <td className="px-2 py-2 text-right">{h.nights}</td>
-                      <td className="px-2 py-2 text-right">{h.roomNightRate.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right font-semibold">{h.total.toFixed(2)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </IsPnlSection>
-            )}
-
-            {/* Transport */}
-            {isPnlData.transport?.items?.length > 0 && (
-              <IsPnlSection title="Transport" total={isPnlData.transport.total} currency={isPnlData.currency}
-                open={isPnlSections.transport} onToggle={() => setIsPnlSections(s => ({ ...s, transport: !s.transport }))}>
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Expense</th><th className="px-3 py-2 text-right">Distance / Days</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
-                  <tbody>{isPnlData.transport.items.map((t, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      <td className="px-3 py-2 font-medium">{t.expense}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{t.distanceDays ?? '—'}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{t.rate != null ? t.rate.toFixed(4) : '—'}</td>
-                      <td className="px-3 py-2 text-right font-semibold">{t.total.toFixed(2)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </IsPnlSection>
-            )}
-
-            {/* Attractions */}
-            {isPnlData.attractions?.length > 0 && (
-              <IsPnlSection title="Attractions" total={isPnlData.attractionTotal} currency={isPnlData.currency}
-                open={isPnlSections.attractions} onToggle={() => setIsPnlSections(s => ({ ...s, attractions: !s.attractions }))}>
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Name</th><th className="px-2 py-2 text-right">Adult (Attraction)</th><th className="px-2 py-2 text-right">Adult (Vehicle)</th><th className="px-2 py-2 text-right">Child (Attraction)</th><th className="px-2 py-2 text-right">Child (Vehicle)</th><th className="px-2 py-2 text-right font-semibold">Total</th></tr></thead>
-                  <tbody>{isPnlData.attractions.map((a, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      <td className="px-3 py-2 font-medium">{a.name}</td>
-                      <td className="px-2 py-2 text-right">{a.adultAttractionRate.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right">{a.adultVehicleRate.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right">{a.childAttractionRate.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right">{a.childVehicleRate.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right font-semibold">{a.total.toFixed(2)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </IsPnlSection>
-            )}
-
-            {/* Tour Transfers */}
-            {isPnlData.tourTransfers?.length > 0 && (
-              <IsPnlSection title="Tour Transfers" total={isPnlData.tourTransferTotal} currency={isPnlData.currency}
-                open={isPnlSections.transfers} onToggle={() => setIsPnlSections(s => ({ ...s, transfers: !s.transfers }))}>
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Name</th><th className="px-3 py-2 text-right">Adult Rate</th><th className="px-3 py-2 text-right">Child Rate</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
-                  <tbody>{isPnlData.tourTransfers.map((t, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      <td className="px-3 py-2 font-medium">{t.name}</td>
-                      <td className="px-3 py-2 text-right">{t.adultRate.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right">{t.childRate.toFixed(2)}</td>
-                      <td className="px-3 py-2 text-right font-semibold">{t.total.toFixed(2)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </IsPnlSection>
-            )}
-
-            {/* Other Rates */}
-            {isPnlData.otherRates?.length > 0 && (
-              <IsPnlSection title="Other Rates" total={isPnlData.otherRatesTotal} currency={isPnlData.currency}
-                open={isPnlSections.otherRates} onToggle={() => setIsPnlSections(s => ({ ...s, otherRates: !s.otherRates }))}>
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Item</th><th className="px-3 py-2 text-right">Pax</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
-                  <tbody>{isPnlData.otherRates.map((o, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      <td className="px-3 py-2 font-medium">{o.name}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{o.pax ?? '—'}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{o.rate != null ? o.rate.toFixed(2) : '—'}</td>
-                      <td className="px-3 py-2 text-right font-semibold">{o.total.toFixed(2)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </IsPnlSection>
-            )}
-
-            {/* Meals */}
-            {isPnlData.meals?.some(m => m.total > 0) && (
-              <IsPnlSection title="Meals" total={isPnlData.mealsTotal} currency={isPnlData.currency}
-                open={isPnlSections.meals} onToggle={() => setIsPnlSections(s => ({ ...s, meals: !s.meals }))}>
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-left"><th className="px-3 py-2">Day</th><th className="px-3 py-2 text-right">Breakfast</th><th className="px-3 py-2 text-right">Lunch</th><th className="px-3 py-2 text-right">Dinner</th><th className="px-3 py-2 text-right font-semibold">Total</th></tr></thead>
-                  <tbody>{isPnlData.meals.filter(m => m.total > 0).map((m, i) => (
-                    <tr key={i} className="border-t border-slate-100">
-                      <td className="px-3 py-2 font-medium">Day {m.day}</td>
-                      <td className="px-3 py-2 text-right">{m.breakfast > 0 ? m.breakfast.toFixed(2) : '—'}</td>
-                      <td className="px-3 py-2 text-right">{m.lunch > 0 ? m.lunch.toFixed(2) : '—'}</td>
-                      <td className="px-3 py-2 text-right">{m.dinner > 0 ? m.dinner.toFixed(2) : '—'}</td>
-                      <td className="px-3 py-2 text-right font-semibold">{m.total.toFixed(2)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </IsPnlSection>
-            )}
-
-            {/* IS PNL Summary */}
-            <Card className="p-4 border-emerald-200 bg-emerald-50/30">
-              <h4 className="text-xs font-bold text-emerald-800 uppercase tracking-wide mb-3">IS PNL Summary</h4>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                {isPnlData.costPerPersonDouble != null && (
-                  <div><p className="text-xs text-slate-500">Cost/Person (DBL)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.costPerPersonDouble.toFixed(2)}</p></div>
-                )}
-                {isPnlData.costPerPersonSingle != null && (
-                  <div><p className="text-xs text-slate-500">Cost/Person (SGL)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.costPerPersonSingle.toFixed(2)}</p></div>
-                )}
-                <div><p className="text-xs text-slate-500">Total Tour Cost (Revenue)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.totalTourCost.toFixed(2)}</p></div>
-                <div><p className="text-xs text-slate-500">Without Markup (Cost)</p><p className="font-bold text-slate-900">{isPnlData.currency} {isPnlData.totalTourCostWithoutMarkup.toFixed(2)}</p></div>
-                <div><p className="text-xs text-slate-500">Profit / Loss</p><p className={`font-bold text-lg ${isPnlData.profitLoss >= 0 ? 'text-green-700' : 'text-red-600'}`}>{isPnlData.currency} {isPnlData.profitLoss.toFixed(2)}</p></div>
-                <div><p className="text-xs text-slate-500">Margin</p><p className={`font-bold text-lg ${margin >= 10 ? 'text-green-700' : 'text-orange-600'}`}>{margin.toFixed(1)}%</p></div>
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Line items table */}
-        <Card>
-          <CardHeader
-            action={
-              <div className="flex items-center gap-2">
-                {canEdit && (
-                  <>
-                    <Button size="sm" variant="secondary" icon={<Plus className="w-3 h-3" />}
-                      onClick={() => setLines(ls => [...ls, {
-                        activity: '', category: 'OTHER', mmtRate: '0',
-                        sicRate: '0', pvtRatePP: '0', adEntrance: '0', chEntrance: '0', otherRate: '0', notes: '',
-                      }])}>
-                      Add Line
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={() => setShowAllValueColumns(v => !v)}>
-                      {showAllValueColumns ? 'Compact View' : 'Show All Fields'}
-                    </Button>
-                  </>
-                )}
-                {!isCreditBk && (canEdit || canConfirmPayment) && (
-                  <Button
-                    size="sm"
-                    variant={showPaymentColumn ? 'outline' : 'secondary'}
-                    onClick={() => setShowPaymentColumn(v => !v)}
-                  >
-                    Payment {showPaymentColumn ? 'On' : 'Off'}
-                  </Button>
-                )}
-              </div>
-            }
-          >
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-slate-900">P&L Line Items</h3>
-              <span className="text-xs text-slate-500">
-                Showing {showAllValueColumns ? 'all value columns' : 'only populated value columns'}
-              </span>
-            </div>
-          </CardHeader>
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th className="w-10">#</th>
-                  <th className="min-w-[180px]">Activity</th>
-                  <th>Category</th>
-                  {visibleValueColumns.map(col => (
-                    <th key={col.key} className="text-right">{col.label}</th>
-                  ))}
-                  <th className="text-right font-semibold">Total Apple Rate</th>
-                  <th className="text-right">Profit</th>
-                  <th>Notes</th>
-                  {/* Payment column only for non-credit bookings */}
-                  {paymentColumnEnabled && <th>Payment</th>}
-                  {canEdit && <th />}
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line, i) => {
-                  const total          = computeTotal(line)
-                  const lineProfitRow  = Number(line.mmtRate || 0) - total
-                  return (
-                    <tr key={i}>
-                      <td className="text-xs text-slate-400 font-mono">{line.sortOrder ?? i + 1}</td>
-                      <td>
-                        {canEdit ? (
-                          <input className="form-input text-xs py-1" value={line.activity}
-                            onChange={e => handleActivityChange(i, e.target.value)} />
-                        ) : (
-                          <span className="text-xs font-medium">{line.activity}</span>
-                        )}
-                      </td>
-                      <td>
-                        {canEdit ? (
-                          <div className="relative inline-flex items-center">
-                            <select className="form-select text-xs py-1 w-28" value={line.category}
-                              onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, category: e.target.value } : l))}>
-                              {CATEGORIES.map(c => <option key={c} value={c}>{c.replace('_', ' ')}</option>)}
-                            </select>
-                            {classifyingLines.has(i) && (
-                              <Sparkles className="w-3 h-3 text-brand-500 animate-pulse absolute -right-4" aria-label="AI classifying…" />
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-slate-500">{line.category}</span>
-                        )}
-                      </td>
-                      {visibleValueColumns.map(col => {
-                        const field = col.key
-                        return (
-                          <td key={field} className="text-right">
-                            {canEdit ? (
-                              <input type="number" step="0.01" min="0"
-                                className="form-input text-xs py-1 w-16 text-right"
-                                value={(line as unknown as Record<string, string>)[field]}
-                                onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, [field]: e.target.value } : l))} />
-                            ) : (
-                              <span className="text-xs">{Number((line as unknown as Record<string, string>)[field]).toFixed(2)}</span>
-                            )}
-                          </td>
-                        )
-                      })}
-                      <td className="text-right font-semibold text-slate-900 text-xs">{(line.totalCost ?? total).toFixed(2)}</td>
-                      <td className={`text-right text-xs font-semibold ${lineProfitRow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {lineProfitRow.toFixed(2)}
-                      </td>
-
-                      <td>
-                        {canEdit ? (
-                          <input
-                            className="form-input text-xs py-1 w-44"
-                            value={line.notes}
-                            onChange={e => setLines(ls => ls.map((l, j) => j === i ? { ...l, notes: e.target.value } : l))}
-                            placeholder="Notes"
-                          />
-                        ) : (
-                          <span className="text-xs text-slate-600">{line.notes || '—'}</span>
-                        )}
-                      </td>
-
-                      {/* Payment cell — only when payment section is switched on */}
-                      {paymentColumnEnabled && (
-                        <td>
-                          {line.id ? (
-                            <div className="flex flex-col gap-1">
-                              <div className="flex items-center gap-1 flex-wrap">
-                              <Badge
-                                color={line.paymentStatus === 'CONFIRMED' ? 'green' : line.paymentStatus === 'REJECTED' ? 'red' : 'yellow'}
-                              >
-                                {line.paymentStatus === 'CONFIRMED' ? 'Confirmed'
-                                  : line.paymentStatus === 'REJECTED' ? 'Rejected'
-                                  : 'Pending'}
-                              </Badge>
-                              {/* Show bill link if uploaded */}
-                              {line.paymentBillUrl && (
-                                <a
-                                  href={line.paymentBillUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-slate-400 hover:text-brand-600 ml-1"
-                                  title={line.paymentBillName ?? 'View bill'}
-                                >
-                                  <Paperclip className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                                {canConfirmPayment && line.paymentStatus === 'PENDING' && (
-                                  <div className="flex gap-1 ml-1">
-                                    <button
-                                      onClick={() => openConfirm(line.id!, 'CONFIRMED', line.activity)}
-                                      disabled={confirmingLine === line.id}
-                                      className="text-green-600 hover:text-green-800"
-                                      title="Confirm payment"
-                                    >
-                                      <CheckCircle className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={() => openConfirm(line.id!, 'REJECTED', line.activity)}
-                                      disabled={confirmingLine === line.id}
-                                      className="text-red-500 hover:text-red-700"
-                                      title="Reject payment"
-                                    >
-                                      <XCircle className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-slate-500 space-y-0.5">
-                                {line.paymentRefNumber && <div className="font-mono">Ref #{line.paymentRefNumber}</div>}
-                                {line.paymentConfirmedAt && <div>Confirmed {formatDateTime(line.paymentConfirmedAt)}</div>}
-                                {line.paymentConfirmedBy && <div className="font-mono">By {line.paymentConfirmedBy}</div>}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">—</span>
-                          )}
-                        </td>
-                      )}
-
-                      {canEdit && (
-                        <td>
-                          <button onClick={() => setLines(ls => ls.filter((_, j) => j !== i))}
-                            className="text-red-400 hover:text-red-600">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  )
-                })}
-              </tbody>
-              {lines.length > 0 && (
-                <tfoot>
-                  <tr className="bg-slate-50">
-                    <td colSpan={3} className="px-4 py-3 text-sm font-bold text-slate-900">TOTALS</td>
-                    {visibleValueColumns.length > 0 ? (
-                      <>
-                        <td className="text-right px-4 py-3 text-sm font-bold">{totalRevenue.toFixed(2)}</td>
-                        {visibleValueColumns.slice(1).map(col => (
-                          <td key={col.key} />
-                        ))}
-                      </>
-                    ) : null}
-                    <td className="text-right px-4 py-3 text-sm font-bold">{totalCost.toFixed(2)}</td>
-                    <td className={`text-right px-4 py-3 text-sm font-bold ${profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {profit.toFixed(2)}
-                    </td>
-                    <td />
-                    {paymentColumnEnabled && <td />}
-                    {canEdit && <td />}
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </Card>
       </div>
-
-      <Modal
-        open={showImportModal}
-        onClose={() => setShowImportModal(false)}
-        title="Import P&L"
-        size="2xl"
-      >
-        <div className="space-y-5">
-          <div className="grid gap-3 md:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => setCloudPickerOpen(true)}
-              disabled={cloudProcessing}
-              className="text-left rounded-xl border border-blue-200 bg-blue-50/80 hover:bg-blue-50 hover:border-blue-300 transition-colors p-4 disabled:opacity-60"
-            >
-              <div className="flex items-center gap-2">
-                {cloudProcessing
-                  ? <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-                  : <HardDrive className="w-4 h-4 text-blue-600" />}
-                <p className="font-semibold text-slate-900">
-                  {cloudProcessing ? 'Importing…' : 'Browse & Import from Cloud'}
-                </p>
-              </div>
-              <p className="text-xs text-slate-500 mt-2">
-                Open the booking&apos;s OneDrive folder, pick a costing sheet file, and import it directly.
-              </p>
-            </button>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex items-center gap-2">
-                <Upload className="w-4 h-4 text-slate-500" />
-                <p className="font-semibold text-slate-900">Import from PC</p>
-              </div>
-              <p className="text-xs text-slate-500 mt-2 mb-3">
-                Upload an Excel, CSV, PDF, Word file, or a tour confirmation image from your computer.
-              </p>
-              <FileUpload
-                accept={['.xlsx', '.xls', '.csv', '.pdf', '.docx', '.doc', '.jpg', '.jpeg', '.png', '.webp']}
-                uploadType="pnl"
-                onParsed={handleAIParsed}
-                label="Upload P&L from PC"
-                description=".xlsx · .xls · .csv · .pdf · .docx · images — AI extracts line items"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {bookingFolderUrl ? (
-              <a
-                href={bookingFolderUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-600 hover:text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                <FolderOpen className="w-3.5 h-3.5" />
-                Open booking folder in cloud
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            ) : (
-              <p className="text-xs text-slate-500">
-                The booking folder will be found automatically during cloud sync.
-              </p>
-            )}
-            {syncingOneDrive && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Syncing from OneDrive…
-              </span>
-            )}
-          </div>
-        </div>
-      </Modal>
-
-      {/* Payment Confirmation Modal — AC_USER only, non-credit agents */}
-      <Modal
-        open={!!confirmModal && !isCreditBk && canConfirmPayment}
-        onClose={() => { setConfirmModal(null); setRefInput('') }}
-        title={confirmModal?.action === 'CONFIRMED' ? 'Confirm Payment' : 'Reject Payment'}
-      >
-        {confirmModal && (
-          <div className="space-y-4">
-            <div className="p-3 bg-slate-50 rounded-lg">
-              <p className="text-sm text-slate-500">P&L Line</p>
-              <p className="font-semibold text-slate-900">{confirmModal.activity}</p>
-            </div>
-
-            {confirmModal.action === 'CONFIRMED' ? (
-              <>
-                {/* Bill upload */}
-                <div>
-                  <label className="form-label flex items-center gap-1.5">
-                    <Paperclip className="w-3.5 h-3.5 text-slate-400" /> Payment Bill / Receipt
-                    <span className="text-slate-400 font-normal text-xs ml-1">(optional but recommended)</span>
-                  </label>
-                  {billFile ? (
-                    <div className="flex items-center gap-2 p-2.5 bg-green-50 border border-green-200 rounded-lg">
-                      <Paperclip className="w-4 h-4 text-green-500 flex-shrink-0" />
-                      <span className="text-sm text-green-700 truncate flex-1">{billFile.name}</span>
-                      <button
-                        type="button"
-                        onClick={() => { setBillFile(null); setBillUrl(null); setBillName(null) }}
-                        className="text-slate-400 hover:text-red-500"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ) : (
-                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-slate-200 rounded-lg cursor-pointer hover:border-brand-400 hover:bg-brand-50 transition-colors">
-                      <Upload className="w-4 h-4 text-slate-400" />
-                      <span className="text-sm text-slate-500">Click to select bill (PDF, JPG, PNG)</span>
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept=".pdf,.jpg,.jpeg,.png,.webp"
-                        onChange={e => {
-                          const f = e.target.files?.[0]
-                          if (f) { setBillFile(f); setBillUrl(null); setBillName(null) }
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
-
-                {/* Reference number */}
-                <div>
-                  <label className="form-label flex items-center gap-1.5">
-                    <Hash className="w-3.5 h-3.5 text-brand-500" /> Reference Number *
-                  </label>
-                  <input
-                    value={refInput}
-                    onChange={e => setRefInput(e.target.value)}
-                    className="form-input font-mono"
-                    placeholder="e.g. TT-2026-0142"
-                    autoFocus
-                  />
-                  <p className="text-xs text-slate-400 mt-1">Bank transfer ref, voucher number, or internal payment ID</p>
-                </div>
-
-                <div className="flex gap-3">
-                  <button
-                    onClick={confirmPayment}
-                    disabled={!refInput.trim() || !!confirmingLine || uploadingBill}
-                    className="btn-primary btn flex-1"
-                  >
-                    {(confirmingLine || uploadingBill) ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                    Confirm Payment
-                  </button>
-                  <button onClick={() => { setConfirmModal(null); setRefInput(''); setBillFile(null) }} className="btn-secondary btn">
-                    Cancel
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700">
-                  This will mark the payment as rejected. The Ground Team will not be able to purchase tickets linked to this line.
-                </div>
-                <div className="flex gap-3">
-                  <button onClick={confirmPayment} disabled={!!confirmingLine} className="btn-danger btn flex-1">
-                    {confirmingLine ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                    Reject Payment
-                  </button>
-                  <button onClick={() => setConfirmModal(null)} className="btn-secondary btn">Cancel</button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </Modal>
-
-      <CloudFilePicker
-        bookingRef={ref}
-        open={cloudPickerOpen}
-        onClose={() => setCloudPickerOpen(false)}
-        onSelect={handleCloudFileSelected}
-        filterExtensions={['.xlsx', '.xls', '.pdf', '.docx', '.doc', '.csv', '.jpg', '.jpeg', '.png', '.webp']}
-        title={`Import P&L from Drive — ${ref}`}
-        selectLabel="Import as P&L"
-      />
     </div>
   )
 }
