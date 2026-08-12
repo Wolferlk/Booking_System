@@ -254,7 +254,10 @@ export function mapQuoteToBooking(
       const ownArrangement = str(h.type).trim().toLowerCase() === 'own_arrangement'
       return {
         city: str(h.city).trim(),
-        hotel: str(h.name).trim() || (ownArrangement ? 'Own Arrangement' : ''),
+        // Never invent a hotel name. AppleSystem sends no `name` for own-arrangement
+        // stays, and writing "Own Arrangement" into the name field wipes whatever the
+        // real hotel was — the own-arrangement flag already drives the UI badge.
+        hotel: str(h.name).trim(),
         checkIn: str(h.check_in).trim(),
         checkOut: str(h.check_out).trim(),
         nights: intOf(h.nights),
@@ -264,7 +267,12 @@ export function mapQuoteToBooking(
         ownArrangement,
       }
     })
-    .filter((h) => h.hotel && /^\d{4}-\d{2}-\d{2}/.test(h.checkIn) && /^\d{4}-\d{2}-\d{2}/.test(h.checkOut))
+    .filter(
+      (h) =>
+        (h.hotel || h.ownArrangement) &&
+        /^\d{4}-\d{2}-\d{2}/.test(h.checkIn) &&
+        /^\d{4}-\d{2}-\d{2}/.test(h.checkOut),
+    )
 
   // Lead passenger from the confirmation voucher.
   const guestName = str(voucher.guest_name).trim()
