@@ -486,7 +486,27 @@ export default function Sidebar() {
   const role = session?.user?.role as UserRole | undefined
   const navItems = useMemo(() => (role ? NAV_ITEMS[role] ?? [] : []), [role])
   const { countryFilter, setCountryFilter, canFilter } = useCountryFilter()
-  const { isCollapsed, isMobileOpen, toggleCollapse, closeMobile } = useSidebar()
+  const { isCollapsed, isPinned, isMobileOpen, toggleCollapse, setHovered, closeMobile } = useSidebar()
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * Expand on hover, collapse on leave.
+   *
+   * Expanding is immediate — any lag reads as the menu being broken. Collapsing
+   * waits a beat so that clipping the edge of the rail on the way to something
+   * else, or crossing the gap to a flyout, does not slam it shut mid-reach.
+   */
+  const onRailEnter = useCallback(() => {
+    if (hoverTimer.current) { clearTimeout(hoverTimer.current); hoverTimer.current = null }
+    setHovered(true)
+  }, [setHovered])
+
+  const onRailLeave = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setHovered(false), 220)
+  }, [setHovered])
+
+  useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current) }, [])
 
   const [query, setQuery] = useState('')
   const [isSearchFocused, setIsSearchFocused] = useState(false)
@@ -664,6 +684,8 @@ export default function Sidebar() {
       )}
 
       <aside
+        onMouseEnter={onRailEnter}
+        onMouseLeave={onRailLeave}
         className={cn(
           'fixed left-0 top-0 h-full bg-slate-900 flex flex-col z-40',
           'border-r border-slate-800',
@@ -672,6 +694,9 @@ export default function Sidebar() {
           isCollapsed && 'lg:w-16',
           isMobileOpen ? 'translate-x-0' : '-translate-x-full',
           'lg:translate-x-0',
+          // Hover-expanded the rail overhangs the page instead of reflowing it,
+          // so it needs a shadow to sit above the content rather than in it.
+          !isPinned && !isCollapsed && 'lg:shadow-2xl lg:shadow-black/40',
         )}
       >
         <button
@@ -988,23 +1013,37 @@ export default function Sidebar() {
           )}
         </nav>
 
+        {/*
+          This button pins rather than expands: the rail already opens on
+          hover, so the only thing left to decide is whether it should *stay*
+          open. Its state follows `isPinned`, not the hover-driven visual
+          state — otherwise it would read "Collapse" while merely hovered and
+          then pin the rail open when clicked.
+        */}
         <button
           onClick={toggleCollapse}
-          title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={isPinned ? 'Unpin — collapse to icons and expand on hover' : 'Keep the sidebar open'}
           className={cn(
             'hidden lg:flex items-center gap-2 border-t border-slate-800',
             'py-2.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800/50 transition-colors',
             isCollapsed ? 'justify-center px-2' : 'px-4',
           )}
         >
-          {isCollapsed
-            ? <ChevronRight className="w-4 h-4" />
-            : (
+          {isPinned
+            ? (
               <>
                 <ChevronLeft className="w-4 h-4" />
                 <span className="text-xs font-medium">Collapse</span>
               </>
             )
+            : isCollapsed
+              ? <ChevronRight className="w-4 h-4" />
+              : (
+                <>
+                  <ChevronRight className="w-4 h-4" />
+                  <span className="text-xs font-medium">Keep open</span>
+                </>
+              )
           }
         </button>
 
