@@ -67,6 +67,12 @@ interface Props {
   autoCreateTickets?: boolean
   /** Called after tickets are created, so the page can refresh its ticket list. */
   onTicketsCreated?: () => void
+  /**
+   * Called on every load with whether the Accounts costing sheet was found, so
+   * the page can offer a manual P&L upload when it wasn't. `null` while the
+   * answer is still unknown (loading, or the read failed).
+   */
+  onAvailability?: (available: boolean | null) => void
 }
 
 const money = (n: number, cur: string) =>
@@ -82,7 +88,7 @@ const SECTIONS: Array<[keyof Totals & keyof LineCounts, string, string]> = [
 ]
 
 export default function DetailedPnlPanel({
-  bookingRef, role, inline = false, autoCreateTickets = false, onTicketsCreated,
+  bookingRef, role, inline = false, autoCreateTickets = false, onTicketsCreated, onAvailability,
 }: Props) {
   const [data, setData]       = useState<Payload | null>(null)
   const [error, setError]     = useState<string | null>(null)
@@ -182,6 +188,13 @@ export default function DetailedPnlPanel({
   }
 
   const available = data?.available === true
+
+  // Report the outcome upwards. A failed read is not "no sheet" — it stays
+  // `null` so the page does not offer a manual upload over a DB outage.
+  useEffect(() => {
+    if (loading) return
+    onAvailability?.(error || !data ? null : available)
+  }, [loading, error, data, available, onAvailability])
 
   // Tickets are created from the costing sheet the moment it is on screen.
   useEffect(() => {

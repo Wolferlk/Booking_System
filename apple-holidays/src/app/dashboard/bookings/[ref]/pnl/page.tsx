@@ -24,6 +24,7 @@ import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { isCreditAgent } from '@/lib/utils'
 import DetailedPnlPanel from '@/components/bookings/detailed-pnl-panel'
+import ManualPnlUpload from '@/components/bookings/manual-pnl-upload'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 
@@ -39,6 +40,10 @@ export default function PNLPage() {
   const [isNumber, setIsNumber]     = useState<string | null>(null)
   const [cntlNumber, setCntlNumber] = useState<string | null>(null)
   const [loading, setLoading]       = useState(true)
+  const [pax, setPax]               = useState<{ adults: number; children: number }>({ adults: 0, children: 0 })
+  // null while unknown / unreadable — the manual upload only appears on a
+  // definite "the Accounts system has nothing for this booking".
+  const [sheetAvailable, setSheetAvailable] = useState<boolean | null>(null)
   const [syncingOneDrive, setSyncingOneDrive] = useState(false)
   const [syncResult, setSyncResult] = useState<{ found: boolean; message: string } | null>(null)
 
@@ -55,6 +60,18 @@ export default function PNLPage() {
         setBookingAgent(json.data.bookingAgent ?? null)
         setIsNumber(json.data.isNumber ?? null)
         setCntlNumber(json.data.cntlNumber ?? null)
+        setPax({ adults: json.data.paxAdults ?? 0, children: json.data.paxChildren ?? 0 })
+      } else {
+        // No stored P&L, so that endpoint carries no booking fields either —
+        // read the identifiers and pax counts off the booking itself.
+        const bRes  = await fetch(`/api/bookings/${ref}`)
+        const bJson = await bRes.json()
+        if (bJson.success && bJson.data) {
+          setBookingAgent(bJson.data.agent ?? null)
+          setIsNumber(bJson.data.isNumber ?? null)
+          setCntlNumber(bJson.data.cntlNumber ?? null)
+          setPax({ adults: bJson.data.paxAdults ?? 0, children: bJson.data.paxChildren ?? 0 })
+        }
       }
     } finally {
       setLoading(false)
@@ -170,7 +187,27 @@ export default function PNLPage() {
             IS number. This is what tickets are costed from — and they are
             created from it automatically as soon as the sheet loads. */}
         {canSeeSheet ? (
-          <DetailedPnlPanel bookingRef={ref} role={role} inline autoCreateTickets />
+          <>
+            <DetailedPnlPanel
+              bookingRef={ref}
+              role={role}
+              inline
+              autoCreateTickets
+              onAvailability={setSheetAvailable}
+            />
+
+            {/* No Accounts sheet for this booking — the P&L can still be
+                uploaded by hand here, and tickets created from it. */}
+            {sheetAvailable === false && (
+              <ManualPnlUpload
+                bookingRef={ref}
+                role={role}
+                paxAdults={pax.adults}
+                paxChildren={pax.children}
+                onChanged={loadMeta}
+              />
+            )}
+          </>
         ) : (
           <Card className="p-6">
             <p className="text-sm text-slate-600">
