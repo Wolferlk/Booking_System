@@ -29,6 +29,7 @@ import SectionNav from '@/components/bookings/section-nav'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import DriverLogPanel from '@/components/bookings/driver-log-panel'
+import PrecheckPanel from '@/components/bookings/precheck-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
@@ -2293,6 +2294,9 @@ Wishing you a wonderful trip! ✈️
             </CardBody>
           </Card>
         </div>
+
+        {/* Pre-checking — D-10 hotel reconfirmation for every stay above */}
+        <PrecheckPanel bookingRef={ref} />
 
         {/* Contact Information — Agent & Tourist */}
         {canViewClientDetails && (

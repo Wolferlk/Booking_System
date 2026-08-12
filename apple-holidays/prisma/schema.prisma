@@ -1576,3 +1576,206 @@ model QueryMonitorRun {
   @@index([status])
   @@map("query_monitor_runs")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-checking / D-10 Hotel Reconfirmation
+//
+// Every hotel stay on a booking has to be reconfirmed with the property ten
+// days before the guest checks in. These four tables are the whole feature and
+// are purely additive — no existing table gains or loses a column.
+//
+// Deliberately FK-free. Accommodations are deleted and re-created wholesale
+// whenever a booking is amended, so a cascading FK would silently destroy the
+// reconfirmation trail on every amendment. Instead a stay is addressed by its
+// `stayKey` (bookingRef + normalised hotel name + check-in date), which
+// survives amendments; `accommodationId` is a soft pointer re-resolved on read.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Where a hotel profile's details originally came from.
+enum HotelProfileSource {
+  ACCOUNTS // matched against invoice_processor.hotel_details
+  MANUAL   // typed in by staff
+  AI       // researched via OpenAI web search, then saved
+}
+
+/// Kind of contact channel held against a hotel.
+enum HotelContactKind {
+  PHONE
+  MOBILE
+  WHATSAPP
+  EMAIL
+  FAX
+}
+
+/// Reconfirmation state of one hotel stay.
+enum HotelConfirmStatus {
+  PENDING     // nobody has spoken to the hotel yet
+  IN_PROGRESS // contacted, waiting on the hotel's reply
+  CONFIRMED   // hotel confirmed the booking as stated
+  DISCREPANCY // hotel confirmed but something differs (rooms, meal, dates)
+  ISSUE       // hotel cannot honour the booking
+  CANCELLED   // stay dropped
+  NOT_REQUIRED // own arrangement / guest booked it themselves
+}
+
+/// Hotel master overlay owned by the booking system.
+///
+/// The Accounts system's `hotel_details` table is the shared master list and is
+/// strictly read-only from here. This table mirrors the identity of a matched
+/// hotel (`accountsHotelId`) and layers on the operational contact detail the
+/// master list does not carry — WhatsApp, reservation desks, verification.
+/// Hotels the master list has never heard of live here alone.
+model HotelProfile {
+  id               String             @id @default(cuid())
+  name             String
+  /// Lowercased, punctuation- and noise-word-stripped name. Unique join key.
+  normalizedName   String             @unique
+  countryCode      String             @default("LK") @db.VarChar(2)
+  city             String?
+  /// invoice_processor.hotel_details.id when this profile is matched to the
+  /// Accounts master list. Null for booking-system-only hotels.
+  accountsHotelId  Int?
+  accountsHotelName String?
+  address          String?            @db.Text
+  website          String?
+  /// Primary numbers, denormalised from `channels` for fast list rendering.
+  phone            String?
+  email            String?
+  whatsapp         String?
+  /// True once a human has confirmed the WhatsApp number actually reaches the
+  /// hotel. AI-derived and prefix-guessed numbers start false.
+  whatsappVerified Boolean            @default(false)
+  googleMapsUrl    String?            @db.Text
+  source           HotelProfileSource @default(MANUAL)
+  notes            String?            @db.Text
+  /// Raw payload of the last AI research run, kept for audit and re-review.
+  aiResearch       Json?
+  aiResearchedAt   DateTime?
+  verifiedAt       DateTime?
+  verifiedBy       String?
+  createdBy        String?
+  updatedBy        String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  channels         HotelContactChannel[]
+
+  @@index([name])
+  @@index([countryCode])
+  @@index([accountsHotelId])
+  @@map("hotel_profiles")
+}
+
+/// One reachable contact point for a hotel. A property may keep any number of
+/// them (front desk, reservations, GM mobile, group email…).
+model HotelContactChannel {
+  id         String           @id @default(cuid())
+  hotelId    String
+  kind       HotelContactKind @default(PHONE)
+  /// "Reservations", "Front Desk", "GM" — free text.
+  label      String?
+  /// As entered by staff / returned by AI.
+  value      String
+  /// E.164 where the value is a number and could be normalised.
+  e164       String?
+  isPrimary  Boolean          @default(false)
+  verified   Boolean          @default(false)
+  verifiedAt DateTime?
+  verifiedBy String?
+  /// Set when the number was inferred (e.g. a mobile prefix implying WhatsApp)
+  /// rather than confirmed by a person.
+  guessed    Boolean          @default(false)
+  notes      String?          @db.Text
+  createdBy  String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  hotel      HotelProfile     @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+
+  @@index([hotelId])
+  @@index([e164])
+  @@map("hotel_contact_channels")
+}
+
+/// The reconfirmation record for one hotel stay on one booking.
+///
+/// Rows are created lazily — the D-10 queue is derived from `accommodations`
+/// on read, and a row only materialises the first time somebody records
+/// something about the stay.
+model HotelReconfirmation {
+  id                  String             @id @default(cuid())
+  /// bookingRef + normalised hotel + check-in date. Stable across amendments.
+  stayKey             String             @unique
+  bookingRef          String
+  /// Soft pointer to accommodations.id — re-resolved on every read.
+  accommodationId     String?
+  hotelProfileId      String?
+  /// Hotel name as it appeared on the booking when the row was created.
+  hotelName           String
+  city                String?
+
+  // ── Stay detail. Defaults are seeded from the booking/accommodation, then
+  // become staff-editable because the TC document is frequently incomplete.
+  checkIn             DateTime
+  checkOut            DateTime
+  nights              Int                @default(0)
+  roomType            String?
+  roomCategory        String?
+  roomCount           Int?
+  mealType            String?
+  adults              Int?
+  children            Int?
+  /// Child With Bed / Child No Bed.
+  cwb                 Int?
+  cnb                 Int?
+  infants             Int?
+
+  // ── Reconfirmation outcome
+  status              HotelConfirmStatus @default(PENDING)
+  confirmationNumber  String?
+  /// Which channel the hotel was reached on last: WHATSAPP | CALL | EMAIL | PORTAL.
+  lastChannel         String?
+  attempts            Int                @default(0)
+  lastCheckedAt       DateTime?
+  lastCheckedBy       String?
+  /// Manual override of the automatic D-10 due date.
+  dueAtOverride       DateTime?
+  followUpAt          DateTime?
+  discrepancyNote     String?            @db.Text
+  notes               String?            @db.Text
+
+  createdBy           String?
+  updatedBy           String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  events              HotelReconfirmationEvent[]
+
+  @@index([bookingRef])
+  @@index([checkIn])
+  @@index([status])
+  @@index([hotelProfileId])
+  @@map("hotel_reconfirmations")
+}
+
+/// Append-only audit trail for a stay's reconfirmation. Never updated, never
+/// deleted — it is the evidence of who spoke to which hotel and when.
+model HotelReconfirmationEvent {
+  id           String              @id @default(cuid())
+  reconfirmId  String
+  /// created | status_change | checked | contacted | edited | linked | unlinked | ai_research
+  action       String
+  fromStatus   String?
+  toStatus     String?
+  channel      String?
+  note         String?             @db.Text
+  actorName    String?
+  actorEmail   String?
+  createdAt    DateTime            @default(now())
+
+  reconfirm    HotelReconfirmation @relation(fields: [reconfirmId], references: [id], onDelete: Cascade)
+
+  @@index([reconfirmId])
+  @@index([createdAt])
+  @@map("hotel_reconfirmation_events")
+}
