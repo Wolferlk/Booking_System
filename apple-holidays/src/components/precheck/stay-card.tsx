@@ -23,7 +23,7 @@ import {
 import Button from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { buildReconfirmMessage, whatsappLink } from '@/lib/hotel-contact'
-import type { PrecheckStay } from '@/lib/hotel-precheck'
+import type { PrecheckStay } from '@/lib/precheck-shared'
 import {
   DueRing, Field, HealthMeter, NoContactBadge, STATUS_META,
   STATUS_ORDER, StatusPill, UrgencyChip, fmtDay, fmtDayShort, fmtWhen,

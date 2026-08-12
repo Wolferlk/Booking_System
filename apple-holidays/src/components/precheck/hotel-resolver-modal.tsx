@@ -30,7 +30,7 @@ import Modal from '@/components/ui/modal'
 import Button from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ConfidenceBar, HealthMeter } from './precheck-ui'
-import type { PrecheckHotel, PrecheckStay } from '@/lib/hotel-precheck'
+import type { PrecheckHotel, PrecheckStay } from '@/lib/precheck-shared'
 
 type Tab = 'match' | 'details' | 'ai'
 

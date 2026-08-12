@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils'
 import StayCard from '@/components/precheck/stay-card'
 import HotelResolverModal from '@/components/precheck/hotel-resolver-modal'
 import { STATUS_META, STATUS_ORDER, URGENCY_META, fmtDay } from '@/components/precheck/precheck-ui'
-import type { PrecheckStay, QueueStats, Urgency } from '@/lib/hotel-precheck'
+import type { PrecheckStay, QueueStats, Urgency } from '@/lib/precheck-shared'
 
 const COUNTRIES = [
   { value: '',                   label: 'All countries' },

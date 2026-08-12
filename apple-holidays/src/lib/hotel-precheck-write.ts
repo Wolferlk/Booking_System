@@ -16,7 +16,7 @@
 import type { HotelConfirmStatus, HotelContactKind, HotelProfileSource, Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 import { normalizeHotelName } from './hotel-match'
-import { buildStayKey, daysBetween } from './hotel-precheck'
+import { buildStayKey, daysBetween } from './precheck-shared'
 import { normalizePhone } from './hotel-contact'
 
 export interface Actor {
