@@ -314,7 +314,7 @@ export default function HotelResolverModal({
 
   // ── AI research ────────────────────────────────────────────────────────────
 
-  const runAi = useCallback(async () => {
+  const runAi = useCallback(async (): Promise<AiResult | null> => {
     setAiLoading(true)
     setAi(null)
     try {
@@ -330,15 +330,18 @@ export default function HotelResolverModal({
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      setAi(json.data as AiResult)
+      const result = json.data as AiResult
+      setAi(result)
+      return result
     } catch (e) {
       toast.error((e as Error).message)
+      return null
     } finally {
       setAiLoading(false)
     }
   }, [draft.name, draft.city, draft.countryCode, stay])
 
-  /** Pull one AI-suggested field into the draft without saving. */
+  /** Overwrite every field the AI has an answer for, keeping the rest. */
   const applyAiAll = useCallback(() => {
     if (!ai) return
     setDraft(d => ({
@@ -357,6 +360,56 @@ export default function HotelResolverModal({
     setTab('details')
     toast.success('Suggestions copied into the form — review, then save')
   }, [ai])
+
+  /**
+   * Fill in the blanks on the Details form from a web lookup.
+   *
+   * The common case this exists for: a hotel matched cleanly against the
+   * Accounts master list, but that list is a *payables* register — it carries
+   * bank and payment-day data and frequently has no phone number at all. The
+   * match is right; the contact details are simply missing.
+   *
+   * So this only writes to fields that are currently empty. Anything a person
+   * already typed, or that came off the master row, is left exactly as it is —
+   * a web scrape must never quietly overwrite a number staff have verified.
+   */
+  const fillMissingFromAi = useCallback(async () => {
+    const result = await runAi()
+    if (!result) return
+
+    const filled: string[] = []
+    setDraft(d => {
+      const next = { ...d }
+      const fill = (key: keyof Draft, value: string | null | undefined, label: string) => {
+        if (!value) return
+        if (String(next[key] ?? '').trim() !== '') return
+        ;(next as Record<string, unknown>)[key] = value
+        filled.push(label)
+      }
+
+      fill('phone', result.phones[0]?.e164 || result.phones[0]?.value, 'phone')
+      fill('whatsapp', result.whatsapp, 'WhatsApp')
+      fill('email', result.email, 'email')
+      fill('website', result.website, 'website')
+      fill('address', result.address, 'address')
+      fill('city', result.city, 'city')
+      fill('googleMapsUrl', result.googleMapsUrl, 'map link')
+      return next
+    })
+
+    if (filled.length === 0) {
+      toast.info(
+        result.phones.length === 0 && !result.email
+          ? 'The lookup found no contact details for this hotel — check the AI Find tab.'
+          : 'Nothing was missing — see the AI Find tab to compare and overwrite.',
+      )
+      return
+    }
+    toast.success(`Filled ${filled.join(', ')} — review, then Save hotel`)
+  }, [runAi])
+
+  /** True when a linked hotel has no way to reach it — what the AI button is for. */
+  const missingContacts = !draft.phone.trim() && !draft.whatsapp.trim() && !draft.email.trim()
 
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft(d => ({ ...d, [k]: v }))
 
@@ -467,6 +520,27 @@ export default function HotelResolverModal({
         {/* ── DETAILS ───────────────────────────────────────────────────── */}
         {tab === 'details' && (
           <div className="space-y-4">
+            {/*
+              The Accounts master list is a payables register — it holds bank
+              and payment-day data, and very often no phone number. A hotel can
+              therefore be matched perfectly and still be unreachable, so the
+              gap is called out here with the one-click fix beside it.
+            */}
+            {missingContacts && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <Info className="w-4 h-4 flex-shrink-0 text-amber-600" />
+                <p className="flex-1 min-w-[12rem] text-xs text-amber-800">
+                  {hotel?.accountsHotelId
+                    ? <>Matched to the Accounts master list, but it holds no phone, WhatsApp or email for this hotel.</>
+                    : <>No way to reach this hotel yet — no phone, WhatsApp or email.</>}
+                </p>
+                <Button size="sm" loading={aiLoading} onClick={() => void fillMissingFromAi()}
+                        icon={<Sparkles className="w-3.5 h-3.5" />}>
+                  Find details with AI
+                </Button>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Input label="Hotel name" value={draft.name} onChange={v => set('name', v)} required />
               <Input label="City" value={draft.city} onChange={v => set('city', v)} />
@@ -493,8 +567,30 @@ export default function HotelResolverModal({
               I have confirmed this WhatsApp number reaches the hotel
             </label>
 
-            <div className="flex justify-end">
-              <Button size="sm" loading={saving} onClick={() => void saveProfile(hotel ? (hotel.source as 'MANUAL') : 'MANUAL')}>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {ai && (
+                <button
+                  onClick={() => setTab('ai')}
+                  className="mr-auto inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 hover:text-violet-800"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  {ai.sources.length > 0 ? `${ai.sources.length} source${ai.sources.length > 1 ? 's' : ''} · ` : ''}
+                  see the full AI result
+                </button>
+              )}
+              {/*
+                Available whether or not anything is missing — a hotel that has
+                only a landline still wants its WhatsApp number found. When
+                fields are already filled the lookup leaves them alone and the
+                AI Find tab is where they can be compared and overwritten.
+              */}
+              <Button size="sm" variant="secondary" loading={aiLoading}
+                      onClick={() => void fillMissingFromAi()}
+                      icon={<Sparkles className="w-3.5 h-3.5" />}
+                      title="Search the web and fill any field that is still blank">
+                Find details with AI
+              </Button>
+              <Button size="sm" loading={saving} onClick={() => void saveProfile(ai ? 'AI' : hotel ? (hotel.source as 'MANUAL') : 'MANUAL')}>
                 {hotel ? 'Save hotel' : 'Create & link hotel'}
               </Button>
             </div>
