@@ -15,9 +15,13 @@
  * from drifting. It is server-built from database values and escaped at every
  * interpolation (render.ts::esc), and no user input reaches it.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import { toast } from 'sonner'
-import { Loader2, RefreshCw, X, Table2, Ticket, Maximize2 } from 'lucide-react'
+import {
+  Loader2, RefreshCw, X, Table2, Ticket, Maximize2,
+  ChevronDown, ChevronRight, CheckCircle2, ArrowRight, Sparkles,
+} from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -53,6 +57,14 @@ type Payload =
 interface Props {
   bookingRef: string
   role: UserRole
+  /** Render the costing sheet expanded inside the card, not only in the modal. */
+  inline?: boolean
+  /**
+   * Create tickets for costing lines that have none as soon as the sheet loads.
+   * Purely additive: the endpoint skips lines that already have a ticket and
+   * never modifies a ticket that has left DRAFT.
+   */
+  autoCreateTickets?: boolean
   /** Called after tickets are created, so the page can refresh its ticket list. */
   onTicketsCreated?: () => void
 }
@@ -69,12 +81,22 @@ const SECTIONS: Array<[keyof Totals & keyof LineCounts, string, string]> = [
   ['others',    'Others',         '#eb6834'],
 ]
 
-export default function DetailedPnlPanel({ bookingRef, role, onTicketsCreated }: Props) {
+export default function DetailedPnlPanel({
+  bookingRef, role, inline = false, autoCreateTickets = false, onTicketsCreated,
+}: Props) {
   const [data, setData]       = useState<Payload | null>(null)
   const [error, setError]     = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [open, setOpen]       = useState(false)
   const [creating, setCreating] = useState(false)
+  const [resyncing, setResyncing] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(inline)
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [lastSync, setLastSync] = useState<{ created: number; updated: number; skipped: number } | null>(null)
+  const [ticketCount, setTicketCount] = useState<number | null>(null)
+
+  // Auto-create fires once per booking, never on every re-render or refresh.
+  const autoRan = useRef<string | null>(null)
 
   const canCreateTickets = ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
@@ -94,7 +116,16 @@ export default function DetailedPnlPanel({ bookingRef, role, onTicketsCreated }:
     }
   }, [bookingRef])
 
-  useEffect(() => { load() }, [load])
+  // Informational only — how many tickets the booking already carries.
+  const loadTicketCount = useCallback(async () => {
+    try {
+      const res  = await fetch(`/api/tickets?bookingRef=${bookingRef}`)
+      const json = await res.json()
+      if (json.success && Array.isArray(json.data)) setTicketCount(json.data.length)
+    } catch { /* best effort */ }
+  }, [bookingRef])
+
+  useEffect(() => { load(); loadTicketCount() }, [load, loadTicketCount])
 
   // Escape closes the full-screen sheet, and the page behind it must not scroll
   // while it is open.
@@ -109,25 +140,64 @@ export default function DetailedPnlPanel({ bookingRef, role, onTicketsCreated }:
     }
   }, [open])
 
+  /**
+   * One call path for every ticket creation on this panel — the manual button,
+   * the re-sync button and the automatic run on load. `resync` refreshes DRAFT
+   * tickets from the latest costing; without it only missing lines are created.
+   */
+  const runCreate = useCallback(async (opts: { resync?: boolean; silent?: boolean } = {}) => {
+    const { resync = false, silent = false } = opts
+    const res  = await fetch(
+      `/api/bookings/${bookingRef}/ext-pnl/create-tickets${resync ? '?resync=true' : ''}`,
+      { method: 'POST' },
+    )
+    const json = await res.json()
+    if (!json.success) throw new Error(json.error || 'Failed to create tickets')
+    const result = json.data as { created: number; updated: number; skipped: number }
+    setLastSync(result)
+    if (result.created > 0 || result.updated > 0) {
+      await loadTicketCount()
+      onTicketsCreated?.()
+      if (!silent) toast.success(json.message ?? `${result.created} ticket${result.created !== 1 ? 's' : ''} created`)
+    } else if (!silent) {
+      toast.info(`Every costing line already has a ticket (${result.skipped} skipped)`)
+    }
+    return result
+  }, [bookingRef, loadTicketCount, onTicketsCreated])
+
   async function createTickets() {
     if (!canCreateTickets) return
     setCreating(true)
-    try {
-      const res  = await fetch(`/api/bookings/${bookingRef}/ext-pnl/create-tickets`, { method: 'POST' })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      const { created, skipped } = json.data as { created: number; skipped: number }
-      if (created > 0) toast.success(`${created} ticket${created !== 1 ? 's' : ''} created from the Detailed P&L`)
-      else             toast.info(`Every costing line already has a ticket (${skipped} skipped)`)
-      onTicketsCreated?.()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create tickets')
-    } finally {
-      setCreating(false)
-    }
+    try { await runCreate() }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to create tickets') }
+    finally { setCreating(false) }
+  }
+
+  async function resyncTickets() {
+    if (!canCreateTickets) return
+    setResyncing(true)
+    try { await runCreate({ resync: true }) }
+    catch (err) { toast.error(err instanceof Error ? err.message : 'Re-sync failed') }
+    finally { setResyncing(false) }
   }
 
   const available = data?.available === true
+
+  // Tickets are created from the costing sheet the moment it is on screen.
+  useEffect(() => {
+    if (!autoCreateTickets || !available || !canCreateTickets) return
+    if (autoRan.current === bookingRef) return
+    autoRan.current = bookingRef
+    setAutoRunning(true)
+    runCreate({ silent: true })
+      .then(r => {
+        if (r.created > 0) {
+          toast.success(`${r.created} ticket${r.created !== 1 ? 's' : ''} auto-created from the Detailed P&L`)
+        }
+      })
+      .catch(err => toast.error(err instanceof Error ? err.message : 'Auto ticket creation failed'))
+      .finally(() => setAutoRunning(false))
+  }, [autoCreateTickets, available, canCreateTickets, bookingRef, runCreate])
   const totalLines = available
     ? Object.values((data as Extract<Payload, { available: true }>).lineCounts).reduce((a, b) => a + b, 0)
     : 0
@@ -158,9 +228,15 @@ export default function DetailedPnlPanel({ bookingRef, role, onTicketsCreated }:
                 Refresh
               </Button>
               {available && (
-                <Button size="sm" onClick={() => setOpen(true)}>
-                  <Maximize2 className="w-3.5 h-3.5" /> View costing sheet
-                </Button>
+                <>
+                  <Button variant="secondary" size="sm" onClick={() => setSheetOpen(o => !o)}>
+                    {sheetOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    {sheetOpen ? 'Collapse sheet' : 'Expand sheet'}
+                  </Button>
+                  <Button size="sm" onClick={() => setOpen(true)}>
+                    <Maximize2 className="w-3.5 h-3.5" /> Full screen
+                  </Button>
+                </>
               )}
             </div>
           </div>
@@ -225,12 +301,79 @@ export default function DetailedPnlPanel({ bookingRef, role, onTicketsCreated }:
                   </div>
 
                   {canCreateTickets && (
-                    <Button size="sm" onClick={createTickets} disabled={creating}>
-                      {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ticket className="w-3.5 h-3.5" />}
-                      Create tickets ({totalLines} lines)
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="secondary" onClick={resyncTickets} disabled={resyncing || creating}>
+                        {resyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Re-sync drafts
+                      </Button>
+                      <Button size="sm" onClick={createTickets} disabled={creating || resyncing}>
+                        {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ticket className="w-3.5 h-3.5" />}
+                        Create tickets ({totalLines} lines)
+                      </Button>
+                    </div>
                   )}
                 </div>
+
+                {/* What this sheet has already turned into, on the tickets page */}
+                {canCreateTickets && (
+                  <div className="flex items-center justify-between gap-3 flex-wrap rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-2.5">
+                    <div className="flex items-center gap-2 text-sm text-slate-700 min-w-0">
+                      {autoRunning ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+                          <span>Creating tickets from this costing sheet…</span>
+                        </>
+                      ) : lastSync ? (
+                        <>
+                          {lastSync.created > 0
+                            ? <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                            : <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />}
+                          <span className="truncate">
+                            {lastSync.created > 0
+                              ? `${lastSync.created} ticket${lastSync.created !== 1 ? 's' : ''} created from this sheet`
+                              : 'Every costing line already has a ticket'}
+                            {lastSync.updated > 0 && ` · ${lastSync.updated} draft${lastSync.updated !== 1 ? 's' : ''} updated`}
+                            {lastSync.skipped > 0 && ` · ${lastSync.skipped} skipped`}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Ticket className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>{totalLines} purchasable line{totalLines === 1 ? '' : 's'} on this sheet</span>
+                        </>
+                      )}
+                      {ticketCount != null && (
+                        <Badge color="blue">{ticketCount} ticket{ticketCount === 1 ? '' : 's'} on booking</Badge>
+                      )}
+                    </div>
+                    <Link
+                      href={`/dashboard/bookings/${bookingRef}/tickets`}
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+                    >
+                      Open tickets <ArrowRight className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                )}
+
+                {/* The costing sheet itself, expanded in place */}
+                {sheetOpen && (
+                  <div className="rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 px-4 py-2 bg-slate-50 border-b border-slate-200">
+                      <span className="text-xs font-semibold text-slate-600">
+                        Costing sheet · matched on {d.source.matchedBy.replace(/_/g, ' ')}
+                      </span>
+                      <button
+                        onClick={() => setOpen(true)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-slate-800"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" /> Full screen
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto px-4 py-3">
+                      <div className="dtp-root" dangerouslySetInnerHTML={{ __html: d.html }} />
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })()}
