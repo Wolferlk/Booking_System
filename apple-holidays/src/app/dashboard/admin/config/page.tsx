@@ -8,6 +8,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import AiUsageMonitor from '@/components/settings/ai-usage-monitor'
+import LastMinuteAlertSettings from '@/components/settings/last-minute-alert-settings'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
@@ -601,6 +602,9 @@ export default function ConfigPage() {
             </div>
           </CardBody>
         </Card>
+
+        {/* ── Last-minute booking alerts (per browser) ── */}
+        <LastMinuteAlertSettings />
 
         {/* ── Automation Settings ── */}
         <Card>
