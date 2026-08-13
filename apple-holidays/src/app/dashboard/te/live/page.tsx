@@ -164,7 +164,16 @@ function BookingsOverview() {
             <Link
               href={`/print/te/range?from=${rangeInfo.start.slice(0,10)}&to=${rangeInfo.end.slice(0,10)}`}
               target="_blank"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 text-white text-xs font-medium hover:bg-slate-900 transition-colors"
+              aria-disabled={loading || filtered.length === 0}
+              tabIndex={loading || filtered.length === 0 ? -1 : undefined}
+              onClick={e => {
+                if (loading || filtered.length === 0) e.preventDefault()
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                loading || filtered.length === 0
+                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed pointer-events-none'
+                  : 'bg-slate-800 text-white hover:bg-slate-900'
+              }`}
             >
               <Printer className="w-3.5 h-3.5" /> Print / Export PDF
             </Link>

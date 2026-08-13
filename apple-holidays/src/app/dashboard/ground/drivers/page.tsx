@@ -15,7 +15,7 @@ import {
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
 
@@ -32,6 +32,16 @@ interface Vehicle {
 interface DriverPayment {
   id: string; amount: number; type: string; description: string | null;
   refNumber: string | null; createdAt: string; paidBy: { name: string }
+}
+const MAX_DRIVER_PAYMENT_AMOUNT = 99_999_999.99
+
+function getPaymentAmountError(value: string): string {
+  const amount = value.trim()
+  if (!/^\d+(?:\.\d{1,2})?$/.test(amount)) return 'This field is required.'
+  const numericAmount = Number(amount)
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) return 'Amount must be greater than 0'
+  if (numericAmount > MAX_DRIVER_PAYMENT_AMOUNT) return 'Amount cannot exceed 99,999,999.99'
+  return ''
 }
 interface Driver {
   id: string; name: string; phone: string; email: string | null
@@ -185,6 +195,7 @@ export default function DriversPage() {
   const [uploadingPhoto, setUploadingPhoto] = useState<string | null>(null)
   const [payForm, setPayForm]         = useState({ amount: '', type: 'ADVANCE', description: '', refNumber: '' })
   const [saving, setSaving]           = useState(false)
+  const paymentAmountError = getPaymentAmountError(payForm.amount)
   const [lightbox, setLightbox]       = useState<{ url: string; label: string } | null>(null)
 
   // ── Data loading ───────────────────────────────────────────────────────────
@@ -419,7 +430,8 @@ export default function DriversPage() {
   }
 
   async function addPayment(driverId: string) {
-    if (!payForm.amount || !payForm.type) return
+    const amountError = getPaymentAmountError(payForm.amount)
+    if (amountError || !payForm.type) { toast.error(amountError || 'Select a payment type'); return }
     setSaving(true)
     try {
       const res  = await fetch(`/api/ground/drivers/${driverId}/payments`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payForm) })
@@ -648,9 +660,15 @@ export default function DriversPage() {
                         {/* Actions */}
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <button onClick={() => openEdit(driver)} className="btn-ghost btn btn-sm"><Edit2 className="w-4 h-4" /></button>
+                          {/* Payment action temporarily disabled while payment processing is under review.
+
                           <button onClick={() => { setShowPayModal(driver.id); setPayForm({ amount: '', type: 'ADVANCE', description: '', refNumber: '' }) }} className="btn-secondary btn btn-sm">
+
                             <DollarSign className="w-4 h-4" /> Payment
+
                           </button>
+
+                          */}
                           {canDelete && (
                             <button onClick={() => deleteDriver(driver.id)} className="btn-ghost btn btn-sm text-red-500 hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
                           )}
@@ -1162,7 +1180,8 @@ export default function DriversPage() {
           </div>
           <div>
             <label className="form-label">Amount (USD) *</label>
-            <input type="number" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} className="form-input" placeholder="0.00" min="0" step="0.01" />
+            <input type="number" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} className={cn('form-input', paymentAmountError && payForm.amount ? 'border-red-400 focus:border-red-400' : '')} placeholder="0.00" min="0.01" max="99999999.99" step="0.01" required aria-invalid={!!paymentAmountError} />
+            {paymentAmountError && <p className="mt-1 text-xs text-red-600">{paymentAmountError}</p>}
           </div>
           <div>
             <label className="form-label">Reference Number</label>
@@ -1173,7 +1192,7 @@ export default function DriversPage() {
             <input value={payForm.description} onChange={e => setPayForm(f => ({ ...f, description: e.target.value }))} className="form-input" placeholder="e.g. Monthly advance for June" />
           </div>
           <div className="flex gap-3">
-            <button onClick={() => addPayment(showPayModal!)} disabled={saving || !payForm.amount} className="btn-primary btn flex-1">
+            <button onClick={() => addPayment(showPayModal!)} disabled={saving || !!paymentAmountError} className="btn-primary btn flex-1">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" />}
               Record Payment
             </button>
