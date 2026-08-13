@@ -29,6 +29,7 @@ export default function ConfigTab({
       <ScheduleCard config={config} onConfigChange={onConfigChange} />
       <SheetCard config={config} onConfigChange={onConfigChange} onSheetChange={onSheetChange} />
       <DuplicatesCard config={config} onConfigChange={onConfigChange} />
+      <WorkbookExtrasCard config={config} />
       <ExclusionCard config={config} onConfigChange={onConfigChange} />
       <MailboxesCard />
       <SenderRulesCard />
@@ -136,6 +137,18 @@ function ScheduleCard({
           label="Mirror to the backup workbook"
           description="Every append and rewrite goes to the standby copy in the same sweep."
         />
+        <Toggle
+          checked={draft.highlightReplied}
+          onChange={v => save({ highlightReplied: v })}
+          label="Turn answered rows green"
+          description="A query's row is filled green once a reply is found. Only the columns this app owns are coloured; switching it off clears them again on the next write."
+        />
+        <Toggle
+          checked={draft.dailyStatsAutoWrite}
+          onChange={v => save({ dailyStatsAutoWrite: v })}
+          label="Rewrite the daily mail counts each sweep"
+          description={`Refreshes the "${draft.dailyStatsSheetName}" tab — mail per day per address, useful against other.`}
+        />
 
         <div className="grid grid-cols-2 gap-3 md:col-span-2">
           <Field label="Sweep every (minutes)" hint="60 = hourly. Minimum 5.">
@@ -168,6 +181,24 @@ function ScheduleCard({
               value={draft.replyChaseDays}
               onChange={e => setDraft({ ...draft, replyChaseDays: Number(e.target.value) })}
               onBlur={() => save({ replyChaseDays: draft.replyChaseDays })}
+            />
+          </Field>
+          <Field label="Daily counts tab" hint="Rewritten in full each time — nothing on it is hand-edited.">
+            <input
+              className={inputCls}
+              value={draft.dailyStatsSheetName}
+              onChange={e => setDraft({ ...draft, dailyStatsSheetName: e.target.value })}
+              onBlur={() => draft.dailyStatsSheetName.trim()
+                && draft.dailyStatsSheetName !== config?.dailyStatsSheetName
+                && save({ dailyStatsSheetName: draft.dailyStatsSheetName })}
+            />
+          </Field>
+          <Field label="Daily counts cover (days)" hint="Newest first. Capped at 180 — the tab is rewritten whole each time.">
+            <input
+              type="number" min={1} max={180} className={inputCls}
+              value={draft.dailyStatsDays}
+              onChange={e => setDraft({ ...draft, dailyStatsDays: Number(e.target.value) })}
+              onBlur={() => save({ dailyStatsDays: draft.dailyStatsDays })}
             />
           </Field>
         </div>
@@ -688,6 +719,94 @@ function DuplicatesCard({
   )
 }
 
+// ── The two tabs the app owns outright ───────────────────────────────────────
+
+/**
+ * Actions on the parts of the workbook nobody hand-edits: the daily counts tab,
+ * which is rewritten whole, and the green fill on answered rows.
+ *
+ * The recolour button exists because a sweep only paints rows it is already
+ * writing. Every query answered before the highlight was switched on is sitting
+ * on the sheet in white, and nothing would ever come back to it.
+ */
+function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
+  const [writing, setWriting] = useState(false)
+  const [painting, setPainting] = useState(false)
+
+  async function writeDailyStats() {
+    setWriting(true)
+    try {
+      const res = await fetch('/api/query-monitor/daily-stats', { method: 'POST' })
+      const d   = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Daily counts written', { duration: 8000 })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not write the daily counts tab')
+    } finally { setWriting(false) }
+  }
+
+  async function recolour() {
+    setPainting(true)
+    try {
+      const res = await fetch('/api/query-monitor/highlight?target=both', { method: 'POST' })
+      const d   = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'Rows recoloured', { duration: 8000 })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not recolour the rows')
+    } finally { setPainting(false) }
+  }
+
+  return (
+    <Card
+      icon={<Wrench className="w-4 h-4" />}
+      title="Daily counts & row colour"
+      description="The parts of the workbook this app owns outright — nothing on them is hand-edited"
+    >
+      <div className="space-y-3">
+        <div className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-slate-700">
+              Rewrite “{config?.dailyStatsSheetName ?? 'Daily Mail Stats'}” now
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Mail per day per address over the last {config?.dailyStatsDays ?? 30} days, split into what
+              became a query and what did not, with live Excel charts. The tab is cleared and laid out
+              again each time — it happens automatically after every sweep unless that is switched off.
+            </p>
+          </div>
+          <button
+            onClick={writeDailyStats} disabled={writing}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50"
+          >
+            {writing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Table2 className="w-4 h-4" />}
+            Write daily counts
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-slate-700">Recolour answered rows</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              A sweep only paints the rows it is already writing, so queries answered before the
+              highlight was turned on are still white. This walks the rows already in both workbooks
+              and brings their colour up to date. It writes no values — only cell fills — and is capped
+              per press, so press it again if it says there are more to do.
+            </p>
+          </div>
+          <button
+            onClick={recolour} disabled={painting}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {painting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            Recolour replied rows
+          </button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 // ── Mail that is not a query ─────────────────────────────────────────────────
 
 /**
@@ -923,6 +1042,21 @@ function MailboxesCard() {
                 className="flex-1 min-w-[14rem] px-2 py-1 rounded border border-slate-200 text-sm text-slate-600"
               />
 
+              {/* A group is not a mailbox: Graph cannot open it, so its mail is
+                  recognised on the TO/CC line of what its members receive. */}
+              <button
+                onClick={() => patch(mailbox.id, { mailboxKind: mailbox.mailboxKind === 'ALIAS' ? 'USER' : 'ALIAS' })}
+                disabled={busy === mailbox.id}
+                title={mailbox.mailboxKind === 'ALIAS'
+                  ? 'Distribution group — counted from the TO/CC line of mail its members receive, never read directly. Click to treat it as a real mailbox.'
+                  : 'Read directly from Graph. Click if this address is a distribution group with no mailbox behind it.'}
+                className={cn('px-2 py-1 rounded text-[11px] font-semibold whitespace-nowrap',
+                  mailbox.mailboxKind === 'ALIAS'
+                    ? 'text-violet-700 bg-violet-50 hover:bg-violet-100'
+                    : 'text-slate-500 bg-slate-100 hover:bg-slate-200')}>
+                {mailbox.mailboxKind === 'ALIAS' ? 'Group' : 'Mailbox'}
+              </button>
+
               <span className="text-[11px] text-slate-400 whitespace-nowrap">
                 {mailbox.lastCheckedAt ? `checked ${formatDateTime(mailbox.lastCheckedAt)}` : 'never checked'}
                 {mailbox.totalSeen > 0 ? ` · ${mailbox.totalSeen.toLocaleString()} seen` : ''}
@@ -943,6 +1077,23 @@ function MailboxesCard() {
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
+
+              {mailbox.mailboxKind === 'ALIAS' && (
+                <div className="w-full flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] text-violet-700 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 flex-shrink-0" />
+                    Counted from TO/CC — a mail sent only to this group, with nobody monitored on it, is not visible.
+                  </span>
+                  <input
+                    defaultValue={mailbox.aliasAddresses}
+                    onBlur={e => e.target.value !== mailbox.aliasAddresses
+                      && patch(mailbox.id, { aliasAddresses: e.target.value })}
+                    placeholder="Other addresses for the same group, comma-separated"
+                    title="The same list is often written under a second domain — every address here counts as this group."
+                    className="flex-1 min-w-[16rem] px-2 py-1 rounded border border-violet-200 bg-violet-50/40 text-[11px] text-slate-600"
+                  />
+                </div>
+              )}
 
               {mailbox.lastError && (
                 <p className="w-full text-[11px] text-rose-700 flex items-start gap-1.5">

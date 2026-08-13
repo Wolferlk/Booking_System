@@ -58,15 +58,26 @@ export async function POST(req: NextRequest) {
     return buildApiError('Interval must be at least 5 minutes — Graph throttles tighter loops')
   }
 
-  // The two tabs must stay distinct, or excluded mail would be appended to the
-  // query sheet in a nine-column layout and wreck it.
-  if (body.excludedSheetName !== undefined || body.sheetName !== undefined) {
-    const current  = await getConfig()
-    const query    = String(body.sheetName ?? current.sheetName).trim().toLowerCase()
-    const excluded = String(body.excludedSheetName ?? current.excludedSheetName).trim().toLowerCase()
-    if (!excluded) return buildApiError('The other-mail tab needs a name')
-    if (query === excluded) {
-      return buildApiError('The other-mail tab must be a different tab from the query sheet')
+  // The four tabs must stay distinct. Two of them are appended to and two are
+  // cleared and rewritten whole, so a collision is not a cosmetic problem: it
+  // would either lay a nine-column row into the query sheet or wipe it.
+  const TAB_FIELDS = [
+    ['sheetName',           'the query sheet'],
+    ['excludedSheetName',   'the other-mail tab'],
+    ['aiUsageSheetName',    'the AI usage tab'],
+    ['dailyStatsSheetName', 'the daily mail counts tab'],
+  ] as const
+
+  if (TAB_FIELDS.some(([field]) => body[field] !== undefined)) {
+    const current = await getConfig()
+    const seen = new Map<string, string>()
+    for (const [field, label] of TAB_FIELDS) {
+      const name = String(body[field] ?? current[field]).trim()
+      if (!name) return buildApiError(`${label[0].toUpperCase()}${label.slice(1)} needs a name`)
+      const key = name.toLowerCase()
+      const clash = seen.get(key)
+      if (clash) return buildApiError(`${label} must be a different tab from ${clash}`)
+      seen.set(key, label)
     }
   }
 

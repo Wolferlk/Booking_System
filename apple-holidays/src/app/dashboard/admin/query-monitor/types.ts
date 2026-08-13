@@ -69,6 +69,10 @@ export interface QmMailbox {
   id:            string
   email:         string
   displayName:   string
+  /** ALIAS = a distribution group, counted off the TO/CC line of members' mail. */
+  mailboxKind:   'USER' | 'ALIAS'
+  /** Further addresses that mean the same group, comma-separated. */
+  aliasAddresses: string
   isActive:      boolean
   sortOrder:     number
   lastCheckedAt: string | null
@@ -115,11 +119,48 @@ export interface QmConfig {
   excludedSheetName: string
   /** Tab the OpenAI spend report is rewritten onto. */
   aiUsageSheetName:  string
+  /** Tab the daily mail counts are rewritten onto. */
+  dailyStatsSheetName: string
+  /** How many days back those counts cover. */
+  dailyStatsDays:      number
+  /** Rewrite the counts at the end of every sweep. */
+  dailyStatsAutoWrite: boolean
+  /** Turn an answered query's row green in the workbook. */
+  highlightReplied:    boolean
   /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
   startDate:         string
   backupEnabled:     boolean
   backupSheetUrl:    string
   lastRunAt:         string | null
+}
+
+/** One address on one day — see src/lib/query-monitor/daily-stats.ts. */
+export interface QmDailyCount {
+  day:            string
+  mailboxId:      string
+  mailbox:        string
+  isAlias:        boolean
+  total:          number
+  useful:         number
+  other:          number
+  replied:        number
+  awaiting:       number
+  answeredByThem: number
+}
+
+export interface QmDailyStats {
+  generatedAt: string
+  timezone:    string
+  days:        number
+  from:        string
+  to:          string
+  daily:       { day: string; total: number; useful: number; other: number; replied: number; awaiting: number; queries: number }[]
+  perMailbox:  QmDailyCount[]
+  summary:     {
+    mailboxId: string; mailbox: string; isAlias: boolean; isActive: boolean
+    total: number; useful: number; other: number; replied: number; awaiting: number; answeredByThem: number
+  }[]
+  totals:      { total: number; useful: number; other: number; replied: number; awaiting: number; queries: number }
 }
 
 export interface QmRun {

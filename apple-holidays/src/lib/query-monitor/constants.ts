@@ -58,6 +58,14 @@ export const SETTINGS = {
   excludedSheetName:  'query_monitor_excluded_sheet_name',
   /** Worksheet tab the OpenAI spend report is rewritten onto. */
   aiUsageSheetName:   'query_monitor_ai_usage_sheet_name',
+  /** Worksheet tab the daily mail counts are rewritten onto. */
+  dailyStatsSheetName: 'query_monitor_daily_stats_sheet_name',
+  /** How many days the daily counts cover, newest first. */
+  dailyStatsDays:     'query_monitor_daily_stats_days',
+  /** Rewrite the daily counts tab at the end of every sweep. */
+  dailyStatsAutoWrite: 'query_monitor_daily_stats_auto_write',
+  /** Paint a query's row green once it has been answered. */
+  highlightReplied:   'query_monitor_highlight_replied',
   /** `YYYY-MM-DD` — mail received before this never reaches either workbook. */
   startDate:          'query_monitor_start_date',
   /** Mirror every append and rewrite into a second, standby workbook. */
@@ -142,6 +150,10 @@ export const DEFAULTS = {
   excludePatterns:   DEFAULT_EXCLUDE_PATTERNS,
   excludedSheetName: 'Other Mails',
   aiUsageSheetName:  'AI Usage',
+  dailyStatsSheetName: 'Daily Mail Stats',
+  dailyStatsDays:      '30',
+  dailyStatsAutoWrite: 'true',
+  highlightReplied:    'true',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
   backupSheetUrl:    BACKUP_SHEET_URL,
@@ -243,6 +255,49 @@ export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   'General',              // K AI Summary
 ] as const
 
+// ── Replied-row highlight ────────────────────────────────────────────────────
+
+/**
+ * The fill painted across a query's row once it has been answered.
+ *
+ * `#C6EFCE` deliberately: it is the green of Excel's own "Good" cell style, so a
+ * row this system colours and a row someone colours by hand from the ribbon look
+ * identical. Only the layout's own columns are painted — the team's lists to the
+ * right of the layout are never touched.
+ */
+export const REPLIED_ROW_FILL = '#C6EFCE'
+
+// ── Third tab: daily mail counts ─────────────────────────────────────────────
+
+/**
+ * The "Daily Mail Stats" tab: how much mail reached each monitored address on
+ * each day, split into the mail that became a query and the mail that did not.
+ *
+ * Like the AI Usage tab and unlike the two query tabs, this one is entirely the
+ * app's: nothing on it is hand-edited, so every export clears it and lays it out
+ * again from the database. The counts move on every sweep and half a stale
+ * report is worse than none.
+ */
+export const DAILY_STATS_COLUMNS = [
+  'Date', 'Mailbox', 'Total mails', 'Useful (queries)', 'Other mail',
+  'Replied', 'Awaiting reply', 'Answered by them', 'Reply rate',
+] as const
+
+export const DAILY_STATS_FIRST_COLUMN = 'A'
+export const DAILY_STATS_LAST_COLUMN  = 'I'
+
+export const DAILY_STATS_NUMBER_FORMATS = [
+  '[$-en-US]dd-mmm-yy;@', // A Date
+  'General',              // B Mailbox
+  '#,##0',                // C Total mails
+  '#,##0',                // D Useful (queries)
+  '#,##0',                // E Other mail
+  '#,##0',                // F Replied
+  '#,##0',                // G Awaiting reply
+  '#,##0',                // H Answered by them
+  '0%',                   // I Reply rate
+] as const
+
 // ── Domain ignore list ───────────────────────────────────────────────────────
 
 /** Senders that never represent a customer query. Case-insensitive substrings. */
@@ -258,13 +313,31 @@ export const INTERNAL_DOMAINS = ['aahaas.com', 'appleholidays.lk']
 // ── Seed data ────────────────────────────────────────────────────────────────
 
 /**
- * The five file-handler mailboxes the booking team asked to monitor.
- * `availcheck@aahaas.com` does not resolve in the tenant (Graph returns
- * ErrorInvalidUser), so it is seeded inactive with the reason recorded — fix the
- * address in the UI and switch it on, no code change needed.
+ * How a monitored address is read.
+ *
+ * `USER` is a mailbox Graph can open — a person's, or a licenced shared one.
+ * `ALIAS` is a distribution group that has no mailbox behind it: Graph answers
+ * `ErrorInvalidUser` for it and, without `Group.Read.All`, cannot even be asked
+ * what it is. Its traffic is instead recognised on the TO/CC line of mail
+ * collected out of the members' inboxes, which costs no extra call and no extra
+ * permission. See `ALIAS_ATTRIBUTION` in run.ts.
+ */
+export type MailboxKind = 'USER' | 'ALIAS'
+
+/**
+ * The file-handler mailboxes the booking team asked to monitor, plus the
+ * `availcheck@` group they are all on.
+ *
+ * availcheck is a **distribution group**, not a mailbox — verified against the
+ * tenant: `/users/availcheck@aahaas.com` is `Request_ResourceNotFound`, no user
+ * carries it as a proxy address, and this app registration has no
+ * `Group.Read.All` to look the group itself up. So it is monitored as an ALIAS:
+ * every mail the members receive that names it in TO or CC counts as a mail to
+ * availcheck. It is written under two domains, hence the second address.
  */
 export const SEED_MAILBOXES: {
-  email: string; displayName: string; isActive: boolean; lastError?: string
+  email: string; displayName: string; isActive: boolean
+  kind?: MailboxKind; aliasAddresses?: string; lastError?: string
 }[] = [
   { email: 'sajid.joshua@aahaas.com',     displayName: 'Sajid',    isActive: true },
   { email: 'vishmika.kavindi@aahaas.com', displayName: 'Vishmika', isActive: true },
@@ -274,11 +347,16 @@ export const SEED_MAILBOXES: {
    { email: 'afrose.a@aahaas.com',     displayName: 'afrose',    isActive: true },
   { email: 'shabrina.jabbar@aahaas.com',  displayName: 'Shabrina', isActive: true },
   {
-    email: 'availcheck@aahaas.com', displayName: 'Availcheck', isActive: false,
-    lastError: 'Graph: ErrorInvalidUser — this address is not a mailbox in the tenant. '
-             + 'Correct it (or give the shared mailbox a licence/UPN) and activate.',
+    email: 'availcheck@aahaas.com', displayName: 'Availcheck', isActive: true,
+    kind: 'ALIAS', aliasAddresses: 'availcheck@appleholidaysds.com',
   },
 ]
+
+/** Recognised on a TO/CC line, an ALIAS address counts as a recipient. */
+export const ALIAS_MAILBOX_NOTE =
+  'Distribution group — Graph cannot open it, so its mail is counted from the TO/CC '
+  + 'line of the mail its members receive. A mail sent only to this group and to '
+  + 'nobody monitored is not visible to this system.'
 
 /**
  * Sales-person / agent mappings for the sender domains the team listed. The

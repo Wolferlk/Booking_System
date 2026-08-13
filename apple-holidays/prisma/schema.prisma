@@ -1393,6 +1393,15 @@ model QueryMonitorMailbox {
   id            String              @id @default(cuid())
   email         String              @unique
   displayName   String
+  /// USER  — a real or shared mailbox, read directly from Graph.
+  /// ALIAS — a distribution group with no mailbox of its own (availcheck@).
+  ///         Graph cannot open it, so its traffic is attributed from the TO/CC
+  ///         headers of the mail collected out of the member inboxes instead.
+  mailboxKind   String              @default("USER")
+  /// Further addresses that mean the same group, comma-separated — the same
+  /// list is written to under two domains. VarChar with a default, not Text:
+  /// see the note on `QueryMonitorEntry.toList`.
+  aliasAddresses String             @default("") @db.VarChar(500)
   isActive      Boolean             @default(true)
   sortOrder     Int                 @default(0)
   lastCheckedAt DateTime?
@@ -1470,6 +1479,17 @@ model QueryMonitorEntry {
   /// apart from `handlerNames`: the owner of a query and the person who happened
   /// to answer it are usually but not always the same, and the team wants both.
   repliedBy        String?
+  /// The address the reply was actually sent from — the identity behind
+  /// `repliedBy`, which is only the first name the sheet shows.
+  repliedByEmail   String?
+  /// internetMessageId of the sent mail counted as the reply, so an attribution
+  /// can be traced back to a real message in someone's Sent Items.
+  replyMessageId   String?
+  /// How the reply was matched to this query:
+  /// RECIPIENT — same thread *and* addressed back to whoever asked (strongest),
+  /// CONVERSATION — same thread only (an internal forward looks like this),
+  /// SUBJECT — no conversation id; same normalised subject, back to the asker.
+  replyMatch       String?
   replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
   /// Sheet column F — the ONE handler who owns this query. Empty until it can be
   /// known: filled straight away when the mail reached a single mailbox, on the
@@ -1518,6 +1538,11 @@ model QueryMonitorEntry {
   backupSheetRow   Int?
   backupSyncStatus String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
   backupSyncError  String?             @db.Text
+  /// The fill last painted onto this entry's row in each workbook — a replied
+  /// query's row is turned green. A cache, not a source of truth: it exists so a
+  /// sweep does not re-send the same formatting call for rows already coloured.
+  sheetHighlight   String?
+  backupHighlight  String?
   firstRunId       String?
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
@@ -1547,6 +1572,9 @@ model QueryMonitorMatch {
   receivedAt  DateTime
   repliedAt   DateTime?
   folder      String?
+  /// True when this recipient was read off the mail's TO/CC line rather than out
+  /// of its own inbox — how a distribution group is counted at all.
+  viaAlias    Boolean             @default(false)
   createdAt   DateTime            @default(now())
   entry       QueryMonitorEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
   mailbox     QueryMonitorMailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)

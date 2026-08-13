@@ -18,14 +18,16 @@
 import { prisma } from '@/lib/prisma'
 import type { Prisma, QueryMonitorEntry } from '@prisma/client'
 import {
-  REPLY_STATUS_SHEET_LABEL, SETTINGS, UNMATCHED_SALES_PERSON,
+  REPLIED_ROW_FILL, REPLY_STATUS_SHEET_LABEL, SETTINGS, UNMATCHED_SALES_PERSON,
   type ReplyStatus, type RunStatus, type RunTrigger,
 } from './constants'
-import { getConfig, listActiveMailboxes, setSetting, startDateBoundary } from './config'
+import {
+  getConfig, listActiveMailboxes, mailboxAddresses, setSetting, startDateBoundary,
+} from './config'
 import { classifySubject, parseExcludePatterns } from './classify'
 import {
-  fetchInboxSince, fetchSentConversationMap, findReplyForConversation,
-  type MonitoredMessage,
+  fetchInboxSince, fetchSentIndex, findSentInConversation,
+  type MonitoredMessage, type SentIndex, type SentMessage,
 } from './collect'
 import { extractByRules, extractWithAi } from './extract'
 import {
@@ -35,10 +37,11 @@ import {
   displaySubject, hasReference, normalizeSubject, subjectKeyFor, threadKeyFor,
 } from './thread'
 import { summarizeMail } from './summarize'
+import { exportDailyStatsToSheet } from './daily-stats-sheet'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
   deleteRowsAt, ensureWorksheet, findLastDataRow, layoutFor, openSession, readValuesRange,
-  remapRowNumber, resolveSheetRef, updateExcludedRow, updateRow,
+  remapRowNumber, resolveSheetRef, setRowFill, updateExcludedRow, updateRow,
   type ExcludedRowValues, type SheetLayout, type SheetRef, type SheetRowValues,
   type WorkbookTarget,
 } from './sheet'
@@ -142,10 +145,62 @@ export function resolveSender(
 
 // ── Grouping ─────────────────────────────────────────────────────────────────
 
+interface GroupHandler {
+  mailboxId:   string
+  handlerName: string
+  graphId:     string
+  receivedAt:  Date
+  /**
+   * True for a distribution group recognised on the mail's TO/CC line rather
+   * than read out of its own inbox. Such a recipient belongs in the TO list —
+   * the team wants to see that a query also went to availcheck — but never in
+   * the running for File Handler: a group cannot own a query or answer one.
+   */
+  viaAlias?:   boolean
+}
+
 interface MessageGroup {
   dedupKey: string
   message:  MonitoredMessage
-  handlers: { mailboxId: string; handlerName: string; graphId: string; receivedAt: Date }[]
+  handlers: GroupHandler[]
+}
+
+/**
+ * A monitored address with no mailbox behind it: `availcheck@aahaas.com` is a
+ * distribution group, so Graph answers ErrorInvalidUser for it and, without
+ * Group.Read.All, will not even say what it is.
+ *
+ * It is still one of the addresses the booking team works out of, so its traffic
+ * is recognised the only way it can be without a new tenant permission: on the
+ * TO/CC line of the mail its members receive. That costs no extra Graph call —
+ * the recipients come back with the message that is being read anyway.
+ *
+ * The blind spot is worth stating plainly: a mail sent *only* to the group, with
+ * nobody monitored on it, reaches no inbox this system reads and is therefore
+ * invisible. Licencing the group as a shared mailbox, or granting Group.Read.All,
+ * is what would close that gap.
+ */
+interface AliasMailbox {
+  id:          string
+  displayName: string
+  addresses:   string[]
+}
+
+/** Every alias recipient of this mail, as handlers to fold into the group. */
+function aliasHandlersFor(message: MonitoredMessage, aliases: AliasMailbox[]): GroupHandler[] {
+  if (aliases.length === 0 || message.recipients.length === 0) return []
+  const on = new Set(message.recipients)
+  return aliases
+    .filter(alias => alias.addresses.some(address => on.has(address)))
+    .map(alias => ({
+      mailboxId:   alias.id,
+      handlerName: alias.displayName,
+      // The message identity we have is the copy read out of a member's inbox;
+      // the group has no mailbox of its own to hold a different one.
+      graphId:     message.graphId,
+      receivedAt:  message.receivedAt,
+      viaAlias:    true,
+    }))
 }
 
 /** Stable key for "the same mail", whichever inbox it was seen in. */
@@ -238,6 +293,7 @@ async function findSameDayResend(message: MonitoredMessage): Promise<EntryWithMa
  */
 async function mergeFollowUp(
   root: EntryWithMatches, group: MessageGroup, runId: string,
+  aliasNames?: ReadonlySet<string>,
 ): Promise<{ toList: string; rewrite: boolean }> {
   const { message } = group
 
@@ -277,6 +333,7 @@ async function mergeFollowUp(
           graphId:     h.graphId,
           handlerName: h.handlerName,
           receivedAt:  h.receivedAt,
+          viaAlias:    h.viaAlias ?? false,
         })),
       },
     },
@@ -294,6 +351,7 @@ async function mergeFollowUp(
         graphId:     h.graphId,
         handlerName: h.handlerName,
         receivedAt:  h.receivedAt,
+        viaAlias:    h.viaAlias ?? false,
       })),
       skipDuplicates: true,
     })
@@ -303,7 +361,7 @@ async function mergeFollowUp(
     ...splitHandlers(root.toList),
     ...newHandlers.map(h => h.handlerName),
   ])
-  const owner = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList))
+  const owner = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList), aliasNames)
 
   // The row always changes now: "Mails in Thread" goes up by one and "Last Mail"
   // moves to this mail's timestamp. That is the whole trade for not giving the
@@ -431,9 +489,17 @@ export function splitHandlers(list: string): string[] {
  * until the first reply names one (see `detectReplies`) or an admin picks from
  * the TO-list dropdown. Guessing here is worse than leaving it empty: a wrong
  * name in the File Handler column is invisible, an empty one is a to-do.
+ *
+ * Distribution groups are struck out of the candidates first. A mail to one
+ * handler and to availcheck reached one *person*, and that person owns it —
+ * counting the group as a second recipient would blank the owner on most of the
+ * team's mail, which is the opposite of what the column is for.
  */
-export function autoFileHandler(toList: string[]): string {
-  return toList.length === 1 ? toList[0] : ''
+export function autoFileHandler(toList: string[], aliasNames?: ReadonlySet<string>): string {
+  const people = aliasNames && aliasNames.size > 0
+    ? toList.filter(name => !aliasNames.has(name))
+    : toList
+  return people.length === 1 ? people[0] : ''
 }
 
 function computeReplyStatus(receivedAt: Date, repliedAt: Date | null, slaHours: number): ReplyStatus {
@@ -543,12 +609,24 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
     })
 
     // ── 1. Read the mailboxes ───────────────────────────────────────────────
-    const mailboxes = await listActiveMailboxes()
+    const allMailboxes = await listActiveMailboxes()
+    const mailboxes = allMailboxes.filter(m => m.mailboxKind !== 'ALIAS')
+    const aliases: AliasMailbox[] = allMailboxes
+      .filter(m => m.mailboxKind === 'ALIAS')
+      .map(m => ({ id: m.id, displayName: m.displayName, addresses: mailboxAddresses(m) }))
+    /** Names that must never be picked as the File Handler. */
+    const aliasNames = new Set(aliases.map(a => a.displayName))
+
     if (mailboxes.length === 0) log.add('warn', 'No active mailboxes configured')
+    if (aliases.length > 0) {
+      log.add('info',
+        `${aliases.length} distribution group(s) counted from the TO/CC line: `
+        + aliases.map(a => `${a.displayName} (${a.addresses.join(', ')})`).join(' · '))
+    }
 
     const groups = new Map<string, MessageGroup>()
-    /** mailboxId → conversationId → first reply sent. */
-    const sentMaps = new Map<string, Map<string, Date>>()
+    /** mailboxId → that handler's Sent Items over the chase window. */
+    const sentIndexes = new Map<string, SentIndex>()
 
     for (const mailbox of mailboxes) {
       try {
@@ -559,7 +637,11 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         // Sent Items across the chase window, so replies to older still-open
         // queries are picked up in the same pass without extra calls.
         const sentSince = new Date(Date.now() - config.replyChaseDays * 86_400_000)
-        sentMaps.set(mailbox.id, await fetchSentConversationMap(mailbox.email, sentSince))
+        const sent = await fetchSentIndex(mailbox, sentSince, normalizeSubject)
+        sentIndexes.set(mailbox.id, sent)
+        if (sent.error) {
+          log.add('warn', `${mailbox.email} — Sent Items unreadable, replies from it cannot be seen: ${sent.error}`)
+        }
 
         for (const message of messages) {
           const key = dedupKeyFor(message)
@@ -582,6 +664,15 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
                 graphId: message.graphId, receivedAt: message.receivedAt,
               }],
             })
+          }
+
+          // The groups on the same mail. Attributed per message rather than per
+          // group so it does not matter which member's copy was read first.
+          const group = groups.get(key)!
+          for (const handler of aliasHandlersFor(message, aliases)) {
+            if (!group.handlers.some(h => h.mailboxId === handler.mailboxId)) {
+              group.handlers.push(handler)
+            }
           }
         }
 
@@ -607,6 +698,28 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           data:  { lastCheckedAt: new Date(), lastError: msg.slice(0, 500) },
         }).catch(() => {})
       }
+    }
+
+    // The groups never report themselves — their counters come from the mail
+    // that named them, so the UI can still show when one was last written to.
+    for (const alias of aliases) {
+      const seen = Array.from(groups.values()).filter(g =>
+        g.handlers.some(h => h.mailboxId === alias.id))
+      const latest = seen
+        .map(g => g.message.receivedAt)
+        .sort((a, b) => b.getTime() - a.getTime())[0] ?? null
+
+      await prisma.queryMonitorMailbox.update({
+        where: { id: alias.id },
+        data: {
+          lastCheckedAt: new Date(),
+          lastError:     null,
+          totalSeen:     { increment: seen.length },
+          ...(latest ? { lastMessageAt: latest } : {}),
+        },
+      }).catch(() => {})
+
+      log.add('info', `${alias.displayName} (group) — on ${seen.length} of this window's mail(s)`)
     }
 
     log.add('info', `${groups.size} unique quer${groups.size === 1 ? 'y' : 'ies'} after dedup across handlers`)
@@ -664,6 +777,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
               graphId:     h.graphId,
               handlerName: h.handlerName,
               receivedAt:  h.receivedAt,
+              viaAlias:    h.viaAlias ?? false,
             })),
             skipDuplicates: true,
           })
@@ -675,7 +789,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
 
           // A second recipient means the owner is no longer obvious, but an owner
           // already chosen — by a reply or by hand — is never taken back.
-          const owner = existing.handlerNames.trim() || autoFileHandler(splitHandlers(merged))
+          const owner = existing.handlerNames.trim() || autoFileHandler(splitHandlers(merged), aliasNames)
 
           await prisma.queryMonitorEntry.update({
             where: { id: existing.id },
@@ -700,7 +814,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           : null
 
         if (root) {
-          const { toList: mergedList } = await mergeFollowUp(root, group, run.id)
+          const { toList: mergedList } = await mergeFollowUp(root, group, run.id, aliasNames)
           counters.entriesUpdated += 1
           log.add('info',
             `Follow-up on "${displaySubject(message.subject).slice(0, 60)}" — folded into `
@@ -778,7 +892,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             receivedAt:     message.receivedAt,
             replyStatus:    computeReplyStatus(message.receivedAt, null, config.slaHours),
             toList,
-            handlerNames:   autoFileHandler(splitHandlers(toList)),
+            handlerNames:   autoFileHandler(splitHandlers(toList), aliasNames),
             salesPerson:    sender.salesPerson,
             agent:          sender.agent?.slice(0, 180) ?? null,
             destination,
@@ -800,6 +914,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
                 graphId:     h.graphId,
                 handlerName: h.handlerName,
                 receivedAt:  h.receivedAt,
+                viaAlias:    h.viaAlias ?? false,
               })),
             },
           },
@@ -840,7 +955,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
     }
 
     // ── 3. Reply detection ──────────────────────────────────────────────────
-    counters.repliesDetected = await detectReplies(sentMaps, config.replyChaseDays, config.slaHours, log)
+    counters.repliesDetected = await detectReplies(sentIndexes, config.replyChaseDays, config.slaHours, log)
 
     // ── 4. Push to the workbook ─────────────────────────────────────────────
     if (config.autoWrite) {
@@ -850,6 +965,21 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
     } else {
       const pending = await prisma.queryMonitorEntry.count({ where: { syncStatus: { in: ['PENDING', 'DIRTY'] } } })
       log.add('warn', `Auto-write is OFF — ${pending} row(s) held in review. Turn it on (or press "Sync to sheet") to write them.`)
+    }
+
+    // ── 5. Rewrite the daily counts ─────────────────────────────────────────
+    // Last, and never able to fail the sweep: it is a report *about* the work
+    // this run just did, so a workbook that refuses it must not cost the rows.
+    if (config.dailyStatsAutoWrite) {
+      try {
+        const stats = await exportDailyStatsToSheet()
+        const primary = stats.workbooks.find(w => w.target === 'primary')
+        log.add('info',
+          `"${stats.sheetName}" rewritten — ${primary?.rows ?? 0} row(s) over ${stats.days} days `
+          + `(${stats.stats.totals.total} mails, ${stats.stats.totals.useful} useful, ${stats.stats.totals.other} other)`)
+      } catch (err) {
+        log.add('warn', `Daily counts not updated: ${err instanceof Error ? err.message : String(err)}`)
+      }
     }
 
     const status: RunStatus = log.errors === 0 ? 'SUCCESS' : 'PARTIAL'
@@ -896,32 +1026,96 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
 
 // ── Reply detection ──────────────────────────────────────────────────────────
 
+/** How a sent mail was tied to a query. Listed strongest first. */
+type ReplyMatchKind = 'RECIPIENT' | 'CONVERSATION' | 'SUBJECT'
+
+const MATCH_RANK: Record<ReplyMatchKind, number> = {
+  RECIPIENT: 0, CONVERSATION: 1, SUBJECT: 2,
+}
+
+interface ReplyCandidate {
+  sentAt:      Date
+  handlerName: string
+  mailboxEmail: string
+  messageId:   string | null
+  match:       ReplyMatchKind
+}
+
 /**
- * Fills in "Replied time" for open queries. Bulk-matches against the Sent Items
- * map first (free), then falls back to a per-thread lookup for the handful of
- * older threads that fell outside it. Anything past the SLA with no reply is
- * flipped to OVERDUE so the sheet shows it in red.
+ * Clock skew between Graph's `receivedDateTime` and a `sentDateTime` on another
+ * server can put a genuine reply a few seconds before the mail it answers.
+ */
+const REPLY_SKEW_MS = 120_000
+
+/**
+ * Is this sent mail a reply *to the person who asked*, rather than a note about
+ * their query to somebody else?
+ *
+ * The distinction is the whole accuracy problem. A handler who forwards the
+ * thread to a colleague, or answers a colleague's question on it, produces a
+ * sent mail with the query's conversation id and nothing else to tell it apart —
+ * and counting that as the reply both stops the SLA clock early and credits the
+ * wrong person. Checking the agent's address against TO and CC is what separates
+ * the two, and it is why the recipients are collected at all.
+ */
+function addressedToAsker(sent: SentMessage, askerAddress: string): boolean {
+  return sent.recipients.includes(askerAddress.toLowerCase())
+}
+
+/** The better of two candidates: strongest match first, then earliest. */
+function betterReply(a: ReplyCandidate | null, b: ReplyCandidate): ReplyCandidate {
+  if (!a) return b
+  if (MATCH_RANK[b.match] !== MATCH_RANK[a.match]) {
+    return MATCH_RANK[b.match] < MATCH_RANK[a.match] ? b : a
+  }
+  return b.sentAt < a.sentAt ? b : a
+}
+
+/**
+ * Fills in "Replied time" and "Replied By" for open queries. Bulk-matches
+ * against the Sent Items indexes first (free — they were read during collection),
+ * then falls back to a per-thread lookup for the handful of older threads that
+ * fell outside them. Anything past the SLA with no reply is flipped to OVERDUE so
+ * the sheet shows it in red.
  *
  * This is what keeps yesterday's rows honest. A query raised at 16:00 and
  * answered at 09:00 the next morning is out of every lookback window by the time
  * the reply lands, so replies are chased for `chaseDays` regardless of when the
  * mail arrived: the reply time, the status **and** the file handler are all
  * written back into rows that were appended days ago.
+ *
+ * Three things it now does that the conversation-id-only version could not:
+ *
+ * - **Every mailbox is searched, not only the ones on the query's TO list.** A
+ *   colleague who was never addressed but picked the query up still answered it,
+ *   and the sheet should say so.
+ * - **A reply addressed back to the agent outranks one that is not.** See
+ *   `addressedToAsker` — this is what stops an internal forward being recorded as
+ *   the answer, and it is the difference between "we replied at 09:12" and "we
+ *   talked about it at 09:12 and replied at 14:40".
+ * - **Mail with no conversation id can still be answered.** It is matched on the
+ *   normalised subject, but only together with the agent's address, which is what
+ *   makes a subject as generic as "Urgent quote required" safe to match on.
  */
 async function detectReplies(
-  sentMaps: Map<string, Map<string, Date>>,
+  sentIndexes: Map<string, SentIndex>,
   chaseDays: number,
   slaHours: number,
   log: RunLog,
 ): Promise<number> {
   const since = new Date(Date.now() - chaseDays * 86_400_000)
+  const indexes = Array.from(sentIndexes.values())
 
   // Excluded mail is not measured against the SLA, so it never costs a lookup —
   // nor do follow-ups, whose reply state is the root row's to carry.
+  //
+  // Queries already marked REPLIED are included when nobody is recorded against
+  // them: those are rows from before this attribution existed, and column O is
+  // blank on every one of them until something fills it in.
   const open = await prisma.queryMonitorEntry.findMany({
     where: {
-      mailKind: 'QUERY', mergedIntoId: null,
-      replyStatus: { not: 'REPLIED' }, receivedAt: { gte: since },
+      mailKind: 'QUERY', mergedIntoId: null, receivedAt: { gte: since },
+      OR: [{ replyStatus: { not: 'REPLIED' } }, { repliedBy: null }],
     },
     include: { matches: { include: { mailbox: true } } },
     orderBy: { receivedAt: 'asc' },
@@ -929,79 +1123,130 @@ async function detectReplies(
   })
 
   let detected = 0
+  let attributed = 0
   let targetedLookups = 0
   const TARGETED_LOOKUP_BUDGET = 40
 
   for (const entry of open) {
-    let repliedAt: Date | null = null
-    let repliedBy: string | null = null
+    const notBefore = new Date(entry.receivedAt.getTime() - REPLY_SKEW_MS)
+    const subjectKey = normalizeSubject(entry.subject)
+    const candidates: ReplyCandidate[] = []
+    const bestSoFar = () => candidates.reduce<ReplyCandidate | null>(betterReply, null)
 
-    if (entry.conversationId) {
-      for (const match of entry.matches) {
-        const sent = sentMaps.get(match.mailboxId)?.get(entry.conversationId)
-        if (sent && sent >= entry.receivedAt && (!repliedAt || sent < repliedAt)) {
-          repliedAt = sent
-          repliedBy = match.handlerName
+    const consider = (sent: SentMessage, index: SentIndex, match: ReplyMatchKind) => {
+      if (sent.sentAt < notBefore) return
+      candidates.push({
+        sentAt:       sent.sentAt,
+        handlerName:  index.handlerName,
+        mailboxEmail: index.mailboxEmail,
+        messageId:    sent.internetMessageId,
+        match,
+      })
+    }
+
+    for (const index of indexes) {
+      if (entry.conversationId) {
+        for (const sent of index.byConversation.get(entry.conversationId) ?? []) {
+          consider(sent, index, addressedToAsker(sent, entry.fromAddress) ? 'RECIPIENT' : 'CONVERSATION')
         }
       }
-
-      // Older thread, no bulk hit — ask Graph about this one conversation.
-      if (!repliedAt && targetedLookups < TARGETED_LOOKUP_BUDGET) {
-        for (const match of entry.matches) {
-          targetedLookups += 1
-          const sent = await findReplyForConversation(
-            match.mailbox.email, entry.conversationId, entry.receivedAt,
-          )
-          // The loop stops at the first hit, so there is nothing to compare against.
-          if (sent) {
-            repliedAt = sent
-            repliedBy = match.handlerName
-            break
-          }
+      // Subject matching alone would collapse unrelated queries, so it is only
+      // ever accepted together with the asker's own address.
+      if (subjectKey) {
+        for (const sent of index.bySubject.get(subjectKey) ?? []) {
+          if (sent.conversationId && sent.conversationId === entry.conversationId) continue
+          if (addressedToAsker(sent, entry.fromAddress)) consider(sent, index, 'SUBJECT')
         }
       }
     }
 
+    // Older thread, nothing in the bulk window — ask Graph about this one
+    // conversation, in the mailboxes that actually received it.
+    if (candidates.length === 0 && entry.conversationId && targetedLookups < TARGETED_LOOKUP_BUDGET) {
+      for (const match of entry.matches) {
+        // A distribution group has no Sent Items to look in.
+        if (match.viaAlias || match.mailbox.mailboxKind === 'ALIAS') continue
+        if (targetedLookups >= TARGETED_LOOKUP_BUDGET) break
+        targetedLookups += 1
+
+        const index: SentIndex = sentIndexes.get(match.mailboxId) ?? {
+          mailboxId: match.mailboxId, mailboxEmail: match.mailbox.email,
+          handlerName: match.handlerName, byConversation: new Map(), bySubject: new Map(),
+        }
+        const sentMails = await findSentInConversation(
+          match.mailbox.email, entry.conversationId, notBefore,
+        )
+        for (const sent of sentMails) {
+          consider(sent, index, addressedToAsker(sent, entry.fromAddress) ? 'RECIPIENT' : 'CONVERSATION')
+        }
+        // Keep going even after a hit unless it is already the strongest kind:
+        // another handler may have answered the agent before this one forwarded it.
+        if (bestSoFar()?.match === 'RECIPIENT') break
+      }
+    }
+
+    const reply = bestSoFar()
+    const repliedAt = reply?.sentAt ?? entry.repliedAt
     const nextStatus = computeReplyStatus(entry.receivedAt, repliedAt, slaHours)
 
     // Whoever answered owns the query. This is how a mail sent to six handlers
     // gets a File Handler without anyone touching the dashboard — but a name
     // already chosen by hand is left alone.
     const overrides = overrideSet(entry)
-    const newOwner = repliedBy && !entry.handlerNames.trim() && !overrides.has('handlerNames')
-      ? repliedBy
+    const newOwner = reply && !entry.handlerNames.trim() && !overrides.has('handlerNames')
+      ? reply.handlerName
       : null
 
-    if (!repliedAt && !newOwner && nextStatus === entry.replyStatus) continue
+    // Nothing found and nothing changed — the common case, and it must not cost
+    // a write.
+    const isNewAttribution = !!reply && (
+      entry.repliedBy !== reply.handlerName
+      || entry.repliedAt?.getTime() !== reply.sentAt.getTime()
+      || entry.replyMatch !== reply.match
+    )
+    if (!isNewAttribution && !newOwner && nextStatus === entry.replyStatus) continue
 
     await prisma.queryMonitorEntry.update({
       where: { id: entry.id },
       data: {
-        repliedAt:   repliedAt ?? entry.repliedAt,
+        repliedAt,
         replyStatus: nextStatus,
         // Who actually answered, kept whether or not they became the owner —
         // on a mail sent to six handlers this is the only record of it.
-        ...(repliedBy ? { repliedBy } : {}),
+        ...(reply ? {
+          repliedBy:      reply.handlerName,
+          repliedByEmail: reply.mailboxEmail,
+          replyMessageId: reply.messageId?.slice(0, 255) ?? null,
+          replyMatch:     reply.match,
+        } : {}),
         ...(newOwner ? { handlerNames: newOwner } : {}),
         // A row already in a sheet needs its Status / Replied time rewritten.
         ...dirtyPatch(entry),
       },
     })
 
-    if (repliedAt) {
-      detected += 1
+    if (reply) {
+      attributed += 1
+      if (entry.replyStatus !== 'REPLIED') detected += 1
       await prisma.queryMonitorMatch.updateMany({
-        where: { entryId: entry.id, handlerName: repliedBy ?? undefined },
-        data:  { repliedAt },
+        where: { entryId: entry.id, handlerName: reply.handlerName },
+        data:  { repliedAt: reply.sentAt },
       }).catch(() => {})
-      log.add('info', `Reply found for "${entry.subject.slice(0, 50)}" by ${repliedBy ?? 'team'}`, {
-        entryId: entry.id, repliedAt: repliedAt.toISOString(),
-        ...(newOwner ? { fileHandlerAssigned: newOwner } : {}),
-      })
+      log.add('info',
+        `Reply found for "${entry.subject.slice(0, 50)}" by ${reply.handlerName}`
+        + (reply.match === 'RECIPIENT' ? '' : ` (matched on ${reply.match.toLowerCase()} only)`), {
+          entryId: entry.id, repliedAt: reply.sentAt.toISOString(),
+          repliedByEmail: reply.mailboxEmail, match: reply.match,
+          ...(newOwner ? { fileHandlerAssigned: newOwner } : {}),
+        })
     }
   }
 
-  if (detected > 0) log.add('success', `${detected} repl${detected === 1 ? 'y' : 'ies'} detected`)
+  if (attributed > 0) {
+    log.add('success',
+      `${detected} repl${detected === 1 ? 'y' : 'ies'} detected`
+      + (attributed > detected ? `, ${attributed - detected} already-answered row(s) credited to whoever replied` : ''))
+  }
   return detected
 }
 
@@ -1039,16 +1284,35 @@ interface WorkbookPlan {
   rowField:    'sheetRow' | 'backupSheetRow'
   statusField: 'syncStatus' | 'backupSyncStatus'
   errorField:  'syncError' | 'backupSyncError'
+  /** Which workbook's remembered row colour this plan writes. */
+  fillField:   'sheetHighlight' | 'backupHighlight'
 }
 
 const PRIMARY_PLAN: WorkbookPlan = {
   target: 'primary', label: 'workbook',
   rowField: 'sheetRow', statusField: 'syncStatus', errorField: 'syncError',
+  fillField: 'sheetHighlight',
 }
 
 const BACKUP_PLAN: WorkbookPlan = {
   target: 'backup', label: 'backup workbook',
   rowField: 'backupSheetRow', statusField: 'backupSyncStatus', errorField: 'backupSyncError',
+  fillField: 'backupHighlight',
+}
+
+/**
+ * The fill a query's row should be carrying: green once it has been answered,
+ * nothing while it is still open.
+ *
+ * Only the query tab is coloured. The other-mail tab is not measured against the
+ * SLA and is never chased for a reply, so there is no state on it for a colour
+ * to mean anything about.
+ */
+export function rowFillFor(
+  entry: { mailKind: string; replyStatus: string }, enabled: boolean,
+): string | null {
+  if (!enabled || entry.mailKind === 'EXCLUDED') return null
+  return entry.replyStatus === 'REPLIED' ? REPLIED_ROW_FILL : null
 }
 
 /**
@@ -1517,6 +1781,7 @@ async function syncOneWorkbook(
   let appended = 0
   let updated  = 0
   let failed   = 0
+  let painted  = 0
 
   /** Mark a whole failed block, so the next sync retries it rather than losing it. */
   const failBlock = async (entries: QueryMonitorEntry[], msg: string, what: string) => {
@@ -1541,6 +1806,34 @@ async function syncOneWorkbook(
         },
       }),
     ))
+
+  /**
+   * Bring one row's colour up to date — green once the query has been answered.
+   *
+   * Skipped when the row already carries the colour it should: the remembered
+   * fill is what stops every sweep re-painting hundreds of rows that have not
+   * changed. Failures are swallowed on purpose; the values are the deliverable
+   * and the colour is a reading aid, so a workbook that refuses the format call
+   * must not turn a written row into a failed one.
+   */
+  const paintRow = async (
+    entry: QueryMonitorEntry, rowNumber: number, tab: string, layout: SheetLayout,
+  ) => {
+    const wanted = rowFillFor(entry, config.highlightReplied)
+    if (entry.mailKind === 'EXCLUDED') return
+    if ((entry[plan.fillField] ?? null) === wanted) return
+
+    try {
+      await setRowFill(ref, tab, rowNumber, layout, wanted, sessionId)
+      await prisma.queryMonitorEntry.update({
+        where: { id: entry.id },
+        data:  { [plan.fillField]: wanted },
+      })
+      painted += 1
+    } catch (err) {
+      note('warn', `"${tab}" row ${rowNumber} could not be coloured: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
 
   try {
     if (pendingQueries.length > 0) {
@@ -1591,6 +1884,12 @@ async function syncOneWorkbook(
           await recordRows(toAppend, result.firstRow, config.sheetName)
           appended += result.rows
           note('success', `Appended ${result.rows} row(s) to "${config.sheetName}" at rows ${result.firstRow}–${result.lastRow}`)
+
+          // A query answered before its row was ever written — a reply that
+          // landed while auto-write was off — is green from the moment it lands.
+          for (let i = 0; i < toAppend.length; i += 1) {
+            await paintRow(toAppend[i], result.firstRow + i, config.sheetName, queryLayout)
+          }
         }
       } catch (err) {
         await failBlock(pendingQueries, err instanceof Error ? err.message : String(err), 'query')
@@ -1648,6 +1947,9 @@ async function syncOneWorkbook(
           await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
         } else {
           await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn, config.slaHours), { sessionId, ref, sheetName: tab })
+          // The rewrite that matters most is the one a reply caused, and this is
+          // where that row turns green.
+          await paintRow(entry, rowNumber, tab, await layoutFor(ref, tab, QUERY_LAYOUT))
         }
         await prisma.queryMonitorEntry.update({
           where: { id: entry.id },
@@ -1671,6 +1973,9 @@ async function syncOneWorkbook(
 
     if (updated > 0) {
       note('success', `Rewrote ${updated} existing row(s) with the current handler, reply time and status`)
+    }
+    if (painted > 0) {
+      note('info', `${painted} row(s) recoloured — answered queries are green`)
     }
   } finally {
     await closeSession(ref, sessionId)
@@ -1966,6 +2271,111 @@ export async function rebaseToNewWorkbook(): Promise<RebaseResult> {
     : { count: 0 }
 
   return { requeued: requeued.count, retired: retired.count, startDate: config.startDate }
+}
+
+export interface RecolourResult {
+  target:   WorkbookTarget
+  painted:  number
+  cleared:  number
+  failed:   number
+  /** Rows still out of step after the cap — press again to carry on. */
+  remaining: number
+  error?:   string
+}
+
+/**
+ * Bring the row colours on a workbook up to date in one pass.
+ *
+ * A sweep only ever paints rows it is already writing, so on the day the
+ * highlight goes in every query answered *before* it is on the sheet in white.
+ * This is the catch-up for that, and the repair for a row someone recoloured by
+ * hand. It writes no values whatsoever — only fills.
+ *
+ * Capped per press because each row is its own Graph call: a workbook with
+ * thousands of answered queries would otherwise run past the function timeout
+ * and leave the job half done with nothing recording where it got to. The count
+ * of what is left comes back, so pressing it again continues.
+ */
+export async function recolourRepliedRows(
+  target: WorkbookTarget = 'primary', limit = 300,
+): Promise<RecolourResult> {
+  const config = await getConfig()
+  const plan   = target === 'primary' ? PRIMARY_PLAN : BACKUP_PLAN
+  const base: RecolourResult = { target, painted: 0, cleared: 0, failed: 0, remaining: 0 }
+
+  const cutoff  = startDateBoundary(config.startDate)
+  const inRange = cutoff ? { receivedAt: { gte: cutoff } } : {}
+  const wantedGreen = config.highlightReplied ? REPLIED_ROW_FILL : null
+
+  // Rows whose colour is not what the current settings say it should be: an
+  // answered query that is not green yet, or a row carrying a fill it should no
+  // longer have (the query was reopened, or highlighting was switched off).
+  const where = {
+    ...inRange,
+    mailKind: 'QUERY' as const,
+    [plan.rowField]: { not: null },
+    OR: [
+      { replyStatus: 'REPLIED', [plan.fillField]: { not: wantedGreen } },
+      { replyStatus: { not: 'REPLIED' }, [plan.fillField]: { not: null } },
+    ],
+  }
+
+  const total   = await prisma.queryMonitorEntry.count({ where })
+  const entries = await prisma.queryMonitorEntry.findMany({
+    where, orderBy: { receivedAt: 'desc' }, take: limit,
+  })
+  if (entries.length === 0) return base
+
+  let ref: SheetRef
+  try {
+    ref = await resolveSheetRef(false, target)
+  } catch (err) {
+    return { ...base, remaining: total, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  const sessionId = await openSession(ref)
+  let painted = 0
+  let cleared = 0
+  let failed  = 0
+
+  try {
+    // One layout lookup per tab, not per row — under an adopted header this is a
+    // stored-mapping read, and there are only ever a couple of tabs in play.
+    const layouts = new Map<string, SheetLayout>()
+    const layoutOf = async (tab: string) => {
+      const known = layouts.get(tab)
+      if (known) return known
+      const resolved = await layoutFor(ref, tab, QUERY_LAYOUT)
+      layouts.set(tab, resolved)
+      return resolved
+    }
+
+    for (const entry of entries) {
+      const rowNumber = entry[plan.rowField]
+      if (!rowNumber) continue
+      const tab = (target === 'primary' ? entry.sheetTab : null) ?? config.sheetName
+      const wanted = rowFillFor(entry, config.highlightReplied)
+
+      try {
+        await setRowFill(ref, tab, rowNumber, await layoutOf(tab), wanted, sessionId)
+        await prisma.queryMonitorEntry.update({
+          where: { id: entry.id },
+          data:  { [plan.fillField]: wanted },
+        })
+        if (wanted) painted += 1
+        else cleared += 1
+      } catch {
+        failed += 1
+      }
+    }
+  } finally {
+    await closeSession(ref, sessionId)
+  }
+
+  return {
+    target, painted, cleared, failed,
+    remaining: Math.max(0, total - painted - cleared),
+  }
 }
 
 /** Re-queue an entry for both workbooks after a hand edit in the dashboard. */

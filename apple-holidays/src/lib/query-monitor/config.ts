@@ -31,6 +31,14 @@ export interface QueryMonitorConfig {
   excludedSheetName: string
   /** Tab the OpenAI spend report is rewritten onto — owned entirely by the app. */
   aiUsageSheetName:  string
+  /** Tab the daily mail counts are rewritten onto — also owned by the app. */
+  dailyStatsSheetName: string
+  /** How many days back the daily counts cover. */
+  dailyStatsDays:      number
+  /** Rewrite the daily counts at the end of every sweep. */
+  dailyStatsAutoWrite: boolean
+  /** Paint a query's row green in the workbook once it has been answered. */
+  highlightReplied:    boolean
   /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
   startDate:         string
   backupEnabled:     boolean
@@ -95,6 +103,13 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
                        || DEFAULTS.excludedSheetName,
     aiUsageSheetName:  str(SETTINGS.aiUsageSheetName, DEFAULTS.aiUsageSheetName)
                        || DEFAULTS.aiUsageSheetName,
+    dailyStatsSheetName: str(SETTINGS.dailyStatsSheetName, DEFAULTS.dailyStatsSheetName)
+                         || DEFAULTS.dailyStatsSheetName,
+    // Capped: the tab is rewritten whole on every sweep, and a year of days ×
+    // mailboxes is a report nobody reads and a payload that times the write out.
+    dailyStatsDays:      Math.min(180, Math.max(1, num(SETTINGS.dailyStatsDays, DEFAULTS.dailyStatsDays))),
+    dailyStatsAutoWrite: bool(SETTINGS.dailyStatsAutoWrite, DEFAULTS.dailyStatsAutoWrite),
+    highlightReplied:    bool(SETTINGS.highlightReplied,    DEFAULTS.highlightReplied),
     startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
     backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
     backupSheetUrl:    str(SETTINGS.backupSheetUrl, DEFAULTS.backupSheetUrl),
@@ -134,6 +149,13 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
     const tab = String(patch.aiUsageSheetName).trim()
     if (tab) put(SETTINGS.aiUsageSheetName, tab)
   }
+  if (patch.dailyStatsSheetName !== undefined) {
+    const tab = String(patch.dailyStatsSheetName).trim()
+    if (tab) put(SETTINGS.dailyStatsSheetName, tab)
+  }
+  if (patch.dailyStatsDays      !== undefined) put(SETTINGS.dailyStatsDays, Math.min(180, Math.max(1, Number(patch.dailyStatsDays) || 30)))
+  if (patch.dailyStatsAutoWrite !== undefined) put(SETTINGS.dailyStatsAutoWrite, !!patch.dailyStatsAutoWrite)
+  if (patch.highlightReplied    !== undefined) put(SETTINGS.highlightReplied,    !!patch.highlightReplied)
 
   if (patch.backupEnabled !== undefined) put(SETTINGS.backupEnabled, !!patch.backupEnabled)
   if (patch.startDate     !== undefined) {
@@ -163,21 +185,77 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
 
 // ── Mailboxes ────────────────────────────────────────────────────────────────
 
-/** Creates the seed mailboxes the first time the feature is opened. Idempotent. */
+/**
+ * Creates the seed mailboxes the first time the feature is opened, and brings
+ * the group addresses among them up to date on installs that already have the
+ * table. Idempotent.
+ *
+ * The second half exists for `availcheck@aahaas.com`, which was originally
+ * seeded as an inactive USER mailbox with `ErrorInvalidUser` recorded against
+ * it — Graph has no mailbox to open, because it is a distribution group. It is
+ * switched to ALIAS so its traffic is read off the members' TO/CC lines instead.
+ *
+ * A group already carrying the ALIAS kind is left completely alone: whether it
+ * is active, what it is called and which addresses it answers to are the
+ * admin's to change from the UI, and a seed must never take that back.
+ */
 export async function ensureSeedMailboxes(): Promise<void> {
   const count = await prisma.queryMonitorMailbox.count()
-  if (count > 0) return
 
-  await prisma.queryMonitorMailbox.createMany({
-    data: SEED_MAILBOXES.map((m, i) => ({
-      email:       m.email.toLowerCase(),
-      displayName: m.displayName,
-      isActive:    m.isActive,
-      sortOrder:   i,
-      lastError:   m.lastError ?? null,
-    })),
-    skipDuplicates: true,
-  })
+  if (count === 0) {
+    await prisma.queryMonitorMailbox.createMany({
+      data: SEED_MAILBOXES.map((m, i) => ({
+        email:          m.email.toLowerCase(),
+        displayName:    m.displayName,
+        mailboxKind:    m.kind ?? 'USER',
+        aliasAddresses: m.aliasAddresses ?? '',
+        isActive:       m.isActive,
+        sortOrder:      i,
+        lastError:      m.lastError ?? null,
+      })),
+      skipDuplicates: true,
+    })
+    return
+  }
+
+  for (let i = 0; i < SEED_MAILBOXES.length; i += 1) {
+    const seed = SEED_MAILBOXES[i]
+    if (seed.kind !== 'ALIAS') continue
+    const email = seed.email.toLowerCase()
+    const existing = await prisma.queryMonitorMailbox.findUnique({ where: { email } })
+
+    if (!existing) {
+      await prisma.queryMonitorMailbox.create({
+        data: {
+          email, displayName: seed.displayName, mailboxKind: 'ALIAS',
+          aliasAddresses: seed.aliasAddresses ?? '', isActive: seed.isActive, sortOrder: i,
+        },
+      }).catch(() => {})
+      continue
+    }
+
+    if (existing.mailboxKind === 'ALIAS') continue
+
+    await prisma.queryMonitorMailbox.update({
+      where: { id: existing.id },
+      data: {
+        mailboxKind:    'ALIAS',
+        aliasAddresses: existing.aliasAddresses || seed.aliasAddresses || '',
+        // It was off only because Graph could not open it. As an alias there is
+        // nothing to open, so the reason no longer applies.
+        isActive:       true,
+        lastError:      null,
+      },
+    }).catch(() => {})
+  }
+}
+
+/** Every address a mailbox record answers to, lower-cased. */
+export function mailboxAddresses(mailbox: { email: string; aliasAddresses?: string }): string[] {
+  return [mailbox.email, ...(mailbox.aliasAddresses ?? '').split(',')]
+    .map(a => a.trim().toLowerCase())
+    .filter(a => a.includes('@'))
+    .filter((a, i, all) => all.indexOf(a) === i)
 }
 
 export async function listMailboxes() {
