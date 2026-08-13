@@ -33,7 +33,7 @@ import {
   RECONFIRM_DUE_DAYS, REASON_META, clearReconfirmDelay, isReconfirmReason,
   loadBookingReconfirm, saveReconfirmDelay,
 } from '@/lib/reconfirm-delay'
-import type { UserRole } from '@prisma/client'
+import type { BookingStatus, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,7 +52,7 @@ type Guard =
   | {
       ok: true
       bookingId: string
-      status: string
+      status: BookingStatus
       actorId: string
       actor: string
     }
@@ -90,7 +90,7 @@ async function guard(ref: string, opts: { write: boolean }): Promise<Guard> {
 }
 
 /** Append the decision to the file's trail. Never fails the write. */
-async function audit(bookingId: string, status: string, actorId: string, note: string) {
+async function audit(bookingId: string, status: BookingStatus, actorId: string, note: string) {
   await prisma.statusEvent.create({
     data: { bookingId, fromState: status, toState: status, actorId, note },
   }).catch(() => { /* the reason is the record that matters; not its trail */ })
