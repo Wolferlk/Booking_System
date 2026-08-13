@@ -7,7 +7,7 @@
  * every message, this one only observes.
  */
 import { graphFetch } from '@/lib/graph-client'
-import { IGNORED_SENDER_PATTERNS, INTERNAL_DOMAINS } from './constants'
+import { ALIAS_MAILBOX_NOTE, IGNORED_SENDER_PATTERNS, INTERNAL_DOMAINS } from './constants'
 
 export interface MonitoredMessage {
   graphId:           string
@@ -22,7 +22,15 @@ export interface MonitoredMessage {
   bodyText:          string
   hasAttachments:    boolean
   folder:            string
+  /**
+   * Every address on the TO and CC lines, lower-cased. This is how a
+   * distribution group with no mailbox of its own — availcheck@ — is counted:
+   * the mail is read out of a member's inbox and the group is recognised here.
+   */
+  recipients:        string[]
 }
+
+interface GraphRecipient { emailAddress?: { address?: string; name?: string } }
 
 interface GraphMessage {
   id: string
@@ -36,12 +44,23 @@ interface GraphMessage {
   bodyPreview?: string
   body?: { contentType?: string; content?: string }
   hasAttachments?: boolean
+  toRecipients?: GraphRecipient[]
+  ccRecipients?: GraphRecipient[]
 }
 
 const SELECT_INBOX =
-  'id,internetMessageId,conversationId,subject,from,receivedDateTime,bodyPreview,body,hasAttachments'
+  'id,internetMessageId,conversationId,subject,from,receivedDateTime,bodyPreview,body,'
+  + 'hasAttachments,toRecipients,ccRecipients'
 const SELECT_SENT =
-  'id,internetMessageId,conversationId,subject,sentDateTime,toRecipients'
+  'id,internetMessageId,conversationId,subject,sentDateTime,toRecipients,ccRecipients'
+
+/** TO + CC as lower-cased addresses. */
+function recipientsOf(msg: GraphMessage): string[] {
+  return [...(msg.toRecipients ?? []), ...(msg.ccRecipients ?? [])]
+    .map(r => (r.emailAddress?.address ?? '').toLowerCase().trim())
+    .filter(Boolean)
+    .filter((a, i, all) => all.indexOf(a) === i)
+}
 
 async function graphPages<T>(url: string, maxItems: number): Promise<T[]> {
   const items: T[] = []
@@ -124,69 +143,146 @@ export async function fetchInboxSince(
         bodyText,
         hasAttachments:    msg.hasAttachments ?? false,
         folder:            'Inbox',
+        recipients:        recipientsOf(msg),
       }
     })
     .filter(m => m.fromAddress && !isIgnorableSender(m.fromAddress))
 }
 
 /**
- * conversationId → first outbound reply, from the mailbox's Sent Items in the
- * window. One call per mailbox instead of one per query.
+ * One mail out of a handler's Sent Items, with enough of it kept to decide
+ * whether it actually answers a given query.
+ *
+ * `recipients` is the part that matters. A sent mail sharing a query's
+ * conversation is not proof the agent was answered — forwarding the thread to a
+ * colleague, or replying only to internal staff on it, looks exactly the same
+ * from the conversation id alone. Knowing who it went to is what separates "we
+ * replied to them" from "we talked about it among ourselves".
  */
-export async function fetchSentConversationMap(
-  mailboxEmail: string, since: Date, limit = 300,
-): Promise<Map<string, Date>> {
-  const base   = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailboxEmail)}`
+export interface SentMessage {
+  graphId:           string
+  internetMessageId: string | null
+  conversationId:    string | null
+  subject:           string
+  sentAt:            Date
+  recipients:        string[]
+}
+
+/**
+ * A mailbox's Sent Items over the window, indexed the two ways replies are
+ * looked up: by conversation, and by normalised subject for the mail Graph gives
+ * no conversation id for. One call per mailbox instead of one per query.
+ */
+export interface SentIndex {
+  mailboxId:      string
+  mailboxEmail:   string
+  handlerName:    string
+  byConversation: Map<string, SentMessage[]>
+  bySubject:      Map<string, SentMessage[]>
+  /** Set when Sent Items could not be read at all — reported, never fatal. */
+  error?:         string
+}
+
+function toSentMessage(msg: GraphMessage): SentMessage | null {
+  if (!msg.sentDateTime) return null
+  return {
+    graphId:           msg.id,
+    internetMessageId: msg.internetMessageId ?? null,
+    conversationId:    msg.conversationId ?? null,
+    subject:           (msg.subject ?? '').trim(),
+    sentAt:            new Date(msg.sentDateTime),
+    recipients:        recipientsOf(msg),
+  }
+}
+
+/**
+ * Build the index. `subjectKey` is supplied by the caller (thread.ts owns
+ * subject normalisation) so collection stays free of thread rules.
+ */
+export async function fetchSentIndex(
+  mailbox: { id: string; email: string; displayName: string },
+  since: Date,
+  subjectKey: (subject: string) => string,
+  limit = 300,
+): Promise<SentIndex> {
+  const base   = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailbox.email)}`
   const filter = encodeURIComponent(`sentDateTime ge ${since.toISOString()}`)
   const url    = `${base}/mailFolders/sentitems/messages`
              + `?$top=${Math.min(limit, 100)}&$orderby=sentDateTime desc`
              + `&$select=${SELECT_SENT}&$filter=${filter}`
 
-  const map = new Map<string, Date>()
+  const index: SentIndex = {
+    mailboxId:      mailbox.id,
+    mailboxEmail:   mailbox.email,
+    handlerName:    mailbox.displayName,
+    byConversation: new Map(),
+    bySubject:      new Map(),
+  }
+
   let messages: GraphMessage[] = []
   try {
     messages = await graphPages<GraphMessage>(url, limit)
-  } catch {
-    return map // no Sent Items access → everything simply stays PENDING
+  } catch (err) {
+    // No Sent Items access → this mailbox simply contributes no replies, and
+    // every query it owns stays PENDING rather than the sweep failing.
+    index.error = err instanceof Error ? err.message.slice(0, 300) : 'Sent Items unreadable'
+    return index
   }
 
-  for (const msg of messages) {
-    const conversationId = msg.conversationId
-    if (!conversationId || !msg.sentDateTime) continue
-    const sentAt = new Date(msg.sentDateTime)
-    const existing = map.get(conversationId)
-    if (!existing || sentAt < existing) map.set(conversationId, sentAt)
+  const push = (map: Map<string, SentMessage[]>, key: string, msg: SentMessage) => {
+    const list = map.get(key)
+    if (list) list.push(msg)
+    else map.set(key, [msg])
   }
-  return map
+
+  for (const raw of messages) {
+    const msg = toSentMessage(raw)
+    if (!msg) continue
+    if (msg.conversationId) push(index.byConversation, msg.conversationId, msg)
+    const key = subjectKey(msg.subject)
+    if (key) push(index.bySubject, key, msg)
+  }
+  return index
 }
 
 /**
  * Targeted lookup for an older thread that has fallen outside the bulk window —
  * used when chasing replies to queries that are still unanswered days later.
+ * Returns every sent mail on the conversation so the caller can apply the same
+ * "was it addressed back to the person who asked" test as the bulk path.
  */
-export async function findReplyForConversation(
+export async function findSentInConversation(
   mailboxEmail: string, conversationId: string, after: Date,
-): Promise<Date | null> {
+): Promise<SentMessage[]> {
   const base   = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailboxEmail)}`
   const filter = encodeURIComponent(`conversationId eq '${conversationId.replace(/'/g, "''")}'`)
   const url    = `${base}/mailFolders/sentitems/messages`
-             + `?$top=5&$orderby=sentDateTime asc&$select=${SELECT_SENT}&$filter=${filter}`
+             + `?$top=10&$orderby=sentDateTime asc&$select=${SELECT_SENT}&$filter=${filter}`
 
   try {
     const page = await graphFetch<{ value: GraphMessage[] }>(url)
-    for (const msg of page.value ?? []) {
-      if (!msg.sentDateTime) continue
-      const sentAt = new Date(msg.sentDateTime)
-      if (sentAt >= after) return sentAt
-    }
-  } catch { /* treated as "no reply found" */ }
-  return null
+    return (page.value ?? [])
+      .map(toSentMessage)
+      .filter((m): m is SentMessage => m !== null && m.sentAt >= after)
+  } catch {
+    return [] // treated as "no reply found"
+  }
 }
 
-/** Cheap reachability probe, so the UI can show a red mailbox before a sweep. */
+/**
+ * Cheap reachability probe, so the UI can show a red mailbox before a sweep.
+ *
+ * An ALIAS address has nothing to probe: it is a distribution group, Graph has
+ * no mailbox for it, and a 404 here would be reported as a fault when it is the
+ * entire premise. It passes with the explanation instead.
+ */
 export async function testMailboxAccess(
-  mailboxEmail: string,
-): Promise<{ ok: boolean; error?: string; lastMessageAt?: Date }> {
+  mailboxEmail: string, kind: 'USER' | 'ALIAS' = 'USER',
+): Promise<{ ok: boolean; error?: string; note?: string; lastMessageAt?: Date }> {
+  if (kind === 'ALIAS') {
+    return { ok: true, note: ALIAS_MAILBOX_NOTE }
+  }
+
   try {
     const res = await graphFetch<{ value: { receivedDateTime?: string }[] }>(
       `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(mailboxEmail)}`

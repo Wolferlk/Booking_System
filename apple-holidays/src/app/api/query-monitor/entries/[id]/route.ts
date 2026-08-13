@@ -73,6 +73,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         `"${handler}" is not on this mail. Pick one of: ${toList.join(', ') || '(nobody — the TO list is empty)'}`,
       )
     }
+    // A distribution group is on the TO list because the mail really did go to
+    // it, but it cannot own a query: nobody is accountable for a group, and
+    // nothing can ever be found in its Sent Items.
+    if (handler) {
+      const groups = await prisma.queryMonitorMailbox.findMany({
+        where:  { mailboxKind: 'ALIAS' },
+        select: { displayName: true },
+      })
+      if (groups.some(g => g.displayName.toLowerCase() === handler.toLowerCase())) {
+        return buildApiError(
+          `"${handler}" is a distribution group, not a person — the File Handler has to be someone who can answer the query.`,
+        )
+      }
+    }
     data.handlerNames = handler
   }
 

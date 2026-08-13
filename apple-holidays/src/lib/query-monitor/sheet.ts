@@ -1054,6 +1054,42 @@ export async function updateExcludedRow(
 }
 
 /**
+ * Paint (or strip) the fill across one row of a tab.
+ *
+ * This is how an answered query turns green in the workbook. Three properties
+ * matter and all three come from where the painting stops:
+ *
+ * - **Only the layout's own columns.** Under a hand-edited header that means the
+ *   mapped runs, so a column of the team's sitting between ours keeps whatever
+ *   colour they gave it. Nothing right of the layout is ever touched.
+ * - **Values are not involved.** This is a `format/fill` call; not one cell's
+ *   contents can change through it, whatever else is wrong.
+ * - **Cosmetic, so never fatal.** The caller treats a failure as "not coloured
+ *   yet" — a row that is on the sheet with the right values but the wrong colour
+ *   is a nuisance, a sweep that dies painting it is an outage.
+ */
+export async function setRowFill(
+  ref: SheetRef, sheetName: string, rowNumber: number, layout: SheetLayout,
+  color: string | null, sessionId: string | null = null,
+): Promise<void> {
+  const spans = layout.map
+    ? columnRuns(layout.map).map(run => [columnLetter(run.first), columnLetter(run.last)] as const)
+    : [[layout.firstColumn, layout.lastColumn] as const]
+
+  for (const [first, last] of spans) {
+    const address = `${first}${rowNumber}:${last}${rowNumber}`
+    const range = `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')`
+    await workbookFetch(
+      color ? `${range}/format/fill` : `${range}/format/fill/clear`,
+      sessionId,
+      color
+        ? { method: 'PATCH', body: JSON.stringify({ color }) }
+        : { method: 'POST',  body: '{}' },
+    )
+  }
+}
+
+/**
  * Remove rows from a tab and close the gap behind them.
  *
  * Only the layout's own columns are shifted up. A whole-row delete would drag
