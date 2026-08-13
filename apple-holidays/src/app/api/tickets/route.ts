@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
+import { resolvePortalSelection } from '@/lib/portals'
 import type { UserRole, OperationCountry } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json()
-  const { bookingRef, agendaItemId, pnlLineId, type, qty, supplier, costPerUnit, currency, notes } = body
+  const { bookingRef, agendaItemId, pnlLineId, type, qty, supplier, costPerUnit, currency, notes, category } = body
 
   if (!bookingRef || !type) return buildApiError('bookingRef and type are required')
 
@@ -68,6 +69,16 @@ export async function POST(req: NextRequest) {
   if (!booking) return buildApiError('Booking not found', 404)
 
   const totalCost = costPerUnit ? Number(costPerUnit) * Number(qty ?? 1) : null
+
+  // Where it is being bought, when the ground team already knows. Validated
+  // against the shared registry rather than stored as typed — Accounts matches
+  // portals by name, so a misspelling here is a payment it cannot route.
+  let portal
+  try {
+    portal = await resolvePortalSelection(booking.operationCountry, body)
+  } catch (err) {
+    return buildApiError(err instanceof Error ? err.message : 'That portal could not be used.', 422)
+  }
 
   const ticket = await prisma.ticket.create({
     data: {
@@ -81,6 +92,14 @@ export async function POST(req: NextRequest) {
       totalCost,
       currency: currency ?? 'USD',
       notes,
+      ...(category != null && { category: category || null }),
+      ...(portal && {
+        portalId: portal.portalId,
+        portalName: portal.portalName,
+        portalRef: portal.portalRef ?? null,
+        portalBy: portal.portalName ? (session.user.name || session.user.email || null) : null,
+        portalAt: portal.portalName ? new Date() : null,
+      }),
       status: 'DRAFT',
     },
   })

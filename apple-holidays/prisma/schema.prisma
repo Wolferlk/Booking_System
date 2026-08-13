@@ -390,6 +390,20 @@ model Ticket {
   vehicleNumber String?
   driverName    String?
   driverPhone   String?
+  // Where this ticket was bought. MY/SG/VN buy through resellers (Cebu, Global
+  // Tix, Travel Vago, Be My Guest) or from an agent, and Accounts pays whoever
+  // that was — Payable 1.0 reads these columns back onto its payable line.
+  //
+  // portalId points at payment_portals in the Accounts database, which is a
+  // different server and so cannot be a relation. portalName is stored beside
+  // it deliberately: a ticket has to keep saying where it was bought even if
+  // the portal is later renamed or removed from the list.
+  portalId      Int?
+  portalName    String?
+  // The portal's own booking reference for this purchase, when it gives one.
+  portalRef     String?
+  portalBy      String?
+  portalAt      DateTime?
   agendaItem    AgendaItem?  @relation(fields: [agendaItemId], references: [id])
   booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   pnlLine       PNLLineItem? @relation(fields: [pnlLineId], references: [id])
@@ -397,6 +411,7 @@ model Ticket {
   @@index([agendaItemId], map: "tickets_agendaItemId_fkey")
   @@index([bookingId], map: "tickets_bookingId_fkey")
   @@index([pnlLineId], map: "tickets_pnlLineId_fkey")
+  @@index([portalName], map: "tickets_portalName_idx")
   @@map("tickets")
 }
 

@@ -10,7 +10,7 @@ import {
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
   Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
   Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle, HardDrive,
-  Database,
+  Database, Store,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -66,6 +66,25 @@ interface Ticket {
   driverPhone: string | null
   pnlLine: PnlLine | null
   agendaItem: { date: string; location: string } | null
+  // Where this ticket was bought — the reseller portal (Cebu, Global Tix,
+  // Travel Vago…) or agent. Accounts pays whoever is named here, so it is not
+  // free text: it is picked from the shared registry (see /api/portals).
+  portalId: number | null
+  portalName: string | null
+  portalRef: string | null
+  portalBy: string | null
+  portalAt: string | null
+}
+
+/** One row of the shared portal registry, as /api/portals returns it. */
+interface Portal {
+  id: number
+  country: string
+  name: string
+  slug: string
+  kind: string
+  categories: string[] | null
+  isActive: boolean
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -220,6 +239,11 @@ export default function TicketsPage() {
   const [drivePickerOpen,  setDrivePickerOpen]  = useState(false)
   const [purchaseModal,    setPurchaseModal]    = useState<string | null>(null)
   const [purchaseRef,   setPurchaseRef]   = useState('')
+  // The portal chosen in the purchase step, and the portal's own booking
+  // reference where it gives one.
+  const [purchasePortal,    setPurchasePortal]    = useState('')
+  const [purchasePortalRef, setPurchasePortalRef] = useState('')
+  const [purchasing,        setPurchasing]        = useState(false)
   const [uploadingId,   setUploadingId]   = useState<string | null>(null)
   const [receiptModal,  setReceiptModal]  = useState<Ticket | null>(null)
   const [viewFile,      setViewFile]      = useState<Ticket | null>(null)
@@ -235,6 +259,7 @@ export default function TicketsPage() {
     type: '', supplier: '', qty: '', costPerUnit: '', reference: '', notes: '',
     category: '',
     transferType: '', vehicleType: '', vehicleNumber: '', driverName: '', driverPhone: '',
+    portalId: '', portalRef: '',
   })
   const [editSaving, setEditSaving] = useState(false)
 
@@ -258,6 +283,51 @@ export default function TicketsPage() {
   const [pnlImporting, setPnlImporting] = useState(false)
   const [pnlSyncing,   setPnlSyncing]   = useState(false)
   const [pnlResult,    setPnlResult]    = useState<{ created: number; updated: number; skipped: number } | null>(null)
+
+  // ── Ticket portals ────────────────────────────────────────────────────────
+  // Where a ticket can be bought, for this booking's country. The list is
+  // shared with Accounts — it pays whichever portal is recorded here — and is
+  // managed at /dashboard/admin/portals (or Accounts → Settings → Ticket
+  // Portals). Countries that buy direct get an empty list and no gate.
+  const [portals,       setPortals]       = useState<Portal[]>([])
+  const [portalsLoaded, setPortalsLoaded] = useState(false)
+
+  useEffect(() => {
+    if (!ref) return
+    let cancelled = false
+
+    fetch(`/api/portals?bookingRef=${ref}`)
+      .then(r => r.json())
+      .then(json => {
+        if (cancelled) return
+        if (json.success) setPortals(json.data.portals || [])
+      })
+      // A portal list we cannot reach must not break the page: tickets still
+      // work, and the purchase step says why the dropdown is empty.
+      .catch(() => { /* offline — handled by portalsLoaded staying honest */ })
+      .finally(() => { if (!cancelled) setPortalsLoaded(true) })
+
+    return () => { cancelled = true }
+  }, [ref])
+
+  /** Does this booking's country buy through portals at all? */
+  const portalsInUse = portals.length > 0
+
+  /** The portals worth offering for a ticket of this category. */
+  function portalsFor(category: string | null): Portal[] {
+    if (!category) return portals
+    const cat = category.toUpperCase()
+    const fits = portals.filter(p => !p.categories?.length || p.categories.some(c => c.toUpperCase() === cat))
+    // A restriction that would leave nothing to pick is ignored: being unable
+    // to record where a ticket was bought is worse than a long dropdown.
+    return fits.length ? fits : portals
+  }
+
+  /** Must this ticket name a portal before it can be marked purchased? */
+  function portalRequired(t: Ticket | null | undefined): boolean {
+    if (!t || !portalsInUse) return false
+    return ['TICKETS', 'ATTRACTION'].includes(effectiveCat(t).toUpperCase())
+  }
 
   async function load() {
     try {
@@ -530,21 +600,39 @@ export default function TicketsPage() {
 
   // ── Purchase ───────────────────────────────────────────────────────────────
 
+  function openPurchase(t: Ticket) {
+    // Pre-filled with whatever is already on the ticket, so re-opening the
+    // window is not a chance to lose the portal someone already recorded.
+    setPurchasePortal(t.portalId ? String(t.portalId) : '')
+    setPurchasePortalRef(t.portalRef ?? '')
+    setPurchaseRef(t.reference ?? '')
+    setPurchaseModal(t.id)
+  }
+
   async function purchaseTicket(id: string) {
+    setPurchasing(true)
     try {
       const res = await fetch(`/api/tickets/${id}/purchase`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reference: purchaseRef }),
+        body: JSON.stringify({
+          reference: purchaseRef,
+          // Only sent when the country buys through portals at all — an absent
+          // field leaves the ticket's portal exactly as it was.
+          ...(portalsInUse && {
+            portalId:  purchasePortal ? Number(purchasePortal) : null,
+            portalRef: purchasePortalRef,
+          }),
+        }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
-      toast.success('Ticket purchased')
-      setPurchaseModal(null); setPurchaseRef('')
+      toast.success(json.message || 'Ticket purchased')
+      setPurchaseModal(null); setPurchaseRef(''); setPurchasePortal(''); setPurchasePortalRef('')
       load()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Payment not confirmed by Accounts (G2)')
-    }
+    } finally { setPurchasing(false) }
   }
 
   // ── File upload (receipt) ──────────────────────────────────────────────────
@@ -580,6 +668,7 @@ export default function TicketsPage() {
       transferType: t.transferType ?? '', vehicleType: t.vehicleType ?? '',
       vehicleNumber: t.vehicleNumber ?? '', driverName: t.driverName ?? '',
       driverPhone: t.driverPhone ?? '',
+      portalId: t.portalId ? String(t.portalId) : '', portalRef: t.portalRef ?? '',
     })
     setEditModal(t)
   }
@@ -604,6 +693,12 @@ export default function TicketsPage() {
           vehicleNumber: editForm.vehicleNumber || null,
           driverName:    editForm.driverName    || null,
           driverPhone:   editForm.driverPhone   || null,
+          // Sent only where portals are in use, so editing a Sri Lankan ticket
+          // never clears a field that country does not have.
+          ...(portalsInUse && {
+            portalId:  editForm.portalId ? Number(editForm.portalId) : null,
+            portalRef: editForm.portalRef || null,
+          }),
         }),
       })
       const json = await res.json()
@@ -1202,6 +1297,35 @@ export default function TicketsPage() {
                             ) : <p className="text-xs text-slate-400">No P&L link</p>}
                           </div>
                         </div>
+
+                        {/* Where it was bought — the field Accounts pays on.
+                            Shown on every ticket of a portal country, filled or
+                            not, because an empty one is the thing somebody has
+                            to go and fix. */}
+                        {portalsInUse && (
+                          <div className="mt-3 pt-3 border-t border-slate-100">
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wide">Bought through</p>
+                            {t.portalName ? (
+                              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
+                                  <Store className="w-3 h-3" /> {t.portalName}
+                                </span>
+                                {t.portalRef && (
+                                  <span className="text-xs text-slate-500 font-mono">#{t.portalRef}</span>
+                                )}
+                                {t.portalBy && (
+                                  <span className="text-[11px] text-slate-400">by {t.portalBy}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <p className={`text-xs mt-0.5 ${portalRequired(t) ? 'text-amber-600 font-semibold' : 'text-slate-400'}`}>
+                                {portalRequired(t)
+                                  ? 'No portal yet — needed before this ticket can be purchased'
+                                  : 'No portal recorded'}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
 
                       {/* Actions */}
@@ -1228,7 +1352,7 @@ export default function TicketsPage() {
 
                         {canPurchase && t.status === 'DRAFT' && (
                           <button
-                            onClick={() => setPurchaseModal(t.id)}
+                            onClick={() => openPurchase(t)}
                             disabled={!payOk}
                             title={!payOk ? 'Payment not confirmed by Accounts (G2)' : 'Purchase ticket'}
                             className={`btn btn-sm ${payOk ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
@@ -1461,6 +1585,36 @@ export default function TicketsPage() {
             <input className="form-input" placeholder="Supplier / provider name" value={editForm.supplier}
               onChange={e => setEditForm(f => ({ ...f, supplier: e.target.value }))} />
           </div>
+
+          {/* Bought through — the portal Accounts pays. Editable after the
+              purchase too: a ticket bought on the wrong portal by mistake is
+              corrected here, and Payable 1.0 follows the correction on its next
+              load rather than paying what was first recorded. */}
+          {portalsInUse && (
+            <div className="border border-indigo-100 rounded-xl p-4 space-y-3 bg-indigo-50/60">
+              <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">Bought through</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="form-label">Portal</label>
+                  <select className="form-input" value={editForm.portalId}
+                    onChange={e => setEditForm(f => ({ ...f, portalId: e.target.value }))}>
+                    <option value="">— none —</option>
+                    {portalsFor(editForm.category || (editModal ? effectiveCat(editModal) : null)).map(p => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="form-label">Portal reference</label>
+                  <input className="form-input font-mono" placeholder="GT-88213" value={editForm.portalRef}
+                    onChange={e => setEditForm(f => ({ ...f, portalRef: e.target.value }))} />
+                </div>
+              </div>
+              <p className="text-xs text-indigo-700">
+                Accounts pays this portal for the ticket — changing it changes who gets paid.
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="form-label">Quantity</label>
@@ -1528,24 +1682,79 @@ export default function TicketsPage() {
       </Modal>
 
       {/* ── Purchase Modal ───────────────────────────────────────────────────── */}
-      <Modal open={!!purchaseModal} onClose={() => setPurchaseModal(null)} title="Mark Ticket as Purchased">
-        <div className="space-y-4">
-          <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-sm text-emerald-700">
-            P&L payment is confirmed — you can proceed to purchase this ticket.
-          </div>
-          <div>
-            <label className="form-label">Voucher / Reference Number (optional)</label>
-            <input className="form-input" placeholder="TKT-2026-001" value={purchaseRef}
-              onChange={e => setPurchaseRef(e.target.value)} />
-          </div>
-          <div className="flex gap-3">
-            <button onClick={() => purchaseModal && purchaseTicket(purchaseModal)} className="btn-primary btn flex-1">
-              <CheckCircle2 className="w-4 h-4" /> Confirm Purchase
-            </button>
-            <button onClick={() => setPurchaseModal(null)} className="btn-secondary btn">Cancel</button>
-          </div>
-        </div>
-      </Modal>
+      {(() => {
+        const t = tickets.find(x => x.id === purchaseModal) ?? null
+        const options = portalsFor(t ? effectiveCat(t) : null)
+        const mustPick = portalRequired(t)
+        const blocked = mustPick && !purchasePortal
+
+        return (
+          <Modal open={!!purchaseModal} onClose={() => setPurchaseModal(null)} title="Mark Ticket as Purchased">
+            <div className="space-y-4">
+              <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-sm text-emerald-700">
+                P&L payment is confirmed — you can proceed to purchase this ticket.
+              </div>
+
+              {/* Where it was bought. This is the field Accounts pays on: the
+                  portal named here becomes the payee on the payable line, so it
+                  is asked for at the moment of purchase rather than left to be
+                  reconstructed later. */}
+              {portalsInUse && (
+                <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-lg space-y-3">
+                  <div>
+                    <label className="form-label">
+                      Bought through {mustPick && <span className="text-rose-600">*</span>}
+                    </label>
+                    <select className="form-input" value={purchasePortal}
+                      onChange={e => setPurchasePortal(e.target.value)}>
+                      <option value="">— select the portal —</option>
+                      {options.map(p => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}{p.kind === 'agent' ? ' (agent)' : p.kind === 'direct' ? ' (direct)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-indigo-700 mt-1">
+                      Accounts pays this portal for the ticket. If the one you used is missing,
+                      add it on the <a href="/dashboard/admin/portals" className="underline font-semibold">Ticket Portals</a> page first.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="form-label">Portal booking reference (optional)</label>
+                    <input className="form-input" placeholder="e.g. GT-88213" value={purchasePortalRef}
+                      onChange={e => setPurchasePortalRef(e.target.value)} />
+                  </div>
+                </div>
+              )}
+
+              {portalsInUse === false && portalsLoaded && (
+                <div className="p-3 bg-amber-50 border border-amber-100 rounded-lg text-sm text-amber-700">
+                  No ticket portals are set up for this country, so this purchase is recorded without one.
+                </div>
+              )}
+
+              <div>
+                <label className="form-label">Voucher / Reference Number (optional)</label>
+                <input className="form-input" placeholder="TKT-2026-001" value={purchaseRef}
+                  onChange={e => setPurchaseRef(e.target.value)} />
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={() => purchaseModal && purchaseTicket(purchaseModal)}
+                  disabled={blocked || purchasing}
+                  title={blocked ? 'Pick the portal this ticket was bought through first.' : undefined}
+                  className="btn-primary btn flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {purchasing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Confirm Purchase
+                </button>
+                <button onClick={() => setPurchaseModal(null)} className="btn-secondary btn">Cancel</button>
+              </div>
+            </div>
+          </Modal>
+        )
+      })()}
 
       {/* ── Bulk Activate Modal ──────────────────────────────────────────────── */}
       <Modal
