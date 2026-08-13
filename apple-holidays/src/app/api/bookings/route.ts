@@ -14,6 +14,11 @@ import type { OperationCountry } from '@/lib/country-detection'
 
 export const dynamic = 'force-dynamic'
 
+// Calendar inputs are date-only values. Build explicit UTC boundaries so the
+// inclusive end date does not depend on the server's local timezone.
+function calendarBoundary(value: string, endOfDay = false): Date {
+  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
+}
 /**
  * How many bookings the Detailed P&L filter will consider in one pass. Sized
  * well above the whole book so the filter is exhaustive in practice, while
@@ -210,10 +215,9 @@ export async function GET(req: NextRequest) {
   // Explicit date range on the chosen date column (arrivalDate or createdAt)
   if (dateFrom || dateTo) {
     const range: Record<string, Date> = {}
-    if (dateFrom) range.gte = new Date(dateFrom)
+    if (dateFrom) range.gte = calendarBoundary(dateFrom)
     if (dateTo) {
-      const end = new Date(dateTo)
-      end.setHours(23, 59, 59, 999)
+      const end = calendarBoundary(dateTo, true)
       range.lte = end
     }
     andClauses.push({ [dateField]: range })
@@ -222,7 +226,8 @@ export async function GET(req: NextRequest) {
   // Date period filter applied to the chosen date column (arrivalDate or createdAt)
   if (dateFilter) {
     const now = new Date()
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const todayStart = new Date(now)
+    todayStart.setUTCHours(0, 0, 0, 0)
     if (dateFilter === 'today') {
       andClauses.push({
         [dateField]: {
@@ -232,15 +237,15 @@ export async function GET(req: NextRequest) {
       })
     } else if (dateFilter === 'this_week') {
       const startOfWeek = new Date(todayStart)
-      startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
+      startOfWeek.setUTCDate(todayStart.getUTCDate() - todayStart.getUTCDay())
       const endOfWeek = new Date(startOfWeek)
-      endOfWeek.setDate(startOfWeek.getDate() + 7)
+      endOfWeek.setUTCDate(startOfWeek.getUTCDate() + 7)
       andClauses.push({ [dateField]: { gte: startOfWeek, lt: endOfWeek } })
     } else if (dateFilter === 'this_month') {
       andClauses.push({
         [dateField]: {
-          gte: new Date(now.getFullYear(), now.getMonth(), 1),
-          lt: new Date(now.getFullYear(), now.getMonth() + 1, 1),
+          gte: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+          lt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
         },
       })
     }

@@ -7,6 +7,8 @@ import { logActivity, ACTION } from '@/lib/activity'
 import { handlePrismaApiError } from '@/lib/prisma-error'
 import type { UserRole, DriverPaymentType } from '@prisma/client'
 
+const MAX_DRIVER_PAYMENT_AMOUNT = 99_999_999.99
+
 export const dynamic = 'force-dynamic'
 export async function GET(
   req: NextRequest,
@@ -42,14 +44,23 @@ export async function POST(
   const body = await req.json()
   const { amount, type, description, refNumber } = body
 
-  if (!amount || !type) return buildApiError('amount and type are required')
+  if (!amount || !type) return buildApiError('Amount and payment type are required', 400)
+
+  const amountText = String(amount).trim()
+  const numericAmount = Number(amountText)
+  if (!/^\d+(?:\.\d{1,2})?$/.test(amountText) || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+    return buildApiError('', 400)
+  }
+  if (numericAmount > MAX_DRIVER_PAYMENT_AMOUNT) {
+    return buildApiError(`Amount cannot exceed ${MAX_DRIVER_PAYMENT_AMOUNT.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 400)
+  }
 
   let payment
   try {
     payment = await prisma.driverPayment.create({
       data: {
         driverId: params.id,
-        amount: Number(amount),
+        amount: numericAmount,
         type: type as DriverPaymentType,
         description: description ?? null,
         refNumber: refNumber ?? null,
@@ -59,17 +70,16 @@ export async function POST(
   } catch (error) {
     return handlePrismaApiError(error, 'Failed to record payment', 'A payment with these details already exists')
   }
-
   // Update driver advance balance for ADVANCE type
   if (type === 'ADVANCE') {
     await prisma.driver.update({
       where: { id: params.id },
-      data: { advanceBalance: { increment: Number(amount) } },
+      data: { advanceBalance: { increment: numericAmount } },
     })
   } else if (type === 'DEDUCTION') {
     await prisma.driver.update({
       where: { id: params.id },
-      data: { advanceBalance: { decrement: Number(amount) } },
+      data: { advanceBalance: { decrement: numericAmount } },
     })
   }
 
@@ -78,7 +88,7 @@ export async function POST(
     action: ACTION.DRIVER_PAYMENT_ADDED,
     entityType: 'Driver',
     entityId: params.id,
-    details: { amount, type, driverName: driver.name },
+    details: { amount: numericAmount, type, driverName: driver.name },
   })
 
   return buildApiSuccess(payment, 'Payment recorded')
