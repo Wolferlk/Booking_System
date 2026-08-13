@@ -1,11 +1,13 @@
 'use client'
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useSession } from 'next-auth/react'
 import {
   Loader2, Download, Filter, X, Calendar, Search,
   Users, Truck, MapPin, Clock, ChevronUp, ChevronDown,
   ClipboardList, RefreshCw, Table2, Globe, FileText,
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
+  Sparkles, Store, UserPlus, Phone,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -13,6 +15,9 @@ import { toast } from 'sonner'
 import { cn, formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import DriverVendorModal from '@/components/shared/driver-vendor-modal'
+import AssignMovementModal, { type MovementAssignment } from '@/components/shared/assign-movement-modal'
+import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
+import type { UserRole } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +54,8 @@ type MCRow = {
   /** Stay rows only: nights at this property. */
   nights:         number | null
   vendor:         string | null
+  /** Transport vendor's own name — `vendor` above falls back to the driver. */
+  vendorName:     string | null
   driverId:       string | null
   vendorId:       string | null
   driverName:     string | null
@@ -56,6 +63,16 @@ type MCRow = {
   driverPhotoUrl: string | null
   vehicleType:    string | null
   vehiclePlate:   string | null
+  driverRate:     number | null
+  rateCurrency:   string | null
+  guideId:         string | null
+  guideName:       string | null
+  guidePhone:      string | null
+  tourVendorId:    string | null
+  tourVendorName:  string | null
+  tourVendorPhone: string | null
+  /** Booking's operation country — decides which partner columns apply. */
+  operationCountry: string | null
   agent:          string | null
   bookingStatus:  string
 }
@@ -137,6 +154,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
   return [
     row.location, row.fromPoint, row.toPoint, row.details,
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
+    row.guideName, row.tourVendorName,
     row.vehicleType, row.vehiclePlate, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
     // Searchable by name: typing "hotel only" pulls up every accommodation-only
@@ -165,6 +183,8 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'Meet Time', value: row.meetingTime },
     { label: 'Vendor',    value: row.vendor },
     { label: 'Driver',    value: row.driverName },
+    { label: 'Guide',       value: row.guideName },
+    { label: 'Tour Vendor', value: row.tourVendorName },
     { label: 'Vehicle',   value: row.vehicleType },
     { label: 'Plate',     value: row.vehiclePlate },
     { label: 'Agent',     value: row.agent },
@@ -258,6 +278,86 @@ function MealBadge({ plan }: { plan: string }) {
   )
 }
 
+/**
+ * Whether anybody can be assigned to this row at all.
+ *
+ * Leisure days, hotel-only movements and Hotel Only bookings carry no transport
+ * by design — the row explains why instead of offering an assign button that
+ * would contradict the badge sitting next to it. Hotel Only stays are not even
+ * agenda items, so there is nothing to attach an assignment to.
+ */
+function isAssignable(row: MCRow): boolean {
+  return !row.isHotelOnlyBooking && !row.isHotelOnly && !row.isLeisure
+}
+
+/**
+ * Guide / tour-vendor cell.
+ *
+ * Three states, and they mean different things: a name, an empty slot the
+ * country does operate with (so it can be filled), and a country that does not
+ * use this partner kind at all — which reads as "not applicable" rather than
+ * "missing", so nobody chases a guide for a country that never books one.
+ */
+function PartnerCell({
+  kind, name, phone, enabled, canAssign, onAssign, query,
+}: {
+  kind: PartnerKind
+  name: string | null
+  phone: string | null
+  enabled: boolean
+  canAssign: boolean
+  onAssign: () => void
+  query: string
+}) {
+  const config = PARTNER_CONFIG[kind]
+  const Icon = kind === 'guide' ? Sparkles : Store
+  const q = query.trim().toLowerCase()
+
+  if (!enabled) {
+    return (
+      <span className="text-slate-300 text-[10px]" title={`${config.labelPlural} are not switched on for this country`}>
+        n/a
+      </span>
+    )
+  }
+
+  if (!name) {
+    return canAssign ? (
+      <button
+        onClick={e => { e.stopPropagation(); onAssign() }}
+        className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 hover:text-brand-700 rounded px-1.5 py-0.5 hover:bg-brand-50 transition-colors"
+      >
+        <UserPlus className="w-3 h-3" /> Assign
+      </button>
+    ) : <span className="text-slate-300 text-[10px]">—</span>
+  }
+
+  return (
+    <button
+      onClick={e => { e.stopPropagation(); if (canAssign) onAssign() }}
+      className={cn(
+        'flex items-center gap-1.5 max-w-full rounded-full pl-1 pr-2 py-0.5 -ml-1 transition-colors text-left',
+        canAssign && 'hover:bg-slate-50 hover:ring-1 hover:ring-slate-200',
+      )}
+      title={phone ? `${name} · ${phone}` : name}
+    >
+      <span className={cn('w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0', config.accent.bg)}>
+        <Icon className={cn('w-3 h-3', config.accent.text)} />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate font-medium text-slate-700">
+          {q && name.toLowerCase().includes(q) ? <Highlight text={name} query={query} /> : name}
+        </span>
+        {phone && (
+          <span className="flex items-center gap-0.5 text-[10px] text-slate-400">
+            <Phone className="w-2.5 h-2.5" />{phone}
+          </span>
+        )}
+      </span>
+    </button>
+  )
+}
+
 function SortTh({
   field, label, sort, onSort,
 }: {
@@ -284,8 +384,12 @@ function SortTh({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
+const ASSIGN_ROLES: UserRole[] = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+
 export default function MCReportPage() {
   const { countryFilter } = useCountryFilter()
+  const { data: session } = useSession()
+  const canAssign = ASSIGN_ROLES.includes(session?.user?.role as UserRole)
   const [rows, setRows]           = useState<MCRow[]>([])
   const [loading, setLoading]     = useState(false)
   const [dateFrom, setDateFrom]   = useState('')
@@ -301,7 +405,18 @@ export default function MCReportPage() {
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
   const [driverModalRow, setDriverModalRow] = useState<MCRow | null>(null)
+  const [assignRow, setAssignRow] = useState<MCRow | null>(null)
+  // Which partner kinds each country operates with (Settings-driven), so the
+  // guide / tour-vendor columns only appear where they are actually used.
+  const [partnerCountries, setPartnerCountries] = useState<Record<PartnerKind, string[]>>({ guide: [], tourVendor: [] })
   const exportMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    fetch('/api/public/partner-settings')
+      .then(r => r.json())
+      .then(json => { if (json.success) setPartnerCountries(json.data) })
+      .catch(() => { /* leave both off — the chart works exactly as before */ })
+  }, [])
 
   // Close export menu on outside click
   useEffect(() => {
@@ -399,6 +514,53 @@ export default function MCReportPage() {
     return sorted.filter(row => rowMatchesDeep(row, q))
   }, [sorted, deepSearch])
 
+  // ── Guides / tour vendors ─────────────────────────────────────────────────────
+
+  const guideEnabledFor      = useCallback(
+    (row: MCRow) => isPartnerEnabledForCountry(partnerCountries.guide, row.operationCountry),
+    [partnerCountries.guide],
+  )
+  const tourVendorEnabledFor = useCallback(
+    (row: MCRow) => isPartnerEnabledForCountry(partnerCountries.tourVendor, row.operationCountry),
+    [partnerCountries.tourVendor],
+  )
+
+  // The columns are only worth their width when something in view can use them:
+  // a chart of Vietnam movements does not carry a tour-vendor column when
+  // Vietnam does not book tour vendors.
+  const showGuideCol      = useMemo(
+    () => displayedRows.some(r => guideEnabledFor(r) || r.guideName),
+    [displayedRows, guideEnabledFor],
+  )
+  const showTourVendorCol = useMemo(
+    () => displayedRows.some(r => tourVendorEnabledFor(r) || r.tourVendorName),
+    [displayedRows, tourVendorEnabledFor],
+  )
+
+  /** Fold a saved assignment back into the row, so the chart updates in place. */
+  function applyAssignment(rowId: string, next: MovementAssignment | null) {
+    setRows(rs => rs.map(r => r.id !== rowId ? r : {
+      ...r,
+      driverId:       next?.driverId     ?? null,
+      vendorId:       next?.vendorId     ?? null,
+      driverName:     next?.driverName   ?? null,
+      driverPhone:    next?.driverPhone  ?? null,
+      vehicleType:    next?.vehicleType  ?? null,
+      vehiclePlate:   next?.vehiclePlate ?? null,
+      vendorName:     next?.vendorName   ?? null,
+      vendor:         next?.vendorName   ?? next?.driverName ?? null,
+      driverPhotoUrl: next?.driverId && next.driverId === r.driverId ? r.driverPhotoUrl : null,
+      driverRate:     next?.driverRate   ?? null,
+      rateCurrency:   next?.rateCurrency ?? null,
+      guideId:         next?.guideId         ?? null,
+      guideName:       next?.guideName       ?? null,
+      guidePhone:      next?.guidePhone      ?? null,
+      tourVendorId:    next?.tourVendorId    ?? null,
+      tourVendorName:  next?.tourVendorName  ?? null,
+      tourVendorPhone: next?.tourVendorPhone ?? null,
+    }))
+  }
+
   // ── Stats ─────────────────────────────────────────────────────────────────────
 
   const totalAdults   = displayedRows.reduce((s, r) => s + r.paxAdults, 0)
@@ -425,7 +587,8 @@ export default function MCReportPage() {
       'Date', 'Tour Ref', 'IS Number', 'Agent ID', 'Location', 'Adults', 'Children',
       'From', 'To', 'Details', 'Meal Plan', 'Meeting Time',
       'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
-      'Vendor', 'Driver', 'Vehicle Type', 'Plate', 'Agent',
+      'Vendor', 'Driver', 'Vehicle Type', 'Plate',
+      'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Agent',
     ]
 
     const csvRows = displayedRows.map(r => [
@@ -439,6 +602,8 @@ export default function MCReportPage() {
       r.isHotelOnlyBooking ? 'Yes' : '',
       r.nights ?? '', r.checkOut ?? '',
       r.vendor ?? '', r.driverName ?? '', r.vehicleType ?? '', r.vehiclePlate ?? '',
+      r.guideName ?? '', r.guidePhone ?? '',
+      r.tourVendorName ?? '', r.tourVendorPhone ?? '',
       r.agent ?? '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
 
@@ -471,7 +636,9 @@ export default function MCReportPage() {
         'Adults', 'Children', 'From', 'To', 'Details',
         'Meal Plan', 'Meeting Time', 'Service Type', 'Leisure Day', 'Hotel Only',
         'Hotel Only Booking', 'Nights', 'Check Out',
-        'Vendor', 'Driver', 'Vehicle Type', 'Plate No', 'Agent', 'Booking Status',
+        'Vendor', 'Driver', 'Vehicle Type', 'Plate No',
+        'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone',
+        'Agent', 'Booking Status',
       ]
 
       const dataRows = displayedRows.map(r => [
@@ -486,6 +653,8 @@ export default function MCReportPage() {
         r.nights ?? '', r.checkOut ?? '',
         r.vendor ?? '', r.driverName ?? '',
         r.vehicleType ?? '', r.vehiclePlate ?? '',
+        r.guideName ?? '', r.guidePhone ?? '',
+        r.tourVendorName ?? '', r.tourVendorPhone ?? '',
         r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
       ])
 
@@ -495,7 +664,9 @@ export default function MCReportPage() {
         { wch: 7  }, { wch: 8  }, { wch: 22 }, { wch: 22 }, { wch: 40 },
         { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
         { wch: 18 }, { wch: 8  }, { wch: 12 },
-        { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 16 },
+        { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 },
+        { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 },
+        { wch: 18 }, { wch: 16 },
       ]
       XLSX.utils.book_append_sheet(wb, ws, 'Movements')
 
@@ -816,6 +987,16 @@ export default function MCReportPage() {
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Meal</th>
                       <SortTh field="meetingTime" label="Meet Time" sort={sort} onSort={handleSort} />
                       <SortTh field="serviceType" label="Service"   sort={sort} onSort={handleSort} />
+                      {showGuideCol && (
+                        <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">
+                          {PARTNER_CONFIG.guide.label}
+                        </th>
+                      )}
+                      {showTourVendorCol && (
+                        <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">
+                          {PARTNER_CONFIG.tourVendor.label}
+                        </th>
+                      )}
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>
                     </tr>
                   </thead>
@@ -976,6 +1157,40 @@ export default function MCReportPage() {
                               </div>
                             </td>
 
+                            {/* Guide — assignable straight from the chart */}
+                            {showGuideCol && (
+                              <td className="px-3 py-2.5 text-slate-600 max-w-[150px]">
+                                {isAssignable(row) ? (
+                                  <PartnerCell
+                                    kind="guide"
+                                    name={row.guideName}
+                                    phone={row.guidePhone}
+                                    enabled={guideEnabledFor(row)}
+                                    canAssign={canAssign}
+                                    onAssign={() => setAssignRow(row)}
+                                    query={deepSearch}
+                                  />
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
+                            {/* Tour Vendor */}
+                            {showTourVendorCol && (
+                              <td className="px-3 py-2.5 text-slate-600 max-w-[150px]">
+                                {isAssignable(row) ? (
+                                  <PartnerCell
+                                    kind="tourVendor"
+                                    name={row.tourVendorName}
+                                    phone={row.tourVendorPhone}
+                                    enabled={tourVendorEnabledFor(row)}
+                                    canAssign={canAssign}
+                                    onAssign={() => setAssignRow(row)}
+                                    query={deepSearch}
+                                  />
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
+
                             {/* Driver / Vendor */}
                             <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
                               {row.isHotelOnlyBooking ? (
@@ -995,9 +1210,10 @@ export default function MCReportPage() {
                                   No driver needed
                                 </span>
                               ) : row.vendor || row.driverId || row.vendorId ? (
+                                <div className="flex items-center gap-1 max-w-full">
                                 <button
                                   onClick={e => { e.stopPropagation(); setDriverModalRow(row) }}
-                                  className="flex items-center gap-1.5 max-w-full rounded-full pl-1 pr-2.5 py-1 -ml-1 hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 transition-colors group"
+                                  className="flex items-center gap-1.5 min-w-0 rounded-full pl-1 pr-2.5 py-1 -ml-1 hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 transition-colors group"
                                 >
                                   {row.driverPhotoUrl ? (
                                     // eslint-disable-next-line @next/next/no-img-element
@@ -1015,6 +1231,26 @@ export default function MCReportPage() {
                                   </span>
                                   <ChevronDown className="w-3 h-3 text-slate-300 group-hover:text-brand-400 flex-shrink-0 -rotate-90" />
                                 </button>
+                                {/* Viewing and re-assigning are different jobs,
+                                    so they are different buttons — clicking the
+                                    driver still opens their details. */}
+                                {canAssign && (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); setAssignRow(row) }}
+                                    title="Re-assign this movement"
+                                    className="flex-shrink-0 p-1 rounded text-slate-300 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                                  >
+                                    <UserPlus className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                </div>
+                              ) : canAssign ? (
+                                <button
+                                  onClick={e => { e.stopPropagation(); setAssignRow(row) }}
+                                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-400 hover:text-brand-700 rounded px-1.5 py-0.5 hover:bg-brand-50 transition-colors"
+                                >
+                                  <UserPlus className="w-3 h-3" /> Assign
+                                </button>
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
                           </tr>
@@ -1022,7 +1258,7 @@ export default function MCReportPage() {
                           {/* Expanded detail row */}
                           {isExpanded && (
                             <tr key={`${row.id}-detail`} className="bg-brand-50/40 border-l-2 border-l-brand-400">
-                              <td colSpan={12} className="px-4 py-3">
+                              <td colSpan={12 + (showGuideCol ? 1 : 0) + (showTourVendorCol ? 1 : 0)} className="px-4 py-3">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                                   {[
                                     { label: 'Tour Ref',       value: row.vnCode },
@@ -1036,6 +1272,10 @@ export default function MCReportPage() {
                                     { label: 'Booking Status', value: row.bookingStatus?.replace(/_/g, ' ') },
                                     { label: 'Pax',            value: `${row.paxAdults} Adults, ${row.paxChildren} Children` },
                                     { label: 'Driver / Vendor', value: row.vendor },
+                                    { label: PARTNER_CONFIG.guide.label,      value: row.guideName },
+                                    { label: 'Guide Phone',                   value: row.guidePhone },
+                                    { label: PARTNER_CONFIG.tourVendor.label, value: row.tourVendorName },
+                                    { label: 'Tour Vendor Phone',             value: row.tourVendorPhone },
                                   ].map(item =>
                                     item.value ? (
                                       <div key={item.label}>
@@ -1094,6 +1334,38 @@ export default function MCReportPage() {
           vendorName:   driverModalRow?.vendor,
         }}
       />
+
+      {/* Assigning from the chart itself — the same dialog the booking's
+          movement chart uses, so the save, the allocation-board sync and the
+          driver's WhatsApp all behave identically. */}
+      {assignRow && (
+        <AssignMovementModal
+          open
+          onClose={() => setAssignRow(null)}
+          bookingRef={assignRow.vnCode}
+          agendaItemId={assignRow.id}
+          date={assignRow.date}
+          country={assignRow.operationCountry}
+          assignment={{
+            driverId:        assignRow.driverId,
+            vendorId:        assignRow.vendorId,
+            vendorName:      assignRow.vendorName,
+            driverName:      assignRow.driverName,
+            driverPhone:     assignRow.driverPhone,
+            vehicleType:     assignRow.vehicleType,
+            vehiclePlate:    assignRow.vehiclePlate,
+            driverRate:      assignRow.driverRate,
+            rateCurrency:    assignRow.rateCurrency,
+            guideId:         assignRow.guideId,
+            guideName:       assignRow.guideName,
+            guidePhone:      assignRow.guidePhone,
+            tourVendorId:    assignRow.tourVendorId,
+            tourVendorName:  assignRow.tourVendorName,
+            tourVendorPhone: assignRow.tourVendorPhone,
+          }}
+          onSaved={next => applyAssignment(assignRow.id, next)}
+        />
+      )}
     </div>
   )
 }
