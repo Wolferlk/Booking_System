@@ -32,9 +32,13 @@ import type { OpsDayBoard, OpsDayRow } from '@/lib/reports/ops-day-data'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import {
   CountUp, ProgressRing, SegmentBar, StateLegend, StatePill, STATE_STYLE,
-  FOCUS_META, reconfirmState, reconfirmText, reconfirmDetail, qcTick,
+  FOCUS_META, ReconfirmFacetBar, reconfirmState, reconfirmText, reconfirmDetail,
+  callState, callText, callDetail, qcTick,
   type FocusKey,
 } from './ops-board-parts'
+import {
+  APPROVAL_LABEL, countFacets, matchesFacets, type ReconfirmFacet,
+} from '@/lib/reports/reconfirm-filters'
 import OpsDrilldown from './ops-drilldown'
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
@@ -97,11 +101,12 @@ const RANGE_PRESETS: { label: string; build: (today: string) => [string, string]
 ]
 
 /** Row filters applied client-side, on top of what the server already scoped. */
-type CheckFilter = 'ALL' | 'reconfirm' | 'driver' | 'tickets' | 'qc'
+type CheckFilter = 'ALL' | 'reconfirm' | 'calls' | 'driver' | 'tickets' | 'qc'
 
 const CHECK_FILTERS: { key: CheckFilter; label: string }[] = [
   { key: 'ALL',       label: 'Any check' },
   { key: 'reconfirm', label: 'Reconfirm outstanding' },
+  { key: 'calls',     label: 'Call request outstanding' },
   { key: 'driver',    label: 'Driver outstanding' },
   { key: 'tickets',   label: 'Tickets outstanding' },
   { key: 'qc',        label: 'QC outstanding' },
@@ -125,6 +130,8 @@ export default function OperationsBoardPage() {
   const [onlyOutstanding, setOnlyOutstanding] = useState(false)
   const [checkFilter, setCheckFilter] = useState<CheckFilter>('ALL')
   const [statusFilter, setStatusFilter] = useState('ALL')
+  /** Reconfirmation chips: OR inside a group, AND across groups. */
+  const [facets, setFacets] = useState<Set<ReconfirmFacet>>(new Set())
   const [countryRowFilter, setCountryRowFilter] = useState('ALL')
   const [expanded, setExpanded] = useState<string | null>(null)
   /** Which card the drill-down is open on; null when it is closed. */
@@ -191,30 +198,41 @@ export default function OperationsBoardPage() {
     }
   }, [countryOptions, countryRowFilter])
 
-  const visible = useMemo(() => {
-    const outstandingCheck = (r: OpsDayRow): boolean => {
-      switch (checkFilter) {
-        case 'reconfirm': return reconfirmState(r) !== 'DONE'
-        case 'driver':    return r.driver.state !== 'DONE' && r.driver.state !== 'NA'
-        case 'tickets':   return r.tickets.state !== 'DONE' && r.tickets.state !== 'NA'
-        case 'qc':        return r.qc.state !== 'DONE' && r.qc.state !== 'NA'
-        default:          return true
-      }
+  const outstandingCheck = useCallback((r: OpsDayRow): boolean => {
+    switch (checkFilter) {
+      case 'reconfirm': return reconfirmState(r) !== 'DONE'
+      case 'calls':     return callState(r) !== 'DONE' && callState(r) !== 'NA'
+      case 'driver':    return r.driver.state !== 'DONE' && r.driver.state !== 'NA'
+      case 'tickets':   return r.tickets.state !== 'DONE' && r.tickets.state !== 'NA'
+      case 'qc':        return r.qc.state !== 'DONE' && r.qc.state !== 'NA'
+      default:          return true
     }
+  }, [checkFilter])
 
-    return (board?.rows ?? []).filter(r => {
-      if (segment === 'ARRIVALS' && !r.isArrival) return false
-      if (segment === 'DEPARTURES' && !r.isDeparture) return false
-      if (onlyOutstanding && r.ready) return false
-      if (statusFilter !== 'ALL' && r.status !== statusFilter) return false
-      if (countryRowFilter !== 'ALL' && r.country !== countryRowFilter) return false
-      return outstandingCheck(r)
-    })
-  }, [board, segment, onlyOutstanding, checkFilter, statusFilter, countryRowFilter])
+  /**
+   * Everything the board shows *except* the reconfirmation chips. The chip
+   * counts read from here, so narrowing to "not confirmed" leaves the other
+   * chips still describing the whole day rather than collapsing to themselves.
+   */
+  const preFacet = useMemo(() => (board?.rows ?? []).filter(r => {
+    if (segment === 'ARRIVALS' && !r.isArrival) return false
+    if (segment === 'DEPARTURES' && !r.isDeparture) return false
+    if (onlyOutstanding && r.ready) return false
+    if (statusFilter !== 'ALL' && r.status !== statusFilter) return false
+    if (countryRowFilter !== 'ALL' && r.country !== countryRowFilter) return false
+    return outstandingCheck(r)
+  }), [board, segment, onlyOutstanding, statusFilter, countryRowFilter, outstandingCheck])
+
+  const facetCounts = useMemo(() => countFacets(preFacet), [preFacet])
+
+  const visible = useMemo(
+    () => facets.size ? preFacet.filter(r => matchesFacets(facets, r)) : preFacet,
+    [preFacet, facets],
+  )
 
   const filtersActive =
     onlyOutstanding || checkFilter !== 'ALL' || statusFilter !== 'ALL'
-    || countryRowFilter !== 'ALL' || search.trim().length > 0
+    || countryRowFilter !== 'ALL' || search.trim().length > 0 || facets.size > 0
 
   function clearFilters() {
     setOnlyOutstanding(false)
@@ -222,6 +240,16 @@ export default function OperationsBoardPage() {
     setStatusFilter('ALL')
     setCountryRowFilter('ALL')
     setSearch('')
+    setFacets(new Set())
+  }
+
+  function toggleFacet(key: ReconfirmFacet) {
+    setFacets(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   // ── The four gauges ────────────────────────────────────────────────────────
@@ -245,6 +273,7 @@ export default function OperationsBoardPage() {
     // opens are guaranteed to describe the same thing.
     return ([
       ['reconfirm', reconfirmState],
+      ['calls', callState],
       ['driver', (r: OpsDayRow) => r.driver.state],
       ['tickets', (r: OpsDayRow) => r.tickets.state],
       ['qc', (r: OpsDayRow) => r.qc.state],
@@ -283,6 +312,7 @@ export default function OperationsBoardPage() {
       'Booking Ref', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
       'Status', 'Arrival', 'Departure', 'Day', 'Pax',
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
+      'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
       'Driver Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
     ]
     const lines = visible.map(r => [
@@ -293,6 +323,11 @@ export default function OperationsBoardPage() {
       r.clientConfirmed ? 'Yes' : 'No',
       r.preTourCall ? `Yes (${r.preTourCall.at})` : 'No',
       r.preTourCall?.outcome ?? '',
+      APPROVAL_LABEL[r.call.approval],
+      r.call.approvalRequestedAt?.slice(0, 10) ?? '',
+      r.call.approvedAt?.slice(0, 10) ?? '',
+      r.call.scheduledAt?.slice(0, 10) ?? '',
+      r.call.scheduleStatus ?? '',
       r.driver.short, r.tickets.short, r.qc.short,
       qcTick(r, 1) === 'DONE' ? 'Pass' : 'Pending',
       qcTick(r, 2) === 'DONE' ? 'Pass' : 'Pending',
@@ -583,7 +618,7 @@ export default function OperationsBoardPage() {
         </div>
 
         {/* ── Readiness gauges ────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           {gauges.map((g, i) => (
             <motion.button
               key={g.key}
@@ -656,6 +691,28 @@ export default function OperationsBoardPage() {
           <span className="text-sm font-extrabold text-slate-900 tabular-nums">{readyPct}%</span>
           <StateLegend />
         </motion.div>
+
+        {/* ── Reconfirmation filter chips ─────────────────────────────────── */}
+        <motion.div {...fade} transition={reduce ? { duration: 0 } : { delay: 0.45, duration: 0.35 }}>
+          <ReconfirmFacetBar
+            selected={facets}
+            counts={facetCounts}
+            total={preFacet.length}
+            onToggle={toggleFacet}
+            onClear={() => setFacets(new Set())}
+            approvalUnavailable={board ? !board.approvalDataAvailable : false}
+          />
+        </motion.div>
+
+        {board && !board.approvalDataAvailable && (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+            <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <span>
+              The WhatsApp call-approval ledger could not be read — call request
+              filters will not match anything until it is available again.
+            </span>
+          </div>
+        )}
 
         {board && !board.callDataAvailable && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
@@ -795,7 +852,7 @@ export default function OperationsBoardPage() {
                     <tr className="bg-slate-50 border-b border-slate-200">
                       {[
                         'Booking', 'Lead Pax', 'Day', 'Pax', 'Movement',
-                        'Reconfirm', 'Driver', 'Tickets', 'QC1', 'QC2', '',
+                        'Reconfirm', 'Call Request', 'Driver', 'Tickets', 'QC1', 'QC2', '',
                       ].map(h => (
                         <th
                           key={h}
@@ -872,6 +929,13 @@ export default function OperationsBoardPage() {
                               />
                             </td>
                             <td className="px-3 py-2.5">
+                              <StatePill
+                                state={callState(r)}
+                                text={callText(r)}
+                                title={callDetail(r)}
+                              />
+                            </td>
+                            <td className="px-3 py-2.5">
                               <StatePill state={r.driver.state} text={r.driver.short} title={r.driver.detail} />
                             </td>
                             <td className="px-3 py-2.5">
@@ -905,7 +969,7 @@ export default function OperationsBoardPage() {
                           <AnimatePresence initial={false}>
                             {open && (
                               <tr key={`${r.bookingRef}-detail`}>
-                                <td colSpan={11} className="p-0">
+                                <td colSpan={12} className="p-0">
                                   <motion.div
                                     initial={reduce ? undefined : { height: 0, opacity: 0 }}
                                     animate={reduce ? undefined : { height: 'auto', opacity: 1 }}
@@ -942,6 +1006,11 @@ export default function OperationsBoardPage() {
                                             <span className={cn('w-2 h-2 rounded-full', r.clientConfirmed ? 'bg-emerald-500' : 'bg-rose-500')} />
                                             Client confirm — {r.clientConfirmed ? 'done' : 'outstanding'}
                                           </div>
+                                          <div className="flex items-center gap-2">
+                                            <span className={cn('w-2 h-2 rounded-full', STATE_STYLE[callState(r)].dot)} />
+                                            WhatsApp call request — {APPROVAL_LABEL[r.call.approval].toLowerCase()}
+                                          </div>
+                                          <div className="pl-4 text-[11px] text-slate-500">{callDetail(r)}</div>
                                           <div className="flex items-center gap-2">
                                             <span className={cn('w-2 h-2 rounded-full', r.preTourCall ? 'bg-emerald-500' : 'bg-rose-500')} />
                                             Pre-tour call — {r.preTourCall ? `logged ${formatDate(r.preTourCall.at)}` : 'not logged'}

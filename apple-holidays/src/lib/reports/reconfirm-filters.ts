@@ -1,0 +1,175 @@
+/**
+ * The reconfirmation facets — the vocabulary the operations board filters on.
+ *
+ * Ops asks five questions about reconfirmation, and they sit on **three
+ * independent axes** rather than one ladder. Collapsing them into a single
+ * dropdown would have made most combinations unreachable, so each axis is its
+ * own group and the board ANDs across groups while ORing inside one:
+ *
+ *   • **Client confirmation** — has the booking status reached "Client
+ *     Confirmed"? `CLIENT_CONFIRMED` / `CLIENT_UNCONFIRMED`.
+ *   • **Reconfirmation call** — has the pre-tour reconfirmation call actually
+ *     happened and been written up? `RECONFIRM_PENDING` selects the ones where
+ *     it has not.
+ *   • **WhatsApp call request** — the customer must accept a WhatsApp message
+ *     before the bot is allowed to place automated calls at all.
+ *     `CALL_ACCEPTED` / `CALL_NOT_ACCEPTED`.
+ *
+ * The third axis is the reason the second one is often stuck: a booking whose
+ * customer never accepted the WhatsApp request can never show a completed call,
+ * and chasing the call instead of the permission is wasted effort. Selecting
+ * "Reconfirmation pending" *and* "Call request not accepted" is the query that
+ * separates the two, which is why they are filterable together.
+ *
+ * Deliberately Prisma-free and pure: the server summary and the client chips
+ * both classify with these functions, so a count and a filtered list can never
+ * disagree about what a facet means.
+ */
+
+/**
+ * Whether the customer has accepted automated WhatsApp calls.
+ *
+ * `unknown` is not a synonym for "no" — it means the approval ledger could not
+ * be read, and no facet claims those rows in either direction.
+ */
+export type CallApprovalState = 'approved' | 'pending' | 'not_requested' | 'unknown'
+
+export const APPROVAL_LABEL: Record<CallApprovalState, string> = {
+  approved: 'Accepted',
+  pending: 'Awaiting customer',
+  not_requested: 'Not sent',
+  unknown: 'Unknown',
+}
+
+export type ReconfirmFacet =
+  | 'CLIENT_CONFIRMED'
+  | 'CLIENT_UNCONFIRMED'
+  | 'RECONFIRM_PENDING'
+  | 'CALL_ACCEPTED'
+  | 'CALL_NOT_ACCEPTED'
+
+export type FacetGroup = 'client' | 'call' | 'approval'
+
+/** Display order, and the order groups are ANDed in. */
+export const FACET_GROUPS: FacetGroup[] = ['client', 'call', 'approval']
+
+/**
+ * The minimum a row must carry to be classified. Both `OpsDayRow` and any
+ * lighter projection of it satisfy this, which keeps the summary code on the
+ * server free of the full row type.
+ */
+export interface ReconfirmFacts {
+  clientConfirmed: boolean
+  /** Null when no reconfirmation call has been logged. */
+  preTourCall: unknown | null
+  call: { approval: CallApprovalState }
+}
+
+export interface FacetMeta {
+  key: ReconfirmFacet
+  group: FacetGroup
+  /** Chip text. */
+  label: string
+  /** Column / pill text where space is tight. */
+  short: string
+  /** Tooltip — says precisely what the facet means, in ops language. */
+  hint: string
+  /** Chip styling when the facet is on. */
+  chip: string
+  dot: string
+}
+
+export const RECONFIRM_FACETS: FacetMeta[] = [
+  {
+    key: 'CLIENT_CONFIRMED',
+    group: 'client',
+    label: 'Client confirmed',
+    short: 'Confirmed',
+    hint: 'Booking status has reached Client Confirmed or beyond',
+    chip: 'bg-emerald-50 text-emerald-700 border-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  {
+    key: 'CLIENT_UNCONFIRMED',
+    group: 'client',
+    label: 'Client not confirmed',
+    short: 'Unconfirmed',
+    hint: 'Booking status has not reached Client Confirmed',
+    chip: 'bg-rose-50 text-rose-700 border-rose-300',
+    dot: 'bg-rose-500',
+  },
+  {
+    key: 'RECONFIRM_PENDING',
+    group: 'call',
+    label: 'Reconfirmation pending',
+    short: 'Not called',
+    hint: 'No pre-tour reconfirmation call has been logged for this booking yet',
+    chip: 'bg-amber-50 text-amber-700 border-amber-300',
+    dot: 'bg-amber-500',
+  },
+  {
+    key: 'CALL_ACCEPTED',
+    group: 'approval',
+    label: 'Call request accepted',
+    short: 'WA accepted',
+    hint: 'The customer accepted the WhatsApp request, so the bot may call them',
+    chip: 'bg-sky-50 text-sky-700 border-sky-300',
+    dot: 'bg-sky-500',
+  },
+  {
+    key: 'CALL_NOT_ACCEPTED',
+    group: 'approval',
+    label: 'Call request pending',
+    short: 'WA pending',
+    hint: 'The WhatsApp call request is unanswered or was never sent — the bot cannot call',
+    chip: 'bg-violet-50 text-violet-700 border-violet-300',
+    dot: 'bg-violet-500',
+  },
+]
+
+export const FACET_META: Record<ReconfirmFacet, FacetMeta> =
+  Object.fromEntries(RECONFIRM_FACETS.map(f => [f.key, f])) as Record<ReconfirmFacet, FacetMeta>
+
+/** Does a single row answer this one question with "yes"? */
+export function matchesFacet(facet: ReconfirmFacet, r: ReconfirmFacts): boolean {
+  switch (facet) {
+    case 'CLIENT_CONFIRMED':   return r.clientConfirmed
+    case 'CLIENT_UNCONFIRMED': return !r.clientConfirmed
+    case 'RECONFIRM_PENDING':  return !r.preTourCall
+    case 'CALL_ACCEPTED':      return r.call.approval === 'approved'
+    // "Unknown" is withheld deliberately: an unreadable ledger must not be
+    // reported to ops as a customer who refused.
+    case 'CALL_NOT_ACCEPTED':  return r.call.approval === 'pending' || r.call.approval === 'not_requested'
+    default:                   return true
+  }
+}
+
+/**
+ * Apply a whole selection.
+ *
+ * OR inside a group, AND across groups — so picking both client chips is the
+ * same as picking neither (every booking is one or the other), while picking
+ * "Client not confirmed" + "Call request pending" narrows to the rows that are
+ * both, which is the list ops actually chases.
+ */
+export function matchesFacets(selected: ReadonlySet<ReconfirmFacet>, r: ReconfirmFacts): boolean {
+  if (selected.size === 0) return true
+  for (const group of FACET_GROUPS) {
+    const chosen = RECONFIRM_FACETS.filter(f => f.group === group && selected.has(f.key))
+    if (!chosen.length) continue
+    if (!chosen.some(f => matchesFacet(f.key, r))) return false
+  }
+  return true
+}
+
+/** Facet head-counts over a set of rows, for chip badges and summary tiles. */
+export function countFacets<T extends ReconfirmFacts>(rows: T[]): Record<ReconfirmFacet, number> {
+  const out = {
+    CLIENT_CONFIRMED: 0, CLIENT_UNCONFIRMED: 0, RECONFIRM_PENDING: 0,
+    CALL_ACCEPTED: 0, CALL_NOT_ACCEPTED: 0,
+  } satisfies Record<ReconfirmFacet, number>
+  for (const r of rows) {
+    for (const f of RECONFIRM_FACETS) if (matchesFacet(f.key, r)) out[f.key] += 1
+  }
+  return out
+}
