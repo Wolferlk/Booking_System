@@ -109,6 +109,7 @@ async function hotelOnlyRows(
       checkOut:       out,
       nights,
       vendor:         null,
+      vendorName:     null,
       driverId:       null,
       vendorId:       null,
       driverPhotoUrl: null,
@@ -116,6 +117,17 @@ async function hotelOnlyRows(
       driverPhone:    null,
       vehicleType:    null,
       vehiclePlate:   null,
+      driverRate:     null,
+      rateCurrency:   null,
+      // Nothing is driven and no agenda exists, so there is nobody to assign —
+      // the chart uses these to keep the guide / tour-vendor cells empty.
+      guideId:         null,
+      guideName:       null,
+      guidePhone:      null,
+      tourVendorId:    null,
+      tourVendorName:  null,
+      tourVendorPhone: null,
+      operationCountry: null,
       agent:          s.booking.agent ?? null,
       bookingStatus:  s.booking.status,
     }
@@ -195,6 +207,8 @@ export async function GET(req: NextRequest) {
               paxChildren:    true,
               agent:          true,
               status:         true,
+              // Decides which partner columns the chart shows for this row.
+              operationCountry: true,
             },
           },
         },
@@ -211,6 +225,10 @@ export async function GET(req: NextRequest) {
           vendor: {
             select: { id: true, name: true, phone: true },
           },
+          // Guide / tour vendor run the movement alongside the driver — the
+          // chart shows them in their own columns and assigns from there.
+          guide:      { select: { id: true, name: true, phone: true, whatsappPhone: true } },
+          tourVendor: { select: { id: true, name: true, phone: true, whatsappPhone: true } },
         },
       },
     },
@@ -248,6 +266,28 @@ export async function GET(req: NextRequest) {
     driverPhone:    item.assignment?.driverPhone ?? item.assignment?.driver?.phone ?? null,
     vehicleType:    item.assignment?.vehicleType  ?? null,
     vehiclePlate:   item.assignment?.vehiclePlate ?? null,
+    // Kept apart from `vendor` above, which falls back to the driver's name for
+    // display: the assign dialog needs the transport vendor's real name only.
+    vendorName:     item.assignment?.vendor?.name ?? item.assignment?.vendorName ?? null,
+    driverRate:     item.assignment?.driverRate != null ? Number(item.assignment.driverRate) : null,
+    rateCurrency:   item.assignment?.rateCurrency ?? null,
+    // A guide / tour vendor typed by hand has no directory record, so the stored
+    // name wins and the linked record only fills the gaps.
+    guideId:         item.assignment?.guideId ?? null,
+    guideName:       item.assignment?.guideName ?? item.assignment?.guide?.name ?? null,
+    guidePhone:      item.assignment?.guidePhone
+                       ?? item.assignment?.guide?.whatsappPhone
+                       ?? item.assignment?.guide?.phone
+                       ?? null,
+    tourVendorId:    item.assignment?.tourVendorId ?? null,
+    tourVendorName:  item.assignment?.tourVendorName ?? item.assignment?.tourVendor?.name ?? null,
+    tourVendorPhone: item.assignment?.tourVendorPhone
+                       ?? item.assignment?.tourVendor?.whatsappPhone
+                       ?? item.assignment?.tourVendor?.phone
+                       ?? null,
+    // Which partner kinds this row's country operates with is a Settings
+    // question the page answers per row, so it needs the booking's country.
+    operationCountry: item.agenda.booking.operationCountry ?? null,
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
     isHotelOnlyBooking: false,

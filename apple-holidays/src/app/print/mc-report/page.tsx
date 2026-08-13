@@ -29,6 +29,10 @@ type MCRow = {
   isHotelOnly:    boolean
   vendor:         string | null
   driverName:     string | null
+  guideName:       string | null
+  guidePhone:      string | null
+  tourVendorName:  string | null
+  tourVendorPhone: string | null
   driverPhotoUrl: string | null
   vehicleType:    string | null
   vehiclePlate:   string | null
@@ -48,6 +52,7 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
   return [
     row.location, row.fromPoint, row.toPoint, row.details,
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
+    row.guideName, row.tourVendorName,
     row.vehicleType, row.vehiclePlate, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
   ].some(v => v?.toLowerCase().includes(q))
@@ -130,6 +135,9 @@ function PrintContent() {
   const ownCount      = rows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = rows.filter(r => r.isLeisure).length
   const hotelOnlyCount = rows.filter(r => r.isHotelOnly).length
+  // The printout is width-bound, so the partner column only takes space on the
+  // days that actually have a guide or tour vendor on the ground.
+  const showPartners = rows.some(r => r.guideName || r.tourVendorName)
 
   if (loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', color: '#94a3b8', fontSize: 14 }}>
@@ -220,6 +228,7 @@ function PrintContent() {
               <th style={th}>Meal</th>
               <th style={th}>Meet Time</th>
               <th style={th}>Service</th>
+              {showPartners && <th style={th}>Guide / Tour Vendor</th>}
               <th style={th}>Driver / Vendor</th>
               <th style={th}>Vehicle</th>
             </tr>
@@ -325,6 +334,34 @@ function PrintContent() {
                       </span>
                     )}
                   </td>
+
+                  {showPartners && (
+                    <td style={{ ...td, color: '#475569', maxWidth: 110 }}>
+                      {row.guideName && (
+                        <div>
+                          <span style={{ fontSize: 8, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Guide </span>
+                          {q && row.guideName.toLowerCase().includes(q)
+                            ? <HighlightText text={row.guideName} query={deepSearch} />
+                            : row.guideName}
+                          {row.guidePhone && (
+                            <div style={{ fontSize: 9, color: '#64748b' }}>{row.guidePhone}</div>
+                          )}
+                        </div>
+                      )}
+                      {row.tourVendorName && (
+                        <div style={{ marginTop: row.guideName ? 3 : 0 }}>
+                          <span style={{ fontSize: 8, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Vendor </span>
+                          {q && row.tourVendorName.toLowerCase().includes(q)
+                            ? <HighlightText text={row.tourVendorName} query={deepSearch} />
+                            : row.tourVendorName}
+                          {row.tourVendorPhone && (
+                            <div style={{ fontSize: 9, color: '#64748b' }}>{row.tourVendorPhone}</div>
+                          )}
+                        </div>
+                      )}
+                      {!row.guideName && !row.tourVendorName && <span style={{ color: '#cbd5e1' }}>—</span>}
+                    </td>
+                  )}
 
                   <td style={{ ...td, color: '#475569', maxWidth: 120 }}>
                     {row.isLeisure || row.isHotelOnly ? (
