@@ -105,12 +105,15 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   // Vietnam Ground Team — Limited. Same ground work as GT_USER (agenda, driver
   // allocation, tickets) but a locked-down surface: dashboard, bookings list,
-  // booking detail and the Ops Board only. No P&L, no vendors, no admin tools.
+  // booking detail, the booking P&L (read only — that page is the Accounts
+  // Detailed P&L costing sheet the tickets are built from) and the Ops Board.
+  // No vendors, no admin tools.
   GT_VN_USER: [
     'booking:read',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'assignment:create', 'assignment:edit',
     'ticket:create', 'ticket:read', 'ticket:purchase',
+    'pnl:read',
   ],
   TE_USER: [
     'booking:create', 'booking:read', 'booking:edit', 'booking:confirm', 'booking:submit_ground',
