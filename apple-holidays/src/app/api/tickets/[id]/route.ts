@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { resolvePortalSelection } from '@/lib/portals'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -55,7 +56,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!CAN_EDIT.includes(role)) return buildApiError('Forbidden', 403)
 
   const { id } = await params
-  const existing = await prisma.ticket.findUnique({ where: { id } })
+  const existing = await prisma.ticket.findUnique({
+    where: { id },
+    include: { booking: { select: { operationCountry: true } } },
+  })
   if (!existing) return buildApiError('Ticket not found', 404)
 
   const body = await req.json()
@@ -64,6 +68,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     category, transferType, vehicleType, vehicleNumber, driverName, driverPhone,
     fileUrl, fileName, fileType,
   } = body
+
+  // The portal this was (or will be) bought through. Resolved against the
+  // shared registry so the name stored is one Accounts can match; left alone
+  // entirely when the request does not mention it.
+  let portal
+  try {
+    portal = await resolvePortalSelection(existing.booking.operationCountry, body)
+  } catch (err) {
+    return buildApiError(err instanceof Error ? err.message : 'That portal could not be used.', 422)
+  }
 
   const parsedQty  = qty  != null ? Number(qty)  : undefined
   const parsedCost = costPerUnit != null ? (costPerUnit === '' ? null : Number(costPerUnit)) : undefined
@@ -95,6 +109,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       ...(fileUrl      != null && { fileUrl: fileUrl || null }),
       ...(fileName     != null && { fileName: fileName || null }),
       ...(fileType     != null && { fileType: fileType || null }),
+      // Who recorded the portal, and when — stamped only when the portal
+      // actually changes, so an unrelated edit does not rewrite the history of
+      // a purchase someone else made.
+      ...(portal && {
+        portalId: portal.portalId,
+        portalName: portal.portalName,
+        portalRef: portal.portalRef ?? null,
+        ...(portal.portalName !== existing.portalName && {
+          portalBy: portal.portalName ? (session.user.name || session.user.email || null) : null,
+          portalAt: portal.portalName ? new Date() : null,
+        }),
+      }),
     },
     include: {
       booking: { select: { bookingRef: true } },

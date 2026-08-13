@@ -74,14 +74,55 @@ async function q<T extends mysql.RowDataPacket>(
  *
  * Exported for the Detailed P&L reader (src/lib/detailed-pnl), which needs the
  * `as_payload` column and the content-catalogue cache rows this module has no
- * other reason to touch. SELECT only — nothing in this app may write to the
- * Accounts database.
+ * other reason to touch. SELECT only — see accountsWrite() for the single,
+ * deliberately narrow exception.
  */
 export async function accountsQuery<T extends mysql.RowDataPacket>(
   sql: string,
   params: unknown[] = [],
 ): Promise<T[]> {
   return q<T>(sql, params)
+}
+
+/**
+ * The one table this app is allowed to write in the Accounts database:
+ * `payment_portals`, the shared list of places a ticket can be bought.
+ *
+ * That list is managed from both systems on purpose — Ground adds a portal the
+ * moment it starts buying through one, and Accounts pays whatever Ground
+ * recorded — so it lives in one table rather than two that drift. Everything
+ * else over there stays read-only, and this guard is what keeps that true: the
+ * connection is a privileged one, so the restriction cannot be left to whoever
+ * writes the next query.
+ *
+ * @throws if the statement touches anything but payment_portals.
+ */
+const WRITABLE_TABLE = /^\s*(insert\s+into|update|delete\s+from)\s+`?payment_portals`?\b/i
+
+export async function accountsWrite(
+  sql: string,
+  params: unknown[] = [],
+): Promise<{ affectedRows: number; insertId: number }> {
+  if (!WRITABLE_TABLE.test(sql)) {
+    throw new Error(
+      'Refused: this app may only write to `payment_portals` in the Accounts database.',
+    )
+  }
+
+  // One statement per call. `multipleStatements` is off by default on this
+  // driver, but a semicolon in a statement that got this far is worth refusing
+  // outright rather than relying on that.
+  if (sql.replace(/;\s*$/, '').includes(';')) {
+    throw new Error('Refused: only one statement per write.')
+  }
+
+  const conn = await getConn()
+  try {
+    const [result] = await conn.query<mysql.ResultSetHeader>(sql, params)
+    return { affectedRows: result.affectedRows ?? 0, insertId: result.insertId ?? 0 }
+  } finally {
+    await conn.end().catch(() => { /* ignore close errors */ })
+  }
 }
 
 // ─── Exported types ───────────────────────────────────────────────────────────

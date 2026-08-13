@@ -36,6 +36,9 @@ interface Ticket {
   fileUrl: string | null
   fileName: string | null
   fileType: string | null
+  // The portal this was bought through — Accounts pays whoever is named here.
+  portalName: string | null
+  portalRef: string | null
   booking: { bookingRef: string; arrivalDate: string; agent: string | null } | null
   pnlLine: {
     activity: string
@@ -427,6 +430,14 @@ export default function TETicketsPage() {
                         )}
                         {t.supplier && (
                           <span className="text-xs text-slate-500">Supplier: {t.supplier}</span>
+                        )}
+                        {/* Where it was bought — the portal Accounts pays for
+                            this ticket. Shown in the list so a run of purchases
+                            can be checked without opening each one. */}
+                        {t.portalName && (
+                          <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded">
+                            {t.portalName}{t.portalRef ? ` · ${t.portalRef}` : ''}
+                          </span>
                         )}
                         {t.reference && (
                           <span className="text-xs font-mono text-slate-500">Ref: {t.reference}</span>
