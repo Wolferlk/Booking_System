@@ -8,6 +8,7 @@ import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope 
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
 import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
+import { fetchDetailedPnlAvailability, normaliseRef } from '@/lib/detailed-pnl'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -18,6 +19,37 @@ export const dynamic = 'force-dynamic'
 function calendarBoundary(value: string, endOfDay = false): Date {
   return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
 }
+/**
+ * How many bookings the Detailed P&L filter will consider in one pass. Sized
+ * well above the whole book so the filter is exhaustive in practice, while
+ * still bounding the query if the data ever grows past expectation.
+ */
+const DETAILED_PNL_SCAN_CAP = 20_000
+
+/**
+ * How long the *decorative* Detailed P&L lookup may take before the list gives
+ * up on it.
+ *
+ * The Accounts DB opens a fresh connection per query and allows itself 15
+ * seconds to do it. That ceiling is fine for a page whose whole purpose is the
+ * costing sheet, and completely wrong here: this is the bookings list, the most
+ * opened screen in the system, and an icon is not worth making it wait. Past
+ * the budget the field comes back `null` — "unknown" — and the list says so.
+ *
+ * The *filter* path has no budget: there, the answer is the query, and a slow
+ * truthful result beats a fast wrong one.
+ */
+const DETAILED_PNL_DECORATE_BUDGET_MS = 4_000
+
+function withBudget<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} exceeded ${ms}ms`)), ms).unref?.(),
+    ),
+  ])
+}
+
 /**
  * Space-insensitive lookup for ref-type columns (isNumber, bookingRef, agentBookingId).
  * "IS 48638" and "IS48638" are treated as identical — spaces are stripped from both the
@@ -225,6 +257,65 @@ export async function GET(req: NextRequest) {
     andClauses.push(quickFilterWhere(quick) as Record<string, unknown>)
   }
 
+  // Hotel Only — accommodation-only bookings. See `src/lib/hotel-only.ts`.
+  const hotelOnlyParam = searchParams.get('hotelOnly')
+  if (hotelOnlyParam === '1') andClauses.push({ hotelOnly: true })
+  else if (hotelOnlyParam === '0') andClauses.push({ hotelOnly: false })
+
+  /**
+   * Detailed P&L filter — "only bookings that have a costing sheet".
+   *
+   * The sheets live in the Accounts database, keyed by IS number, so this
+   * cannot be a column on the Prisma query. It is resolved in three steps, and
+   * only when the switch is actually on:
+   *
+   *   1. run the filter set so far, selecting nothing but the identifiers;
+   *   2. ask the Accounts DB which of those identifiers have a stored payload;
+   *   3. narrow the real (paginated) query to the refs that matched.
+   *
+   * Done before pagination on purpose — filtering the returned page instead
+   * would give short pages and a total that disagreed with them.
+   *
+   * `DETAILED_PNL_SCAN_CAP` bounds step 1. It is far above the whole book, so
+   * in practice every booking is considered; if a deployment ever exceeded it
+   * the response says so rather than quietly filtering a subset.
+   */
+  const detailedPnlParam = searchParams.get('detailedPnl')
+  const wantsDetailedPnl = detailedPnlParam === '1' || detailedPnlParam === '0'
+  let detailedPnlTruncated = false
+
+  if (wantsDetailedPnl) {
+    const scope: Record<string, unknown> = andClauses.length > 0 ? { AND: [...andClauses] } : {}
+    const candidates = await prisma.booking.findMany({
+      where: scope,
+      select: { bookingRef: true, isNumber: true },
+      take: DETAILED_PNL_SCAN_CAP + 1,
+    })
+    detailedPnlTruncated = candidates.length > DETAILED_PNL_SCAN_CAP
+    const scanned = detailedPnlTruncated ? candidates.slice(0, DETAILED_PNL_SCAN_CAP) : candidates
+
+    let available = new Set<string>()
+    try {
+      available = await fetchDetailedPnlAvailability(
+        scanned.flatMap(c => [c.isNumber, c.bookingRef].filter((v): v is string => !!v)),
+      )
+    } catch (err) {
+      // The Accounts DB being down is a connectivity problem, not an answer.
+      // Saying "no booking has a P&L" would be a confident lie.
+      console.error('[bookings] Detailed P&L availability lookup failed:', err)
+      return buildApiError('Could not reach the Accounts database to check Detailed P&L availability', 503)
+    }
+
+    const has = (c: { bookingRef: string; isNumber: string | null }) =>
+      available.has(normaliseRef(c.isNumber)) || available.has(normaliseRef(c.bookingRef))
+    const wanted = detailedPnlParam === '1'
+    const refs = scanned.filter(c => has(c) === wanted).map(c => c.bookingRef)
+
+    // An empty list must still filter — `{ in: [] }` matches nothing, which is
+    // the correct answer, where omitting the clause would show everything.
+    andClauses.push({ bookingRef: { in: refs } })
+  }
+
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 
   const baseInclude = {
@@ -265,7 +356,44 @@ export async function GET(req: NextRequest) {
     }),
   ])
 
-  return buildApiSuccess({ bookings, total, page, limit })
+  /**
+   * Decorate the page with Detailed P&L availability, so the list can show the
+   * icon without the browser making a second round trip per page.
+   *
+   * One bounded query against the Accounts DB for the refs actually on screen.
+   * If that database is unreachable the field comes back `null` — "we could not
+   * check" — which the list renders as no icon rather than as a definite "no".
+   */
+  let pnlAvailable: Set<string> | null = null
+  try {
+    pnlAvailable = await withBudget(
+      fetchDetailedPnlAvailability(
+        bookings.flatMap(b => [b.isNumber, b.bookingRef].filter((v): v is string => !!v)),
+      ),
+      DETAILED_PNL_DECORATE_BUDGET_MS,
+      'Detailed P&L availability lookup',
+    )
+  } catch (err) {
+    console.error('[bookings] Detailed P&L availability decoration skipped (non-fatal):', err)
+  }
+
+  const decorated = bookings.map(b => ({
+    ...b,
+    hasDetailedPnl: pnlAvailable
+      ? pnlAvailable.has(normaliseRef(b.isNumber)) || pnlAvailable.has(normaliseRef(b.bookingRef))
+      : null,
+  }))
+
+  return buildApiSuccess({
+    bookings: decorated,
+    total,
+    page,
+    limit,
+    /** False when the Accounts DB could not be read; the icons are absent, not negative. */
+    detailedPnlChecked: pnlAvailable !== null,
+    /** True when the Detailed P&L filter could not consider the whole book. */
+    detailedPnlTruncated,
+  })
 }
 
 export async function POST(req: NextRequest) {

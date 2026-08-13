@@ -125,6 +125,63 @@ export async function fetchStoredPnlByIsNumber(isNumber: string): Promise<Detail
 }
 
 /**
+ * Which of these references have a Detailed P&L waiting behind them?
+ *
+ * The bookings list needs this for a whole page at once — "does this booking
+ * have a costing sheet?" × 50 — and `fetchStoredPnl` answers for one booking at
+ * a time by pulling the entire `as_payload` blob with it. Fifty of those would
+ * move megabytes across the wire to answer fifty yes/no questions.
+ *
+ * So this asks only the question: it selects the normalised identifier, never
+ * the payload, and uses `as_payload IS NOT NULL AND as_payload <> ''` as the
+ * test — the same bar `loadDetailedPnl` sets when it reports `no_payload`, so a
+ * row the list marks as available can always actually be opened.
+ *
+ * Matching mirrors `fetchStoredPnl` exactly: spaces stripped and upper-cased on
+ * both sides, `source = 'apple_system_api'`, soft-deletes excluded. All three
+ * identifier columns are checked, because a booking whose IS number has not
+ * reached the Accounts DB yet may still be findable by tour ref.
+ *
+ * Returns the **normalised** keys that matched — compare with `normaliseRef()`,
+ * never with the raw value. An empty input, or an unreachable Accounts DB,
+ * yields an empty set: the list degrades to showing no icons rather than
+ * failing, because a costing sheet nobody can reach is not worth a broken page.
+ */
+export async function fetchDetailedPnlAvailability(refs: string[]): Promise<Set<string>> {
+  const keys = Array.from(new Set(refs.map(normaliseRef).filter(Boolean)))
+  if (keys.length === 0) return new Set()
+
+  // Chunked so a large page (or the filter's wider sweep) never builds a single
+  // statement with thousands of placeholders.
+  const CHUNK = 500
+  const found = new Set<string>()
+
+  for (let i = 0; i < keys.length; i += CHUNK) {
+    const slice = keys.slice(i, i + CHUNK)
+    const holes = slice.map(() => '?').join(',')
+    const rows = await accountsQuery<RowDataPacket & { k: string }>(
+      `SELECT DISTINCT REPLACE(UPPER(is_number), ' ', '') AS k
+         FROM pnl_records
+        WHERE deleted_at IS NULL
+          AND source = 'apple_system_api'
+          AND as_payload IS NOT NULL AND as_payload <> ''
+          AND REPLACE(UPPER(is_number), ' ', '') IN (${holes})
+        UNION
+       SELECT DISTINCT REPLACE(UPPER(tour_ref), ' ', '') AS k
+         FROM pnl_records
+        WHERE deleted_at IS NULL
+          AND source = 'apple_system_api'
+          AND as_payload IS NOT NULL AND as_payload <> ''
+          AND REPLACE(UPPER(tour_ref), ' ', '') IN (${holes})`,
+      [...slice, ...slice],
+    )
+    for (const r of rows) if (r.k) found.add(String(r.k))
+  }
+
+  return found
+}
+
+/**
  * Same lookup, widened to the other identifiers a booking can be known by.
  *
  * IS number is the contract the two systems share and is always tried first;

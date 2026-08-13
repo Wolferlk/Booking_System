@@ -50,7 +50,9 @@ function PrintContent() {
   useEffect(() => {
     const params = new URLSearchParams()
     const passthrough = ['search', 'refSearch', 'contentSearch', 'status', 'dateFilter', 'dateField',
-      'dateFrom', 'dateTo', 'sortBy', 'sortDir', 'country', 'source', 'quick']
+      'dateFrom', 'dateTo', 'sortBy', 'sortDir', 'country', 'source', 'quick',
+      // The two narrowing switches, so a printout matches the screen it came from.
+      'hotelOnly', 'detailedPnl']
     passthrough.forEach(k => { const v = sp.get(k); if (v) params.set(k, v) })
     params.set('limit', '500')
     params.set('page', '1')

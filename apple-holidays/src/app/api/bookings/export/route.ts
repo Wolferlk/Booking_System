@@ -166,6 +166,12 @@ export async function GET(req: NextRequest) {
     andClauses.push(quickFilterWhere(quick) as Record<string, unknown>)
   }
 
+  // Hotel Only — mirrors the switch on the bookings list, so a download or a
+  // printout of a filtered screen contains what the screen showed.
+  const hotelOnlyParam = searchParams.get('hotelOnly')
+  if (hotelOnlyParam === '1') andClauses.push({ hotelOnly: true })
+  else if (hotelOnlyParam === '0') andClauses.push({ hotelOnly: false })
+
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}
 
   const bookings = await prisma.booking.findMany({
