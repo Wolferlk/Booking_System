@@ -220,6 +220,7 @@ function PrintContent() {
               <th style={th}>#</th>
               <th style={th}>Date</th>
               <th style={th}>Tour Ref</th>
+              <th style={th}>Agent</th>
               <th style={th}>Location</th>
               <th style={{ ...th, textAlign: 'center' }}>Pax</th>
               <th style={th}>From</th>
@@ -258,6 +259,14 @@ function PrintContent() {
                         {q ? <HighlightText text={row.agentBookingId} query={deepSearch} /> : row.agentBookingId}
                       </div>
                     )}
+                  </td>
+
+                  <td style={{ ...td, color: '#475569', maxWidth: 110 }}>
+                    {row.agent
+                      ? (q && row.agent.toLowerCase().includes(q)
+                          ? <HighlightText text={row.agent} query={deepSearch} />
+                          : row.agent)
+                      : <span style={{ color: '#cbd5e1' }}>—</span>}
                   </td>
 
                   <td style={{ ...td, fontWeight: 600 }}>

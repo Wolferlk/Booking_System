@@ -50,6 +50,7 @@ import { isHotelOnlyBooking, waives, HOTEL_ONLY_WAIVED } from '@/lib/hotel-only'
 import {
   HotelOnlyBanner, HotelOnlyButton, HotelOnlyChip,
 } from '@/components/bookings/hotel-only-control'
+import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 
 /** Shapes returned by the three `/extract` endpoints behind the AI Auto-fill popups. */
 type ExtractedFlight = {
@@ -1403,6 +1404,15 @@ Wishing you a wonderful trip! ✈️
                   hasCustomerReview={hasGuestFeedback}
                 />
                 {hotelOnly && <HotelOnlyChip />}
+                {/* Sold inside D-4. Renders nothing on a normally-booked file,
+                    and needs no query — the rule is `createdAt` vs `arrivalDate`
+                    and both are already here. See `lib/last-minute-shared.ts`. */}
+                <LastMinuteBadge
+                  size="full"
+                  createdAt={booking.createdAt as string}
+                  arrivalDate={booking.arrivalDate as string}
+                  status={status}
+                />
                 {booking.operationCountry && (
                   <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
                     booking.operationCountry === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-200' :

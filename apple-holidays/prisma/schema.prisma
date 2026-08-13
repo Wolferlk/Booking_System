@@ -1864,3 +1864,44 @@ model BookingReconfirmDelay {
   @@index([recordedAt])
   @@map("booking_reconfirm_delays")
 }
+
+/// Acknowledgement that a **last-minute booking** (sold inside D-4) has been
+/// seen by the operation. One row per booking ref; its existence is the whole
+/// signal, and the absence of a row is what keeps the header alert shouting.
+///
+/// Acknowledging is deliberately a **team-wide** act, like the AppleSystem
+/// import alert: the point is that *somebody* picked the file up, not that
+/// everyone read the popup. Who and when are recorded so the morning meeting can
+/// ask.
+///
+/// `arrivalDate` is a snapshot of the arrival the acknowledgement was made
+/// against, not a copy of the booking. An amendment that pulls the guest
+/// *forward* is new news — a file acknowledged as "arrives Friday" that becomes
+/// "arrives tomorrow" is re-raised rather than silently staying quiet. Moving
+/// the arrival later never re-raises.
+///
+/// Keyed by `bookingRef` with no foreign key, matching
+/// `BookingReconfirmDelay`: amendments rewrite a booking's child rows wholesale,
+/// and a record of who took responsibility for a late file must not be swept
+/// away by a cascade. The rules that decide when a row is owed at all live in
+/// `src/lib/last-minute-shared.ts`.
+model BookingLastMinuteAck {
+  id             String   @id @default(cuid())
+  bookingRef     String   @unique
+  /// Arrival this acknowledgement was made against — see the note above.
+  arrivalDate    DateTime
+  /// Whole days from creation to arrival at the time of acknowledgement, kept so
+  /// a report can count how late the team's late files actually were without
+  /// recomputing against a booking that may since have been amended.
+  leadDays       Int
+  acknowledgedBy String?
+  acknowledgedByEmail String?
+  acknowledgedAt DateTime @default(now())
+  /// Optional free text — what the desk did about it.
+  note           String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([acknowledgedAt])
+  @@map("booking_last_minute_acks")
+}

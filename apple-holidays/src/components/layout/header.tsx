@@ -6,6 +6,7 @@ import { ROLE_LABELS } from '@/lib/rbac'
 import { getInitials } from '@/lib/utils'
 import { useSidebar } from '@/hooks/use-sidebar'
 import NotificationsBell from '@/components/layout/notifications-bell'
+import LastMinuteAlert from '@/components/layout/last-minute-alert'
 import type { UserRole } from '@prisma/client'
 
 interface HeaderProps {
@@ -40,6 +41,11 @@ export default function Header({ title, subtitle, actions }: HeaderProps) {
         {/* Right: actions + bell + user */}
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {actions}
+
+          {/* Bookings sold inside D-4 that nobody has picked up yet. Renders its
+              own chip only when there is something outstanding, and carries the
+              recurring alarm dialog with it. */}
+          <LastMinuteAlert />
 
           {/* Live traveller-experience alerts (complaints raised on AI calls) */}
           <NotificationsBell />

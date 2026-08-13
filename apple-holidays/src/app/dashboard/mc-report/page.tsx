@@ -77,7 +77,7 @@ type MCRow = {
   bookingStatus:  string
 }
 
-type SortField = 'date' | 'vnCode' | 'location' | 'serviceType' | 'meetingTime'
+type SortField = 'date' | 'vnCode' | 'agent' | 'location' | 'serviceType' | 'meetingTime'
 type SortDir   = 'asc' | 'desc'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -500,6 +500,7 @@ export default function MCReportPage() {
     switch (sort.field) {
       case 'date':        return dir * a.date.localeCompare(b.date)
       case 'vnCode':      return dir * a.vnCode.localeCompare(b.vnCode)
+      case 'agent':       return dir * (a.agent ?? '').localeCompare(b.agent ?? '')
       case 'location':    return dir * a.location.localeCompare(b.location)
       case 'serviceType': return dir * a.serviceType.localeCompare(b.serviceType)
       case 'meetingTime': return dir * (a.meetingTime ?? '').localeCompare(b.meetingTime ?? '')
@@ -978,6 +979,7 @@ export default function MCReportPage() {
                     <tr className="bg-slate-50 border-b border-slate-200 sticky top-0">
                       <SortTh field="date"        label="Date"      sort={sort} onSort={handleSort} />
                       <SortTh field="vnCode"      label="VN Code"   sort={sort} onSort={handleSort} />
+                      <SortTh field="agent"       label="Agent"     sort={sort} onSort={handleSort} />
                       <SortTh field="location"    label="Location"  sort={sort} onSort={handleSort} />
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Adults</th>
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Child</th>
@@ -1058,6 +1060,15 @@ export default function MCReportPage() {
                                   {q ? <Highlight text={row.agentBookingId} query={deepSearch} /> : row.agentBookingId}
                                 </span>
                               )}
+                            </td>
+
+                            {/* Agent — who sold the file; operations reads it beside the ref */}
+                            <td className="px-3 py-2.5 max-w-[140px]">
+                              {row.agent ? (
+                                <span className="block truncate font-medium text-slate-700" title={row.agent}>
+                                  {q ? <Highlight text={row.agent} query={deepSearch} /> : row.agent}
+                                </span>
+                              ) : <span className="text-slate-300">—</span>}
                             </td>
 
                             {/* Location */}
@@ -1258,7 +1269,7 @@ export default function MCReportPage() {
                           {/* Expanded detail row */}
                           {isExpanded && (
                             <tr key={`${row.id}-detail`} className="bg-brand-50/40 border-l-2 border-l-brand-400">
-                              <td colSpan={12 + (showGuideCol ? 1 : 0) + (showTourVendorCol ? 1 : 0)} className="px-4 py-3">
+                              <td colSpan={13 + (showGuideCol ? 1 : 0) + (showTourVendorCol ? 1 : 0)} className="px-4 py-3">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                                   {[
                                     { label: 'Tour Ref',       value: row.vnCode },
