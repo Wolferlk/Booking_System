@@ -66,7 +66,7 @@ interface Summary {
     window: { label: string; fromDate: string; toDate: string; timezone: string }
     created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
     onGround: { total: number; pax: number }
-    readiness: { total: number; notReady: number; tomorrow: number }
+    readiness: { total: number; notReady: number; tomorrow: number; hotelOnly: number }
     complaints: { total: number; open: number; available: boolean }
     upcoming: { total: number; next7: number }
   }
@@ -138,7 +138,16 @@ export default function PreviewDrawer({
   const stats = d ? [
     { label: 'Created', value: d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
     { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
-    { label: 'Next 3 days', value: d.readiness.total, sub: `${d.readiness.notReady} not ready` },
+    {
+      label: 'Next 3 days',
+      value: d.readiness.total,
+      // Hotel Only arrivals are counted as ready, so the tile names them: "0 not
+      // ready" on a morning of room-only files is true but easy to misread.
+      sub: [
+        `${d.readiness.notReady} not ready`,
+        d.readiness.hotelOnly ? `${d.readiness.hotelOnly} hotel only` : null,
+      ].filter(Boolean).join(' · '),
+    },
     { label: 'Complaints', value: d.complaints.total, sub: d.complaints.available ? `${d.complaints.open} open` : 'unavailable' },
     { label: 'Upcoming', value: d.upcoming.total, sub: `${d.upcoming.next7} in 7 days` },
   ] : []

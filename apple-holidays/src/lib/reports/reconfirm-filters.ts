@@ -47,11 +47,21 @@ export type ReconfirmFacet =
   | 'RECONFIRM_PENDING'
   | 'CALL_ACCEPTED'
   | 'CALL_NOT_ACCEPTED'
+  | 'HOTEL_ONLY'
+  | 'FULL_SERVICE'
 
-export type FacetGroup = 'client' | 'call' | 'approval'
+export type FacetGroup = 'client' | 'call' | 'approval' | 'scope'
 
-/** Display order, and the order groups are ANDed in. */
-export const FACET_GROUPS: FacetGroup[] = ['client', 'call', 'approval']
+/**
+ * Display order, and the order groups are ANDed in.
+ *
+ * `scope` is a fourth axis and sits first because it changes what the other
+ * three even mean: a Hotel Only booking has no tour to reconfirm, so it is
+ * neither a chase nor a success on the reconfirmation axes — it is simply out of
+ * their scope. Ops filters on it both ways: "show me only the room-only files"
+ * and, far more often, "hide them so I can work the real tours".
+ */
+export const FACET_GROUPS: FacetGroup[] = ['scope', 'client', 'call', 'approval']
 
 /**
  * The minimum a row must carry to be classified. Both `OpsDayRow` and any
@@ -63,6 +73,8 @@ export interface ReconfirmFacts {
   /** Null when no reconfirmation call has been logged. */
   preTourCall: unknown | null
   call: { approval: CallApprovalState }
+  /** Accommodation-only file — see `src/lib/hotel-only.ts`. */
+  hotelOnly?: boolean
 }
 
 export interface FacetMeta {
@@ -117,6 +129,24 @@ export const RECONFIRM_FACETS: FacetMeta[] = [
     dot: 'bg-sky-500',
   },
   {
+    key: 'HOTEL_ONLY',
+    group: 'scope',
+    label: 'Hotel Only',
+    short: 'Hotel Only',
+    hint: 'Accommodation-only bookings — no agenda, drivers, tickets, flights, client reconfirmation or QC',
+    chip: 'bg-amber-50 text-amber-800 border-amber-300',
+    dot: 'bg-amber-500',
+  },
+  {
+    key: 'FULL_SERVICE',
+    group: 'scope',
+    label: 'Full tours only',
+    short: 'Full tours',
+    hint: 'Hides Hotel Only bookings, leaving the files that carry an operation',
+    chip: 'bg-slate-100 text-slate-700 border-slate-300',
+    dot: 'bg-slate-500',
+  },
+  {
     key: 'CALL_NOT_ACCEPTED',
     group: 'approval',
     label: 'Call request pending',
@@ -140,6 +170,8 @@ export function matchesFacet(facet: ReconfirmFacet, r: ReconfirmFacts): boolean 
     // "Unknown" is withheld deliberately: an unreadable ledger must not be
     // reported to ops as a customer who refused.
     case 'CALL_NOT_ACCEPTED':  return r.call.approval === 'pending' || r.call.approval === 'not_requested'
+    case 'HOTEL_ONLY':         return r.hotelOnly === true
+    case 'FULL_SERVICE':       return r.hotelOnly !== true
     default:                   return true
   }
 }
@@ -167,6 +199,7 @@ export function countFacets<T extends ReconfirmFacts>(rows: T[]): Record<Reconfi
   const out = {
     CLIENT_CONFIRMED: 0, CLIENT_UNCONFIRMED: 0, RECONFIRM_PENDING: 0,
     CALL_ACCEPTED: 0, CALL_NOT_ACCEPTED: 0,
+    HOTEL_ONLY: 0, FULL_SERVICE: 0,
   } satisfies Record<ReconfirmFacet, number>
   for (const r of rows) {
     for (const f of RECONFIRM_FACETS) if (matchesFacet(f.key, r)) out[f.key] += 1

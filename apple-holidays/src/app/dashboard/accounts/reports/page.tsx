@@ -21,7 +21,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
   PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
-  Sparkles, Info, Maximize2,
+  Sparkles, Info, Maximize2, Hotel,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -283,6 +283,8 @@ export default function OperationsBoardPage() {
 
   const readyCount = visible.filter(r => r.ready).length
   const readyPct = visible.length ? Math.round((readyCount / visible.length) * 100) : 0
+  /** Accommodation-only files in view — ready by definition, not by work done. */
+  const hotelOnlyCount = visible.filter(r => r.hotelOnly).length
 
   // A week rail centred two days back, so yesterday's loose ends stay one click away.
   const railDays = useMemo(
@@ -309,18 +311,20 @@ export default function OperationsBoardPage() {
   function exportCSV() {
     if (!visible.length) { toast.error('Nothing to export'); return }
     const headers = [
-      'Booking Ref', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
+      'Booking Ref', 'Booking Type', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
       'Status', 'Arrival', 'Departure', 'Day', 'Pax',
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
       'Driver Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
     ]
     const lines = visible.map(r => [
-      r.bookingRef, r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
+      r.bookingRef,
+      r.hotelOnly ? 'Hotel Only' : 'Full tour',
+      r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
       r.countryLabel, r.destination ?? '', r.statusLabel,
       r.arrivalDate, r.departureDate, `${r.dayNo}/${r.totalDays}`, r.pax,
-      r.isArrival ? 'Arriving' : r.isDeparture ? 'Departing' : 'On tour',
-      r.clientConfirmed ? 'Yes' : 'No',
+      r.isArrival ? 'Arriving' : r.isDeparture ? 'Departing' : r.hotelOnly ? 'In hotel' : 'On tour',
+      r.hotelOnly ? 'N/A — Hotel Only' : r.clientConfirmed ? 'Yes' : 'No',
       r.preTourCall ? `Yes (${r.preTourCall.at})` : 'No',
       r.preTourCall?.outcome ?? '',
       APPROVAL_LABEL[r.call.approval],
@@ -689,6 +693,18 @@ export default function OperationsBoardPage() {
             />
           </div>
           <span className="text-sm font-extrabold text-slate-900 tabular-nums">{readyPct}%</span>
+          {/* Hotel Only files count as ready because nothing is outstanding on
+              them. Saying how many there are stops the percentage reading as a
+              better day than it was. */}
+          {hotelOnlyCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold"
+              title="Accommodation-only bookings. Every check is N/A on these, so they count as ready."
+            >
+              <Hotel className="w-3 h-3" />
+              {hotelOnlyCount} Hotel Only
+            </span>
+          )}
           <StateLegend />
         </motion.div>
 
@@ -876,14 +892,19 @@ export default function OperationsBoardPage() {
                             onClick={() => setExpanded(open ? null : r.bookingRef)}
                             className={cn(
                               'cursor-pointer transition-colors',
-                              open ? 'bg-slate-50' : 'hover:bg-slate-50',
+                              open ? 'bg-slate-50'
+                                // Hotel Only rows are tinted rather than hidden:
+                                // the guest is on the ground and ops must see
+                                // them, but nothing on the row is a chase.
+                                : r.hotelOnly ? 'bg-amber-50/40 hover:bg-amber-50'
+                                  : 'hover:bg-slate-50',
                             )}
                           >
                             <td className="px-3 py-2.5 whitespace-nowrap">
                               <div className="flex items-center gap-2">
                                 <span className={cn(
                                   'w-1.5 h-1.5 rounded-full flex-shrink-0',
-                                  r.ready ? 'bg-emerald-500' : 'bg-rose-500',
+                                  r.hotelOnly ? 'bg-amber-400' : r.ready ? 'bg-emerald-500' : 'bg-rose-500',
                                 )} />
                                 <a
                                   href={`/dashboard/bookings/${r.bookingRef}`}
@@ -895,7 +916,17 @@ export default function OperationsBoardPage() {
                                   {r.bookingRef}
                                 </a>
                               </div>
-                              <div className="text-[10px] text-slate-400 pl-3.5">{r.countryLabel}</div>
+                              <div className="text-[10px] text-slate-400 pl-3.5 flex items-center gap-1.5">
+                                {r.countryLabel}
+                                {r.hotelOnly && (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold uppercase tracking-wide"
+                                    title="Hotel Only booking — accommodation only. No agenda, drivers, tickets, flights, client reconfirmation or QC."
+                                  >
+                                    <Hotel className="w-2.5 h-2.5" /> Hotel Only
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="px-3 py-2.5 text-slate-700 max-w-[180px] truncate" title={r.leadPassenger ?? ''}>
                               {r.leadPassenger || '—'}
@@ -918,7 +949,7 @@ export default function OperationsBoardPage() {
                                 </span>
                               )}
                               {!r.isArrival && !r.isDeparture && (
-                                <span className="text-slate-400">On tour</span>
+                                <span className="text-slate-400">{r.hotelOnly ? 'In hotel' : 'On tour'}</span>
                               )}
                             </td>
                             <td className="px-3 py-2.5">

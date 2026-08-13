@@ -124,6 +124,18 @@ const SEVERITY_PILL: Record<string, string> = {
   low: pill('LOW', '#ffffff', C.faint),
 }
 
+/**
+ * The Hotel Only mark, for a booking row.
+ *
+ * Small and inline rather than a column of its own: it appears on a minority of
+ * rows, and a mostly-empty column would cost width the checklist tables cannot
+ * spare. Where it does appear it is the explanation for a row of dashes — those
+ * checks are waived, not forgotten.
+ */
+function hotelOnlyPill(): string {
+  return '<span class="pill" style="background:#fef3c7;color:#92400e;">HOTEL ONLY</span>'
+}
+
 /** Classed, not inline: this one renders on every booking row in three tables. */
 function sourcePill(source: string): string {
   return source === 'B2C'
@@ -305,7 +317,7 @@ function onGroundSection(d: ReportData): string {
             ? pill('DEPARTS', '#ffffff', C.warn)
             : `${t.dayNo}/${t.totalDays}`
         return `<tr>
-          ${td(`<strong style="color:${C.ink};">${esc(t.bookingRef)}</strong>`, { nowrap: true })}
+          ${td(`<strong style="color:${C.ink};">${esc(t.bookingRef)}</strong>${t.hotelOnly ? ` ${hotelOnlyPill()}` : ''}`, { nowrap: true })}
           ${td(sourcePill(t.source), { nowrap: true })}
           ${td(esc(t.countryLabel), { nowrap: true })}
           ${td(truncate(t.leadPassenger ?? t.destination, 24))}
@@ -404,7 +416,7 @@ function tomorrowGapTable(lines: ReadinessLine[]): string {
       { text: 'Pax', align: 'right', width: '40' },
       { text: 'Outstanding' }, { text: 'QC', align: 'center', width: '80' },
     ]) + rows.map(b => `<tr>
-      ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${b.leadPassenger ? `<div style="color:${C.faint};font-size:11px;">${truncate(b.leadPassenger, 22)}</div>` : ''}`, { nowrap: true })}
+      ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${b.hotelOnly ? ` ${hotelOnlyPill()}` : ''}${b.leadPassenger ? `<div style="color:${C.faint};font-size:11px;">${truncate(b.leadPassenger, 22)}</div>` : ''}`, { nowrap: true })}
       ${td(esc(b.countryLabel), { nowrap: true })}
       ${td(num(b.pax), { align: 'right' })}
       ${td(outstandingReasons(b))}
@@ -424,7 +436,9 @@ function readinessSection(d: ReportData): string {
   const kpis = kpiRow([
     { label: 'Arriving in 3 days', value: num(r.total), note: `${num(r.pax)} guests`, color: C.brand },
     { label: 'Tomorrow', value: num(r.tomorrow), note: r.tomorrowNotReady ? `${num(r.tomorrowNotReady)} not ready` : 'all ready', color: r.tomorrowNotReady ? C.bad : C.good },
-    { label: 'Fully ready', value: num(r.ready), color: C.good },
+    // Hotel Only arrivals are inside `ready` — nothing is outstanding on them —
+    // so the note says how many, or a room-only morning reads as a prepared one.
+    { label: 'Fully ready', value: num(r.ready), note: r.hotelOnly ? `${num(r.hotelOnly)} hotel only` : undefined, color: C.good },
     { label: 'Needs action', value: num(r.notReady), color: r.notReady ? C.bad : C.ink },
   ])
 
@@ -484,7 +498,7 @@ function readinessSection(d: ReportData): string {
       const arrives = b.daysToArrival === 1 ? 'Tomorrow' : formatReportDate(b.arrivalDate, { weekday: true })
       const guest = b.leadPassenger ?? b.destination
       return `<tr>
-        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
+        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${b.hotelOnly ? ` ${hotelOnlyPill()}` : ''}${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
         ${td(esc(arrives), { nowrap: true, color: b.daysToArrival === 1 ? C.bad : C.body, bold: b.daysToArrival === 1 })}
         ${td(esc(b.countryLabel), { nowrap: true })}
         ${td(num(b.pax), { align: 'right' })}
@@ -501,7 +515,7 @@ function readinessSection(d: ReportData): string {
     : emptyNote('No tours arrive in the next three days.')
 
   const legend = r.bookings.length
-    ? `<div class="more">Driver and ticket cells read “done / total”. Red is nothing done, amber is part-done, green is complete; “—” or “None” means the check does not apply — no transfers, or no tickets on the booking.</div>`
+    ? `<div class="more">Driver and ticket cells read “done / total”. Red is nothing done, amber is part-done, green is complete; “—” or “None” means the check does not apply — no transfers, or no tickets on the booking. A row marked <strong>HOTEL ONLY</strong> is accommodation only: every check is waived by design, and the hotel is reconfirmed on the Pre-checking queue instead.</div>`
     : ''
 
   return section(
@@ -826,13 +840,13 @@ export function renderReportCsv(d: ReportData): string {
   block('Bookings created', ['Ref', 'Source', 'Country', 'Agent', 'Status', 'Arrival', 'Departure', 'Adults', 'Children', 'Infants', 'Currency', 'Quoted total', 'Created at'],
     d.created.bookings.map(b => [b.bookingRef, b.source, b.countryLabel, b.agent ?? '', b.status, b.arrivalDate, b.departureDate, b.paxAdults, b.paxChildren, b.paxInfants, b.currency, b.quotedTotal ?? '', b.createdAt].map(String)))
 
-  block(`On ground ${d.onGround.date}`, ['Ref', 'Source', 'Country', 'Lead guest', 'Day', 'Total days', 'Pax', 'Status'],
-    d.onGround.tours.map(t => [t.bookingRef, t.source, t.countryLabel, t.leadPassenger ?? '', t.dayNo, t.totalDays, t.pax, t.status].map(String)))
+  block(`On ground ${d.onGround.date}`, ['Ref', 'Booking type', 'Source', 'Country', 'Lead guest', 'Day', 'Total days', 'Pax', 'Status'],
+    d.onGround.tours.map(t => [t.bookingRef, t.hotelOnly ? 'Hotel Only' : 'Full tour', t.source, t.countryLabel, t.leadPassenger ?? '', t.dayNo, t.totalDays, t.pax, t.status].map(String)))
 
   block(`Arriving ${d.readiness.fromDate} to ${d.readiness.toDate} — readiness`,
-    ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'Days to arrival', 'Pax', 'Status', 'Client confirmed', 'Driver allocation', 'Driver detail', 'Tickets', 'Ticket detail', 'QC stage', 'Ready', 'Blocking', 'Outstanding'],
+    ['Ref', 'Booking type', 'Source', 'Country', 'Lead guest', 'Arrival', 'Days to arrival', 'Pax', 'Status', 'Client confirmed', 'Driver allocation', 'Driver detail', 'Tickets', 'Ticket detail', 'QC stage', 'Ready', 'Blocking', 'Outstanding'],
     d.readiness.bookings.map(b => [
-      b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, b.daysToArrival, b.pax, b.status,
+      b.bookingRef, b.hotelOnly ? 'Hotel Only' : 'Full tour', b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, b.daysToArrival, b.pax, b.status,
       b.readiness.client.state === 'DONE' ? 'Yes' : 'No',
       b.readiness.driver.short, b.readiness.driver.detail,
       b.readiness.tickets.short, b.readiness.tickets.detail,

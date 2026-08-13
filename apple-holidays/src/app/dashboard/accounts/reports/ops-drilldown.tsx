@@ -273,7 +273,7 @@ export default function OpsDrilldown({
   function exportCSV() {
     if (!rows.length) { toast.error('Nothing to export'); return }
     const headers = [
-      'Booking Ref', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
+      'Booking Ref', 'Booking Type', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
       'Status', 'Arrival', 'Departure', 'Days', 'Pax',
       `${meta.label} — State`, `${meta.label} — Detail`,
       'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
@@ -281,7 +281,9 @@ export default function OpsDrilldown({
       'Driver Allocation', 'Tickets', 'QC1', 'QC2', 'Outstanding',
     ]
     const lines = rows.map(r => [
-      r.bookingRef, r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
+      r.bookingRef,
+      r.hotelOnly ? 'Hotel Only' : 'Full tour',
+      r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
       r.countryLabel, r.destination ?? '', r.statusLabel,
       r.arrivalDate, r.departureDate, r.totalDays, r.pax,
       STATE_STYLE[stateForFocus(focus, r)].label, detailForFocus(focus, r),
@@ -666,6 +668,16 @@ export default function OpsDrilldown({
                               <span className="text-[11px] text-slate-400 whitespace-nowrap">
                                 {r.countryLabel} · {r.pax} pax · {r.totalDays}d
                               </span>
+
+                              {/* Explains a row whose every check is N/A. */}
+                              {r.hotelOnly && (
+                                <span
+                                  className="inline-flex items-center gap-1 px-1.5 py-px rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold whitespace-nowrap"
+                                  title="Hotel Only booking — accommodation only. No agenda, drivers, tickets, flights, client reconfirmation or QC."
+                                >
+                                  Hotel Only
+                                </span>
+                              )}
 
                               <span className="text-[11px] text-slate-500 whitespace-nowrap inline-flex items-center gap-1">
                                 <PlaneLanding className="w-3 h-3 text-emerald-500" />

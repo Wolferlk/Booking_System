@@ -19,6 +19,11 @@
  *     chauffeur allocation, which is not stored per agenda row;
  *   - part-done is its own state rather than a flat fail.
  *
+ * A **Hotel Only** booking (`hotel-only.ts`) short-circuits all four: it is
+ * accommodation and nothing else, so client reconfirmation, drivers, tickets and
+ * QC all read `NA` and the file counts as ready. Hotel reconfirmation is not
+ * part of this checklist and is unaffected.
+ *
  * Nothing here writes, and the panel is untouched — changing what an operator
  * sees mid-booking is a separate decision from what the report counts.
  *
@@ -28,6 +33,7 @@
 import type { BookingStatus } from '@prisma/client'
 import { getCurrentStep } from '@/lib/state-machine'
 import { HOTEL_ONLY_VEHICLE, resolveIsHotelOnly } from '@/lib/driver-requirement'
+import { HOTEL_ONLY_NA, isHotelOnlyBooking, waives } from '@/lib/hotel-only'
 
 /**
  * `PARTIAL` matters as much as the other three: a tour with three of five
@@ -54,6 +60,11 @@ export interface BookingReadiness {
   driver: ReadinessCheck
   tickets: ReadinessCheck
   qc: ReadinessCheck & { stage: QcStage }
+  /**
+   * Accommodation-only file. Every check above reads `NA`, so this is what a
+   * screen badges to say *why* the row is empty rather than unstarted.
+   */
+  hotelOnly: boolean
   /**
    * True when nothing that stops the guest landing is outstanding — the booking
    * can be left alone. QC is deliberately excluded; see `blocking`.
@@ -87,6 +98,11 @@ export interface ReadinessTicket {
 export interface ReadinessBooking {
   status: string
   qcPassedAt?: Date | string | null
+  /**
+   * Hotel Only — accommodation and nothing else. Waives driver, tickets, client
+   * reconfirmation and QC in one go; see `hotel-only.ts`.
+   */
+  hotelOnly?: boolean | null
   tourAgenda?: { items?: ReadinessAgendaItem[] | null } | null
   /** Sri Lanka allocates one driver per booking rather than per agenda row. */
   slDriverAllocation?: {
@@ -142,7 +158,15 @@ function isAllocated(item: ReadinessAgendaItem): boolean {
 
 // ─── Checks ───────────────────────────────────────────────────────────────────
 
+/** A check that does not apply to this file, worded the Hotel Only way. */
+function hotelOnlyNa(): ReadinessCheck {
+  return { state: 'NA', short: HOTEL_ONLY_NA.short, detail: HOTEL_ONLY_NA.detail, done: 0, required: 0 }
+}
+
 function clientCheck(b: ReadinessBooking): ReadinessCheck {
+  // Nothing to run past the client — there is no tour, only a bed.
+  if (waives(b, 'clientReconfirm')) return hotelOnlyNa()
+
   const confirmed = hasReached(b.status, CLIENT_CONFIRMED_FROM)
   return {
     state: confirmed ? 'DONE' : 'PENDING',
@@ -156,6 +180,10 @@ function clientCheck(b: ReadinessBooking): ReadinessCheck {
 }
 
 function driverCheck(b: ReadinessBooking): ReadinessCheck {
+  // The booking-level flag outranks everything below it: no transport is sold on
+  // this file at all, whatever a half-built agenda might still be carrying.
+  if (waives(b, 'drivers')) return hotelOnlyNa()
+
   // Hotel Only is an operator decision that the file carries no transport at
   // all — the Driver Allocation board reads it as "no driver needed", so the
   // report must not chase it as an unallocated tour.
@@ -214,6 +242,9 @@ function driverCheck(b: ReadinessBooking): ReadinessCheck {
 }
 
 function ticketsCheck(b: ReadinessBooking): ReadinessCheck {
+  // No excursions, no entrances — nothing to issue.
+  if (waives(b, 'tickets')) return hotelOnlyNa()
+
   const active = (b.tickets ?? []).filter(t => t.activated !== false)
   if (!active.length) {
     // Same rule the QC panel uses: a booking with no tickets on it has nothing
@@ -240,6 +271,15 @@ function ticketsCheck(b: ReadinessBooking): ReadinessCheck {
 }
 
 function qcCheck(b: ReadinessBooking): ReadinessCheck & { stage: QcStage } {
+  // QC1 and QC2 audit an operation — drivers, movements, tickets — that a Hotel
+  // Only file does not have. A booking still free to pass QC on its own is not
+  // held to it here, so `stage` reports what actually happened.
+  if (waives(b, 'qc')) {
+    const passed: QcStage = hasReached(b.status, 'QC2_PASS') ? 'QC2'
+      : hasReached(b.status, 'QC1_PASS') ? 'QC1' : 'NONE'
+    return { stage: passed, ...hotelOnlyNa() }
+  }
+
   const stage: QcStage = hasReached(b.status, 'QC2_PASS') ? 'QC2'
     : hasReached(b.status, 'QC1_PASS') ? 'QC1'
       : 'NONE'
@@ -286,5 +326,11 @@ export function computeReadiness(b: ReadinessBooking): BookingReadiness {
 
   const blocking = outstanding.filter(o => o !== 'QC')
 
-  return { client, driver, tickets, qc, ready: blocking.length === 0, outstanding, blocking }
+  return {
+    client, driver, tickets, qc,
+    hotelOnly: isHotelOnlyBooking(b),
+    ready: blocking.length === 0,
+    outstanding,
+    blocking,
+  }
 }

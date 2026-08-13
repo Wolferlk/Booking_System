@@ -10,7 +10,7 @@ import {
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical, Globe, Sparkles, PlaneLanding,
-  History, ChevronDown, RotateCcw, Wand2,
+  History, ChevronDown, RotateCcw, Wand2, ShieldCheck,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -43,6 +43,12 @@ import LogoSpinner from '@/components/shared/logo-spinner'
 // Shared with the pre-checking engine, so the badge here and the queue's
 // "optional" treatment can never disagree.
 import { isOwnArrangement } from '@/lib/own-arrangement'
+// Hotel Only — one flag that waives seven modules on this page. The rules live
+// in the lib so this page, the reports and the ops board all read the same list.
+import { isHotelOnlyBooking, waives, HOTEL_ONLY_WAIVED } from '@/lib/hotel-only'
+import {
+  HotelOnlyBanner, HotelOnlyButton, HotelOnlyChip,
+} from '@/components/bookings/hotel-only-control'
 
 /** Shapes returned by the three `/extract` endpoints behind the AI Auto-fill popups. */
 type ExtractedFlight = {
@@ -474,6 +480,17 @@ export default function BookingDetailPage() {
   const isVnGroundLimited = role === 'GT_VN_USER'
 
   const canEditFlights = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  // ── Hotel Only ──────────────────────────────────────────────────────────────
+  // Accommodation and nothing else. The flag waives seven modules; each section
+  // below asks `hoWaives(...)` rather than testing the flag itself, so what the
+  // page hides is exactly what `hotel-only.ts` says is waived — and the reports
+  // that read the same list can never show a different story.
+  const hotelOnly = isHotelOnlyBooking(booking as { hotelOnly?: boolean | null })
+  const hoWaives = (m: Parameters<typeof waives>[1]) =>
+    waives(booking as { hotelOnly?: boolean | null }, m)
+  const canSetHotelOnly = ['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+    && status !== 'CANCELLED'
 
   function openEditFlight() {
     setFlightEditList(
@@ -1307,6 +1324,10 @@ Wishing you a wonderful trip! ✈️
 
         <SectionNav />
 
+        {/* Hotel Only — states the contract before the reader notices the
+            itinerary, agenda and QC panels are missing further down. */}
+        <HotelOnlyBanner state={booking as { hotelOnly?: boolean | null; hotelOnlyAt?: string | null; hotelOnlyBy?: string | null; hotelOnlyNote?: string | null }} />
+
         {/* Lifecycle + status */}
         <section data-nav="Overview & Status" data-nav-icon="overview">
         <Card className="p-6">
@@ -1380,6 +1401,7 @@ Wishing you a wonderful trip! ✈️
                   departureDate={booking.departureDate as string}
                   hasCustomerReview={hasGuestFeedback}
                 />
+                {hotelOnly && <HotelOnlyChip />}
                 {booking.operationCountry && (
                   <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
                     booking.operationCountry === 'VIETNAM'            ? 'bg-red-50 text-red-600 border-red-200' :
@@ -1543,15 +1565,27 @@ Wishing you a wonderful trip! ✈️
                 )
               )}
 
-              {/* Links to sub-pages */}
-              <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
-                <MapPin className="w-3.5 h-3.5" /> Agenda
-              </Link>
-              <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
-                <Ticket className="w-3.5 h-3.5" /> Tickets
-              </Link>
+              {/* Hotel Only — set or lift the mark that waives most of the checklist */}
+              <HotelOnlyButton
+                bookingRef={ref}
+                state={booking as { hotelOnly?: boolean | null; hotelOnlyAt?: string | null; hotelOnlyBy?: string | null; hotelOnlyNote?: string | null }}
+                disabled={!canSetHotelOnly}
+                onChanged={load}
+              />
+
+              {/* Links to sub-pages — a Hotel Only file has no agenda or tickets */}
+              {!hoWaives('agenda') && (
+                <Link href={`/dashboard/bookings/${ref}/agenda`} className="btn btn-secondary btn-sm">
+                  <MapPin className="w-3.5 h-3.5" /> Agenda
+                </Link>
+              )}
+              {!hoWaives('tickets') && (
+                <Link href={`/dashboard/bookings/${ref}/tickets`} className="btn btn-secondary btn-sm">
+                  <Ticket className="w-3.5 h-3.5" /> Tickets
+                </Link>
+              )}
               {/* Drivers — GT can assign drivers from the Agenda page */}
-              {['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              {!hoWaives('drivers') && ['GT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link
                   href={`/dashboard/bookings/${ref}/agenda`}
                   className={`btn btn-sm ${
@@ -1662,6 +1696,8 @@ Wishing you a wonderful trip! ✈️
             extPnlLinked={extPnlLinked}
             ticketCount={(booking.tickets as any[])?.length ?? 0}
             agendaItems={(booking.tourAgenda as any)?.items ?? []}
+            hotelOnly={hotelOnly}
+            accommodationCount={accommodations.length}
           />
         </Card>
         </section>
@@ -1864,7 +1900,9 @@ Wishing you a wonderful trip! ✈️
             </div>
             <div className="col-span-2 md:col-span-3">
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Chauffeur / Tour Guide Contact</p>
-              {allocatedDrivers.length > 0
+              {hoWaives('drivers')
+                ? <p className="text-sm text-amber-700">No transport on this booking — Hotel Only</p>
+                : allocatedDrivers.length > 0
                 ? <p className="text-sm text-slate-700">{allocatedDrivers.join(', ')}</p>
                 : booking.chauffeurContact
                   ? <p className="text-sm text-slate-700 whitespace-pre-line">{booking.chauffeurContact as string}</p>
@@ -1967,8 +2005,9 @@ Wishing you a wonderful trip! ✈️
           </section>
         )}
 
-        {/* QC Panel — visible to operations/TE/admin */}
-        {['GT_USER', 'GT_VN_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+        {/* QC Panel — visible to operations/TE/admin. QC audits an operation a
+            Hotel Only file does not have, so the panel goes with it. */}
+        {!hoWaives('qc') && ['GT_USER', 'GT_VN_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <section data-nav="Quality Control" data-nav-icon="checklist">
           <BookingQCPanel
             booking={booking}
@@ -2184,7 +2223,38 @@ Wishing you a wonderful trip! ✈️
             </CardBody>
           </Card>
 
-          {/* Flights */}
+          {/* Flights — waived on a Hotel Only file. The card stays (the grid is
+              three columns wide) but collapses to the reason; anything the TC
+              did extract is kept behind a disclosure rather than thrown away. */}
+          {hoWaives('flights') ? (
+            <Card>
+              <CardHeader>
+                <h3 className="text-sm font-semibold text-slate-400 flex items-center gap-2">
+                  <Plane className="w-4 h-4 text-slate-300" /> Flights
+                </h3>
+              </CardHeader>
+              <CardBody>
+                <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/50 px-3 py-3">
+                  <p className="text-xs font-semibold text-amber-800">Not required — Hotel Only</p>
+                  <p className="text-[11px] text-amber-700/80 mt-0.5">The guest arranges their own travel.</p>
+                </div>
+                {flights.length > 0 && (
+                  <details className="mt-3">
+                    <summary className="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600">
+                      {flights.length} flight{flights.length === 1 ? '' : 's'} still on file — show
+                    </summary>
+                    <div className="mt-2 space-y-1.5">
+                      {flights.map(f => (
+                        <p key={f.id as string} className="text-[11px] text-slate-500 font-mono">
+                          {f.flightNo as string} · {f.fromApt as string} → {f.toApt as string} · {formatDate(f.date as string)}
+                        </p>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </CardBody>
+            </Card>
+          ) : (
           <Card>
             <CardHeader
               action={canEditFlights ? (
@@ -2231,6 +2301,7 @@ Wishing you a wonderful trip! ✈️
               ))}
             </CardBody>
           </Card>
+          )}
 
           {/* Hotels */}
           <Card>
@@ -2281,7 +2352,19 @@ Wishing you a wonderful trip! ✈️
           </Card>
         </div>
 
-        {/* Pre-checking — D-10 hotel reconfirmation for every stay above */}
+        {/* Pre-checking — D-10 hotel reconfirmation for every stay above.
+            Never waived: on a Hotel Only file it is the whole operation, so it
+            is called out as such rather than left to look like one panel among
+            many that happened to survive. */}
+        {hotelOnly && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <p className="text-xs text-amber-900">
+              <span className="font-semibold">This is the only reconfirmation this booking needs.</span>{' '}
+              Every stay below must still be reconfirmed with the property at D-10.
+            </p>
+          </div>
+        )}
         <PrecheckPanel bookingRef={ref} />
 
         {/* Contact Information — Agent & Tourist */}
@@ -2534,8 +2617,9 @@ Wishing you a wonderful trip! ✈️
           </section>
         )}
 
-        {/* Itinerary */}
-        {itinerary.length > 0 && (
+        {/* Itinerary — a Hotel Only guest fills their own days, so any itinerary
+            the TC happened to carry is not shown as something we operate. */}
+        {!hoWaives('itinerary') && itinerary.length > 0 && (
           <section data-nav="Itinerary" data-nav-icon="itinerary">
           <Card>
             <CardHeader><h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
@@ -2644,7 +2728,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* Driver Advance Sheet (Sri Lanka) — tour & fuel advances derived from the Accounts PNL */}
-        {booking.operationCountry === 'SRILANKA'
+        {!hoWaives('drivers') && booking.operationCountry === 'SRILANKA'
           && ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <section data-nav="Driver Advances" data-nav-icon="driver">
           <DriverLogPanel bookingRef={ref} role={role} />
@@ -4002,7 +4086,73 @@ interface OpChecklistProps {
   extPnlLinked: boolean
   ticketCount: number
   agendaItems: { assignment?: { id?: string; driverName?: string | null; driverId?: string | null } | null }[]
+  /** Accommodation-only file — the checklist collapses to what it actually owns. */
+  hotelOnly?: boolean
+  /** How many stays are loaded; a Hotel Only booking with none is not started. */
+  accommodationCount?: number
 }
+
+/**
+ * The Hotel Only checklist.
+ *
+ * Ten rungs of an operation this file does not have would read as permanently
+ * 4/10 complete, which is worse than useless — it makes a finished booking look
+ * abandoned. So the checklist collapses to the five things that are genuinely
+ * still owed, and the waived modules are shown separately, greyed, so nobody
+ * wonders whether they were forgotten.
+ */
+const HOTEL_ONLY_CHECKLIST: {
+  label: string
+  key: string
+  icon: string
+  done: (p: OpChecklistProps) => boolean
+  active: (p: OpChecklistProps) => boolean
+}[] = [
+  {
+    label:  'Booking Confirmed',
+    key:    'ho-confirmed',
+    icon:   '✅',
+    done:   p => getCurrentStep(p.status) > 2,
+    active: p => getCurrentStep(p.status) <= 2,
+  },
+  {
+    label:  'Hotels Loaded',
+    key:    'ho-hotels',
+    icon:   '🏨',
+    done:   p => (p.accommodationCount ?? 0) > 0,
+    active: p => (p.accommodationCount ?? 0) === 0,
+  },
+  {
+    label:  'P&L Added',
+    key:    'ho-pnl',
+    icon:   '📊',
+    done:   p => p.hasPnl || p.extPnlLinked,
+    active: p => !(p.hasPnl || p.extPnlLinked) && getCurrentStep(p.status) >= 5,
+  },
+  {
+    label:  'Hotel Reconfirmed',
+    key:    'ho-recon',
+    icon:   '📞',
+    // Sourced from the Pre-checking panel further down the page rather than
+    // duplicated here; the rung turns green once the file is operationally live.
+    done:   p => getCurrentStep(p.status) >= 12,
+    active: p => getCurrentStep(p.status) >= 6 && getCurrentStep(p.status) < 12,
+  },
+  {
+    label:  'Voucher Sent to Customer',
+    key:    'ho-msg',
+    icon:   '💬',
+    done:   p => getCurrentStep(p.status) >= 14,
+    active: p => getCurrentStep(p.status) >= 12 && getCurrentStep(p.status) < 14,
+  },
+  {
+    label:  'Completed',
+    key:    'ho-completed',
+    icon:   '🏁',
+    done:   p => p.status === 'COMPLETED',
+    active: p => p.status === 'FEEDBACK_DONE',
+  },
+]
 
 const CHECKLIST: {
   label: string
@@ -4090,29 +4240,36 @@ const CHECKLIST: {
 ]
 
 function OperationChecklist(props: OpChecklistProps) {
-  const doneCount = CHECKLIST.filter(c => c.done(props)).length
+  const hotelOnly = props.hotelOnly === true
+  const list = hotelOnly ? HOTEL_ONLY_CHECKLIST : CHECKLIST
+  const doneCount = list.filter(c => c.done(props)).length
 
   return (
     <div className="mt-5 pt-5 border-t border-slate-100">
       <div className="flex items-center justify-between mb-3">
-        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+        <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-2">
           Operation Checklist
+          {hotelOnly && (
+            <span className="normal-case tracking-normal text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+              Hotel Only
+            </span>
+          )}
         </h4>
         <span className="text-xs font-semibold text-slate-500">
-          {doneCount} / {CHECKLIST.length} complete
+          {doneCount} / {list.length} complete
         </span>
       </div>
 
       {/* Progress bar */}
       <div className="w-full bg-slate-100 rounded-full h-1.5 mb-4 overflow-hidden">
         <div
-          className="h-full bg-brand-500 rounded-full transition-all duration-500"
-          style={{ width: `${(doneCount / CHECKLIST.length) * 100}%` }}
+          className={`h-full rounded-full transition-all duration-500 ${hotelOnly ? 'bg-amber-500' : 'bg-brand-500'}`}
+          style={{ width: `${(doneCount / list.length) * 100}%` }}
         />
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-        {CHECKLIST.map(c => {
+        {list.map(c => {
           const done   = c.done(props)
           const active = !done && c.active(props)
 
@@ -4140,6 +4297,27 @@ function OperationChecklist(props: OpChecklistProps) {
           )
         })}
       </div>
+
+      {/* What Hotel Only dropped. Shown rather than silently absent, so a reader
+          can tell a waived rung from one nobody has got to yet. */}
+      {hotelOnly && (
+        <div className="mt-3 pt-3 border-t border-dashed border-slate-200">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+            Waived on this booking
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {HOTEL_ONLY_WAIVED.map(m => (
+              <span
+                key={m.key}
+                title={m.why}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-400 line-through decoration-slate-300"
+              >
+                <span className="grayscale opacity-60 no-underline">{m.icon}</span> {m.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
