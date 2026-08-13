@@ -202,6 +202,12 @@ export interface QueueStats {
   noContact: number
   /** Share of actionable stays already confirmed, 0–100. */
   completion: number
+  /** Own-arrangement stays — checking them is optional, so they sit outside the progress. */
+  optional: number
+  /** Stays we actually have to reconfirm (everything that is not own arrangement). */
+  required: number
+  /** Required stays already settled — confirmed, or explicitly marked not required. */
+  requiredDone: number
 }
 
 /** Headline counts for the queue's KPI strip. */
@@ -209,20 +215,36 @@ export function summarizeQueue(rows: PrecheckStay[]): QueueStats {
   const s: QueueStats = {
     total: rows.length, overdue: 0, dueToday: 0, dueSoon: 0, upcoming: 0,
     confirmed: 0, issues: 0, unmatched: 0, noContact: 0, completion: 0,
+    optional: 0, required: 0, requiredDone: 0,
   }
   for (const r of rows) {
+    // Own arrangement: the guest booked it, so nothing is owed to us or by us.
+    // It is counted separately and left out of every "needs work" number —
+    // an operator may still check it, but the booking is complete without it.
+    if (r.ownArrangement) {
+      s.optional++
+      continue
+    }
+
+    s.required++
     if (r.urgency === 'OVERDUE') s.overdue++
     else if (r.urgency === 'DUE_TODAY') s.dueToday++
     else if (r.urgency === 'DUE_SOON') s.dueSoon++
     else if (r.urgency === 'UPCOMING') s.upcoming++
 
     if (r.status === 'CONFIRMED') s.confirmed++
+    if (r.status === 'CONFIRMED' || r.status === 'NOT_REQUIRED') s.requiredDone++
     if (r.status === 'ISSUE' || r.status === 'DISCREPANCY') s.issues++
     if (r.unmatched) s.unmatched++
     if (r.noContact) s.noContact++
   }
+  // Completion is still measured over the action window only (a stay two months
+  // out is not "outstanding"), but a queue holding nothing but own arrangements
+  // reads as done rather than as 0%.
   const inWindow = s.overdue + s.dueToday + s.dueSoon + s.confirmed
-  s.completion = inWindow === 0 ? 0 : Math.round((s.confirmed / inWindow) * 100)
+  s.completion = inWindow === 0
+    ? (s.required === 0 ? 100 : 0)
+    : Math.round((s.confirmed / inWindow) * 100)
   return s
 }
 

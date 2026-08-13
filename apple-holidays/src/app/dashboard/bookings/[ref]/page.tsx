@@ -40,23 +40,9 @@ import AiAutofillModal from '@/components/bookings/ai-autofill-modal'
 import AppleSystemActions from '@/components/bookings/applesystem-actions'
 import { buildEmergencyContactsBlock } from '@/lib/emergency-contacts'
 import LogoSpinner from '@/components/shared/logo-spinner'
-
-/**
- * Detects whether an accommodation is the customer's OWN arrangement (booked by
- * the guest / agent themselves, not by Apple Holidays). We infer this from the
- * text fields the TC extraction fills in — hotels marked "own arrangement",
- * "self booked", "TBA", or with no hotel name are treated as own-arrangement.
- */
-function isOwnArrangement(a: Record<string, unknown>): boolean {
-  if (a.ownArrangement === true) return true
-  const hay = [a.hotel, a.roomType, a.mealType, a.address, a.contact]
-    .map(v => String(v ?? '').toLowerCase())
-    .join(' | ')
-  if (/own\s*arrangement|self[\s-]*book|guest\s*arrang|by\s*guest|not\s*included|own\s*acc/.test(hay)) return true
-  const hotel = String(a.hotel ?? '').trim().toLowerCase()
-  if (!hotel || ['tba', 'tbc', 'n/a', 'na', 'to be advised', 'to be confirmed', '-'].includes(hotel)) return true
-  return false
-}
+// Shared with the pre-checking engine, so the badge here and the queue's
+// "optional" treatment can never disagree.
+import { isOwnArrangement } from '@/lib/own-arrangement'
 
 /** Shapes returned by the three `/extract` endpoints behind the AI Auto-fill popups. */
 type ExtractedFlight = {

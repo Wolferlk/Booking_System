@@ -206,7 +206,13 @@ export default function StayCard({
             )}
             <StatusPill status={stay.status} size="sm" />
             {stay.urgency !== 'SETTLED' && <UrgencyChip urgency={stay.urgency} />}
-            {stay.unmatched && (
+            {/*
+              An own-arrangement stay is the guest's own booking: we hold no
+              reservation, so an unmatched hotel or a missing phone number is
+              not a problem to flag. The resolver is still one click away inside
+              the worksheet for an operator who wants to check anyway.
+            */}
+            {stay.unmatched && !stay.ownArrangement && (
               <button
                 onClick={() => onResolveHotel(stay)}
                 className="inline-flex items-center gap-1 rounded-md border border-dashed border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-100"
@@ -214,10 +220,13 @@ export default function StayCard({
                 <Link2 className="w-3 h-3" /> Match hotel
               </button>
             )}
-            {stay.noContact && <NoContactBadge />}
+            {stay.noContact && !stay.ownArrangement && <NoContactBadge />}
             {stay.ownArrangement && (
-              <span className="rounded-md bg-violet-50 border border-violet-200 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600">
-                Own arrangement
+              <span
+                className="rounded-md bg-violet-50 border border-violet-200 px-1.5 py-0.5 text-[10px] font-semibold text-violet-600"
+                title="Booked by the guest or agent — reconfirming is optional"
+              >
+                Own arrangement · optional
               </span>
             )}
           </div>

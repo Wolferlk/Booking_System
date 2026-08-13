@@ -19,6 +19,7 @@ import type { OperationCountry, Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 import { normalizeHotelName } from './hotel-match'
 import { contactHealth, countryCodeForOperation } from './hotel-contact'
+import { isOwnArrangement } from './own-arrangement'
 import {
   OVERDUE_GRACE_DAYS, buildStayKey, classifyStay, daysBetween, startOfUtcDay,
   type PrecheckHotel, type PrecheckStay, type Urgency,
@@ -136,7 +137,7 @@ export async function buildPrecheckQueue(f: QueueFilters = {}): Promise<Precheck
         select: {
           id: true, city: true, hotel: true, checkIn: true, checkOut: true,
           nights: true, roomType: true, mealType: true, contact: true,
-          ownArrangement: true,
+          address: true, ownArrangement: true,
         },
         orderBy: { checkIn: 'asc' },
       },
@@ -180,7 +181,12 @@ export async function buildPrecheckQueue(f: QueueFilters = {}): Promise<Precheck
     const countryCode = countryCodeForOperation(b.operationCountry)
 
     for (const a of b.accommodations) {
-      if (a.ownArrangement && !f.includeOwnArrangement) continue
+      // The column is authoritative when set, but most stays only carry the
+      // signal as text, so fall back to the same heuristic the booking page
+      // badges with. Own arrangement means we hold no reservation: checking is
+      // optional, never required.
+      const own = isOwnArrangement(a)
+      if (own && !f.includeOwnArrangement) continue
 
       const stayKey = buildStayKey(b.bookingRef, a.hotel, a.checkIn)
       const r = reconByKey.get(stayKey) ?? null
@@ -189,7 +195,13 @@ export async function buildPrecheckQueue(f: QueueFilters = {}): Promise<Precheck
         ?? profileByNorm.get(normalizeHotelName(a.hotel))
         ?? null
 
-      const status = r?.status ?? (a.ownArrangement ? 'NOT_REQUIRED' : 'PENDING')
+      // An own-arrangement stay is never "pending" — there is no reservation of
+      // ours to chase. A row seeded as PENDING before the stay was recognised
+      // as own arrangement is read the same way; anything an operator actually
+      // recorded (they rang the hotel anyway, and confirmed it) is kept.
+      const status = own
+        ? (r && r.status !== 'PENDING' ? r.status : 'NOT_REQUIRED')
+        : (r?.status ?? 'PENDING')
       const info = classifyStay(a.checkIn, status, now, r?.dueAtOverride ?? null)
 
       if (!f.includePast && info.urgency === 'PAST') continue
@@ -226,7 +238,7 @@ export async function buildPrecheckQueue(f: QueueFilters = {}): Promise<Precheck
         accommodationId: a.id,
         hotelName: a.hotel,
         city: a.city,
-        ownArrangement: a.ownArrangement,
+        ownArrangement: own,
         bookingContact: a.contact,
 
         checkIn: a.checkIn.toISOString(),
