@@ -163,6 +163,10 @@ export function normalizeSchedule(
     // it switched on, because a report about today's operations that omits what
     // lands tomorrow is the weaker default.
     readiness: bool(sectionsIn.readiness, prevSections?.readiness ?? true),
+    // Same reasoning as readiness: an existing schedule gains the D-10 section
+    // switched on. A report that lists what is not ready while staying silent
+    // about why is the half of the story that generates the follow-up email.
+    reconfirm: bool(sectionsIn.reconfirm, prevSections?.reconfirm ?? true),
     complaints: bool(sectionsIn.complaints, prevSections?.complaints ?? true),
     upcoming: bool(sectionsIn.upcoming, prevSections?.upcoming ?? true),
   }
