@@ -267,59 +267,66 @@ export default function TicketsPage() {
     } finally { setLoading(false) }
   }
 
-  // Check if Accounts PNL is linked and auto-create missing tickets on first load
+  // Is an Accounts costing sheet available for this booking? Read-only: this
+  // check writes nothing, so opening the page never creates a ticket. Ticket
+  // creation happens only when someone presses "Generate Tickets from P&L".
   useEffect(() => {
     if (!ref || !canPnlSync) return
-    async function checkAndAutoCreate() {
+    async function checkPnlAvailable() {
       try {
-        const res  = await fetch(`/api/bookings/${ref}/ext-pnl`)
+        const res  = await fetch(`/api/bookings/${ref}/detailed-pnl`)
         const json = await res.json()
-        if (!json.success || !json.data) return
-        setPnlLinked(true)
-        // Auto-create tickets (only creates missing ones, safe to call every load)
-        const cr = await fetch(`/api/bookings/${ref}/ext-pnl/create-tickets`, { method: 'POST' })
-        const cj = await cr.json()
-        if (cj.success && (cj.data.created > 0)) {
-          setPnlResult(cj.data)
-          toast.success(`${cj.data.created} ticket${cj.data.created !== 1 ? 's' : ''} auto-created from Accounts PNL`)
-          load()
-        } else if (cj.success) {
-          setPnlResult(cj.data)
-        }
+        setPnlLinked(Boolean(json.success && json.data?.available))
       } catch { /* silent — PNL check is best-effort */ }
     }
-    checkAndAutoCreate()
+    checkPnlAvailable()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref])
 
-  // Manual import: create any still-missing tickets
-  async function importFromPnl() {
-    setPnlImporting(true)
+  /**
+   * The one ticket-generation path on this page.
+   *
+   * Step 1 links/refreshes the Accounts P&L for this booking (GET /ext-pnl
+   * creates the link and moves it to the latest amendment), so the costing sheet
+   * step 2 reads is the current one. Step 2 builds the tickets from the Detailed
+   * P&L — one per hotel stay, attraction, transfer leg, transport charge and
+   * meal day. Additive: lines that already have a ticket are skipped, and a
+   * ticket that has left DRAFT is never touched.
+   */
+  async function generateFromPnl(opts: { resync?: boolean } = {}) {
+    const resync = opts.resync ?? false
+    resync ? setPnlSyncing(true) : setPnlImporting(true)
     try {
-      const res  = await fetch(`/api/bookings/${ref}/ext-pnl/create-tickets`, { method: 'POST' })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      setPnlResult(json.data)
-      toast.success(json.message ?? `${json.data.created} tickets created from PNL`)
-      if (json.data.created > 0) load()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Import failed')
-    } finally { setPnlImporting(false) }
-  }
+      // 1 — create / refresh the P&L link before costing anything off it.
+      const linkRes  = await fetch(`/api/bookings/${ref}/ext-pnl`)
+      const linkJson = await linkRes.json()
+      if (linkJson.success && linkJson.data) setPnlLinked(true)
 
-  // Re-sync: update draft tickets with latest PNL data + create new ones
-  async function resyncFromPnl() {
-    setPnlSyncing(true)
-    try {
-      const res  = await fetch(`/api/bookings/${ref}/ext-pnl/create-tickets?resync=true`, { method: 'POST' })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
+      // 2 — generate the tickets from the Detailed P&L.
+      const res  = await fetch(
+        `/api/bookings/${ref}/ext-pnl/create-tickets${resync ? '?resync=true' : ''}`,
+        { method: 'POST' },
+      )
+      // A crashed route answers with an empty body; res.json() would then throw
+      // "Unexpected end of JSON input", which says nothing about what failed.
+      const text = await res.text()
+      let json: { success?: boolean; error?: string; message?: string; data?: { created: number; updated: number; skipped: number } }
+      try { json = text ? JSON.parse(text) : {} }
+      catch { throw new Error(`Ticket generation failed on the server (HTTP ${res.status}).`) }
+      if (!json.success || !json.data) throw new Error(json.error || `Failed to generate tickets (HTTP ${res.status})`)
+
       setPnlResult(json.data)
-      toast.success(json.message ?? `Re-synced from PNL`)
-      load()
+      if (json.data.created > 0 || json.data.updated > 0) {
+        toast.success(json.message ?? `${json.data.created} ticket${json.data.created !== 1 ? 's' : ''} generated from the Detailed P&L`)
+        load()
+      } else {
+        toast.info(`Every costing line already has a ticket (${json.data.skipped} skipped)`)
+      }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Re-sync failed')
-    } finally { setPnlSyncing(false) }
+      toast.error(err instanceof Error ? err.message : resync ? 'Re-sync failed' : 'Ticket generation failed')
+    } finally {
+      resync ? setPnlSyncing(false) : setPnlImporting(false)
+    }
   }
 
   useEffect(() => { load() }, [ref])
@@ -732,15 +739,15 @@ export default function TicketsPage() {
             {canPnlSync && pnlLinked && (
               <>
                 <button
-                  onClick={importFromPnl}
+                  onClick={() => generateFromPnl()}
                   disabled={pnlImporting || pnlSyncing}
                   className="btn btn-sm flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50"
-                  title="Create tickets for any PNL items that don't have a ticket yet"
+                  title="Link the Accounts P&L, then create tickets for every Detailed P&L costing line that doesn't have one yet"
                 >
                   {pnlImporting
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     : <Database className="w-3.5 h-3.5" />}
-                  Import from PNL
+                  Generate Tickets from P&L
                   {pnlResult && pnlResult.skipped > 0 && (
                     <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-emerald-100 rounded-full">
                       {pnlResult.skipped} exist
@@ -748,10 +755,10 @@ export default function TicketsPage() {
                   )}
                 </button>
                 <button
-                  onClick={resyncFromPnl}
+                  onClick={() => generateFromPnl({ resync: true })}
                   disabled={pnlImporting || pnlSyncing}
                   className="btn btn-sm flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 disabled:opacity-50"
-                  title="Re-sync all draft tickets with latest Accounts PNL data"
+                  title="Re-sync all draft tickets with the latest Detailed P&L costing"
                 >
                   {pnlSyncing
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -823,21 +830,21 @@ export default function TicketsPage() {
                   <Loader2 className="w-3 h-3 animate-spin" /> Processing…
                 </span>
               ) : (
-                <span className="text-emerald-600 ml-2">Tickets auto-synced on load</span>
+                <span className="text-emerald-600 ml-2">Press “Generate Tickets from P&amp;L” to create tickets</span>
               )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <button
-                onClick={importFromPnl}
+                onClick={() => generateFromPnl()}
                 disabled={pnlImporting || pnlSyncing}
                 className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 disabled:opacity-40 flex items-center gap-1"
               >
                 {pnlImporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                Import Missing
+                Generate Missing
               </button>
               <span className="text-emerald-300">|</span>
               <button
-                onClick={resyncFromPnl}
+                onClick={() => generateFromPnl({ resync: true })}
                 disabled={pnlImporting || pnlSyncing}
                 className="text-[11px] font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-40 flex items-center gap-1"
               >
@@ -914,7 +921,7 @@ export default function TicketsPage() {
                 )}
                 <Sparkles className="w-4 h-4 text-amber-500" />
                 <h2 className="text-sm font-semibold text-slate-900">
-                  Auto-generated from P&L
+                  Generated from P&L
                   <span className="ml-2 text-xs font-normal text-slate-400">— review & activate before purchasing</span>
                 </h2>
               </div>
@@ -1030,7 +1037,7 @@ export default function TicketsPage() {
             <CreditCard className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" />
             <div className="text-sm">
               <p className="font-semibold text-emerald-800">Flow</p>
-              <p className="text-emerald-600 mt-0.5">AC uploads P&L → tickets auto-created → GT activates (with optional ticket scan) → AC confirms payment → GT purchases & uploads receipt.</p>
+              <p className="text-emerald-600 mt-0.5">AC uploads P&L → GT presses “Generate Tickets from P&L” → GT activates (with optional ticket scan) → AC confirms payment → GT purchases & uploads receipt.</p>
             </div>
           </div>
         </div>
