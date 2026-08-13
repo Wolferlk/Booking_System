@@ -1597,7 +1597,7 @@ Wishing you a wonderful trip! ✈️
                   <UserCheck className="w-3.5 h-3.5" /> Drivers
                 </Link>
               )}
-              {['BT_USER', 'AC_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'AC_USER', 'TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>

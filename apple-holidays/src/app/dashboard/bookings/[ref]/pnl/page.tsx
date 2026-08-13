@@ -28,8 +28,8 @@ import ManualPnlUpload from '@/components/bookings/manual-pnl-upload'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 
-/** Roles allowed to read the Accounts costing sheet — unchanged from before. */
-const COSTING_ROLES = ['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+/** Roles allowed to read the Accounts costing sheet. */
+const COSTING_ROLES = ['AC_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export default function PNLPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -211,7 +211,7 @@ export default function PNLPage() {
         ) : (
           <Card className="p-6">
             <p className="text-sm text-slate-600">
-              The Accounts costing sheet for this booking is visible to the Booking, Accounts and Admin teams.
+              The Accounts costing sheet for this booking is visible to the Booking, Accounts, Vietnam Ground and Admin teams.
             </p>
           </Card>
         )}

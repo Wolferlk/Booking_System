@@ -37,9 +37,10 @@ const GT_VN_ALLOWED_PAGES = [
 
 function isGtVnPageAllowed(pathname: string): boolean {
   if (pathname === '/dashboard') return true
-  // Creating bookings and the per-booking P&L are outside the limited scope.
+  // Creating bookings is outside the limited scope. The per-booking P&L page is
+  // allowed: it shows the Accounts Detailed P&L costing sheet, which the
+  // Vietnam ground team needs to work tickets from.
   if (pathname.startsWith('/dashboard/bookings/new')) return false
-  if (/^\/dashboard\/bookings\/[^/]+\/pnl/.test(pathname)) return false
   return GT_VN_ALLOWED_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))
 }
 
