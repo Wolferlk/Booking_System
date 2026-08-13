@@ -26,6 +26,7 @@ import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
 import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import QuickStatCards, { type QuickStats } from '@/components/bookings/quick-stat-cards'
+import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 import {
   isQuickFilter, QUICK_FILTER_LABELS, QUICK_FILTER_SORT, type QuickFilter,
 } from '@/lib/booking-quick-filters'
@@ -1275,6 +1276,15 @@ function BookingsPageInner() {
                                 {SOURCE_BADGE.B2C.label}
                               </span>
                             )}
+                            {/* Sold inside D-4. Sits next to the cancelled flag
+                                because, like it, it changes how the whole row
+                                should be read — every date on it was already
+                                too late when the file was created. */}
+                            <LastMinuteBadge
+                              createdAt={b.createdAt}
+                              arrivalDate={b.arrivalDate}
+                              status={b.status}
+                            />
                             {/* The special mark. First in the row after the
                                 cancelled flag, because it changes how every
                                 other column on the row should be read. */}
