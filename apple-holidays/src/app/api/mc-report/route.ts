@@ -7,7 +7,7 @@ import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
-import type { UserRole } from '@prisma/client'
+import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
@@ -30,6 +30,96 @@ function buildBookingWhere(
   if (conditions.length === 0) return undefined
   if (conditions.length === 1) return conditions[0]
   return { AND: conditions }
+}
+
+/**
+ * Hotel Only bookings, rendered as movement-chart rows.
+ *
+ * These files have no agenda by design (see `hotel-only.ts`), so a chart built
+ * only from `agendaItem` would show nothing for them — and a guest sleeping in
+ * Kandy tonight would be invisible on the one page operations reads to know who
+ * is out there. The stays themselves are the movements, so each accommodation
+ * becomes a row on its check-in date: same shape as a real chart row, marked so
+ * the page can badge it rather than pretend a driver is missing.
+ *
+ * Deliberately never merged into the agenda query — a Hotel Only booking that
+ * still carries a half-built agenda from before it was marked would otherwise
+ * appear twice, once as a stay and once as movements nobody will drive.
+ */
+async function hotelOnlyRows(
+  dateFilter: { gte?: Date; lte?: Date },
+  bookingWhere: Record<string, unknown> | undefined,
+  serviceType: string | null,
+) {
+  // The chart's Type filter is about transfers. Hotel Only carries none, so any
+  // narrowing to a transfer type must exclude these rows rather than coerce them.
+  if (serviceType && serviceType !== 'OWN_ARRANGEMENT') return []
+
+  const stays = await prisma.accommodation.findMany({
+    where: {
+      ...(Object.keys(dateFilter).length > 0 ? { checkIn: dateFilter } : {}),
+      booking: {
+        ...(bookingWhere ?? {}),
+        hotelOnly: true,
+        status: { not: 'CANCELLED' },
+      },
+    } as Prisma.AccommodationWhereInput,
+    include: {
+      booking: {
+        select: {
+          bookingRef: true, isNumber: true, agentBookingId: true,
+          paxAdults: true, paxChildren: true, agent: true, status: true,
+        },
+      },
+    },
+    orderBy: [{ checkIn: 'asc' }, { city: 'asc' }],
+  })
+
+  return stays.map(s => {
+    const nights = s.nights || Math.max(
+      1, Math.round((s.checkOut.getTime() - s.checkIn.getTime()) / 86_400_000),
+    )
+    const out = s.checkOut.toISOString().slice(0, 10)
+    return {
+      id:             `hotel-only:${s.id}`,
+      date:           s.checkIn.toISOString().slice(0, 10),
+      vnCode:         s.booking.bookingRef,
+      isNumber:       s.booking.isNumber       ?? null,
+      agentBookingId: s.booking.agentBookingId ?? null,
+      location:       s.city,
+      paxAdults:      s.booking.paxAdults,
+      paxChildren:    s.booking.paxChildren,
+      fromPoint:      null,
+      toPoint:        s.hotel,
+      details:        [
+        s.hotel,
+        `${nights} night${nights === 1 ? '' : 's'} → ${out}`,
+        s.roomType || null,
+      ].filter(Boolean).join(' · '),
+      mealPlan:       s.mealType ?? null,
+      meetingTime:    null,
+      // Nothing is driven, so the row reads as the guest's own arrangement — the
+      // same service type the chart already uses for "we do not move this".
+      serviceType:    'OWN_ARRANGEMENT' as const,
+      isLeisure:      false,
+      isHotelOnly:    true,
+      /** The whole booking is Hotel Only, not just this movement. */
+      isHotelOnlyBooking: true,
+      /** Checkout date, so the chart can show the span without re-deriving it. */
+      checkOut:       out,
+      nights,
+      vendor:         null,
+      driverId:       null,
+      vendorId:       null,
+      driverPhotoUrl: null,
+      driverName:     null,
+      driverPhone:    null,
+      vehicleType:    null,
+      vehiclePlate:   null,
+      agent:          s.booking.agent ?? null,
+      bookingStatus:  s.booking.status,
+    }
+  })
 }
 
 export async function GET(req: NextRequest) {
@@ -80,12 +170,17 @@ export async function GET(req: NextRequest) {
     dateFilter.lte = to
   }
 
+  const bookingWhere = buildBookingWhere(search, bookingCountryWhere)
+
   const items = await prisma.agendaItem.findMany({
     where: {
       ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
       ...(serviceType ? { serviceType: serviceType as never } : {}),
       agenda: {
-        booking: buildBookingWhere(search, bookingCountryWhere),
+        // Hotel Only files are represented by their stays instead — see
+        // `hotelOnlyRows`. Excluding them here is what stops a booking marked
+        // after its agenda was built from appearing on the chart twice.
+        booking: { ...(bookingWhere ?? {}), hotelOnly: false },
       },
     },
     include: {
@@ -122,7 +217,7 @@ export async function GET(req: NextRequest) {
     orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
   })
 
-  const data = items.map(item => ({
+  const data: Record<string, unknown>[] = items.map(item => ({
     id:             item.id,
     date:           item.date.toISOString().slice(0, 10),
     vnCode:         item.agenda.booking.bookingRef,
@@ -155,7 +250,19 @@ export async function GET(req: NextRequest) {
     vehiclePlate:   item.assignment?.vehiclePlate ?? null,
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
+    isHotelOnlyBooking: false,
+    checkOut:       null,
+    nights:         null,
   }))
 
-  return buildApiSuccess(data)
+  const hotelOnly = await hotelOnlyRows(dateFilter, bookingWhere, serviceType)
+
+  // One chart, sorted as one list — a stay must sit on its date beside the
+  // transfers happening the same day, not in a block of its own at the end.
+  const merged = [...data, ...hotelOnly].sort((a, b) =>
+    String(a.date).localeCompare(String(b.date))
+    || String(a.vnCode).localeCompare(String(b.vnCode)),
+  )
+
+  return buildApiSuccess(merged)
 }

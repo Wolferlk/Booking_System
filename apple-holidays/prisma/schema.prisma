@@ -163,6 +163,14 @@ model Booking {
   cancelDecidedByEmail   String?
   cancelDecisionNote     String?                   @db.Text
   cancelMailSentAt       DateTime?
+  // Hotel Only — accommodation and nothing else. An explicit operator decision
+  // that waives itinerary, agenda, drivers, tickets, flights, client
+  // reconfirmation and QC on this file. See `src/lib/hotel-only.ts`; hotel
+  // reconfirmation is deliberately NOT waived.
+  hotelOnly              Boolean                   @default(false)
+  hotelOnlyAt            DateTime?
+  hotelOnlyBy            String?
+  hotelOnlyNote          String?                   @db.Text
   accommodations         Accommodation[]
   versions               BookingVersion[]
   clientUser             User?                     @relation("ClientUser", fields: [clientUserId], references: [id])
@@ -186,6 +194,7 @@ model Booking {
 
   @@index([status])
   @@index([arrivalDate])
+  @@index([hotelOnly])
   @@index([clientUserId], map: "bookings_clientUserId_fkey")
   @@index([createdById], map: "bookings_createdById_fkey")
   @@map("bookings")

@@ -37,6 +37,17 @@ type MCRow = {
   isLeisure:      boolean
   /** Hotel only — accommodation or own transport, so likewise no driver. */
   isHotelOnly:    boolean
+  /**
+   * The whole booking is Hotel Only — accommodation and nothing else. These
+   * files carry no agenda at all, so the row is a *stay* the server built from
+   * the accommodation rather than a movement anyone planned. See
+   * `src/lib/hotel-only.ts`.
+   */
+  isHotelOnlyBooking: boolean
+  /** Stay rows only: `yyyy-mm-dd` the guest checks out. */
+  checkOut:       string | null
+  /** Stay rows only: nights at this property. */
+  nights:         number | null
   vendor:         string | null
   driverId:       string | null
   vendorId:       string | null
@@ -128,6 +139,9 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     row.mealPlan, row.meetingTime, row.vendor, row.driverName,
     row.vehicleType, row.vehiclePlate, row.agent,
     row.vnCode, row.isNumber, row.agentBookingId,
+    // Searchable by name: typing "hotel only" pulls up every accommodation-only
+    // file, which is the fastest way to answer "who has no tour this week?"
+    row.isHotelOnlyBooking ? 'hotel only booking accommodation only' : null,
   ].some(v => v?.toLowerCase().includes(q))
 }
 
@@ -197,6 +211,27 @@ function LeisureBadge() {
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold ring-1 bg-amber-100 text-amber-700 ring-amber-200 whitespace-nowrap">
       <Palmtree className="w-3 h-3" />
       Leisure Day
+    </span>
+  )
+}
+
+/**
+ * Marks a whole booking sold as accommodation only.
+ *
+ * Deliberately a different colour and wording from `HotelOnlyBadge` below: that
+ * one says "this movement needs no driver", this one says "there is no tour at
+ * all — the row you are looking at is a hotel stay". Reading them as the same
+ * thing would have an operator hunting for a movement chart that will never
+ * exist.
+ */
+function HotelOnlyBookingBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ring-1 bg-amber-100 text-amber-800 ring-amber-300 whitespace-nowrap"
+      title="Hotel Only booking — accommodation only. No agenda, drivers, tickets, flights, client reconfirmation or QC."
+    >
+      <Hotel className="w-3 h-3" />
+      Hotel Only Booking
     </span>
   )
 }
@@ -373,6 +408,13 @@ export default function MCReportPage() {
   const ownCount      = displayedRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = displayedRows.filter(r => r.isLeisure).length
   const hotelOnlyCount = displayedRows.filter(r => r.isHotelOnly).length
+  // Distinct *bookings*, not rows: a five-night file across two properties is
+  // one Hotel Only booking on this chart, however many stays it contributes.
+  const hotelOnlyBookingCount = useMemo(
+    () => new Set(displayedRows.filter(r => r.isHotelOnlyBooking).map(r => r.vnCode)).size,
+    [displayedRows],
+  )
+  const hotelOnlyStayCount = displayedRows.filter(r => r.isHotelOnlyBooking).length
 
   // ── CSV Export ────────────────────────────────────────────────────────────────
 
@@ -382,7 +424,8 @@ export default function MCReportPage() {
     const headers = [
       'Date', 'Tour Ref', 'IS Number', 'Agent ID', 'Location', 'Adults', 'Children',
       'From', 'To', 'Details', 'Meal Plan', 'Meeting Time',
-      'Service Type', 'Leisure Day', 'Hotel Only', 'Vendor', 'Driver', 'Vehicle Type', 'Plate', 'Agent',
+      'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
+      'Vendor', 'Driver', 'Vehicle Type', 'Plate', 'Agent',
     ]
 
     const csvRows = displayedRows.map(r => [
@@ -393,6 +436,8 @@ export default function MCReportPage() {
       SERVICE_LABELS[r.serviceType] ?? r.serviceType,
       r.isLeisure ? 'Yes' : '',
       r.isHotelOnly ? 'Yes' : '',
+      r.isHotelOnlyBooking ? 'Yes' : '',
+      r.nights ?? '', r.checkOut ?? '',
       r.vendor ?? '', r.driverName ?? '', r.vehicleType ?? '', r.vehiclePlate ?? '',
       r.agent ?? '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
@@ -425,6 +470,7 @@ export default function MCReportPage() {
         'Date', 'Tour Ref', 'IS Number', 'Agent Booking ID', 'Location',
         'Adults', 'Children', 'From', 'To', 'Details',
         'Meal Plan', 'Meeting Time', 'Service Type', 'Leisure Day', 'Hotel Only',
+        'Hotel Only Booking', 'Nights', 'Check Out',
         'Vendor', 'Driver', 'Vehicle Type', 'Plate No', 'Agent', 'Booking Status',
       ]
 
@@ -436,6 +482,8 @@ export default function MCReportPage() {
         SERVICE_LABELS[r.serviceType] ?? r.serviceType,
         r.isLeisure ? 'Yes' : '',
         r.isHotelOnly ? 'Yes' : '',
+        r.isHotelOnlyBooking ? 'Yes' : '',
+        r.nights ?? '', r.checkOut ?? '',
         r.vendor ?? '', r.driverName ?? '',
         r.vehicleType ?? '', r.vehiclePlate ?? '',
         r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
@@ -446,6 +494,7 @@ export default function MCReportPage() {
         { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 16 }, { wch: 20 },
         { wch: 7  }, { wch: 8  }, { wch: 22 }, { wch: 22 }, { wch: 40 },
         { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
+        { wch: 18 }, { wch: 8  }, { wch: 12 },
         { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 16 },
       ]
       XLSX.utils.book_append_sheet(wb, ws, 'Movements')
@@ -465,6 +514,8 @@ export default function MCReportPage() {
         ['Own Arrangements', ownCount],
         ['Leisure Days',     leisureCount],
         ['Hotel Only',       hotelOnlyCount],
+        ['Hotel Only Bookings', hotelOnlyBookingCount],
+        ['Hotel Only Stays',    hotelOnlyStayCount],
       ].filter(r => r.length > 0)
 
       const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
@@ -691,7 +742,7 @@ export default function MCReportPage() {
 
         {/* ── Stats Bar ─────────────────────────────────────────────────── */}
         {displayedRows.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             {[
               { icon: <Table2 className="w-4 h-4" />,  label: 'Movements', value: displayedRows.length, color: 'text-slate-900', bg: 'bg-slate-50' },
               { icon: <Users className="w-4 h-4" />,   label: 'Adults',    value: totalAdults,           color: 'text-blue-700',  bg: 'bg-blue-50' },
@@ -700,12 +751,18 @@ export default function MCReportPage() {
               { icon: <Truck className="w-4 h-4" />,   label: 'SIC / Own', value: `${sicCount} / ${ownCount}`, color: 'text-amber-700', bg: 'bg-amber-50' },
               { icon: <Palmtree className="w-4 h-4" />, label: 'Leisure',  value: leisureCount,          color: 'text-amber-700', bg: 'bg-amber-50' },
               { icon: <Hotel className="w-4 h-4" />, label: 'Hotel Only', value: hotelOnlyCount,       color: 'text-pink-700', bg: 'bg-pink-50' },
+              // Bookings, not rows — see `hotelOnlyBookingCount`. The stay count
+              // rides along as a subtitle so the two are never confused.
+              { icon: <Hotel className="w-4 h-4" />, label: 'Hotel Only Bookings', value: hotelOnlyBookingCount, sub: `${hotelOnlyStayCount} stay${hotelOnlyStayCount === 1 ? '' : 's'}`, color: 'text-amber-800', bg: 'bg-amber-50' },
             ].map(stat => (
               <div key={stat.label} className={cn('rounded-xl p-4 border border-slate-200 flex items-center gap-3 shadow-sm', stat.bg)}>
                 <div className={cn('flex-shrink-0', stat.color)}>{stat.icon}</div>
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase tracking-wide font-semibold">{stat.label}</div>
                   <div className={cn('text-lg font-bold leading-tight', stat.color)}>{stat.value}</div>
+                  {'sub' in stat && stat.sub ? (
+                    <div className="text-[10px] text-slate-400 leading-tight">{stat.sub}</div>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -782,15 +839,25 @@ export default function MCReportPage() {
                               'transition-colors cursor-pointer group',
                               isExpanded
                                 ? 'bg-brand-50/60 border-l-2 border-l-brand-400'
-                                : 'hover:bg-slate-50/80',
+                                // A stay, not a movement — tinted and edged so it
+                                // reads as a different kind of row at a glance.
+                                : row.isHotelOnlyBooking
+                                  ? 'bg-amber-50/50 border-l-2 border-l-amber-400 hover:bg-amber-50'
+                                  : 'hover:bg-slate-50/80',
                             )}
                           >
-                            {/* Date */}
+                            {/* Date — a stay spans nights, so it shows the span */}
                             <td className="px-3 py-2.5 whitespace-nowrap font-medium text-slate-800">
                               <div className="flex items-center gap-1.5">
                                 <Calendar className="w-3 h-3 text-slate-400 flex-shrink-0" />
                                 {formatDate(row.date)}
                               </div>
+                              {row.isHotelOnlyBooking && row.checkOut && (
+                                <div className="mt-0.5 text-[10px] text-amber-700 font-semibold">
+                                  → {formatDate(row.checkOut)}
+                                  {row.nights ? ` · ${row.nights}N` : ''}
+                                </div>
+                              )}
                             </td>
 
                             {/* Booking Ref / IS / Agent ID */}
@@ -894,15 +961,30 @@ export default function MCReportPage() {
                             {/* Service Type */}
                             <td className="px-3 py-2.5">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <ServiceBadge type={row.serviceType} />
-                                {row.isLeisure && <LeisureBadge />}
-                                {row.isHotelOnly && <HotelOnlyBadge />}
+                                {/* The booking-level mark replaces the movement
+                                    badges — on a stay row they would only repeat
+                                    the same "no driver" point three times. */}
+                                {row.isHotelOnlyBooking ? (
+                                  <HotelOnlyBookingBadge />
+                                ) : (
+                                  <>
+                                    <ServiceBadge type={row.serviceType} />
+                                    {row.isLeisure && <LeisureBadge />}
+                                    {row.isHotelOnly && <HotelOnlyBadge />}
+                                  </>
+                                )}
                               </div>
                             </td>
 
                             {/* Driver / Vendor */}
                             <td className="px-3 py-2.5 text-slate-600 max-w-[160px]">
-                              {row.isHotelOnly ? (
+                              {row.isHotelOnlyBooking ? (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 whitespace-nowrap"
+                                  title="Hotel Only booking — no transport is sold on this file">
+                                  <Hotel className="w-3 h-3 text-amber-600" />
+                                  Accommodation only
+                                </span>
+                              ) : row.isHotelOnly ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-pink-700 whitespace-nowrap">
                                   <Hotel className="w-3 h-3 text-pink-500" />
                                   No driver needed

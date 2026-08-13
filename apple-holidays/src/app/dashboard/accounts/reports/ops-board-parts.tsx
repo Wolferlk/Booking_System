@@ -17,6 +17,7 @@ import {
   APPROVAL_LABEL, FACET_GROUPS, RECONFIRM_FACETS,
   type FacetGroup, type ReconfirmFacet,
 } from '@/lib/reports/reconfirm-filters'
+import { HOTEL_ONLY_LABEL } from '@/lib/hotel-only'
 
 // ─── Shared vocabulary ────────────────────────────────────────────────────────
 
@@ -235,12 +236,16 @@ export const FOCUS_META: Record<FocusKey, {
  * Both signals in is the only fully-green state.
  */
 export function reconfirmState(r: OpsDayRow): ReadinessState {
+  // Hotel Only has no tour to run the guest through, so neither signal is ever
+  // coming. N/A, not pending — the desk must not be sent chasing it.
+  if (r.hotelOnly) return 'NA'
   if (r.clientConfirmed && r.preTourCall) return 'DONE'
   if (r.clientConfirmed || r.preTourCall) return 'PARTIAL'
   return 'PENDING'
 }
 
 export function reconfirmText(r: OpsDayRow): string {
+  if (r.hotelOnly) return HOTEL_ONLY_LABEL
   if (r.clientConfirmed && r.preTourCall) return 'Confirmed + called'
   if (r.clientConfirmed) return 'Client confirmed'
   if (r.preTourCall) return 'Pre-tour call'
@@ -248,6 +253,10 @@ export function reconfirmText(r: OpsDayRow): string {
 }
 
 export function reconfirmDetail(r: OpsDayRow): string {
+  if (r.hotelOnly) {
+    return 'Hotel Only booking — no tour to reconfirm with the guest. '
+      + 'The hotel itself is still reconfirmed on the Pre-checking queue.'
+  }
   return [
     r.clientConfirmed ? 'Client has confirmed the booking' : 'Client confirmation outstanding',
     r.preTourCall
@@ -265,6 +274,8 @@ export function reconfirmDetail(r: OpsDayRow): string {
  * guests who may well have accepted already.
  */
 export function callState(r: OpsDayRow): ReadinessState {
+  // No call is ever placed for a room-only file, so permission is moot.
+  if (r.hotelOnly) return 'NA'
   switch (r.call.approval) {
     case 'approved':      return 'DONE'
     case 'pending':       return 'PARTIAL'
@@ -274,10 +285,12 @@ export function callState(r: OpsDayRow): ReadinessState {
 }
 
 export function callText(r: OpsDayRow): string {
+  if (r.hotelOnly) return HOTEL_ONLY_LABEL
   return APPROVAL_LABEL[r.call.approval]
 }
 
 export function callDetail(r: OpsDayRow): string {
+  if (r.hotelOnly) return 'Hotel Only booking — no pre-tour call is placed for these files'
   const c = r.call
   const parts: string[] = []
 
@@ -359,6 +372,7 @@ export function inFocus(focus: FocusKey, r: OpsDayRow): boolean {
 // ─── Reconfirmation facet chips ───────────────────────────────────────────────
 
 const GROUP_LABEL: Record<FacetGroup, string> = {
+  scope: 'Booking type',
   client: 'Client confirm',
   call: 'Reconfirm call',
   approval: 'WhatsApp call request',

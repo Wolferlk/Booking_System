@@ -63,6 +63,12 @@ export interface BookingLine {
   quotedTotal: number | null
   destination: string | null
   createdAt: string
+  /**
+   * Accommodation-only booking — see `src/lib/hotel-only.ts`. Carried on every
+   * line so the readiness table can explain an all-N/A row, and so a reader
+   * scanning the mail can tell a room-only sale from a tour at a glance.
+   */
+  hotelOnly: boolean
 }
 
 export interface TourLine extends BookingLine {
@@ -178,6 +184,13 @@ export interface ReadinessSection {
   pendingDriver: number
   pendingTickets: number
   pendingQc: number
+  /**
+   * Arrivals that are Hotel Only. They are counted in `ready` because nothing is
+   * outstanding on them, so the mail states the number separately — a morning
+   * that looks 100% ready reads differently when four of the six arrivals are
+   * room-only files with no operation to prepare.
+   */
+  hotelOnly: number
   byDay: ReadinessDay[]
   byCountry: CountryRow[]
   /** Arrivals split by trade channel — the two are worked by different desks. */
@@ -372,6 +385,7 @@ const BOOKING_SELECT = {
   quotedTotal: true,
   tourDestination: true,
   createdAt: true,
+  hotelOnly: true,
 } satisfies Prisma.BookingSelect
 
 type RawBooking = Prisma.BookingGetPayload<{ select: typeof BOOKING_SELECT }>
@@ -395,6 +409,7 @@ function toLine(b: RawBooking): BookingLine {
     quotedTotal: toNumber(b.quotedTotal),
     destination: b.tourDestination,
     createdAt: b.createdAt.toISOString(),
+    hotelOnly: b.hotelOnly,
   }
 }
 
@@ -546,6 +561,7 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
         readiness: computeReadiness({
           status: r.status,
           qcPassedAt: r.qcPassedAt,
+          hotelOnly: r.hotelOnly,
           tourAgenda: r.tourAgenda,
           slDriverAllocation: r.slDriverAllocation,
           tickets: r.tickets,
@@ -611,6 +627,7 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     pendingDriver: lines.filter(l => l.readiness.outstanding.includes('driver allocation')).length,
     pendingTickets: lines.filter(l => l.readiness.outstanding.includes('tickets')).length,
     pendingQc: lines.filter(l => l.readiness.outstanding.includes('QC')).length,
+    hotelOnly: lines.filter(l => l.hotelOnly).length,
     byDay: Array.from(dayMap.values()),
     byCountry: rollUpByCountry(lines),
     channel: channelSplit(lines),

@@ -31,6 +31,14 @@
  *     Resolved from the approval ledger (`te_call_approvals`) plus evidence
  *     from the call schedule, and equally defensive.
  *
+ * **Hotel Only** bookings (`src/lib/hotel-only.ts`) sit on the board like any
+ * other file — the guest is on the ground and ops needs to see them — but every
+ * check reads `NA` and both reconfirmation signals are out of scope, because
+ * there is no tour to allocate, ticket, QC or run the guest through. They are
+ * badged and separately filterable rather than hidden: a room-only guest is
+ * still a guest, and the desk must be able to both find them and, more often,
+ * take them out of the list of tours it is actually working.
+ *
  * Everything here is read-only. The board derives, it never writes.
  */
 import { prisma } from '@/lib/prisma'
@@ -118,6 +126,13 @@ export interface OpsDayRow {
   driver: ReadinessCheck
   tickets: ReadinessCheck
   qc: ReadinessCheck & { stage: QcStage }
+  /**
+   * Accommodation-only file. Every check above reads `NA` on these rows, and
+   * both reconfirmation signals are out of scope — the guest has no tour to be
+   * run through. Kept on the row rather than inferred so the board can badge it
+   * and filter on it. See `src/lib/hotel-only.ts`.
+   */
+  hotelOnly: boolean
   /** Status has reached "Client Confirmed" or beyond. */
   clientConfirmed: boolean
   /** Null when no reconfirmation call has been logged for this booking. */
@@ -155,6 +170,8 @@ export interface OpsDaySummary {
   checks: OpsCountRow[]
   /** Head-count of each reconfirmation signal across the on-ground set. */
   reconfirm: { clientConfirmed: number; preTourCalled: number; neither: number }
+  /** Accommodation-only files in the window — read as "out of scope, not late". */
+  hotelOnly: number
   /** How many rows each filter chip would keep — the chip badges read this. */
   facets: Record<ReconfirmFacet, number>
   /** WhatsApp approval split, including the rows we cannot speak for. */
@@ -471,7 +488,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       bookingRef: true, agent: true, fileHandler: true, status: true,
       operationCountry: true, arrivalDate: true, departureDate: true,
       paxAdults: true, paxChildren: true, paxInfants: true,
-      tourDestination: true, qcPassedAt: true,
+      tourDestination: true, qcPassedAt: true, hotelOnly: true,
       passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
       tourAgenda: {
         select: {
@@ -502,6 +519,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     const readiness = computeReadiness({
       status: b.status,
       qcPassedAt: b.qcPassedAt,
+      hotelOnly: b.hotelOnly,
       tourAgenda: b.tourAgenda,
       slDriverAllocation: b.slDriverAllocation,
       tickets: b.tickets,
@@ -515,7 +533,14 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     // A reconfirmation is outstanding when neither signal is in: the client has
     // not confirmed and no pre-tour call has been logged. Either one on its own
     // is enough for ops to treat the guest as reconfirmed.
-    const reconfirmed = readiness.client.state === 'DONE' || !!preTourCall
+    //
+    // A Hotel Only booking is reconfirmed by definition: there is no tour to run
+    // the guest through, so neither signal is ever coming and leaving the row
+    // red would park a permanent chase on the board. The hotel itself is still
+    // reconfirmed — on the Pre-checking queue, which this board does not own.
+    const reconfirmed = b.hotelOnly
+      || readiness.client.state === 'DONE'
+      || !!preTourCall
     const outstanding = [
       reconfirmed ? null : 'reconfirmation',
       ...readiness.outstanding.filter(o => o !== 'client confirmation'),
@@ -546,6 +571,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       driver: readiness.driver,
       tickets: readiness.tickets,
       qc: readiness.qc,
+      hotelOnly: b.hotelOnly,
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCall,
       call: callState.get(b.bookingRef) ?? NO_CALL,
@@ -583,8 +609,11 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     reconfirm: {
       clientConfirmed: rows.filter(r => r.clientConfirmed).length,
       preTourCalled: rows.filter(r => !!r.preTourCall).length,
-      neither: rows.filter(r => !r.clientConfirmed && !r.preTourCall).length,
+      // Hotel Only rows are excluded: they are not waiting on either signal, and
+      // counting them as "neither" would inflate the number ops chases.
+      neither: rows.filter(r => !r.hotelOnly && !r.clientConfirmed && !r.preTourCall).length,
     },
+    hotelOnly: rows.filter(r => r.hotelOnly).length,
     facets: countFacets(rows),
     callApproval: rows.reduce((acc, r) => {
       acc[r.call.approval] += 1
