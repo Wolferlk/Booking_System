@@ -67,6 +67,7 @@ interface Summary {
     created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
     onGround: { total: number; pax: number }
     readiness: { total: number; notReady: number; tomorrow: number; hotelOnly: number }
+    reconfirm: { total: number; breached: number; explained: number; unexplained: number }
     complaints: { total: number; open: number; available: boolean }
     upcoming: { total: number; next7: number }
   }
@@ -147,6 +148,15 @@ export default function PreviewDrawer({
         `${d.readiness.notReady} not ready`,
         d.readiness.hotelOnly ? `${d.readiness.hotelOnly} hotel only` : null,
       ].filter(Boolean).join(' · '),
+    },
+    {
+      label: 'D-10 late',
+      value: d.reconfirm.breached,
+      // The split matters more than the total: a late booking with a reason on
+      // file is a known problem, an unexplained one is not yet anybody's.
+      sub: d.reconfirm.breached
+        ? `${d.reconfirm.unexplained} unexplained · ${d.reconfirm.explained} with reason`
+        : 'all reconfirmed on time',
     },
     { label: 'Complaints', value: d.complaints.total, sub: d.complaints.available ? `${d.complaints.open} open` : 'unavailable' },
     { label: 'Upcoming', value: d.upcoming.total, sub: `${d.upcoming.next7} in 7 days` },

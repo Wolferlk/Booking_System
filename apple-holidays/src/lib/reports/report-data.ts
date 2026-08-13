@@ -24,6 +24,10 @@ import { prisma } from '@/lib/prisma'
 import { countryLabel, detectCountryFromRef, detectCountryFromText } from '@/lib/country-detection'
 import { bookingSourceOf, type BookingSource } from '@/lib/booking-source'
 import { computeReadiness, type BookingReadiness } from '@/lib/booking-readiness'
+import {
+  RECONFIRM_DUE_DAYS, REASON_META, classifyReconfirm, loadReconfirmDelays,
+  type ReconfirmDelay,
+} from '@/lib/reconfirm-delay'
 import { groupByAgent } from './agent-names'
 import {
   buildReportWindow, previousWindow, zonedDayStart, shiftDate, dateInTz, formatReportDate,
@@ -156,6 +160,16 @@ export interface ReadinessLine extends BookingLine {
   /** Whole days from the report date to arrival — 1 = tomorrow. */
   daysToArrival: number
   readiness: BookingReadiness
+  /**
+   * The recorded reason this booking's guest reconfirmation is late, when its
+   * D-10 deadline has passed and someone has explained it.
+   *
+   * A tour arriving in three days that is still unconfirmed is by definition
+   * seven days past D-10, so the explanation belongs on the chase list too —
+   * without it, the desk re-discovers the same blocker every morning of the
+   * final week. Null on a booking that is either confirmed or unexplained.
+   */
+  delay: ReconfirmDelay | null
 }
 
 export interface ReadinessDay {
@@ -206,6 +220,54 @@ export interface ReadinessSection {
   tomorrowOutstanding: ReadinessLine[]
 }
 
+/** One booking that has blown its D-10 guest reconfirmation deadline. */
+export interface ReconfirmLine extends BookingLine {
+  leadPassenger: string | null
+  /** Whole days from the report date to arrival. */
+  daysToArrival: number
+  /** `yyyy-mm-dd` the D-10 deadline fell on. */
+  dueAt: string
+  /** Whole days past that deadline. Always ≥ 1 on a line in this section. */
+  daysLate: number
+  clientConfirmed: boolean
+  preTourCalled: boolean
+  /**
+   * The reason the desk recorded on the booking page, or null when nobody has
+   * said. Null is the finding, not a gap in the data — see `reconfirm-delay.ts`.
+   */
+  delay: ReconfirmDelay | null
+}
+
+/**
+ * The D-10 guest reconfirmation deadline across everything about to travel.
+ *
+ * Distinct from `readiness`, which looks three days out and asks whether a tour
+ * can *run*. This looks ten days out and asks whether the guest has been
+ * *spoken to* — a slower, earlier failure that the three-day window catches far
+ * too late to fix politely.
+ */
+export interface ReconfirmSection {
+  /** First and last arrival date covered — today through today + D-10. */
+  fromDate: string
+  toDate: string
+  /** Bookings arriving inside the window at all. */
+  total: number
+  /** Past the deadline with the guest still unreconfirmed. */
+  breached: number
+  /** Breaches with a recorded reason. */
+  explained: number
+  /** Breaches nobody has explained — the number this section exists for. */
+  unexplained: number
+  /** Explained, but by an answer nobody has refreshed in days. */
+  stale: number
+  /** Breach counts per recorded reason, biggest first. Excludes the unexplained. */
+  byReason: { reason: string; label: string; owner: string; count: number }[]
+  byCountry: CountryRow[]
+  channel: ChannelSplit
+  /** Unexplained first, then most overdue — the order the desk works. */
+  bookings: ReconfirmLine[]
+}
+
 export interface ReportData {
   window: ReportWindow
   generatedAt: string
@@ -213,6 +275,7 @@ export interface ReportData {
   created: CreatedSection
   onGround: OnGroundSection
   readiness: ReadinessSection
+  reconfirm: ReconfirmSection
   complaints: ComplaintsSection
   upcoming: UpcomingSection
 }
@@ -551,21 +614,32 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
     orderBy: { arrivalDate: 'asc' },
   })
 
+  // Any arrival inside this three-day window is already well past its D-10
+  // deadline, so a recorded reason is fetched for all of them in one query and
+  // attached to the ones it is still true of.
+  const delays = await loadReconfirmDelays(rows.map(r => r.bookingRef))
+
   const lines: ReadinessLine[] = rows
     .map(r => {
       const line = toLine(r)
+      const readiness = computeReadiness({
+        status: r.status,
+        qcPassedAt: r.qcPassedAt,
+        hotelOnly: r.hotelOnly,
+        tourAgenda: r.tourAgenda,
+        slDriverAllocation: r.slDriverAllocation,
+        tickets: r.tickets,
+      })
+      // Only carried while the reconfirmation is genuinely still outstanding: an
+      // explanation for a booking that has since been confirmed is history, and
+      // printing it on the chase list would read as a live blocker.
+      const stillOutstanding = !r.hotelOnly && readiness.client.state !== 'DONE'
       return {
         ...line,
         leadPassenger: r.passengers[0]?.name ?? null,
         daysToArrival: daysBetween(w.today, line.arrivalDate),
-        readiness: computeReadiness({
-          status: r.status,
-          qcPassedAt: r.qcPassedAt,
-          hotelOnly: r.hotelOnly,
-          tourAgenda: r.tourAgenda,
-          slDriverAllocation: r.slDriverAllocation,
-          tickets: r.tickets,
-        }),
+        readiness,
+        delay: stillOutstanding ? delays.get(r.bookingRef) ?? null : null,
       }
     })
     .filter(l => inSelectedCountries(l.country, countries))
@@ -637,6 +711,133 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
       .sort((a, b) =>
         b.readiness.blocking.length - a.readiness.blocking.length ||
         a.bookingRef.localeCompare(b.bookingRef)),
+  }
+}
+
+/**
+ * The D-10 guest reconfirmation deadline, and why it was missed.
+ *
+ * Scope is every booking arriving from the report date through the next ten
+ * days: outside that window the deadline either has not arrived yet or the
+ * guest has already travelled, and neither is worth a line in a morning mail.
+ *
+ * Two lookups sit behind it, both defensive in the same way the rest of this
+ * file is. The TE pre-tour call table may be absent on an environment, and the
+ * delay-reason table is new enough that it may not have been applied yet; either
+ * missing degrades to "no call logged" / "no reason recorded", which are also
+ * the honest answers when the tables are present and empty.
+ *
+ * Rows carry the recorded reason verbatim. The mail does not summarise or
+ * re-word it: the whole point is that the desk's own sentence reaches the people
+ * who would otherwise ask the same question again tomorrow.
+ */
+async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: number): Promise<ReconfirmSection> {
+  const scope = countryWhere(countries)
+  const fromDate = w.today
+  const toDate = shiftDate(w.today, RECONFIRM_DUE_DAYS)
+  const start = zonedDayStart(fromDate, w.timezone)
+  const end = zonedDayStart(shiftDate(toDate, 1), w.timezone)
+
+  const rows = await prisma.booking.findMany({
+    where: {
+      arrivalDate: { gte: start, lt: end },
+      status: { notIn: [...DEAD_STATUSES] },
+      ...(scope ?? {}),
+    },
+    select: {
+      ...BOOKING_SELECT,
+      qcPassedAt: true,
+      passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
+    },
+    orderBy: { arrivalDate: 'asc' },
+  })
+
+  // Country is resolved on the built line, not the raw row — `toLine` is where
+  // the legacy SG/MY bucket gets split, and filtering before that would keep
+  // rows the rest of the report has already decided belong elsewhere.
+  const inScope = rows
+    .map(r => ({ raw: r, line: toLine(r) }))
+    .filter(x => inSelectedCountries(x.line.country, countries))
+  const refs = inScope.map(x => x.line.bookingRef)
+
+  // Which of these have a written-up pre-tour call, and which carry a reason.
+  const [calledRefs, delays] = await Promise.all([
+    refs.length
+      ? prisma.tbl_te_reconfirmation
+          .findMany({ where: { booking_ref: { in: refs } }, select: { booking_ref: true } })
+          .then(cs => new Set(cs.map(c => c.booking_ref)))
+          .catch(() => new Set<string>())
+      : Promise.resolve(new Set<string>()),
+    loadReconfirmDelays(refs),
+  ])
+
+  const lines: ReconfirmLine[] = []
+  for (const { raw: r, line } of inScope) {
+    const clientConfirmed = computeReadiness({
+      status: r.status,
+      qcPassedAt: r.qcPassedAt,
+      hotelOnly: r.hotelOnly,
+    }).client.state === 'DONE'
+    const preTourCalled = calledRefs.has(r.bookingRef)
+    const standing = classifyReconfirm({
+      arrivalDate: line.arrivalDate,
+      today: w.today,
+      clientConfirmed,
+      preTourCalled,
+      hotelOnly: r.hotelOnly,
+    })
+    // Only breaches make the list. A booking still inside its window is counted
+    // in `total` and nowhere else — the section reports failures, not workload.
+    if (!standing.breached) continue
+
+    lines.push({
+      ...line,
+      leadPassenger: r.passengers[0]?.name ?? null,
+      daysToArrival: standing.daysToArrival,
+      dueAt: standing.dueAt,
+      daysLate: Math.abs(standing.daysToDue),
+      clientConfirmed,
+      preTourCalled,
+      delay: delays.get(r.bookingRef) ?? null,
+    })
+  }
+
+  // Reasons, commonest first. Only the explained appear: "no reason" is not a
+  // reason, and mixing it in would make the biggest bar on the chart a
+  // non-answer. It is reported as its own number instead.
+  const reasonCount = new Map<string, number>()
+  for (const l of lines) {
+    if (!l.delay) continue
+    reasonCount.set(l.delay.reason, (reasonCount.get(l.delay.reason) ?? 0) + 1)
+  }
+  const byReason = Array.from(reasonCount.entries())
+    .map(([reason, count]) => ({
+      reason,
+      label: REASON_META[reason as keyof typeof REASON_META]?.label ?? reason,
+      owner: REASON_META[reason as keyof typeof REASON_META]?.owner ?? '',
+      count,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+
+  // Unexplained first — those need a person before they need a plan — then the
+  // most overdue, then a stable tiebreak so two runs never reorder the mail.
+  const ranked = lines.slice().sort((a, b) =>
+    Number(!!a.delay) - Number(!!b.delay) ||
+    b.daysLate - a.daysLate ||
+    a.bookingRef.localeCompare(b.bookingRef))
+
+  return {
+    fromDate,
+    toDate,
+    total: inScope.length,
+    breached: lines.length,
+    explained: lines.filter(l => l.delay).length,
+    unexplained: lines.filter(l => !l.delay).length,
+    stale: lines.filter(l => l.delay?.stale).length,
+    byReason,
+    byCountry: rollUpByCountry(lines),
+    channel: channelSplit(lines),
+    bookings: ranked.slice(0, maxRows),
   }
 }
 
@@ -814,10 +1015,11 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
   const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
 
-  const [created, onGround, readiness, complaints, upcoming] = await Promise.all([
+  const [created, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
     collectCreated(window, countries, maxRows),
     collectOnGround(window, countries, maxRows),
     collectReadiness(window, countries, maxRows),
+    collectReconfirm(window, countries, maxRows),
     collectComplaints(window, countries, maxRows),
     collectUpcoming(window, countries, maxRows),
   ])
@@ -829,6 +1031,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     created,
     onGround,
     readiness,
+    reconfirm,
     complaints,
     upcoming,
   }

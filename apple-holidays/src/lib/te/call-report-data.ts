@@ -190,11 +190,33 @@ export interface CallReportData {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Whole-table read: ~1,700 rows today, so one request covers every booking. */
-const SCHEDULE_FETCH_LIMIT = 5000
+/**
+ * The upstream list endpoints silently cap **every** query at this many rows,
+ * whatever `limit` asks for. Only `/schedule` is big enough to hit it today.
+ *
+ * It answers oldest-first and honours neither `offset`/`page` nor any date
+ * filter, so a single wide read returns the oldest slice and the most recent
+ * days come back empty — which is exactly how the report lost its last days.
+ * The only filters it does honour are `status` and `service_id`.
+ */
+const UPSTREAM_PAGE_CAP = 2000
+
+/**
+ * Every status the upstream scheduler actually writes. Splitting the read by
+ * status keeps each slice under the cap and so reaches today's rows.
+ *
+ * A value the upstream does not recognise is ignored rather than rejected — the
+ * query then answers with the unfiltered oldest slice — so this list must hold
+ * only real statuses, and each slice is re-checked against its status below.
+ */
+const SCHEDULE_STATUSES = [
+  'pending', 'calling', 'answered', 'done', 'no_answer', 'missed', 'failed', 'skipped',
+] as const
 
 const DONE_STATUSES = new Set(['answered', 'done', 'completed'])
-const MISSED_STATUSES = new Set(['missed', 'failed'])
+// `no_answer` is an attempt that nobody picked up — a missed call, not a call
+// still waiting to be made.
+const MISSED_STATUSES = new Set(['missed', 'failed', 'no_answer'])
 const SKIPPED_STATUSES = new Set(['skipped', 'cancelled'])
 
 function emptyCounts(): CallCounts {
@@ -303,6 +325,59 @@ async function safeList<T>(
   }
 }
 
+/** One `/schedule` query; `null` marks a slice that failed rather than an empty one. */
+async function scheduleSlice(status: string | null): Promise<RawScheduleItem[] | null> {
+  try {
+    const payload = await teGet('schedule', { limit: UPSTREAM_PAGE_CAP, status: status ?? undefined })
+    return teList<RawScheduleItem>(payload, 'schedule')
+  } catch (err) {
+    console.warn(`[CallReport] Call schedule (${status ?? 'all'}) unavailable:`,
+      err instanceof Error ? err.message : String(err))
+    return null
+  }
+}
+
+/**
+ * The whole call schedule, assembled from one unfiltered read plus one read per
+ * status. The unfiltered read is what catches rows carrying a status this file
+ * has not been told about; the per-status reads are what reach the recent days.
+ * Rows are unioned on `id`, so the overlap between slices costs nothing.
+ */
+async function fetchSchedule(warnings: string[]): Promise<RawScheduleItem[]> {
+  const queries: (string | null)[] = [null, ...SCHEDULE_STATUSES]
+  const slices = await Promise.all(queries.map(scheduleSlice))
+
+  const byId = new Map<number, RawScheduleItem>()
+  const failed: string[] = []
+  const saturated: string[] = []
+
+  slices.forEach((rows, i) => {
+    const status = queries[i]
+    if (rows === null) { failed.push(status ?? 'all'); return }
+    if (rows.length >= UPSTREAM_PAGE_CAP) saturated.push(status ?? 'all')
+    for (const row of rows) {
+      // Guards against an unrecognised status quietly answering with the
+      // unfiltered slice: only rows that really carry it are taken from it.
+      if (status && (row.status ?? '').toLowerCase() !== status) continue
+      if (row.id != null) byId.set(row.id, row)
+    }
+  })
+
+  if (failed.length === queries.length) {
+    warnings.push('Call schedule could not be loaded — figures may be incomplete.')
+  } else if (failed.length) {
+    warnings.push(`Part of the call schedule could not be loaded (${failed.join(', ')}) — figures may be incomplete.`)
+  }
+  // The unfiltered read always saturates while the table is larger than the cap;
+  // that is expected and covered by the per-status reads, so it is not reported.
+  const realSaturation = saturated.filter(s => s !== 'all')
+  if (realSaturation.length) {
+    warnings.push(`The call schedule hit the upstream ${UPSTREAM_PAGE_CAP}-row limit (${realSaturation.join(', ')}) — the oldest calls may be missing.`)
+  }
+
+  return Array.from(byId.values())
+}
+
 export async function collectCallReport(
   filters: CallReportFilters,
   opts: { now?: Date } = {},
@@ -312,18 +387,17 @@ export async function collectCallReport(
   const warnings: string[] = []
 
   const [services, schedule, calls, alerts, ledger] = await Promise.all([
-    safeList<RawService>('Services', () => teGet('services', { limit: 500 }), ['services'], warnings),
-    // The services list does not embed schedules — one bulk read beats ~220
-    // per-service round trips, and the whole table is small enough to hold.
-    safeList<RawScheduleItem>('Call schedule', () => teGet('schedule', { limit: SCHEDULE_FETCH_LIMIT }), ['schedule'], warnings),
+    // 401 registered bookings today: asked wide, because this list is also
+    // returned oldest-first and a short limit would drop the newest bookings.
+    safeList<RawService>('Services', () => teGet('services', { limit: UPSTREAM_PAGE_CAP }), ['services'], warnings),
+    // The services list does not embed schedules, so the schedule is read in
+    // bulk rather than once per service — see `fetchSchedule` for why that read
+    // has to be split by status.
+    fetchSchedule(warnings),
     safeList<RawCall>('Call log', () => teGet('calls', { limit: 1000 }), ['calls'], warnings),
     safeList<RawAlert>('Alerts', () => teGet('alerts', { limit: 500 }), ['alerts'], warnings),
     getApprovalLedger().catch((): Record<string, ApprovalEntry> => ({})),
   ])
-
-  if (schedule.length >= SCHEDULE_FETCH_LIMIT) {
-    warnings.push('The call schedule hit the fetch limit — the oldest calls may be missing.')
-  }
 
   // Index by service id first (always present upstream), booking ref second.
   const scheduleByService = new Map<number, RawScheduleItem[]>()

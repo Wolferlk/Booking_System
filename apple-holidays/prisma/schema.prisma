@@ -1816,3 +1816,36 @@ model HotelReconfirmationEvent {
   @@index([createdAt])
   @@map("hotel_reconfirmation_events")
 }
+
+/// Why a booking's **guest** reconfirmation was not completed by its D-10
+/// deadline (ten days before arrival). One row per booking: the current
+/// explanation, overwritten as it changes, deleted when it no longer holds.
+///
+/// Not to be confused with `HotelReconfirmation` above, which is the D-10
+/// reconfirmation of a hotel *stay* with the property. This one is about the
+/// guest: client confirmation, or the TE pre-tour call.
+///
+/// Deliberately keyed by `bookingRef` with no foreign key. Amendments rewrite a
+/// booking's child rows wholesale, and an explanation of why a deadline was
+/// missed is evidence — it must not be swept away by a cascade. The rules that
+/// decide when a row is owed at all live in `src/lib/reconfirm-delay-shared.ts`.
+model BookingReconfirmDelay {
+  id         String    @id @default(cuid())
+  bookingRef String    @unique
+  /// A `ReconfirmDelayReason` code — see `src/lib/reconfirm-delay-shared.ts`.
+  reason     String    @db.VarChar(32)
+  /// Free text. Mandatory for `OTHER`, optional otherwise.
+  note       String?   @db.Text
+  /// The D-10 date this explanation was recorded against. Kept so an amendment
+  /// that moves the arrival shows up as a reason written for a different
+  /// deadline rather than silently carrying over to the new one.
+  dueAt      DateTime?
+  recordedBy String?
+  recordedAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([reason])
+  @@index([recordedAt])
+  @@map("booking_reconfirm_delays")
+}

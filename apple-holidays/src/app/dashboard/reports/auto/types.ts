@@ -7,6 +7,7 @@ export interface ScheduleSections {
   created: boolean
   onGround: boolean
   readiness: boolean
+  reconfirm: boolean
   complaints: boolean
   upcoming: boolean
 }
@@ -94,6 +95,7 @@ export const SECTION_OPTIONS: { key: keyof ScheduleSections; label: string; hint
   { key: 'created', label: 'Bookings created', hint: 'B2B / B2C split, country-wise, full list' },
   { key: 'onGround', label: 'On ground today', hint: 'Live tours by country, arrivals and departures' },
   { key: 'readiness', label: 'Arriving next 3 days', hint: 'Tomorrow + 2 days: client confirmation, drivers, tickets, QC' },
+  { key: 'reconfirm', label: 'Guest reconfirmation (D-10)', hint: 'Bookings past the ten-days-before-travel deadline, with the reason recorded for each' },
   { key: 'complaints', label: 'Complaints', hint: 'Every issue in detail, resolved and unresolved' },
   { key: 'upcoming', label: 'Upcoming tours', hint: 'Forward book by country and month' },
 ]
@@ -128,7 +130,7 @@ export function emptySchedule(defaultTimezone: string): Partial<Schedule> {
     replyTo: null,
     subjectPrefix: null,
     countries: [],
-    sections: { created: true, onGround: true, readiness: true, complaints: true, upcoming: true },
+    sections: { created: true, onGround: true, readiness: true, reconfirm: true, complaints: true, upcoming: true },
     attachCsv: true,
     aiSummary: false,
     skipIfEmpty: false,

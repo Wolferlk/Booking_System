@@ -19,9 +19,10 @@ import {
   formatReportDate, PERIOD_LABEL, type ReportWindow,
 } from './report-window'
 import type {
-  BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReportData, TourLine,
+  BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmLine, ReportData, TourLine,
 } from './report-data'
 import type { ReadinessCheck } from '@/lib/booking-readiness'
+import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 
@@ -368,13 +369,26 @@ function outstandingReasons(b: ReadinessLine): string {
 
   if (!parts.length) return `<span style="color:${C.good};">Nothing blocking</span>`
 
+  // The recorded D-10 reason, appended once under the checks rather than beside
+  // the client line it explains — it accounts for the file as a whole, and the
+  // desk reading this list needs it before it decides who to ring.
+  const why = b.delay
+    ? `<div style="padding:3px 0 0 0;">
+         <strong style="color:${C.warn};">Reason:</strong>
+         <span style="color:${C.body};">${esc(b.delay.reasonLabel)}${b.delay.note ? ` — ${truncate(b.delay.note, 110)}` : ''}</span>
+         <span style="color:${C.faint};font-size:11px;">${esc(
+           b.delay.stale ? ` (recorded ${b.delay.ageDays}d ago — not refreshed)` : ` (${b.delay.recordedBy ?? 'recorded'})`,
+         )}</span>
+       </div>`
+    : ''
+
   return parts.map(p => {
     const colour = p.check.state === 'PARTIAL' ? C.warn : C.bad
     return `<div style="padding:1px 0;">
       <strong style="color:${colour};">${esc(p.label)}:</strong>
       <span style="color:${C.body};">${esc(p.check.detail)}</span>
     </div>`
-  }).join('')
+  }).join('') + why
 }
 
 /**
@@ -387,9 +401,9 @@ function outstandingReasons(b: ReadinessLine): string {
  * whatever the caller sorted by; only the grouping happens here. A channel with
  * no arrivals emits nothing rather than an empty table.
  */
-function byChannel(
-  lines: ReadinessLine[],
-  render: (rows: ReadinessLine[], source: 'B2B' | 'B2C') => string,
+function byChannel<T extends { source: string }>(
+  lines: T[],
+  render: (rows: T[], source: 'B2B' | 'B2C') => string,
 ): string {
   return (['B2B', 'B2C'] as const).map(source => {
     const rows = lines.filter(l => l.source === source)
@@ -524,6 +538,118 @@ function readinessSection(d: ReportData): string {
     C.warn,
     banner + kpis + tomorrowGapTable(r.tomorrowOutstanding) + gapTable + dayTable +
       `<div style="padding-top:18px;"><div class="h3">Booking-by-booking checklist</div>${list}${legend}</div>` +
+      (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : ''),
+  )
+}
+
+/**
+ * The D-10 reconfirmation section — who is late, and why.
+ *
+ * The one number this section is built around is `unexplained`: bookings past
+ * their deadline that nobody has written a word about. Everything else on the
+ * page is context for it, which is why it leads the banner and sorts to the top
+ * of the table rather than being averaged into a single "late" count.
+ *
+ * Recorded reasons are printed verbatim and attributed. An explanation that has
+ * gone unrefreshed is marked, because a reason from nine days ago is a stale
+ * fact being used as a live excuse, and the mail is the only place that
+ * distinction reliably gets noticed.
+ */
+function reconfirmSection(d: ReportData): string {
+  const r = d.reconfirm
+
+  const kpis = kpiRow([
+    { label: `Past D-${RECONFIRM_DUE_DAYS}`, value: num(r.breached), note: `of ${num(r.total)} travelling within ${RECONFIRM_DUE_DAYS} days`, color: r.breached ? C.warn : C.good },
+    { label: 'No reason given', value: num(r.unexplained), color: r.unexplained ? C.bad : C.good },
+    { label: 'Reason on file', value: num(r.explained), note: r.stale ? `${num(r.stale)} not refreshed` : undefined, color: r.explained ? C.warn : C.ink },
+    { label: 'Reconfirmed on time', value: num(Math.max(0, r.total - r.breached)), color: C.good },
+  ])
+
+  if (!r.breached) {
+    return section(
+      `Guest reconfirmation — D-${RECONFIRM_DUE_DAYS}`,
+      `Arrivals ${formatReportDate(r.fromDate)} to ${formatReportDate(r.toDate)} · every tour reconfirmed with the guest ten days before travel`,
+      C.good,
+      kpis + emptyNote(`Every tour travelling in the next ${RECONFIRM_DUE_DAYS} days has been reconfirmed on time.`),
+    )
+  }
+
+  const banner = r.unexplained
+    ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#991b1b;">
+         ${num(r.unexplained)} booking${r.unexplained === 1 ? '' : 's'} missed D-${RECONFIRM_DUE_DAYS} with no reason recorded.
+         <div style="font-weight:400;padding-top:3px;">Open the booking and record why on the Guest reconfirmation panel — it appears here and on the ops board from the next run.</div>
+       </div>`
+    : `<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#92400e;">
+         Every one of the ${num(r.breached)} late booking${r.breached === 1 ? '' : 's'} has a recorded reason.
+         <div style="font-weight:400;padding-top:3px;">They are still late — accounted for is not the same as reconfirmed.</div>
+       </div>`
+
+  // Where the delays are coming from. Sorted by volume, with the desk that owns
+  // each reason named, so the section routes work rather than only reporting it.
+  const reasonTable = r.byReason.length
+    ? `<div class="h3">Why they are late</div>` +
+      tableOpen([
+        { text: 'Reason' }, { text: 'Owner' },
+        { text: 'Bookings', align: 'right', width: '80' }, { text: '', width: '120' },
+      ]) +
+      r.byReason.map(row => `<tr>
+        ${td(esc(row.label), { bold: true, color: C.ink })}
+        ${td(esc(row.owner), { color: C.muted })}
+        ${td(num(row.count), { align: 'right', bold: true, color: C.warn })}
+        ${td(bar(row.count, r.breached, C.warn))}
+      </tr>`).join('') +
+      (r.unexplained
+        ? `<tr>
+             ${td('<strong>No reason recorded</strong>', { color: C.bad })}
+             ${td('—', { color: C.faint })}
+             ${td(num(r.unexplained), { align: 'right', bold: true, color: C.bad })}
+             ${td(bar(r.unexplained, r.breached, C.bad))}
+           </tr>`
+        : '') +
+      TABLE_CLOSE
+    : ''
+
+  const rowsTable = (rows: ReconfirmLine[], source: 'B2B' | 'B2C') =>
+    tableOpen([
+      { text: 'Ref' }, { text: 'Arrives' },
+      { text: `D-${RECONFIRM_DUE_DAYS}`, align: 'center', width: '90' },
+      { text: 'Country' }, { text: 'Pax', align: 'right', width: '40' },
+      { text: 'Reason not reconfirmed' },
+    ]) + rows.map(b => {
+      const guest = b.leadPassenger ?? b.destination
+      const late = `<span class="pill ${b.delay ? 'wn' : 'bd'}">${esc(`${b.daysLate}d late`)}</span>`
+      // The reason cell is the whole point of the row, so it carries the desk's
+      // own sentence, who wrote it, and — when it has gone stale — that it is
+      // being quoted back from a week ago.
+      const why = b.delay
+        ? `<div><strong style="color:${C.ink};">${esc(b.delay.reasonLabel)}</strong>
+             ${b.delay.stale ? `<span class="pill bd" style="margin-left:6px;">${esc(`${b.delay.ageDays}d old`)}</span>` : ''}</div>
+           ${b.delay.note ? `<div style="color:${C.body};padding-top:2px;">${truncate(b.delay.note, 150)}</div>` : ''}
+           <div style="color:${C.faint};font-size:11px;padding-top:2px;">recorded ${esc(formatReportDate(b.delay.recordedAt.slice(0, 10)))}${b.delay.recordedBy ? ` by ${esc(b.delay.recordedBy)}` : ''}</div>`
+        : `<strong style="color:${C.bad};">No reason recorded</strong>
+           <div style="color:${C.faint};font-size:11px;padding-top:2px;">${esc(
+             [b.clientConfirmed ? 'client confirmed' : 'client not confirmed',
+              b.preTourCalled ? 'pre-tour call logged' : 'no pre-tour call'].join(' · '),
+           )}</div>`
+      return `<tr>
+        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>${guest ? `<div style="color:${C.faint};font-size:11px;">${truncate(guest, 22)}</div>` : ''}`, { nowrap: true })}
+        ${td(esc(formatReportDate(b.arrivalDate, { weekday: true })), { nowrap: true })}
+        ${td(late, { align: 'center', nowrap: true })}
+        ${td(esc(b.countryLabel), { nowrap: true })}
+        ${td(num(b.pax), { align: 'right' })}
+        ${td(why)}
+      </tr>`
+    }).join('') + TABLE_CLOSE +
+    moreNote(rows.length, source === 'B2C' ? r.channel.b2c : r.channel.b2b, `${source} late bookings`)
+
+  return section(
+    `Guest reconfirmation — D-${RECONFIRM_DUE_DAYS}`,
+    `Arrivals ${formatReportDate(r.fromDate)} to ${formatReportDate(r.toDate)} · ${num(r.breached)} past the deadline, ${num(r.unexplained)} of them unexplained`,
+    r.unexplained ? C.bad : C.warn,
+    banner + kpis + reasonTable +
+      `<div style="padding-top:18px;"><div class="h3">Booking by booking</div>${byChannel(r.bookings, rowsTable)}
+        <div class="more">A booking counts as reconfirmed once the client confirms <em>or</em> the pre-tour call is logged — either signal is enough. Hotel Only files are excluded: there is no tour to reconfirm with the guest.</div>
+      </div>` +
       (r.byCountry.length ? `<div style="padding-top:18px;"><div class="h3">Country-wise</div>${countryTable(r.byCountry)}</div>` : ''),
   )
 }
@@ -665,7 +791,7 @@ function upcomingSection(d: ReportData): string {
 
 export interface RenderOptions {
   /** Which sections to include, in the order they appear. */
-  sections?: { created?: boolean; onGround?: boolean; readiness?: boolean; complaints?: boolean; upcoming?: boolean }
+  sections?: { created?: boolean; onGround?: boolean; readiness?: boolean; reconfirm?: boolean; complaints?: boolean; upcoming?: boolean }
   /** Optional AI-written paragraph placed above the sections. */
   narrative?: string | null
   /** Absolute dashboard URL for the footer link. */
@@ -705,6 +831,7 @@ function summaryStrip(d: ReportData): string {
     { label: 'Created', value: num(d.created.total), sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C` },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
     { label: 'Next 3 days', value: num(d.readiness.total), sub: `${num(d.readiness.notReady)} not ready` },
+    { label: `D-${RECONFIRM_DUE_DAYS} late`, value: num(d.reconfirm.breached), sub: `${num(d.reconfirm.unexplained)} unexplained` },
     { label: 'Complaints', value: num(d.complaints.total), sub: `${num(d.complaints.open)} open` },
     { label: 'Upcoming', value: num(d.upcoming.total), sub: `${num(d.upcoming.next7)} in 7d` },
   ]
@@ -736,6 +863,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     created: opts.sections?.created !== false,
     onGround: opts.sections?.onGround !== false,
     readiness: opts.sections?.readiness !== false,
+    reconfirm: opts.sections?.reconfirm !== false,
     complaints: opts.sections?.complaints !== false,
     upcoming: opts.sections?.upcoming !== false,
   }
@@ -759,6 +887,10 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     want.created ? createdSection(d) : '',
     want.onGround ? onGroundSection(d) : '',
     want.readiness ? readinessSection(d) : '',
+    // Placed after readiness and before complaints: readiness is the next three
+    // days, this is the next ten, and both are things to fix before the guest
+    // lands — complaints are what happens when neither was.
+    want.reconfirm ? reconfirmSection(d) : '',
     want.complaints ? complaintsSection(d) : '',
     want.upcoming ? upcomingSection(d) : '',
   ].join('')
@@ -776,7 +908,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.complaints.open)} open complaints.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -809,6 +941,10 @@ export function renderReportSubject(d: ReportData, opts: { prefix?: string; test
     `${d.onGround.total} on ground`,
   ]
   if (d.readiness.notReady > 0) parts.push(`${d.readiness.notReady} not ready in 3d`)
+  // Only the unexplained breaches earn a place in the subject. A late booking
+  // somebody has accounted for is inside-the-mail detail; a late booking nobody
+  // has spoken for is the reason to open the mail at all.
+  if (d.reconfirm.unexplained > 0) parts.push(`${d.reconfirm.unexplained} D-${RECONFIRM_DUE_DAYS} unexplained`)
   if (d.complaints.open > 0) parts.push(`${d.complaints.open} open complaint${d.complaints.open === 1 ? '' : 's'}`)
   const range = d.window.period === 'DAILY'
     ? formatReportDate(d.window.fromDate)
@@ -865,6 +1001,26 @@ export function renderReportCsv(d: ReportData): string {
         b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.pax, b.status,
         b.readiness.blocking.join('; '),
         b.readiness.client.detail, b.readiness.driver.detail, b.readiness.tickets.detail, b.readiness.qc.detail,
+      ].map(String)))
+  }
+
+  // Every breached booking, with the desk's own words. Uncapped in the CSV even
+  // though the mail caps its table: this is the block someone pivots by reason
+  // at the end of the month, and a truncated one would answer wrongly.
+  if (d.reconfirm.breached) {
+    block(`Guest reconfirmation — past D-${RECONFIRM_DUE_DAYS} (arrivals ${d.reconfirm.fromDate} to ${d.reconfirm.toDate})`,
+      ['Ref', 'Source', 'Country', 'Lead guest', 'Arrival', 'D-10 due', 'Days late', 'Pax', 'Status',
+        'Client confirmed', 'Pre-tour call', 'Reason', 'Detail', 'Recorded by', 'Recorded on', 'Reason age (days)', 'Stale'],
+      d.reconfirm.bookings.map(b => [
+        b.bookingRef, b.source, b.countryLabel, b.leadPassenger ?? '', b.arrivalDate, b.dueAt, b.daysLate, b.pax, b.status,
+        b.clientConfirmed ? 'Yes' : 'No',
+        b.preTourCalled ? 'Yes' : 'No',
+        b.delay?.reasonLabel ?? 'NO REASON RECORDED',
+        b.delay?.note ?? '',
+        b.delay?.recordedBy ?? '',
+        b.delay?.recordedAt.slice(0, 10) ?? '',
+        b.delay?.ageDays ?? '',
+        b.delay?.stale ? 'Yes' : '',
       ].map(String)))
   }
 
