@@ -48,8 +48,13 @@ export async function GET(req: NextRequest) {
     andClauses.push({ slDriverAllocation: { vendorId: { not: null }, driverId: null } })
   } else if (statusFilter === 'pending') {
     // A Hotel Only file needs no driver, so it is complete — never pending.
+    // Two ways of being Hotel Only, both excluded here: the booking-level flag
+    // (`hotelOnly`) and the older allocation vehicle type. The flag has to be
+    // tested on the booking itself because these files usually carry no
+    // allocation row at all — nobody ever opened one to say "no driver".
     // Charts where every movement is individually marked hotel-only or leisure
     // are filtered out client-side, where the movements are already in hand.
+    andClauses.push({ hotelOnly: false })
     andClauses.push({
       OR: [
         { slDriverAllocation: null },
@@ -57,7 +62,12 @@ export async function GET(req: NextRequest) {
       ],
     })
   } else if (statusFilter === 'hotel_only') {
-    andClauses.push({ slDriverAllocation: { vehicleType: HOTEL_ONLY_VEHICLE } })
+    andClauses.push({
+      OR: [
+        { hotelOnly: true },
+        { slDriverAllocation: { vehicleType: HOTEL_ONLY_VEHICLE } },
+      ],
+    })
   } else if (statusFilter === 'emergency') {
     andClauses.push({ slDriverAllocation: { isEmergency: true } })
   }
@@ -91,6 +101,10 @@ export async function GET(req: NextRequest) {
         departureDate:   true,
         createdAt:       true,
         status:          true,
+        // Hotel Only booking — accommodation only, so no driver is ever needed.
+        // See `src/lib/hotel-only.ts`.
+        hotelOnly:       true,
+        hotelOnlyNote:   true,
         paxAdults:       true,
         paxChildren:     true,
         contactPhone:    true,

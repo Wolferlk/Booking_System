@@ -67,6 +67,15 @@ interface SLBooking {
   id: string; bookingRef: string; isNumber: string | null; cntlNumber: string | null
   agent: string | null; agentPhone: string | null; fileHandler: string | null
   arrivalDate: string; departureDate: string; createdAt: string; status: string
+  /**
+   * Hotel Only booking — accommodation and nothing else, so no driver is ever
+   * required. Distinct from the `hotel_only` *vehicle type* on the allocation
+   * below: this is a decision about the whole file, taken on the booking page,
+   * and it holds even when there is no allocation row and no movement chart —
+   * which is the normal state for these bookings. See `src/lib/hotel-only.ts`.
+   */
+  hotelOnly: boolean
+  hotelOnlyNote: string | null
   paxAdults: number; paxChildren: number
   contactPhone: string | null; contactEmail: string | null
   tourDestination: string | null; importantNotes: string | null
@@ -178,11 +187,13 @@ function effectiveVehicleType(b: SLBooking): string | null {
 
 /**
  * True when this file still has to be given a driver. False for a Hotel Only
- * booking, and for one whose every movement on the chart is a leisure day or
- * marked Hotel Only — there is nothing to drive, so the allocation is complete.
+ * booking — by the flag on the booking or by the allocation's vehicle type —
+ * and for one whose every movement on the chart is a leisure day or marked
+ * Hotel Only. There is nothing to drive, so the allocation is complete.
  */
 function needsDriver(b: SLBooking): boolean {
   return bookingNeedsDriver({
+    hotelOnly:   b.hotelOnly,
     vehicleType: effectiveVehicleType(b),
     items:       b.tourAgenda?.items ?? [],
   })
@@ -354,7 +365,11 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
             <p className="text-white font-black text-base leading-tight">{booking.isNumber ?? booking.cntlNumber ?? booking.bookingRef}</p>
             <p className="text-slate-400 text-xs mt-0.5 truncate">{leadPax?.name ?? '—'} · {paxTotal} pax</p>
           </div>
-          <div className={cn('px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider', STATUS_BADGE[status])}>{status}</div>
+          <div className={cn('px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider',
+            booking.hotelOnly ? 'bg-amber-500/15 border-amber-500/35 text-amber-300' : STATUS_BADGE[status])}
+          >
+            {booking.hotelOnly ? 'Hotel Only' : status}
+          </div>
           <button onClick={onClose} className="ml-2 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"><X className="w-4 h-4" /></button>
         </div>
         <div className="flex border-b border-slate-800 bg-[#0c1225]/90 flex-shrink-0">
@@ -371,6 +386,24 @@ function BookingDetailPanel({ booking, onClose }: { booking: SLBooking | null; o
           ))}
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Stated once, at the top of every tab — the Movements tab of a Hotel
+              Only file is empty by design, and an unexplained empty tab reads
+              as data that failed to load. */}
+          {booking.hotelOnly && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3">
+              <p className="text-amber-300 text-xs font-bold flex items-center gap-1.5">
+                <Building2 className="w-3.5 h-3.5" /> Hotel Only booking
+              </p>
+              <p className="text-amber-200/70 text-[11px] mt-1 leading-snug">
+                Accommodation only — no driver, vehicle, movement chart, tickets or
+                flights are required on this file. The hotels below are still
+                reconfirmed with each property at D-10.
+              </p>
+              {booking.hotelOnlyNote && (
+                <p className="text-amber-200/60 text-[11px] mt-1.5 italic">“{booking.hotelOnlyNote}”</p>
+              )}
+            </div>
+          )}
           {tab === 'overview' && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
@@ -1784,7 +1817,11 @@ export default function SriLankaDriverAllocationPage() {
                       <tr key={b.id} className={cn('transition-colors group',
                         i % 2 === 0 ? 'bg-transparent' : 'bg-slate-900/30',
                         status === 'emergency' && 'bg-red-500/3',
-                        status === 'assigned'  && 'bg-emerald-500/2')}>
+                        status === 'assigned'  && 'bg-emerald-500/2',
+                        // Amber throughout for a booking-level Hotel Only file,
+                        // so it reads as a different kind of row rather than a
+                        // tour that is merely missing its driver.
+                        b.hotelOnly && 'bg-amber-500/[0.04]')}>
 
                         {/* IS # / CNTL */}
                         <td className="px-4 py-3.5">
@@ -1794,6 +1831,18 @@ export default function SriLankaDriverAllocationPage() {
                           </button>
                           {b.cntlNumber && (
                             <p className="text-slate-400 text-[10px] mt-0.5 font-mono">{b.cntlNumber}</p>
+                          )}
+                          {/* The answer to "why is this one never assigned?",
+                              put where the eye lands first. */}
+                          {b.hotelOnly && (
+                            <span
+                              className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded border border-amber-500/40 bg-amber-500/10 text-amber-300 text-[9px] font-bold uppercase tracking-wider"
+                              title={b.hotelOnlyNote
+                                ? `Hotel Only booking — accommodation only, no driver required. ${b.hotelOnlyNote}`
+                                : 'Hotel Only booking — accommodation only, no driver required'}
+                            >
+                              <Building2 className="w-2.5 h-2.5" /> Hotel Only Booking
+                            </span>
                           )}
                         </td>
 
@@ -1821,9 +1870,17 @@ export default function SriLankaDriverAllocationPage() {
                           {depFlight && depFlight.id !== arrFlight?.id && <div className="mt-1 space-y-0.5"><p className="text-slate-500 text-[10px] flex items-center gap-1"><Plane className="w-2.5 h-2.5 rotate-90" /><span className="font-mono font-bold text-slate-400">{depFlight.flightNo}</span></p><p className="text-slate-600 text-[10px]">{formatTime(depFlight.depTime)} · {depFlight.fromApt}</p></div>}
                         </td>
 
-                        {/* Vehicle */}
+                        {/* Vehicle — nothing to choose on a Hotel Only booking;
+                            offering the picker would invite an allocation the
+                            file does not want. */}
                         <td className="px-4 py-3.5">
-                          <VehicleSelector current={effectiveVehicleType(b)} onChange={v => handleVehicleChange(b, v)} />
+                          {b.hotelOnly ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-500/25 bg-amber-500/5 text-amber-300/80 text-[11px] font-semibold">
+                              🏨 No transport
+                            </span>
+                          ) : (
+                            <VehicleSelector current={effectiveVehicleType(b)} onChange={v => handleVehicleChange(b, v)} />
+                          )}
                         </td>
 
                         {/* Driver / Vendor */}
@@ -1848,6 +1905,17 @@ export default function SriLankaDriverAllocationPage() {
                               </div>
                               <Edit2 className="w-3 h-3 text-slate-600 group-hover/d:text-slate-400 mt-1 opacity-0 group-hover/d:opacity-100 transition-all" />
                             </button>
+                          ) : b.hotelOnly ? (
+                            // Sold as accommodation only. Says so in full rather
+                            // than just "no driver needed": the reader's next
+                            // question is always why, and the answer is the
+                            // booking type, not a gap in the allocation.
+                            <span
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-semibold"
+                              title="Hotel Only booking — accommodation only. No transport is sold on this file, so no driver is required."
+                            >
+                              <Building2 className="w-3 h-3" />Hotel Only — no driver
+                            </span>
                           ) : status === 'hotel_only' ? (
                             // Nothing to drive on this file — the Assign prompt would
                             // read as outstanding work that does not exist.
@@ -1873,11 +1941,23 @@ export default function SriLankaDriverAllocationPage() {
                         {/* Status */}
                         <td className="px-4 py-3.5">
                           <div className="flex flex-col items-start gap-1.5">
-                            <span className={cn('px-2.5 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider', STATUS_BADGE[status])}>
-                              {STATUS_LABEL[status] ?? status}
+                            <span className={cn(
+                              'px-2.5 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider',
+                              // Amber for the booking-level flag, pink for the
+                              // allocation vehicle type — two different facts,
+                              // and the board should not blur them.
+                              b.hotelOnly && status === 'hotel_only'
+                                ? 'bg-amber-500/15 border-amber-500/35 text-amber-300'
+                                : STATUS_BADGE[status],
+                            )}>
+                              {b.hotelOnly && status === 'hotel_only'
+                                ? 'Hotel Only Booking'
+                                : STATUS_LABEL[status] ?? status}
                             </span>
                             {status === 'hotel_only' && (
-                              <span className="text-pink-400/70 text-[10px]">No driver needed</span>
+                              <span className={cn('text-[10px]', b.hotelOnly ? 'text-amber-400/80' : 'text-pink-400/70')}>
+                                {b.hotelOnly ? 'Accommodation only' : 'No driver needed'}
+                              </span>
                             )}
                             {status === 'emergency' && <AlertTriangle className="w-3.5 h-3.5 text-red-400" />}
                           </div>
