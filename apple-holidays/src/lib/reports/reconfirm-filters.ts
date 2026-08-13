@@ -14,6 +14,15 @@
  *   • **WhatsApp call request** — the customer must accept a WhatsApp message
  *     before the bot is allowed to place automated calls at all.
  *     `CALL_ACCEPTED` / `CALL_NOT_ACCEPTED`.
+ *   • **D-10 breach** — the booking blew its ten-days-before-travel
+ *     reconfirmation deadline, and either someone has written down why or nobody
+ *     has. `DELAY_EXPLAINED` / `DELAY_UNEXPLAINED`.
+ *
+ * The last axis is the one the desk works from in the morning:
+ * `DELAY_UNEXPLAINED` is the list of files that are late *and* silent, which is
+ * a different job from the late ones that are already accounted for. Neither
+ * chip matches a booking that is not past its deadline — a file with time left
+ * owes nobody an explanation.
  *
  * The third axis is the reason the second one is often stuck: a booking whose
  * customer never accepted the WhatsApp request can never show a completed call,
@@ -49,8 +58,10 @@ export type ReconfirmFacet =
   | 'CALL_NOT_ACCEPTED'
   | 'HOTEL_ONLY'
   | 'FULL_SERVICE'
+  | 'DELAY_EXPLAINED'
+  | 'DELAY_UNEXPLAINED'
 
-export type FacetGroup = 'client' | 'call' | 'approval' | 'scope'
+export type FacetGroup = 'client' | 'call' | 'approval' | 'scope' | 'delay'
 
 /**
  * Display order, and the order groups are ANDed in.
@@ -61,7 +72,7 @@ export type FacetGroup = 'client' | 'call' | 'approval' | 'scope'
  * their scope. Ops filters on it both ways: "show me only the room-only files"
  * and, far more often, "hide them so I can work the real tours".
  */
-export const FACET_GROUPS: FacetGroup[] = ['scope', 'client', 'call', 'approval']
+export const FACET_GROUPS: FacetGroup[] = ['scope', 'client', 'call', 'approval', 'delay']
 
 /**
  * The minimum a row must carry to be classified. Both `OpsDayRow` and any
@@ -75,6 +86,13 @@ export interface ReconfirmFacts {
   call: { approval: CallApprovalState }
   /** Accommodation-only file — see `src/lib/hotel-only.ts`. */
   hotelOnly?: boolean
+  /**
+   * Past the D-10 reconfirmation deadline with the guest still unreconfirmed —
+   * see `src/lib/reconfirm-delay-shared.ts`.
+   */
+  reconfirmBreached?: boolean
+  /** The recorded explanation for that breach, when one exists. */
+  reconfirmDelay?: unknown | null
 }
 
 export interface FacetMeta {
@@ -147,6 +165,24 @@ export const RECONFIRM_FACETS: FacetMeta[] = [
     dot: 'bg-slate-500',
   },
   {
+    key: 'DELAY_UNEXPLAINED',
+    group: 'delay',
+    label: 'D-10 missed, unexplained',
+    short: 'No reason',
+    hint: 'Past the 10-days-before-travel reconfirmation deadline and nobody has recorded why',
+    chip: 'bg-rose-50 text-rose-700 border-rose-300',
+    dot: 'bg-rose-500',
+  },
+  {
+    key: 'DELAY_EXPLAINED',
+    group: 'delay',
+    label: 'D-10 missed, reason on file',
+    short: 'Reason given',
+    hint: 'Past the deadline, but the desk has recorded why — still late, just accounted for',
+    chip: 'bg-amber-50 text-amber-700 border-amber-300',
+    dot: 'bg-amber-500',
+  },
+  {
     key: 'CALL_NOT_ACCEPTED',
     group: 'approval',
     label: 'Call request pending',
@@ -172,6 +208,11 @@ export function matchesFacet(facet: ReconfirmFacet, r: ReconfirmFacts): boolean 
     case 'CALL_NOT_ACCEPTED':  return r.call.approval === 'pending' || r.call.approval === 'not_requested'
     case 'HOTEL_ONLY':         return r.hotelOnly === true
     case 'FULL_SERVICE':       return r.hotelOnly !== true
+    // Both delay facets are conditioned on the breach itself: a booking that is
+    // not late is neither "explained" nor "unexplained", it is simply not being
+    // asked, and letting it fall into either bucket would drown the real list.
+    case 'DELAY_EXPLAINED':    return r.reconfirmBreached === true && !!r.reconfirmDelay
+    case 'DELAY_UNEXPLAINED':  return r.reconfirmBreached === true && !r.reconfirmDelay
     default:                   return true
   }
 }
@@ -200,6 +241,7 @@ export function countFacets<T extends ReconfirmFacts>(rows: T[]): Record<Reconfi
     CLIENT_CONFIRMED: 0, CLIENT_UNCONFIRMED: 0, RECONFIRM_PENDING: 0,
     CALL_ACCEPTED: 0, CALL_NOT_ACCEPTED: 0,
     HOTEL_ONLY: 0, FULL_SERVICE: 0,
+    DELAY_EXPLAINED: 0, DELAY_UNEXPLAINED: 0,
   } satisfies Record<ReconfirmFacet, number>
   for (const r of rows) {
     for (const f of RECONFIRM_FACETS) if (matchesFacet(f.key, r)) out[f.key] += 1

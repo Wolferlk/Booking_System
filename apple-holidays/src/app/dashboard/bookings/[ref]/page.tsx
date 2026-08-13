@@ -30,6 +30,7 @@ import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
 import DriverLogPanel from '@/components/bookings/driver-log-panel'
 import PrecheckPanel from '@/components/bookings/precheck-panel'
+import ReconfirmDelayPanel from '@/components/bookings/reconfirm-delay-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import TravellerExperiencePanel from '@/components/bookings/traveller-experience-panel'
@@ -2016,6 +2017,18 @@ Wishing you a wonderful trip! ✈️
             daysUntilTrip={daysUntil}
           />
           </section>
+        )}
+
+        {/* Guest reconfirmation — the D-10 deadline and, when it is missed, the
+            reason. Deliberately sits above the AI call panel: the call is one of
+            the two ways the deadline is met, so the standing is read first and
+            the mechanics second. Shown on Hotel Only files too, where it says in
+            one line why the deadline does not apply. */}
+        {['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'BT_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <ReconfirmDelayPanel
+            bookingRef={ref}
+            canEdit={['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)}
+          />
         )}
 
         {/* AI Voice Calls — Traveller Experience panel */}

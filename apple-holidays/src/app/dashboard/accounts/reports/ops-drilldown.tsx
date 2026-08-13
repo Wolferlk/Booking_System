@@ -40,6 +40,7 @@ import {
 import {
   APPROVAL_LABEL, countFacets, matchesFacets, type ReconfirmFacet,
 } from '@/lib/reports/reconfirm-filters'
+import { RECONFIRM_DUE_DAYS, REASON_META, delaySummary } from '@/lib/reconfirm-delay-shared'
 
 // ─── Range presets ────────────────────────────────────────────────────────────
 
@@ -679,6 +680,29 @@ export default function OpsDrilldown({
                                 </span>
                               )}
 
+                              {/* A blown D-10 deadline follows the booking onto
+                                  every view, not just the reconfirmation one:
+                                  whoever is working drivers or tickets on this
+                                  file is looking at a tour the guest has not
+                                  been reconfirmed on, and should know it. Red
+                                  when nobody has explained it, amber when
+                                  somebody has — recording a reason accounts for
+                                  the delay, it does not clear it. */}
+                              {r.reconfirmBreached && (
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-1 px-1.5 py-px rounded-full border text-[10px] font-bold whitespace-nowrap',
+                                    r.reconfirmDelay
+                                      ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                      : 'bg-rose-100 text-rose-800 border-rose-300',
+                                  )}
+                                  title={delaySummary(r.reconfirmStanding, r.reconfirmDelay)}
+                                >
+                                  D-{RECONFIRM_DUE_DAYS} {Math.abs(r.reconfirmStanding.daysToDue)}d late
+                                  {r.reconfirmDelay ? ` · ${REASON_META[r.reconfirmDelay.reason]?.short ?? 'reason'}` : ' · no reason'}
+                                </span>
+                              )}
+
                               <span className="text-[11px] text-slate-500 whitespace-nowrap inline-flex items-center gap-1">
                                 <PlaneLanding className="w-3 h-3 text-emerald-500" />
                                 {formatDate(r.arrivalDate)}
@@ -714,6 +738,44 @@ export default function OpsDrilldown({
                                 </span>
                               )}
                             </div>
+
+                            {/* The recorded explanation, in the desk's own
+                                words. Printed in full on the reconfirmation
+                                view — a truncated reason is no reason — with
+                                the desk that owns it, so the row says who to
+                                go to as well as what is wrong. */}
+                            {focus === 'reconfirm' && r.reconfirmBreached && (
+                              <div className={cn(
+                                'ml-2.5 mt-1.5 rounded-md border px-2 py-1.5 text-[11px]',
+                                r.reconfirmDelay
+                                  ? 'border-amber-200 bg-amber-50 text-amber-900'
+                                  : 'border-rose-200 bg-rose-50 text-rose-800',
+                              )}>
+                                {r.reconfirmDelay ? (
+                                  <>
+                                    <span className="font-bold">{r.reconfirmDelay.reasonLabel}</span>
+                                    <span className="ml-1.5 text-amber-700/70">
+                                      {REASON_META[r.reconfirmDelay.reason]?.owner}
+                                    </span>
+                                    {r.reconfirmDelay.note && (
+                                      <div className="mt-0.5 whitespace-pre-wrap">{r.reconfirmDelay.note}</div>
+                                    )}
+                                    <div className="mt-0.5 text-[10px] text-amber-700/70">
+                                      Recorded {formatDate(r.reconfirmDelay.recordedAt.slice(0, 10))}
+                                      {r.reconfirmDelay.recordedBy ? ` by ${r.reconfirmDelay.recordedBy}` : ''}
+                                      {r.reconfirmDelay.stale
+                                        ? ` · not updated in ${r.reconfirmDelay.ageDays} days — chase the reason`
+                                        : ''}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="font-semibold">
+                                    {Math.abs(r.reconfirmStanding.daysToDue)} day(s) past D-{RECONFIRM_DUE_DAYS} and
+                                    nobody has recorded why — open the booking and record the reason.
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </motion.div>
                         )
                       })}

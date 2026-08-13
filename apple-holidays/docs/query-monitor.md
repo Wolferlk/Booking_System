@@ -27,6 +27,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    npx prisma db execute --file prisma/sql/query-monitor-to-list.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-thread-merge.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-reply-detail-ai-summary.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/query-monitor-group-mailbox-reply-source.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
 

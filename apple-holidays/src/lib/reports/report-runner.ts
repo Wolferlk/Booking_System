@@ -140,6 +140,15 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
         qc: d.readiness.pendingQc,
       },
     },
+    // The D-10 breach counts, with the top reasons. Given to the model so the
+    // narrative can say *why* a week is going wrong, not only that it is.
+    guestReconfirmation: {
+      travellingWithin10Days: d.reconfirm.total,
+      pastDeadline: d.reconfirm.breached,
+      withRecordedReason: d.reconfirm.explained,
+      noReasonRecorded: d.reconfirm.unexplained,
+      topReasons: d.reconfirm.byReason.slice(0, 3).map(r => ({ reason: r.label, n: r.count })),
+    },
     complaints: { total: d.complaints.total, open: d.complaints.open, resolved: d.complaints.resolved, highOpen: d.complaints.highSeverityOpen, topCategories: d.complaints.byCategory.slice(0, 3) },
     upcoming: { total: d.upcoming.total, next7: d.upcoming.next7, next30: d.upcoming.next30 },
   }

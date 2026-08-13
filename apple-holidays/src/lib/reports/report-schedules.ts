@@ -26,6 +26,11 @@ export interface ReportSections {
   onGround: boolean
   /** Arrivals over the next three days with their operational checklist. */
   readiness: boolean
+  /**
+   * Bookings that blew the D-10 guest reconfirmation deadline, with the reason
+   * the desk recorded for each — or a flag that nobody recorded one.
+   */
+  reconfirm: boolean
   complaints: boolean
   upcoming: boolean
 }
@@ -238,6 +243,7 @@ function withSectionDefaults(s: ReportSchedule): ReportSchedule {
       created: sections.created ?? true,
       onGround: sections.onGround ?? true,
       readiness: sections.readiness ?? true,
+      reconfirm: sections.reconfirm ?? true,
       complaints: sections.complaints ?? true,
       upcoming: sections.upcoming ?? true,
     },

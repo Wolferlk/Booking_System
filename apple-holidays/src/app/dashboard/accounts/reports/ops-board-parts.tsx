@@ -18,6 +18,7 @@ import {
   type FacetGroup, type ReconfirmFacet,
 } from '@/lib/reports/reconfirm-filters'
 import { HOTEL_ONLY_LABEL } from '@/lib/hotel-only'
+import { RECONFIRM_DUE_DAYS, delaySummary } from '@/lib/reconfirm-delay-shared'
 
 // ─── Shared vocabulary ────────────────────────────────────────────────────────
 
@@ -249,6 +250,12 @@ export function reconfirmText(r: OpsDayRow): string {
   if (r.clientConfirmed && r.preTourCall) return 'Confirmed + called'
   if (r.clientConfirmed) return 'Client confirmed'
   if (r.preTourCall) return 'Pre-tour call'
+  // A missed deadline says how badly, and whether the desk owes an answer for
+  // it — "Not reconfirmed" alone is the cell that made this feature necessary.
+  if (r.reconfirmBreached) {
+    const late = `${Math.abs(r.reconfirmStanding.daysToDue)}d late`
+    return r.reconfirmDelay ? `${late} · ${r.reconfirmDelay.reasonLabel}` : `${late} · no reason`
+  }
   return 'Not reconfirmed'
 }
 
@@ -262,6 +269,9 @@ export function reconfirmDetail(r: OpsDayRow): string {
     r.preTourCall
       ? `Pre-tour call logged ${formatDate(r.preTourCall.at)}${r.preTourCall.outcome ? ` — ${r.preTourCall.outcome}` : ''}`
       : 'No pre-tour call logged',
+    // The D-10 line is appended rather than replacing the two signals above: the
+    // operator needs to see both what is missing and what is being done about it.
+    ...(r.reconfirmBreached ? [delaySummary(r.reconfirmStanding, r.reconfirmDelay)] : []),
   ].join(' · ')
 }
 
@@ -376,6 +386,7 @@ const GROUP_LABEL: Record<FacetGroup, string> = {
   client: 'Client confirm',
   call: 'Reconfirm call',
   approval: 'WhatsApp call request',
+  delay: `D-${RECONFIRM_DUE_DAYS} deadline`,
 }
 
 /**

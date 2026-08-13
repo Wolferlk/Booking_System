@@ -47,6 +47,10 @@ import { computeReadiness, type ReadinessCheck, type QcStage } from '@/lib/booki
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { getApprovalLedger, resolveApprovalState, type ApprovalEntry } from '@/lib/te/call-approvals'
 import { normalizePhone } from '@/lib/te/te-api'
+import {
+  classifyReconfirm, loadReconfirmDelays,
+  type ReconfirmDelay, type ReconfirmStanding,
+} from '@/lib/reconfirm-delay'
 import { countFacets, type CallApprovalState, type ReconfirmFacet } from './reconfirm-filters'
 import {
   DEFAULT_REPORT_TZ, dateInTz, formatReportDate, shiftDate, zonedDayStart,
@@ -139,6 +143,19 @@ export interface OpsDayRow {
   preTourCall: PreTourCall | null
   /** WhatsApp permission and the pre-tour call schedule behind it. */
   call: ReconfirmCallInfo
+  /**
+   * Where the booking sits against its D-10 reconfirmation deadline — ten days
+   * before the guest travels. See `src/lib/reconfirm-delay-shared.ts`.
+   */
+  reconfirmStanding: ReconfirmStanding
+  /**
+   * Why the deadline was missed, as recorded on the booking page. Null means
+   * nobody has said — which the board reports as loudly as it reports the breach
+   * itself, because an unexplained breach is the one that needs a human.
+   */
+  reconfirmDelay: ReconfirmDelay | null
+  /** Convenience mirror of `reconfirmStanding.breached`, for the facet filters. */
+  reconfirmBreached: boolean
   /** True when driver, tickets, QC2 and both reconfirmation signals are clear. */
   ready: boolean
   outstanding: string[]
@@ -170,6 +187,12 @@ export interface OpsDaySummary {
   checks: OpsCountRow[]
   /** Head-count of each reconfirmation signal across the on-ground set. */
   reconfirm: { clientConfirmed: number; preTourCalled: number; neither: number }
+  /**
+   * The D-10 deadline, counted three ways: how many bookings blew it, how many
+   * of those carry a recorded reason, and how many are late and silent. The last
+   * number is the one the morning stand-up acts on.
+   */
+  reconfirmDelay: { breached: number; explained: number; unexplained: number; stale: number }
   /** Accommodation-only files in the window — read as "out of scope, not late". */
   hotelOnly: number
   /** How many rows each filter chip would keep — the chip badges read this. */
@@ -514,6 +537,10 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
   const { map: callState, available: approvalDataAvailable } = await loadCallState(
     refs, new Set(calls.keys()),
   )
+  // Recorded explanations for a missed D-10. Read for the whole window in one
+  // query; an environment without the table degrades to an empty map, which
+  // reads as "nobody has explained these" — the honest answer either way.
+  const delays = await loadReconfirmDelays(refs)
 
   const rows: OpsDayRow[] = bookings.map(b => {
     const readiness = computeReadiness({
@@ -546,6 +573,17 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       ...readiness.outstanding.filter(o => o !== 'client confirmation'),
     ].filter((x): x is string => x !== null)
 
+    // The deadline is measured against the operations-local *today*, not the
+    // board's window: a booking is ten days late or it is not, whichever date
+    // the operator happens to be looking at.
+    const reconfirmStanding = classifyReconfirm({
+      arrivalDate,
+      today,
+      clientConfirmed: readiness.client.state === 'DONE',
+      preTourCalled: !!preTourCall,
+      hotelOnly: b.hotelOnly,
+    })
+
     return {
       bookingRef: b.bookingRef,
       agent: b.agent,
@@ -575,6 +613,12 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCall,
       call: callState.get(b.bookingRef) ?? NO_CALL,
+      reconfirmStanding,
+      // A reason recorded on a booking that has since been reconfirmed is
+      // history, not an outstanding excuse, so it is only carried onto the board
+      // while the breach it explains is still live.
+      reconfirmDelay: reconfirmStanding.breached ? delays.get(b.bookingRef) ?? null : null,
+      reconfirmBreached: reconfirmStanding.breached,
       ready: outstanding.length === 0,
       outstanding,
     }
@@ -612,6 +656,14 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       // Hotel Only rows are excluded: they are not waiting on either signal, and
       // counting them as "neither" would inflate the number ops chases.
       neither: rows.filter(r => !r.hotelOnly && !r.clientConfirmed && !r.preTourCall).length,
+    },
+    reconfirmDelay: {
+      breached: rows.filter(r => r.reconfirmBreached).length,
+      explained: rows.filter(r => r.reconfirmBreached && r.reconfirmDelay).length,
+      unexplained: rows.filter(r => r.reconfirmBreached && !r.reconfirmDelay).length,
+      // Explained, but by an answer nobody has touched in days — counted apart
+      // so a board full of amber does not read as a board under control.
+      stale: rows.filter(r => r.reconfirmDelay?.stale).length,
     },
     hotelOnly: rows.filter(r => r.hotelOnly).length,
     facets: countFacets(rows),

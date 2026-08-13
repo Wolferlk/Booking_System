@@ -39,6 +39,7 @@ import {
 import {
   APPROVAL_LABEL, countFacets, matchesFacets, type ReconfirmFacet,
 } from '@/lib/reports/reconfirm-filters'
+import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 import OpsDrilldown from './ops-drilldown'
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
@@ -286,6 +287,20 @@ export default function OperationsBoardPage() {
   /** Accommodation-only files in view — ready by definition, not by work done. */
   const hotelOnlyCount = visible.filter(r => r.hotelOnly).length
 
+  /**
+   * The D-10 reconfirmation deadline across the visible rows.
+   *
+   * `unexplained` is the number that earns a place on the readiness strip:
+   * a late file somebody has accounted for is a known problem, while a late
+   * file nobody has written a word about is an unknown one, and the strip is
+   * read to find out which kind of day it is.
+   */
+  const d10 = useMemo(() => ({
+    breached: visible.filter(r => r.reconfirmBreached).length,
+    unexplained: visible.filter(r => r.reconfirmBreached && !r.reconfirmDelay).length,
+    stale: visible.filter(r => r.reconfirmDelay?.stale).length,
+  }), [visible])
+
   // A week rail centred two days back, so yesterday's loose ends stay one click away.
   const railDays = useMemo(
     () => Array.from({ length: 9 }, (_, i) => shift(date, i - 4)),
@@ -316,6 +331,7 @@ export default function OperationsBoardPage() {
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
       'Driver Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
+      'D-10 Due', 'D-10 Status', 'Days Late', 'Delay Reason', 'Delay Detail', 'Reason Recorded By', 'Reason Recorded On',
     ]
     const lines = visible.map(r => [
       r.bookingRef,
@@ -336,6 +352,16 @@ export default function OperationsBoardPage() {
       qcTick(r, 1) === 'DONE' ? 'Pass' : 'Pending',
       qcTick(r, 2) === 'DONE' ? 'Pass' : 'Pending',
       r.outstanding.join('; ') || 'None',
+      // The D-10 block is exported alongside the checks so a spreadsheet can be
+      // pivoted by reason — "how many files did we lose to unpaid balances last
+      // month" is a question the board itself cannot answer.
+      r.reconfirmStanding.dueAt,
+      r.reconfirmStanding.state,
+      r.reconfirmBreached ? Math.abs(r.reconfirmStanding.daysToDue) : '',
+      r.reconfirmBreached ? (r.reconfirmDelay?.reasonLabel ?? 'NO REASON RECORDED') : '',
+      r.reconfirmDelay?.note ?? '',
+      r.reconfirmDelay?.recordedBy ?? '',
+      r.reconfirmDelay?.recordedAt?.slice(0, 10) ?? '',
     ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))
 
     const blob = new Blob([[headers.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8;' })
@@ -704,6 +730,36 @@ export default function OperationsBoardPage() {
               <Hotel className="w-3 h-3" />
               {hotelOnlyCount} Hotel Only
             </span>
+          )}
+          {/* The D-10 pill is a control, not an ornament: clicking it filters
+              the board down to exactly the files it is complaining about, which
+              is the next thing anyone reading the number wants to do. */}
+          {d10.breached > 0 && (
+            <button
+              type="button"
+              onClick={() => toggleFacet(d10.unexplained > 0 ? 'DELAY_UNEXPLAINED' : 'DELAY_EXPLAINED')}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors',
+                d10.unexplained > 0
+                  ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                  : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100',
+              )}
+              title={
+                `${d10.breached} booking(s) are past the D-${RECONFIRM_DUE_DAYS} guest reconfirmation deadline. `
+                + (d10.unexplained > 0
+                  ? `${d10.unexplained} of them have no recorded reason — click to see only those.`
+                  : 'Every one of them has a recorded reason — click to see them.')
+                + (d10.stale > 0 ? ` ${d10.stale} reason(s) have not been updated in days.` : '')
+              }
+            >
+              <CircleAlert className="w-3 h-3" />
+              {d10.unexplained > 0
+                ? `${d10.unexplained} D-${RECONFIRM_DUE_DAYS} unexplained`
+                : `${d10.breached} D-${RECONFIRM_DUE_DAYS} late`}
+              {d10.stale > 0 && (
+                <span className="opacity-70">· {d10.stale} stale</span>
+              )}
+            </button>
           )}
           <StateLegend />
         </motion.div>
