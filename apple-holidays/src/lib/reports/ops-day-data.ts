@@ -16,7 +16,7 @@
  * The checklist itself is `computeReadiness()` — the same rules the booking QC
  * panel and the daily mail use, so the board cannot contradict either.
  *
- * Reconfirmation has two independent signals and the page shows both:
+ * Reconfirmation has three independent signals and the page shows all three:
  *   • **Client confirm** — the booking status reached "Client Confirmed"
  *     (`GT_VERIFIED`) or beyond. Comes from the readiness checklist.
  *   • **Pre-tour call** — a row in `tbl_te_reconfirmation`, written by the TE
@@ -24,11 +24,22 @@
  *     table belongs to the TE stack and may be absent on some environments, so
  *     the lookup is defensive: a missing table degrades to "no call data"
  *     instead of failing the board.
+ *   • **WhatsApp call request** — the customer has to accept a WhatsApp message
+ *     before the bot may place an automated call at all. Without it the call
+ *     above can never happen, so ops needs to see the two apart: a booking
+ *     stuck on permission is a different job from one waiting on a dial.
+ *     Resolved from the approval ledger (`te_call_approvals`) plus evidence
+ *     from the call schedule, and equally defensive.
+ *
+ * Everything here is read-only. The board derives, it never writes.
  */
 import { prisma } from '@/lib/prisma'
 import { countryLabel, countryScope, type OperationCountry } from '@/lib/country-detection'
 import { computeReadiness, type ReadinessCheck, type QcStage } from '@/lib/booking-readiness'
 import { STATUS_LABELS } from '@/lib/state-machine'
+import { getApprovalLedger, resolveApprovalState, type ApprovalEntry } from '@/lib/te/call-approvals'
+import { normalizePhone } from '@/lib/te/te-api'
+import { countFacets, type CallApprovalState, type ReconfirmFacet } from './reconfirm-filters'
 import {
   DEFAULT_REPORT_TZ, dateInTz, formatReportDate, shiftDate, zonedDayStart,
 } from './report-window'
@@ -50,6 +61,34 @@ export interface PreTourCall {
   paxOk: string | null
   contactOk: string | null
   requestedChange: string | null
+}
+
+/**
+ * Where the automated reconfirmation call stands for one booking — permission
+ * first, then the dial.
+ *
+ * The bot cannot call a number the customer has not approved over WhatsApp, so
+ * `approval` is the gate and `scheduleStatus` is what happens behind it. When
+ * the TE stack is not reachable every field degrades to its neutral value and
+ * `approval` becomes `unknown`, which no filter treats as a refusal.
+ */
+export interface ReconfirmCallInfo {
+  /** The booking is registered with the AI call service. */
+  registered: boolean
+  /** Digits-only number the bot dials, when one is on file. */
+  phone: string | null
+  approval: CallApprovalState
+  /** ISO timestamp the WhatsApp request was last sent from ops. */
+  approvalRequestedAt: string | null
+  /** ISO timestamp the customer accepted. */
+  approvedAt: string | null
+  /** When the pre-tour call is (or was) due — ISO, null when none is scheduled. */
+  scheduledAt: string | null
+  /** Raw upstream schedule status: `pending`, `done`, `missed`, … */
+  scheduleStatus: string | null
+  attempts: number
+  /** A reconfirmation call ran and was written up. */
+  completed: boolean
 }
 
 export interface OpsDayRow {
@@ -83,6 +122,8 @@ export interface OpsDayRow {
   clientConfirmed: boolean
   /** Null when no reconfirmation call has been logged for this booking. */
   preTourCall: PreTourCall | null
+  /** WhatsApp permission and the pre-tour call schedule behind it. */
+  call: ReconfirmCallInfo
   /** True when driver, tickets, QC2 and both reconfirmation signals are clear. */
   ready: boolean
   outstanding: string[]
@@ -114,6 +155,10 @@ export interface OpsDaySummary {
   checks: OpsCountRow[]
   /** Head-count of each reconfirmation signal across the on-ground set. */
   reconfirm: { clientConfirmed: number; preTourCalled: number; neither: number }
+  /** How many rows each filter chip would keep — the chip badges read this. */
+  facets: Record<ReconfirmFacet, number>
+  /** WhatsApp approval split, including the rows we cannot speak for. */
+  callApproval: Record<CallApprovalState, number>
   byCountry: { country: string; label: string; bookings: number; pax: number }[]
 }
 
@@ -133,6 +178,8 @@ export interface OpsDayBoard {
   isToday: boolean
   /** False when the TE reconfirmation table could not be read. */
   callDataAvailable: boolean
+  /** False when the WhatsApp approval ledger could not be read. */
+  approvalDataAvailable: boolean
   summary: OpsDaySummary
   rows: OpsDayRow[]
   /** True when the row cap was hit and the window is showing a partial picture. */
@@ -236,6 +283,118 @@ async function loadPreTourCalls(
   }
 }
 
+// ─── WhatsApp call requests ───────────────────────────────────────────────────
+
+/** Schedule statuses that mean the call actually connected. */
+const CONNECTED_STATUSES = new Set(['answered', 'done', 'completed'])
+
+/** Upstream spells the pre-tour phase three ways; all of them mean the same row. */
+const PRE_TOUR_PHASES = new Set(['reconfirm', 'reconfirmation', 'pre_tour', 'pretour'])
+
+function isoStamp(d: Date | null | undefined): string | null {
+  return d ? d.toISOString() : null
+}
+
+const NO_CALL: ReconfirmCallInfo = {
+  registered: false, phone: null, approval: 'unknown',
+  approvalRequestedAt: null, approvedAt: null,
+  scheduledAt: null, scheduleStatus: null, attempts: 0, completed: false,
+}
+
+/**
+ * Resolve, per booking, whether the customer has accepted automated WhatsApp
+ * calls and where the pre-tour call sits on the schedule.
+ *
+ * Three reads, each optional:
+ *   • `tbl_te_service`       — the number the bot dials, and that the booking is
+ *                              registered for calls at all;
+ *   • `tbl_te_call_schedule` — the pre-tour row: due date, status, attempts;
+ *   • the approval ledger    — `SystemSetting.te_call_approvals`, keyed by phone.
+ *
+ * A connected call is itself proof of approval — the bot could not have placed
+ * it otherwise — so it overrides a ledger that never saw the request, which is
+ * what happens when approval was sent from outside the dashboard.
+ *
+ * `available` is false only when the ledger read failed. Everything else can be
+ * missing without making the answer a lie: no service row simply means the
+ * booking was never registered for calls.
+ */
+async function loadCallState(
+  refs: string[],
+  calledRefs: Set<string>,
+): Promise<{ map: Map<string, ReconfirmCallInfo>; available: boolean }> {
+  const map = new Map<string, ReconfirmCallInfo>()
+  if (!refs.length) return { map, available: true }
+
+  const [services, schedules, ledger] = await Promise.all([
+    prisma.tbl_te_service
+      .findMany({
+        where: { booking_ref: { in: refs } },
+        select: { booking_ref: true, call_phone: true, customer_phone: true, status: true },
+      })
+      .catch(() => null),
+    prisma.tbl_te_call_schedule
+      .findMany({
+        where: { booking_ref: { in: refs } },
+        orderBy: { call_date: 'desc' },
+        select: {
+          booking_ref: true, phase: true, status: true, attempts: true,
+          scheduled_at: true, call_date: true, conversation_id: true,
+        },
+      })
+      .catch(() => null),
+    getApprovalLedger().catch(() => null),
+  ])
+
+  // Index the ledger both ways. Phone is the real key, but an entry written
+  // against a booking whose number has since changed still tells us the request
+  // went out, so the ref is kept as a fallback rather than thrown away.
+  const byPhone = new Map<string, ApprovalEntry>()
+  const byRef = new Map<string, ApprovalEntry>()
+  for (const [key, entry] of Object.entries(ledger ?? {})) {
+    byPhone.set(key, entry)
+    const ref = entry.bookingRef?.toUpperCase()
+    if (ref && !byRef.has(ref)) byRef.set(ref, entry)
+  }
+
+  const serviceByRef = new Map(services?.map(s => [s.booking_ref, s]) ?? [])
+
+  /** Latest pre-tour row per booking, plus whether any call ever connected. */
+  const preTourByRef = new Map<string, (NonNullable<typeof schedules>)[number]>()
+  const connectedRefs = new Set<string>()
+  for (const s of schedules ?? []) {
+    if (CONNECTED_STATUSES.has((s.status ?? '').toLowerCase()) || s.conversation_id) {
+      connectedRefs.add(s.booking_ref)
+    }
+    if (!PRE_TOUR_PHASES.has((s.phase ?? '').toLowerCase())) continue
+    if (!preTourByRef.has(s.booking_ref)) preTourByRef.set(s.booking_ref, s)
+  }
+
+  for (const ref of refs) {
+    const service = serviceByRef.get(ref)
+    const phone = normalizePhone(service?.call_phone ?? service?.customer_phone) || null
+    const schedule = preTourByRef.get(ref)
+    // A written-up reconfirmation is the strongest proof of all: the call ran.
+    const connected = connectedRefs.has(ref) || calledRefs.has(ref)
+    const entry = (phone ? byPhone.get(phone) : undefined) ?? byRef.get(ref)
+
+    map.set(ref, {
+      registered: !!service,
+      phone,
+      approval: ledger === null ? 'unknown' : resolveApprovalState(entry, connected),
+      approvalRequestedAt: entry?.requestedAt ?? null,
+      approvedAt: entry?.approvedAt ?? null,
+      scheduledAt: isoStamp(schedule?.scheduled_at) || isoDate(schedule?.call_date) || null,
+      scheduleStatus: schedule?.status ?? null,
+      attempts: schedule?.attempts ?? 0,
+      completed: calledRefs.has(ref)
+        || CONNECTED_STATUSES.has((schedule?.status ?? '').toLowerCase()),
+    })
+  }
+
+  return { map, available: ledger !== null }
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export interface OpsDayOptions {
@@ -331,8 +490,12 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     },
   })
 
-  const { map: calls, available: callDataAvailable } = await loadPreTourCalls(
-    bookings.map(b => b.bookingRef),
+  const refs = bookings.map(b => b.bookingRef)
+  const { map: calls, available: callDataAvailable } = await loadPreTourCalls(refs)
+  // Needs the logged calls first: a written-up reconfirmation proves the number
+  // was approved, whatever the ledger has to say.
+  const { map: callState, available: approvalDataAvailable } = await loadCallState(
+    refs, new Set(calls.keys()),
   )
 
   const rows: OpsDayRow[] = bookings.map(b => {
@@ -385,6 +548,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       qc: readiness.qc,
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCall,
+      call: callState.get(b.bookingRef) ?? NO_CALL,
       ready: outstanding.length === 0,
       outstanding,
     }
@@ -421,6 +585,11 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       preTourCalled: rows.filter(r => !!r.preTourCall).length,
       neither: rows.filter(r => !r.clientConfirmed && !r.preTourCall).length,
     },
+    facets: countFacets(rows),
+    callApproval: rows.reduce((acc, r) => {
+      acc[r.call.approval] += 1
+      return acc
+    }, { approved: 0, pending: 0, not_requested: 0, unknown: 0 } as Record<CallApprovalState, number>),
     byCountry: Array.from(countryMap.values())
       .sort((a, b) => b.bookings - a.bookings || a.label.localeCompare(b.label)),
   }
@@ -438,6 +607,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     timezone,
     isToday: from === today && to === today,
     callDataAvailable,
+    approvalDataAvailable,
     summary,
     rows,
     truncated: bookings.length >= MAX_ROWS,

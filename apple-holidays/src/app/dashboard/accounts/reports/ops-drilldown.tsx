@@ -33,9 +33,13 @@ import type { OpsDayBoard, OpsDayRow } from '@/lib/reports/ops-day-data'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import {
   CountUp, ProgressRing, SegmentBar, StatePill, STATE_STYLE, FOCUS_META,
-  stateForFocus, textForFocus, detailForFocus, inFocus, qcTick,
+  ReconfirmFacetBar, stateForFocus, textForFocus, detailForFocus, inFocus,
+  callDetail, qcTick,
   type FocusKey,
 } from './ops-board-parts'
+import {
+  APPROVAL_LABEL, countFacets, matchesFacets, type ReconfirmFacet,
+} from '@/lib/reports/reconfirm-filters'
 
 // ─── Range presets ────────────────────────────────────────────────────────────
 
@@ -111,6 +115,7 @@ export default function OpsDrilldown({
   const [loading, setLoading] = useState(false)
   const [countries, setCountries] = useState<Set<string>>(new Set())
   const [states, setStates] = useState<Set<ReadinessState>>(new Set())
+  const [facets, setFacets] = useState<Set<ReconfirmFacet>>(new Set())
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortKey>('state')
   const [mounted, setMounted] = useState(false)
@@ -194,10 +199,13 @@ export default function OpsDrilldown({
     })
   }, [scoped, countries, search])
 
+  const facetCounts = useMemo(() => countFacets(preState), [preState])
+
   const rows = useMemo(() => {
-    const out = states.size
+    let out = states.size
       ? preState.filter(r => states.has(stateForFocus(focus, r)))
       : preState.slice()
+    if (facets.size) out = out.filter(r => matchesFacets(facets, r))
 
     return out.sort((a, b) => {
       if (sort === 'state') {
@@ -208,7 +216,7 @@ export default function OpsDrilldown({
       if (sort === 'pax') return b.pax - a.pax
       return a.arrivalDate.localeCompare(b.arrivalDate) || a.bookingRef.localeCompare(b.bookingRef)
     })
-  }, [preState, states, sort, focus])
+  }, [preState, states, facets, sort, focus])
 
   // ── Headline numbers ───────────────────────────────────────────────────────
 
@@ -269,6 +277,7 @@ export default function OpsDrilldown({
       'Status', 'Arrival', 'Departure', 'Days', 'Pax',
       `${meta.label} — State`, `${meta.label} — Detail`,
       'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
+      'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
       'Driver Allocation', 'Tickets', 'QC1', 'QC2', 'Outstanding',
     ]
     const lines = rows.map(r => [
@@ -279,6 +288,11 @@ export default function OpsDrilldown({
       r.clientConfirmed ? 'Yes' : 'No',
       r.preTourCall ? `Yes (${r.preTourCall.at})` : 'No',
       r.preTourCall?.outcome ?? '',
+      APPROVAL_LABEL[r.call.approval],
+      r.call.approvalRequestedAt?.slice(0, 10) ?? '',
+      r.call.approvedAt?.slice(0, 10) ?? '',
+      r.call.scheduledAt?.slice(0, 10) ?? '',
+      r.call.scheduleStatus ?? '',
       r.driver.short, r.tickets.short,
       qcTick(r, 1) === 'DONE' ? 'Pass' : 'Pending',
       qcTick(r, 2) === 'DONE' ? 'Pass' : 'Pending',
@@ -300,7 +314,16 @@ export default function OpsDrilldown({
     return a === from && b === to
   })?.key
 
-  const filtersOn = countries.size > 0 || states.size > 0 || search.trim().length > 0
+  const filtersOn = countries.size > 0 || states.size > 0 || facets.size > 0 || search.trim().length > 0
+
+  function toggleFacet(key: ReconfirmFacet) {
+    setFacets(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   if (!mounted) return null
 
@@ -478,7 +501,7 @@ export default function OpsDrilldown({
               </button>
               {filtersOn && (
                 <button
-                  onClick={() => { setCountries(new Set()); setStates(new Set()); setSearch('') }}
+                  onClick={() => { setCountries(new Set()); setStates(new Set()); setFacets(new Set()); setSearch('') }}
                   className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-200 transition-colors"
                 >
                   Clear
@@ -505,6 +528,19 @@ export default function OpsDrilldown({
                     <span>This range hit the row limit — narrow the dates for a complete picture.</span>
                   </div>
                 )}
+
+                {/* Reconfirmation chips — the same five questions as the board,
+                    asked across the whole range. */}
+                <div className="px-5 sm:px-7 pt-5">
+                  <ReconfirmFacetBar
+                    selected={facets}
+                    counts={facetCounts}
+                    total={preState.length}
+                    onToggle={toggleFacet}
+                    onClear={() => setFacets(new Set())}
+                    approvalUnavailable={board ? !board.approvalDataAvailable : false}
+                  />
+                </div>
 
                 {/* Timeline — only earns its space on a multi-day range. */}
                 {timeline.length > 1 && (
@@ -649,6 +685,12 @@ export default function OpsDrilldown({
 
                             <div className="pl-2.5 mt-1 text-[11px] text-slate-500">
                               {detailForFocus(focus, r)}
+                              {/* On the reconfirmation view the permission is
+                                  the missing half of the story — a guest who
+                                  never accepted cannot be called at all. */}
+                              {focus === 'reconfirm' && (
+                                <span className="ml-2 text-slate-400">· {callDetail(r)}</span>
+                              )}
                               {focus === 'reconfirm' && r.preTourCall?.requestedChange && (
                                 <span className="ml-2 text-amber-700 font-medium">
                                   Change asked: {r.preTourCall.requestedChange}

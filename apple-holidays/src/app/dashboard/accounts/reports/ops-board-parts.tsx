@@ -9,10 +9,14 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
-import { Check, Minus, AlertTriangle, Clock, Car, PhoneCall, Ticket, ShieldCheck, Users, PlaneLanding, PlaneTakeoff } from 'lucide-react'
+import { Check, Minus, AlertTriangle, Clock, Car, PhoneCall, Ticket, ShieldCheck, Users, PlaneLanding, PlaneTakeoff, MessageCircle } from 'lucide-react'
 import { cn, formatDate } from '@/lib/utils'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import type { OpsDayRow } from '@/lib/reports/ops-day-data'
+import {
+  APPROVAL_LABEL, FACET_GROUPS, RECONFIRM_FACETS,
+  type FacetGroup, type ReconfirmFacet,
+} from '@/lib/reports/reconfirm-filters'
 
 // ─── Shared vocabulary ────────────────────────────────────────────────────────
 
@@ -200,7 +204,7 @@ export function SegmentBar({
  * routing bug.
  */
 export type FocusKey =
-  | 'reconfirm' | 'driver' | 'tickets' | 'qc'
+  | 'reconfirm' | 'calls' | 'driver' | 'tickets' | 'qc'
   | 'onground' | 'arrivals' | 'departures'
 
 export const FOCUS_META: Record<FocusKey, {
@@ -211,6 +215,7 @@ export const FOCUS_META: Record<FocusKey, {
   kind: 'check' | 'movement'
 }> = {
   reconfirm:  { label: 'Reconfirmation',    hint: 'Client confirm or pre-tour call',        icon: PhoneCall,    kind: 'check' },
+  calls:      { label: 'Call Requests',     hint: 'WhatsApp permission to call the guest',  icon: MessageCircle, kind: 'check' },
   driver:     { label: 'Driver Allocation', hint: 'Every transfer has a driver or vendor',  icon: Car,          kind: 'check' },
   tickets:    { label: 'Tickets Issued',    hint: 'Every active ticket purchased or paid',  icon: Ticket,       kind: 'check' },
   qc:         { label: 'QC1 / QC2',         hint: 'Both quality rounds signed off',         icon: ShieldCheck,  kind: 'check' },
@@ -251,6 +256,56 @@ export function reconfirmDetail(r: OpsDayRow): string {
   ].join(' · ')
 }
 
+/**
+ * The WhatsApp call request, graded on the same four-state scale as every other
+ * check so one legend covers the whole board.
+ *
+ * `unknown` grades as N/A rather than pending: the ledger being unreadable is
+ * our problem, not the customer's, and colouring it red would send ops chasing
+ * guests who may well have accepted already.
+ */
+export function callState(r: OpsDayRow): ReadinessState {
+  switch (r.call.approval) {
+    case 'approved':      return 'DONE'
+    case 'pending':       return 'PARTIAL'
+    case 'not_requested': return 'PENDING'
+    default:              return 'NA'
+  }
+}
+
+export function callText(r: OpsDayRow): string {
+  return APPROVAL_LABEL[r.call.approval]
+}
+
+export function callDetail(r: OpsDayRow): string {
+  const c = r.call
+  const parts: string[] = []
+
+  if (c.approval === 'approved') {
+    parts.push(c.approvedAt
+      ? `Customer accepted the WhatsApp call request on ${formatDate(c.approvedAt.slice(0, 10))}`
+      : 'Customer has accepted automated WhatsApp calls')
+  } else if (c.approval === 'pending') {
+    parts.push(c.approvalRequestedAt
+      ? `Request sent ${formatDate(c.approvalRequestedAt.slice(0, 10))} — not accepted yet`
+      : 'Request sent — not accepted yet')
+  } else if (c.approval === 'not_requested') {
+    parts.push(c.registered
+      ? 'No WhatsApp call request has been sent — the bot cannot call this guest'
+      : 'Not registered for AI calls, and no WhatsApp request sent')
+  } else {
+    parts.push('Approval ledger unavailable — permission unknown')
+  }
+
+  if (c.completed) parts.push('reconfirmation call completed')
+  else if (c.scheduledAt) {
+    parts.push(`pre-tour call ${c.scheduleStatus ?? 'scheduled'} for ${formatDate(c.scheduledAt.slice(0, 10))}`
+      + (c.attempts > 0 ? ` after ${c.attempts} attempt${c.attempts === 1 ? '' : 's'}` : ''))
+  } else if (c.registered) parts.push('no pre-tour call scheduled')
+
+  return parts.join(' · ')
+}
+
 /** QC1 and QC2 are shown as two separate ticks; both come off the one stage. */
 export function qcTick(r: OpsDayRow, round: 1 | 2): ReadinessState {
   if (r.qc.stage === 'QC2') return 'DONE'
@@ -262,6 +317,7 @@ export function qcTick(r: OpsDayRow, round: 1 | 2): ReadinessState {
 export function stateForFocus(focus: FocusKey, r: OpsDayRow): ReadinessState {
   switch (focus) {
     case 'reconfirm': return reconfirmState(r)
+    case 'calls': return callState(r)
     case 'driver': return r.driver.state
     case 'tickets': return r.tickets.state
     case 'qc': return r.qc.state
@@ -273,6 +329,7 @@ export function stateForFocus(focus: FocusKey, r: OpsDayRow): ReadinessState {
 export function textForFocus(focus: FocusKey, r: OpsDayRow): string {
   switch (focus) {
     case 'reconfirm': return reconfirmText(r)
+    case 'calls': return callText(r)
     case 'driver': return r.driver.short
     case 'tickets': return r.tickets.short
     case 'qc': return r.qc.short
@@ -284,6 +341,7 @@ export function textForFocus(focus: FocusKey, r: OpsDayRow): string {
 export function detailForFocus(focus: FocusKey, r: OpsDayRow): string {
   switch (focus) {
     case 'reconfirm': return reconfirmDetail(r)
+    case 'calls': return callDetail(r)
     case 'driver': return r.driver.detail
     case 'tickets': return r.tickets.detail
     case 'qc': return r.qc.detail
@@ -296,6 +354,105 @@ export function inFocus(focus: FocusKey, r: OpsDayRow): boolean {
   if (focus === 'arrivals') return r.isArrival
   if (focus === 'departures') return r.isDeparture
   return true
+}
+
+// ─── Reconfirmation facet chips ───────────────────────────────────────────────
+
+const GROUP_LABEL: Record<FacetGroup, string> = {
+  client: 'Client confirm',
+  call: 'Reconfirm call',
+  approval: 'WhatsApp call request',
+}
+
+/**
+ * The reconfirmation filter bar.
+ *
+ * Five chips in three groups, each carrying the count it would leave behind, so
+ * the size of the job is visible before anyone clicks. Chips in one group OR
+ * together, groups AND — stated in the footnote rather than left to be guessed,
+ * because "Client not confirmed + Call request pending" is the combination ops
+ * came here for and it has to be obviously reachable.
+ *
+ * A count of zero still renders: an empty "Reconfirmation pending" chip is the
+ * good news, and hiding it would make the day look unmeasured instead of clear.
+ */
+export function ReconfirmFacetBar({
+  selected,
+  counts,
+  total,
+  onToggle,
+  onClear,
+  approvalUnavailable,
+}: {
+  selected: Set<ReconfirmFacet>
+  counts: Record<ReconfirmFacet, number>
+  total: number
+  onToggle: (key: ReconfirmFacet) => void
+  onClear: () => void
+  /** True when the approval ledger could not be read on this environment. */
+  approvalUnavailable?: boolean
+}) {
+  const reduce = useReducedMotion()
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white shadow-card p-3 sm:p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          <PhoneCall className="w-3.5 h-3.5" />
+          Reconfirmation
+        </span>
+
+        {FACET_GROUPS.map((group, gi) => (
+          <div key={group} className="flex flex-wrap items-center gap-1.5">
+            {gi > 0 && <span className="hidden sm:block w-px h-5 bg-slate-200 mr-1.5" />}
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-300 mr-0.5">
+              {GROUP_LABEL[group]}
+            </span>
+            {RECONFIRM_FACETS.filter(f => f.group === group).map(f => {
+              const on = selected.has(f.key)
+              const count = counts[f.key] ?? 0
+              const muted = group === 'approval' && approvalUnavailable
+              return (
+                <motion.button
+                  key={f.key}
+                  onClick={() => onToggle(f.key)}
+                  title={muted ? `${f.hint} — approval data unavailable here` : f.hint}
+                  aria-pressed={on}
+                  whileTap={reduce ? undefined : { scale: 0.96 }}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors',
+                    on ? f.chip : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
+                    muted && !on && 'opacity-50',
+                  )}
+                >
+                  <span className={cn('w-2 h-2 rounded-full', on ? f.dot : 'bg-slate-300')} />
+                  {f.label}
+                  <span className={cn('font-bold tabular-nums', on ? 'opacity-70' : 'text-slate-400')}>
+                    {count}
+                  </span>
+                </motion.button>
+              )
+            })}
+          </div>
+        ))}
+
+        {selected.size > 0 && (
+          <button
+            onClick={onClear}
+            className="ml-auto px-2.5 py-1 rounded-lg text-[11px] font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+          >
+            Clear reconfirmation
+          </button>
+        )}
+      </div>
+
+      <p className="mt-2 text-[10px] text-slate-400">
+        {selected.size === 0
+          ? `Counts are out of ${total} tour${total === 1 ? '' : 's'} in view. Pick chips to narrow the list.`
+          : 'Chips in the same group match either; different groups must all match.'}
+      </p>
+    </div>
+  )
 }
 
 export function StateLegend() {
