@@ -128,6 +128,7 @@ export async function PUT(req: NextRequest, { params }: { params: { ref: string 
     const why =
       view.standing.state === 'NA'   ? 'this is a Hotel Only booking — there is no tour to reconfirm with the guest'
       : view.standing.state === 'DONE' ? 'this booking is already reconfirmed'
+      : view.standing.state === 'PAST' ? 'the guest has already travelled — the deadline is closed'
       : `D-${RECONFIRM_DUE_DAYS} has not passed yet — it falls on ${view.standing.dueAt}`
     return buildApiError(`No reason is needed: ${why}`, 409)
   }

@@ -240,7 +240,10 @@ export interface ReconfirmStanding {
   daysToDue: number
   /** Days until the guest travels; negative once they have. */
   daysToArrival: number
-  /** Past the deadline with neither reconfirmation signal in. */
+  /**
+   * Past the deadline, the guest has not travelled yet, and neither
+   * reconfirmation signal is in — the state that is still worth chasing.
+   */
   breached: boolean
   /** An explanation is owed for this booking right now. */
   needsReason: boolean
@@ -250,8 +253,9 @@ export interface ReconfirmStanding {
  * Where one booking stands against its D-10 deadline.
  *
  * `needsReason` is the field everything else keys off: it is true only while the
- * deadline is genuinely missed, so a reason is never demanded for a file that is
- * either fine, not yet due, or out of scope.
+ * deadline is genuinely missed *and* there is still something to be done about
+ * it, so a reason is never demanded for a file that is fine, not yet due, out of
+ * scope, or already gone.
  */
 export function classifyReconfirm(input: ReconfirmStandingInput): ReconfirmStanding {
   const dueAt = reconfirmDueDate(input.arrivalDate)
@@ -264,6 +268,13 @@ export function classifyReconfirm(input: ReconfirmStandingInput): ReconfirmStand
   }
   if (input.clientConfirmed || input.preTourCalled) {
     return { ...base, state: 'DONE', breached: false, needsReason: false }
+  }
+  // The guest has already travelled. Nothing anyone does now reconfirms a tour
+  // that is under way, and holding the breach open would leave every on-ground
+  // booking permanently red on the operations board — a standing alarm nobody
+  // can silence is one nobody reads.
+  if (daysToArrival < 0) {
+    return { ...base, state: 'PAST', breached: false, needsReason: false }
   }
   if (daysToDue < 0) {
     return { ...base, state: 'BREACHED', breached: true, needsReason: true }

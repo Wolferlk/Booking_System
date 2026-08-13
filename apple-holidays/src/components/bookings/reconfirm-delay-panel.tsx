@@ -144,6 +144,9 @@ export default function ReconfirmDelayPanel({
   const headline = !s ? null
     : s.state === 'NA'   ? { text: 'Not applicable', tone: 'slate' as const }
     : s.state === 'DONE' ? { text: 'Reconfirmed', tone: 'emerald' as const }
+    // Travelled without ever being reconfirmed. Amber, not red: it is a failure,
+    // but a closed one — there is nothing left for anyone to do about it.
+    : s.state === 'PAST' ? { text: 'Travelled unreconfirmed', tone: 'amber' as const }
     : s.state === 'BREACHED'
       ? delay
         ? { text: `${Math.abs(s.daysToDue)}d late — reason on file`, tone: 'amber' as const }
@@ -247,6 +250,15 @@ export default function ReconfirmDelayPanel({
                   Hotel Only booking — accommodation and nothing else, so there is no tour to
                   reconfirm with the guest and the D-{RECONFIRM_DUE_DAYS} deadline does not apply.
                   The hotel itself is still reconfirmed on the Pre-checking queue.
+                </p>
+              )}
+
+              {s.state === 'PAST' && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  The guest has already travelled and this booking was never reconfirmed. The
+                  D-{RECONFIRM_DUE_DAYS} deadline is closed — nothing recorded now would change the
+                  trip, so no reason is asked for. Any reason recorded while it was still open is
+                  kept below as the record of what happened.
                 </p>
               )}
 
