@@ -17,6 +17,7 @@ import type { HotelConfirmStatus, HotelContactKind, HotelProfileSource, Prisma }
 import { prisma } from './prisma'
 import { normalizeHotelName } from './hotel-match'
 import { buildStayKey, daysBetween } from './precheck-shared'
+import { isOwnArrangement } from './own-arrangement'
 import { normalizePhone } from './hotel-contact'
 
 export interface Actor {
@@ -53,6 +54,7 @@ export async function ensureReconfirmation(stayKey: string, actor: Actor) {
         select: {
           id: true, hotel: true, city: true, checkIn: true, checkOut: true,
           nights: true, roomType: true, mealType: true, ownArrangement: true,
+          address: true, contact: true,
         },
       },
     },
@@ -87,7 +89,7 @@ export async function ensureReconfirmation(stayKey: string, actor: Actor) {
       adults: booking.paxAdults,
       children: booking.paxChildren,
       infants: booking.paxInfants,
-      status: accom.ownArrangement ? 'NOT_REQUIRED' : 'PENDING',
+      status: isOwnArrangement(accom) ? 'NOT_REQUIRED' : 'PENDING',
       createdBy: actorLabel(actor),
       updatedBy: actorLabel(actor),
     },

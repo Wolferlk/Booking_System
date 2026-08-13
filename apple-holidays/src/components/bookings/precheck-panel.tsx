@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import {
-  AlertTriangle, BedDouble, Car, ClipboardCheck, ExternalLink, Loader2, RefreshCw,
+  AlertTriangle, BedDouble, Car, CheckCircle2, ClipboardCheck, ExternalLink, Loader2, RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -72,6 +72,11 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
 
   const stats = data?.stats
   const hotelAction = (stats?.overdue ?? 0) + (stats?.dueToday ?? 0)
+  // A trip whose every stay is own arrangement has nothing to reconfirm, so it
+  // shows as complete instead of stalling at 0%.
+  const hotelPct = !stats || stats.required === 0
+    ? 100
+    : Math.round((stats.requiredDone / stats.required) * 100)
   const driverAction = (driverStats?.unassigned ?? 0) + (driverStats?.missed ?? 0) + (driverStats?.noPhone ?? 0)
   const needsAction = hotelAction + driverAction
 
@@ -112,6 +117,7 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
               active={tab === 'hotels'} onClick={() => setTab('hotels')}
               icon={BedDouble} label="Hotels"
               badge={hotelAction || null} tone="rose"
+              done={!!stats && hotelPct === 100}
               hint={`D-${RECONFIRM_LEAD_DAYS} reconfirmation`}
             />
             <TabButton
@@ -124,18 +130,22 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
         </CardHeader>
 
         <CardBody className={cn('space-y-3', tab !== 'hotels' && 'hidden')}>
-          {/* Progress strip */}
+          {/* Progress strip — own arrangements sit outside it, see hotelPct */}
           {stats && stats.total > 0 && (
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex-1 min-w-[10rem]">
                 <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 mb-1">
-                  <span>{stats.confirmed} of {stats.total} stays confirmed</span>
-                  <span className="tabular-nums">{Math.round((stats.confirmed / stats.total) * 100)}%</span>
+                  <span>
+                    {stats.required === 0
+                      ? 'All stays are own arrangement — nothing to reconfirm'
+                      : `${stats.requiredDone} of ${stats.required} stays confirmed`}
+                  </span>
+                  <span className="tabular-nums">{hotelPct}%</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
                   <div
                     className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-500"
-                    style={{ width: `${Math.round((stats.confirmed / stats.total) * 100)}%` }}
+                    style={{ width: `${hotelPct}%` }}
                   />
                 </div>
               </div>
@@ -144,6 +154,7 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
               {stats.issues > 0 && <Pill tone="rose">{stats.issues} issue{stats.issues > 1 ? 's' : ''}</Pill>}
               {stats.unmatched > 0 && <Pill tone="slate">{stats.unmatched} unmatched</Pill>}
               {stats.noContact > 0 && <Pill tone="rose">{stats.noContact} no contact</Pill>}
+              {stats.optional > 0 && <Pill tone="violet">{stats.optional} own arrangement</Pill>}
             </div>
           )}
 
@@ -204,7 +215,7 @@ export default function PrecheckPanel({ bookingRef }: { bookingRef: string }) {
 }
 
 function TabButton({
-  active, onClick, icon: Icon, label, badge, tone, hint,
+  active, onClick, icon: Icon, label, badge, tone, hint, done,
 }: {
   active: boolean
   onClick: () => void
@@ -213,6 +224,8 @@ function TabButton({
   badge: number | null
   tone: 'rose'
   hint: string
+  /** Everything required on this tab is settled — shown instead of a count. */
+  done?: boolean
 }) {
   return (
     <button
@@ -225,25 +238,28 @@ function TabButton({
     >
       <Icon className="w-3.5 h-3.5" />
       {label}
-      {badge != null && badge > 0 && (
+      {badge != null && badge > 0 ? (
         <span className={cn(
           'rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none',
           tone === 'rose' ? 'bg-rose-500 text-white' : 'bg-slate-200 text-slate-600',
         )}>
           {badge}
         </span>
-      )}
+      ) : done ? (
+        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+      ) : null}
     </button>
   )
 }
 
-function Pill({ children, tone }: { children: React.ReactNode; tone: 'rose' | 'amber' | 'slate' }) {
+function Pill({ children, tone }: { children: React.ReactNode; tone: 'rose' | 'amber' | 'slate' | 'violet' }) {
   return (
     <span className={cn(
       'rounded-md px-2 py-0.5 text-[10px] font-bold',
-      tone === 'rose'  ? 'bg-rose-50 text-rose-600 border border-rose-200' :
-      tone === 'amber' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                         'bg-slate-100 text-slate-500 border border-slate-200',
+      tone === 'rose'   ? 'bg-rose-50 text-rose-600 border border-rose-200' :
+      tone === 'amber'  ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+      tone === 'violet' ? 'bg-violet-50 text-violet-600 border border-violet-200' :
+                          'bg-slate-100 text-slate-500 border border-slate-200',
     )}>
       {children}
     </span>
