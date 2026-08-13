@@ -18,6 +18,7 @@ export type { DetailedPnl } from './render'
 export type { DetailPayload } from './types'
 export { syncTicketsFromDetailed, ticketSpecsFromDetailed, DETAILED_TAG_PREFIX } from './tickets'
 export { DETAILED_PNL_CSS } from './styles'
+export { fetchDetailedPnlAvailability, normaliseRef } from './db'
 
 export interface LoadedDetailedPnl {
   record: DetailedPnlRow

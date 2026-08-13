@@ -9,7 +9,9 @@ import {
   Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
   Download, ChevronDown, Table2,
   Cloud, FolderOpen, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
+  Hotel, Receipt,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
@@ -17,6 +19,7 @@ import Button from '@/components/ui/button'
 import { formatDate, formatDateTime, formatCurrency } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { isB2cBooking } from '@/lib/booking-source'
+import { HOTEL_ONLY_LABEL } from '@/lib/hotel-only'
 import Modal from '@/components/ui/modal'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
@@ -83,6 +86,17 @@ interface Booking {
   createdBy: { name: string; role: string }
   _count: { changeRequests: number }
   pnl: { id: string } | null
+  /**
+   * Hotel Only — accommodation and nothing else. See `src/lib/hotel-only.ts`.
+   */
+  hotelOnly?: boolean | null
+  hotelOnlyNote?: string | null
+  /**
+   * Does a Detailed P&L costing sheet exist for this booking in the Accounts
+   * database? `null` means the Accounts DB could not be read — "unknown", which
+   * the list shows as no icon rather than as a definite no.
+   */
+  hasDetailedPnl?: boolean | null
   guestFeedback: { submittedAt: string } | null
   tourAgenda: {
     id: string
@@ -204,6 +218,53 @@ function SortIcon({ field, sortBy, sortDir }: { field: SortField; sortBy: SortFi
     : <ArrowDown className="w-3 h-3 ml-1 text-brand-600 inline" />
 }
 
+/** Tone palettes for `FilterSwitch`, off-state first. */
+const SWITCH_TONE = {
+  amber: { on: 'bg-amber-50 text-amber-800 border-amber-300', track: 'bg-amber-500' },
+  teal:  { on: 'bg-teal-50 text-teal-800 border-teal-300',    track: 'bg-teal-500' },
+} as const
+
+/**
+ * A labelled on/off switch for a narrowing filter.
+ *
+ * Reads as a physical toggle rather than a chip, because that is what it is:
+ * flipping it changes the population of the list, and a chip would sit
+ * ambiguously among the dropdowns beside it. Off is deliberately quiet — the
+ * unfiltered list is the normal state and should not look filtered.
+ */
+function FilterSwitch({
+  on, onChange, icon, label, tone, title,
+}: {
+  on: boolean
+  onChange: (v: boolean) => void
+  icon: React.ReactNode
+  label: string
+  tone: keyof typeof SWITCH_TONE
+  title: string
+}) {
+  const t = SWITCH_TONE[tone]
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={() => onChange(!on)}
+      title={title}
+      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-semibold whitespace-nowrap transition-colors ${
+        on ? t.on : 'bg-white text-slate-500 border-slate-300 hover:border-slate-400'
+      }`}
+    >
+      {icon}
+      {label}
+      <span className={`relative w-7 h-4 rounded-full transition-colors ${on ? t.track : 'bg-slate-300'}`}>
+        <span
+          className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${on ? 'left-3.5' : 'left-0.5'}`}
+        />
+      </span>
+    </button>
+  )
+}
+
 function BookingsPageInner() {
   const { data: session } = useSession()
   const router = useRouter()
@@ -223,6 +284,12 @@ function BookingsPageInner() {
   const downloadMenuRef = useRef<HTMLDivElement>(null)
   const [status, setStatus]             = useState(searchParams.get('status') ?? '')
   const [source, setSource]             = useState(searchParams.get('source') ?? '')
+  // Two independent switches, each a plain on/off rather than a third dropdown:
+  // they answer "show me only X", not "which kind of X".
+  const [hotelOnlyFilter, setHotelOnlyFilter] = useState(searchParams.get('hotelOnly') === '1')
+  const [detailedPnlFilter, setDetailedPnlFilter] = useState(searchParams.get('detailedPnl') === '1')
+  /** False when the Accounts DB could not be reached on the last fetch. */
+  const [pnlChecked, setPnlChecked] = useState(true)
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
   // Date range and basis are seeded from the URL so a deep link — e.g. the one
   // OPS_AI builds for "arrivals on 1 July" — lands on an already-filtered list.
@@ -282,6 +349,8 @@ function BookingsPageInner() {
     if (contentSearch)                                  params.set('contentSearch', contentSearch)
     if (status)                                         params.set('status',        status)
     if (source)                                         params.set('source',        source)
+    if (hotelOnlyFilter)                                params.set('hotelOnly',     '1')
+    if (detailedPnlFilter)                              params.set('detailedPnl',   '1')
     if (dateFilter)                                     params.set('dateFilter',    dateFilter)
     if (dateFilter || dateFrom || dateTo)               params.set('dateField',     dateBasis)
     if (dateFrom)                                       params.set('dateFrom',      dateFrom)
@@ -300,11 +369,14 @@ function BookingsPageInner() {
       if (json.success) {
         setBookings(json.data.bookings)
         setTotal(json.data.total)
+        setPnlChecked(json.data.detailedPnlChecked !== false)
+      } else if (json.error) {
+        toast.error(json.error)
       }
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, source, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, page, limit])
+  }, [search, refSearch, contentSearch, status, source, hotelOnlyFilter, detailedPnlFilter, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, page, limit])
 
   // Card counts follow the scope filters only (country + channel) — never the
   // search box — so the row of numbers stays a steady operational readout.
@@ -532,6 +604,8 @@ function BookingsPageInner() {
     if (contentSearch)                            params.set('contentSearch', contentSearch)
     if (status)                                   params.set('status',        status)
     if (source)                                   params.set('source',        source)
+    if (hotelOnlyFilter)                          params.set('hotelOnly',     '1')
+    if (detailedPnlFilter)                        params.set('detailedPnl',   '1')
     if (dateFilter)                               params.set('dateFilter',    dateFilter)
     if (dateFilter || dateFrom || dateTo)         params.set('dateField',     dateBasis)
     if (dateFrom)                                 params.set('dateFrom',      dateFrom)
@@ -553,6 +627,8 @@ function BookingsPageInner() {
       if (contentSearch)                            params.set('contentSearch', contentSearch)
       if (status)                                   params.set('status',        status)
       if (source)                                   params.set('source',        source)
+      if (hotelOnlyFilter)                          params.set('hotelOnly',     '1')
+      if (detailedPnlFilter)                        params.set('detailedPnl',   '1')
       if (dateFilter)                               params.set('dateFilter',    dateFilter)
       if (dateFilter || dateFrom || dateTo)         params.set('dateField',     dateBasis)
       if (dateFrom)                                 params.set('dateFrom',      dateFrom)
@@ -756,6 +832,27 @@ function BookingsPageInner() {
               <option value="B2B">B2B — Agents</option>
               <option value="B2C">B2C — Aahaas</option>
             </select>
+
+            {/* Two narrowing switches. Deliberately toggles, not dropdown
+                entries: each answers "show me only these", and as options in the
+                status list they would have read as mutually exclusive with a
+                status, which they are not. */}
+            <FilterSwitch
+              on={hotelOnlyFilter}
+              onChange={v => { setHotelOnlyFilter(v); setPage(1) }}
+              icon={<Hotel className="w-3.5 h-3.5" />}
+              label={HOTEL_ONLY_LABEL}
+              tone="amber"
+              title="Show only accommodation-only bookings — no agenda, drivers, tickets, flights, client reconfirmation or QC"
+            />
+            <FilterSwitch
+              on={detailedPnlFilter}
+              onChange={v => { setDetailedPnlFilter(v); setPage(1) }}
+              icon={<Receipt className="w-3.5 h-3.5" />}
+              label="Detailed P&L"
+              tone="teal"
+              title="Show only bookings that have a Detailed P&L costing sheet in the Accounts system"
+            />
           </div>
 
           {/* Row 3 — Content / deep search (hotels, flights, agenda, itinerary) + Created date range */}
@@ -808,6 +905,20 @@ function BookingsPageInner() {
               )}
             </div>
           </div>
+
+          {/* Detailed P&L lives in another system. When it cannot be reached the
+              icons vanish, which would otherwise read as "no booking has a
+              costing sheet" — so it is said out loud instead. */}
+          {!pnlChecked && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                The Accounts database could not be reached, so Detailed P&amp;L
+                availability is unknown on this page — the missing icons do not mean
+                the costing sheets are missing.
+              </span>
+            </div>
+          )}
 
           {/* Row 4 — Date period pills + Sort controls */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
@@ -1116,7 +1227,14 @@ function BookingsPageInner() {
                         className={`cursor-pointer transition-colors ${
                           isCancelled
                             ? 'bg-slate-100/80 text-slate-400 opacity-80 grayscale hover:grayscale-0 hover:bg-red-50/70 border-l-4 border-l-red-500'
-                            : `hover:bg-slate-50 ${isSelected ? 'bg-red-50/60' : ''}`
+                            : isSelected
+                              ? 'bg-red-50/60 hover:bg-slate-50'
+                              // A left edge rather than a fill: the row must
+                              // still read normally, it is only a different
+                              // *kind* of booking, not a problem one.
+                              : b.hotelOnly
+                                ? 'border-l-4 border-l-amber-400 bg-amber-50/30 hover:bg-amber-50/60'
+                                : 'hover:bg-slate-50'
                         }`}
                         onClick={() => router.push(`/dashboard/bookings/${b.bookingRef}`)}
                       >
@@ -1155,6 +1273,32 @@ function BookingsPageInner() {
                                 title="Imported from the Aahaas B2C storefront"
                               >
                                 {SOURCE_BADGE.B2C.label}
+                              </span>
+                            )}
+                            {/* The special mark. First in the row after the
+                                cancelled flag, because it changes how every
+                                other column on the row should be read. */}
+                            {b.hotelOnly && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-800 border border-amber-300"
+                                title={b.hotelOnlyNote
+                                  ? `${HOTEL_ONLY_LABEL} booking — accommodation only; no agenda, drivers, tickets, flights, client reconfirmation or QC. ${b.hotelOnlyNote}`
+                                  : `${HOTEL_ONLY_LABEL} booking — accommodation only; no agenda, drivers, tickets, flights, client reconfirmation or QC`}
+                              >
+                                <Hotel className="w-2.5 h-2.5" /> {HOTEL_ONLY_LABEL}
+                              </span>
+                            )}
+                            {/* Only the positive case is marked. An absent icon
+                                means "no sheet, or we could not ask" — see
+                                `pnlChecked`; a red "missing" badge on every row
+                                would be noise, and wrong whenever the Accounts
+                                DB is down. */}
+                            {b.hasDetailedPnl === true && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200"
+                                title="A Detailed P&L costing sheet exists for this booking in the Accounts system"
+                              >
+                                <Receipt className="w-2.5 h-2.5" /> P&amp;L
                               </span>
                             )}
                             {b.isNumber && (
