@@ -85,6 +85,7 @@ export interface TicketApproval {
   paidReference: string | null
   paidAt: string | null
   purchasedAt: string | null
+  history: ApprovalHistoryEntry[]
 }
 
 interface ApprovalRow extends RowDataPacket {
@@ -111,13 +112,59 @@ interface ApprovalRow extends RowDataPacket {
   paid_reference: string | null
   paid_at: Date | string | null
   purchased_at: Date | string | null
+  // JSON on MySQL 8, LONGTEXT on MariaDB — see parseHistory().
+  history: unknown
 }
 
 const COLUMNS = `id, ops_ticket_id, status, urgency, urgent_reason, needed_by, request_note,
                  portal_id, portal_name, portal_ref, amount, currency,
                  submitted_by, submitted_at, submit_count,
                  decided_by, decided_at, decision_note,
-                 paid_amount, paid_currency, paid_reference, paid_at, purchased_at`
+                 paid_amount, paid_currency, paid_reference, paid_at, purchased_at, history`
+
+/** One line of the shared row's audit trail. */
+export interface ApprovalHistoryEntry {
+  at: string
+  by?: string | null
+  event: string
+  detail?: string | null
+}
+
+/**
+ * The trail as it stands, whatever the driver handed back.
+ *
+ * MariaDB stores JSON as LONGTEXT, so this comes back as a string on that
+ * server and as a parsed array on MySQL 8 — both are handled rather than one
+ * being assumed. A trail that cannot be parsed is treated as empty: losing the
+ * history of a request is bad, but refusing to submit it because of a bad old
+ * entry is worse.
+ */
+function parseHistory(value: unknown): ApprovalHistoryEntry[] {
+  if (!value) return []
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value
+    return Array.isArray(parsed) ? (parsed as ApprovalHistoryEntry[]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The trail with one entry added, as a string ready to store.
+ *
+ * Written whole rather than through JSON_ARRAY_APPEND(…, CAST(? AS JSON)):
+ * MariaDB has no JSON cast, so that form is a syntax error there. Reading and
+ * rewriting the array is a couple of hundred bytes and works on both servers.
+ *
+ * Bounded at 50 entries — a request that has bounced fifty times has its recent
+ * history read, never its first line. The same cap the Accounts side applies.
+ */
+function withHistory(existing: unknown, entry: ApprovalHistoryEntry): string {
+  const trail = parseHistory(existing)
+  trail.push(entry)
+
+  return JSON.stringify(trail.slice(-50))
+}
 
 function iso(value: Date | string | null): string | null {
   if (!value) return null
@@ -156,6 +203,7 @@ function toApproval(row: ApprovalRow): TicketApproval {
     paidReference: row.paid_reference,
     paidAt: iso(row.paid_at),
     purchasedAt: iso(row.purchased_at),
+    history: parseHistory(row.history),
   }
 }
 
@@ -367,12 +415,14 @@ export async function submitForApproval(
     : Number(ticket.totalCost)
   const travelDate = ticket.agendaDate ?? ticket.booking.arrivalDate ?? null
 
-  const history = JSON.stringify([{
+  // The whole trail, with this submission on the end. Built here rather than in
+  // SQL because MariaDB has no JSON cast to append through.
+  const history = withHistory(existing?.history, {
     at: new Date().toISOString(),
     by: actor,
     event: existing ? 'resubmitted' : 'submitted',
     detail: reason,
-  }])
+  })
 
   if (existing) {
     // Re-opening a rejected or withdrawn row. Every decision and payment column
@@ -388,7 +438,7 @@ export async function submitForApproval(
               decided_by = NULL, decided_at = NULL, decision_note = NULL,
               paid_amount = NULL, paid_currency = NULL, paid_reference = NULL,
               paid_method = NULL, paid_by = NULL, paid_at = NULL,
-              history = JSON_ARRAY_APPEND(COALESCE(history, JSON_ARRAY()), '$', CAST(? AS JSON)),
+              history = ?,
               updated_at = NOW()
         WHERE id = ?`,
       [
@@ -397,7 +447,7 @@ export async function submitForApproval(
         ticket.type, ticket.category, ticket.qty, amount, ticket.currency,
         travelDate, ticket.booking.clientName ?? null,
         actor,
-        JSON.stringify({ at: new Date().toISOString(), by: actor, event: 'resubmitted', detail: reason }),
+        history,
         existing.id,
       ],
     )
@@ -410,7 +460,7 @@ export async function submitForApproval(
           status, urgency, urgent_reason, needed_by, request_note,
           submitted_by, submitted_at, submit_count, history, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               'pending', ?, ?, ?, ?, ?, NOW(), 1, CAST(? AS JSON), NOW(), NOW())`,
+               'pending', ?, ?, ?, ?, ?, NOW(), 1, ?, NOW(), NOW())`,
       [
         ticket.id, ticket.booking.id, ticket.booking.bookingRef,
         ticket.booking.isNumber, ticket.booking.cntlNumber, country,
@@ -455,12 +505,10 @@ export async function withdrawApproval(ticketId: string, actor: string): Promise
 
   await accountsWrite(
     `UPDATE ticket_approvals
-        SET status = 'withdrawn',
-            history = JSON_ARRAY_APPEND(COALESCE(history, JSON_ARRAY()), '$', CAST(? AS JSON)),
-            updated_at = NOW()
+        SET status = 'withdrawn', history = ?, updated_at = NOW()
       WHERE id = ? AND status = 'pending'`,
     [
-      JSON.stringify({ at: new Date().toISOString(), by: actor, event: 'withdrawn' }),
+      withHistory(existing.history, { at: new Date().toISOString(), by: actor, event: 'withdrawn' }),
       existing.id,
     ],
   )
