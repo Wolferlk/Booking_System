@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import { resolvePortalSelection } from '@/lib/portals'
+import { syncApprovalMirror } from '@/lib/ticket-approvals'
 import type { UserRole, OperationCountry } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -47,6 +48,34 @@ export async function GET(req: NextRequest) {
     },
     orderBy: { createdAt: 'desc' },
   })
+
+  // Bring Accounts' answers across before the list is drawn, so an approval or
+  // a payment that landed a minute ago shows without anyone pressing anything.
+  // Only worth doing for tickets actually in the queue — and only when the list
+  // is small enough that a booking's worth of state costs one round trip. A
+  // country-wide list skips it and reads the mirror as it stands.
+  const inQueue = tickets.filter(t => t.approvalStatus === 'pending' || t.approvalStatus === 'approved')
+
+  if (inQueue.length && inQueue.length <= 60) {
+    const fresh = await syncApprovalMirror(inQueue.map(t => t.id))
+
+    for (const ticket of tickets) {
+      const a = fresh.get(ticket.id)
+      if (!a) continue
+
+      // The rows were read before the refresh; patch what moved rather than
+      // querying the whole list again.
+      Object.assign(ticket, {
+        approvalStatus:    a.status,
+        approvalUrgency:   a.urgency,
+        approvalDecidedBy: a.decidedBy,
+        approvalDecidedAt: a.decidedAt ? new Date(a.decidedAt) : null,
+        approvalNote:      a.decisionNote,
+        approvalPaidAt:    a.paidAt ? new Date(a.paidAt) : null,
+        approvalPaidRef:   a.paidReference,
+      })
+    }
+  }
 
   return buildApiSuccess(tickets)
 }

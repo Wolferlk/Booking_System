@@ -4,7 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { prisma } from '@/lib/prisma'
-import { loadDetailedPnl, isLoaded, missMessage, syncTicketsFromDetailed } from '@/lib/detailed-pnl'
+import {
+  loadDetailedPnl, isLoaded, missMessage, syncTicketsFromDetailed,
+  ALL_TICKET_CATEGORIES, type TicketSpec,
+} from '@/lib/detailed-pnl'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -22,6 +25,11 @@ export const dynamic = 'force-dynamic'
  * ?resync=true  — update existing DRAFT tickets from the sheet and create any
  *                 new ones. PURCHASED / PAID tickets are never modified.
  * (default)     — create tickets only for costing lines that have none yet.
+ * ?categories=  — comma-separated: HOTEL, TRANSPORT, TICKETS, OTHER. Left off,
+ *                 only attractions and other services are created (see
+ *                 DEFAULT_TICKET_CATEGORIES): those are what the ground team
+ *                 buys and Accounts approves. A booking that really does need a
+ *                 hotel or transport ticket asks for it here.
  *
  * Tickets created before this change carry a "PNL Item #<id>" tag and are left
  * exactly as they are: nothing is deleted or rewritten, so anything already
@@ -37,6 +45,13 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   if (!hasPermission(role, 'ticket:create')) return buildApiError('Forbidden', 403)
 
   const resync = req.nextUrl.searchParams.get('resync') === 'true'
+
+  // Anything unrecognised is dropped rather than refused: the caller asking for
+  // "MEALS" gets the default set, not an error page.
+  const categories = (req.nextUrl.searchParams.get('categories') ?? '')
+    .split(',')
+    .map(c => c.trim().toUpperCase())
+    .filter((c): c is TicketSpec['category'] => (ALL_TICKET_CATEGORIES as string[]).includes(c))
 
   const booking = await prisma.booking.findUnique({
     where: { bookingRef: params.ref },
@@ -63,18 +78,25 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   // end of JSON input" and said nothing about what actually went wrong.
   let sync
   try {
-    sync = await syncTicketsFromDetailed(booking.id, result.detail, { resync })
+    sync = await syncTicketsFromDetailed(booking.id, result.detail, { resync, categories })
   } catch (err) {
     console.error('[ext-pnl] Ticket sync failed for', params.ref, err)
     const detail = err instanceof Error ? err.message.split('\n').pop()?.trim() : null
     return buildApiError(`Could not write the tickets for this costing sheet.${detail ? ` ${detail}` : ''}`, 500)
   }
 
-  const { created, updated, skipped } = sync
+  const { created, updated, skipped, notRequested } = sync
+
+  // "6 lines were not asked for" is the honest end of the sentence when hotels
+  // and transport are left out by default — without it the count silently drops
+  // and reads as lines that went missing.
+  const rest = notRequested
+    ? `; ${notRequested} hotel/transport line${notRequested !== 1 ? 's' : ''} left out (ask for them by category if you need them)`
+    : ''
 
   const msg = resync
-    ? `Re-synced from the Detailed P&L: ${created} created, ${updated} updated, ${skipped} skipped`
-    : `${created} ticket${created !== 1 ? 's' : ''} created from the Detailed P&L, ${skipped} already existed`
+    ? `Re-synced from the Detailed P&L: ${created} created, ${updated} updated, ${skipped} skipped${rest}`
+    : `${created} ticket${created !== 1 ? 's' : ''} created from the Detailed P&L, ${skipped} already existed${rest}`
 
-  return buildApiSuccess({ created, updated, skipped }, msg)
+  return buildApiSuccess({ created, updated, skipped, notRequested }, msg)
 }

@@ -23,6 +23,7 @@ import Link from 'next/link'
 import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-picker'
 import PasteDropzone from '@/components/shared/paste-dropzone'
 import LogoSpinner from '@/components/shared/logo-spinner'
+import TicketApprovalPanel from '@/components/tickets/ticket-approval-panel'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,21 @@ interface Ticket {
   portalRef: string | null
   portalBy: string | null
   portalAt: string | null
+  // How far the request to Accounts has got. MY/SG/VN send an attraction
+  // ticket over *before* buying it, and cannot purchase until this reads
+  // "paid" — see TicketApprovalPanel and /api/tickets/[id]/approval. Null on
+  // a ticket that has never been submitted.
+  approvalStatus: string | null
+  approvalUrgency: string | null
+  approvalReason: string | null
+  approvalNeededBy: string | null
+  submittedBy: string | null
+  submittedAt: string | null
+  approvalDecidedBy: string | null
+  approvalDecidedAt: string | null
+  approvalNote: string | null
+  approvalPaidAt: string | null
+  approvalPaidRef: string | null
 }
 
 /** One row of the shared portal registry, as /api/portals returns it. */
@@ -327,6 +343,38 @@ export default function TicketsPage() {
   function portalRequired(t: Ticket | null | undefined): boolean {
     if (!t || !portalsInUse) return false
     return ['TICKETS', 'ATTRACTION'].includes(effectiveCat(t).toUpperCase())
+  }
+
+  /**
+   * Must Accounts approve *and pay for* this ticket before it can be bought?
+   *
+   * The same countries and the same categories as the portal rule, plus the
+   * "other" services that are also bought through a portal — kept in step with
+   * APPROVAL_REQUIRED_CATEGORIES in lib/ticket-approvals, which is what the
+   * server actually enforces. This copy only decides what the card offers.
+   */
+  function approvalRequired(t: Ticket | null | undefined): boolean {
+    if (!t || !portalsInUse) return false
+    return ['TICKETS', 'ATTRACTION', 'OTHER'].includes(effectiveCat(t).toUpperCase())
+  }
+
+  /**
+   * Why this ticket cannot be bought yet, or null.
+   *
+   * The server refuses the purchase either way (see the G4 guard in the
+   * purchase route); this is so the button says what is missing instead of
+   * being a dead end the user has to click to understand.
+   */
+  function purchaseBlockedBecause(t: Ticket): string | null {
+    if (!approvalRequired(t)) return null
+
+    switch (t.approvalStatus) {
+      case 'paid':      return null
+      case 'pending':   return 'Accounts has not answered your request yet'
+      case 'approved':  return 'Approved — waiting for Accounts to pay the portal'
+      case 'rejected':  return `Accounts sent this back${t.approvalNote ? `: ${t.approvalNote}` : ''}`
+      default:          return 'Send this to Accounts for approval first'
+    }
   }
 
   async function load() {
@@ -1324,6 +1372,16 @@ export default function TicketsPage() {
                                   : 'No portal recorded'}
                               </p>
                             )}
+
+                            {/* Ask Accounts before buying. They approve paying
+                                the portal above and send the money; the
+                                Purchase button opens only after that. */}
+                            <TicketApprovalPanel
+                              ticket={t}
+                              required={approvalRequired(t)}
+                              canSubmit={canPurchase}
+                              onChanged={load}
+                            />
                           </div>
                         )}
                       </div>
@@ -1350,16 +1408,26 @@ export default function TicketsPage() {
                           </button>
                         )}
 
-                        {canPurchase && t.status === 'DRAFT' && (
-                          <button
-                            onClick={() => openPurchase(t)}
-                            disabled={!payOk}
-                            title={!payOk ? 'Payment not confirmed by Accounts (G2)' : 'Purchase ticket'}
-                            className={`btn btn-sm ${payOk ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
-                          >
-                            <ShoppingCart className="w-3.5 h-3.5" /> Purchase
-                          </button>
-                        )}
+                        {canPurchase && t.status === 'DRAFT' && (() => {
+                          // Two gates, and the button says which one is shut:
+                          // the P&L payment (G2) and, on MY/SG/VN, Accounts
+                          // having approved and paid for the ticket (G4).
+                          const approvalBlock = purchaseBlockedBecause(t)
+                          const ok = payOk && !approvalBlock
+
+                          return (
+                            <button
+                              onClick={() => openPurchase(t)}
+                              disabled={!ok}
+                              title={!payOk
+                                ? 'Payment not confirmed by Accounts (G2)'
+                                : (approvalBlock || 'Purchase ticket')}
+                              className={`btn btn-sm ${ok ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
+                            >
+                              <ShoppingCart className="w-3.5 h-3.5" /> Purchase
+                            </button>
+                          )
+                        })()}
                         {canCreate && (
                           <button onClick={() => openEdit(t)} className="btn btn-secondary btn-sm" title="Edit">
                             <Pencil className="w-3.5 h-3.5" />

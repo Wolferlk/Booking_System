@@ -53,6 +53,11 @@ const config: Config = {
         'slide-up': 'slideUp 0.3s ease-out',
         'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
         'slide-in-right': 'slideInRight 0.25s cubic-bezier(0.32, 0.72, 0, 1)',
+        // Ticket approvals: a request that is blocking a purchase is the one
+        // thing on the tickets page allowed to move until somebody answers it.
+        'urgent-glow': 'urgentGlow 1.5s ease-in-out infinite',
+        'sheen': 'sheen 2.6s ease-in-out infinite',
+        'breathe': 'breathe 2s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -66,6 +71,18 @@ const config: Config = {
         slideInRight: {
           '0%': { transform: 'translateX(100%)' },
           '100%': { transform: 'translateX(0)' },
+        },
+        urgentGlow: {
+          '0%, 100%': { boxShadow: '0 2px 10px rgba(220,38,38,0.30)' },
+          '50%':      { boxShadow: '0 6px 24px rgba(220,38,38,0.62)' },
+        },
+        sheen: {
+          '0%':        { transform: 'translateX(-130%)' },
+          '55%, 100%': { transform: 'translateX(150%)' },
+        },
+        breathe: {
+          '0%, 100%': { opacity: '0.4', transform: 'scale(0.85)' },
+          '50%':      { opacity: '1',   transform: 'scale(1.15)' },
         },
       },
     },
