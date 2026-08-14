@@ -44,14 +44,18 @@ export async function GET(req: NextRequest) {
   })
 
   type Row = (typeof rows)[number]
-  const byPhone = new Map<string, { last: Row; unread: number; displayName: string | null }>()
+  const byPhone = new Map<string, { last: Row; unread: number; displayName: string | null; ref: string | null }>()
 
   for (const row of rows) {
     let entry = byPhone.get(row.phone)
     if (!entry) {
-      entry = { last: row, unread: 0, displayName: null }
+      entry = { last: row, unread: 0, displayName: null, ref: null }
       byPhone.set(row.phone, entry)
     }
+    // Newest-first scan: keep the most recent real bookingRef this number's
+    // messages were filed under, as a fallback for numbers that don't match any
+    // booking's stored contact (a second line staff messaged the booking from).
+    if (!entry.ref && row.bookingRef && !row.bookingRef.startsWith('UNKNOWN:')) entry.ref = row.bookingRef
     if (row.direction === 'inbound' && !row.read) entry.unread += 1
     if (!entry.displayName && row.direction === 'inbound' && row.senderName) entry.displayName = row.senderName
   }
@@ -64,8 +68,18 @@ export async function GET(req: NextRequest) {
     })
     .sort((a, b) => new Date(b[1].last.createdAt).getTime() - new Date(a[1].last.createdAt).getTime())
 
+  // One batched lookup for the bookingRef fallbacks above.
+  const fallbackRefs = Array.from(new Set(conversations.map(([, e]) => e.ref).filter((r): r is string => !!r)))
+  const fallbackBookings = fallbackRefs.length
+    ? await prisma.booking.findMany({
+        where:  { bookingRef: { in: fallbackRefs } },
+        select: { bookingRef: true, status: true, operationCountry: true },
+      })
+    : []
+  const bookingByRef = new Map(fallbackBookings.map(b => [b.bookingRef, b]))
+
   const results = await Promise.all(conversations.map(async ([phone, entry]) => {
-    const booking = await findBookingByPhone(phone)
+    const booking = (await findBookingByPhone(phone)) ?? (entry.ref ? bookingByRef.get(entry.ref) ?? null : null)
     const { last } = entry
     return {
       phone,

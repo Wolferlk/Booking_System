@@ -43,7 +43,56 @@ export async function GET(req: NextRequest) {
 
   const windowOpen = await isWithin24hWindow(phone)
 
-  const bookingRow = await findBookingByPhone(phone)
+  // Which booking(s) is this number's history filed under? Staff often message a
+  // booking from a second number (an agent's line, a number typed by hand in the
+  // booking panel), so the guest-contact lookup alone can miss the thread that
+  // actually carries the replies — and the booking-scoped mini chat, which keys
+  // on bookingRef, then shows messages this phone-keyed view never had.
+  const refs = Array.from(new Set(
+    messages.map(m => m.bookingRef).filter(ref => ref && !ref.startsWith('UNKNOWN:')),
+  ))
+
+  // Resolve by phone first (live, authoritative); fall back to whatever ref this
+  // thread's own messages were filed under, so a second number still shows the
+  // linked-booking card instead of nothing.
+  const bookingRow =
+    (await findBookingByPhone(phone)) ??
+    (refs.length ? await prisma.booking.findUnique({ where: { bookingRef: refs[0] } }) : null)
+
+  // Sibling threads: other numbers carrying messages for the same booking(s).
+  let relatedThreads: {
+    phone: string
+    bookingRef: string
+    displayName: string | null
+    messageCount: number
+    lastAt: Date
+  }[] = []
+  if (refs.length) {
+    const siblings = await prisma.whatsAppMessage.findMany({
+      where:   { bookingRef: { in: refs }, phone: { not: phone } },
+      orderBy: { createdAt: 'asc' },
+      select:  { phone: true, bookingRef: true, senderName: true, direction: true, createdAt: true },
+    })
+    const grouped = new Map<string, (typeof relatedThreads)[number]>()
+    for (const row of siblings) {
+      const entry = grouped.get(row.phone)
+      if (!entry) {
+        grouped.set(row.phone, {
+          phone:        row.phone,
+          bookingRef:   row.bookingRef,
+          displayName:  row.direction === 'inbound' ? row.senderName : null,
+          messageCount: 1,
+          lastAt:       row.createdAt,
+        })
+        continue
+      }
+      entry.messageCount += 1
+      entry.lastAt = row.createdAt
+      if (!entry.displayName && row.direction === 'inbound' && row.senderName) entry.displayName = row.senderName
+    }
+    relatedThreads = Array.from(grouped.values()).sort((a, b) => b.lastAt.getTime() - a.lastAt.getTime())
+  }
+
   let booking = null
   if (bookingRow) {
     const lead = await prisma.passenger.findFirst({
@@ -59,5 +108,5 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return buildApiSuccess({ messages, booking, windowOpen })
+  return buildApiSuccess({ messages, booking, windowOpen, relatedThreads })
 }

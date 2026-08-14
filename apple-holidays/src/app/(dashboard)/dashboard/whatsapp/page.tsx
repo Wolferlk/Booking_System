@@ -47,6 +47,21 @@ interface ThreadBooking extends ConversationBooking {
   departureDate: string
 }
 
+/**
+ * Another number carrying messages for the same booking as the open thread.
+ * These exist whenever staff messaged a booking from a second line (an agent's
+ * number, or one typed by hand in the booking panel) — the booking page's mini
+ * chat lumps them all together because it keys on bookingRef, so without this
+ * the phone-keyed inbox looks stale next to it.
+ */
+interface RelatedThread {
+  phone: string
+  bookingRef: string
+  displayName: string | null
+  messageCount: number
+  lastAt: string
+}
+
 interface WaTemplate {
   name: string
   language: string
@@ -127,6 +142,7 @@ function WhatsAppInboxInner() {
 
   const [messages, setMessages] = useState<WaMessage[]>([])
   const [threadBooking, setThreadBooking] = useState<ThreadBooking | null>(null)
+  const [relatedThreads, setRelatedThreads] = useState<RelatedThread[]>([])
   const [threadLoading, setThreadLoading] = useState(false)
   const [windowOpen, setWindowOpen] = useState<boolean | null>(null)
 
@@ -194,6 +210,7 @@ function WhatsAppInboxInner() {
         setMessages(res.data.messages)
         setThreadBooking(res.data.booking)
         setWindowOpen(res.data.windowOpen)
+        setRelatedThreads(res.data.relatedThreads ?? [])
       }
     } catch {
       if (opts.showLoader) toast.error("Couldn't load this conversation")
@@ -206,6 +223,7 @@ function WhatsAppInboxInner() {
     setSelected(phone)
     setMessages([])
     setThreadBooking(null)
+    setRelatedThreads([])
     setWindowOpen(null)
     setDraft('')
     setAttachment(null)
@@ -657,6 +675,36 @@ function WhatsAppInboxInner() {
               ) : (
                 <div className="mt-3 rounded-xl border border-dashed border-slate-200 px-3.5 py-2 text-[12px] text-slate-400">
                   No booking linked to this number yet.
+                </div>
+              )}
+
+              {/* Other numbers on the same booking. Without this the thread looks
+                  stale next to the booking page's mini chat, which merges every
+                  number filed under the bookingRef into one stream. */}
+              {relatedThreads.length > 0 && (
+                <div className="mt-2.5 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2.5">
+                  <p className="text-[11.5px] font-bold text-amber-800">
+                    {relatedThreads.length === 1 ? 'Another number' : `${relatedThreads.length} other numbers`} on this booking
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-amber-700/80">
+                    Messages sent to these numbers are part of the same booking but live in their own thread — the booking page&apos;s chat shows them all together.
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {relatedThreads.map(rt => (
+                      <button
+                        key={rt.phone}
+                        onClick={() => openConversation(rt.phone)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-2.5 py-1.5 text-[11.5px] font-semibold text-amber-800 transition hover:bg-amber-100"
+                        title={`Open the thread with +${rt.phone}`}
+                      >
+                        <MessageCircle className="h-3 w-3" />
+                        {rt.displayName ? `${rt.displayName} · ` : ''}+{rt.phone}
+                        <span className="font-normal text-amber-600">
+                          ({rt.messageCount} msg · {fmtDate(rt.lastAt)})
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
