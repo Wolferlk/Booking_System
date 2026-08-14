@@ -277,6 +277,155 @@ function toAlert(b: CandidateBooking, standing: LastMinuteStanding): LastMinuteA
   }
 }
 
+// ─── The board ────────────────────────────────────────────────────────────────
+
+/**
+ * How far either side of today the header board looks.
+ *
+ * Behind: a file that landed yesterday is still the one the desk is firefighting
+ * this morning, so it stays on the board for a few days rather than vanishing at
+ * midnight. Ahead: far enough to cover every late file anybody could have sold,
+ * which is a short list by definition — nothing sold inside D-4 can arrive in
+ * two months' time.
+ */
+export const BOARD_PAST_DAYS = 3
+export const BOARD_FUTURE_DAYS = 45
+
+/** Most rows the board will hand the browser. Far above any real week's total. */
+const MAX_BOARD = 200
+
+/** One late booking as the header board shows it — the alert, plus who took it. */
+export interface LastMinuteBoardRow extends LastMinuteAlert {
+  /** Somebody has picked this file up. */
+  acknowledged: boolean
+  acknowledgedBy: string | null
+  /** ISO. */
+  acknowledgedAt: string | null
+  acknowledgedNote: string | null
+  /** True when the guest has already landed — history, not work. */
+  arrived: boolean
+}
+
+export interface LastMinuteBoard {
+  rows: LastMinuteBoardRow[]
+  /** Counts the panel prints without re-deriving them in the browser. */
+  summary: {
+    total: number
+    outstanding: number
+    acknowledged: number
+    critical: number
+    arrivingToday: number
+    arrived: number
+  }
+  truncated: boolean
+  acksReadable: boolean
+  today: string
+  window: { from: string; to: string }
+}
+
+/**
+ * Every last-minute booking around today, acknowledged or not.
+ *
+ * This is the *browsable* half of the D-4 rule, and it exists because the alarm
+ * deliberately disappears the moment somebody accepts a file: an operator who
+ * wants to ask "what came in late this week, and who has it?" had nowhere to
+ * look. Same rule, same tiers, same country scoping as the alarm — the only
+ * difference is that nothing is filtered out for having been acknowledged.
+ */
+export async function listLastMinuteBoard(viewer: LastMinuteViewer): Promise<LastMinuteBoard> {
+  const today = dateInTz(new Date(), LAST_MINUTE_TZ)
+  const todayStart = new Date(`${today}T00:00:00.000Z`)
+  const from = new Date(todayStart.getTime() - BOARD_PAST_DAYS * DAY_MS)
+  const to   = new Date(todayStart.getTime() + BOARD_FUTURE_DAYS * DAY_MS)
+
+  const empty: LastMinuteBoard = {
+    rows: [],
+    summary: { total: 0, outstanding: 0, acknowledged: 0, critical: 0, arrivingToday: 0, arrived: 0 },
+    truncated: false,
+    acksReadable: true,
+    today,
+    window: { from: arrivalDateKey(from), to: arrivalDateKey(to) },
+  }
+  if (viewer.role === 'CLIENT') return empty
+
+  // Same trick as the feed: a last-minute booking cannot have been created more
+  // than four days before the earliest arrival we are looking at, so the created
+  // floor bounds the scan. One spare day for the UTC/Colombo offset.
+  const createdFloor = new Date(from.getTime() - (LAST_MINUTE_DAYS + 1) * DAY_MS)
+
+  const where: Prisma.BookingWhereInput = {
+    arrivalDate: { gte: from, lte: to },
+    createdAt: { gte: createdFloor },
+  }
+
+  if (!canSeeAllCountries(viewer.role, viewer.country as OperationCountry)) {
+    const scope = userCountryScope(viewer.country, viewer.countries)
+    if (scope) where.operationCountry = { in: scope }
+  }
+
+  const candidates = await prisma.booking.findMany({
+    where,
+    orderBy: { arrivalDate: 'asc' },
+    take: MAX_BOARD * 4,
+    select: {
+      bookingRef: true, agent: true, fileHandler: true, status: true,
+      operationCountry: true, arrivalDate: true, departureDate: true, createdAt: true,
+      paxAdults: true, paxChildren: true, paxInfants: true,
+      createdBy: { select: { name: true } },
+      passengers: { where: { isLead: true }, take: 1, select: { name: true } },
+    },
+  })
+
+  // Cancelled files stay on the board — "it was sold late and then cancelled" is
+  // part of the picture an operator is looking for — but they are never alarmed
+  // about, which `classifyLastMinute` already handles.
+  const late = candidates
+    .map(b => ({ booking: b, standing: classifyLastMinute({
+      createdAt: b.createdAt,
+      arrivalDate: b.arrivalDate,
+      today,
+      status: b.status,
+      timeZone: LAST_MINUTE_TZ,
+    }) }))
+    .filter(x => x.standing.lastMinute)
+
+  const acks = await readAcks(late.map(x => x.booking.bookingRef))
+
+  const rows: LastMinuteBoardRow[] = late.slice(0, MAX_BOARD).map(({ booking, standing }) => {
+    const ack = acks?.get(booking.bookingRef)
+    const covered = Boolean(ack && ackStillCovers(ack, booking.arrivalDate))
+    return {
+      ...toAlert(booking, standing),
+      acknowledged: covered,
+      acknowledgedBy: covered ? ack?.acknowledgedBy ?? null : null,
+      acknowledgedAt: covered ? ack?.acknowledgedAt.toISOString() ?? null : null,
+      acknowledgedNote: covered ? ack?.note ?? null : null,
+      arrived: standing.daysToArrival < 0,
+    }
+  })
+
+  // Nearest arrival first, and inside a day the latest sale first — that is the
+  // order the desk reads them in.
+  rows.sort((a, b) =>
+    a.arrivalDate.localeCompare(b.arrivalDate) || a.leadDays - b.leadDays)
+
+  return {
+    rows,
+    summary: {
+      total: rows.length,
+      outstanding: rows.filter(r => !r.acknowledged && !r.arrived).length,
+      acknowledged: rows.filter(r => r.acknowledged).length,
+      critical: rows.filter(r => r.tier === 'CRITICAL' && !r.arrived).length,
+      arrivingToday: rows.filter(r => r.daysToArrival === 0).length,
+      arrived: rows.filter(r => r.arrived).length,
+    },
+    truncated: late.length > MAX_BOARD,
+    acksReadable: acks !== null,
+    today,
+    window: { from: arrivalDateKey(from), to: arrivalDateKey(to) },
+  }
+}
+
 // ─── Acknowledging ────────────────────────────────────────────────────────────
 
 export interface AcknowledgeActor {
