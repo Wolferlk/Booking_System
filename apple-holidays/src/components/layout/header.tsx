@@ -7,6 +7,7 @@ import { getInitials } from '@/lib/utils'
 import { useSidebar } from '@/hooks/use-sidebar'
 import NotificationsBell from '@/components/layout/notifications-bell'
 import LastMinuteAlert from '@/components/layout/last-minute-alert'
+import LastMinutePanel from '@/components/layout/last-minute-panel'
 import type { UserRole } from '@prisma/client'
 
 interface HeaderProps {
@@ -46,6 +47,11 @@ export default function Header({ title, subtitle, actions }: HeaderProps) {
               own chip only when there is something outstanding, and carries the
               recurring alarm dialog with it. */}
           <LastMinuteAlert />
+
+          {/* The permanent way in to the same D-4 rule. The chip above vanishes
+              the moment everything is acknowledged — this icon does not, so the
+              week's late files stay reachable after the alarm has been answered. */}
+          <LastMinutePanel />
 
           {/* Live traveller-experience alerts (complaints raised on AI calls) */}
           <NotificationsBell />
