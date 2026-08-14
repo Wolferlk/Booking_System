@@ -85,19 +85,28 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
 }
 
 /**
- * The one table this app is allowed to write in the Accounts database:
- * `payment_portals`, the shared list of places a ticket can be bought.
+ * The only tables this app may write in the Accounts database:
  *
- * That list is managed from both systems on purpose — Ground adds a portal the
- * moment it starts buying through one, and Accounts pays whatever Ground
- * recorded — so it lives in one table rather than two that drift. Everything
- * else over there stays read-only, and this guard is what keeps that true: the
- * connection is a privileged one, so the restriction cannot be left to whoever
- * writes the next query.
+ *   payment_portals    the shared list of places a ticket can be bought.
+ *                      Managed from both systems on purpose — Ground adds a
+ *                      portal the moment it starts buying through one, and
+ *                      Accounts pays whatever Ground recorded.
  *
- * @throws if the statement touches anything but payment_portals.
+ *   ticket_approvals   the request to buy one ticket. Ground raises it here
+ *                      (src/lib/ticket-approvals.ts) and Accounts answers it on
+ *                      Payable 1.0; the ticket cannot be purchased until the
+ *                      answer comes back "paid". Ground only ever writes its
+ *                      own half of the row — see the column guard in
+ *                      ticket-approvals.ts — never the decision or the payment.
+ *
+ * Everything else over there stays read-only, and this guard is what keeps that
+ * true: the connection is a privileged one, so the restriction cannot be left
+ * to whoever writes the next query.
+ *
+ * @throws if the statement touches any other table.
  */
-const WRITABLE_TABLE = /^\s*(insert\s+into|update|delete\s+from)\s+`?payment_portals`?\b/i
+const WRITABLE_TABLE =
+  /^\s*(insert\s+into|update|delete\s+from)\s+`?(payment_portals|ticket_approvals)`?\b/i
 
 export async function accountsWrite(
   sql: string,
@@ -105,7 +114,8 @@ export async function accountsWrite(
 ): Promise<{ affectedRows: number; insertId: number }> {
   if (!WRITABLE_TABLE.test(sql)) {
     throw new Error(
-      'Refused: this app may only write to `payment_portals` in the Accounts database.',
+      'Refused: this app may only write to `payment_portals` and `ticket_approvals` '
+      + 'in the Accounts database.',
     )
   }
 

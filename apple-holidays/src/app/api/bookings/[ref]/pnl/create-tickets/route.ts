@@ -24,6 +24,22 @@ const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
 }
 
 /**
+ * Categories left out unless the caller asks for them by name.
+ *
+ * A ticket is a thing the ground team goes and buys, and on MY/SG/VN one that
+ * Accounts approves and pays a portal for first. Hotels and transport are
+ * neither: Accounts settles those with the supplier directly on the payables
+ * board, and a voucher per stay and per transfer leg only buried the
+ * attractions that do need buying.
+ *
+ * Same rule as the Detailed P&L's DEFAULT_TICKET_CATEGORIES, deliberately —
+ * the two entry points must not disagree about what a ticket is for. Existing
+ * hotel and transport tickets are untouched: this decides what is made, never
+ * what is removed.
+ */
+const OPT_IN_CATEGORIES: PNLCategory[] = ['HOTEL', 'TRANSPORT']
+
+/**
  * POST /api/bookings/[ref]/pnl/create-tickets
  *
  * Creates DRAFT tickets from the **booking system's own** P&L line items — the
@@ -71,9 +87,24 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   })
   const taken = new Set(existing.map(t => t.pnlLineId))
 
-  const missing = pnl.lineItems.filter(
-    l => TICKETABLE_CATEGORIES[l.category] && !taken.has(l.id),
+  // ?categories=HOTEL,TRANSPORT brings the opt-in ones back for a booking that
+  // genuinely needs them. Anything unrecognised is ignored rather than refused.
+  const asked = new Set(
+    (req.nextUrl.searchParams.get('categories') ?? '')
+      .split(',')
+      .map(c => c.trim().toUpperCase())
+      .filter(c => (OPT_IN_CATEGORIES as string[]).includes(c)),
   )
+
+  const wanted = (category: PNLCategory) =>
+    Boolean(TICKETABLE_CATEGORIES[category])
+    && (!OPT_IN_CATEGORIES.includes(category) || asked.has(category))
+
+  const missing = pnl.lineItems.filter(l => wanted(l.category) && !taken.has(l.id))
+
+  const notRequested = pnl.lineItems.filter(
+    l => TICKETABLE_CATEGORIES[l.category] && !wanted(l.category) && !taken.has(l.id),
+  ).length
 
   if (missing.length > 0) {
     await prisma.ticket.createMany({
@@ -98,10 +129,14 @@ export async function POST(req: NextRequest, { params }: { params: { ref: string
   const created = missing.length
   const skipped = pnl.lineItems.length - created
 
+  const rest = notRequested
+    ? `; ${notRequested} hotel/transport line${notRequested !== 1 ? 's' : ''} left out by default`
+    : ''
+
   return buildApiSuccess(
-    { created, skipped },
+    { created, skipped, notRequested },
     created > 0
-      ? `${created} ticket${created !== 1 ? 's' : ''} created from the uploaded P&L, ${skipped} skipped`
-      : 'Every P&L line already has a ticket',
+      ? `${created} ticket${created !== 1 ? 's' : ''} created from the uploaded P&L, ${skipped} skipped${rest}`
+      : `No new tickets to create${rest || ' — every P&L line already has one'}`,
   )
 }

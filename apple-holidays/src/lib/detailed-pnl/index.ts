@@ -16,7 +16,11 @@ import type { DetailPayload } from './types'
 
 export type { DetailedPnl } from './render'
 export type { DetailPayload } from './types'
-export { syncTicketsFromDetailed, ticketSpecsFromDetailed, DETAILED_TAG_PREFIX } from './tickets'
+export {
+  syncTicketsFromDetailed, ticketSpecsFromDetailed, DETAILED_TAG_PREFIX,
+  DEFAULT_TICKET_CATEGORIES, ALL_TICKET_CATEGORIES,
+} from './tickets'
+export type { TicketSpec, SyncResult } from './tickets'
 export { DETAILED_PNL_CSS } from './styles'
 export { fetchDetailedPnlAvailability, normaliseRef } from './db'
 

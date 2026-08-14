@@ -71,6 +71,21 @@ const TICKETABLE_CATEGORIES: Partial<Record<PNLCategory, string>> = {
   OTHER:          'Service',
 }
 
+/**
+ * Categories that no longer auto-create a ticket on save.
+ *
+ * A ticket is something the ground team goes out and buys — and on MY/SG/VN
+ * something Accounts approves and pays a portal for before they can. Hotels and
+ * transport are settled with the supplier directly on the payables board, so a
+ * voucher per stay and per transfer leg was work nobody actioned and noise that
+ * buried the attractions that do need buying.
+ *
+ * They are still creatable on demand: POST ./create-tickets?categories=HOTEL,
+ * TRANSPORT. Tickets that already exist are untouched — this decides what is
+ * made, never what is removed.
+ */
+const OPT_IN_CATEGORIES: PNLCategory[] = ['HOTEL', 'TRANSPORT']
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { ref: string } },
@@ -177,12 +192,25 @@ export async function POST(
   )
 
   // Auto-create inactive tickets for ticketable categories
-  // Delete stale auto-generated (not yet activated) tickets first
+  // Delete stale auto-generated (not yet activated) tickets first — except any
+  // that are already in front of Accounts. An un-activated ticket can still
+  // have been submitted for approval, and dropping it here would leave Accounts
+  // deciding on (or having paid for) a ticket that no longer exists on this
+  // side. Those are left in place and simply re-costed by the ground team.
   await prisma.ticket.deleteMany({
-    where: { bookingId: booking.id, activated: false },
+    where: {
+      bookingId: booking.id,
+      activated: false,
+      OR: [
+        { approvalStatus: null },
+        { approvalStatus: { in: ['rejected', 'withdrawn', 'cancelled'] } },
+      ],
+    },
   })
 
-  const ticketableLines = createdLines.filter(l => TICKETABLE_CATEGORIES[l.category as PNLCategory])
+  const ticketableLines = createdLines.filter(
+    l => TICKETABLE_CATEGORIES[l.category as PNLCategory] && !OPT_IN_CATEGORIES.includes(l.category as PNLCategory),
+  )
   if (ticketableLines.length > 0) {
     await prisma.ticket.createMany({
       data: ticketableLines.map(l => ({

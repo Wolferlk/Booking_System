@@ -404,6 +404,28 @@ model Ticket {
   portalRef     String?
   portalBy      String?
   portalAt      DateTime?
+  // The Accounts approval this ticket is waiting on, mirrored.
+  //
+  // MY/SG/VN tickets are submitted to Accounts *before* they are bought: the
+  // portal above says where we intend to buy, and this says how far that
+  // request has got. The request itself lives in `ticket_approvals` in the
+  // Accounts database (src/lib/ticket-approvals.ts) — these columns are a copy
+  // kept so the tickets list can filter and colour by state without a
+  // cross-database query per row, and are refreshed from there, never the
+  // other way round. NULL approvalStatus = never submitted.
+  approvalStatus    String?
+  approvalId        Int?
+  approvalUrgency   String?
+  approvalReason    String?
+  approvalNeededBy  DateTime?
+  submittedBy       String?
+  submittedAt       DateTime?
+  approvalDecidedBy String?
+  approvalDecidedAt DateTime?
+  approvalNote      String?      @db.Text
+  approvalPaidAt    DateTime?
+  approvalPaidRef   String?
+  approvalSyncedAt  DateTime?
   agendaItem    AgendaItem?  @relation(fields: [agendaItemId], references: [id])
   booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   pnlLine       PNLLineItem? @relation(fields: [pnlLineId], references: [id])
@@ -412,6 +434,7 @@ model Ticket {
   @@index([bookingId], map: "tickets_bookingId_fkey")
   @@index([pnlLineId], map: "tickets_pnlLineId_fkey")
   @@index([portalName], map: "tickets_portalName_idx")
+  @@index([approvalStatus], map: "tickets_approvalStatus_idx")
   @@map("tickets")
 }
 

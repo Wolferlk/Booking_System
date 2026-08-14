@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { portalPurchaseBlocker, resolvePortalSelection } from '@/lib/portals'
+import { markApprovalPurchased, purchaseBlocker } from '@/lib/ticket-approvals'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -61,6 +62,18 @@ export async function POST(
   })
   if (blocker) return buildApiError(blocker, 422)
 
+  // G4 GUARD: on MY/SG/VN an attraction ticket is approved and paid for by
+  // Accounts *before* it is bought. This is the gate that enforces that order —
+  // it reads the shared approval row live rather than the mirrored column, and
+  // an Accounts database it cannot reach blocks the purchase rather than
+  // waving it through. Sri Lanka and non-ticket categories are exempt: their
+  // driver buys out of an advance he already holds.
+  const approvalBlocker = await purchaseBlocker(ticket.booking.operationCountry, {
+    id: ticket.id,
+    category: ticket.category,
+  })
+  if (approvalBlocker) return buildApiError(approvalBlocker, 422)
+
   const updated = await prisma.ticket.update({
     where: { id: params.id },
     data: {
@@ -77,10 +90,15 @@ export async function POST(
     },
   })
 
+  // Close the loop for Accounts: they paid a portal for this ticket, and this
+  // is what tells them it turned into a purchase. Best-effort by design — the
+  // purchase above is already recorded and must not fail on a stamp.
+  await markApprovalPurchased(updated.id, updated.reference)
+
   return buildApiSuccess(
     updated,
     updated.portalName
-      ? `Ticket purchased through ${updated.portalName} — Accounts will pay that portal.`
+      ? `Ticket purchased through ${updated.portalName} — Accounts has already paid that portal.`
       : 'Ticket marked as purchased',
   )
 }

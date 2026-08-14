@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { resolvePortalSelection } from '@/lib/portals'
+import { withdrawApproval } from '@/lib/ticket-approvals'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -44,6 +45,30 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const existing = await prisma.ticket.findUnique({ where: { id } })
   if (!existing) return buildApiError('Ticket not found', 404)
 
+  // Deleting a ticket Accounts has already committed money to would leave them
+  // paying for something with no record on this side of what it was.
+  if (existing.approvalStatus === 'approved' || existing.approvalStatus === 'paid') {
+    return buildApiError(
+      `Accounts has ${existing.approvalStatus === 'paid' ? 'paid for' : 'approved'} this ticket. `
+      + 'Ask them to reverse it before deleting the ticket.',
+      422,
+    )
+  }
+
+  // A request still waiting for a decision is taken back first, so nobody
+  // approves a ticket that no longer exists.
+  if (existing.approvalStatus === 'pending') {
+    try {
+      await withdrawApproval(id, session.user.name || session.user.email || 'operations')
+    } catch (err) {
+      return buildApiError(
+        'The approval request could not be withdrawn, so the ticket was left in place. '
+        + (err instanceof Error ? err.message : ''),
+        422,
+      )
+    }
+  }
+
   await prisma.ticket.delete({ where: { id } })
   return buildApiSuccess(null, 'Ticket deleted')
 }
@@ -63,6 +88,33 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!existing) return buildApiError('Ticket not found', 404)
 
   const body = await req.json()
+
+  // A ticket that is with Accounts is frozen on the things they are deciding
+  // about: what is being bought, for how much, and from whom. Accounts approved
+  // paying *this* portal *this* amount, and letting the ground team edit either
+  // afterwards would turn their decision into a signature on a blank page.
+  //
+  // Read from the mirrored column rather than the shared table: it is written
+  // on every submission and refreshed on every read, and being one refresh
+  // behind can only make this guard stricter, never laxer.
+  const LOCKED_WHILE = ['pending', 'approved', 'paid']
+  if (existing.approvalStatus && LOCKED_WHILE.includes(existing.approvalStatus)) {
+    const touchesPortal = body.portalId !== undefined || body.portalName !== undefined
+    const touchesMoney = body.costPerUnit !== undefined || body.qty !== undefined
+      || body.currency !== undefined || body.type !== undefined
+
+    if (touchesPortal || touchesMoney) {
+      return buildApiError(
+        existing.approvalStatus === 'pending'
+          ? 'This ticket is with Accounts for approval. Withdraw the request first if you need to change '
+            + 'the portal, the price or what is being bought.'
+          : `Accounts has already ${existing.approvalStatus === 'paid' ? 'paid for' : 'approved'} this ticket — `
+            + 'the portal and the amount cannot be changed now. Talk to Accounts.',
+        422,
+      )
+    }
+  }
+
   const {
     type, supplier, qty, costPerUnit, currency, reference, notes,
     category, transferType, vehicleType, vehicleNumber, driverName, driverPhone,

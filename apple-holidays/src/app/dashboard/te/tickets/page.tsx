@@ -39,6 +39,12 @@ interface Ticket {
   // The portal this was bought through — Accounts pays whoever is named here.
   portalName: string | null
   portalRef: string | null
+  // How far the Accounts approval has got. MY/SG/VN cannot buy an attraction
+  // ticket until this reads "paid"; the request itself is raised from the
+  // booking's own tickets page. Null = never submitted.
+  approvalStatus: string | null
+  approvalUrgency: string | null
+  approvalNote: string | null
   booking: { bookingRef: string; arrivalDate: string; agent: string | null } | null
   pnlLine: {
     activity: string
@@ -439,6 +445,38 @@ export default function TETicketsPage() {
                             {t.portalName}{t.portalRef ? ` · ${t.portalRef}` : ''}
                           </span>
                         )}
+                        {/* Where the Accounts approval has got to. A ticket
+                            cannot be bought until this says paid, so it is
+                            shown beside the portal it is about — and an urgent
+                            one that is still waiting keeps moving until it is
+                            answered. */}
+                        {t.approvalStatus && !isPurchased && (
+                          <span className={`inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded border ${
+                            t.approvalStatus === 'paid'     ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                            t.approvalStatus === 'approved' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                            t.approvalStatus === 'rejected' ? 'bg-red-50 text-red-700 border-red-200' :
+                            t.approvalStatus === 'pending' && t.approvalUrgency === 'urgent'
+                              ? 'bg-red-600 text-white border-red-700 animate-urgent-glow'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}
+                          title={
+                            t.approvalStatus === 'paid'     ? 'Accounts has paid the portal — you can buy this.' :
+                            t.approvalStatus === 'approved' ? 'Approved; waiting for Accounts to pay the portal.' :
+                            t.approvalStatus === 'rejected' ? `Sent back by Accounts${t.approvalNote ? `: ${t.approvalNote}` : ''}` :
+                            'Waiting for Accounts to approve and pay.'
+                          }>
+                            {t.approvalStatus === 'pending' && (
+                              <span className={`w-1.5 h-1.5 rounded-full animate-breathe ${
+                                t.approvalUrgency === 'urgent' ? 'bg-white' : 'bg-amber-500'}`} />
+                            )}
+                            {t.approvalStatus === 'pending'
+                              ? (t.approvalUrgency === 'urgent' ? 'URGENT · with Accounts' : 'With Accounts')
+                              : t.approvalStatus === 'paid' ? 'Paid — buy it'
+                              : t.approvalStatus === 'approved' ? 'Approved'
+                              : t.approvalStatus === 'rejected' ? 'Sent back'
+                              : t.approvalStatus}
+                          </span>
+                        )}
                         {t.reference && (
                           <span className="text-xs font-mono text-slate-500">Ref: {t.reference}</span>
                         )}
@@ -485,16 +523,30 @@ export default function TETicketsPage() {
                       )}
 
                       {/* Purchase */}
-                      {isActive && !isPurchased && canPurchase && (
-                        <button
-                          onClick={() => setPurchaseModal(t)}
-                          disabled={!payOk}
-                          title={!payOk ? 'Payment not yet confirmed (G2)' : 'Purchase ticket'}
-                          className={`btn btn-sm text-xs ${payOk ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
-                        >
-                          <ShoppingCart className="w-3.5 h-3.5" /> Purchase
-                        </button>
-                      )}
+                      {isActive && !isPurchased && canPurchase && (() => {
+                        // A ticket that has been sent to Accounts can only be
+                        // bought once they have paid the portal. Tickets that
+                        // never went through the queue (Sri Lanka, and any
+                        // category that is not bought through a portal) are
+                        // unaffected — they have no approval status at all.
+                        const waiting = t.approvalStatus !== null && t.approvalStatus !== 'paid'
+                        const ok = payOk && !waiting
+
+                        return (
+                          <button
+                            onClick={() => setPurchaseModal(t)}
+                            disabled={!ok}
+                            title={!payOk
+                              ? 'Payment not yet confirmed (G2)'
+                              : waiting
+                                ? 'Accounts has not paid for this ticket yet — submit and wait on the booking’s tickets page'
+                                : 'Purchase ticket'}
+                            className={`btn btn-sm text-xs ${ok ? 'btn-primary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
+                          >
+                            <ShoppingCart className="w-3.5 h-3.5" /> Purchase
+                          </button>
+                        )
+                      })()}
 
                       {/* View / upload receipt */}
                       {t.fileUrl ? (

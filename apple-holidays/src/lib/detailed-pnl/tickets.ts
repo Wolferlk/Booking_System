@@ -25,6 +25,29 @@ import type { DetailedPnl } from './render'
 
 export const DETAILED_TAG_PREFIX = 'Detailed P&L #'
 
+/**
+ * The categories a ticket is created for unless somebody asks for more.
+ *
+ * A ticket exists so the ground team can buy something and Accounts can approve
+ * paying for it. That is what an attraction is, and what most of the "other"
+ * charges are. Hotels and transport are not: Accounts settles those with the
+ * supplier directly, on the payables board, and creating a ticket for each one
+ * only buried the attractions that do need buying under vouchers nobody ever
+ * actioned.
+ *
+ * They are still creatable — a costing line of any category can be turned into
+ * a ticket on request (see `categories` on syncTicketsFromDetailed, and the
+ * create-tickets route's `categories` parameter). What changed is what happens
+ * by default.
+ *
+ * Tickets already created under the old default are left exactly as they are:
+ * this list decides what is *made*, never what is removed.
+ */
+export const DEFAULT_TICKET_CATEGORIES: TicketSpec['category'][] = ['TICKETS', 'OTHER']
+
+/** Every category a costing line can produce a ticket for. */
+export const ALL_TICKET_CATEGORIES: TicketSpec['category'][] = ['HOTEL', 'TRANSPORT', 'TICKETS', 'OTHER']
+
 /** One purchasable line, as the costing sheet states it. */
 export interface TicketSpec {
   /** Stable identity within the booking — the idempotency key. */
@@ -207,7 +230,13 @@ export function ticketSpecsFromDetailed(detail: DetailedPnl): TicketSpec[] {
   return specs
 }
 
-export interface SyncResult { created: number; updated: number; skipped: number }
+export interface SyncResult {
+  created: number
+  updated: number
+  skipped: number
+  /** Costing lines left alone because their category was not asked for. */
+  notRequested: number
+}
 
 function noteFor(spec: TicketSpec): string {
   // A name too long for `Ticket.type` is not lost — it is kept in full here,
@@ -220,18 +249,30 @@ function noteFor(spec: TicketSpec): string {
  * Create tickets for costing-sheet lines that have none; when `resync` is true,
  * also refresh existing DRAFT tickets from the latest costing.
  *
+ * By default only the categories in DEFAULT_TICKET_CATEGORIES are created —
+ * attractions and other services, the things the ground team actually goes and
+ * buys. Pass `categories` to include hotels or transport for a booking that
+ * genuinely needs them.
+ *
  * Never deletes, and never modifies a ticket that has left DRAFT — a purchased
  * ticket is a commitment already made, and a re-costed booking must not rewrite
- * what was bought.
+ * what was bought. Narrowing the default categories therefore removes nothing:
+ * transport tickets created before this change stay exactly where they are, and
+ * a resync still refreshes them if they are asked for.
  */
 export async function syncTicketsFromDetailed(
   bookingId: string,
   detail: DetailedPnl,
-  opts: { resync?: boolean } = {},
+  opts: { resync?: boolean; categories?: TicketSpec['category'][] } = {},
 ): Promise<SyncResult> {
   const resync = opts.resync ?? false
-  const specs = ticketSpecsFromDetailed(detail)
-  if (!specs.length) return { created: 0, updated: 0, skipped: 0 }
+  const wanted = new Set(opts.categories?.length ? opts.categories : DEFAULT_TICKET_CATEGORIES)
+
+  const all = ticketSpecsFromDetailed(detail)
+  const specs = all.filter(s => wanted.has(s.category))
+  const notRequested = all.length - specs.length
+
+  if (!specs.length) return { created: 0, updated: 0, skipped: 0, notRequested }
 
   const existing = await prisma.ticket.findMany({
     where: { bookingId },
@@ -271,5 +312,5 @@ export async function syncTicketsFromDetailed(
     }
   }
 
-  return { created, updated, skipped }
+  return { created, updated, skipped, notRequested }
 }
