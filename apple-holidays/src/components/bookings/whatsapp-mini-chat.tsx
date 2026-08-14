@@ -14,6 +14,12 @@ interface WaMessage {
   senderName: string | null
   status: string
   createdAt: string
+  // This panel is keyed on bookingRef, so a booking messaged from more than one
+  // number (an agent's line, or one typed by hand here) mixes those numbers into
+  // one stream. Carrying the phone lets us label who each message went to, and
+  // point "open full conversation" at the number that's actually active — the
+  // global inbox is keyed on phone, so it only ever shows one of them.
+  phone?: string | null
   mediaUrl?: string | null
   mediaType?: string | null
 }
@@ -43,6 +49,13 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
   const bottomRef  = useRef<HTMLDivElement>(null)
   const pollRef    = useRef<ReturnType<typeof setInterval> | null>(null)
   const prevCountRef = useRef(0)
+
+  // Distinct numbers this booking's thread spans, and the one carrying the most
+  // recent message (messages arrive oldest-first).
+  const threadPhones = Array.from(new Set(
+    messages.map(m => (m.phone ?? '').replace(/\D/g, '')).filter(Boolean),
+  ))
+  const latestPhone = [...messages].reverse().find(m => m.phone)?.phone?.replace(/\D/g, '') ?? ''
 
   const resolvedPhone =
     booking?.contactWhatsapp ||
@@ -191,9 +204,12 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
               </div>
               <p className="text-[11px] text-green-100 truncate font-mono">{bookingRef}</p>
             </div>
-            {phone && (
+            {(latestPhone || phone) && (
               <a
-                href={`/dashboard/whatsapp?phone=${encodeURIComponent(phone.replace(/\D/g, ''))}`}
+                // Open the thread that's actually active, not necessarily the
+                // booking's stored contact — otherwise this lands on an empty
+                // thread whenever the conversation ran on a second number.
+                href={`/dashboard/whatsapp?phone=${encodeURIComponent(latestPhone || phone.replace(/\D/g, ''))}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1 hover:bg-white/20 rounded-lg transition-colors"
@@ -331,8 +347,12 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
                         {msg.body}
                       </p>
                     )}
-                    {/* timestamp */}
+                    {/* timestamp — with the number when this booking's chat
+                        spans more than one, so it's clear which line it used */}
                     <p className={`text-[10px] mt-1 text-right ${isOut ? 'text-green-600' : 'text-slate-400'}`}>
+                      {threadPhones.length > 1 && msg.phone && (
+                        <span className="mr-1 font-mono opacity-70">+{msg.phone}</span>
+                      )}
                       {date} {time}
                       {isOut && (
                         <span className="ml-1">
