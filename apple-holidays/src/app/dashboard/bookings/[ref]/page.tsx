@@ -27,9 +27,8 @@ import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import SectionNav from '@/components/bookings/section-nav'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
-import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
+import DetailedPnlPanel from '@/components/bookings/detailed-pnl-panel'
 import InvoicePaymentPanel from '@/components/bookings/invoice-payment-panel'
-import DriverLogPanel from '@/components/bookings/driver-log-panel'
 import PrecheckPanel from '@/components/bookings/precheck-panel'
 import ReconfirmDelayPanel from '@/components/bookings/reconfirm-delay-panel'
 import OneDriveFolderPicker from '@/components/bookings/onedrive-folder-picker'
@@ -2756,18 +2755,14 @@ Wishing you a wonderful trip! ✈️
           </section>
         )}
 
-        {/* Accounts PNL (Reetha) — auto-linked or manually linked external record */}
-        {['AC_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <section data-nav="Accounts PNL" data-nav-icon="accounts">
-          <ExternalPnlPanel bookingRef={ref} role={role} />
-          </section>
-        )}
-
-        {/* Driver Advance Sheet (Sri Lanka) — tour & fuel advances derived from the Accounts PNL */}
-        {!hoWaives('drivers') && booking.operationCountry === 'SRILANKA'
-          && ['AC_USER', 'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
-          <section data-nav="Driver Advances" data-nav-icon="driver">
-          <DriverLogPanel bookingRef={ref} role={role} />
+        {/* Detailed P&L — the Accounts system's costing sheet for this booking,
+            matched on the IS number. Replaces the old linked "Accounts PNL
+            record" panel: the sheet itself is what every desk actually reads.
+            Ticket creation is deliberately not triggered here — that stays on
+            the dedicated P&L page, which owns the ticket list it refreshes. */}
+        {['AC_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+          <section data-nav="Detailed P&L" data-nav-icon="accounts">
+          <DetailedPnlPanel bookingRef={ref} role={role} inline />
           </section>
         )}
 
