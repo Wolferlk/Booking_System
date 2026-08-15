@@ -9,6 +9,7 @@ import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
 import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
 import { fetchDetailedPnlAvailability, normaliseRef } from '@/lib/detailed-pnl'
+import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -40,6 +41,14 @@ const DETAILED_PNL_SCAN_CAP = 20_000
  * truthful result beats a fast wrong one.
  */
 const DETAILED_PNL_DECORATE_BUDGET_MS = 4_000
+
+/**
+ * The same budget for the invoice payment column. It reads two indexed columns
+ * on `generated_invoices` for the refs on one page, so it is the cheaper of the
+ * two lookups; it gets the same ceiling because it runs on the same screen and
+ * the two together must not add up to a wait anyone notices.
+ */
+const INVOICE_PAYMENT_DECORATE_BUDGET_MS = 4_000
 
 function withBudget<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -363,25 +372,45 @@ export async function GET(req: NextRequest) {
    * One bounded query against the Accounts DB for the refs actually on screen.
    * If that database is unreachable the field comes back `null` — "we could not
    * check" — which the list renders as no icon rather than as a definite "no".
+   *
+   * The invoice payment decoration alongside it works to the same contract, and
+   * the two run concurrently: they are separate connections to the same
+   * database, and running them in series would spend both budgets one after the
+   * other on the most-opened screen in the system. An unpaid badge is an
+   * instruction to chase a client for money, so it too must never be the shape
+   * a timeout takes — a failed lookup is `null`, "we could not check".
    */
-  let pnlAvailable: Set<string> | null = null
-  try {
-    pnlAvailable = await withBudget(
+  const settled = <T,>(work: Promise<T>, ms: number, label: string): Promise<T | null> =>
+    withBudget(work, ms, label).catch(err => {
+      console.error(`[bookings] ${label} skipped (non-fatal):`, err)
+      return null
+    })
+
+  const [pnlAvailable, invoiceSummaries] = await Promise.all([
+    settled(
       fetchDetailedPnlAvailability(
         bookings.flatMap(b => [b.isNumber, b.bookingRef].filter((v): v is string => !!v)),
       ),
       DETAILED_PNL_DECORATE_BUDGET_MS,
       'Detailed P&L availability lookup',
-    )
-  } catch (err) {
-    console.error('[bookings] Detailed P&L availability decoration skipped (non-fatal):', err)
-  }
+    ),
+    settled(
+      fetchInvoicePaymentSummaries(bookings.map(b => ({
+        reference: b.bookingRef,
+        isNumber: b.isNumber,
+        controlNumber: b.cntlNumber,
+      }))),
+      INVOICE_PAYMENT_DECORATE_BUDGET_MS,
+      'Invoice payment lookup',
+    ),
+  ])
 
   const decorated = bookings.map(b => ({
     ...b,
     hasDetailedPnl: pnlAvailable
       ? pnlAvailable.has(normaliseRef(b.isNumber)) || pnlAvailable.has(normaliseRef(b.bookingRef))
       : null,
+    invoicePayment: invoiceSummaries?.get(b.bookingRef) ?? null,
   }))
 
   return buildApiSuccess({
@@ -393,6 +422,8 @@ export async function GET(req: NextRequest) {
     detailedPnlChecked: pnlAvailable !== null,
     /** True when the Detailed P&L filter could not consider the whole book. */
     detailedPnlTruncated,
+    /** False when the invoice ledger could not be read; the cells say "unknown". */
+    invoicePaymentChecked: invoiceSummaries !== null,
   })
 }
 

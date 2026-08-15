@@ -27,6 +27,8 @@ import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import QuickStatCards, { type QuickStats } from '@/components/bookings/quick-stat-cards'
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
+import PaymentStateCell from '@/components/bookings/payment-state-cell'
+import type { InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import {
   isQuickFilter, QUICK_FILTER_LABELS, QUICK_FILTER_SORT, type QuickFilter,
 } from '@/lib/booking-quick-filters'
@@ -98,6 +100,13 @@ interface Booking {
    * the list shows as no icon rather than as a definite no.
    */
   hasDetailedPnl?: boolean | null
+  /**
+   * The client invoice's payment state, read out of the accounts database and
+   * decorated onto this response server-side. `null` means that database could
+   * not be read — "unknown", which the cell shows as a dash rather than as an
+   * unpaid booking.
+   */
+  invoicePayment?: InvoicePaymentSummary | null
   guestFeedback: { submittedAt: string } | null
   tourAgenda: {
     id: string
@@ -291,6 +300,8 @@ function BookingsPageInner() {
   const [detailedPnlFilter, setDetailedPnlFilter] = useState(searchParams.get('detailedPnl') === '1')
   /** False when the Accounts DB could not be reached on the last fetch. */
   const [pnlChecked, setPnlChecked] = useState(true)
+  /** False when the accounts ledger could not be read for this page of rows. */
+  const [invoiceChecked, setInvoiceChecked] = useState(true)
   const [dateFilter, setDateFilter]   = useState<DateFilter>((searchParams.get('dateFilter') ?? '') as DateFilter)
   // Date range and basis are seeded from the URL so a deep link — e.g. the one
   // OPS_AI builds for "arrivals on 1 July" — lands on an already-filtered list.
@@ -371,6 +382,7 @@ function BookingsPageInner() {
         setBookings(json.data.bookings)
         setTotal(json.data.total)
         setPnlChecked(json.data.detailedPnlChecked !== false)
+        setInvoiceChecked(json.data.invoicePaymentChecked !== false)
       } else if (json.error) {
         toast.error(json.error)
       }
@@ -921,6 +933,19 @@ function BookingsPageInner() {
             </div>
           )}
 
+          {/* Same rule for the money: a dash in the Invoice column when the
+              ledger could not be read must never be mistaken for "unpaid",
+              because that is an instruction to go and chase a client. */}
+          {!invoiceChecked && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>
+                The Accounts ledger could not be read, so the Invoice column is unknown on this
+                page — a dash there does not mean the booking is unpaid.
+              </span>
+            </div>
+          )}
+
           {/* Row 4 — Date period pills + Sort controls */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -1192,6 +1217,11 @@ function BookingsPageInner() {
                     <th>Country</th>
                     <th>Lead Passenger</th>
                     <th>Agent</th>
+                    {/* Client money: what the booking was invoiced and how much
+                        of it is in. Green paid, amber part paid, red owing. */}
+                    <th title="The client invoice and what has been received against it, read live from the Accounts system">
+                      Invoice
+                    </th>
                     <th>
                       <button className="flex items-center whitespace-nowrap hover:text-brand-700 transition-colors" onClick={() => toggleSort('arrivalDate')}>
                         Arrival <SortIcon field="arrivalDate" sortBy={sortBy} sortDir={sortDir} />
@@ -1345,6 +1375,13 @@ function BookingsPageInner() {
 
                         {/* Agent */}
                         <td className="text-slate-500 text-xs">{b.agent ?? '—'}</td>
+
+                        {/* Invoice & payment state — from the Accounts ledger */}
+                        {/* Nothing in the cell is clickable, so the row's own
+                            navigation is left intact. */}
+                        <td>
+                          <PaymentStateCell summary={b.invoicePayment} checked={invoiceChecked} />
+                        </td>
 
                         {/* Arrival */}
                         <td>
