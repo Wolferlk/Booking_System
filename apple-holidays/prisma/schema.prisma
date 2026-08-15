@@ -1592,6 +1592,12 @@ model QueryMonitorEntry {
   /// happens when this falls behind `inboundCount + outboundCount` — that test
   /// is what stops a sweep paying for a summary of a thread that has not moved.
   replySummaryEvents Int               @default(0)
+  /// Sheet column AB — why this row is the one that survived when duplicates
+  /// were folded into it: which rule matched, and what it absorbed. Blank on the
+  /// overwhelming majority of rows, and that is the point — a filled cell is the
+  /// sheet showing its working for a line that now stands for mail nobody can
+  /// see written out any more.
+  duplicateReason  String?             @db.Text
   /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
   manualOverrides  Json?
   sheetRow         Int?

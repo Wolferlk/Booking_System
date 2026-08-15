@@ -200,8 +200,35 @@ SET @sql := (
 );
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- The workbook itself needs no migration. The seven new query columns land in
--- U–AA and the three new other-mail columns in L–N — all previously empty cells,
--- to the right of everything already written. The header names are filled in by
--- the app on the next sync (see `headerExtension` in src/lib/query-monitor/
--- sheet.ts), which writes ONLY the blank header cells and never touches A–T.
+-- duplicateReason: why this row is the one that survived a fold, and what it
+-- absorbed. Written whenever the automatic de-duplication folds another row into
+-- this one — the sheet showing its working for a line that now stands for mail
+-- nobody can see written out any more.
+SET @sql := (
+  SELECT IF(COUNT(*) = 0,
+    'ALTER TABLE `query_monitor_entries` ADD COLUMN `duplicateReason` TEXT NULL',
+    'SELECT 1')
+  FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME   = 'query_monitor_entries'
+    AND COLUMN_NAME  = 'duplicateReason'
+);
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+-- ── The workbook ────────────────────────────────────────────────────────────
+--
+-- The new columns to the RIGHT of the layout need no migration: they are
+-- previously empty cells, and the app fills their header names in on the next
+-- sync (see `headerExtension` in src/lib/query-monitor/sheet.ts), which writes
+-- ONLY blank header cells and never touches a column already in use.
+--
+-- **From / From Email are different.** They were briefly written at U / V and
+-- have been moved to G / H, next to File Handler — which means moving real
+-- columns in a file the team is using. That is done by `realignWorksheet` in
+-- sheet.ts, not here: it is an Excel operation (delete U:V, insert two columns
+-- at G, name them), so Excel itself moves the data and fixes up every formula
+-- and named range that pointed at the shifted cells. It runs from the same
+-- "Prepare" action that lays out a workbook, it recognises exactly the one
+-- previous shape it knows how to transform, and it refuses anything else rather
+-- than guess. Until it has run, writes to that tab are refused as a header
+-- mismatch — no row is ever written into the wrong column.

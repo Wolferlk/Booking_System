@@ -395,6 +395,13 @@ async function mergeFollowUp(
       handlerNames:  owner,
       followUpCount: { increment: 1 },
       lastMessageAt: message.receivedAt,
+      duplicateReason: appendDuplicateReason(
+        root.duplicateReason,
+        duplicateReasonFor(
+          { conversationId: message.conversationId, subjectKey: subjectKeyFor(message), fromAddress: message.fromAddress },
+          root,
+        ),
+      ),
       ...ledgerPatch(ledger),
       ...dirtyPatch(root),
     },
@@ -469,9 +476,15 @@ export function buildSheetRow(
     subject:        displaySubject(entry.subject).slice(0, 500),
     allocationTime: toExcelDateTimeSerial(entry.receivedAt),
     repliedTime:    toExcelDateTimeSerial(entry.repliedAt),
-    // One owner in F, everyone who received it in G. Blank F is deliberate: it
+    // One owner in F, everyone who received it in I. Blank F is deliberate: it
     // is the team's cue that nobody has picked the query up yet.
     fileHandler:    entry.handlerNames,
+    // Who it came from, read straight after who owns it. The query sheet has
+    // carried the sender's *domain* rules since day one (Sales Person, Agent)
+    // and never the person — so "who at MMT actually sent this" was a column the
+    // team did not have, and it belongs next to F rather than off the far right.
+    from:           entry.fromName || entry.fromAddress,
+    fromEmail:      entry.fromAddress,
     toList:         entry.toList,
     salesPerson:    entry.salesPerson ?? '',
     destination:    entry.destination ?? '',
@@ -487,11 +500,6 @@ export function buildSheetRow(
     threadCount:    threadMailCount(entry),
     lastMail:       toExcelDateTimeSerial(entry.lastMessageAt ?? entry.receivedAt),
     aiSummary:      entry.aiSummary ?? '',
-    // Who it came from. The query sheet has carried the sender's *domain* rules
-    // since day one (Sales Person, Agent) and never the person — so "who at MMT
-    // actually sent this" was a column the team did not have.
-    from:           entry.fromName || entry.fromAddress,
-    fromEmail:      entry.fromAddress,
     repliedByEmail: entry.repliedByEmail ?? '',
     repliedTo:      entry.repliedToAddress ?? '',
     replyType:      REPLY_TYPE_SHEET_LABEL[entry.replyType ?? ''] ?? '',
@@ -499,6 +507,8 @@ export function buildSheetRow(
     // The thread in prose. Falls back to the ledger's own description when the
     // AI switch is off, so this column is never blank on a thread that moved.
     replySummary:   entry.replySummary ?? '',
+    // Why this row is the one that survived, when others folded into it.
+    duplicateReason: entry.duplicateReason ?? '',
   }
 }
 
@@ -540,6 +550,7 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
     threadCount:  threadMailCount(entry),
     lastMail:     toExcelDateTimeSerial(entry.lastMessageAt ?? entry.receivedAt),
     replySummary: entry.replySummary ?? '',
+    duplicateReason: entry.duplicateReason ?? '',
   }
 }
 
@@ -1821,6 +1832,25 @@ function sameQueryKeys(
   return keys
 }
 
+/** Keep the audit trail short, stable, and readable in the workbook cell. */
+function appendDuplicateReason(existing: string | null | undefined, reason: string): string {
+  const parts = (existing ?? '').split('; ').map(s => s.trim()).filter(Boolean)
+  if (!parts.includes(reason)) parts.push(reason)
+  return parts.join('; ').slice(0, 1000)
+}
+
+function duplicateReasonFor(
+  duplicate: Pick<QueryMonitorEntry, 'conversationId' | 'subjectKey' | 'fromAddress'>,
+  winner: Pick<QueryMonitorEntry, 'conversationId' | 'subjectKey' | 'fromAddress'>,
+): string {
+  if (duplicate.conversationId && duplicate.conversationId === winner.conversationId) return 'Same conversation'
+  if (duplicate.subjectKey && duplicate.subjectKey === winner.subjectKey) return 'Same reference/subject'
+  if (duplicate.fromAddress && duplicate.fromAddress.toLowerCase() === (winner.fromAddress ?? '').toLowerCase()) {
+    return 'Same-day same sender'
+  }
+  return 'Same query identity'
+}
+
 /**
  * Every identity a row already on the sheet answers to.
  *
@@ -1875,7 +1905,8 @@ async function foldDuplicatesInBlock(
 
   for (const entry of entries) {
     const keys   = keysOf(entry)
-    const winner = keys.map(k => winnerByKey.get(k)).find(Boolean)
+    const matchedKey = keys.find(k => winnerByKey.has(k))
+    const winner = matchedKey ? winnerByKey.get(matchedKey) : undefined
 
     if (!winner) {
       for (const key of keys) if (!winnerByKey.has(key)) winnerByKey.set(key, entry)
@@ -1920,8 +1951,21 @@ async function foldDuplicatesInBlock(
         ...ledgerPatch(ledger),
         // The thread just got longer than its summary was written from.
         replySummaryEvents: 0,
+        duplicateReason: appendDuplicateReason(
+          winner.duplicateReason,
+          matchedKey?.startsWith('ref|') ? 'Same reference/subject'
+            : matchedKey?.startsWith('from|') ? 'Same-day same sender'
+            : 'Same query identity',
+        ),
       },
     })
+
+    winner.duplicateReason = appendDuplicateReason(
+      winner.duplicateReason,
+      matchedKey?.startsWith('ref|') ? 'Same reference/subject'
+        : matchedKey?.startsWith('from|') ? 'Same-day same sender'
+        : 'Same query identity',
+    )
 
     note('warn',
       `Same query twice — "${displaySubject(entry.subject).slice(0, 60)}" folded into the row `
@@ -2366,7 +2410,9 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
   const roots = new Map<string, EntryWithMatches>()
   const duplicates: { entry: EntryWithMatches; root: EntryWithMatches }[] = []
   /** Root id → what the merge has accumulated onto it. */
-  const growth = new Map<string, { toList: string[]; followUps: number; lastMessageAt: Date }>()
+  const growth = new Map<string, {
+    toList: string[]; followUps: number; lastMessageAt: Date; duplicateReason: string
+  }>()
 
   for (const entry of entries) {
     const subjectKey = subjectKeyFor(entry)
@@ -2387,10 +2433,12 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
     const acc = growth.get(root.id) ?? {
       toList: splitHandlers(root.toList), followUps: root.followUpCount,
       lastMessageAt: root.lastMessageAt ?? root.receivedAt,
+      duplicateReason: root.duplicateReason ?? '',
     }
     acc.toList.push(...splitHandlers(entry.toList))
     acc.followUps += 1
     if (entry.receivedAt > acc.lastMessageAt) acc.lastMessageAt = entry.receivedAt
+    acc.duplicateReason = appendDuplicateReason(acc.duplicateReason, duplicateReasonFor(entry, root))
     growth.set(root.id, acc)
   }
 
@@ -2447,6 +2495,7 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
         threadKey:     root.threadKey ?? threadKeyFor(root),
         subjectKey:    subjectKeyFor(root),
         ...ledgerPatch(ledger),
+        duplicateReason: acc.duplicateReason,
         // The thread just got longer than the stored summary was written from —
         // this is what makes the next sweep re-read it.
         replySummaryEvents: 0,
