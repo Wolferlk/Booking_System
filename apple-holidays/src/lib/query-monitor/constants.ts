@@ -178,6 +178,12 @@ export const SHEET_COLUMNS = [
   // ── Added Aug 2026, to the right of the columns already in use ─────────────
   'Replied By', 'Response (hrs)', 'SLA', 'Mails in Thread', 'Last Mail',
   'AI Summary',
+  // ── The thread ledger, added 15 Aug 2026 ──────────────────────────────────
+  // Who the mail came from, who answered them and where that answer went, who
+  // passed the thread on — and, last, what happened across the whole thread
+  // rather than in the mail that opened it.
+  'From', 'From Email', 'Replied By Email', 'Replied To', 'Reply Type',
+  'Forward Chain', 'Reply Summary',
 ] as const
 
 /**
@@ -191,7 +197,7 @@ export const SHEET_COLUMNS = [
 export const LEGACY_SHEET_COLUMNS = SHEET_COLUMNS.slice(0, 14)
 
 export const SHEET_FIRST_COLUMN = 'A'
-export const SHEET_LAST_COLUMN  = 'T'
+export const SHEET_LAST_COLUMN  = 'AA'
 /** Row 1 is the header; data starts at row 2. */
 export const SHEET_HEADER_ROW   = 1
 
@@ -217,6 +223,13 @@ export const SHEET_NUMBER_FORMATS = [
   '0',                    // R Mails in Thread
   'm/d/yyyy h:mm',        // S Last Mail
   'General',              // T AI Summary
+  'General',              // U From
+  'General',              // V From Email
+  'General',              // W Replied By Email
+  'General',              // X Replied To
+  'General',              // Y Reply Type
+  'General',              // Z Forward Chain
+  'General',              // AA Reply Summary
 ] as const
 
 // ── Second tab: excluded mail ────────────────────────────────────────────────
@@ -233,13 +246,18 @@ export const EXCLUDED_SHEET_COLUMNS = [
   // Added Aug 2026 — an on-ground incident in one line is the whole point of
   // reading this tab, so it carries the summary too.
   'AI Summary',
+  // ── The thread ledger, added 15 Aug 2026 ──────────────────────────────────
+  // An on-ground incident is the traffic that threads hardest: the same mail
+  // comes back four times before it is settled. This tab has no SLA columns to
+  // hang that off, so it takes the three that say it plainly.
+  'Mails in Thread', 'Last Mail', 'Reply Summary',
 ] as const
 
 /** The A–J layout this tab was created with. See `LEGACY_SHEET_COLUMNS`. */
 export const LEGACY_EXCLUDED_SHEET_COLUMNS = EXCLUDED_SHEET_COLUMNS.slice(0, 10)
 
 export const EXCLUDED_SHEET_FIRST_COLUMN = 'A'
-export const EXCLUDED_SHEET_LAST_COLUMN  = 'K'
+export const EXCLUDED_SHEET_LAST_COLUMN  = 'N'
 
 export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   '[$-en-US]dd-mmm-yy;@', // A Date
@@ -253,6 +271,9 @@ export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   'General',              // I Destination
   'General',              // J CNTL
   'General',              // K AI Summary
+  '0',                    // L Mails in Thread
+  'm/d/yyyy h:mm',        // M Last Mail
+  'General',              // N Reply Summary
 ] as const
 
 // ── Replied-row highlight ────────────────────────────────────────────────────

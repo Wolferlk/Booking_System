@@ -36,7 +36,12 @@ import {
 import {
   displaySubject, hasReference, normalizeSubject, subjectKeyFor, threadKeyFor,
 } from './thread'
-import { summarizeMail } from './summarize'
+import { summarizeMail, summarizeThread } from './summarize'
+import {
+  buildDirectory, classifyOutbound, describeThread, needsThreadSummary,
+  reassignThreadEvents, recordThreadEvent, rollUpEntry, timelineLines,
+  type Directory, type EventKind, type ThreadRollUp,
+} from './thread-events'
 import { exportDailyStatsToSheet } from './daily-stats-sheet'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
@@ -293,7 +298,7 @@ async function findSameDayResend(message: MonitoredMessage): Promise<EntryWithMa
  */
 async function mergeFollowUp(
   root: EntryWithMatches, group: MessageGroup, runId: string,
-  aliasNames?: ReadonlySet<string>,
+  directory: Directory, aliasNames?: ReadonlySet<string>,
 ): Promise<{ toList: string; rewrite: boolean }> {
   const { message } = group
 
@@ -363,9 +368,26 @@ async function mergeFollowUp(
   ])
   const owner = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList), aliasNames)
 
+  // The chaser goes into the root's ledger, not the follow-up's: the ledger
+  // belongs to the row, and the row is the root's.
+  await recordThreadEvent(root.id, {
+    direction:    'IN',
+    kind:         'FOLLOW_UP',
+    actorName:    message.fromName || message.fromAddress,
+    actorAddress: message.fromAddress,
+    toAddresses:  message.recipients,
+    occurredAt:   message.receivedAt,
+    subject:      message.subject,
+    snippet:      message.bodyPreview || message.bodyText,
+    messageId:    message.internetMessageId,
+    graphId:      message.graphId,
+  }, directory)
+
   // The row always changes now: "Mails in Thread" goes up by one and "Last Mail"
   // moves to this mail's timestamp. That is the whole trade for not giving the
   // chaser a line of its own — the row has to say that the chaser happened.
+  const ledger = await rollUpEntry(root.id)
+
   await prisma.queryMonitorEntry.update({
     where: { id: root.id },
     data: {
@@ -373,11 +395,31 @@ async function mergeFollowUp(
       handlerNames:  owner,
       followUpCount: { increment: 1 },
       lastMessageAt: message.receivedAt,
+      ...ledgerPatch(ledger),
       ...dirtyPatch(root),
     },
   })
 
   return { toList, rewrite: true }
+}
+
+/**
+ * The ledger roll-up as columns on the entry.
+ *
+ * `lastMessageAt` is left out on purpose: the caller owns it. On a merge it is
+ * the chaser's timestamp and is already being written; on a reply it must *not*
+ * move, because "Last Mail" answering itself would make every answered thread
+ * look like it had just been touched by the agent.
+ */
+function ledgerPatch(ledger: ThreadRollUp) {
+  return {
+    inboundCount:  ledger.inboundCount,
+    outboundCount: ledger.outboundCount,
+    replyType:     ledger.replyType,
+    forwardChain:  ledger.forwardChain,
+    lastActor:     ledger.lastActor,
+    lastDirection: ledger.lastDirection,
+  }
 }
 
 // ── Sheet row assembly ───────────────────────────────────────────────────────
@@ -441,12 +483,44 @@ export function buildSheetRow(
     repliedBy:      entry.repliedBy ?? '',
     responseHours:  responseHours(entry.receivedAt, entry.repliedAt),
     sla:            slaOutcome(entry.receivedAt, entry.repliedAt, slaHours),
-    // The chasers that did not get rows of their own are counted here instead,
-    // so nothing is hidden — the sheet says "3 mails" on one line.
-    threadCount:    entry.followUpCount + 1,
+    // Everything that passed on this thread, ours included — see `threadMailCount`.
+    threadCount:    threadMailCount(entry),
     lastMail:       toExcelDateTimeSerial(entry.lastMessageAt ?? entry.receivedAt),
     aiSummary:      entry.aiSummary ?? '',
+    // Who it came from. The query sheet has carried the sender's *domain* rules
+    // since day one (Sales Person, Agent) and never the person — so "who at MMT
+    // actually sent this" was a column the team did not have.
+    from:           entry.fromName || entry.fromAddress,
+    fromEmail:      entry.fromAddress,
+    repliedByEmail: entry.repliedByEmail ?? '',
+    repliedTo:      entry.repliedToAddress ?? '',
+    replyType:      REPLY_TYPE_SHEET_LABEL[entry.replyType ?? ''] ?? '',
+    forwardChain:   entry.forwardChain ?? '',
+    // The thread in prose. Falls back to the ledger's own description when the
+    // AI switch is off, so this column is never blank on a thread that moved.
+    replySummary:   entry.replySummary ?? '',
   }
+}
+
+/**
+ * How many mails this row stands for — theirs and ours.
+ *
+ * Rows written before the ledger existed have an empty one, and `inboundCount`
+ * defaults to 1 on every one of them. So the old counter is kept as a floor: a
+ * row that folded in four chasers last week still says five, not one, and starts
+ * counting our side of the conversation from the next mail that lands.
+ */
+export function threadMailCount(entry: {
+  inboundCount: number; outboundCount: number; followUpCount: number
+}): number {
+  return Math.max(entry.inboundCount + entry.outboundCount, entry.followUpCount + 1)
+}
+
+/** Column Y, in the team's words rather than the database's. */
+const REPLY_TYPE_SHEET_LABEL: Record<string, string> = {
+  DIRECT:   'Direct reply',
+  FORWARD:  'Forwarded on',
+  INTERNAL: 'Internal only',
 }
 
 /** The same entry as a row on the second tab. */
@@ -463,6 +537,9 @@ export function buildExcludedRow(entry: QueryMonitorEntry): ExcludedRowValues {
     destination:  entry.destination ?? '',
     cntl:         entry.cntl ?? '',
     aiSummary:    entry.aiSummary ?? '',
+    threadCount:  threadMailCount(entry),
+    lastMail:     toExcelDateTimeSerial(entry.lastMessageAt ?? entry.receivedAt),
+    replySummary: entry.replySummary ?? '',
   }
 }
 
@@ -616,6 +693,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
       .map(m => ({ id: m.id, displayName: m.displayName, addresses: mailboxAddresses(m) }))
     /** Names that must never be picked as the File Handler. */
     const aliasNames = new Set(aliases.map(a => a.displayName))
+    /** Address → the name the sheet prints for it, so a ledger cell reads in names. */
+    const directory = buildDirectory(allMailboxes)
 
     if (mailboxes.length === 0) log.add('warn', 'No active mailboxes configured')
     if (aliases.length > 0) {
@@ -814,7 +893,7 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           : null
 
         if (root) {
-          const { toList: mergedList } = await mergeFollowUp(root, group, run.id, aliasNames)
+          const { toList: mergedList } = await mergeFollowUp(root, group, run.id, directory, aliasNames)
           counters.entriesUpdated += 1
           log.add('info',
             `Follow-up on "${displaySubject(message.subject).slice(0, 60)}" — folded into `
@@ -920,6 +999,21 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           },
         })
 
+        // The mail that opened the thread is its first ledger event. Everything
+        // the row later says about the conversation is counted from here.
+        await recordThreadEvent(created.id, {
+          direction:    'IN',
+          kind:         'QUERY',
+          actorName:    message.fromName || message.fromAddress,
+          actorAddress: message.fromAddress,
+          toAddresses:  message.recipients,
+          occurredAt:   message.receivedAt,
+          subject:      message.subject,
+          snippet:      message.bodyPreview || message.bodyText,
+          messageId:    message.internetMessageId,
+          graphId:      message.graphId,
+        }, directory)
+
         if (sender.ruleId) {
           await prisma.queryMonitorSenderRule.update({
             where: { id: sender.ruleId },
@@ -955,7 +1049,15 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
     }
 
     // ── 3. Reply detection ──────────────────────────────────────────────────
-    counters.repliesDetected = await detectReplies(sentIndexes, config.replyChaseDays, config.slaHours, log)
+    counters.repliesDetected = await detectReplies(
+      sentIndexes, config.replyChaseDays, config.slaHours, directory, log,
+    )
+
+    // ── 3b. Re-read the threads that moved ──────────────────────────────────
+    // After the ledger has both sides of every conversation, and before the
+    // workbook is written, so a row goes out with its summary already on it
+    // rather than blank until the next sweep rewrites it.
+    counters.aiCalls += await refreshThreadSummaries(config.aiSummaryEnabled, log)
 
     // ── 4. Push to the workbook ─────────────────────────────────────────────
     if (config.autoWrite) {
@@ -1034,11 +1136,13 @@ const MATCH_RANK: Record<ReplyMatchKind, number> = {
 }
 
 interface ReplyCandidate {
-  sentAt:      Date
-  handlerName: string
+  sentAt:       Date
+  handlerName:  string
   mailboxEmail: string
-  messageId:   string | null
-  match:       ReplyMatchKind
+  messageId:    string | null
+  match:        ReplyMatchKind
+  /** Everyone the reply went to — column X, so a forward cannot pose as a reply. */
+  recipients:   string[]
 }
 
 /**
@@ -1096,11 +1200,21 @@ function betterReply(a: ReplyCandidate | null, b: ReplyCandidate): ReplyCandidat
  * - **Mail with no conversation id can still be answered.** It is matched on the
  *   normalised subject, but only together with the agent's address, which is what
  *   makes a subject as generic as "Urgent quote required" safe to match on.
+ *
+ * Since the thread ledger (15 Aug 2026) it also does the other half of the job.
+ * Every mail of ours on the query's conversation is now written down — the
+ * forwards and the internal notes as well as the replies — so the row can say
+ * who passed the thread to whom. **Only a mail that actually reached the person
+ * who asked stops the SLA clock.** That is a deliberate tightening: a forward
+ * used to be accepted as the reply when nothing better could be found, which
+ * both stopped the clock early and credited the wrong person. Such a thread now
+ * stays open and reads "Forwarded on" in column Y, which is the truth about it.
  */
 async function detectReplies(
   sentIndexes: Map<string, SentIndex>,
   chaseDays: number,
   slaHours: number,
+  directory: Directory,
   log: RunLog,
 ): Promise<number> {
   const since = new Date(Date.now() - chaseDays * 86_400_000)
@@ -1133,21 +1247,42 @@ async function detectReplies(
     const candidates: ReplyCandidate[] = []
     const bestSoFar = () => candidates.reduce<ReplyCandidate | null>(betterReply, null)
 
-    const consider = (sent: SentMessage, index: SentIndex, match: ReplyMatchKind) => {
+    /**
+     * Everything of ours seen on this thread, whatever it turned out to be.
+     * Keyed by Graph id because the same sent mail can be reached twice — once
+     * through the conversation index and once through the subject one.
+     */
+    const outbound = new Map<string, { sent: SentMessage; index: SentIndex; kind: EventKind }>()
+
+    /**
+     * Look at one sent mail: write it into the ledger whatever it is, and offer
+     * it as the reply only if it actually reached the person who asked.
+     *
+     * `evidence` is how the mail was tied to this query, which is a separate
+     * question from what the mail was — a mail can be firmly on the thread and
+     * still be a forward.
+     */
+    const consider = (sent: SentMessage, index: SentIndex, evidence: ReplyMatchKind) => {
       if (sent.sentAt < notBefore) return
+
+      const kind = classifyOutbound(sent, entry.fromAddress)
+      outbound.set(sent.graphId, { sent, index, kind })
+      if (kind !== 'REPLY') return
+
       candidates.push({
         sentAt:       sent.sentAt,
         handlerName:  index.handlerName,
         mailboxEmail: index.mailboxEmail,
         messageId:    sent.internetMessageId,
-        match,
+        match:        evidence === 'CONVERSATION' ? 'RECIPIENT' : evidence,
+        recipients:   sent.recipients,
       })
     }
 
     for (const index of indexes) {
       if (entry.conversationId) {
         for (const sent of index.byConversation.get(entry.conversationId) ?? []) {
-          consider(sent, index, addressedToAsker(sent, entry.fromAddress) ? 'RECIPIENT' : 'CONVERSATION')
+          consider(sent, index, 'CONVERSATION')
         }
       }
       // Subject matching alone would collapse unrelated queries, so it is only
@@ -1162,7 +1297,7 @@ async function detectReplies(
 
     // Older thread, nothing in the bulk window — ask Graph about this one
     // conversation, in the mailboxes that actually received it.
-    if (candidates.length === 0 && entry.conversationId && targetedLookups < TARGETED_LOOKUP_BUDGET) {
+    if (outbound.size === 0 && entry.conversationId && targetedLookups < TARGETED_LOOKUP_BUDGET) {
       for (const match of entry.matches) {
         // A distribution group has no Sent Items to look in.
         if (match.viaAlias || match.mailbox.mailboxKind === 'ALIAS') continue
@@ -1176,14 +1311,34 @@ async function detectReplies(
         const sentMails = await findSentInConversation(
           match.mailbox.email, entry.conversationId, notBefore,
         )
-        for (const sent of sentMails) {
-          consider(sent, index, addressedToAsker(sent, entry.fromAddress) ? 'RECIPIENT' : 'CONVERSATION')
-        }
-        // Keep going even after a hit unless it is already the strongest kind:
-        // another handler may have answered the agent before this one forwarded it.
-        if (bestSoFar()?.match === 'RECIPIENT') break
+        for (const sent of sentMails) consider(sent, index, 'CONVERSATION')
+        // Keep going even after a hit unless the agent has demonstrably been
+        // answered: another handler may have replied before this one forwarded it.
+        if (bestSoFar()) break
       }
     }
+
+    // Write down our side of the conversation — forwards and internal notes
+    // included. This is what column Z is built from, and it is the only record
+    // anywhere of a thread that was passed on but never answered.
+    let ledgerGrew = false
+    for (const { sent, index, kind } of Array.from(outbound.values())) {
+      const added = await recordThreadEvent(entry.id, {
+        direction:    'OUT',
+        kind,
+        actorName:    index.handlerName,
+        actorAddress: index.mailboxEmail,
+        toAddresses:  sent.recipients,
+        occurredAt:   sent.sentAt,
+        subject:      sent.subject,
+        snippet:      sent.bodyPreview,
+        messageId:    sent.internetMessageId,
+        graphId:      sent.graphId,
+      }, directory)
+      ledgerGrew = ledgerGrew || added
+    }
+
+    const ledger = ledgerGrew ? await rollUpEntry(entry.id) : null
 
     const reply = bestSoFar()
     const repliedAt = reply?.sentAt ?? entry.repliedAt
@@ -1204,7 +1359,7 @@ async function detectReplies(
       || entry.repliedAt?.getTime() !== reply.sentAt.getTime()
       || entry.replyMatch !== reply.match
     )
-    if (!isNewAttribution && !newOwner && nextStatus === entry.replyStatus) continue
+    if (!isNewAttribution && !newOwner && !ledger && nextStatus === entry.replyStatus) continue
 
     await prisma.queryMonitorEntry.update({
       where: { id: entry.id },
@@ -1214,16 +1369,29 @@ async function detectReplies(
         // Who actually answered, kept whether or not they became the owner —
         // on a mail sent to six handlers this is the only record of it.
         ...(reply ? {
-          repliedBy:      reply.handlerName,
-          repliedByEmail: reply.mailboxEmail,
-          replyMessageId: reply.messageId?.slice(0, 255) ?? null,
-          replyMatch:     reply.match,
+          repliedBy:        reply.handlerName,
+          repliedByEmail:   reply.mailboxEmail,
+          replyMessageId:   reply.messageId?.slice(0, 255) ?? null,
+          replyMatch:       reply.match,
+          repliedToAddress: reply.recipients.join(', ').slice(0, 500),
         } : {}),
         ...(newOwner ? { handlerNames: newOwner } : {}),
+        // Counts, forward chain and reply type, recomputed from the ledger this
+        // pass just added to. `lastMessageAt` is left alone: it is when the
+        // *agent* last wrote, and our own answer must not move it.
+        ...(ledger ? ledgerPatch(ledger) : {}),
         // A row already in a sheet needs its Status / Replied time rewritten.
         ...dirtyPatch(entry),
       },
     })
+
+    // A thread that was passed on but never answered is the case this feature
+    // exists to make visible — it used to look identical to an unread mail.
+    if (!reply && ledger?.forwardChain) {
+      log.add('warn',
+        `"${entry.subject.slice(0, 50)}" forwarded but not yet answered — ${ledger.forwardChain}`,
+        { entryId: entry.id, forwardChain: ledger.forwardChain })
+    }
 
     if (reply) {
       attributed += 1
@@ -1248,6 +1416,111 @@ async function detectReplies(
       + (attributed > detected ? `, ${attributed - detected} already-answered row(s) credited to whoever replied` : ''))
   }
   return detected
+}
+
+// ── Thread summaries ─────────────────────────────────────────────────────────
+
+/**
+ * Rewrite column AA for every thread that has grown since it was last read.
+ *
+ * The AI Summary in column T is written once, from the mail that opened the
+ * thread, and is never touched again — which is correct for "what was asked" and
+ * silent about everything that happened afterwards. This column is the opposite:
+ * it is regenerated from the ledger whenever the ledger grows, so a row standing
+ * for eleven mails says what became of them.
+ *
+ * Two things keep it cheap. The regeneration test is `replySummaryEvents <
+ * inbound + outbound`, so a conversation nobody has touched costs nothing; and a
+ * one-mail thread is skipped outright, because there the AI Summary already says
+ * everything a thread summary could.
+ *
+ * With the AI switch off it still runs — writing `describeThread`, which is
+ * assembled from the ledger and costs nothing. The cell is worth having either
+ * way, and this is the one place where a fact is better than a sentence.
+ */
+async function refreshThreadSummaries(aiEnabled: boolean, log: RunLog): Promise<number> {
+  /** As with the per-mail summaries, a catch-up run must not make hundreds of calls. */
+  const AI_BUDGET = 30
+  let aiCalls = 0
+  let written = 0
+
+  const moved = await prisma.queryMonitorEntry.findMany({
+    where: {
+      mergedIntoId: null,
+      // A thread of one has nothing to summarise beyond column T.
+      OR: [{ outboundCount: { gt: 0 } }, { inboundCount: { gt: 1 } }],
+    },
+    orderBy: { lastMessageAt: 'desc' },
+    take:    200,
+  })
+
+  for (const entry of moved) {
+    if (!needsThreadSummary(entry)) continue
+
+    const events = await prisma.queryMonitorThreadEvent.findMany({
+      where:   { entryId: entry.id },
+      orderBy: { occurredAt: 'asc' },
+      take:    200,
+    })
+    if (events.length === 0) continue
+
+    /**
+     * The watermark is the same number `needsThreadSummary` tests against, not
+     * `events.length`. They can differ — `inboundCount` floors at 1 for a row
+     * whose ledger only ever caught our side of the conversation — and storing
+     * the smaller of the two would leave the entry permanently behind its own
+     * threshold, re-summarised on every sweep for ever.
+     */
+    const watermark = entry.inboundCount + entry.outboundCount
+
+    // The ledger's own reading is computed first and kept as the floor: if the
+    // model is off, over budget or unreachable, the cell still says something
+    // true rather than falling back to blank.
+    const factual = describeThread(events)
+    let summary = factual
+
+    /**
+     * A thread the budget could not reach still gets the factual sentence — but
+     * the watermark is *not* advanced for it, so the next sweep offers it to the
+     * model again. Advancing it would mean a busy hour permanently downgraded
+     * every thread it happened to push past the ceiling.
+     */
+    const overBudget = aiEnabled && aiCalls >= AI_BUDGET
+    if (aiEnabled && !overBudget) {
+      aiCalls += 1
+      summary = await summarizeThread(entry.subject, timelineLines(events)) ?? factual
+    }
+    const readThisFar = overBudget ? entry.replySummaryEvents : watermark
+
+    if (!summary || summary === entry.replySummary) {
+      // Nothing new to say, but record that the thread has been read this far.
+      await prisma.queryMonitorEntry.update({
+        where: { id: entry.id },
+        data:  { replySummaryEvents: readThisFar },
+      })
+      continue
+    }
+
+    await prisma.queryMonitorEntry.update({
+      where: { id: entry.id },
+      data: {
+        replySummary:       summary,
+        replySummaryAt:     new Date(),
+        replySummaryEvents: readThisFar,
+        ...dirtyPatch(entry),
+      },
+    })
+    written += 1
+  }
+
+  if (written > 0) {
+    log.add('info',
+      `${written} thread summar${written === 1 ? 'y' : 'ies'} rewritten`
+      + (aiEnabled
+        ? ` (${aiCalls} read by AI${aiCalls >= AI_BUDGET ? ' — per-sweep ceiling reached, the rest describe the ledger' : ''})`
+        : ' from the ledger — turn the AI switch on for a written reading of each thread'))
+  }
+  return aiCalls
 }
 
 // ── Sheet sync ───────────────────────────────────────────────────────────────
@@ -1625,15 +1898,29 @@ async function foldDuplicatesInBlock(
       },
     })
 
+    // The folded mail is part of the thread the winner now stands for, so its
+    // ledger goes with it — otherwise the surviving row under-counts itself by
+    // exactly the mail this fold just kept off the sheet.
+    await reassignThreadEvents(entry.id, winner.id)
+
     // The surviving row has to say the second mail happened — that is the whole
     // trade for not giving it a line of its own.
     winner.followUpCount += 1
     const last = winner.lastMessageAt ?? winner.receivedAt
     if (entry.receivedAt > last) winner.lastMessageAt = entry.receivedAt
 
+    const ledger = await rollUpEntry(winner.id)
+    Object.assign(winner, ledgerPatch(ledger))
+
     await prisma.queryMonitorEntry.update({
       where: { id: winner.id },
-      data:  { followUpCount: winner.followUpCount, lastMessageAt: winner.lastMessageAt },
+      data: {
+        followUpCount: winner.followUpCount,
+        lastMessageAt: winner.lastMessageAt,
+        ...ledgerPatch(ledger),
+        // The thread just got longer than its summary was written from.
+        replySummaryEvents: 0,
+      },
     })
 
     note('warn',
@@ -2119,6 +2406,11 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
     if (entry.sheetRow)       noteRemoval('primary', tabOf(entry, cfg, 'primary'), entry.sheetRow)
     if (entry.backupSheetRow) noteRemoval('backup',  tabOf(entry, cfg, 'backup'),  entry.backupSheetRow)
 
+    // The duplicate's mail is part of the thread the root now stands for, so its
+    // ledger moves with it — otherwise the kept row would under-count itself by
+    // exactly the mails this fold just took off the sheet.
+    await reassignThreadEvents(entry.id, root.id)
+
     await prisma.queryMonitorEntry.update({
       where: { id: entry.id },
       data: {
@@ -2142,6 +2434,9 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
     const root = entries.find(e => e.id === rootId)!
     const toList = joinHandlers(acc.toList)
     const owner  = root.handlerNames.trim() || autoFileHandler(splitHandlers(toList))
+    // Recomputed after the events were moved above, so the kept row's counts,
+    // forward chain and reply type describe the whole folded thread.
+    const ledger = await rollUpEntry(rootId)
     await prisma.queryMonitorEntry.update({
       where: { id: rootId },
       data: {
@@ -2151,6 +2446,10 @@ export async function mergeDuplicateEntries(): Promise<DuplicateSweepResult> {
         lastMessageAt: acc.lastMessageAt,
         threadKey:     root.threadKey ?? threadKeyFor(root),
         subjectKey:    subjectKeyFor(root),
+        ...ledgerPatch(ledger),
+        // The thread just got longer than the stored summary was written from —
+        // this is what makes the next sweep re-read it.
+        replySummaryEvents: 0,
         ...(toList !== root.toList || owner !== root.handlerNames ? dirtyPatch(root) : {}),
       },
     })

@@ -51,8 +51,14 @@ interface GraphMessage {
 const SELECT_INBOX =
   'id,internetMessageId,conversationId,subject,from,receivedDateTime,bodyPreview,body,'
   + 'hasAttachments,toRecipients,ccRecipients'
+// `bodyPreview` is on the sent select and `body` is not, deliberately. The
+// thread summary needs to know what an answer said, and the preview is the first
+// ~255 characters Graph already has indexed — carrying the full body of every
+// sent mail in the window instead would multiply the response size for text that
+// is quoted thread nine times out of ten.
 const SELECT_SENT =
-  'id,internetMessageId,conversationId,subject,sentDateTime,toRecipients,ccRecipients'
+  'id,internetMessageId,conversationId,subject,sentDateTime,bodyPreview,'
+  + 'toRecipients,ccRecipients'
 
 /** TO + CC as lower-cased addresses. */
 function recipientsOf(msg: GraphMessage): string[] {
@@ -166,6 +172,8 @@ export interface SentMessage {
   subject:           string
   sentAt:            Date
   recipients:        string[]
+  /** First few lines of what was actually written — feeds the thread summary. */
+  bodyPreview:       string
 }
 
 /**
@@ -192,6 +200,7 @@ function toSentMessage(msg: GraphMessage): SentMessage | null {
     subject:           (msg.subject ?? '').trim(),
     sentAt:            new Date(msg.sentDateTime),
     recipients:        recipientsOf(msg),
+    bodyPreview:       (msg.bodyPreview ?? '').trim(),
   }
 }
 
