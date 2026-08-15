@@ -6,9 +6,11 @@
  * cycle and without ever locking the file.
  *
  * Two rules the rest of the code depends on:
- *   1. Writes are confined to the layout's own columns (A–N on the query sheet,
- *      A–J on the other-mail tab). Anything further right belongs to the team's
+ *   1. Writes are confined to the layout's own columns (A–AB on the query sheet,
+ *      A–O on the other-mail tab). Anything further right belongs to the team's
  *      lookup lists and pivot helpers, and touching it would corrupt the sheet.
+ *      The layout only ever grows into columns verified empty first — except for
+ *      the one column that had to *move*; see `realignWorksheet`.
  *   2. The append row is found by scanning column C (Subject) from the bottom,
  *      not from `usedRange`: the used range extends past the real data because
  *      of trailing formatted-but-empty rows.
@@ -20,6 +22,8 @@ import { graphFetch, getGraphToken } from '@/lib/graph-client'
 import {
   EXCLUDED_SHEET_COLUMNS, EXCLUDED_SHEET_FIRST_COLUMN, EXCLUDED_SHEET_LAST_COLUMN,
   EXCLUDED_SHEET_NUMBER_FORMATS,
+  FROM_COLUMN_INDEX, LEGACY_SHEET_COLUMNS, PREVIOUS_FROM_COLUMN_INDEX,
+  PREVIOUS_SHEET_COLUMNS,
   SETTINGS, SHEET_COLUMNS, SHEET_FIRST_COLUMN, SHEET_LAST_COLUMN,
   SHEET_NUMBER_FORMATS,
 } from './constants'
@@ -45,6 +49,12 @@ export interface SheetInfo extends SheetRef {
   /** Set when row 1 is an older layout of ours that the next write will widen. */
   headerPendingColumns: string[]
   /**
+   * True when row 1 is the order this tab carried before **From** was moved next
+   * to File Handler. Writes are refused until it is moved — pressing *Prepare*
+   * does it, in place, without touching a single row. See `realignWorksheet`.
+   */
+  headerNeedsRealign: boolean
+  /**
    * Set when this tab carries a header the team edited and this system was told
    * to write under it as it stands. Null on a tab that still has our layout.
    */
@@ -63,7 +73,7 @@ export interface SheetInfo extends SheetRef {
   lastModified:   string | null
 }
 
-/** A row as it will be laid down in columns A–AA. */
+/** A row as it will be laid down in columns A–AB. */
 export interface SheetRowValues {
   date:           number | ''  // A — Excel date serial
   status:         string       // B
@@ -71,19 +81,21 @@ export interface SheetRowValues {
   allocationTime: number | ''  // D — Excel datetime serial
   repliedTime:    number | ''  // E — Excel datetime serial
   fileHandler:    string       // F — exactly one name, or blank until chosen
-  toList:         string       // G — every handler the mail reached
-  salesPerson:    string       // H
-  destination:    string       // I
-  agent:          string       // J
-  travelDate:     number | ''  // K — Excel date serial
-  cntl:           string       // L
-  amendment:      string       // M
-  region:         string       // N
-  repliedBy:      string       // O — whose Sent Items the reply was found in
-  responseHours:  number | ''  // P — allocation → reply, in hours
-  sla:            string       // Q — Met / Missed, blank while open
+  from:           string       // G — the agent's display name, beside its owner
+  fromEmail:      string       // H — the address it actually came from
+  toList:         string       // I — every handler the mail reached
+  salesPerson:    string       // J
+  destination:    string       // K
+  agent:          string       // L
+  travelDate:     number | ''  // M — Excel date serial
+  cntl:           string       // N
+  amendment:      string       // O
+  region:         string       // P
+  repliedBy:      string       // Q — whose Sent Items the reply was found in
+  responseHours:  number | ''  // R — allocation → reply, in hours
+  sla:            string       // S — Met / Missed, blank while open
   /**
-   * R — every mail of the conversation, ours included.
+   * T — every mail of the conversation, ours included.
    *
    * Widened on 15 Aug 2026 from "inbound mails folded into this row" to the
    * whole thread, both directions: a row that stands for three agent mails and
@@ -92,30 +104,36 @@ export interface SheetRowValues {
    * the split, and column Z spells the traffic out hop by hop.
    */
   threadCount:    number | ''
-  lastMail:       number | ''  // S — Excel datetime serial of the newest mail
-  aiSummary:      string       // T — one sentence on the mail that opened it
-  from:           string       // U — the agent's display name
-  fromEmail:      string       // V — the address it actually came from
+  lastMail:       number | ''  // U — Excel datetime serial of the newest mail
+  aiSummary:      string       // V — one sentence on the mail that opened it
   repliedByEmail: string       // W — the mailbox the reply went out of
   repliedTo:      string       // X — where it went, so a forward cannot pose as a reply
   replyType:      string       // Y — Direct reply / Forwarded / Internal only
   forwardChain:   string       // Z — "Sajid → Vishmika · Vishmika → Sudari"
   replySummary:   string       // AA — what happened across the whole thread
+  /**
+   * AB — why this row is the one that survived, when duplicates were folded
+   * into it. Blank on the overwhelming majority of rows, and that is the point:
+   * a filled cell is the sheet showing its working for a line that now stands
+   * for mail the team can no longer see written out.
+   */
+  duplicateReason: string
 }
 
 export function rowToCells(row: SheetRowValues): (string | number)[] {
   return [
     row.date, row.status, row.subject, row.allocationTime, row.repliedTime,
-    row.fileHandler, row.toList, row.salesPerson, row.destination, row.agent,
+    row.fileHandler, row.from, row.fromEmail,
+    row.toList, row.salesPerson, row.destination, row.agent,
     row.travelDate, row.cntl, row.amendment, row.region,
     row.repliedBy, row.responseHours, row.sla, row.threadCount, row.lastMail,
     row.aiSummary,
-    row.from, row.fromEmail, row.repliedByEmail, row.repliedTo, row.replyType,
-    row.forwardChain, row.replySummary,
+    row.repliedByEmail, row.repliedTo, row.replyType, row.forwardChain,
+    row.replySummary, row.duplicateReason,
   ]
 }
 
-/** A row on the second tab, columns A–N. See EXCLUDED_SHEET_COLUMNS. */
+/** A row on the second tab, columns A–O. See EXCLUDED_SHEET_COLUMNS. */
 export interface ExcludedRowValues {
   date:         number | ''  // A — Excel date serial
   receivedTime: number | ''  // B — Excel datetime serial
@@ -131,6 +149,7 @@ export interface ExcludedRowValues {
   threadCount:  number | ''  // L — every mail of the conversation, ours included
   lastMail:     number | ''  // M — Excel datetime serial of the newest mail
   replySummary: string       // N — what happened across the whole thread
+  duplicateReason: string    // O — why this row survived a fold
 }
 
 export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] {
@@ -138,7 +157,7 @@ export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] 
     row.date, row.receivedTime, row.subject, row.sender, row.senderEmail,
     row.fileHandler, row.toList, row.reason, row.destination, row.cntl,
     row.aiSummary,
-    row.threadCount, row.lastMail, row.replySummary,
+    row.threadCount, row.lastMail, row.replySummary, row.duplicateReason,
   ]
 }
 
@@ -269,6 +288,116 @@ export function headerExtension(cells: string[], layout: SheetLayout): number | 
   const tailBlank = cells.slice(filled).every(cell => (cell ?? '').trim() === '')
 
   return isPrefix && tailBlank ? filled : null
+}
+
+// ── Moving a column in a file the team is using ──────────────────────────────
+
+/**
+ * Is row 1 the order this sheet carried before **From** was moved next to File
+ * Handler?
+ *
+ * Exact match only, over the full previous layout or over any prefix of it that
+ * reaches at least the columns the workbook was started with. A sheet in any
+ * other state is not recognised and is not touched — the whole safety of moving
+ * a column in a live file is that the transformation knows precisely what it is
+ * looking at.
+ */
+export function needsRealign(cells: string[]): boolean {
+  const previous = PREVIOUS_SHEET_COLUMNS
+
+  let filled = 0
+  while (filled < previous.length && (cells[filled] ?? '').trim() !== '') filled += 1
+  // Anything past the previous layout means the team has put something of their
+  // own there, and the shifting below would move it.
+  if (!cells.slice(filled).every(cell => (cell ?? '').trim() === '')) return false
+  // A shorter header than the original A–N is a sheet that was never ours.
+  if (filled < LEGACY_SHEET_COLUMNS.length) return false
+  // Already carrying From at G — nothing to move.
+  if (same(cells[FROM_COLUMN_INDEX] ?? '', SHEET_COLUMNS[FROM_COLUMN_INDEX])) return false
+
+  return previous.slice(0, filled).every((name, i) => same(cells[i] ?? '', name))
+}
+
+export interface RealignResult {
+  moved:   boolean
+  /** Set when the tab was left exactly as it was, and why. */
+  skipped?: string
+}
+
+/**
+ * Move **From** and **From Email** from the far right to G / H, in place.
+ *
+ * They arrived at U / V with the rest of the thread ledger, which is where new
+ * columns can always go safely — but it is not where they are useful. The team
+ * reads File Handler and the sender together, and a column twenty places away
+ * might as well not be on the sheet.
+ *
+ * There is no way to do that without moving real columns in a file people are
+ * working in, so it is done the way a person would, and Excel does the moving:
+ *
+ *   1. **Delete U:V**, shifting left. These two columns are ours and days old;
+ *      nothing of the team's has ever been in them.
+ *   2. **Insert two columns at G**, shifting right. Everything from the old TO
+ *      List onwards moves two places, and Excel rewrites every formula, named
+ *      range, filter and conditional format that pointed at those cells — which
+ *      is the entire reason for doing it as an Excel operation rather than by
+ *      rewriting values ourselves.
+ *   3. **Name the two new columns.** Row 1 is then exactly this layout's header
+ *      for every column that existed before, and the ones added since fill in
+ *      through the ordinary `headerExtension` path on the next write.
+ *
+ * Order matters: U:V are deleted while they are still at U:V. Doing the insert
+ * first would move them to W:X and the delete would take two of the team's
+ * columns instead.
+ *
+ * Rows are not touched at all, so every stored `sheetRow` pointer still names
+ * the same query and nothing is re-appended or re-synced.
+ *
+ * The guard is `needsRealign`, and it is strict on purpose: a tab whose row 1 is
+ * not *exactly* the shape this knows how to transform is left alone and reported
+ * as a header mismatch, which is what stops rows going into the wrong columns.
+ */
+export async function realignWorksheet(
+  ref: SheetRef, sheetName: string, sessionId: string | null = null,
+): Promise<RealignResult> {
+  const cells = await readWideHeader(ref, sheetName, sessionId)
+  if (!needsRealign(cells)) return { moved: false, skipped: 'not the previous layout' }
+
+  const range = (address: string) =>
+    `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')`
+
+  // Only if they really are our two columns. A blind delete of U:V on a sheet
+  // that never got them would take Reply Type and Forward Chain with it.
+  const fromAt = PREVIOUS_FROM_COLUMN_INDEX
+  const hasFromColumns =
+    same(cells[fromAt] ?? '', 'From') && same(cells[fromAt + 1] ?? '', 'From Email')
+
+  if (hasFromColumns) {
+    const first = columnLetter(fromAt)
+    const last  = columnLetter(fromAt + 1)
+    await workbookFetch(`${range(`${first}:${last}`)}/delete`, sessionId, {
+      method: 'POST', body: JSON.stringify({ shift: 'Left' }),
+    })
+  }
+
+  const target    = columnLetter(FROM_COLUMN_INDEX)
+  const targetEnd = columnLetter(FROM_COLUMN_INDEX + 1)
+  await workbookFetch(`${range(`${target}:${targetEnd}`)}/insert`, sessionId, {
+    method: 'POST', body: JSON.stringify({ shift: 'Right' }),
+  })
+
+  const headerAddress = `${target}1:${targetEnd}1`
+  await workbookFetch(range(headerAddress), sessionId, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      values: [[SHEET_COLUMNS[FROM_COLUMN_INDEX], SHEET_COLUMNS[FROM_COLUMN_INDEX + 1]]],
+    }),
+  })
+  await workbookFetch(`${range(headerAddress)}/format/font`, sessionId, {
+    method: 'PATCH', body: JSON.stringify({ bold: true }),
+  }).catch(() => {})
+
+  return { moved: true }
 }
 
 // ── Share-URL resolution ─────────────────────────────────────────────────────
@@ -460,6 +589,11 @@ export async function getSheetInfo(force = false, target: WorkbookTarget = 'prim
       }
     : null
 
+  // Recognisably the order this tab carried before From was moved next to File
+  // Handler. Reported rather than repaired: "Test" is a read, and restructuring
+  // a live workbook is something the team should press "Prepare" for.
+  const realignPending = !adopted && !exact && headerExtendsAt === null && needsRealign(headerCells)
+
   const headerMatches = adopted ? adoptionFits : (exact || headerExtendsAt !== null)
 
   const layout = adopted && adoptionFits ? withColumnMap(QUERY_LAYOUT, adopted.map) : QUERY_LAYOUT
@@ -479,6 +613,7 @@ export async function getSheetInfo(force = false, target: WorkbookTarget = 'prim
     header:        headerCells,
     headerMatches,
     headerPendingColumns: headerExtendsAt === null ? [] : [...SHEET_COLUMNS.slice(headerExtendsAt)],
+    headerNeedsRealign: realignPending,
     custom,
     lastDataRow,
     nextAppendRow: lastDataRow + 1,
@@ -636,8 +771,22 @@ export async function ensureWorksheet(
 
   const headerAddress = `${layout.firstColumn}1:${layout.lastColumn}1`
   const header  = await readRange(ref, sheetName, headerAddress, sessionId)
-  const cells   = (header.text?.[0] ?? header.values[0]?.map(v => String(v ?? '')) ?? [])
+  let cells     = (header.text?.[0] ?? header.values[0]?.map(v => String(v ?? '')) ?? [])
     .map(h => String(h ?? '').trim())
+
+  // The one header change that cannot be made by writing into empty cells:
+  // From / From Email have to *move* to G / H. Done before anything else looks
+  // at row 1, so everything below sees the tab in its settled shape. It is a
+  // repair, so the read-only status panel reports the old order rather than
+  // quietly restructuring the file behind a "Test" button.
+  if (repair && layout.kind === 'query' && needsRealign(cells)) {
+    const realigned = await realignWorksheet(ref, sheetName, sessionId)
+    if (realigned.moved) {
+      const again = await readRange(ref, sheetName, headerAddress, sessionId)
+      cells = (again.text?.[0] ?? again.values[0]?.map(v => String(v ?? '')) ?? [])
+        .map(h => String(h ?? '').trim())
+    }
+  }
 
   const isEmpty  = cells.every(cell => cell === '')
   const matches  = layout.header.every((expected, i) => (cells[i] ?? '').toLowerCase() === expected.toLowerCase())

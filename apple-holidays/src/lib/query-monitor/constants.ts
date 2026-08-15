@@ -173,17 +173,23 @@ export const DEFAULTS = {
  */
 export const SHEET_COLUMNS = [
   'Date', 'Status', 'Subject', 'Allocation time', 'Replied time', 'File Handler',
+  // Who wrote in, kept beside the person who owns it. It arrived on the far
+  // right with the rest of the ledger and was moved here on 15 Aug 2026: the
+  // team reads F and G together — "who asked, and who is on it" — and a column
+  // twenty places away might as well not be on the sheet. Moving it is a real
+  // structural change to a live file; see `realignWorksheet`.
+  'From', 'From Email',
   'TO List', 'Sales Person', 'Destination', 'Agent', 'Travel Date', 'CNTL',
   'Amendment', 'Region',
   // ── Added Aug 2026, to the right of the columns already in use ─────────────
   'Replied By', 'Response (hrs)', 'SLA', 'Mails in Thread', 'Last Mail',
   'AI Summary',
   // ── The thread ledger, added 15 Aug 2026 ──────────────────────────────────
-  // Who the mail came from, who answered them and where that answer went, who
-  // passed the thread on — and, last, what happened across the whole thread
-  // rather than in the mail that opened it.
-  'From', 'From Email', 'Replied By Email', 'Replied To', 'Reply Type',
-  'Forward Chain', 'Reply Summary',
+  // Who answered and where that answer went, who passed the thread on, what
+  // happened across the whole thread rather than in the mail that opened it —
+  // and why this row is the one that survived a duplicate.
+  'Replied By Email', 'Replied To', 'Reply Type', 'Forward Chain',
+  'Reply Summary', 'Duplicate Reason',
 ] as const
 
 /**
@@ -194,10 +200,38 @@ export const SHEET_COLUMNS = [
  * right" apart from "somebody else's header" — the first is extended in place
  * over live data, the second is refused. See `headerExtension`.
  */
-export const LEGACY_SHEET_COLUMNS = SHEET_COLUMNS.slice(0, 14)
+export const LEGACY_SHEET_COLUMNS = [
+  'Date', 'Status', 'Subject', 'Allocation time', 'Replied time', 'File Handler',
+  'TO List', 'Sales Person', 'Destination', 'Agent', 'Travel Date', 'CNTL',
+  'Amendment', 'Region',
+] as const
+
+/**
+ * The order the sheet carried before **From** was moved next to File Handler:
+ * the same columns, with From / From Email at U / V instead of G / H.
+ *
+ * This is not history for its own sake. A workbook already in use carries this
+ * header and this data, and turning it into the layout above means moving real
+ * columns in a live file — so the move has to recognise, exactly, the one shape
+ * it knows how to transform, and refuse everything else. See `realignWorksheet`.
+ */
+export const PREVIOUS_SHEET_COLUMNS = [
+  'Date', 'Status', 'Subject', 'Allocation time', 'Replied time', 'File Handler',
+  'TO List', 'Sales Person', 'Destination', 'Agent', 'Travel Date', 'CNTL',
+  'Amendment', 'Region',
+  'Replied By', 'Response (hrs)', 'SLA', 'Mails in Thread', 'Last Mail',
+  'AI Summary',
+  'From', 'From Email', 'Replied By Email', 'Replied To', 'Reply Type',
+  'Forward Chain', 'Reply Summary',
+] as const
+
+/** Where From / From Email have to end up: straight after File Handler. */
+export const FROM_COLUMN_INDEX = 6
+/** Where they are on a sheet still carrying the previous order. */
+export const PREVIOUS_FROM_COLUMN_INDEX = 20
 
 export const SHEET_FIRST_COLUMN = 'A'
-export const SHEET_LAST_COLUMN  = 'AA'
+export const SHEET_LAST_COLUMN  = 'AB'
 /** Row 1 is the header; data starts at row 2. */
 export const SHEET_HEADER_ROW   = 1
 
@@ -209,27 +243,28 @@ export const SHEET_NUMBER_FORMATS = [
   'm/d/yyyy h:mm',        // D Allocation time
   'm/d/yyyy h:mm',        // E Replied time
   'General',              // F File Handler — one name
-  'General',              // G TO List — every recipient
-  'General',              // H Sales Person
-  'General',              // I Destination
-  'General',              // J Agent
-  'm/d/yyyy',             // K Travel Date
-  'General',              // L CNTL
-  'General',              // M Amendment
-  'General',              // N Region
-  'General',              // O Replied By
-  '0.00',                 // P Response (hrs) — a real number, so it averages
-  'General',              // Q SLA — Met / Missed
-  '0',                    // R Mails in Thread
-  'm/d/yyyy h:mm',        // S Last Mail
-  'General',              // T AI Summary
-  'General',              // U From
-  'General',              // V From Email
+  'General',              // G From — the sender's display name
+  'General',              // H From Email
+  'General',              // I TO List — every recipient
+  'General',              // J Sales Person
+  'General',              // K Destination
+  'General',              // L Agent
+  'm/d/yyyy',             // M Travel Date
+  'General',              // N CNTL
+  'General',              // O Amendment
+  'General',              // P Region
+  'General',              // Q Replied By
+  '0.00',                 // R Response (hrs) — a real number, so it averages
+  'General',              // S SLA — Met / Missed
+  '0',                    // T Mails in Thread
+  'm/d/yyyy h:mm',        // U Last Mail
+  'General',              // V AI Summary
   'General',              // W Replied By Email
   'General',              // X Replied To
   'General',              // Y Reply Type
   'General',              // Z Forward Chain
   'General',              // AA Reply Summary
+  'General',              // AB Duplicate Reason
 ] as const
 
 // ── Second tab: excluded mail ────────────────────────────────────────────────
@@ -250,14 +285,14 @@ export const EXCLUDED_SHEET_COLUMNS = [
   // An on-ground incident is the traffic that threads hardest: the same mail
   // comes back four times before it is settled. This tab has no SLA columns to
   // hang that off, so it takes the three that say it plainly.
-  'Mails in Thread', 'Last Mail', 'Reply Summary',
+  'Mails in Thread', 'Last Mail', 'Reply Summary', 'Duplicate Reason',
 ] as const
 
 /** The A–J layout this tab was created with. See `LEGACY_SHEET_COLUMNS`. */
 export const LEGACY_EXCLUDED_SHEET_COLUMNS = EXCLUDED_SHEET_COLUMNS.slice(0, 10)
 
 export const EXCLUDED_SHEET_FIRST_COLUMN = 'A'
-export const EXCLUDED_SHEET_LAST_COLUMN  = 'N'
+export const EXCLUDED_SHEET_LAST_COLUMN  = 'O'
 
 export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   '[$-en-US]dd-mmm-yy;@', // A Date
@@ -274,6 +309,7 @@ export const EXCLUDED_SHEET_NUMBER_FORMATS = [
   '0',                    // L Mails in Thread
   'm/d/yyyy h:mm',        // M Last Mail
   'General',              // N Reply Summary
+  'General',              // O Duplicate Reason
 ] as const
 
 // ── Replied-row highlight ────────────────────────────────────────────────────
