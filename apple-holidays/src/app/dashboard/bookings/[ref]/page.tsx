@@ -28,6 +28,7 @@ import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import SectionNav from '@/components/bookings/section-nav'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
 import ExternalPnlPanel from '@/components/bookings/external-pnl-panel'
+import InvoicePaymentPanel from '@/components/bookings/invoice-payment-panel'
 import DriverLogPanel from '@/components/bookings/driver-log-panel'
 import PrecheckPanel from '@/components/bookings/precheck-panel'
 import ReconfirmDelayPanel from '@/components/bookings/reconfirm-delay-panel'
@@ -2740,6 +2741,18 @@ Wishing you a wonderful trip! ✈️
               </div>
             </CardBody>
           </Card>
+          </section>
+        )}
+
+        {/* Client invoice & payments — read live from the accounts database.
+            Not gated to the accounts roles the way the P&L panels are: this is
+            what the client was billed and what they have paid, which is the
+            question every desk asks about a booking, and none of it is supplier
+            cost. The VN ground desk, whose view is deliberately narrow, is the
+            one exception. */}
+        {!isVnGroundLimited && (
+          <section data-nav="Invoice & Payments" data-nav-icon="invoice">
+          <InvoicePaymentPanel bookingRef={ref} />
           </section>
         )}
 

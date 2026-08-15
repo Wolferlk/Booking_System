@@ -23,7 +23,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Activity, ShieldCheck, Star, ClipboardCheck, PhoneCall, AudioLines,
   MessageCircle, Plane, Contact, Siren, Map, FileText, TrendingUp,
-  Calculator, Car, History, ArrowUp, BedDouble, type LucideIcon,
+  Calculator, Car, History, ArrowUp, BedDouble, Receipt, type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -43,6 +43,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   notes: FileText,
   pnl: TrendingUp,
   accounts: Calculator,
+  invoice: Receipt,
   precheck: BedDouble,
   driver: Car,
   history: History,
