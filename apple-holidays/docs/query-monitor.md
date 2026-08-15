@@ -28,6 +28,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    npx prisma db execute --file prisma/sql/query-monitor-thread-merge.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-reply-detail-ai-summary.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-group-mailbox-reply-source.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/2026-08-15-query-monitor-thread-ledger.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
 
@@ -79,12 +80,70 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
 | O Replied By | The handler whose Sent Items the reply was found in |
 | P Response (hrs) | `E − D` in hours, to 2 dp. A **number**, so the team can average and sort it. Blank while open |
 | Q SLA | `Met` / `Missed` against the SLA hours, blank while open — Status says where a query stands *now*, this remembers whether it was answered in time |
-| R Mails in Thread | 1 + the chasers folded into this row |
+| R Mails in Thread | **Every** mail of the conversation, ours included — see *The thread ledger* |
 | S Last Mail | Timestamp of the newest mail in the thread (D stays the first one) |
-| T AI Summary | One sentence, written only while *AI reads every new mail* is on |
+| T AI Summary | One sentence on the mail that **opened** the thread, written only while *AI reads every new mail* is on |
+| U From | The sender's display name — who at the agency actually wrote |
+| V From Email | The address it came from |
+| W Replied By Email | The mailbox the answer went out of (O is only the first name) |
+| X Replied To | Where the answer went — what proves it reached the agent and not a colleague |
+| Y Reply Type | `Direct reply` / `Forwarded on` / `Internal only`. Only the first stops the SLA clock |
+| Z Forward Chain | `Sajid → Vishmika · Vishmika → Sudari`, oldest hop first |
+| AA Reply Summary | What happened across the **whole** thread, rewritten every time it grows |
 
 Dates are written as real Excel serials with the same number formats as the
 manual rows, so sorting and the team's pivots keep working.
+
+### The thread ledger
+
+Columns R and U–AA are roll-ups of a record kept per thread: **one row per mail,
+in both directions**, in `query_monitor_thread_events`. Before it existed a row
+knew only how many *inbound* mails had folded into it and the first name of
+whoever's Sent Items a reply turned up in — which left the team opening Outlook
+to answer "who forwarded this, and did anyone ever actually reply?".
+
+Each mail is recorded as one of five kinds:
+
+| Kind | Direction | What it is |
+|---|---|---|
+| `QUERY` | in | The mail that opened the thread |
+| `FOLLOW_UP` | in | A later mail from the agent — a chaser, or an answer to our question |
+| `REPLY` | out | Ours, **addressed back to whoever asked** |
+| `FORWARD` | out | Ours, to a colleague or a supplier instead |
+| `INTERNAL` | out | Ours, on the thread but to neither |
+
+The classification is made from the mail's actual recipients, never guessed:
+the asker's address on TO or CC is what makes something a reply.
+
+> **This tightened the SLA.** A forward used to be accepted as the reply when
+> nothing better could be found, which stopped the clock early and credited the
+> wrong person. It no longer does. Such a thread stays **Pending/Overdue**, reads
+> `Forwarded on` in column Y, and names the hop in Z. Some rows that read
+> *Replied* under the old rule will correctly go back to open the first time a
+> sweep re-reads them.
+
+Recording is idempotent, so the overlapping windows every sweep re-reads cannot
+log the same mail twice. Rows written before 15 Aug 2026 start with an empty
+ledger and gain one from the next mail that touches the thread — history is
+never rewritten. While a ledger is empty, R falls back to the old
+`chasers + 1` count rather than claiming the thread is a single mail.
+
+### Reply Summary (AA) vs AI Summary (T)
+
+They answer different questions and are deliberately kept apart:
+
+- **T** reads the mail that opened the thread, is written once and never moves.
+  It says *what was asked*.
+- **AA** reads the whole ledger and is rewritten whenever the ledger grows. It
+  says *what became of it* — who chased, who answered, what is outstanding.
+
+AA is filled in **whether or not the AI switch is on**. With it on, gpt-4o-mini
+narrates the timeline (capped at 30 threads a sweep). With it off — or over
+budget, or if the call fails — the cell carries the ledger's own description,
+which costs nothing and is always true: *"Ravi Kumar wrote 3 times (2 chasers);
+forwarded Sajid → Vishmika; answered by Vishmika on 2026-08-15 14:40."*
+
+A thread of exactly one mail is left blank: there, T already says everything.
 
 ### One file handler, chosen from the TO list
 
@@ -112,11 +171,13 @@ time on enquiries — but they are not noise either, so nothing is discarded.
 Every mail is classified on the subject line alone (bodies carry quoted threads,
 which would exclude a genuine query written under an old voucher mail):
 
-- **QUERY** → appended to the query sheet, columns A–T, as above.
+- **QUERY** → appended to the query sheet, columns A–AA, as above.
 - **EXCLUDED** → appended to a second tab, default **“Other Mails”**, columns
-  A–K: Date · Received time · Subject · Sender · Sender Email · File Handler ·
-  TO List · Reason · Destination · CNTL · AI Summary. The tab is created with its
-  header on first use.
+  A–N: Date · Received time · Subject · Sender · Sender Email · File Handler ·
+  TO List · Reason · Destination · CNTL · AI Summary · Mails in Thread ·
+  Last Mail · Reply Summary. The tab is created with its header on first use.
+  It carries the thread columns because on-ground traffic is what threads
+  hardest — the same incident comes back four times before it is settled.
 
 The pattern list is the `query_monitor_exclude_patterns` setting, edited under
 *Configuration → Mail that is not a query*. One pattern per line: `#` comments,
@@ -227,7 +288,7 @@ rewritten.
 **Duplicates already in the sheet** are cleaned up by *Configuration → Duplicate
 rows → Merge duplicates*. It keeps the earliest row of each thread, brings it up
 to date, deletes the later ones from both workbooks and renumbers every stored
-row pointer below them. Only columns A–N are deleted and shifted up, so the
+row pointer below them. Only the layout's own columns are deleted and shifted up, so the
 lists the team keeps to the right stay where they are.
 
 *Remove duplicates* (the sheet-level sweep, `sheet-dedupe.ts`) works the other
@@ -429,7 +490,7 @@ columns:
 Rows keep their row numbers and their order throughout, so the row pointer stored
 per entry still points at the same query: nothing is re-appended and nothing is
 re-synced. The one thing that does not survive on the *live* tab is a column of
-the team's that stood inside A–T — that column now carries one of our fields. It
+the team's that stood inside A–AA — that column now carries one of our fields. It
 is intact on the archive tab, and the columns affected are named back in the
 confirmation message.
 
@@ -446,9 +507,9 @@ run log.
 
 ## Safety properties
 
-- **Columns A–T only** on the query sheet; anything further right belongs to the
+- **Columns A–AA only** on the query sheet; anything further right belongs to the
   team's lookup lists and pivots and is never written. (The other-mail tab uses
-  A–K.) The layout can only grow into columns verified empty first — see
+  A–N.) The layout can only grow into columns verified empty first — see
   *Growing the layout over a sheet already in use*.
 - **The File Handler is always someone on the TO list**, or blank. Enforced by
   the API, not just the UI.

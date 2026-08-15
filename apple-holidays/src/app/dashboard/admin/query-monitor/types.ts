@@ -14,6 +14,25 @@ export interface QmEntry {
   repliedAt:        string | null
   /** Sheet column O — whose Sent Items the reply was found in. */
   repliedBy:        string | null
+  /** Sheet column W — the mailbox that answer went out of. */
+  repliedByEmail:   string | null
+  /** Sheet column X — where it went, so a forward cannot pose as a reply. */
+  repliedToAddress: string | null
+  /**
+   * Sheet column Y. DIRECT — the agent was answered · FORWARD — passed to a
+   * colleague and not yet answered · INTERNAL — discussed, not yet answered.
+   * Only DIRECT stops the SLA clock.
+   */
+  replyType:        'DIRECT' | 'FORWARD' | 'INTERNAL' | null
+  /** Sheet column Z — "Sajid → Vishmika · Vishmika → Sudari", oldest hop first. */
+  forwardChain:     string | null
+  /** Mails from the agent on this thread, the opening one included. */
+  inboundCount:     number
+  /** Mails we sent on it — replies, forwards and internal notes alike. */
+  outboundCount:    number
+  /** Who wrote the newest mail of the thread, and which way it went. */
+  lastActor:        string | null
+  lastDirection:    'IN' | 'OUT' | null
   replyStatus:      'REPLIED' | 'PENDING' | 'OVERDUE'
   /** Sheet column F — the ONE handler who owns this query, '' while unclaimed. */
   handlerNames:     string
@@ -38,6 +57,13 @@ export interface QmEntry {
   /** Sheet column T — one sentence, written only while the AI-read switch is on. */
   aiSummary:        string | null
   aiSummaryAt:      string | null
+  /**
+   * Sheet column AA — what happened across the whole thread, rewritten each time
+   * the thread grows. Unlike `aiSummary` it is filled in whether or not the AI
+   * switch is on: with it off the ledger describes itself.
+   */
+  replySummary:     string | null
+  replySummaryAt:   string | null
   sheetRow:         number | null
   /** MERGED = a follow-up sharing another query's row; never written anywhere. */
   syncStatus:       'PENDING' | 'SYNCED' | 'DIRTY' | 'FAILED' | 'SKIPPED' | 'MERGED'
@@ -49,6 +75,43 @@ export interface QmEntry {
   backupSyncError:  string | null
   createdAt:        string
   matches?:         { handlerName: string; repliedAt: string | null; mailboxId: string }[]
+}
+
+/**
+ * One mail of a thread. Fetched per query from `/entries/[id]/thread` when the
+ * detail panel opens — never with the list, which would multiply its size.
+ */
+export interface QmThreadEvent {
+  id:           string
+  direction:    'IN' | 'OUT'
+  /** QUERY · FOLLOW_UP — theirs. REPLY · FORWARD · INTERNAL — ours. */
+  kind:         'QUERY' | 'FOLLOW_UP' | 'REPLY' | 'FORWARD' | 'INTERNAL'
+  actorName:    string
+  actorAddress: string
+  /** Recipients, already resolved to handler names where the address is ours. */
+  toNames:      string
+  toAddresses:  string
+  occurredAt:   string
+  subject:      string
+  snippet:      string | null
+}
+
+export interface QmThread {
+  rootId:       string
+  events:       QmThreadEvent[]
+  rollUp: {
+    inboundCount:  number
+    outboundCount: number
+    replyType:     'DIRECT' | 'FORWARD' | 'INTERNAL' | null
+    forwardChain:  string | null
+    lastActor:     string | null
+    lastDirection: 'IN' | 'OUT' | null
+    lastMessageAt: string | null
+  }
+  /** The ledger's own reading, recomputed live — what column AA falls back to. */
+  ledgerSays:     string | null
+  replySummary:   string | null
+  replySummaryAt: string | null
 }
 
 export interface QmStats {

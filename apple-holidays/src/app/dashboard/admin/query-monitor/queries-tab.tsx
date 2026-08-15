@@ -8,12 +8,37 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  FilterX, Inbox, Layers, Loader2, Mail, Pencil, Search, Trash2, Undo2, UserPlus, Users, Zap,
+  CornerDownLeft, CornerUpRight, FilterX, Inbox, Layers, Loader2, Mail, MessageSquare,
+  Pencil, Search, Share2, Trash2, Undo2, UserPlus, Users, Zap,
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
 import { EmptyState, Field, ReplyStatusBadge, SourceBadge, SyncStatusBadge, inputCls } from './ui'
-import type { QmEntry, QmStats } from './types'
+import type { QmEntry, QmStats, QmThread, QmThreadEvent } from './types'
+
+/**
+ * What a query's last outbound mail was, in the team's words.
+ *
+ * "Forwarded on" and "Internal only" are the two states the sheet could never
+ * show before: both used to look exactly like a reply from the conversation id
+ * alone, and both mean the agent is still waiting.
+ */
+const REPLY_TYPE_LABEL: Record<string, { label: string; cls: string }> = {
+  DIRECT:   { label: 'Direct reply',   cls: 'bg-emerald-100 text-emerald-700' },
+  FORWARD:  { label: 'Forwarded on',   cls: 'bg-amber-100 text-amber-700' },
+  INTERNAL: { label: 'Internal only',  cls: 'bg-slate-200 text-slate-600' },
+}
+
+/** How each kind of mail is drawn on the timeline. */
+const EVENT_STYLE: Record<QmThreadEvent['kind'], {
+  verb: string; icon: typeof Mail; cls: string
+}> = {
+  QUERY:     { verb: 'asked',            icon: Mail,           cls: 'text-sky-600 bg-sky-50 border-sky-200' },
+  FOLLOW_UP: { verb: 'wrote again',      icon: MessageSquare,  cls: 'text-sky-600 bg-sky-50 border-sky-200' },
+  REPLY:     { verb: 'replied to',       icon: CornerDownLeft, cls: 'text-emerald-600 bg-emerald-50 border-emerald-200' },
+  FORWARD:   { verb: 'forwarded to',     icon: Share2,         cls: 'text-amber-600 bg-amber-50 border-amber-200' },
+  INTERNAL:  { verb: 'noted internally', icon: CornerUpRight,  cls: 'text-slate-500 bg-slate-50 border-slate-200' },
+}
 
 const REPLY_FILTERS = [
   { id: '',        label: 'All' },
@@ -44,6 +69,16 @@ const ASSIGNED_FILTERS = [
 ]
 
 export const splitNames = (list: string) => list.split(',').map(s => s.trim()).filter(Boolean)
+
+/**
+ * Every mail this row stands for, ours included.
+ *
+ * `followUpCount` is the floor for the same reason it is on the server (see
+ * `threadMailCount` in run.ts): a row written before the ledger existed has an
+ * empty one, and must not suddenly claim to be a single mail.
+ */
+const threadTotal = (entry: QmEntry) =>
+  Math.max(entry.inboundCount + entry.outboundCount, entry.followUpCount + 1)
 
 /**
  * The File Handler cell: one name, chosen from the people the mail was actually
@@ -85,6 +120,68 @@ function HandlerPicker({
   )
 }
 
+/**
+ * The conversation, mail by mail, oldest first.
+ *
+ * This is the panel the sheet's thread columns are a compression of, and it is
+ * here so that compression can be checked: "Mails in Thread 5" and "Forwarded
+ * on" are claims, and a team that cannot see what they were computed from will
+ * go back to opening Outlook. Ours and theirs are drawn on opposite sides for
+ * the same reason a chat app does it — the shape of a thread where nothing ever
+ * came back is meant to be visible without reading a word.
+ */
+function ThreadTimeline({ thread, loading }: { thread: QmThread | null; loading: boolean }) {
+  if (loading) {
+    return (
+      <p className="text-xs text-slate-400 flex items-center gap-2">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading the thread…
+      </p>
+    )
+  }
+  if (!thread || thread.events.length === 0) {
+    return (
+      <p className="text-xs text-slate-400">
+        No ledger for this thread yet — it is written from the next mail that touches it.
+        Rows from before 15 Aug 2026 start empty by design; their history is not rewritten.
+      </p>
+    )
+  }
+
+  return (
+    <ol className="space-y-1.5">
+      {thread.events.map(event => {
+        const style = EVENT_STYLE[event.kind]
+        const Icon  = style.icon
+        const ours  = event.direction === 'OUT'
+        return (
+          <li
+            key={event.id}
+            className={cn(
+              'rounded-lg border p-2 text-xs',
+              style.cls,
+              // Ours indented, theirs flush — the thread's balance at a glance.
+              ours ? 'ml-6' : 'mr-6',
+            )}
+          >
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="font-semibold">{event.actorName || event.actorAddress}</span>
+              <span className="opacity-80">{style.verb}</span>
+              {event.toNames && <span className="font-medium">{event.toNames}</span>}
+              <span className="ml-auto tabular-nums opacity-70">
+                {formatDateTime(event.occurredAt)}
+              </span>
+            </div>
+            {event.snippet && (
+              <p className="mt-1 text-slate-600 line-clamp-2">{event.snippet}</p>
+            )}
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
 export default function QueriesTab({
   refreshKey, onStats,
 }: {
@@ -107,6 +204,34 @@ export default function QueriesTab({
 
   const [editing, setEditing] = useState<QmEntry | null>(null)
   const [viewing, setViewing] = useState<QmEntry | null>(null)
+
+  // The ledger is fetched per query when the detail panel opens, never with the
+  // list — a dozen events with a snippet each, times 200 rows, would dwarf
+  // everything else on the page. See the route's own note.
+  const [thread, setThread] = useState<QmThread | null>(null)
+  const [threadLoading, setThreadLoading] = useState(false)
+
+  useEffect(() => {
+    if (!viewing) { setThread(null); return }
+
+    let cancelled = false
+    setThread(null)
+    setThreadLoading(true)
+    ;(async () => {
+      try {
+        const res  = await fetch(`/api/query-monitor/entries/${viewing.id}/thread`)
+        const json = await res.json()
+        if (!cancelled && json.success) setThread(json.data as QmThread)
+      } catch {
+        // A timeline that will not load must not take the detail panel with it —
+        // every other field on it came with the list and is already correct.
+      } finally {
+        if (!cancelled) setThreadLoading(false)
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [viewing])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -384,14 +509,26 @@ export default function QueriesTab({
                             <span className="font-medium text-slate-800 group-hover:text-emerald-700 line-clamp-1">
                               {entry.subject}
                             </span>
-                            {/* Later mail of the same thread shares this row
-                                instead of repeating the subject underneath it. */}
-                            {entry.followUpCount > 0 && (
+                            {/* Every mail of the thread shares this row instead
+                                of repeating the subject underneath it — ours as
+                                well as theirs, which is what the counter says. */}
+                            {threadTotal(entry) > 1 && (
                               <span
-                                title={`${entry.followUpCount} later mail(s) in this thread — folded into this row`}
+                                title={`${entry.inboundCount} mail(s) from them, ${entry.outboundCount} from us — all folded into this row`}
                                 className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold"
                               >
-                                <Layers className="w-3 h-3" /> +{entry.followUpCount}
+                                <Layers className="w-3 h-3" /> {threadTotal(entry)}
+                              </span>
+                            )}
+                            {/* Passed to a colleague and still not answered —
+                                the state that used to be indistinguishable from
+                                a mail nobody had opened. */}
+                            {entry.replyType === 'FORWARD' && entry.replyStatus !== 'REPLIED' && (
+                              <span
+                                title={entry.forwardChain ?? 'Forwarded on, agent not yet answered'}
+                                className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold"
+                              >
+                                <Share2 className="w-3 h-3" /> Forwarded
                               </span>
                             )}
                           </span>
@@ -403,9 +540,18 @@ export default function QueriesTab({
                               {entry.aiSummary}
                             </span>
                           )}
+                          {/* What became of the thread, when it is more than the
+                              one mail column T already reads. */}
+                          {entry.replySummary && threadTotal(entry) > 1 && (
+                            <span className="block text-[11px] text-sky-600/90 line-clamp-1">
+                              {entry.replySummary}
+                            </span>
+                          )}
+                          {/* Who it actually came from — the address, not just
+                              the agency the sender rules mapped it to. */}
                           <span className="block text-[11px] text-slate-400 truncate">
-                            {entry.fromName || entry.fromAddress} · {entry.fromDomain}
-                            {entry.lastMessageAt && entry.followUpCount > 0
+                            {entry.fromName ? `${entry.fromName} · ` : ''}{entry.fromAddress}
+                            {entry.lastMessageAt && threadTotal(entry) > 1
                               && ` · last mail ${formatDateTime(entry.lastMessageAt)}`}
                           </span>
                         </button>
@@ -446,8 +592,33 @@ export default function QueriesTab({
                       <td className="px-3 py-2.5 text-slate-700 whitespace-nowrap">
                         {entry.travelDate ? formatDate(entry.travelDate) : '—'}
                       </td>
+                      {/* When, and by whom. The pair is the answer to "who
+                          replied and when" — one without the other has had to be
+                          chased through Outlook every time it was asked. */}
                       <td className="px-3 py-2.5 text-slate-500 text-xs whitespace-nowrap">
-                        {entry.repliedAt ? formatDateTime(entry.repliedAt) : '—'}
+                        {entry.repliedAt
+                          ? (
+                            <>
+                              {formatDateTime(entry.repliedAt)}
+                              {entry.repliedBy && (
+                                <span
+                                  className="block text-[10px] text-emerald-600 font-semibold"
+                                  title={entry.repliedToAddress
+                                    ? `Sent to ${entry.repliedToAddress}`
+                                    : undefined}
+                                >
+                                  by {entry.repliedBy}
+                                </span>
+                              )}
+                            </>
+                          )
+                          : entry.forwardChain
+                            ? (
+                              <span className="text-amber-600" title={entry.forwardChain}>
+                                forwarded, no reply yet
+                              </span>
+                            )
+                            : '—'}
                       </td>
                       <td className="px-3 py-2.5">
                         <SyncStatusBadge status={entry.syncStatus} sheetRow={entry.sheetRow} />
@@ -521,7 +692,22 @@ export default function QueriesTab({
               <Detail label="Allocation time" value={formatDateTime(viewing.receivedAt)} />
               <Detail label="Replied time" value={viewing.repliedAt ? formatDateTime(viewing.repliedAt) : 'Not yet'} />
               <Detail label="Status" value={<ReplyStatusBadge status={viewing.replyStatus} />} />
-              <Detail label="Replied by" value={viewing.repliedBy ?? '—'} />
+              <Detail
+                label="Replied by"
+                value={viewing.repliedBy
+                  ? (
+                    <span>
+                      {viewing.repliedBy}
+                      {viewing.repliedByEmail && (
+                        <span className="block text-[11px] text-slate-400">{viewing.repliedByEmail}</span>
+                      )}
+                    </span>
+                  )
+                  : '—'}
+              />
+              {/* Where the answer went. "Replied by Sajid" is only half of it —
+                  this is what shows it reached the agent and not a colleague. */}
+              <Detail label="Replied to" value={viewing.repliedToAddress ?? '—'} />
               <Detail
                 label="Response time"
                 value={viewing.repliedAt
@@ -530,10 +716,34 @@ export default function QueriesTab({
               />
               <Detail
                 label="Mails in thread"
-                value={viewing.followUpCount > 0
-                  ? `${viewing.followUpCount + 1} · last ${formatDateTime(viewing.lastMessageAt ?? viewing.receivedAt)}`
-                  : '1'}
+                value={
+                  <span>
+                    {Math.max(
+                      viewing.inboundCount + viewing.outboundCount,
+                      viewing.followUpCount + 1,
+                    )}
+                    <span className="block text-[11px] text-slate-400">
+                      {viewing.inboundCount} in · {viewing.outboundCount} out · last{' '}
+                      {formatDateTime(viewing.lastMessageAt ?? viewing.receivedAt)}
+                    </span>
+                  </span>
+                }
               />
+              <Detail
+                label="Last outbound"
+                value={viewing.replyType
+                  ? (
+                    <span className={cn(
+                      'inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold',
+                      REPLY_TYPE_LABEL[viewing.replyType]?.cls,
+                    )}>
+                      {REPLY_TYPE_LABEL[viewing.replyType]?.label ?? viewing.replyType}
+                    </span>
+                  )
+                  : <span className="text-slate-400">Nothing sent yet</span>}
+              />
+              {/* Who handed the thread to whom, in the order it happened. */}
+              <Detail label="Forward chain" value={viewing.forwardChain ?? '—'} />
               <Detail
                 label="File handler"
                 value={viewing.handlerNames || <span className="text-amber-600">Not picked yet</span>}
@@ -563,12 +773,41 @@ export default function QueriesTab({
 
             {viewing.aiSummary && (
               <div>
-                <p className="text-xs font-semibold text-slate-600 mb-1">AI summary</p>
+                <p className="text-xs font-semibold text-slate-600 mb-1">
+                  AI summary <span className="font-normal text-slate-400">· the mail that opened the thread</span>
+                </p>
                 <p className="text-sm text-slate-700 bg-emerald-50/60 border border-emerald-100 rounded-lg p-3">
                   {viewing.aiSummary}
                 </p>
               </div>
             )}
+
+            {/* Column AA. Deliberately shown under the AI summary and not beside
+                it: one says what was asked, the other what became of it, and
+                reading them in that order is the whole point of having both. */}
+            {(viewing.replySummary || thread?.ledgerSays) && (
+              <div>
+                <p className="text-xs font-semibold text-slate-600 mb-1">
+                  Reply summary <span className="font-normal text-slate-400">· the whole thread</span>
+                </p>
+                <p className="text-sm text-slate-700 bg-sky-50/60 border border-sky-100 rounded-lg p-3">
+                  {viewing.replySummary || thread?.ledgerSays}
+                </p>
+                {viewing.replySummaryAt && (
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Rewritten {formatDateTime(viewing.replySummaryAt)} — it is written again
+                    every time the thread grows.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs font-semibold text-slate-600 mb-1">
+                Thread <span className="font-normal text-slate-400">· every mail, ours and theirs</span>
+              </p>
+              <ThreadTimeline thread={thread} loading={threadLoading} />
+            </div>
 
             <div>
               <p className="text-xs font-semibold text-slate-600 mb-1">Mail extract</p>

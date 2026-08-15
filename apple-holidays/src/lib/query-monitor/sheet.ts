@@ -63,7 +63,7 @@ export interface SheetInfo extends SheetRef {
   lastModified:   string | null
 }
 
-/** A row as it will be laid down in columns A–T. */
+/** A row as it will be laid down in columns A–AA. */
 export interface SheetRowValues {
   date:           number | ''  // A — Excel date serial
   status:         string       // B
@@ -82,9 +82,25 @@ export interface SheetRowValues {
   repliedBy:      string       // O — whose Sent Items the reply was found in
   responseHours:  number | ''  // P — allocation → reply, in hours
   sla:            string       // Q — Met / Missed, blank while open
-  threadCount:    number | ''  // R — mails in the thread, this row included
+  /**
+   * R — every mail of the conversation, ours included.
+   *
+   * Widened on 15 Aug 2026 from "inbound mails folded into this row" to the
+   * whole thread, both directions: a row that stands for three agent mails and
+   * two of our replies is a five-mail thread, and reading it as three was the
+   * complaint that started the ledger. `threadIn`/`threadOut` on the entry keep
+   * the split, and column Z spells the traffic out hop by hop.
+   */
+  threadCount:    number | ''
   lastMail:       number | ''  // S — Excel datetime serial of the newest mail
-  aiSummary:      string       // T — one sentence, when the AI switch is on
+  aiSummary:      string       // T — one sentence on the mail that opened it
+  from:           string       // U — the agent's display name
+  fromEmail:      string       // V — the address it actually came from
+  repliedByEmail: string       // W — the mailbox the reply went out of
+  repliedTo:      string       // X — where it went, so a forward cannot pose as a reply
+  replyType:      string       // Y — Direct reply / Forwarded / Internal only
+  forwardChain:   string       // Z — "Sajid → Vishmika · Vishmika → Sudari"
+  replySummary:   string       // AA — what happened across the whole thread
 }
 
 export function rowToCells(row: SheetRowValues): (string | number)[] {
@@ -94,10 +110,12 @@ export function rowToCells(row: SheetRowValues): (string | number)[] {
     row.travelDate, row.cntl, row.amendment, row.region,
     row.repliedBy, row.responseHours, row.sla, row.threadCount, row.lastMail,
     row.aiSummary,
+    row.from, row.fromEmail, row.repliedByEmail, row.repliedTo, row.replyType,
+    row.forwardChain, row.replySummary,
   ]
 }
 
-/** A row on the second tab, columns A–K. See EXCLUDED_SHEET_COLUMNS. */
+/** A row on the second tab, columns A–N. See EXCLUDED_SHEET_COLUMNS. */
 export interface ExcludedRowValues {
   date:         number | ''  // A — Excel date serial
   receivedTime: number | ''  // B — Excel datetime serial
@@ -110,6 +128,9 @@ export interface ExcludedRowValues {
   destination:  string       // I
   cntl:         string       // J
   aiSummary:    string       // K — one sentence, when the AI switch is on
+  threadCount:  number | ''  // L — every mail of the conversation, ours included
+  lastMail:     number | ''  // M — Excel datetime serial of the newest mail
+  replySummary: string       // N — what happened across the whole thread
 }
 
 export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] {
@@ -117,6 +138,7 @@ export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] 
     row.date, row.receivedTime, row.subject, row.sender, row.senderEmail,
     row.fileHandler, row.toList, row.reason, row.destination, row.cntl,
     row.aiSummary,
+    row.threadCount, row.lastMail, row.replySummary,
   ]
 }
 

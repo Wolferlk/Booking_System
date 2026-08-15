@@ -1498,7 +1498,20 @@ model QueryMonitorEntry {
   /// looked at again) but are never written — their sync state is MERGED.
   mergedIntoId     String?
   /// How many later mails of the thread folded into this row.
+  ///
+  /// Inbound only, and kept for exactly that reason: it is what the merge logic
+  /// increments. What the sheet's "Mails in Thread" column now shows is
+  /// `inboundCount + outboundCount` — the whole conversation, both ways.
   followUpCount    Int                 @default(0)
+  /// Mails from the agent on this thread, the opening one included. Rolled up
+  /// from `events` so a sheet write never has to aggregate them per row.
+  inboundCount     Int                 @default(1)
+  /// Mails we sent on this thread — replies, forwards and internal notes alike.
+  outboundCount    Int                 @default(0)
+  /// Who wrote the newest mail of the thread and which way it went, so
+  /// "waiting on us" and "waiting on them" can be told apart at a glance.
+  lastActor        String?
+  lastDirection    String?             @db.VarChar(8)
   /// When the newest mail of the thread arrived. `receivedAt` stays the first
   /// one: the SLA is measured from when the query was originally asked.
   lastMessageAt    DateTime?
@@ -1520,6 +1533,16 @@ model QueryMonitorEntry {
   /// The address the reply was actually sent from — the identity behind
   /// `repliedBy`, which is only the first name the sheet shows.
   repliedByEmail   String?
+  /// Sheet column X — where the reply went. "Replied by Sajid" is half an
+  /// answer; this is what shows it went back to the agent who asked rather than
+  /// to a colleague.
+  repliedToAddress String?             @db.VarChar(500)
+  /// Sheet column Y — DIRECT (the agent was answered) | FORWARD (passed to a
+  /// colleague, agent not yet answered) | INTERNAL (discussed among ourselves).
+  /// Only DIRECT stops the SLA clock. Null while nothing has gone out at all.
+  replyType        String?             @db.VarChar(16)
+  /// Sheet column Z — "Sajid → Vishmika · Vishmika → Sudari", oldest hop first.
+  forwardChain     String?             @db.VarChar(500)
   /// internetMessageId of the sent mail counted as the reply, so an attribution
   /// can be traced back to a real message in someone's Sent Items.
   replyMessageId   String?
@@ -1559,6 +1582,16 @@ model QueryMonitorEntry {
   /// switch off — it is not backfilled over history.
   aiSummary        String?             @db.Text
   aiSummaryAt      DateTime?
+  /// Sheet column AA — what happened across the *whole* thread, in one or two
+  /// sentences. Distinct from `aiSummary`, which reads the opening mail only and
+  /// never moves again: this one is rewritten every time the thread grows, which
+  /// is the only way a row standing for eleven mails can say anything true.
+  replySummary     String?             @db.Text
+  replySummaryAt   DateTime?
+  /// How many ledger events the stored summary was written from. Regeneration
+  /// happens when this falls behind `inboundCount + outboundCount` — that test
+  /// is what stops a sweep paying for a summary of a thread that has not moved.
+  replySummaryEvents Int               @default(0)
   /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
   manualOverrides  Json?
   sheetRow         Int?
@@ -1585,6 +1618,7 @@ model QueryMonitorEntry {
   createdAt        DateTime            @default(now())
   updatedAt        DateTime            @updatedAt
   matches          QueryMonitorMatch[]
+  events           QueryMonitorThreadEvent[]
 
   @@index([receivedAt])
   @@index([syncStatus])
@@ -1621,6 +1655,52 @@ model QueryMonitorMatch {
   @@index([graphId])
   @@index([mailboxId])
   @@map("query_monitor_matches")
+}
+
+/// One row per message of a thread, in both directions — the record that lets a
+/// single sheet row say what actually happened in a conversation.
+///
+/// `QueryMonitorMatch` answers "which mailboxes saw this mail". This answers the
+/// question the team kept having to open Outlook for: who wrote in, who answered
+/// them and when, and who forwarded the thread on to whom. Every roll-up on the
+/// entry — `inboundCount`, `outboundCount`, `forwardChain`, `replyType`,
+/// `replySummary` — is computed from these rows and stored there only so a sheet
+/// write does not have to aggregate per row.
+///
+/// Recording is idempotent on `eventKey`. Every sweep re-reads an overlapping
+/// window of Sent Items on purpose, so the same reply is offered to the ledger
+/// again and again and must land exactly once.
+model QueryMonitorThreadEvent {
+  id           String   @id @default(cuid())
+  /// The root entry whose sheet row stands for this thread. Follow-ups keep no
+  /// ledger of their own — their mail is an event on the row they merged into.
+  entryId      String
+  /// `entryId|internetMessageId`, falling back to the Graph id when a message
+  /// carries none.
+  eventKey     String   @unique @db.VarChar(190)
+  /// IN — from the agent to us · OUT — from one of the monitored mailboxes.
+  direction    String   @db.VarChar(8)
+  /// QUERY (opened the thread) | FOLLOW_UP (a later mail from the agent) |
+  /// REPLY (ours, back to whoever asked — the only kind that stops the SLA
+  /// clock) | FORWARD (ours, to a colleague) | INTERNAL (ours, to neither).
+  kind         String   @db.VarChar(16)
+  /// The handler's first name for OUT, the agent's display name for IN.
+  actorName    String   @default("")
+  actorAddress String   @default("")
+  /// Everyone it went to, already resolved to handler names where the address is
+  /// one of ours. VarChar with a default for the same reason as `Entry.toList`.
+  toNames      String   @default("") @db.VarChar(500)
+  toAddresses  String   @default("") @db.VarChar(500)
+  occurredAt   DateTime
+  subject      String   @default("") @db.VarChar(500)
+  snippet      String?  @db.Text
+  messageId    String?
+  createdAt    DateTime @default(now())
+  entry        QueryMonitorEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([entryId, occurredAt])
+  @@index([direction])
+  @@map("query_monitor_thread_events")
 }
 
 /// One record per sweep — the "View log" feed. `steps` holds the full ordered
