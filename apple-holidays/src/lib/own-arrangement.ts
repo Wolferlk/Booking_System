@@ -22,8 +22,35 @@ const PLACEHOLDER_HOTELS = new Set([
   'tba', 'tbc', 'n/a', 'na', 'to be advised', 'to be confirmed', '-',
 ])
 
-const OWN_ARRANGEMENT_TEXT =
-  /own\s*arrangement|self[\s-]*book|guest\s*arrang|by\s*guest|not\s*included|own\s*acc/
+/**
+ * Wording that means "the guest holds this reservation, not us".
+ *
+ * TCs say this a dozen ways, and the list grew from the ones that were coming
+ * through as *company* arranged — `self arranged`, `own basis`, `booked by the
+ * client`, `direct booking`, a bare `OWN`. Each alternative tolerates a hyphen,
+ * a plural or an extra article ("booked by the guest") while staying tight
+ * enough not to swallow a hotel that merely has the word in its name
+ * ("Guest House Hanoi" is a property, not an arrangement).
+ */
+const OWN_ARRANGEMENT_TEXT = new RegExp([
+  'own\\s*arrangement',                            // own arrangement / arrangements
+  'own[\\s-]*arrang',                              // own arranged / own-arranging
+  'self[\\s-]*(book|arrang|made|organis|organiz)', // self-booked / self arranged
+  '(guest|client|customer|traveller|traveler|pax)[\\s-]*(own|arrang|book)',
+  'book(ed|ing)?\\s*by\\s*(the\\s*)?(guest|client|customer|traveller|traveler|pax)',
+  'own\\s*(acc|hotel|stay|basis|booking|expense|cost|account)',
+  'direct[\\s-]*book',                             // guest booked direct with the hotel
+].join('|'), 'i')
+
+/**
+ * "Not ours" said about the stay itself.
+ *
+ * Only tested against the hotel and room fields. It deliberately never reads
+ * `mealType`: a company-arranged hotel routinely carries "Not included" there,
+ * meaning breakfast is not in the package — which says nothing at all about who
+ * booked the room, and used to flip the whole stay to own-arrangement.
+ */
+const NOT_OURS_TEXT = /not\s*(included|booked|provided|arranged)|^\s*own\s*$/i
 
 export interface OwnArrangementInput {
   ownArrangement?: boolean | null
@@ -44,10 +71,21 @@ export function isOwnArrangement(a: OwnArrangementInput | Record<string, unknown
   const r = a as Record<string, unknown>
   if (r.ownArrangement === true) return true
 
-  const hay = [r.hotel, r.roomType, r.mealType, r.address, r.contact]
-    .map(v => String(v ?? '').toLowerCase())
-    .join(' | ')
-  if (OWN_ARRANGEMENT_TEXT.test(hay)) return true
+  const field = (k: string) => String(r[k] ?? '').toLowerCase()
+
+  // Explicitly false is the extractor saying "we hold this reservation", so the
+  // text heuristics below — which exist only for rows that predate the column or
+  // arrived without it — are not consulted. The placeholder-hotel rule at the
+  // end still applies: a stay with no property named has nothing to reconfirm
+  // whoever booked it.
+  if (r.ownArrangement !== false) {
+    const fields = ['hotel', 'roomType', 'mealType', 'address', 'contact'].map(field)
+    if (fields.some(v => OWN_ARRANGEMENT_TEXT.test(v))) return true
+
+    // "Not included" / a bare "OWN" only counts when said about the property or
+    // the room — see NOT_OURS_TEXT.
+    if ([field('hotel'), field('roomType')].some(v => NOT_OURS_TEXT.test(v))) return true
+  }
 
   const hotel = String(r.hotel ?? '').trim().toLowerCase()
   return !hotel || PLACEHOLDER_HOTELS.has(hotel)

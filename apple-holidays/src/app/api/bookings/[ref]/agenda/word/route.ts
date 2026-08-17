@@ -18,6 +18,7 @@ import {
 } from '@/lib/ticket-notes'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
+import { withoutRetiredContacts } from '@/lib/emergency-contacts'
 
 export const dynamic = 'force-dynamic'
 
@@ -683,14 +684,16 @@ export async function GET(
   }
 
   // ── EMERGENCY CONTACTS ────────────────────────────────────────────────────
-  if (booking.emergencyContacts.length > 0) {
+  // Resigned staff never reach the guest — see `lib/emergency-contacts.ts`.
+  const emergencyContacts = withoutRetiredContacts(booking.emergencyContacts)
+  if (emergencyContacts.length > 0) {
     children.push(sectionHeading('🚨', 'Emergency Contacts'))
     children.push(new Table({
       width: { size: 100, type: WidthType.PERCENTAGE },
       layout: TableLayoutType.FIXED,
       rows: [
         new TableRow({ children: ['Name', 'Phone', 'Role'].map(h => hCell(h)) }),
-        ...booking.emergencyContacts.map((ec, i) => new TableRow({
+        ...emergencyContacts.map((ec, i) => new TableRow({
           children: [
             dCell(ec.name,       { bold: true, color: CLR.red, shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(ec.phone ?? '—', { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),

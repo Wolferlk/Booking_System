@@ -10,6 +10,11 @@ export type Transition = {
 }
 
 // All valid state transitions — Method 1: Manual Vietnam Credit-base Agents
+//
+// `GT_VN_USER` (Vietnam Ground — Limited) owns the operational stretch from
+// TE_REVIEWED through to the D-3 customer message: driver allocation, QC1,
+// tickets, QC2 and MSG_SENT_CUSTOMER. It deliberately holds none of the earlier
+// booking-creation steps and none of the closing feedback/completion steps.
 export const TRANSITIONS: Transition[] = [
   {
     from: 'DRAFT',
@@ -77,25 +82,25 @@ export const TRANSITIONS: Transition[] = [
   {
     from: 'DRIVER_ALLOCATED',
     to: 'QC1_PASS',
-    allowedRoles: ['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['TE_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'QC1 Pass',
   },
   {
     from: 'QC1_PASS',
     to: 'TICKETS_ISSUED',
-    allowedRoles: ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['TE_USER', 'GT_VN_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Tickets Issued (Activated)',
   },
   {
     from: 'TICKETS_ISSUED',
     to: 'QC2_PASS',
-    allowedRoles: ['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['TE_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'QC2 Pass',
   },
   {
     from: 'QC2_PASS',
     to: 'MSG_SENT_CUSTOMER',
-    allowedRoles: ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+    allowedRoles: ['TE_USER', 'GT_VN_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
     label: 'Message Sent to Customer',
   },
   {

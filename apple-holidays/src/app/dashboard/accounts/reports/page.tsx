@@ -21,7 +21,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
   PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
-  Sparkles, Info, Maximize2, Hotel,
+  Sparkles, Info, Maximize2, Hotel, XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -253,13 +253,25 @@ export default function OperationsBoardPage() {
     })
   }
 
+  /**
+   * The visible rows minus the cancellations.
+   *
+   * Cancelled bookings are listed on the board — the desk asked to see that the
+   * file it was working is dead rather than have it silently vanish — but there
+   * is no work left on one, so they are excluded from every gauge, the ready
+   * percentage and the D-10 chase. Counting them would make a day of
+   * cancellations read as a day fully under control.
+   */
+  const liveVisible = useMemo(() => visible.filter(r => !r.cancelled), [visible])
+  const cancelledCount = visible.length - liveVisible.length
+
   // ── The four gauges ────────────────────────────────────────────────────────
   // Computed over the *visible* rows so the rings describe exactly the list
   // underneath them; switching to Arrivals re-scopes the whole board.
   const gauges = useMemo(() => {
     const tally = (pick: (r: OpsDayRow) => ReadinessState) => {
       const counts: Record<ReadinessState, number> = { DONE: 0, PARTIAL: 0, PENDING: 0, NA: 0 }
-      for (const r of visible) counts[pick(r)] += 1
+      for (const r of liveVisible) counts[pick(r)] += 1
       // N/A rows are excluded from the denominator: a tour with no tickets to
       // buy should not drag the "tickets issued" gauge down.
       const scope = counts.DONE + counts.PARTIAL + counts.PENDING
@@ -280,12 +292,12 @@ export default function OperationsBoardPage() {
       ['qc', (r: OpsDayRow) => r.qc.state],
     ] as [FocusKey, (r: OpsDayRow) => ReadinessState][])
       .map(([key, pick]) => ({ key, ...FOCUS_META[key], ...tally(pick) }))
-  }, [visible])
+  }, [liveVisible])
 
-  const readyCount = visible.filter(r => r.ready).length
-  const readyPct = visible.length ? Math.round((readyCount / visible.length) * 100) : 0
+  const readyCount = liveVisible.filter(r => r.ready).length
+  const readyPct = liveVisible.length ? Math.round((readyCount / liveVisible.length) * 100) : 0
   /** Accommodation-only files in view — ready by definition, not by work done. */
-  const hotelOnlyCount = visible.filter(r => r.hotelOnly).length
+  const hotelOnlyCount = liveVisible.filter(r => r.hotelOnly).length
 
   /**
    * The D-10 reconfirmation deadline across the visible rows.
@@ -296,10 +308,10 @@ export default function OperationsBoardPage() {
    * read to find out which kind of day it is.
    */
   const d10 = useMemo(() => ({
-    breached: visible.filter(r => r.reconfirmBreached).length,
-    unexplained: visible.filter(r => r.reconfirmBreached && !r.reconfirmDelay).length,
-    stale: visible.filter(r => r.reconfirmDelay?.stale).length,
-  }), [visible])
+    breached: liveVisible.filter(r => r.reconfirmBreached).length,
+    unexplained: liveVisible.filter(r => r.reconfirmBreached && !r.reconfirmDelay).length,
+    stale: liveVisible.filter(r => r.reconfirmDelay?.stale).length,
+  }), [liveVisible])
 
   // A week rail centred two days back, so yesterday's loose ends stay one click away.
   const railDays = useMemo(
@@ -335,11 +347,11 @@ export default function OperationsBoardPage() {
     ]
     const lines = visible.map(r => [
       r.bookingRef,
-      r.hotelOnly ? 'Hotel Only' : 'Full tour',
+      r.cancelled ? 'CANCELLED' : r.hotelOnly ? 'Hotel Only' : 'Full tour',
       r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
       r.countryLabel, r.destination ?? '', r.statusLabel,
       r.arrivalDate, r.departureDate, `${r.dayNo}/${r.totalDays}`, r.pax,
-      r.isArrival ? 'Arriving' : r.isDeparture ? 'Departing' : r.hotelOnly ? 'In hotel' : 'On tour',
+      r.cancelled ? 'Cancelled' : r.isArrival ? 'Arriving' : r.isDeparture ? 'Departing' : r.hotelOnly ? 'In hotel' : 'On tour',
       r.hotelOnly ? 'N/A — Hotel Only' : r.clientConfirmed ? 'Yes' : 'No',
       r.preTourCall ? `Yes (${r.preTourCall.at})` : 'No',
       r.preTourCall?.outcome ?? '',
@@ -731,6 +743,24 @@ export default function OperationsBoardPage() {
               {hotelOnlyCount} Hotel Only
             </span>
           )}
+          {/* Cancellations are on the board but excluded from the percentage —
+              say how many, so the ready count is read against the right total. */}
+          {cancelledCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setStatusFilter(statusFilter === 'CANCELLED' ? 'ALL' : 'CANCELLED')}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors',
+                statusFilter === 'CANCELLED'
+                  ? 'bg-rose-100 text-rose-800 border-rose-300'
+                  : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200',
+              )}
+              title="Cancelled bookings in view. They are listed so the desk can see what happened to the file, but they carry no outstanding work and are left out of every count above."
+            >
+              <XCircle className="w-3 h-3" />
+              {cancelledCount} Cancelled
+            </button>
+          )}
           {/* The D-10 pill is a control, not an ornament: clicking it filters
               the board down to exactly the files it is complaining about, which
               is the next thing anyone reading the number wants to do. */}
@@ -949,31 +979,47 @@ export default function OperationsBoardPage() {
                             className={cn(
                               'cursor-pointer transition-colors',
                               open ? 'bg-slate-50'
-                                // Hotel Only rows are tinted rather than hidden:
-                                // the guest is on the ground and ops must see
-                                // them, but nothing on the row is a chase.
-                                : r.hotelOnly ? 'bg-amber-50/40 hover:bg-amber-50'
-                                  : 'hover:bg-slate-50',
+                                // A cancelled file is greyed and struck through:
+                                // still on the board so the desk sees what
+                                // happened to it, visibly not work in progress.
+                                : r.cancelled ? 'bg-slate-100/70 text-slate-400 hover:bg-slate-100'
+                                  // Hotel Only rows are tinted rather than hidden:
+                                  // the guest is on the ground and ops must see
+                                  // them, but nothing on the row is a chase.
+                                  : r.hotelOnly ? 'bg-amber-50/40 hover:bg-amber-50'
+                                    : 'hover:bg-slate-50',
                             )}
                           >
                             <td className="px-3 py-2.5 whitespace-nowrap">
                               <div className="flex items-center gap-2">
                                 <span className={cn(
                                   'w-1.5 h-1.5 rounded-full flex-shrink-0',
-                                  r.hotelOnly ? 'bg-amber-400' : r.ready ? 'bg-emerald-500' : 'bg-rose-500',
+                                  r.cancelled ? 'bg-slate-400'
+                                    : r.hotelOnly ? 'bg-amber-400' : r.ready ? 'bg-emerald-500' : 'bg-rose-500',
                                 )} />
                                 <a
                                   href={`/dashboard/bookings/${r.bookingRef}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   onClick={e => e.stopPropagation()}
-                                  className="font-mono font-bold text-brand-700 hover:underline"
+                                  className={cn(
+                                    'font-mono font-bold hover:underline',
+                                    r.cancelled ? 'text-slate-500 line-through' : 'text-brand-700',
+                                  )}
                                 >
                                   {r.bookingRef}
                                 </a>
                               </div>
                               <div className="text-[10px] text-slate-400 pl-3.5 flex items-center gap-1.5">
                                 {r.countryLabel}
+                                {r.cancelled && (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-full bg-rose-100 text-rose-800 border border-rose-300 text-[9px] font-bold uppercase tracking-wide"
+                                    title="This booking has been cancelled. Nothing on the row is outstanding and it is excluded from every count on this board."
+                                  >
+                                    <XCircle className="w-2.5 h-2.5" /> Cancelled
+                                  </span>
+                                )}
                                 {r.hotelOnly && (
                                   <span
                                     className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold uppercase tracking-wide"

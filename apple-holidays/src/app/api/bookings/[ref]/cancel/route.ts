@@ -25,7 +25,7 @@ export async function POST(
 
   // Kept in step with CAN_CANCEL_ROLES on the booking detail page.
   const role = session.user.role as UserRole
-  if (!['BT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
+  if (!['BT_USER', 'TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)) {
     return buildApiError('Forbidden', 403)
   }
 

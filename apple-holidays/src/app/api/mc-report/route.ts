@@ -10,7 +10,14 @@ import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
-const ALLOWED_ROLES: UserRole[] = ['TE_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+// Every internal desk reads the movement chart: it is the one page that says who
+// is being moved where, and Booking Team and Accounts were the two that could not
+// open it. Assigning drivers from the chart is separately gated by ASSIGN_ROLES
+// on the page, so widening the read here grants no new write.
+const ALLOWED_ROLES: UserRole[] = [
+  'TE_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'BT_USER', 'AC_USER',
+  'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
+]
 
 // Merges optional search + country conditions into a single booking WHERE clause
 function buildBookingWhere(
@@ -58,10 +65,12 @@ async function hotelOnlyRows(
   const stays = await prisma.accommodation.findMany({
     where: {
       ...(Object.keys(dateFilter).length > 0 ? { checkIn: dateFilter } : {}),
+      // Cancelled files are charted like any other and badged as cancelled by
+      // the page — the same way the agenda query below treats them. Hiding them
+      // here would make a cancelled Hotel Only stay the one row that vanishes.
       booking: {
         ...(bookingWhere ?? {}),
         hotelOnly: true,
-        status: { not: 'CANCELLED' },
       },
     } as Prisma.AccommodationWhereInput,
     include: {

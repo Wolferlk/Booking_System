@@ -303,14 +303,27 @@ ADDITIONAL RULES:
 ════════════════════════════════════════════════════════════════
 Return ONLY a JSON object: { "items": [ { all 9 fields required: date, location, fromPoint, toPoint, details, mealPlan, meetingTime, timeFrom, timeTo, serviceType } ] }`
 
+  // The TQ used to be cut at 9,000 characters — about the first five days of a
+  // MakeMyTrip confirmation. Everything past that was invisible, so the movement
+  // chart for a long tour disagreed with the TC from roughly day six onwards:
+  // the exact "tour confirmation and system itinerary not in align" report.
+  // gpt-4o has a 128k context window, so the document fits; the cap below only
+  // guards against one pathological file.
+  const MAX_TQ_CHARS = 120_000
+  if (tqDocumentText && tqDocumentText.length > MAX_TQ_CHARS) {
+    console.warn(`[agenda/generate] ${params.ref}: TQ truncated from ${tqDocumentText.length} to ${MAX_TQ_CHARS} chars`)
+  }
+
   const userContent = `Generate the movement chart for booking ${params.ref}.
+The itinerary runs to the very end of the text below — cover EVERY day, including
+the last ones, and every service on each day. Do not stop early.
 
 === structured_booking_data ===
 ${JSON.stringify(structuredData, null, 2)}
 
 === tq_document_text ===
 ${tqDocumentText
-    ? tqDocumentText.slice(0, 9000)
+    ? tqDocumentText.slice(0, MAX_TQ_CHARS)
     : '(No document uploaded — derive all content from itineraryItems in structured_booking_data)'
   }`
 
@@ -322,7 +335,16 @@ ${tqDocumentText
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
+    max_tokens: 16384,
   })
+
+  // A chart cut off mid-itinerary is worse than none: it looks complete and is
+  // missing the back half of the tour. Fail loudly instead of saving it.
+  if (response.choices[0]?.finish_reason === 'length') {
+    return buildApiError(
+      'The movement chart was cut off before the itinerary finished — the tour is too long to generate in one pass. Generate it again, or split the file.',
+    )
+  }
 
   const aiContent = response.choices[0]?.message?.content
   if (!aiContent) return buildApiError('AI returned empty response')
@@ -346,7 +368,26 @@ ${tqDocumentText
     return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
   }
 
-  const mapped = rawItems.map(item => {
+  /**
+   * One generated movement, loosely typed: the AI's own keys are carried through
+   * untouched (`...item`) while the fields this route computes or the downstream
+   * rules read are named explicitly.
+   */
+  type GeneratedItem = {
+    serviceType: string
+    meetingTime: string | null
+    timeFrom: string | null
+    timeTo: string | null
+    fromPoint?: string | null
+    toPoint?: string | null
+    mealPlan?: string | null
+    date?: unknown
+    location?: string | null
+    details?: string | null
+    [key: string]: unknown
+  }
+
+  const mapped: GeneratedItem[] = rawItems.map(item => {
     const from = String(item.fromPoint ?? '')
     const to   = String(item.toPoint   ?? '')
     const loc  = String(item.location  ?? '')
@@ -355,6 +396,16 @@ ${tqDocumentText
     const isFromAirport = AIRPORT_ROAD_RE.test(from)
     const isToAirport   = AIRPORT_ROAD_RE.test(to)
     const isAirportRoad = isFromAirport || isToAirport
+
+    // Something is actually being driven: a pickup and a drop-off, or wording
+    // that names a transfer. A confirmed tour whose title happens to contain
+    // "tickets" ("Vin Wonder & Safari Combo tickets & Grand World Transfer") was
+    // being filed as INTERNAL_TOUR — ticket only, no driver — which is the
+    // "captured as a ticket only" report. Same for a titled transfer landing on
+    // OWN_ARRANGEMENT and losing its driver as a "self-transfer".
+    const TRANSFER_RE = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis|round trip|one way)\b/i
+    const hasMovement = (!!from.trim() && !!to.trim())
+      || TRANSFER_RE.test(to) || TRANSFER_RE.test(det) || TRANSFER_RE.test(from)
 
     let serviceType = VALID_TYPES.has(String(item.serviceType)) ? String(item.serviceType) : 'PVT_TRANSFER'
     let meetingTime = item.meetingTime as string | null | undefined
@@ -376,6 +427,14 @@ ${tqDocumentText
         // No SIC/Shared signal anywhere — revert to Private
         serviceType = 'PVT_TRANSFER'
       }
+    }
+
+    // A movement with a vehicle in it is a transfer, whatever the model called
+    // it — shared when the wording says SIC, private otherwise.
+    if (hasMovement && (serviceType === 'INTERNAL_TOUR' || serviceType === 'OWN_ARRANGEMENT')) {
+      serviceType = SIC_RE.test(to) || SIC_RE.test(loc) || SIC_RE.test(det)
+        ? 'SIC_TRANSFER'
+        : 'PVT_TRANSFER'
     }
 
     // For SIC: ensure timeFrom/timeTo (join-window) are set
@@ -418,7 +477,59 @@ ${tqDocumentText
   })
 
   // ── Drop movements the AI listed twice (structured transfer + TQ line) ────
-  const items = dedupeAgendaItems(mapped)
+  const deduped: GeneratedItem[] = dedupeAgendaItems(mapped)
+
+  // ── Coverage safety net ───────────────────────────────────────────────────
+  // The model silently drops or merges services, and it does it most often on a
+  // day that already has one — which is exactly the "same day tours are missing"
+  // report. Every confirmed itinerary line must appear on the chart, so anything
+  // the model left out is appended here rather than lost. The same guarantee the
+  // email pipeline has always had (see `lib/incoming-mail-automation.ts`).
+  const normText = (v: unknown) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const covered = deduped.map(it => normText(`${it.location} ${it.toPoint ?? ''} ${it.details ?? ''}`))
+
+  const missing = structuredData.itineraryItems.filter(src => {
+    const key = normText(src.title)
+    if (!key || !src.date) return false
+    // A title is "covered" when it appears verbatim on some row, or when most of
+    // its distinctive words do — the model routinely re-words the middle of a
+    // title while keeping the landmarks.
+    const tokens = key.split(' ').filter(t => t.length > 3)
+    return !covered.some(h => {
+      if (h.includes(key)) return true
+      if (!tokens.length) return false
+      return tokens.filter(t => h.includes(t)).length / tokens.length >= 0.6
+    })
+  })
+
+  if (missing.length > 0) {
+    console.warn(`[agenda/generate] ${params.ref}: appended ${missing.length} itinerary item(s) the model dropped`)
+  }
+
+  const items: GeneratedItem[] = [
+    ...deduped,
+    ...missing.map(src => {
+      const title = String(src.title)
+      const sic   = SIC_RE.test(title)
+      const moves = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis)\b/i.test(title)
+      const own   = !moves && /own arrangement|own basis|at leisure|free day|leisure|free time/i.test(title)
+      const serviceType = sic ? 'SIC_TRANSFER' : own ? 'OWN_ARRANGEMENT' : 'PVT_TRANSFER'
+      return {
+        date:        src.date,
+        location:    booking.tourDestination ?? '',
+        fromPoint:   null,
+        // The complete confirmed title, verbatim — this row exists precisely
+        // because the model would not copy it.
+        toPoint:     title,
+        details:     src.description ?? null,
+        mealPlan:    null,
+        meetingTime: serviceType === 'OWN_ARRANGEMENT' ? null : '08:00',
+        timeFrom:    null,
+        timeTo:      null,
+        serviceType,
+      }
+    }),
+  ].sort((a, b) => String(a.date ?? '').localeCompare(String(b.date ?? '')))
 
   // ── Enforce first & last items are PVT_TRANSFER ───────────────────────────
   const NON_TRANSFER_TYPES = new Set(['OWN_ARRANGEMENT', 'INTERNAL_TOUR'])

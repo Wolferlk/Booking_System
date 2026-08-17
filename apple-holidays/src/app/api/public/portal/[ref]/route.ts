@@ -9,6 +9,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { verifyPortalLinkToken } from '@/lib/portal-link'
+import { withoutRetiredContacts } from '@/lib/emergency-contacts'
 
 export const dynamic = 'force-dynamic'
 
@@ -79,7 +80,9 @@ export async function GET(
     flights: booking.flights,
     accommodations: booking.accommodations,
     itinerary: booking.itineraryItems,
-    emergencyContacts: booking.emergencyContacts.map(c => ({
+    // Staff who have left the company are stripped here rather than deleted
+    // from the booking — see `withoutRetiredContacts`.
+    emergencyContacts: withoutRetiredContacts(booking.emergencyContacts).map(c => ({
       id: c.id,
       name: c.name,
       phone: c.phone,

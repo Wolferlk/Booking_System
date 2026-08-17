@@ -11,9 +11,14 @@ import { PURCHASED_TICKET_STATUSES } from '@/lib/ticket-notes'
 import { generateAgendaPdf } from '@/lib/generate-agenda-pdf'
 import { sendMailViaGraph } from '@/lib/send-mail'
 
-/** Emergency numbers printed in the customer confirmation email. */
+/**
+ * Emergency numbers printed in the customer confirmation email.
+ *
+ * Keep in step with `src/lib/emergency-contacts.ts`, which prints the same
+ * people into the WhatsApp messages — a number that has left the company must
+ * disappear from both or the guest still gets it from one of them.
+ */
 const EMERGENCY_CONTACTS = [
-  { name: 'Helen',    phone: '+84 94 959 15 36' },
   { name: 'Senthoor', phone: '+91 95852 22335'  },
   { name: 'Tina',     phone: '+84 94 516 95 95' },
 ]

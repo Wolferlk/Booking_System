@@ -137,6 +137,14 @@ export interface OpsDayRow {
    * and filter on it. See `src/lib/hotel-only.ts`.
    */
   hotelOnly: boolean
+  /**
+   * The booking was cancelled. The row is still listed — ops asked to see
+   * cancellations on the board rather than have them vanish, because a guest who
+   * silently disappears from the chart is the one a driver still turns up for —
+   * but it is excluded from every count and from the readiness chase: there is
+   * nothing left to get ready.
+   */
+  cancelled: boolean
   /** Status has reached "Client Confirmed" or beyond. */
   clientConfirmed: boolean
   /** Null when no reconfirmation call has been logged for this booking. */
@@ -195,6 +203,11 @@ export interface OpsDaySummary {
   reconfirmDelay: { breached: number; explained: number; unexplained: number; stale: number }
   /** Accommodation-only files in the window — read as "out of scope, not late". */
   hotelOnly: number
+  /**
+   * Cancelled bookings in the window. Counted apart and excluded from every
+   * other number here, so `onGround` still means "guests we are running".
+   */
+  cancelled: number
   /** How many rows each filter chip would keep — the chip badges read this. */
   facets: Record<ReconfirmFacet, number>
   /** WhatsApp approval split, including the rows we cannot speak for. */
@@ -228,7 +241,12 @@ export interface OpsDayBoard {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** A cancelled tour is not on the ground, whatever its dates say. */
+/**
+ * A cancelled tour is not on the ground, whatever its dates say — so it is kept
+ * out of every count on the board. It is no longer kept out of the *listing*:
+ * the desk needs to see that the file it was working is cancelled, on the same
+ * board it reads every morning. Rows are flagged `cancelled` instead.
+ */
 const DEAD_STATUSES: BookingStatus[] = ['CANCELLED']
 
 const MAX_ROWS = 2000
@@ -482,7 +500,6 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     // after it starts. Both bounds are half-open against the local days.
     { arrivalDate: { lt: dayEnd } },
     { departureDate: { gte: dayStart } },
-    { status: { notIn: DEAD_STATUSES } },
   ]
 
   const scope = opts.country && opts.country !== 'ALL'
@@ -543,6 +560,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
   const delays = await loadReconfirmDelays(refs)
 
   const rows: OpsDayRow[] = bookings.map(b => {
+    const cancelled = DEAD_STATUSES.includes(b.status)
     const readiness = computeReadiness({
       status: b.status,
       qcPassedAt: b.qcPassedAt,
@@ -565,10 +583,14 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     // the guest through, so neither signal is ever coming and leaving the row
     // red would park a permanent chase on the board. The hotel itself is still
     // reconfirmed — on the Pre-checking queue, which this board does not own.
+    //
+    // A cancelled file is reconfirmed by the same argument, only harder: there is
+    // no guest coming, so nothing is outstanding and nobody should be chased.
     const reconfirmed = b.hotelOnly
+      || cancelled
       || readiness.client.state === 'DONE'
       || !!preTourCall
-    const outstanding = [
+    const outstanding = cancelled ? [] : [
       reconfirmed ? null : 'reconfirmation',
       ...readiness.outstanding.filter(o => o !== 'client confirmation'),
     ].filter((x): x is string => x !== null)
@@ -581,7 +603,9 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       today,
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCalled: !!preTourCall,
-      hotelOnly: b.hotelOnly,
+      // A cancelled booking has no D-10 deadline left to breach — treated the
+      // same way an accommodation-only file is, so it never reads as "late".
+      hotelOnly: b.hotelOnly || cancelled,
     })
 
     return {
@@ -610,6 +634,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       tickets: readiness.tickets,
       qc: readiness.qc,
       hotelOnly: b.hotelOnly,
+      cancelled,
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCall,
       call: callState.get(b.bookingRef) ?? NO_CALL,
@@ -625,11 +650,15 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
   })
 
   // ── Summary ────────────────────────────────────────────────────────────────
-  const arrivals = rows.filter(r => r.isArrival)
-  const departures = rows.filter(r => r.isDeparture)
+  // Every number below is counted over the live rows only. Cancellations are
+  // listed on the board but must not inflate pax on the ground, the readiness
+  // rollups or the reconfirmation chase.
+  const liveRows = rows.filter(r => !r.cancelled)
+  const arrivals = liveRows.filter(r => r.isArrival)
+  const departures = liveRows.filter(r => r.isDeparture)
 
   const countryMap = new Map<string, { country: string; label: string; bookings: number; pax: number }>()
-  for (const r of rows) {
+  for (const r of liveRows) {
     const entry = countryMap.get(r.country)
       ?? { country: r.country, label: r.countryLabel, bookings: 0, pax: 0 }
     entry.bookings += 1
@@ -638,36 +667,37 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
   }
 
   const summary: OpsDaySummary = {
-    onGround: rows.length,
+    onGround: liveRows.length,
     arrivals: arrivals.length,
     departures: departures.length,
-    paxOnGround: rows.reduce((s, r) => s + r.pax, 0),
+    paxOnGround: liveRows.reduce((s, r) => s + r.pax, 0),
     paxArriving: arrivals.reduce((s, r) => s + r.pax, 0),
     paxDeparting: departures.reduce((s, r) => s + r.pax, 0),
-    ready: rows.filter(r => r.ready).length,
+    ready: liveRows.filter(r => r.ready).length,
     checks: [
-      countStates(rows, 'driver', 'Driver allocation', r => r.driver),
-      countStates(rows, 'tickets', 'Tickets issued', r => r.tickets),
-      countStates(rows, 'qc', 'QC1 / QC2', r => r.qc),
+      countStates(liveRows, 'driver', 'Driver allocation', r => r.driver),
+      countStates(liveRows, 'tickets', 'Tickets issued', r => r.tickets),
+      countStates(liveRows, 'qc', 'QC1 / QC2', r => r.qc),
     ],
     reconfirm: {
-      clientConfirmed: rows.filter(r => r.clientConfirmed).length,
-      preTourCalled: rows.filter(r => !!r.preTourCall).length,
+      clientConfirmed: liveRows.filter(r => r.clientConfirmed).length,
+      preTourCalled: liveRows.filter(r => !!r.preTourCall).length,
       // Hotel Only rows are excluded: they are not waiting on either signal, and
       // counting them as "neither" would inflate the number ops chases.
-      neither: rows.filter(r => !r.hotelOnly && !r.clientConfirmed && !r.preTourCall).length,
+      neither: liveRows.filter(r => !r.hotelOnly && !r.clientConfirmed && !r.preTourCall).length,
     },
     reconfirmDelay: {
-      breached: rows.filter(r => r.reconfirmBreached).length,
-      explained: rows.filter(r => r.reconfirmBreached && r.reconfirmDelay).length,
-      unexplained: rows.filter(r => r.reconfirmBreached && !r.reconfirmDelay).length,
+      breached: liveRows.filter(r => r.reconfirmBreached).length,
+      explained: liveRows.filter(r => r.reconfirmBreached && r.reconfirmDelay).length,
+      unexplained: liveRows.filter(r => r.reconfirmBreached && !r.reconfirmDelay).length,
       // Explained, but by an answer nobody has touched in days — counted apart
       // so a board full of amber does not read as a board under control.
-      stale: rows.filter(r => r.reconfirmDelay?.stale).length,
+      stale: liveRows.filter(r => r.reconfirmDelay?.stale).length,
     },
-    hotelOnly: rows.filter(r => r.hotelOnly).length,
-    facets: countFacets(rows),
-    callApproval: rows.reduce((acc, r) => {
+    hotelOnly: liveRows.filter(r => r.hotelOnly).length,
+    cancelled: rows.length - liveRows.length,
+    facets: countFacets(liveRows),
+    callApproval: liveRows.reduce((acc, r) => {
       acc[r.call.approval] += 1
       return acc
     }, { approved: 0, pending: 0, not_requested: 0, unknown: 0 } as Record<CallApprovalState, number>),
