@@ -241,3 +241,191 @@ The system should save:
 * AI-generated call summary
 * Call recording reference, if recording is enabled
 * Final result: **Confirmed / Issue Found / No Answer / Call Failed / Follow-up Required**
+
+
+
+
+==============================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================================
+
+
+# Driver, Guide & Tour Vendor Explanation Call Structure
+![alt text](image-1.png)
+
+## 1. Purpose
+
+This component manages **explanation and confirmation calls** for allocated **Drivers, Guides, and Tour Vendors**.
+
+The system must ensure that the assigned person/vendor clearly understands the required itinerary or service before the travel date.
+
+---
+
+## 2. Driver Explanation Calls
+
+### Call 1 — Initial Itinerary Confirmation
+
+**When:** After the driver is allocated to the booking.
+
+**Purpose:**
+
+* Explain the assigned itinerary.
+* Provide a clear summary of the trip or assigned movement.
+* Confirm that the driver understands the requirements.
+* Get confirmation that the driver is **OK with the itinerary**.
+* Record any questions, issues, or requested changes.
+
+**Final Status:**
+
+* Confirmed
+* Issue Reported
+* Update Required
+* No Answer / Call Failed
+
+---
+
+### Call 2 — Day-Before Reminder
+
+**When:** **D-1 — one day before the travel/service date.**
+
+**Purpose:**
+
+* Remind the driver about the upcoming service.
+* Explain the **full tour agenda / assigned movement again**.
+* Reconfirm important details such as:
+
+  * Date
+  * Pickup time
+  * Pickup location
+  * Drop-off location
+  * Guest details
+  * Vehicle/service requirements
+  * Important itinerary notes
+* Ask whether there are any new issues or updates.
+* Record all updates mentioned by the driver.
+* Alert the Operations Team if any action is required.
+
+---
+
+## 3. Country-Based Driver Explanation
+
+### Sri Lanka
+
+For **Sri Lanka bookings**, the allocated driver may handle the complete tour.
+
+Therefore, the call should explain the **full trip itinerary**, including:
+
+**Booking → Arrival → Day-wise Tour Plan → Hotels/Transfers → Activities → Departure**
+
+The driver must confirm that the **entire itinerary is understood and accepted**.
+
+### Other Countries
+
+For other countries, the driver may only be assigned to a **specific transfer or movement**.
+
+Therefore, explain only the driver's assigned service.
+
+**Example:**
+
+**Booking → Airport Transfer → Assigned Driver**
+
+Only explain:
+**Airport → Hotel | Pickup Time | Guest | Vehicle | Special Notes**
+
+Do not explain unrelated parts of the complete itinerary.
+
+---
+
+## 4. Guide Explanation Calls
+
+The same confirmation process should apply to an **Allocated Guide**.
+
+The system should identify the guide's assigned days/services and explain only the relevant itinerary.
+
+**Call 1:** Explain assignment and get confirmation.
+
+**Call 2 (D-1):** Remind the guide, explain the agenda again, and collect any updates/issues.
+
+For a **full-tour guide**, explain the complete tour.
+For a **specific-day/activity guide**, explain only the assigned section.
+
+---
+
+## 5. Tour Vendor Explanation Calls
+
+The same process should apply to **Tour Vendors**.
+
+The system should identify exactly what service the vendor is responsible for, such as:
+
+**Booking → Tour/Activity → Assigned Vendor**
+
+The call should confirm:
+
+* Service/activity
+* Date
+* Reporting/pickup time
+* Guest/PAX details
+* Pickup and drop-off details
+* Service requirements
+* Special requests
+* Vendor confirmation
+
+A **D-1 reminder call** should reconfirm the service and capture any last-minute updates.
+
+---
+
+## 6. Issue & Update Handling
+
+During either call, if the Driver, Guide, or Tour Vendor reports an issue:
+
+**Call → Detect Issue → Save Note → Mark "Action Required" → Alert Operations Team**
+
+Examples:
+
+* Driver unavailable
+* Wrong pickup time
+* Wrong itinerary
+* Vehicle issue
+* Guide unavailable
+* Vendor cannot provide the service
+* Guest/service information mismatch
+* Timing conflict
+* Other requested changes
+
+The issue and call notes must remain visible against the relevant booking and allocation.
+
+---
+
+## 7. Overall Flow
+
+```text
+Booking
+   │
+   ├── Allocated Driver
+   │      ├── Call 1: Explain + Confirm
+   │      └── D-1 Call: Reminder + Reconfirm
+   │
+   ├── Allocated Guide
+   │      ├── Call 1: Explain + Confirm
+   │      └── D-1 Call: Reminder + Reconfirm
+   │
+   └── Allocated Tour Vendor
+          ├── Call 1: Explain + Confirm
+          └── D-1 Call: Reminder + Reconfirm
+                     │
+                     ▼
+               Any Issue?
+                /      \
+              No        Yes
+              │          │
+          Confirmed   Save Note
+                         │
+                         ▼
+                  Alert Operations
+```
+
+### Key Rule
+
+**Sri Lanka Driver → Explain the full trip itinerary when the driver handles the complete tour.**
+
+**Other Country Driver → Explain only the particular assigned transfer/movement.**
+
+**Guide / Tour Vendor → Explain only the itinerary and services allocated to them, unless they are responsible for the complete tour.**

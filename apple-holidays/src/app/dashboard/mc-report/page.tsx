@@ -7,7 +7,7 @@ import {
   Users, Truck, MapPin, Clock, ChevronUp, ChevronDown,
   ClipboardList, RefreshCw, Table2, Globe, FileText,
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
-  Sparkles, Store, UserPlus, Phone,
+  Sparkles, Store, UserPlus, Phone, XCircle,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -75,6 +75,20 @@ type MCRow = {
   operationCountry: string | null
   agent:          string | null
   bookingStatus:  string
+}
+
+/**
+ * The booking behind this movement has been cancelled.
+ *
+ * Cancelled files are deliberately still charted: a driver is allocated against
+ * these movements and the desk needs to see, on the chart it works from, that
+ * the tour is off — a row that silently disappears is the one somebody still
+ * turns up for. They are badged and struck through instead, and left out of the
+ * pax and service-type totals, which describe work we are actually running.
+ */
+function isCancelledRow(row: { bookingStatus?: string | null }): boolean {
+  const s = String(row.bookingStatus ?? '')
+  return s === 'CANCELLED' || s === 'PENDING_CANCELLATION'
 }
 
 type SortField = 'date' | 'vnCode' | 'agent' | 'location' | 'serviceType' | 'meetingTime'
@@ -564,13 +578,22 @@ export default function MCReportPage() {
 
   // ── Stats ─────────────────────────────────────────────────────────────────────
 
-  const totalAdults   = displayedRows.reduce((s, r) => s + r.paxAdults, 0)
-  const totalChildren = displayedRows.reduce((s, r) => s + r.paxChildren, 0)
-  const pvtCount      = displayedRows.filter(r => r.serviceType === 'PVT_TRANSFER').length
-  const sicCount      = displayedRows.filter(r => r.serviceType === 'SIC_TRANSFER').length
-  const ownCount      = displayedRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
-  const leisureCount  = displayedRows.filter(r => r.isLeisure).length
-  const hotelOnlyCount = displayedRows.filter(r => r.isHotelOnly).length
+  // Cancelled movements stay in the table but out of every total: pax on a
+  // cancelled file are not travelling and its transfers are not being driven.
+  const liveRows      = useMemo(() => displayedRows.filter(r => !isCancelledRow(r)), [displayedRows])
+  const cancelledRowCount = displayedRows.length - liveRows.length
+  const cancelledBookingCount = useMemo(
+    () => new Set(displayedRows.filter(isCancelledRow).map(r => r.vnCode)).size,
+    [displayedRows],
+  )
+
+  const totalAdults   = liveRows.reduce((s, r) => s + r.paxAdults, 0)
+  const totalChildren = liveRows.reduce((s, r) => s + r.paxChildren, 0)
+  const pvtCount      = liveRows.filter(r => r.serviceType === 'PVT_TRANSFER').length
+  const sicCount      = liveRows.filter(r => r.serviceType === 'SIC_TRANSFER').length
+  const ownCount      = liveRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
+  const leisureCount  = liveRows.filter(r => r.isLeisure).length
+  const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly).length
   // Distinct *bookings*, not rows: a five-night file across two properties is
   // one Hotel Only booking on this chart, however many stays it contributes.
   const hotelOnlyBookingCount = useMemo(
@@ -587,7 +610,7 @@ export default function MCReportPage() {
     const headers = [
       'Date', 'Tour Ref', 'IS Number', 'Agent ID', 'Location', 'Adults', 'Children',
       'From', 'To', 'Details', 'Meal Plan', 'Meeting Time',
-      'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
+      'Booking Status', 'Cancelled', 'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
       'Vendor', 'Driver', 'Vehicle Type', 'Plate',
       'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Agent',
     ]
@@ -597,6 +620,8 @@ export default function MCReportPage() {
       r.location, r.paxAdults, r.paxChildren,
       r.fromPoint ?? '', r.toPoint ?? '', r.details ?? '',
       r.mealPlan ?? '', r.meetingTime ?? '',
+      r.bookingStatus?.replace(/_/g, ' ') ?? '',
+      isCancelledRow(r) ? 'CANCELLED' : '',
       SERVICE_LABELS[r.serviceType] ?? r.serviceType,
       r.isLeisure ? 'Yes' : '',
       r.isHotelOnly ? 'Yes' : '',
@@ -688,6 +713,8 @@ export default function MCReportPage() {
         ['Hotel Only',       hotelOnlyCount],
         ['Hotel Only Bookings', hotelOnlyBookingCount],
         ['Hotel Only Stays',    hotelOnlyStayCount],
+        ['Cancelled Bookings',  cancelledBookingCount],
+        ['Cancelled Movements', cancelledRowCount],
       ].filter(r => r.length > 0)
 
       const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
@@ -916,7 +943,10 @@ export default function MCReportPage() {
         {displayedRows.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
             {[
-              { icon: <Table2 className="w-4 h-4" />,  label: 'Movements', value: displayedRows.length, color: 'text-slate-900', bg: 'bg-slate-50' },
+              // Movements counts every charted row; the subtitle owns up to how
+              // many of them belong to a cancelled file, since the pax and
+              // service tiles beside it exclude those.
+              { icon: <Table2 className="w-4 h-4" />,  label: 'Movements', value: displayedRows.length, sub: cancelledRowCount > 0 ? `${cancelledRowCount} cancelled` : undefined, color: 'text-slate-900', bg: 'bg-slate-50' },
               { icon: <Users className="w-4 h-4" />,   label: 'Adults',    value: totalAdults,           color: 'text-blue-700',  bg: 'bg-blue-50' },
               { icon: <Users className="w-4 h-4" />,   label: 'Children',  value: totalChildren,         color: 'text-violet-700', bg: 'bg-violet-50' },
               { icon: <Truck className="w-4 h-4" />,   label: 'Private',   value: pvtCount,              color: 'text-emerald-700', bg: 'bg-emerald-50' },
@@ -926,6 +956,9 @@ export default function MCReportPage() {
               // Bookings, not rows — see `hotelOnlyBookingCount`. The stay count
               // rides along as a subtitle so the two are never confused.
               { icon: <Hotel className="w-4 h-4" />, label: 'Hotel Only Bookings', value: hotelOnlyBookingCount, sub: `${hotelOnlyStayCount} stay${hotelOnlyStayCount === 1 ? '' : 's'}`, color: 'text-amber-800', bg: 'bg-amber-50' },
+              ...(cancelledBookingCount > 0
+                ? [{ icon: <XCircle className="w-4 h-4" />, label: 'Cancelled', value: cancelledBookingCount, sub: `${cancelledRowCount} movement${cancelledRowCount === 1 ? '' : 's'}`, color: 'text-rose-700', bg: 'bg-rose-50' }]
+                : []),
             ].map(stat => (
               <div key={stat.label} className={cn('rounded-xl p-4 border border-slate-200 flex items-center gap-3 shadow-sm', stat.bg)}>
                 <div className={cn('flex-shrink-0', stat.color)}>{stat.icon}</div>
@@ -1022,11 +1055,15 @@ export default function MCReportPage() {
                               'transition-colors cursor-pointer group',
                               isExpanded
                                 ? 'bg-brand-50/60 border-l-2 border-l-brand-400'
-                                // A stay, not a movement — tinted and edged so it
-                                // reads as a different kind of row at a glance.
-                                : row.isHotelOnlyBooking
-                                  ? 'bg-amber-50/50 border-l-2 border-l-amber-400 hover:bg-amber-50'
-                                  : 'hover:bg-slate-50/80',
+                                // Cancelled file — greyed and edged in rose so it
+                                // cannot be mistaken for a movement to run.
+                                : isCancelledRow(row)
+                                  ? 'bg-rose-50/40 border-l-2 border-l-rose-400 text-slate-400 hover:bg-rose-50/70'
+                                  // A stay, not a movement — tinted and edged so it
+                                  // reads as a different kind of row at a glance.
+                                  : row.isHotelOnlyBooking
+                                    ? 'bg-amber-50/50 border-l-2 border-l-amber-400 hover:bg-amber-50'
+                                    : 'hover:bg-slate-50/80',
                             )}
                           >
                             {/* Date — a stay spans nights, so it shows the span */}
@@ -1047,9 +1084,20 @@ export default function MCReportPage() {
                             <td className="px-3 py-2.5">
                               <a href={`/dashboard/bookings/${row.vnCode}`} target="_blank" rel="noreferrer"
                                 onClick={e => e.stopPropagation()}
-                                className="font-mono font-semibold text-brand-700 hover:underline whitespace-nowrap block">
+                                className={cn(
+                                  'font-mono font-semibold hover:underline whitespace-nowrap block',
+                                  isCancelledRow(row) ? 'text-slate-500 line-through' : 'text-brand-700',
+                                )}>
                                 {q ? <Highlight text={row.vnCode} query={deepSearch} /> : row.vnCode}
                               </a>
+                              {isCancelledRow(row) && (
+                                <span
+                                  className="inline-flex items-center gap-0.5 mt-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-800 bg-rose-100 border border-rose-300 px-1.5 py-0.5 rounded whitespace-nowrap"
+                                  title={`This booking is ${row.bookingStatus?.replace(/_/g, ' ').toLowerCase()} — do not run this movement. It is excluded from the pax and service totals.`}
+                                >
+                                  {row.bookingStatus === 'PENDING_CANCELLATION' ? 'Cancelling' : 'Cancelled'}
+                                </span>
+                              )}
                               {row.isNumber && (
                                 <span className="inline-flex items-center mt-0.5 text-[10px] font-semibold font-mono text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded whitespace-nowrap">
                                   IS: {q ? <Highlight text={row.isNumber} query={deepSearch} /> : row.isNumber}

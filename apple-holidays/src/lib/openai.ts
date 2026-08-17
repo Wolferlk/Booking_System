@@ -179,7 +179,8 @@ Schema:
       "contact": "string or null",
       "nights": "number",
       "roomType": "string or null",
-      "mealType": "string or null"
+      "mealType": "string or null",
+      "ownArrangement": "boolean — TRUE when the GUEST or the AGENT holds this hotel reservation and we do not. Set true when the stay is labelled 'Own Arrangement', 'Own Arranged', 'Self Booked', 'Self Arranged', 'Own Basis', 'Guest Own', 'Booked by Guest/Client', 'Direct Booking', 'Own Account', or when the hotel column says the accommodation is not included / not booked by us, or names no property at all (TBA/TBC/blank). Set false when it is a hotel we booked and confirmed. NEVER infer this from the meal plan — 'Meals: Not included' is about breakfast, not about who booked the room."
     }
   ],
   "itineraryItems": [
@@ -243,6 +244,11 @@ Important:
   * Example: "Vin Wonder & Safari Combo tickets & Grand World Transfer" must be copied in full — do NOT shorten to "Vin Wonder & Safari".
 - accommodations — HOTEL FIELD:
   * The hotel field must contain ONLY the hotel/resort/villa name. NEVER include airport names, transfer directions, or route descriptions.
+- accommodations — OWN ARRANGEMENT (CRITICAL):
+  * Every stay MUST carry ownArrangement as an explicit true or false — never omit it and never return null.
+  * true = the guest or agent booked it themselves and we hold no reservation, so there is nothing for us to reconfirm.
+  * false = we booked and hold the reservation.
+  * Read the wording on the stay itself, not the package meal plan. "Meals: Not Included" on a hotel WE booked is still ownArrangement = false.
 - passengers:
   * If the document has BOTH a "Lead Passenger" summary section AND a detailed passenger table (Name / Type / Age columns), use ONLY the detailed table — do NOT duplicate the lead passenger from the summary.
   * If only a "Guests Name:" or "Lead Passenger Name:" field appears (no table), extract that as the single lead passenger.

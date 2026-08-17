@@ -395,6 +395,8 @@ export async function POST(req: NextRequest) {
           nights:   a.nights,
           roomType: a.roomType ?? null,
           mealType: a.mealType ?? null,
+          // Who holds the reservation, straight from the TC — see own-arrangement.ts.
+          ownArrangement: a.ownArrangement ?? false,
         })),
       })
     }

@@ -3,6 +3,7 @@ import path from 'path'
 import { readLocalUploadAsBuffer } from './local-upload'
 import { localUploadRelativePath } from './upload-path'
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
+import { withoutRetiredContacts } from './emergency-contacts'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HEADER_BG = '#0F172A'
@@ -216,7 +217,8 @@ async function buildPdf(booking: any, includeDriversAndTickets: boolean): Promis
       }
 
       // ── 3b. Emergency Contacts ────────────────────────────────────────────
-      const emergencyContacts: any[] = booking.emergencyContacts ?? []
+      // Resigned staff never reach the guest — see `lib/emergency-contacts.ts`.
+      const emergencyContacts: any[] = withoutRetiredContacts(booking.emergencyContacts ?? [])
       if (emergencyContacts.length > 0) {
         sectionTitle('Emergency Contacts')
         emergencyContacts.forEach((ec: any) => {

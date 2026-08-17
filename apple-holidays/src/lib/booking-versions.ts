@@ -233,6 +233,10 @@ export async function restoreBookingVersion(bookingId: string, versionNo: number
           mealType: (a.mealType as string | null) ?? null,
           address:  (a.address as string | null) ?? null,
           contact:  (a.contact as string | null) ?? null,
+          // Restoring a snapshot must restore who held the reservation too,
+          // otherwise a rollback silently turns own-arrangement stays into
+          // company-arranged ones. See `lib/own-arrangement.ts`.
+          ownArrangement: (a.ownArrangement as boolean | null) ?? false,
         })),
       })
     }

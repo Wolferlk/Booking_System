@@ -8,6 +8,7 @@
  */
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
 import { readUploadAsBuffer, imageDimensions, fitImage } from './local-upload'
+import { withoutRetiredContacts } from './emergency-contacts'
 import {
   parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
   categoryLabel, paxLabel, isPurchasedTicket,
@@ -686,7 +687,9 @@ export async function generateAgendaPdf(
     }
 
     // ── Emergency contacts ─────────────────────────────────────────────────
-    const emergencyContacts = booking.emergencyContacts ?? []
+    // Resigned staff are filtered out of the guest-facing PDF — the booking's
+    // own rows still carry them. See `lib/emergency-contacts.ts`.
+    const emergencyContacts = withoutRetiredContacts(booking.emergencyContacts ?? [])
     if (emergencyContacts.length > 0) {
       sectionTitle('Emergency Contacts')
       emergencyContacts.forEach(ec => {

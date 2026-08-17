@@ -128,6 +128,18 @@ function normalizeMealPlan(raw: string | null | undefined): string | null {
   return trimmed
 }
 
+/**
+ * How much of the booking document the movement-chart call may read.
+ *
+ * This used to be 10,000 characters, which is roughly the first five days of a
+ * MakeMyTrip TC — everything after that was invisible to the model, so the later
+ * days of a long tour came back missing or invented and the chart no longer
+ * matched the confirmation. gpt-4o has a 128k context window, so the whole
+ * document fits; the cap only exists to keep one pathological file from running
+ * away.
+ */
+const MAX_AGENDA_DOC_CHARS = 120_000
+
 async function buildAgendaItems(data: Awaited<ReturnType<typeof extractBookingFromEmail>>, bookingRef: string): Promise<any[]> {
   const openaiModule = await import('@/lib/openai')
   const openai = openaiModule.default
@@ -196,10 +208,16 @@ SIC TIME RANGE — For SIC_TRANSFER items, always include timeFrom and timeTo fi
 
 Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"string|null","toPoint":"string|null","details":"string|null","mealPlan":"Breakfast|Lunch|Dinner|Breakfast, Lunch|Breakfast, Dinner|Breakfast, Lunch, Dinner|null","meetingTime":"HH:MM or null","timeFrom":"HH:MM or null","timeTo":"HH:MM or null","serviceType":"PVT_TRANSFER|SIC_TRANSFER|OWN_ARRANGEMENT|FLIGHT|INTERNAL_TOUR|ACCOMMODATION"}] }`,
       },
-      { role: 'user', content: `Generate movement chart for booking ${bookingRef}:\n\n${docText.slice(0, 10000)}` },
+      {
+        role: 'user',
+        content: `Generate movement chart for booking ${bookingRef}. `
+          + `Cover the itinerary to the very last day — do not stop early.\n\n`
+          + docText.slice(0, MAX_AGENDA_DOC_CHARS),
+      },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.1,
+    max_tokens: 16384,
   })
   await logAiUsage({ callType: 'agenda_generation', model: 'gpt-4o', usage: response.usage, bookingRef, source: 'email' })
 
@@ -211,7 +229,9 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
 
     const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
     const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
-    const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|relax|no activ|own arrangement)\b/i
+    const LEISURE_RE       = /\b(leisure|free day|free time|at leisure|own arrangement|own basis|at own pace)\b/i
+    /** Wording that means a vehicle and driver are part of the service. */
+    const TRANSFER_RE      = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis|round trip|one way)\b/i
     const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay|accommodation)\b/i
     const SIC_RE           = /\bsic\b/i
     const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
@@ -221,22 +241,57 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       const to   = String(item.toPoint   ?? '')
       const det  = String(item.details   ?? '')
       const loc  = String(item.location  ?? '')
-      const aiType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'OWN_ARRANGEMENT'
+      // Something is actually being driven: there is a pickup and a drop-off, or
+      // the wording names a transfer. Used below to stop leisure/ticket wording
+      // from stripping the driver off a movement that plainly has one.
+      const hasMovement = (!!from.trim() && !!to.trim())
+        || TRANSFER_RE.test(to) || TRANSFER_RE.test(det) || TRANSFER_RE.test(from)
+      // An item the model failed to classify defaults to a PRIVATE TRANSFER, not
+      // to OWN_ARRANGEMENT. The old default meant every unclassified confirmed
+      // tour landed on the chart as the guest's own arrangement — no driver, no
+      // vehicle, nobody allocated — which is exactly the "captured as
+      // self-transfers" complaint. PVT is also what the interactive generator in
+      // `api/bookings/[ref]/agenda/generate` defaults to, so the two pipelines
+      // now agree. A free day still comes through: the model says so explicitly,
+      // or LEISURE_RE below reads it off the title.
+      const aiType: string = VALID_TYPES.has(item.serviceType) ? item.serviceType : 'PVT_TRANSFER'
       let serviceType = aiType
 
-      // OWN_ARRANGEMENT from AI must be preserved — never silently convert to PVT_TRANSFER
-      if (aiType === 'OWN_ARRANGEMENT') {
+      // OWN_ARRANGEMENT from the AI is preserved — unless the movement plainly
+      // has a vehicle in it. "Vin Wonder & Safari Combo tickets & Grand World
+      // Transfer" is a confirmed private transfer that the model likes to file as
+      // the guest's own arrangement (or as tickets only) because of the words
+      // "tickets" and "own"; charting it that way loses the driver allocation
+      // entirely. A titled transfer wins over the model's label.
+      if (aiType === 'OWN_ARRANGEMENT' && !hasMovement) {
         serviceType = 'OWN_ARRANGEMENT'
+      } else if (aiType === 'INTERNAL_TOUR' && !hasMovement) {
+        // Genuinely ticket-only: entrance or activity with no transport.
+        serviceType = 'INTERNAL_TOUR'
       } else if (FLIGHT_RE.test(loc) || FLIGHT_RE.test(det)) {
         serviceType = 'FLIGHT'
       } else if (AIRPORT_ROAD_RE.test(from) || AIRPORT_ROAD_RE.test(to)) {
         serviceType = 'PVT_TRANSFER'
-      } else if (SIC_RE.test(loc)) {
+      } else if (SIC_RE.test(loc) || SIC_RE.test(to)) {
         serviceType = 'SIC_TRANSFER'
-      } else if (LEISURE_RE.test(det) || LEISURE_RE.test(loc)) {
+      } else if ((LEISURE_RE.test(to) || LEISURE_RE.test(loc)) && !hasMovement) {
+        // Read off the movement's own title / destination, never off `details`.
+        // Tour descriptions are full of "free time for shopping" and "relax on
+        // the beach", and matching those turned confirmed, driven tours into
+        // own-arrangement free days. A title that says leisure AND carries no
+        // pickup or drop-off is a genuine free day.
         serviceType = 'OWN_ARRANGEMENT'
       } else if (ACCOMMODATION_RE.test(det) || ACCOMMODATION_RE.test(loc)) {
         serviceType = 'ACCOMMODATION'
+      }
+
+      // Last word on the two labels that silently drop the driver: a movement
+      // with a vehicle in it is a transfer, whatever the model called it. Shared
+      // if the wording says SIC, private otherwise.
+      if (hasMovement && (serviceType === 'OWN_ARRANGEMENT' || serviceType === 'INTERNAL_TOUR')) {
+        serviceType = SIC_RE.test(to) || SIC_RE.test(loc) || SIC_RE.test(det)
+          ? 'SIC_TRANSFER'
+          : 'PVT_TRANSFER'
       }
 
       const meetingTime = serviceType === 'OWN_ARRANGEMENT' || serviceType === 'ACCOMMODATION'
@@ -279,7 +334,11 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
       if (covered) continue
 
       const sic = /\bsic\b/i.test(title)
-      const own = /own arrangement|at leisure|free day|leisure|free time/i.test(title)
+      // A title naming a transfer is a driven movement even when it also says
+      // "leisure" ("Free day — private transfer to the beach"), so the transfer
+      // wins. Same rule the classifier above applies.
+      const moves = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis)\b/i.test(title)
+      const own = !moves && /own arrangement|own basis|at leisure|free day|leisure|free time/i.test(title)
       const serviceType = sic ? 'SIC_TRANSFER' : own ? 'OWN_ARRANGEMENT' : 'PVT_TRANSFER'
       appended.push({
         date:        it.date,
@@ -444,6 +503,9 @@ async function replaceBookingChildren(bookingId: string, extracted: Awaited<Retu
         nights: a.nights,
         roomType: a.roomType ?? null,
         mealType: a.mealType ?? null,
+        // Who holds the reservation, straight from the TC — the text heuristic in
+        // `lib/own-arrangement.ts` is only a fallback for rows without it.
+        ownArrangement: a.ownArrangement ?? false,
       })),
     })
   }

@@ -128,13 +128,22 @@ function PrintContent() {
 
   const q = deepSearch.trim().toLowerCase()
 
-  const totalAdults   = rows.reduce((s, r) => s + r.paxAdults, 0)
-  const totalChildren = rows.reduce((s, r) => s + r.paxChildren, 0)
-  const pvtCount      = rows.filter(r => r.serviceType === 'PVT_TRANSFER').length
-  const sicCount      = rows.filter(r => r.serviceType === 'SIC_TRANSFER').length
-  const ownCount      = rows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
-  const leisureCount  = rows.filter(r => r.isLeisure).length
-  const hotelOnlyCount = rows.filter(r => r.isHotelOnly).length
+  // A cancelled file is printed — the driver reading this chart must see the
+  // tour is off, not find the row missing — but it is left out of every total,
+  // which describes the work actually being run. Matches the on-screen MC
+  // Report in `dashboard/mc-report/page.tsx`.
+  const isCancelled = (r: MCRow) =>
+    r.bookingStatus === 'CANCELLED' || r.bookingStatus === 'PENDING_CANCELLATION'
+  const liveRows      = rows.filter(r => !isCancelled(r))
+  const cancelledCount = rows.length - liveRows.length
+
+  const totalAdults   = liveRows.reduce((s, r) => s + r.paxAdults, 0)
+  const totalChildren = liveRows.reduce((s, r) => s + r.paxChildren, 0)
+  const pvtCount      = liveRows.filter(r => r.serviceType === 'PVT_TRANSFER').length
+  const sicCount      = liveRows.filter(r => r.serviceType === 'SIC_TRANSFER').length
+  const ownCount      = liveRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
+  const leisureCount  = liveRows.filter(r => r.isLeisure).length
+  const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly).length
   // The printout is width-bound, so the partner column only takes space on the
   // days that actually have a guide or tour vendor on the ground.
   const showPartners = rows.some(r => r.guideName || r.tourVendorName)
@@ -200,6 +209,10 @@ function PrintContent() {
           { label: 'Own Arr.',        value: ownCount,       bg: '#f1f5f9', fg: '#475569' },
           { label: 'Leisure',         value: leisureCount,   bg: '#fffbeb', fg: '#b45309' },
           { label: 'Hotel Only',      value: hotelOnlyCount, bg: '#fdf2f8', fg: '#be185d' },
+          // Printed only when there is one, so a clean chart stays clean.
+          ...(cancelledCount > 0
+            ? [{ label: 'Cancelled', value: cancelledCount, bg: '#fff1f2', fg: '#9f1239' }]
+            : []),
         ].map(s => (
           <div key={s.label} style={{ background: s.bg, border: '1px solid #e2e8f0', borderRadius: 8, padding: '6px 14px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 70 }}>
             <span style={{ fontSize: 16, fontWeight: 800, color: s.fg, lineHeight: 1 }}>{s.value}</span>
@@ -238,7 +251,11 @@ function PrintContent() {
             {rows.map((row, idx) => {
               const isEven = idx % 2 === 0
               return (
-                <tr key={row.id} style={{ background: isEven ? '#ffffff' : '#f8fafc', pageBreakInside: 'avoid' }}>
+                <tr key={row.id} style={{
+                  background: isCancelled(row) ? '#fff1f2' : isEven ? '#ffffff' : '#f8fafc',
+                  color: isCancelled(row) ? '#9f1239' : undefined,
+                  pageBreakInside: 'avoid',
+                }}>
                   <td style={{ ...td, color: '#94a3b8', fontWeight: 600 }}>{idx + 1}</td>
 
                   <td style={{ ...td, whiteSpace: 'nowrap', fontWeight: 600 }}>
@@ -246,9 +263,21 @@ function PrintContent() {
                   </td>
 
                   <td style={{ ...td, fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
-                    <span style={{ fontWeight: 700, color: '#0f172a' }}>
+                    <span style={{
+                      fontWeight: 700,
+                      color: isCancelled(row) ? '#9f1239' : '#0f172a',
+                      textDecoration: isCancelled(row) ? 'line-through' : undefined,
+                    }}>
                       {q ? <HighlightText text={row.vnCode} query={deepSearch} /> : row.vnCode}
                     </span>
+                    {isCancelled(row) && (
+                      <div style={{
+                        fontSize: 8, fontWeight: 800, letterSpacing: 0.4, marginTop: 1,
+                        color: '#9f1239', textTransform: 'uppercase',
+                      }}>
+                        {row.bookingStatus === 'PENDING_CANCELLATION' ? 'Cancelling' : 'Cancelled'}
+                      </div>
+                    )}
                     {row.isNumber && (
                       <div style={{ fontSize: 9, color: '#2563eb', marginTop: 1 }}>
                         IS: {q ? <HighlightText text={row.isNumber} query={deepSearch} /> : row.isNumber}

@@ -6,6 +6,8 @@
  * Tickets are excluded unless opts.includeTickets = true.
  */
 
+import { withoutRetiredContacts } from './emergency-contacts'
+
 export interface BookingHtmlOptions {
   includeTickets?: boolean
 }
@@ -44,7 +46,8 @@ export function generateBookingHtml(booking: any, opts: BookingHtmlOptions = {})
   const itinerary      = booking.itineraryItems ?? []
   const agendaItems    = booking.tourAgenda?.items ?? []
   const drivers        = getDrivers(agendaItems)
-  const emergencyContacts = booking.emergencyContacts ?? []
+  // Resigned staff never reach the guest — see `lib/emergency-contacts.ts`.
+  const emergencyContacts = withoutRetiredContacts(booking.emergencyContacts ?? [])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tickets: any[] = opts.includeTickets ? (booking.tickets ?? []).filter((t: any) => t.activated !== false) : []
 

@@ -127,7 +127,14 @@ export async function PUT(
   const canEdit = isSuperAdmin || hasPermission(role, 'booking:edit') ||
     ['GT_USER', 'BT_USER', 'TE_USER', 'GT_TE_USER'].includes(role)
 
-  if (!canEdit) return buildApiError('Forbidden', 403)
+  // Vietnam Ground (Limited) is not a booking editor, but it does own two live
+  // operations jobs: keeping the traveller's contact number right and keeping
+  // the passenger list / meal preferences right. It reaches this route for
+  // exactly those fields and is refused everything else, so the narrow surface
+  // the booking page shows it cannot be widened by hand-crafting a payload.
+  // Keep in step with `canEditContacts` / `canEditPassengers` on the page.
+  const isVnGroundLimited = role === 'GT_VN_USER'
+  if (!canEdit && !isVnGroundLimited) return buildApiError('Forbidden', 403)
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
@@ -138,6 +145,23 @@ export async function PUT(
   }
 
   const body = await req.json()
+
+  if (isVnGroundLimited) {
+    const VN_GROUND_FIELDS = new Set([
+      'agentEmail', 'agentPhone', 'agentWhatsapp', 'agentAddress',
+      'contactEmail', 'contactPhone', 'contactWhatsapp', 'contactAddress',
+      'passengerUpdates', 'passengerAdds', 'passengerDeletes',
+    ])
+    const rejected = Object.keys(body as Record<string, unknown>)
+      .filter(k => (body as Record<string, unknown>)[k] !== undefined && !VN_GROUND_FIELDS.has(k))
+    if (rejected.length > 0) {
+      return buildApiError(
+        `Vietnam Ground can only change contact details and passengers — not ${rejected.join(', ')}`,
+        403,
+      )
+    }
+  }
+
   const {
     agentBookingId, cntlNumber, agent, fileHandler,
     arrivalDate, departureDate, paxAdults, paxChildren, paxInfants,

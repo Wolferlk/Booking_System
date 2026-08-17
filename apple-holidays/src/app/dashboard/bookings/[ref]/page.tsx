@@ -70,7 +70,10 @@ type ExtractedAccommodation = {
 const DEFAULT_CANCEL_REASON = 'File handler cancelled this booking'
 
 /** Roles allowed to cancel — kept in step with the cancel API route. */
-const CAN_CANCEL_ROLES: string[] = ['BT_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+// Kept in step with the role check in `api/bookings/[ref]/cancel/route.ts`.
+// A cancellation raised here still needs Accounts to approve it — the booking
+// goes to PENDING_CANCELLATION, not straight to CANCELLED.
+const CAN_CANCEL_ROLES: string[] = ['BT_USER', 'TE_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
 export default function BookingDetailPage() {
   const { ref } = useParams<{ ref: string }>()
@@ -480,6 +483,15 @@ export default function BookingDetailPage() {
   // Tour Confirmation, QC, Passengers/Flights/Hotels, Contacts, Itinerary and
   // Package & Notes — plus the Agenda / Tickets / Drivers / PDF buttons only.
   const isVnGroundLimited = role === 'GT_VN_USER'
+
+  // The Vietnam ground desk is not a booking editor — it cannot touch dates,
+  // pax, package text or the TC. It does own two live-operations jobs that the
+  // Vietnam team was granted: keeping the traveller's contact number correct,
+  // and keeping meal preferences correct. Those two get their own gates rather
+  // than widening `canEditBooking`, which unlocks the whole file.
+  // The matching server-side rule lives in `api/bookings/[ref]/route.ts` (PUT).
+  const canEditContacts   = canEditBooking || isVnGroundLimited
+  const canEditPassengers = canEditBooking || isVnGroundLimited
 
   const canEditFlights = ['TE_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
@@ -1633,7 +1645,7 @@ Wishing you a wonderful trip! ✈️
                   <FileText className="w-3.5 h-3.5" /> PDF
                 </Link>
               )}
-              {['BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              {['BT_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={async () => {
                     try {
@@ -1653,7 +1665,7 @@ Wishing you a wonderful trip! ✈️
                   <Copy className="w-3.5 h-3.5" /> Portal Link
                 </button>
               )}
-              {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+              {['TE_USER', 'BT_USER', 'GT_VN_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
                 <button
                   onClick={openWhatsApp}
                   className="btn btn-sm bg-green-600 text-white border border-green-700 hover:bg-green-700 flex items-center gap-1.5"
@@ -2059,7 +2071,7 @@ Wishing you a wonderful trip! ✈️
         )}
 
         {/* Customer WhatsApp — manual daily briefings + feedback form */}
-        {['TE_USER', 'GT_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+        {['TE_USER', 'GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
           <section data-nav="Customer WhatsApp" data-nav-icon="whatsapp">
           <CustomerWhatsappPanel bookingRef={ref} />
           </section>
@@ -2088,7 +2100,7 @@ Wishing you a wonderful trip! ✈️
           <Card>
             <CardHeader
               action={
-                canEditBooking ? (
+                canEditPassengers ? (
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     <button
                       onClick={() => setAiPassengerOpen(true)}
@@ -2207,7 +2219,7 @@ Wishing you a wonderful trip! ✈️
                       {isOpen && (
                         <div className="px-4 pb-3 ml-11">
                           <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-2">🍽 Meal Preferences</p>
-                          {canEditBooking ? (
+                          {canEditPassengers ? (
                             <div className="flex flex-wrap gap-1.5">
                               {MEAL_OPTIONS.map(opt => {
                                 const isOn = selected.includes(opt.value)
@@ -2379,16 +2391,23 @@ Wishing you a wonderful trip! ✈️
             Never waived: on a Hotel Only file it is the whole operation, so it
             is called out as such rather than left to look like one panel among
             many that happened to survive. */}
-        {hotelOnly && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <p className="text-xs text-amber-900">
-              <span className="font-semibold">This is the only reconfirmation this booking needs.</span>{' '}
-              Every stay below must still be reconfirmed with the property at D-10.
-            </p>
-          </div>
+        {/* The Vietnam ground desk is deliberately held back from pre-checking:
+            its access request asks for it to wait until the hotel pre-checking
+            development is finished. Remove `!isVnGroundLimited` to hand it over. */}
+        {!isVnGroundLimited && (
+          <>
+            {hotelOnly && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                <p className="text-xs text-amber-900">
+                  <span className="font-semibold">This is the only reconfirmation this booking needs.</span>{' '}
+                  Every stay below must still be reconfirmed with the property at D-10.
+                </p>
+              </div>
+            )}
+            <PrecheckPanel bookingRef={ref} />
+          </>
         )}
-        <PrecheckPanel bookingRef={ref} />
 
         {/* Contact Information — Agent & Tourist */}
         {canViewClientDetails && (
@@ -2404,7 +2423,7 @@ Wishing you a wonderful trip! ✈️
                   </h3>
                 </CardHeader>
                 <CardBody className="py-3 px-4">
-                  {canEditBooking ? (
+                  {canEditContacts ? (
                     <div className="space-y-3">
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -2505,7 +2524,7 @@ Wishing you a wonderful trip! ✈️
                   </h3>
                 </CardHeader>
                 <CardBody className="py-3 px-4">
-                  {canEditBooking ? (
+                  {canEditContacts ? (
                     <div className="space-y-3">
                       <div>
                         <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1">
@@ -2599,7 +2618,7 @@ Wishing you a wonderful trip! ✈️
             </div>
 
             {/* Save button — only for edit-capable roles */}
-            {canEditBooking && (
+            {canEditContacts && (
               <div className="flex justify-end">
                 <Button loading={savingContact} onClick={saveContactEdits} size="sm">
                   Save Contact Info

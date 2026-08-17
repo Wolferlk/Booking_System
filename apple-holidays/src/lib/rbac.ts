@@ -106,8 +106,15 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // Vietnam Ground Team — Limited. Same ground work as GT_USER (agenda, driver
   // allocation, tickets) but a locked-down surface: dashboard, bookings list,
   // booking detail, the booking P&L (read only — that page is the Accounts
-  // Detailed P&L costing sheet the tickets are built from) and the Ops Board.
-  // No vendors, no admin tools.
+  // Detailed P&L costing sheet the tickets are built from), the MC Report and
+  // the Ops Board. No vendors, no admin tools.
+  //
+  // It also runs the live customer-facing steps the Vietnam desk owns: the
+  // portal link, the booking WhatsApp messages (T-7 confirmation and the T-3
+  // full details + vouchers), the daily trip-detail sends, and corrections to
+  // contact numbers and meal preferences. `booking:edit` is deliberately NOT
+  // granted — those two corrections are allowed by a field allowlist in
+  // `api/bookings/[ref]/route.ts` rather than by opening the whole file.
   GT_VN_USER: [
     'booking:read',
     'agenda:create', 'agenda:read', 'agenda:edit',
