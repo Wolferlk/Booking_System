@@ -80,12 +80,16 @@ export function ChatThread({
   const oldestIdRef = useRef<number | null>(null)
   const readSentRef = useRef(0)
   const tailBusyRef = useRef(false)
+  const lastIdConversationRef = useRef<number | null>(null)
 
   const conversation = conversationId ? byId.get(conversationId) ?? null : null
 
   const ids = messages.map(m => m.id).filter(Boolean) as number[]
   lastIdRef.current = ids.length ? Math.max(...ids) : 0
   oldestIdRef.current = ids.length ? Math.min(...ids) : null
+  // Which conversation the two ids above belong to. Without this the cursors
+  // outlive the thread they were measured in — see markRead().
+  lastIdConversationRef.current = ids.length ? conversationId : null
 
   /* ---- the fast poll tier is claimed only while a thread is actually open -- */
   useEffect(() => {
@@ -103,13 +107,26 @@ export function ChatThread({
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: instant ? 'auto' : 'smooth' })
   }, [])
 
+  /**
+   * Move this conversation's read marker to the newest message ON SCREEN.
+   *
+   * The id has to be checked against the conversation it belongs to. This
+   * component is reused when the page switches threads and by every dock box, so
+   * `lastIdRef` could still hold the previous conversation's newest id — and ids
+   * are global across conversations, so posting one meant "read up to a message
+   * this thread has never seen". Production had exactly that: a thread whose
+   * newest message was id 3 carried a read marker of 6, which silently swallows
+   * the unread badge for anything in between.
+   */
   const markRead = useCallback(() => {
     if (!conversationId || !lastIdRef.current) return
+    if (lastIdConversationRef.current !== conversationId) return
     if (readSentRef.current >= lastIdRef.current) return
+
     readSentRef.current = lastIdRef.current
     void chatApi(`/conversations/${conversationId}/read`, { method: 'POST', body: { up_to: lastIdRef.current } })
       .then(() => refresh())
-      .catch(() => {})
+      .catch(() => { readSentRef.current = 0 })
   }, [conversationId, refresh])
 
   /* ---- open -------------------------------------------------------------- */
@@ -183,6 +200,26 @@ export function ChatThread({
       .catch(() => {})
       .finally(() => { tailBusyRef.current = false })
   }, [serverLastId, tailNudge, booted, conversationId, scrollToBottom, markRead])
+
+  /**
+   * An edit, a delete or a reaction changes a message without creating a new id,
+   * so the cursor above cannot see it. `touched_at` moves instead, and the page
+   * on screen is re-read and merged — the merge is by id, so bubbles are updated
+   * in place rather than duplicated.
+   */
+  const touchedAt = conversationId ? (live[conversationId]?.touched_at ?? null) : null
+
+  useEffect(() => {
+    if (!conversationId || !booted || !touchedAt || !messages.length) return
+
+    const limit = Math.min(Math.max(messages.length, 20), 60)
+    chatApi<{ messages: ChatMessage[] }>(`/conversations/${conversationId}/messages?limit=${limit}`)
+      .then(d => { if (d.messages?.length) setMessages(prev => mergeMessages(prev, d.messages)) })
+      .catch(() => {})
+    // messages.length is read, not depended on: re-reading whenever the stream
+    // grows would undo the point of the cursor above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [touchedAt, conversationId, booted])
 
   /* ---- infinite scroll upwards ------------------------------------------- */
 
