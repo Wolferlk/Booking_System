@@ -68,10 +68,11 @@ export function Avatar({ person, size = 34 }: { person: ChatPerson; size?: keyof
       )}
       title={`${person.name}${person.role_label ? ` · ${person.role_label}` : ''}`}
     >
+      {/* Avatars come from two different hosts — this app and the Accounts app —
+          and next/image would need every one of them declared as a remote
+          pattern for no benefit at 34 pixels wide. */}
       {showImage
-        // eslint-disable-next-line @next/next/no-img-element -- avatars come from
-        // two different hosts (this app and the Accounts app), which next/image
-        // would need every one of them configured as a remote pattern for.
+        // eslint-disable-next-line @next/next/no-img-element
         ? <img src={person.avatar!} alt={person.name} onError={() => setFailed(true)} className="h-full w-full rounded-full object-cover" />
         : person.initials}
 
