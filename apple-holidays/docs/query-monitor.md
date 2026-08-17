@@ -29,6 +29,7 @@ Screen: `/dashboard/admin/query-monitor` (SUPER_ADMIN / ULTRA_SUPER_ADMIN).
    npx prisma db execute --file prisma/sql/query-monitor-reply-detail-ai-summary.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/query-monitor-group-mailbox-reply-source.sql --schema prisma/schema.prisma
    npx prisma db execute --file prisma/sql/2026-08-15-query-monitor-thread-ledger.sql --schema prisma/schema.prisma
+   npx prisma db execute --file prisma/sql/2026-08-17-query-monitor-thread-rounds.sql --schema prisma/schema.prisma
    npx prisma generate
    ```
 
@@ -265,6 +266,42 @@ words is one query asked twice. The sender *address* is what makes this safe
 where the domain would not: two agents at one agency sending the same generic
 subject still keep a row each.
 
+### A thread is not one query for ever — rounds
+
+Folding every later mail into the first row is right *while the query is open*.
+A chaser is the same unanswered question, and folding it keeps the SLA measured
+from when it was first asked rather than letting an impatient agent reset the
+clock by writing again.
+
+It is wrong once we have actually answered. The agent coming back after a reply
+is a new question with a new clock, and folding it made the sheet show nothing at
+all: on 17 Aug the team watched real mail arrive and disappear into rows dated
+the 6th, the 8th and the 11th, and typed those lines back in by hand.
+
+So a mail that arrives after the thread's `repliedAt` opens a **new round**,
+which takes a row of its own. Everything else still folds.
+
+- **`repliedAt` is the test**, and it is only ever set by a *direct* reply
+  addressed back to the asker. A forward to a colleague leaves it null, so
+  passing a query on can never split a thread — which is the same rule that
+  stopped a forward counting as an answer for the SLA.
+- **The merge target is the thread's *latest* unmerged entry**, not its earliest:
+  the round still open is the last one started. Within a round nothing changes,
+  because that round's chasers are all `MERGED` and the only unmerged entry it
+  has is the mail that opened it.
+- **The append guard is relaxed for a round-opening entry** (`newRound` on the
+  model). A row is normally protected by two identities — the exact one (date +
+  allocation time + subject) and a looser same-day-same-subject one. The loose
+  one cannot tell two rounds of a thread apart, so for these entries only the
+  exact key applies. It carries the allocation time, which two rounds never
+  share, so a write landing twice is still caught.
+
+The practical effect on a day's mail: of fourteen follow-ups on 17 Aug, five had
+arrived after we replied and now take a line each. The other nine are chasers on
+queries **nobody has answered** — one of them sitting unanswered since 8 Aug —
+and folding those is the point. Four separate lines would read as four queries;
+one overdue row is the truth.
+
 What a merge deliberately does **not** touch:
 
 - **Allocation time (D)** stays the first mail's — the SLA is measured from when
@@ -346,6 +383,40 @@ something the others cannot.
 
 `mergeDuplicateEntries` works from the database outwards, this works from the
 sheet inwards; they are separate on purpose.
+
+### Rows the team moved
+
+A stored `sheetRow` is a row *number*, and a row number only means what it meant
+when it was recorded for as long as nobody inserts or deletes rows above it. The
+team does insert rows — that is what a shared workbook is for. On 17 Aug two
+hand-typed lines went in at 664–665 and pushed every row below them down by two
+while the database went on pointing at the old numbers. Nothing complained:
+`updateRow` writes to the number it is given, so the next reply on that thread
+would have silently overwritten one of the lines just typed in.
+
+So **an in-place rewrite now checks that the row still holds the query** before
+writing it. The span covering the dirty rows is read once per tab — padded on
+both sides, because where the rows *were* is not where they may have gone — and
+each entry is matched to the row that actually carries it, by the exact identity
+the append guard already uses: date serial, allocation-time serial and subject,
+the three cells nothing else edits. Three outcomes:
+
+- **the stored row still matches** — the ordinary case, and the ordinary cost is
+  one extra range read per sweep;
+- **it moved** — the pointer is corrected to where the row now is, in the
+  database as well as for this write, so the drift is repaired permanently and
+  reported in the run log;
+- **it is nowhere in the span** — the write is **skipped**, and the entry goes
+  `FAILED` with an explanation. A row that cannot be found is a row that must not
+  be guessed at: writing blind is precisely how a hand-typed line gets destroyed.
+  Clear the stale row and press *Retry failed writes* to append it fresh.
+
+A read that fails leaves every entry unverified and the old behaviour standing —
+a sweep must not stop because a range read did.
+
+Note that the append point was never affected by any of this: it is found by
+scanning column C from the bottom, so appends land correctly under hand-typed
+rows whatever the stored pointers say. Only the in-place rewrites were exposed.
 
 ### When a write fails
 
@@ -520,6 +591,10 @@ run log.
 - **Every written row's number is stored** on the entry, so a row can be traced,
   re-read, or corrected in place. The duplicate clean-up is the only thing that
   deletes rows, and it renumbers those pointers in the same pass.
+- **A row is never rewritten without checking it is still the right row.** Row
+  numbers go stale the moment anyone inserts or deletes rows in Excel; a rewrite
+  that cannot confirm its target is skipped rather than allowed to overwrite
+  whatever is standing there — see *Rows the team moved*.
 - **A follow-up never starts a row.** Merged entries are terminal (`MERGED`);
   neither a sync, a rebase nor a reclassify can put them back in the queue.
 - **Hand edits win.** Any field corrected in the dashboard is recorded in
@@ -569,6 +644,11 @@ prisma/sql/query-monitor-to-list.sql      toList + backup row/state columns
 prisma/sql/query-monitor-thread-merge.sql thread keys, mergedIntoId, followUpCount
 prisma/sql/query-monitor-reply-detail-ai-summary.sql
                                           repliedBy, aiSummary, aiSummaryAt
+prisma/sql/2026-08-15-query-monitor-thread-ledger.sql
+                                          thread events table + roll-up columns
+prisma/sql/2026-08-17-query-monitor-thread-rounds.sql
+                                          newRound — a thread can hold more
+                                          than one query, see "rounds" above
 ```
 
 ## Known gaps
