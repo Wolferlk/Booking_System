@@ -84,13 +84,23 @@ const CHARSET = COLLATION.split('_')[0]
  */
 async function source(): Promise<string> {
   if (!viewChecked) {
-    viewChecked = true
     try {
       await chatQuery('SELECT 1 FROM `chat_directory` LIMIT 1')
+      viewChecked = true
       viewExists = true
     } catch (err) {
-      console.warn('[chat] chat_directory is unusable; falling back to the inline UNION.', err)
+      // Only a verdict ABOUT THE VIEW is remembered. A dropped connection or a
+      // timeout says nothing about whether the view works, and caching that as
+      // "unusable" pinned the whole process to the slower cross-schema UNION
+      // for its entire life over one network blip — so a transient failure
+      // leaves the probe unanswered and is asked again next time.
+      const code = (err as { code?: string })?.code ?? ''
+      const definitive = ['ER_NO_SUCH_TABLE', 'ER_VIEW_INVALID', 'ER_CANT_AGGREGATE_2COLLATIONS',
+        'ER_CANT_AGGREGATE_NCOLLATIONS', 'ER_TABLEACCESS_DENIED_ERROR', 'ER_VIEW_NO_EXPLAIN'].includes(code)
+
+      console.warn(`[chat] chat_directory probe failed (${code || 'unknown'}); using the inline UNION${definitive ? '' : ' for this query only'}.`, err)
       viewExists = false
+      if (definitive) viewChecked = true
     }
   }
 

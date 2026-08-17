@@ -306,7 +306,10 @@ export function MessageBubble({
         <Avatar person={message.sender} size={34} />
       </div>
 
-      <div className={cn('flex min-w-0 max-w-[74%] flex-col', mine && 'items-end')}>
+      {/* items-start matters: a flex column stretches its children, so the first
+          bubble of a group used to be padded out to the width of the sender line
+          above it instead of hugging its text. */}
+      <div className={cn('flex min-w-0 max-w-[74%] flex-col', mine ? 'items-end' : 'items-start')}>
         {isFirst && !mine && (
           <div className="mb-1 flex items-center gap-2 px-1">
             <span className="text-[.72rem] font-extrabold text-slate-700">{message.sender.name}</span>

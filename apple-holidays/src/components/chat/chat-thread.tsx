@@ -15,7 +15,8 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ArrowLeft, Bell, BellOff, Download, Maximize2, Minus, Pin, UserPlus, X,
+  AlertTriangle, ArrowLeft, Bell, BellOff, Download, Maximize2, Minus, Pin,
+  RefreshCw, UserPlus, WifiOff, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { chatApi, useChat } from './chat-store'
@@ -24,6 +25,28 @@ import { MessageBubble } from './message-bubble'
 import { Composer } from './composer'
 import { CardViewer, type CardTarget } from './card-viewer'
 import type { ChatAttachment, ChatMessage } from './types'
+
+/**
+ * Fold incoming rows into the stream.
+ *
+ * Matched by client_uuid first so the sender's optimistic bubble is replaced
+ * rather than duplicated, then by id so a row that arrives twice — from the
+ * send response and from a tail read that raced it — is still one bubble.
+ * Optimistic rows (id null) sort last, which is where they belong.
+ */
+function mergeMessages(prev: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  if (!incoming.length) return prev
+
+  const next = [...prev]
+  incoming.forEach(m => {
+    const at = next.findIndex(x =>
+      (m.client_uuid && x.client_uuid === m.client_uuid) || (m.id !== null && x.id === m.id))
+    if (at > -1) next[at] = m
+    else next.push(m)
+  })
+
+  return next.sort((a, b) => (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER))
+}
 
 export function ChatThread({
   conversationId, compact, onBack, onMinimize, onClose, onManageMembers, onPopOut,
@@ -214,11 +237,10 @@ export function ChatThread({
       method: 'POST', body: payload,
     })
       .then(d => {
-        setMessages(prev => {
-          const at = prev.findIndex(m => m.client_uuid === payload.client_uuid)
-          if (at === -1) return [...prev, d.message]
-          const next = [...prev]; next[at] = d.message; return next
-        })
+        // The same merge the tail read uses: the server copy replaces the
+        // optimistic bubble whether it is matched by uuid or by id, and a tail
+        // read that raced this response cannot leave a duplicate behind.
+        setMessages(prev => mergeMessages(prev, [d.message]))
         applyConversations(d.conversations ?? [])
         requestAnimationFrame(() => scrollToBottom())
       })
@@ -350,6 +372,13 @@ export function ChatThread({
             + 'radial-gradient(760px 380px at 4% 104%, rgba(13,148,136,.08), transparent 60%), #f6f8fb',
         }}
       >
+        {/* Live or not live is never left to be guessed from an absence of messages. */}
+        {!connected && (
+          <div className="sticky top-0 z-10 mb-2 flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50/95 px-3 py-1.5 text-[.7rem] font-bold text-amber-800">
+            <WifiOff className="h-3.5 w-3.5" /> Reconnecting — new messages may be delayed
+          </div>
+        )}
+
         {loading && !messages.length && (
           <div className="space-y-3">
             {[72, 96, 60, 110].map((h, i) => (
@@ -358,7 +387,24 @@ export function ChatThread({
           </div>
         )}
 
-        {!loading && !messages.length && (
+        {/* A failed read is never dressed up as an empty conversation. */}
+        {!loading && loadError && (
+          <div className="grid place-items-center py-14 text-center">
+            <div className="max-w-sm rounded-2xl border border-rose-200 bg-rose-50/80 px-5 py-4">
+              <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-rose-600" />
+              <p className="text-[.82rem] font-bold text-rose-800">This conversation could not be loaded</p>
+              <p className="mt-1 text-[.72rem] text-rose-700/80">{loadError}</p>
+              <button
+                onClick={() => { setLoadError(null); setReloadKey(k => k + 1) }}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-rose-700 px-3.5 py-2 text-[.75rem] font-bold text-white transition hover:bg-rose-800 active:scale-95"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Try again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!loading && !loadError && !messages.length && (
           <div className="grid place-items-center py-16 text-center text-slate-400">
             <div>
               <div className="mb-2 text-3xl">✍️</div>
