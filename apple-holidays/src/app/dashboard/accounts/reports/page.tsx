@@ -21,13 +21,13 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
   PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
-  Sparkles, Info, Maximize2, Hotel, XCircle,
+  Sparkles, Info, Maximize2, Hotel, XCircle, Ban, Clock, ExternalLink,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
-import { cn, formatDate } from '@/lib/utils'
+import { cn, formatDate, formatCurrency } from '@/lib/utils'
 import type { OpsDayBoard, OpsDayRow } from '@/lib/reports/ops-day-data'
 import type { ReadinessState } from '@/lib/booking-readiness'
 import {
@@ -101,6 +101,31 @@ const RANGE_PRESETS: { label: string; build: (today: string) => [string, string]
   { label: 'Next 30 days', build: t => [t, shift(t, 29)] },
 ]
 
+/**
+ * How loud a waiting cancellation request is allowed to be.
+ *
+ * A request raised this morning is routine; one that has sat unanswered for
+ * three days is holding ops hostage — drivers are being allocated and tickets
+ * issued against a file that may be dead — so it escalates from amber to red
+ * rather than sitting at one flat colour nobody re-reads.
+ */
+function waitTone(days: number | null): { ring: string; chip: string; text: string } {
+  if (days != null && days >= 3) {
+    return { ring: 'border-rose-300', chip: 'bg-rose-100 text-rose-800 border-rose-300', text: 'text-rose-700' }
+  }
+  if (days != null && days >= 1) {
+    return { ring: 'border-orange-300', chip: 'bg-orange-100 text-orange-800 border-orange-300', text: 'text-orange-700' }
+  }
+  return { ring: 'border-amber-300', chip: 'bg-amber-100 text-amber-800 border-amber-300', text: 'text-amber-700' }
+}
+
+/** "today", "1 day", "4 days" — the age of a pending request, in words. */
+function waitLabel(days: number | null): string {
+  if (days == null) return 'waiting'
+  if (days === 0) return 'raised today'
+  return `waiting ${days} day${days === 1 ? '' : 's'}`
+}
+
 /** Row filters applied client-side, on top of what the server already scoped. */
 type CheckFilter = 'ALL' | 'reconfirm' | 'calls' | 'driver' | 'tickets' | 'qc'
 
@@ -134,6 +159,8 @@ export default function OperationsBoardPage() {
   /** Reconfirmation chips: OR inside a group, AND across groups. */
   const [facets, setFacets] = useState<Set<ReconfirmFacet>>(new Set())
   const [countryRowFilter, setCountryRowFilter] = useState('ALL')
+  /** Narrow the whole board to files whose cancellation accounts has not decided. */
+  const [cancelOnly, setCancelOnly] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
   /** Which card the drill-down is open on; null when it is closed. */
   const [focus, setFocus] = useState<FocusKey | null>(null)
@@ -219,10 +246,11 @@ export default function OperationsBoardPage() {
     if (segment === 'ARRIVALS' && !r.isArrival) return false
     if (segment === 'DEPARTURES' && !r.isDeparture) return false
     if (onlyOutstanding && r.ready) return false
+    if (cancelOnly && !r.cancelPending) return false
     if (statusFilter !== 'ALL' && r.status !== statusFilter) return false
     if (countryRowFilter !== 'ALL' && r.country !== countryRowFilter) return false
     return outstandingCheck(r)
-  }), [board, segment, onlyOutstanding, statusFilter, countryRowFilter, outstandingCheck])
+  }), [board, segment, onlyOutstanding, cancelOnly, statusFilter, countryRowFilter, outstandingCheck])
 
   const facetCounts = useMemo(() => countFacets(preFacet), [preFacet])
 
@@ -232,11 +260,12 @@ export default function OperationsBoardPage() {
   )
 
   const filtersActive =
-    onlyOutstanding || checkFilter !== 'ALL' || statusFilter !== 'ALL'
+    onlyOutstanding || cancelOnly || checkFilter !== 'ALL' || statusFilter !== 'ALL'
     || countryRowFilter !== 'ALL' || search.trim().length > 0 || facets.size > 0
 
   function clearFilters() {
     setOnlyOutstanding(false)
+    setCancelOnly(false)
     setCheckFilter('ALL')
     setStatusFilter('ALL')
     setCountryRowFilter('ALL')
@@ -264,6 +293,47 @@ export default function OperationsBoardPage() {
    */
   const liveVisible = useMemo(() => visible.filter(r => !r.cancelled), [visible])
   const cancelledCount = visible.length - liveVisible.length
+
+  /**
+   * Files whose cancellation the accounts team has not answered yet.
+   *
+   * Read from the whole loaded window rather than the filtered list on purpose:
+   * this is an alert, and an alert that disappears because somebody switched to
+   * the Arrivals tab is an alert nobody can rely on. The board still runs its
+   * own filters underneath — the panel is what makes sure the request is seen at
+   * all. Oldest request first: the one that has waited longest is the one
+   * blocking the most work.
+   */
+  const cancelQueue = useMemo(() => (board?.rows ?? [])
+    .filter(r => r.cancelPending)
+    .sort((a, b) =>
+      (b.cancellation?.waitingDays ?? 0) - (a.cancellation?.waitingDays ?? 0)
+      || a.arrivalDate.localeCompare(b.arrivalDate)),
+    [board])
+
+  const cancelQueuePax = cancelQueue.reduce((s, r) => s + r.pax, 0)
+  const cancelQueueFee = cancelQueue.reduce((s, r) => s + (r.cancellation?.feeTotal ?? 0), 0)
+  /** The oldest wait in the queue — what the headline chip escalates on. */
+  const cancelQueueOldest = cancelQueue.reduce<number | null>(
+    (m, r) => {
+      const d = r.cancellation?.waitingDays
+      return d == null ? m : m == null ? d : Math.max(m, d)
+    }, null)
+
+  /**
+   * Jump the board to the approval queue. Clearing the other filters first is
+   * deliberate: "show me these five files" must show five files, not five minus
+   * whatever an Outstanding-only tick left behind.
+   */
+  function focusCancelQueue() {
+    if (cancelOnly) { setCancelOnly(false); return }
+    setOnlyOutstanding(false)
+    setCheckFilter('ALL')
+    setStatusFilter('ALL')
+    setFacets(new Set())
+    setSegment('ONGROUND')
+    setCancelOnly(true)
+  }
 
   // ── The four gauges ────────────────────────────────────────────────────────
   // Computed over the *visible* rows so the rings describe exactly the list
@@ -343,6 +413,8 @@ export default function OperationsBoardPage() {
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
       'Driver Allocation', 'Tickets', 'QC Stage', 'QC1', 'QC2', 'Outstanding',
+      'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By', 'Days Awaiting Approval',
+      'Cancel Reason', 'Cancellation Fee',
       'D-10 Due', 'D-10 Status', 'Days Late', 'Delay Reason', 'Delay Detail', 'Reason Recorded By', 'Reason Recorded On',
     ]
     const lines = visible.map(r => [
@@ -364,6 +436,14 @@ export default function OperationsBoardPage() {
       qcTick(r, 1) === 'DONE' ? 'Pass' : 'Pending',
       qcTick(r, 2) === 'DONE' ? 'Pass' : 'Pending',
       r.outstanding.join('; ') || 'None',
+      // Exported next to the checks on purpose: a spreadsheet can then answer
+      // "what did we allocate against files that were being cancelled".
+      r.cancelPending ? 'AWAITING APPROVAL' : r.cancelled ? 'Approved / cancelled' : '',
+      r.cancellation?.requestedAt?.slice(0, 10) ?? '',
+      r.cancellation?.requestedBy ?? '',
+      r.cancelPending ? r.cancellation?.waitingDays ?? '' : '',
+      r.cancellation?.reason ?? '',
+      r.cancellation?.feeTotal ?? '',
       // The D-10 block is exported alongside the checks so a spreadsheet can be
       // pivoted by reason — "how many files did we lose to unpaid balances last
       // month" is a question the board itself cannot answer.
@@ -659,6 +739,177 @@ export default function OperationsBoardPage() {
           ))}
         </div>
 
+        {/* ── Cancellation approvals pending ──────────────────────────────── */}
+        {/*
+            Sits directly under the hero counts because of what it means: every
+            file listed here is inside those counts — being driven, ticketed and
+            QC'd — while somebody has already asked for it to be cancelled. The
+            board's job is to make sure nobody spends another day on a tour that
+            accounts is about to call off.
+        */}
+        <AnimatePresence initial={false}>
+          {cancelQueue.length > 0 && (
+            <motion.div
+              {...fade}
+              exit={reduce ? undefined : { opacity: 0, y: -8 }}
+              transition={reduce ? { duration: 0 } : { delay: 0.1, duration: 0.35 }}
+              className={cn(
+                'relative overflow-hidden rounded-2xl border-2 bg-white shadow-card',
+                waitTone(cancelQueueOldest).ring,
+              )}
+            >
+              {/* A quiet diagonal wash, so the panel reads as an alert strip
+                  rather than yet another white card in the stack. */}
+              <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-rose-50 via-orange-50/60 to-transparent" />
+
+              <div className="relative p-4 sm:p-5 space-y-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className={cn(
+                      'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border',
+                      waitTone(cancelQueueOldest).chip,
+                    )}>
+                      <Ban className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+                        Cancellation approvals pending
+                        <span className={cn(
+                          'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold',
+                          waitTone(cancelQueueOldest).chip,
+                        )}>
+                          <CountUp value={cancelQueue.length} />
+                          <span className="ml-1 font-semibold">
+                            file{cancelQueue.length === 1 ? '' : 's'}
+                          </span>
+                        </span>
+                      </h3>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-600 max-w-2xl">
+                        These bookings are still counted as live above — drivers, tickets and QC are
+                        still being chased on them — but a cancellation has been requested and the
+                        accounts team has not decided yet. Approve or reject in the Apple Accounts
+                        system; this board is read-only.
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                        <span className="inline-flex items-center gap-1">
+                          <Users className="h-3 w-3 text-slate-400" />
+                          <strong className="text-slate-800">{cancelQueuePax}</strong> pax affected
+                        </span>
+                        {cancelQueueFee > 0 && (
+                          <span className="inline-flex items-center gap-1">
+                            <CircleAlert className="h-3 w-3 text-slate-400" />
+                            <strong className="text-slate-800">
+                              {formatCurrency(cancelQueueFee, cancelQueue[0]?.cancellation?.currency ?? 'USD')}
+                            </strong> in cancellation fees claimed
+                          </span>
+                        )}
+                        {cancelQueueOldest != null && (
+                          <span className={cn('inline-flex items-center gap-1 font-semibold', waitTone(cancelQueueOldest).text)}>
+                            <Clock className="h-3 w-3" />
+                            oldest {waitLabel(cancelQueueOldest)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={focusCancelQueue}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-[11px] font-bold transition-colors',
+                      cancelOnly
+                        ? 'bg-slate-900 text-white border-slate-900 hover:bg-slate-800'
+                        : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50',
+                    )}
+                  >
+                    {cancelOnly ? 'Show the whole board' : 'Show only these on the board'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                  {cancelQueue.map(r => {
+                    const c = r.cancellation
+                    const tone = waitTone(c?.waitingDays ?? null)
+                    return (
+                      <div
+                        key={r.bookingRef}
+                        className={cn(
+                          'rounded-xl border bg-white/90 p-3 shadow-sm backdrop-blur-sm transition-shadow hover:shadow-md',
+                          tone.ring,
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <a
+                            href={`/dashboard/bookings/${r.bookingRef}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 font-mono text-sm font-bold text-brand-700 hover:underline"
+                          >
+                            {r.bookingRef}
+                            <ExternalLink className="h-3 w-3 text-slate-400" />
+                          </a>
+                          <span className={cn(
+                            'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                            tone.chip,
+                          )}>
+                            <Clock className="h-2.5 w-2.5" />
+                            {waitLabel(c?.waitingDays ?? null)}
+                          </span>
+                        </div>
+
+                        <div className="mt-1.5 space-y-0.5 text-[11px] text-slate-600">
+                          <div className="truncate" title={r.leadPassenger ?? ''}>
+                            {r.leadPassenger || '—'}
+                            <span className="text-slate-400"> · {r.pax} pax · {r.countryLabel}</span>
+                          </div>
+                          <div>
+                            {formatDate(r.arrivalDate)} → {formatDate(r.departureDate)}
+                            <span className="text-slate-400"> · day {r.dayNo}/{r.totalDays}</span>
+                          </div>
+                          <div className="text-slate-400 truncate">
+                            Requested by {c?.requestedBy || 'unknown'}
+                            {c?.heldAtLabel ? ` · held at ${c.heldAtLabel}` : ''}
+                          </div>
+                        </div>
+
+                        {c?.reason && (
+                          <p
+                            className="mt-2 rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] italic text-slate-600 line-clamp-2"
+                            title={c.reason}
+                          >
+                            “{c.reason}”
+                          </p>
+                        )}
+
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {c?.feeTotal != null && c.feeTotal > 0 && (
+                            <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                              Fee {formatCurrency(c.feeTotal, c.currency ?? 'USD')}
+                            </span>
+                          )}
+                          {/* What is still being spent on a file that may die —
+                              the reason this panel is on an ops board at all. */}
+                          {r.driver.state !== 'NA' && r.driver.state !== 'PENDING' && (
+                            <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                              Drivers {r.driver.short}
+                            </span>
+                          )}
+                          {r.tickets.state === 'DONE' && (
+                            <span className="rounded-md bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800">
+                              Tickets issued
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* ── Readiness gauges ────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
           {gauges.map((g, i) => (
@@ -759,6 +1010,31 @@ export default function OperationsBoardPage() {
             >
               <XCircle className="w-3 h-3" />
               {cancelledCount} Cancelled
+            </button>
+          )}
+          {/* Pending cancellations *are* counted in the percentage — they are
+              live files until accounts decides — so the strip says how much of
+              the day's readiness is being spent on work that may be called off. */}
+          {cancelQueue.length > 0 && (
+            <button
+              type="button"
+              onClick={focusCancelQueue}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-semibold transition-colors',
+                cancelOnly
+                  ? 'bg-slate-900 text-white border-slate-900'
+                  : cn(waitTone(cancelQueueOldest).chip, 'hover:brightness-95'),
+              )}
+              title={
+                `${cancelQueue.length} booking(s) have a cancellation request waiting on the accounts team. `
+                + 'They are still counted as live above — click to see only those files.'
+              }
+            >
+              <Ban className="w-3 h-3" />
+              {cancelQueue.length} awaiting cancel approval
+              {cancelQueueOldest != null && cancelQueueOldest >= 1 && (
+                <span className="opacity-70">· oldest {cancelQueueOldest}d</span>
+              )}
             </button>
           )}
           {/* The D-10 pill is a control, not an ornament: clicking it filters
@@ -983,6 +1259,11 @@ export default function OperationsBoardPage() {
                                 // still on the board so the desk sees what
                                 // happened to it, visibly not work in progress.
                                 : r.cancelled ? 'bg-slate-100/70 text-slate-400 hover:bg-slate-100'
+                                  // A file with a cancellation waiting on accounts
+                                  // is still live work, so it keeps its full
+                                  // colour — but it is striped so the desk cannot
+                                  // scroll past it without noticing.
+                                  : r.cancelPending ? 'bg-orange-50/70 hover:bg-orange-50'
                                   // Hotel Only rows are tinted rather than hidden:
                                   // the guest is on the ground and ops must see
                                   // them, but nothing on the row is a chase.
@@ -995,7 +1276,8 @@ export default function OperationsBoardPage() {
                                 <span className={cn(
                                   'w-1.5 h-1.5 rounded-full flex-shrink-0',
                                   r.cancelled ? 'bg-slate-400'
-                                    : r.hotelOnly ? 'bg-amber-400' : r.ready ? 'bg-emerald-500' : 'bg-rose-500',
+                                    : r.cancelPending ? 'bg-orange-500 animate-pulse'
+                                      : r.hotelOnly ? 'bg-amber-400' : r.ready ? 'bg-emerald-500' : 'bg-rose-500',
                                 )} />
                                 <a
                                   href={`/dashboard/bookings/${r.bookingRef}`}
@@ -1018,6 +1300,22 @@ export default function OperationsBoardPage() {
                                     title="This booking has been cancelled. Nothing on the row is outstanding and it is excluded from every count on this board."
                                   >
                                     <XCircle className="w-2.5 h-2.5" /> Cancelled
+                                  </span>
+                                )}
+                                {r.cancelPending && (
+                                  <span
+                                    className={cn(
+                                      'inline-flex items-center gap-0.5 px-1.5 py-px rounded-full border text-[9px] font-bold uppercase tracking-wide',
+                                      waitTone(r.cancellation?.waitingDays ?? null).chip,
+                                    )}
+                                    title={
+                                      'A cancellation has been requested on this booking and the accounts team has not decided. '
+                                      + `${waitLabel(r.cancellation?.waitingDays ?? null)}. `
+                                      + (r.cancellation?.reason ? `Reason: ${r.cancellation.reason}` : 'No reason recorded.')
+                                    }
+                                  >
+                                    <Ban className="w-2.5 h-2.5" /> Cancel Pending
+                                    {r.cancellation?.waitingDays ? ` · ${r.cancellation.waitingDays}d` : ''}
                                   </span>
                                 )}
                                 {r.hotelOnly && (
@@ -1184,6 +1482,57 @@ export default function OperationsBoardPage() {
                                           </div>
                                         </div>
                                       </div>
+
+                                      {/* The full request, for the row somebody
+                                          opened *because* of the badge. */}
+                                      {r.cancellation && (r.cancelPending || r.cancelled) && (
+                                        <div className={cn(
+                                          'lg:col-span-3 rounded-xl border p-3',
+                                          r.cancelPending ? waitTone(r.cancellation.waitingDays).ring : 'border-slate-200',
+                                          r.cancelPending ? 'bg-orange-50/60' : 'bg-white',
+                                        )}>
+                                          <h4 className="text-[10px] font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+                                            <Ban className="w-3 h-3" />
+                                            {r.cancelPending ? 'Cancellation — awaiting accounts approval' : 'Cancellation'}
+                                          </h4>
+                                          <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
+                                            <div><span className="text-slate-400">Requested by:</span> {r.cancellation.requestedBy || '—'}</div>
+                                            <div>
+                                              <span className="text-slate-400">Requested on:</span>{' '}
+                                              {r.cancellation.requestedAt ? formatDate(r.cancellation.requestedAt.slice(0, 10)) : '—'}
+                                            </div>
+                                            <div>
+                                              <span className="text-slate-400">Waiting:</span>{' '}
+                                              <span className={cn('font-semibold', waitTone(r.cancellation.waitingDays).text)}>
+                                                {waitLabel(r.cancellation.waitingDays)}
+                                              </span>
+                                            </div>
+                                            <div><span className="text-slate-400">Held at:</span> {r.cancellation.heldAtLabel || '—'}</div>
+                                            <div>
+                                              <span className="text-slate-400">Cancellation fee:</span>{' '}
+                                              {r.cancellation.feeTotal != null
+                                                ? formatCurrency(r.cancellation.feeTotal, r.cancellation.currency ?? 'USD')
+                                                : '—'}
+                                            </div>
+                                            {r.cancellation.decidedAt && (
+                                              <div>
+                                                <span className="text-slate-400">Decided on:</span>{' '}
+                                                {formatDate(r.cancellation.decidedAt.slice(0, 10))}
+                                              </div>
+                                            )}
+                                          </div>
+                                          <p className="mt-2 whitespace-pre-wrap text-[11px] text-slate-700">
+                                            <span className="text-slate-400">Reason: </span>
+                                            {r.cancellation.reason || 'No reason recorded.'}
+                                          </p>
+                                          {r.cancelPending && (
+                                            <p className="mt-2 text-[10px] font-semibold text-orange-800">
+                                              Every check above is still being chased on this file. Approve or reject the
+                                              request in the Apple Accounts system before more cost is committed.
+                                            </p>
+                                          )}
+                                        </div>
+                                      )}
                                     </div>
                                   </motion.div>
                                 </td>

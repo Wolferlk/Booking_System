@@ -7,12 +7,12 @@ import {
   Users, Truck, MapPin, Clock, ChevronUp, ChevronDown,
   ClipboardList, RefreshCw, Table2, Globe, FileText,
   FileSpreadsheet, Printer, ChevronDown as ChevronDownIcon, Palmtree, Hotel,
-  Sparkles, Store, UserPlus, Phone, XCircle,
+  Sparkles, Store, UserPlus, Phone, XCircle, Ban, ExternalLink,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { toast } from 'sonner'
-import { cn, formatDate } from '@/lib/utils'
+import { cn, formatDate, formatCurrency } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import AssignMovementModal, { type MovementAssignment } from '@/components/shared/assign-movement-modal'
@@ -75,6 +75,14 @@ type MCRow = {
   operationCountry: string | null
   agent:          string | null
   bookingStatus:  string
+  /** Cancellation-approval trail — set once a cancellation has been requested. */
+  cancelRequestedAt: string | null
+  cancelRequestedBy: string | null
+  cancelReason:      string | null
+  cancelFeeTotal:    number | null
+  /** Status the file is held at while accounts decides. */
+  cancelHeldAt:      string | null
+  currency:          string | null
 }
 
 /**
@@ -89,6 +97,48 @@ type MCRow = {
 function isCancelledRow(row: { bookingStatus?: string | null }): boolean {
   const s = String(row.bookingStatus ?? '')
   return s === 'CANCELLED' || s === 'PENDING_CANCELLATION'
+}
+
+/**
+ * A cancellation has been *requested* on this file and accounts has not decided.
+ *
+ * Kept apart from `isCancelledRow` above, which covers both states: a pending
+ * request is not a cancellation yet. The movement is still scheduled, the driver
+ * is still expected to turn up, and somebody is about to be told not to — which
+ * is exactly why the chart has to say so rather than quietly grey the row out.
+ */
+function isCancelPendingRow(row: { bookingStatus?: string | null }): boolean {
+  return String(row.bookingStatus ?? '') === 'PENDING_CANCELLATION'
+}
+
+/** Whole days a request has been waiting on accounts. */
+function waitingDays(requestedAt: string | null): number | null {
+  if (!requestedAt) return null
+  const then = Date.parse(requestedAt)
+  if (isNaN(then)) return null
+  return Math.max(0, Math.floor((Date.now() - then) / 86_400_000))
+}
+
+/** "raised today", "waiting 4 days" — how a queued request describes itself. */
+function waitLabel(days: number | null): string {
+  if (days == null) return 'awaiting approval'
+  if (days === 0) return 'raised today'
+  return `waiting ${days} day${days === 1 ? '' : 's'}`
+}
+
+/**
+ * A request raised this morning is routine; one sitting unanswered for days is
+ * costing money — every hour it waits, more drivers and tickets go against a
+ * file that may be dead — so the colour escalates rather than staying flat.
+ */
+function waitTone(days: number | null): { border: string; chip: string; text: string } {
+  if (days != null && days >= 3) {
+    return { border: 'border-rose-300', chip: 'bg-rose-100 text-rose-800 border-rose-300', text: 'text-rose-700' }
+  }
+  if (days != null && days >= 1) {
+    return { border: 'border-orange-300', chip: 'bg-orange-100 text-orange-800 border-orange-300', text: 'text-orange-700' }
+  }
+  return { border: 'border-amber-300', chip: 'bg-amber-100 text-amber-800 border-amber-300', text: 'text-amber-700' }
 }
 
 type SortField = 'date' | 'vnCode' | 'agent' | 'location' | 'serviceType' | 'meetingTime'
@@ -174,6 +224,11 @@ function rowMatchesDeep(row: MCRow, q: string): boolean {
     // Searchable by name: typing "hotel only" pulls up every accommodation-only
     // file, which is the fastest way to answer "who has no tour this week?"
     row.isHotelOnlyBooking ? 'hotel only booking accommodation only' : null,
+    // Same trick for the approval queue: "cancel pending" pulls up every file
+    // waiting on accounts, and the reason text is searchable with it.
+    isCancelPendingRow(row)
+      ? `cancel pending cancellation approval ${row.cancelReason ?? ''} ${row.cancelRequestedBy ?? ''}`
+      : null,
   ].some(v => v?.toLowerCase().includes(q))
 }
 
@@ -205,6 +260,7 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'Tour Ref',  value: row.vnCode },
     { label: 'IS No',     value: row.isNumber },
     { label: 'Agent ID',  value: row.agentBookingId },
+    { label: 'Cancel Reason', value: row.cancelReason },
   ]
   return fields
     .filter(f => f.value?.toLowerCase().includes(q))
@@ -416,6 +472,8 @@ export default function MCReportPage() {
   const [resetNonce, setResetNonce]     = useState(0)
   const [sort, setSort]           = useState<{ field: SortField; dir: SortDir }>({ field: 'date', dir: 'asc' })
   const [expandedRow, setExpandedRow] = useState<string | null>(null)
+  /** Narrow the chart to movements on files awaiting a cancellation decision. */
+  const [cancelOnly, setCancelOnly] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [downloadingXlsx, setDownloadingXlsx] = useState(false)
   const [driverModalRow, setDriverModalRow] = useState<MCRow | null>(null)
@@ -494,7 +552,7 @@ export default function MCReportPage() {
     // data list refreshes instead of staying on the previously-filtered result.
     const today = todayISO()
     setDateFrom(today); setDateTo(today); setSearch(''); setSvcFilter('')
-    setLocalCountry(''); setActiveRange('Today'); setDeepSearch('')
+    setLocalCountry(''); setActiveRange('Today'); setDeepSearch(''); setCancelOnly(false)
     // Bump the nonce so the list always refetches with the cleared filters,
     // even when the date range was already Today (e.g. only a text search was set).
     setResetNonce(n => n + 1)
@@ -525,9 +583,10 @@ export default function MCReportPage() {
   // Deep search — client-side filter on already-sorted rows
   const displayedRows = useMemo(() => {
     const q = deepSearch.trim().toLowerCase()
-    if (!q) return sorted
-    return sorted.filter(row => rowMatchesDeep(row, q))
-  }, [sorted, deepSearch])
+    const base = cancelOnly ? sorted.filter(isCancelPendingRow) : sorted
+    if (!q) return base
+    return base.filter(row => rowMatchesDeep(row, q))
+  }, [sorted, deepSearch, cancelOnly])
 
   // ── Guides / tour vendors ─────────────────────────────────────────────────────
 
@@ -587,6 +646,61 @@ export default function MCReportPage() {
     [displayedRows],
   )
 
+  /**
+   * One entry per booking whose cancellation is sitting with accounts, with the
+   * movements still charted against it.
+   *
+   * Built from the whole loaded chart rather than the filtered view: this is an
+   * alert, and an alert that vanishes because somebody typed a hotel name into
+   * deep search is one nobody can trust. Longest wait first — that request is
+   * the one costing the most, because work has kept going on it all week.
+   */
+  const cancelQueue = useMemo(() => {
+    const byBooking = new Map<string, {
+      vnCode: string; isNumber: string | null; agent: string | null
+      movements: number; adults: number; children: number
+      firstDate: string; lastDate: string
+      requestedAt: string | null; requestedBy: string | null
+      reason: string | null; feeTotal: number | null
+      heldAt: string | null; currency: string | null
+      driversAssigned: number
+      days: number | null
+    }>()
+
+    for (const r of rows) {
+      if (!isCancelPendingRow(r)) continue
+      const e = byBooking.get(r.vnCode)
+      if (!e) {
+        byBooking.set(r.vnCode, {
+          vnCode: r.vnCode, isNumber: r.isNumber, agent: r.agent,
+          movements: 1, adults: r.paxAdults, children: r.paxChildren,
+          firstDate: r.date, lastDate: r.date,
+          requestedAt: r.cancelRequestedAt, requestedBy: r.cancelRequestedBy,
+          reason: r.cancelReason, feeTotal: r.cancelFeeTotal,
+          heldAt: r.cancelHeldAt, currency: r.currency,
+          driversAssigned: r.driverId || r.driverName ? 1 : 0,
+          days: waitingDays(r.cancelRequestedAt),
+        })
+        continue
+      }
+      e.movements += 1
+      // Pax are a property of the booking, not the movement — read once, from
+      // the first row, so a five-day file does not report five times its pax.
+      if (r.date < e.firstDate) e.firstDate = r.date
+      if (r.date > e.lastDate)  e.lastDate  = r.date
+      if (r.driverId || r.driverName) e.driversAssigned += 1
+    }
+
+    return Array.from(byBooking.values())
+      .sort((a, b) => (b.days ?? 0) - (a.days ?? 0) || a.firstDate.localeCompare(b.firstDate))
+  }, [rows])
+
+  const cancelQueueMovements = cancelQueue.reduce((s, e) => s + e.movements, 0)
+  const cancelQueuePax       = cancelQueue.reduce((s, e) => s + e.adults + e.children, 0)
+  const cancelQueueDrivers   = cancelQueue.reduce((s, e) => s + e.driversAssigned, 0)
+  const cancelQueueOldest    = cancelQueue.reduce<number | null>(
+    (m, e) => e.days == null ? m : m == null ? e.days : Math.max(m, e.days), null)
+
   const totalAdults   = liveRows.reduce((s, r) => s + r.paxAdults, 0)
   const totalChildren = liveRows.reduce((s, r) => s + r.paxChildren, 0)
   const pvtCount      = liveRows.filter(r => r.serviceType === 'PVT_TRANSFER').length
@@ -610,7 +724,9 @@ export default function MCReportPage() {
     const headers = [
       'Date', 'Tour Ref', 'IS Number', 'Agent ID', 'Location', 'Adults', 'Children',
       'From', 'To', 'Details', 'Meal Plan', 'Meeting Time',
-      'Booking Status', 'Cancelled', 'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
+      'Booking Status', 'Cancelled', 'Cancel Approval', 'Cancel Requested On',
+      'Cancel Requested By', 'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
+      'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
       'Vendor', 'Driver', 'Vehicle Type', 'Plate',
       'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Agent',
     ]
@@ -622,6 +738,14 @@ export default function MCReportPage() {
       r.mealPlan ?? '', r.meetingTime ?? '',
       r.bookingStatus?.replace(/_/g, ' ') ?? '',
       isCancelledRow(r) ? 'CANCELLED' : '',
+      // Split out from 'Cancelled' above: a spreadsheet pivot has to be able to
+      // tell a dead file from one still waiting on a decision.
+      isCancelPendingRow(r) ? 'AWAITING APPROVAL' : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
+      r.cancelRequestedAt?.slice(0, 10) ?? '',
+      r.cancelRequestedBy ?? '',
+      isCancelPendingRow(r) ? waitingDays(r.cancelRequestedAt) ?? '' : '',
+      r.cancelReason ?? '',
+      r.cancelFeeTotal ?? '',
       SERVICE_LABELS[r.serviceType] ?? r.serviceType,
       r.isLeisure ? 'Yes' : '',
       r.isHotelOnly ? 'Yes' : '',
@@ -665,6 +789,8 @@ export default function MCReportPage() {
         'Vendor', 'Driver', 'Vehicle Type', 'Plate No',
         'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone',
         'Agent', 'Booking Status',
+        'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By',
+        'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
       ]
 
       const dataRows = displayedRows.map(r => [
@@ -682,6 +808,12 @@ export default function MCReportPage() {
         r.guideName ?? '', r.guidePhone ?? '',
         r.tourVendorName ?? '', r.tourVendorPhone ?? '',
         r.agent ?? '', r.bookingStatus?.replace(/_/g, ' ') ?? '',
+        isCancelPendingRow(r) ? 'AWAITING APPROVAL' : r.bookingStatus === 'CANCELLED' ? 'Approved / cancelled' : '',
+        r.cancelRequestedAt?.slice(0, 10) ?? '',
+        r.cancelRequestedBy ?? '',
+        isCancelPendingRow(r) ? waitingDays(r.cancelRequestedAt) ?? '' : '',
+        r.cancelReason ?? '',
+        r.cancelFeeTotal ?? '',
       ])
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
@@ -693,6 +825,7 @@ export default function MCReportPage() {
         { wch: 20 }, { wch: 20 }, { wch: 14 }, { wch: 12 },
         { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 },
         { wch: 18 }, { wch: 16 },
+        { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 40 }, { wch: 14 },
       ]
       XLSX.utils.book_append_sheet(wb, ws, 'Movements')
 
@@ -715,6 +848,8 @@ export default function MCReportPage() {
         ['Hotel Only Stays',    hotelOnlyStayCount],
         ['Cancelled Bookings',  cancelledBookingCount],
         ['Cancelled Movements', cancelledRowCount],
+        ['Cancellations Awaiting Accounts Approval', cancelQueue.length],
+        ['Movements On Files Awaiting Approval',     cancelQueueMovements],
       ].filter(r => r.length > 0)
 
       const wsSummary = XLSX.utils.aoa_to_sheet(statsData)
@@ -922,6 +1057,16 @@ export default function MCReportPage() {
               </p>
             )}
 
+            {cancelOnly && (
+              <p className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold text-orange-700">
+                <Ban className="h-3 w-3" />
+                Showing only movements on files awaiting a cancellation decision —
+                <button type="button" onClick={() => setCancelOnly(false)} className="underline hover:text-orange-900">
+                  show everything
+                </button>
+              </p>
+            )}
+
             <div className="flex items-center gap-2">
               <button onClick={load} disabled={loading} className="btn btn-primary btn-sm">
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Filter className="w-4 h-4" />}
@@ -938,6 +1083,155 @@ export default function MCReportPage() {
             </div>
           </CardBody>
         </Card>
+
+        {/* ── Cancellation approvals pending ────────────────────────────── */}
+        {/*
+            Above the chart, not inside it. Every movement listed here is still
+            scheduled — a driver is expected to turn up, a ticket may already be
+            issued — while somebody has asked for the file to be cancelled and
+            accounts has not answered. The chart cannot let that sit as one
+            struck-through row halfway down a 400-row table.
+        */}
+        {cancelQueue.length > 0 && (
+          <div className={cn(
+            'relative overflow-hidden rounded-2xl border-2 bg-white shadow-sm',
+            waitTone(cancelQueueOldest).border,
+          )}>
+            <span className="pointer-events-none absolute inset-0 bg-gradient-to-r from-rose-50 via-orange-50/60 to-transparent" />
+
+            <div className="relative p-4 sm:p-5 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className={cn(
+                    'flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl border',
+                    waitTone(cancelQueueOldest).chip,
+                  )}>
+                    <Ban className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <h3 className="flex items-center gap-2 text-sm font-extrabold text-slate-900">
+                      Cancellation approvals pending
+                      <span className={cn(
+                        'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold',
+                        waitTone(cancelQueueOldest).chip,
+                      )}>
+                        {cancelQueue.length} booking{cancelQueue.length === 1 ? '' : 's'}
+                      </span>
+                    </h3>
+                    <p className="mt-1 max-w-2xl text-[11px] leading-relaxed text-slate-600">
+                      A cancellation has been requested on {cancelQueue.length === 1 ? 'this file' : 'these files'} and
+                      the accounts team has not decided yet. The movements below are still on the chart and still
+                      expected to run — hold off committing anything new until the decision comes back.
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                      <span className="inline-flex items-center gap-1">
+                        <Table2 className="h-3 w-3 text-slate-400" />
+                        <strong className="text-slate-800">{cancelQueueMovements}</strong> movement{cancelQueueMovements === 1 ? '' : 's'} on the chart
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <Users className="h-3 w-3 text-slate-400" />
+                        <strong className="text-slate-800">{cancelQueuePax}</strong> pax
+                      </span>
+                      {cancelQueueDrivers > 0 && (
+                        <span className="inline-flex items-center gap-1 font-semibold text-rose-700">
+                          <Truck className="h-3 w-3" />
+                          {cancelQueueDrivers} already allocated a driver
+                        </span>
+                      )}
+                      {cancelQueueOldest != null && (
+                        <span className={cn('inline-flex items-center gap-1 font-semibold', waitTone(cancelQueueOldest).text)}>
+                          <Clock className="h-3 w-3" />
+                          oldest {waitLabel(cancelQueueOldest)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setCancelOnly(v => !v)}
+                  className={cn(
+                    'rounded-lg border px-3 py-1.5 text-[11px] font-bold transition-colors',
+                    cancelOnly
+                      ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
+                      : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+                  )}
+                >
+                  {cancelOnly ? 'Show all movements' : 'Show only these movements'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                {cancelQueue.map(e => {
+                  const tone = waitTone(e.days)
+                  return (
+                    <div key={e.vnCode}
+                      className={cn('rounded-xl border bg-white/90 p-3 shadow-sm transition-shadow hover:shadow-md', tone.border)}>
+                      <div className="flex items-center justify-between gap-2">
+                        <a
+                          href={`/dashboard/bookings/${e.vnCode}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 font-mono text-sm font-bold text-brand-700 hover:underline"
+                        >
+                          {e.vnCode}
+                          <ExternalLink className="h-3 w-3 text-slate-400" />
+                        </a>
+                        <span className={cn(
+                          'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                          tone.chip,
+                        )}>
+                          <Clock className="h-2.5 w-2.5" />
+                          {waitLabel(e.days)}
+                        </span>
+                      </div>
+
+                      <div className="mt-1.5 space-y-0.5 text-[11px] text-slate-600">
+                        <div className="truncate">
+                          {e.isNumber || '—'}
+                          <span className="text-slate-400"> · {e.agent || 'no agent'}</span>
+                        </div>
+                        <div>
+                          {formatDate(e.firstDate)}{e.lastDate !== e.firstDate ? ` → ${formatDate(e.lastDate)}` : ''}
+                          <span className="text-slate-400">
+                            {' '}· {e.movements} movement{e.movements === 1 ? '' : 's'} · {e.adults + e.children} pax
+                          </span>
+                        </div>
+                        <div className="truncate text-slate-400">
+                          Requested by {e.requestedBy || 'unknown'}
+                          {e.heldAt ? ` · held at ${e.heldAt.replace(/_/g, ' ').toLowerCase()}` : ''}
+                        </div>
+                      </div>
+
+                      {e.reason && (
+                        <p className="mt-2 rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] italic text-slate-600 line-clamp-2"
+                          title={e.reason}>
+                          &ldquo;{e.reason}&rdquo;
+                        </p>
+                      )}
+
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {e.feeTotal != null && e.feeTotal > 0 && (
+                          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                            Fee {formatCurrency(e.feeTotal, e.currency ?? 'USD')}
+                          </span>
+                        )}
+                        {/* The number that decides whether somebody picks up the
+                            phone right now: a driver already told to be there. */}
+                        {e.driversAssigned > 0 && (
+                          <span className="rounded-md bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-800">
+                            {e.driversAssigned} driver{e.driversAssigned === 1 ? '' : 's'} allocated
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Stats Bar ─────────────────────────────────────────────────── */}
         {displayedRows.length > 0 && (
@@ -958,6 +1252,12 @@ export default function MCReportPage() {
               { icon: <Hotel className="w-4 h-4" />, label: 'Hotel Only Bookings', value: hotelOnlyBookingCount, sub: `${hotelOnlyStayCount} stay${hotelOnlyStayCount === 1 ? '' : 's'}`, color: 'text-amber-800', bg: 'bg-amber-50' },
               ...(cancelledBookingCount > 0
                 ? [{ icon: <XCircle className="w-4 h-4" />, label: 'Cancelled', value: cancelledBookingCount, sub: `${cancelledRowCount} movement${cancelledRowCount === 1 ? '' : 's'}`, color: 'text-rose-700', bg: 'bg-rose-50' }]
+                : []),
+              // Counted over the whole loaded chart, like the panel above it —
+              // the tile and the alert must never disagree about how many files
+              // are waiting on accounts.
+              ...(cancelQueue.length > 0
+                ? [{ icon: <Ban className="w-4 h-4" />, label: 'Cancel Pending', value: cancelQueue.length, sub: `${cancelQueueMovements} movement${cancelQueueMovements === 1 ? '' : 's'} · awaiting accounts`, color: 'text-orange-700', bg: 'bg-orange-50' }]
                 : []),
             ].map(stat => (
               <div key={stat.label} className={cn('rounded-xl p-4 border border-slate-200 flex items-center gap-3 shadow-sm', stat.bg)}>
@@ -1055,6 +1355,12 @@ export default function MCReportPage() {
                               'transition-colors cursor-pointer group',
                               isExpanded
                                 ? 'bg-brand-50/60 border-l-2 border-l-brand-400'
+                                // Awaiting a decision — kept at full strength, in
+                                // orange. This movement is still expected to run,
+                                // so greying it out like a dead file would be the
+                                // wrong instruction to give the desk.
+                                : isCancelPendingRow(row)
+                                  ? 'bg-orange-50/60 border-l-2 border-l-orange-400 hover:bg-orange-50'
                                 // Cancelled file — greyed and edged in rose so it
                                 // cannot be mistaken for a movement to run.
                                 : isCancelledRow(row)
@@ -1086,16 +1392,41 @@ export default function MCReportPage() {
                                 onClick={e => e.stopPropagation()}
                                 className={cn(
                                   'font-mono font-semibold hover:underline whitespace-nowrap block',
-                                  isCancelledRow(row) ? 'text-slate-500 line-through' : 'text-brand-700',
+                                  isCancelPendingRow(row) ? 'text-orange-800'
+                                    : isCancelledRow(row) ? 'text-slate-500 line-through' : 'text-brand-700',
                                 )}>
                                 {q ? <Highlight text={row.vnCode} query={deepSearch} /> : row.vnCode}
                               </a>
-                              {isCancelledRow(row) && (
+                              {/* A pending request gets its own badge, carrying how
+                                  long it has waited: "Cancelling" alone reads as a
+                                  settled fact, and this one is a decision nobody
+                                  has taken yet. */}
+                              {isCancelPendingRow(row) ? (
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-0.5 mt-0.5 text-[10px] font-bold uppercase tracking-wide border px-1.5 py-0.5 rounded whitespace-nowrap',
+                                    waitTone(waitingDays(row.cancelRequestedAt)).chip,
+                                  )}
+                                  title={
+                                    'Cancellation requested — awaiting the accounts team\'s approval. '
+                                    + `${waitLabel(waitingDays(row.cancelRequestedAt))}`
+                                    + (row.cancelRequestedBy ? `, raised by ${row.cancelRequestedBy}` : '')
+                                    + '. The movement is still scheduled until the decision comes back. '
+                                    + (row.cancelReason ? `Reason: ${row.cancelReason}` : 'No reason recorded.')
+                                  }
+                                >
+                                  <Ban className="w-2.5 h-2.5" />
+                                  Cancel Pending
+                                  {waitingDays(row.cancelRequestedAt)
+                                    ? ` · ${waitingDays(row.cancelRequestedAt)}d`
+                                    : ''}
+                                </span>
+                              ) : isCancelledRow(row) && (
                                 <span
                                   className="inline-flex items-center gap-0.5 mt-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-800 bg-rose-100 border border-rose-300 px-1.5 py-0.5 rounded whitespace-nowrap"
                                   title={`This booking is ${row.bookingStatus?.replace(/_/g, ' ').toLowerCase()} — do not run this movement. It is excluded from the pax and service totals.`}
                                 >
-                                  {row.bookingStatus === 'PENDING_CANCELLATION' ? 'Cancelling' : 'Cancelled'}
+                                  Cancelled
                                 </span>
                               )}
                               {row.isNumber && (
@@ -1346,6 +1677,48 @@ export default function MCReportPage() {
                                     ) : null
                                   )}
                                 </div>
+
+                                {/* The request in full, for the row somebody opened
+                                    because of the badge on it. */}
+                                {isCancelPendingRow(row) && (
+                                  <div className={cn(
+                                    'mt-3 rounded-xl border p-3',
+                                    waitTone(waitingDays(row.cancelRequestedAt)).border,
+                                    'bg-orange-50/70',
+                                  )}>
+                                    <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-orange-800">
+                                      <Ban className="w-3 h-3" />
+                                      Cancellation requested — awaiting accounts approval
+                                    </p>
+                                    <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-slate-600 sm:grid-cols-4">
+                                      <div>
+                                        <span className="text-slate-400">Requested on:</span>{' '}
+                                        {row.cancelRequestedAt ? formatDate(row.cancelRequestedAt.slice(0, 10)) : '—'}
+                                      </div>
+                                      <div><span className="text-slate-400">Requested by:</span> {row.cancelRequestedBy || '—'}</div>
+                                      <div>
+                                        <span className="text-slate-400">Waiting:</span>{' '}
+                                        <span className={cn('font-semibold', waitTone(waitingDays(row.cancelRequestedAt)).text)}>
+                                          {waitLabel(waitingDays(row.cancelRequestedAt))}
+                                        </span>
+                                      </div>
+                                      <div>
+                                        <span className="text-slate-400">Cancellation fee:</span>{' '}
+                                        {row.cancelFeeTotal != null
+                                          ? formatCurrency(row.cancelFeeTotal, row.currency ?? 'USD')
+                                          : '—'}
+                                      </div>
+                                    </div>
+                                    <p className="mt-2 whitespace-pre-wrap text-[11px] text-slate-700">
+                                      <span className="text-slate-400">Reason: </span>
+                                      {row.cancelReason || 'No reason recorded.'}
+                                    </p>
+                                    <p className="mt-2 text-[10px] font-semibold text-orange-800">
+                                      This movement is still scheduled. Do not stand the driver down until the
+                                      accounts team approves the cancellation.
+                                    </p>
+                                  </div>
+                                )}
 
                                 {/* Matched-in chips when deep search is active */}
                                 {q && matchedFields.length > 0 && (
