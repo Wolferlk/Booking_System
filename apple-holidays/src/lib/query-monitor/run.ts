@@ -2125,6 +2125,9 @@ async function claimAlreadyWrittenRows(
  *
  * One read per tab, not per row. If it fails, every entry is returned unverified
  * and the old behaviour stands — a sweep must not stop because a range read did.
+ *
+ * The same read also hands back the row's File Handler cell, so the rewrite can
+ * keep a hand-typed name without going back to Graph for it a second time.
  */
 async function locateDirtyRows(
   entries: QueryMonitorEntry[],
@@ -2133,8 +2136,8 @@ async function locateDirtyRows(
   plan: WorkbookPlan,
   margin = 250,
   maxSpan = 3000,
-): Promise<Map<string, number | null>> {
-  const located = new Map<string, number | null>()
+): Promise<Map<string, LocatedRow>> {
+  const located = new Map<string, LocatedRow>()
   const rowsHeld = entries
     .map(e => e[plan.rowField])
     .filter((r): r is number => typeof r === 'number' && r > 1)
@@ -2162,23 +2165,40 @@ async function locateDirtyRows(
   // match more than one row — two rounds of a thread, a genuine repeat — and
   // repointing an entry at one of those would move the write onto a row that
   // belongs to a different mail.
-  const rowByExactKey = new Map<string, number>()
+  // Read out of the same block: what the team has typed into File Handler on
+  // that row, so the rewrite can leave it exactly as it is.
+  const handlerField = layout.header.indexOf('File Handler')
+
+  const rowByExactKey = new Map<string, LocatedRow>()
   rows.forEach((cells, i) => {
     // The padding runs past the last row in use, and a run of blank rows would
     // otherwise all key alike. No entry can key that way — every one has a
     // subject — but an empty row is not a candidate for anything.
     if (String(cells[2] ?? '').trim() === '') return
     const [exact] = sheetRowKeys(cells, layout)
-    if (exact && !rowByExactKey.has(exact)) rowByExactKey.set(exact, first + i)
+    if (exact && !rowByExactKey.has(exact)) {
+      rowByExactKey.set(exact, {
+        row: first + i,
+        fileHandler: handlerField >= 0 ? String(cells[handlerField] ?? '').trim() : undefined,
+      })
+    }
   })
 
   for (const entry of entries) {
     const stored = entry[plan.rowField]
     if (typeof stored !== 'number' || stored <= 1) continue
     const [exact] = keysOf(entry)
-    located.set(entry.id, exact ? rowByExactKey.get(exact) ?? null : null)
+    located.set(entry.id, (exact ? rowByExactKey.get(exact) : undefined) ?? { row: null })
   }
   return located
+}
+
+/** Where a dirty entry's row was found, and what its hand-typed column holds. */
+interface LocatedRow {
+  /** The row it is actually on, or null when it is nowhere in the span read. */
+  row: number | null
+  /** File Handler as the sheet has it — undefined when it could not be read. */
+  fileHandler?: string
 }
 
 /** One workbook's share of the work. See `syncEntriesToSheet`. */
@@ -2430,19 +2450,19 @@ async function syncOneWorkbook(
     // Not fatal, on the same principle as the append guard: leaving entries
     // unverified restores the old behaviour, while letting a range read fail the
     // sync would cost the team every rewrite in the batch.
-    const located = new Map<string, number | null>()
+    const located = new Map<string, LocatedRow>()
     try {
       if (dirtyQueries.length > 0) {
         const found = await locateDirtyRows(
           dirtyQueries, queryKeysFor, ref, config.sheetName,
           await layoutFor(ref, config.sheetName, QUERY_LAYOUT), sessionId, plan)
-        found.forEach((row, id) => located.set(id, row))
+        found.forEach((hit, id) => located.set(id, hit))
       }
       if (dirtyExcluded.length > 0) {
         const found = await locateDirtyRows(
           dirtyExcluded, excludedKeysFor, ref, config.excludedSheetName,
           await layoutFor(ref, config.excludedSheetName, EXCLUDED_LAYOUT), sessionId, plan)
-        found.forEach((row, id) => located.set(id, row))
+        found.forEach((hit, id) => located.set(id, hit))
       }
     } catch (err) {
       located.clear()
@@ -2456,7 +2476,9 @@ async function syncOneWorkbook(
     for (const entry of dirty) {
       const tab = tabFor(entry)
       const stored = entry[plan.rowField]!
-      const found  = located.get(entry.id)
+      const hit    = located.get(entry.id)
+      // undefined = never verified (the span read failed); null = verified gone.
+      const found  = hit?.row
 
       // Verified missing — not merely unverified, which reads as undefined.
       if (found === null) {
@@ -2488,11 +2510,16 @@ async function syncOneWorkbook(
         }).catch(() => {})
       }
 
+      // Only trust the handler read off the row we actually found. Falling back
+      // to the stored row number means we did not verify what is standing there,
+      // and the rewrite reads the cell itself before deciding.
+      const currentFileHandler = found === rowNumber ? hit?.fileHandler : undefined
+
       try {
         if (isExcluded(entry)) {
-          await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
+          await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab, currentFileHandler })
         } else {
-          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn, config.slaHours), { sessionId, ref, sheetName: tab })
+          await updateRow(rowNumber, buildSheetRow(entry, config.writeStatusColumn, config.slaHours), { sessionId, ref, sheetName: tab, currentFileHandler })
           // The rewrite that matters most is the one a reply caused, and this is
           // where that row turns green.
           await paintRow(entry, rowNumber, tab, await layoutFor(ref, tab, QUERY_LAYOUT))
@@ -2518,7 +2545,9 @@ async function syncOneWorkbook(
     }
 
     if (updated > 0) {
-      note('success', `Rewrote ${updated} existing row(s) with the current handler, reply time and status`)
+      note('success',
+        `Rewrote ${updated} existing row(s) with the current reply time and status — `
+        + 'File Handler was left as the sheet has it wherever a name is typed in')
     }
     if (moved > 0) {
       note('warn',

@@ -247,6 +247,74 @@ export async function layoutFor(
   return adopted ? withColumnMap(base, adopted.map) : base
 }
 
+// ── Columns the team owns ────────────────────────────────────────────────────
+
+/**
+ * **File Handler is hand-typed and is never written over.**
+ *
+ * It is the one column of the layout the booking team fills in themselves: who
+ * picked the query up is a decision made in the room, not something a mailbox
+ * sweep can see. A rewrite that carried our own idea of the handler into it —
+ * usually blank, because nobody has been detected — would wipe a name somebody
+ * typed, which is the one loss the sheet cannot recover from.
+ *
+ * So on a rewrite the cell is read first and left exactly as it stands the
+ * moment it holds anything at all. An *empty* cell is still filled, which is how
+ * a row gets a handler when the sweep does know one; and an append writes it
+ * normally, there being nothing there to lose.
+ */
+const HAND_TYPED_COLUMN = 'File Handler'
+
+/** The layout field the hand-typed column is, or -1 on a layout without it. */
+function handTypedField(layout: SheetLayout): number {
+  return layout.header.findIndex(name => same(name, HAND_TYPED_COLUMN))
+}
+
+/** The physical 0-based column a layout field lands in, or -1 for nowhere. */
+function fieldColumn(layout: SheetLayout, field: number): number {
+  if (field < 0) return -1
+  if (layout.map) return layout.map[field] ?? -1
+  return columnIndex(layout.firstColumn) + field
+}
+
+/** What a single cell displays, trimmed. Blank for an empty or unreadable one. */
+async function readCellText(
+  ref: SheetRef, sheetName: string, rowNumber: number, column: number,
+  sessionId: string | null,
+): Promise<string> {
+  const letter  = columnLetter(column)
+  const range   = await readRange(ref, sheetName, `${letter}${rowNumber}:${letter}${rowNumber}`, sessionId)
+  const cell    = range.text?.[0]?.[0] ?? range.values?.[0]?.[0]
+  return cell === null || cell === undefined ? '' : String(cell).trim()
+}
+
+/**
+ * Which fields this rewrite has to leave alone on this one row.
+ *
+ * `known` is the cell's current contents when the caller has already read them —
+ * the sync reads the whole span of rows it is about to rewrite anyway, so it
+ * passes what it saw and this costs nothing. Undefined means "go and look".
+ *
+ * A failed read counts as occupied: not updating a cell leaves it as the team
+ * typed it, which is the outcome this whole mechanism exists to protect.
+ */
+async function protectedFields(
+  ref: SheetRef, sheetName: string, rowNumber: number, layout: SheetLayout,
+  sessionId: string | null, known?: string,
+): Promise<number[]> {
+  const field  = handTypedField(layout)
+  const column = fieldColumn(layout, field)
+  if (field < 0 || column < 0) return []
+
+  if (known !== undefined) return known.trim() === '' ? [] : [field]
+
+  try {
+    return (await readCellText(ref, sheetName, rowNumber, column, sessionId)) === '' ? [] : [field]
+  } catch {
+    return [field]
+  }
+}
+
 // ── Header compatibility ─────────────────────────────────────────────────────
 
 /** `0 → "A"`, `14 → "O"`, `26 → "AA"`. */
@@ -687,10 +755,15 @@ async function appendCells(
  * Without a mapping that is one PATCH over A–T. With one it is a PATCH per run
  * of neighbouring mapped columns, which is what keeps a column the team put in
  * the middle of ours from being written over.
+ *
+ * `skipFields` names layout fields to step over — the same run-splitting is what
+ * carries a hand-typed cell through a rewrite untouched, so a protected column
+ * costs one extra PATCH and nothing else. See `protectedFields`.
  */
 async function writeBlock(
   ref: SheetRef, sheetName: string, firstRow: number, lastRow: number,
   rows: (string | number)[][], layout: SheetLayout, sessionId: string | null,
+  skipFields: readonly number[] = [],
 ): Promise<void> {
   const patch = async (address: string, values: unknown[][], numberFormat: string[][]) => {
     await workbookFetch(
@@ -700,7 +773,9 @@ async function writeBlock(
     )
   }
 
-  if (!layout.map) {
+  const skip = new Set(skipFields.filter(field => field >= 0))
+
+  if (!layout.map && skip.size === 0) {
     await patch(
       `${layout.firstColumn}${firstRow}:${layout.lastColumn}${lastRow}`,
       rows,
@@ -709,7 +784,10 @@ async function writeBlock(
     return
   }
 
-  for (const run of columnRuns(layout.map)) {
+  const base = layout.map ?? layout.header.map((_, field) => fieldColumn(layout, field))
+  const map  = skip.size === 0 ? base : base.map((col, field) => (skip.has(field) ? -1 : col))
+
+  for (const run of columnRuns(map)) {
     const address = `${columnLetter(run.first)}${firstRow}:${columnLetter(run.last)}${lastRow}`
     await patch(
       address,
@@ -1195,33 +1273,54 @@ function uniqueTabName(existing: string[], sheetName: string): string {
   throw new Error('Could not find a free name for the archive tab — delete an old "bak" tab and try again')
 }
 
+/** What a rewrite may be told about the row it is going to overwrite. */
+interface UpdateOptions {
+  sessionId?: string | null
+  ref?:       SheetRef
+  sheetName?: string
+  layout?:    SheetLayout
+  /**
+   * The File Handler cell as it currently stands, when the caller has already
+   * read it. Anything non-blank is kept and the column is not written. Leave it
+   * out and the cell is read here instead. See `protectedFields`.
+   */
+  currentFileHandler?: string
+}
+
 /**
  * Rewrite a single existing row in place — used when a reply lands after the row
  * was already appended, or when someone corrects an entry in the dashboard.
+ *
+ * File Handler is carried through rather than rewritten whenever the sheet
+ * already has a name in it: that column is the team's, not ours.
  */
 export async function updateRow(
   rowNumber: number,
   row: SheetRowValues,
-  opts: { sessionId?: string | null; ref?: SheetRef; sheetName?: string; layout?: SheetLayout } = {},
+  opts: UpdateOptions = {},
 ): Promise<void> {
   const cfg       = await getConfig()
   const ref       = opts.ref ?? await resolveSheetRef()
   const sheetName = opts.sheetName ?? cfg.sheetName
   const layout    = opts.layout ?? await layoutFor(ref, sheetName, QUERY_LAYOUT)
-  await writeBlock(ref, sheetName, rowNumber, rowNumber, [rowToCells(row)], layout, opts.sessionId ?? null)
+  const sessionId = opts.sessionId ?? null
+  const skip      = await protectedFields(ref, sheetName, rowNumber, layout, sessionId, opts.currentFileHandler)
+  await writeBlock(ref, sheetName, rowNumber, rowNumber, [rowToCells(row)], layout, sessionId, skip)
 }
 
 /** Rewrite a row on the second tab — the handler list is what usually changes. */
 export async function updateExcludedRow(
   rowNumber: number,
   row: ExcludedRowValues,
-  opts: { sessionId?: string | null; ref?: SheetRef; sheetName?: string; layout?: SheetLayout } = {},
+  opts: UpdateOptions = {},
 ): Promise<void> {
   const cfg       = await getConfig()
   const ref       = opts.ref ?? await resolveSheetRef()
   const sheetName = opts.sheetName ?? cfg.excludedSheetName
   const layout    = opts.layout ?? await layoutFor(ref, sheetName, EXCLUDED_LAYOUT)
-  await writeBlock(ref, sheetName, rowNumber, rowNumber, [excludedRowToCells(row)], layout, opts.sessionId ?? null)
+  const sessionId = opts.sessionId ?? null
+  const skip      = await protectedFields(ref, sheetName, rowNumber, layout, sessionId, opts.currentFileHandler)
+  await writeBlock(ref, sheetName, rowNumber, rowNumber, [excludedRowToCells(row)], layout, sessionId, skip)
 }
 
 /**
