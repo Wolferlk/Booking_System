@@ -54,6 +54,22 @@ interface ChatStore {
   typing: Record<number, string[]>
   /** Bumped whenever a thread gains new messages, so surfaces can tail-read. */
   moved: { ids: number[]; at: number }
+  /**
+   * The newest state the server reported per thread, refreshed by every pulse.
+   *
+   * This is the number a thread reconciles itself against, rather than a
+   * one-shot "it moved" event: if a tail read fails, or lands while the first
+   * page is still in flight, the next pulse still says "the newest id here is
+   * 812" and the thread notices it is behind and fetches again. A missed fetch
+   * used to mean the message stayed invisible until the thread was reopened.
+   */
+  live: Record<number, { last_id: number; unread: number; touched_at: string | null }>
+  /** False once the poll has failed repeatedly — the UI says so rather than going quiet. */
+  connected: boolean
+  /** Set when the first load failed outright, so surfaces can offer a retry. */
+  error: string | null
+  /** Load everything again after a failure. */
+  retry: () => void
 
   refresh: () => Promise<void>
   applyConversations: (list: ChatConversation[]) => void
@@ -101,6 +117,28 @@ export function useChatOptional(): ChatStore | null {
   return useContext(Ctx)
 }
 
+/* ── cheap equality, so a 1.5s poll does not re-render the app every tick ─── */
+
+type LiveMap = Record<number, { last_id: number; unread: number; touched_at: string | null }>
+
+function sameLive(a: LiveMap, b: LiveMap): boolean {
+  const ka = Object.keys(a), kb = Object.keys(b)
+  if (ka.length !== kb.length) return false
+  return ka.every(k => {
+    const x = a[Number(k)], y = b[Number(k)]
+    return y && x.last_id === y.last_id && x.unread === y.unread && x.touched_at === y.touched_at
+  })
+}
+
+function sameTyping(a: Record<number, string[]>, b: Record<number, string[]>): boolean {
+  const ka = Object.keys(a), kb = Object.keys(b)
+  if (ka.length !== kb.length) return false
+  return ka.every(k => {
+    const x = a[Number(k)], y = b[Number(k)]
+    return y && x.length === y.length && x.every((n, i) => n === y[i])
+  })
+}
+
 /* ── the notification chime, synthesised so there is no asset to ship ─────── */
 
 function chime() {
@@ -137,6 +175,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [totalUnread, setTotalUnread] = useState(0)
   const [typing, setTyping] = useState<Record<number, string[]>>({})
   const [moved, setMoved] = useState<{ ids: number[]; at: number }>({ ids: [], at: 0 })
+  const [live, setLive] = useState<Record<number, { last_id: number; unread: number; touched_at: string | null }>>({})
+  const [connected, setConnected] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [bootAttempt, setBootAttempt] = useState(0)
   const [dock, setDock] = useState<DockEntry[]>([])
   const [toasts, setToasts] = useState<Toast[]>([])
 
@@ -238,8 +280,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   /* ---- boot -------------------------------------------------------------- */
 
+  const retry = useCallback(() => {
+    setError(null)
+    setBootAttempt(n => n + 1)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+
     chatApi<{ me: ChatPerson; conversations: ChatConversation[]; settings: ChatSettings; config: ChatConfig }>('/bootstrap')
       .then(d => {
         if (cancelled) return
@@ -247,6 +296,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setConfig(d.config ?? DEFAULT_CONFIG)
         setSettings(d.settings)
         applyConversations(d.conversations ?? [])
+        setError(null)
+        setConnected(true)
         setReady(true)
 
         // Restore the boxes this person had open. Not on the full chat page — a
@@ -261,10 +312,23 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           if (entries.length) setDock(entries)
         }
       })
-      .catch(() => { if (!cancelled) setReady(true) })
+      .catch((err: Error) => {
+        if (cancelled) return
+        // Never fail silently: an empty rail with no explanation is
+        // indistinguishable from "you have no conversations", which is what
+        // made a failed load look like missing messages. Say so, keep trying,
+        // and let the user force a retry.
+        setError(err?.message || 'Chat could not be loaded.')
+        setConnected(false)
+        setReady(true)
+        retryTimer = setTimeout(() => { if (!cancelled) setBootAttempt(n => n + 1) }, 8000)
+      })
 
-    return () => { cancelled = true }
-  }, [applyConversations])
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+    }
+  }, [applyConversations, bootAttempt])
 
   /* ---- the poll loop ----------------------------------------------------- */
 
@@ -273,11 +337,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
     let timer: ReturnType<typeof setTimeout> | null = null
     let stopped = false
+    // Consecutive pulse failures. A blip is normal on a shared database; a run
+    // of them means the client is not live any more and has to say so.
+    let failures = 0
 
     const interval = () => {
-      if (document.hidden) return config.poll.background
-      // "Active" means a thread is actually on screen and being used.
-      return activeCount.current > 0 && document.hasFocus() ? config.poll.active : config.poll.idle
+      const base = document.hidden
+        ? config.poll.background
+        // "Active" means a thread is actually on screen and being used.
+        : (activeCount.current > 0 && document.hasFocus() ? config.poll.active : config.poll.idle)
+      // Back off while the server is unhappy rather than hammering it at 1.5s.
+      return failures ? Math.min(base * Math.min(failures, 6), 30_000) : base
     }
 
     const tick = async () => {
@@ -286,18 +356,27 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       const d = await chatApi<{
         total_unread: number
-        conversations: Array<{ id: number; last_id: number; unread: number }>
+        conversations: Array<{ id: number; last_id: number; unread: number; touched_at: string | null }>
         typing: Record<number, string[]>
       }>(`/pulse${typingParam ? `?typing_in=${typingParam}` : ''}`)
 
       const movedIds: number[] = []
+      const nextLive: Record<number, { last_id: number; unread: number; touched_at: string | null }> = {}
       ;(d.conversations ?? []).forEach(c => {
+        const lastId = Number(c.last_id ?? 0)
+        nextLive[c.id] = { last_id: lastId, unread: Number(c.unread ?? 0), touched_at: c.touched_at ?? null }
+
         const known = lastIds.current.get(c.id)
-        if (known === undefined) { lastIds.current.set(c.id, c.last_id); return }
-        if (c.last_id > known) { lastIds.current.set(c.id, c.last_id); movedIds.push(c.id) }
+        if (known === undefined) { lastIds.current.set(c.id, lastId); return }
+        if (lastId > known) { lastIds.current.set(c.id, lastId); movedIds.push(c.id) }
       })
 
-      setTyping(d.typing ?? {})
+      // Every open thread reconciles against this, so nothing depends on
+      // catching a single event at the right moment. Replaced only when it
+      // actually changed — the poll runs every 1.5s and must not re-render the
+      // whole app for an unchanged answer.
+      setLive(prev => (sameLive(prev, nextLive) ? prev : nextLive))
+      setTyping(prev => (sameTyping(prev, d.typing ?? {}) ? prev : (d.typing ?? {})))
 
       const grew = d.total_unread > 0 && d.total_unread !== totalUnreadRef.current
       totalUnreadRef.current = d.total_unread
@@ -323,12 +402,25 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    const loop = () => {
-      if (stopped) return
-      timer = setTimeout(() => { void tick().catch(() => {}).finally(loop) }, interval())
+    const runTick = async () => {
+      try {
+        await tick()
+        failures = 0
+        setConnected(prev => (prev ? prev : true))
+      } catch {
+        failures++
+        // One failure is noise; three in a row is a state the user should see,
+        // because from the inside it looks exactly like "chat stopped working".
+        if (failures >= 3) setConnected(prev => (prev ? false : prev))
+      }
     }
 
-    void tick().catch(() => {}).finally(loop)
+    const loop = () => {
+      if (stopped) return
+      timer = setTimeout(() => { void runTick().finally(loop) }, interval())
+    }
+
+    void runTick().finally(loop)
 
     // Re-arm on focus/visibility so switching to active does not wait out an
     // already-scheduled slow interval.
@@ -348,6 +440,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const value: ChatStore = {
     ready, me, config, settings, conversations, byId, totalUnread, typing, moved,
+    live, connected, error, retry,
     refresh, applyConversations, claimActive, setTyping: declareTyping,
     dock, openInDock, minimizeInDock, expandInDock, closeInDock,
     toast, toasts, dismissToast,

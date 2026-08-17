@@ -100,6 +100,7 @@ export function NewChatModal({ onClose, onOpened }: { onClose: () => void; onOpe
   const [query, setQuery] = useState('')
   const [system, setSystem] = useState<'all' | 'accounts' | 'ops'>('all')
   const [people, setPeople] = useState<ChatPerson[]>([])
+  const [peopleError, setPeopleError] = useState<string | null>(null)
   const [picked, setPicked] = useState<ChatPerson[]>([])
   const [groupName, setGroupName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -111,9 +112,12 @@ export function NewChatModal({ onClose, onOpened }: { onClose: () => void; onOpe
     const qs = new URLSearchParams()
     if (query.trim()) qs.set('q', query.trim())
     if (system !== 'all') qs.set('system', system)
+    setPeopleError(null)
     chatApi<{ people: ChatPerson[] }>(`/people?${qs}`)
       .then(d => setPeople(d.people ?? []))
-      .catch(() => {})
+      // An empty directory and a failed directory read are not the same thing,
+      // and "nobody to message" is a bad way to report a broken query.
+      .catch((err: Error) => setPeopleError(err?.message || 'The directory could not be read.'))
   }, [query, system])
 
   useEffect(() => { const t = setTimeout(load, 200); return () => clearTimeout(t) }, [load])
@@ -201,7 +205,15 @@ export function NewChatModal({ onClose, onOpened }: { onClose: () => void; onOpe
       </div>
 
       <div className="mt-2.5">
-        {people.length === 0 ? (
+        {peopleError ? (
+          <div className="py-8 text-center">
+            <p className="text-[.82rem] font-bold text-rose-700">The people directory could not be read</p>
+            <p className="mt-1 text-[.72rem] text-slate-500">{peopleError}</p>
+            <button onClick={load} className="mt-3 rounded-xl bg-slate-900 px-3.5 py-2 text-[.75rem] font-bold text-white active:scale-95">
+              Try again
+            </button>
+          </div>
+        ) : people.length === 0 ? (
           <div className="py-10 text-center text-slate-400">
             <UserX className="mx-auto mb-2 h-7 w-7 opacity-40" />
             <p className="text-sm">Nobody matches that.</p>

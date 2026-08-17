@@ -15,7 +15,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
-import { Inbox, MessageSquarePlus, MessagesSquare, Search } from 'lucide-react'
+import { AlertTriangle, Inbox, MessageSquarePlus, MessagesSquare, RefreshCw, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { chatApi, useChat } from './chat-store'
 import { Aurora } from './bits'
@@ -29,7 +29,7 @@ type Filter = 'all' | 'direct' | 'group' | 'unread'
 export function ChatPage() {
   const router = useRouter()
   const params = useSearchParams()
-  const { ready, conversations, byId, applyConversations, toast } = useChat()
+  const { ready, conversations, byId, applyConversations, toast, error, retry } = useChat()
 
   const [activeId, setActiveId] = useState<number | null>(null)
   const [filter, setFilter] = useState<Filter>('all')
@@ -148,6 +148,20 @@ export function ChatPage() {
           {!ready ? (
             <div className="space-y-2">
               {[0, 1, 2, 3, 4].map(i => <div key={i} className="h-16 animate-pulse rounded-2xl bg-slate-100" />)}
+            </div>
+          ) : error && !conversations.length ? (
+            // Distinguishing "the load failed" from "you have no conversations"
+            // is the whole point: the two used to look identical.
+            <div className="px-3 py-10 text-center">
+              <AlertTriangle className="mx-auto mb-3 h-7 w-7 text-rose-500" />
+              <p className="text-[.84rem] font-bold text-slate-800">Chat could not be loaded</p>
+              <p className="mt-1 text-[.72rem] text-slate-500">{error}</p>
+              <button
+                onClick={retry}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-teal-600 to-teal-700 px-3.5 py-2 text-[.75rem] font-bold text-white active:scale-95"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Try again
+              </button>
             </div>
           ) : visible.length === 0 ? (
             <div className="py-14 text-center text-slate-400">

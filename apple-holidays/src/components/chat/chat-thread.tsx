@@ -15,7 +15,8 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ArrowLeft, Bell, BellOff, Download, Maximize2, Minus, Pin, UserPlus, X,
+  AlertTriangle, ArrowLeft, Bell, BellOff, Download, Maximize2, Minus, Pin,
+  RefreshCw, UserPlus, WifiOff, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { chatApi, useChat } from './chat-store'
@@ -24,6 +25,28 @@ import { MessageBubble } from './message-bubble'
 import { Composer } from './composer'
 import { CardViewer, type CardTarget } from './card-viewer'
 import type { ChatAttachment, ChatMessage } from './types'
+
+/**
+ * Fold incoming rows into the stream.
+ *
+ * Matched by client_uuid first so the sender's optimistic bubble is replaced
+ * rather than duplicated, then by id so a row that arrives twice — from the
+ * send response and from a tail read that raced it — is still one bubble.
+ * Optimistic rows (id null) sort last, which is where they belong.
+ */
+function mergeMessages(prev: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  if (!incoming.length) return prev
+
+  const next = [...prev]
+  incoming.forEach(m => {
+    const at = next.findIndex(x =>
+      (m.client_uuid && x.client_uuid === m.client_uuid) || (m.id !== null && x.id === m.id))
+    if (at > -1) next[at] = m
+    else next.push(m)
+  })
+
+  return next.sort((a, b) => (a.id ?? Number.MAX_SAFE_INTEGER) - (b.id ?? Number.MAX_SAFE_INTEGER))
+}
 
 export function ChatThread({
   conversationId, compact, onBack, onMinimize, onClose, onManageMembers, onPopOut,
@@ -36,18 +59,27 @@ export function ChatThread({
   onManageMembers?: () => void
   onPopOut?: () => void
 }) {
-  const { me, byId, config, typing, moved, refresh, applyConversations, claimActive, toast } = useChat()
+  const { me, byId, config, typing, live, connected, refresh, applyConversations, claimActive, toast } = useChat()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [exhausted, setExhausted] = useState(false)
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
   const [card, setCard] = useState<CardTarget | null>(null)
   const [lightbox, setLightbox] = useState<ChatAttachment | null>(null)
+  /** Set when the first page could not be read — never show an empty stream instead. */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  /** Bumped to force the first page to be read again. */
+  const [reloadKey, setReloadKey] = useState(0)
+  /** True once the first page has landed; the tail read waits for it. */
+  const [booted, setBooted] = useState(false)
+  /** Bumped after every successful tail read, so a page-sized backlog drains. */
+  const [tailNudge, setTailNudge] = useState(0)
 
   const streamRef = useRef<HTMLDivElement | null>(null)
   const lastIdRef = useRef(0)
   const oldestIdRef = useRef<number | null>(null)
   const readSentRef = useRef(0)
+  const tailBusyRef = useRef(false)
 
   const conversation = conversationId ? byId.get(conversationId) ?? null : null
 
@@ -83,10 +115,10 @@ export function ChatThread({
   /* ---- open -------------------------------------------------------------- */
 
   useEffect(() => {
-    if (!conversationId) { setMessages([]); return }
+    if (!conversationId) { setMessages([]); setBooted(false); setLoadError(null); return }
 
     let cancelled = false
-    setMessages([]); setExhausted(false); setReplyTo(null)
+    setMessages([]); setExhausted(false); setReplyTo(null); setLoadError(null); setBooted(false)
     readSentRef.current = 0
     setLoading(true)
 
@@ -95,41 +127,62 @@ export function ChatThread({
         if (cancelled) return
         setMessages(d.messages ?? [])
         if ((d.messages ?? []).length < config.page_size) setExhausted(true)
+        setBooted(true)
         requestAnimationFrame(() => scrollToBottom(true))
       })
-      .catch(err => { if (!cancelled) toast(err.message, 'bad') })
+      .catch(err => {
+        if (cancelled) return
+        // An empty stream saying "No messages yet — say hello" is a lie when the
+        // read failed, and it is precisely what made a broken read look like
+        // missing messages. Keep the failure on screen with a way out.
+        setLoadError(err?.message || 'These messages could not be loaded.')
+      })
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [conversationId, config.page_size, scrollToBottom, toast])
+  }, [conversationId, config.page_size, scrollToBottom, reloadKey])
 
   // Mark read once the first page has landed.
   useEffect(() => { if (messages.length) markRead() }, [messages.length, markRead])
 
   /* ---- the tail read ----------------------------------------------------- */
 
-  useEffect(() => {
-    if (!conversationId || !moved.ids.includes(conversationId)) return
+  /**
+   * Reconcile against the id the last pulse reported, rather than reacting to a
+   * single "it moved" event.
+   *
+   * The event form dropped messages for good: if the fetch failed, or fired
+   * while the first page was still in flight (whose result then replaced the
+   * appended rows), nothing ever asked again — the message stayed invisible
+   * until the conversation was reopened. Comparing the server's newest id with
+   * the newest id on screen makes every following pulse a fresh chance to catch
+   * up, so a failure costs a second and a half, not the message.
+   */
+  const serverLastId = conversationId ? (live[conversationId]?.last_id ?? 0) : 0
 
+  useEffect(() => {
+    if (!conversationId || !booted) return
+    if (!serverLastId || serverLastId <= lastIdRef.current) return
+    if (tailBusyRef.current) return
+
+    tailBusyRef.current = true
     const wasAtBottom = nearBottom()
-    chatApi<{ messages: ChatMessage[] }>(`/conversations/${conversationId}/messages?after=${lastIdRef.current}`)
+    const from = lastIdRef.current
+
+    chatApi<{ messages: ChatMessage[] }>(`/conversations/${conversationId}/messages?after=${from}`)
       .then(d => {
         const fresh = d.messages ?? []
         if (!fresh.length) return
-        setMessages(prev => {
-          const next = [...prev]
-          fresh.forEach(m => {
-            // Replace the optimistic bubble by its client_uuid rather than
-            // appending a second copy of the user's own message.
-            const at = next.findIndex(x => (m.client_uuid && x.client_uuid === m.client_uuid) || (x.id && x.id === m.id))
-            if (at > -1) next[at] = m; else next.push(m)
-          })
-          return next.sort((a, b) => (a.id ?? 1e15) - (b.id ?? 1e15))
-        })
+        setMessages(prev => mergeMessages(prev, fresh))
+        // More may be waiting than one page holds — ask again now that the
+        // cursor has moved.
+        setTailNudge(n => n + 1)
         if (wasAtBottom) requestAnimationFrame(() => { scrollToBottom(); markRead() })
       })
+      // Deliberately quiet: the next pulse sees the same gap and retries.
       .catch(() => {})
-  }, [moved, conversationId, scrollToBottom, markRead])
+      .finally(() => { tailBusyRef.current = false })
+  }, [serverLastId, tailNudge, booted, conversationId, scrollToBottom, markRead])
 
   /* ---- infinite scroll upwards ------------------------------------------- */
 
@@ -184,11 +237,10 @@ export function ChatThread({
       method: 'POST', body: payload,
     })
       .then(d => {
-        setMessages(prev => {
-          const at = prev.findIndex(m => m.client_uuid === payload.client_uuid)
-          if (at === -1) return [...prev, d.message]
-          const next = [...prev]; next[at] = d.message; return next
-        })
+        // The same merge the tail read uses: the server copy replaces the
+        // optimistic bubble whether it is matched by uuid or by id, and a tail
+        // read that raced this response cannot leave a duplicate behind.
+        setMessages(prev => mergeMessages(prev, [d.message]))
         applyConversations(d.conversations ?? [])
         requestAnimationFrame(() => scrollToBottom())
       })
@@ -320,6 +372,13 @@ export function ChatThread({
             + 'radial-gradient(760px 380px at 4% 104%, rgba(13,148,136,.08), transparent 60%), #f6f8fb',
         }}
       >
+        {/* Live or not live is never left to be guessed from an absence of messages. */}
+        {!connected && (
+          <div className="sticky top-0 z-10 mb-2 flex items-center justify-center gap-2 rounded-xl border border-amber-300 bg-amber-50/95 px-3 py-1.5 text-[.7rem] font-bold text-amber-800">
+            <WifiOff className="h-3.5 w-3.5" /> Reconnecting — new messages may be delayed
+          </div>
+        )}
+
         {loading && !messages.length && (
           <div className="space-y-3">
             {[72, 96, 60, 110].map((h, i) => (
@@ -328,7 +387,24 @@ export function ChatThread({
           </div>
         )}
 
-        {!loading && !messages.length && (
+        {/* A failed read is never dressed up as an empty conversation. */}
+        {!loading && loadError && (
+          <div className="grid place-items-center py-14 text-center">
+            <div className="max-w-sm rounded-2xl border border-rose-200 bg-rose-50/80 px-5 py-4">
+              <AlertTriangle className="mx-auto mb-2 h-6 w-6 text-rose-600" />
+              <p className="text-[.82rem] font-bold text-rose-800">This conversation could not be loaded</p>
+              <p className="mt-1 text-[.72rem] text-rose-700/80">{loadError}</p>
+              <button
+                onClick={() => { setLoadError(null); setReloadKey(k => k + 1) }}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-rose-700 px-3.5 py-2 text-[.75rem] font-bold text-white transition hover:bg-rose-800 active:scale-95"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Try again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!loading && !loadError && !messages.length && (
           <div className="grid place-items-center py-16 text-center text-slate-400">
             <div>
               <div className="mb-2 text-3xl">✍️</div>

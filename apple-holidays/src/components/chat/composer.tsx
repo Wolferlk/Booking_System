@@ -17,7 +17,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CloudUpload, Mic, Paperclip, Receipt, Send, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { chatApi, useChat } from './chat-store'
-import { mmss } from './bits'
+// uuid(), not crypto.randomUUID() directly: that API only exists in a secure
+// context, so a plain-HTTP host (a LAN address, a staging box) turned every send
+// into a TypeError and the message simply never left the composer.
+import { mmss, uuid } from './bits'
 import type { ChatMessage, PendingAttachment, StagedCard } from './types'
 
 export interface ComposerHandle { stageCard: (card: StagedCard) => void }
@@ -196,7 +199,7 @@ export function Composer({
       const ids = await upload([file], { durationMs: duration, waveform: waveform.slice(0, 34) })
       if (ids.length) {
         onSend({
-          body: null, kind: 'voice', client_uuid: crypto.randomUUID(),
+          body: null, kind: 'voice', client_uuid: uuid(),
           reply_to_id: replyTo?.id ?? null, attachment_ids: ids, card_type: null, card_ref: null,
         })
         setPending([])
@@ -223,7 +226,7 @@ export function Composer({
     onSend({
       body: body || null,
       kind,
-      client_uuid: crypto.randomUUID(),
+      client_uuid: uuid(),
       reply_to_id: replyTo?.id ?? null,
       attachment_ids: attachmentIds,
       card_type: card?.type ?? null,
