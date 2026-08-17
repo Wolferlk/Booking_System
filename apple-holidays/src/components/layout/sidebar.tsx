@@ -12,7 +12,7 @@ import {
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
-  ChevronDown, Zap, Sparkles, Store, BedDouble,
+  ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -36,12 +36,16 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
-  Sparkles, Store, BedDouble,
+  Sparkles, Store, BedDouble, MessagesSquare,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
 // it opens in a new tab rather than navigating the current dashboard view away.
 const WHATSAPP_NAV_ITEM = { label: 'WhatsApp', href: '/dashboard/whatsapp', icon: 'MessageCircle', external: true }
+
+// Internal chat, shared with the Accounts system. Appended to every staff role's
+// nav in the component rather than repeated across a dozen arrays.
+const CHAT_NAV_ITEM = { label: 'Chat', href: '/dashboard/chat', icon: 'MessagesSquare' }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean; external?: boolean }[]> = {
   BT_USER: [
@@ -489,7 +493,15 @@ export default function Sidebar() {
   const router = useRouter()
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
-  const navItems = useMemo(() => (role ? NAV_ITEMS[role] ?? [] : []), [role])
+  const navItems = useMemo(() => {
+    const items = role ? NAV_ITEMS[role] ?? [] : []
+    // Internal chat is deliberately not in the per-role lists: it is shared with
+    // the Accounts system, and a messenger only works if everybody is reachable.
+    // A role that cannot be messaged is a role nobody can ask a question of.
+    // CLIENT is the one exception — external users get the portal, not staff chat.
+    if (!role || role === 'CLIENT') return items
+    return [...items, CHAT_NAV_ITEM]
+  }, [role])
   const { countryFilter, setCountryFilter, canFilter } = useCountryFilter()
   const { isCollapsed, isPinned, isMobileOpen, toggleCollapse, setHovered, closeMobile } = useSidebar()
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)

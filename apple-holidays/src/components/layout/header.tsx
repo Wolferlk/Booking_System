@@ -8,6 +8,7 @@ import { useSidebar } from '@/hooks/use-sidebar'
 import NotificationsBell from '@/components/layout/notifications-bell'
 import LastMinuteAlert from '@/components/layout/last-minute-alert'
 import LastMinutePanel from '@/components/layout/last-minute-panel'
+import ChatHeaderButton from '@/components/chat/chat-header-button'
 import type { UserRole } from '@prisma/client'
 
 interface HeaderProps {
@@ -42,6 +43,10 @@ export default function Header({ title, subtitle, actions }: HeaderProps) {
         {/* Right: actions + bell + user */}
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           {actions}
+
+          {/* Internal chat, shared with the Accounts system. Renders nothing on
+              routes outside the dashboard shell, where the store is not mounted. */}
+          <ChatHeaderButton />
 
           {/* Bookings sold inside D-4 that nobody has picked up yet. Renders its
               own chip only when there is something outstanding, and carries the
