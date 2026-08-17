@@ -117,6 +117,24 @@ async function findPnl(ref: string) {
   return rows[0] ?? null
 }
 
+/**
+ * What to call a P&L row.
+ *
+ * Its own is_number is preferred, but rows imported from mail routinely carry a
+ * literal "NA" there and are matched on tour_ref or invoice_number instead.
+ * Titling that card "NA" would be worse than useless, so anything uninformative
+ * falls through to the next identifier and finally to what was searched for.
+ *
+ * Mirrors ChatCardService::pnlLabel() in the Accounts app.
+ */
+function pnlLabel(pnl: RowDataPacket, searched: string): string {
+  for (const candidate of [pnl.is_number, pnl.tour_ref, pnl.invoice_number]) {
+    const value = String(candidate ?? '').trim()
+    if (value && !['NA', 'N/A', '-'].includes(value.toUpperCase())) return value
+  }
+  return searched
+}
+
 /** The booking file, newest amendment first. */
 async function findBooking(ref: string) {
   // Prisma has no expression index to match REPLACE(UPPER(...)), so the three
@@ -161,7 +179,7 @@ export async function preview(type: CardType, rawRef: string): Promise<CardPrevi
     if (!pnl) return null
     const pl = Number(pnl.profit_loss ?? 0)
     return {
-      title: String(pnl.is_number ?? pnl.tour_ref ?? pnl.invoice_number ?? ref),
+      title: pnlLabel(pnl, ref),
       subtitle: (pnl.guest_name ?? pnl.agent_name ?? null) as string | null,
       meta: [
         { label: 'Sell', value: money(pnl.amount, pnl.currency) },
@@ -367,7 +385,7 @@ async function pnlDoc(ref: string): Promise<PartialDoc | null> {
   })
 
   return {
-    title: String(pnl.is_number ?? pnl.tour_ref ?? pnl.invoice_number ?? ref),
+    title: pnlLabel(pnl, ref),
     subtitle: (pnl.guest_name ?? pnl.agent_name ?? null) as string | null,
     badges: [
       { label: pl >= 0 ? 'PROFIT' : 'LOSS', tone: pl >= 0 ? 'good' : 'bad' },
