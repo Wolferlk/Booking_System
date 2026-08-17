@@ -135,19 +135,52 @@ export async function chatQueryOne<T extends mysql.RowDataPacket>(
  * invoices, payables, P&L or users, and the connection is privileged enough that
  * the restriction cannot be left to whoever writes the next query.
  */
-const WRITABLE = /^\s*(insert\s+into|update|delete\s+from)\s+`?(chat_conversations|chat_participants|chat_messages|chat_attachments|chat_reactions|chat_presence|chat_settings)`?\b/i
+const CHAT_TABLES = 'chat_conversations|chat_participants|chat_messages|chat_attachments|chat_reactions|chat_presence|chat_settings'
+
+/**
+ * The verb may carry modifiers. `INSERT IGNORE INTO` is a different string from
+ * `INSERT INTO`, and the first version of this pattern only knew the second —
+ * so the guard refused `INSERT IGNORE INTO chat_settings`, the statement that
+ * creates a person's settings row on their very first visit. The whole of chat
+ * then failed to load for anyone who had never had one, with
+ * "Refused: chat may only write to chat_* tables".
+ *
+ * The modifiers below change how a statement behaves on conflict or on lock
+ * contention. None of them change WHICH TABLE is written, which is the only
+ * thing this guard exists to police.
+ */
+const WRITABLE = new RegExp(
+  '^\\s*(?:'
+    + 'insert(?:\\s+(?:ignore|low_priority|high_priority|delayed))*\\s+into'
+    + '|replace(?:\\s+(?:low_priority|delayed))*\\s+into'
+    + '|update(?:\\s+(?:low_priority|ignore))*'
+    + '|delete(?:\\s+(?:low_priority|quick|ignore))*\\s+from'
+  + ')\\s+`?(?:' + CHAT_TABLES + ')`?\\b',
+  'i',
+)
+
+/**
+ * Is this statement a chat write?
+ *
+ * Exported so it can be tested directly — `npm run chat:guard` checks it against
+ * every write the app actually issues and against a list of statements it must
+ * keep refusing. It is the only thing standing between a chat bug and live
+ * financial data, and it has been wrong once.
+ */
+export function chatWriteAllowed(sql: string): boolean {
+  if (!WRITABLE.test(sql)) return false
+  // One statement per call. multipleStatements is off by default, but a
+  // semicolon that got this far is worth refusing outright.
+  if (sql.replace(/;\s*$/, '').includes(';')) return false
+  return true
+}
 
 export async function chatWrite(
   sql: string,
   params: unknown[] = [],
 ): Promise<{ affectedRows: number; insertId: number }> {
-  if (!WRITABLE.test(sql)) {
+  if (!chatWriteAllowed(sql)) {
     throw new Error('Refused: chat may only write to chat_* tables in the Accounts database.')
-  }
-  // One statement per call. multipleStatements is off by default, but a
-  // semicolon that got this far is worth refusing outright.
-  if (sql.replace(/;\s*$/, '').includes(';')) {
-    throw new Error('Refused: only one statement per write.')
   }
 
   // Not retried: a single statement that may or may not have applied must not be
@@ -195,8 +228,7 @@ async function runTransaction<T>(
         return rows
       },
       write: async (sql: string, params: unknown[] = []) => {
-        if (!WRITABLE.test(sql)) throw new Error('Refused: chat may only write to chat_* tables.')
-        if (sql.replace(/;\s*$/, '').includes(';')) throw new Error('Refused: only one statement per write.')
+        if (!chatWriteAllowed(sql)) throw new Error('Refused: chat may only write to chat_* tables.')
         const [res] = await conn.query<mysql.ResultSetHeader>(sql, params)
         return { affectedRows: res.affectedRows ?? 0, insertId: res.insertId ?? 0 }
       },
