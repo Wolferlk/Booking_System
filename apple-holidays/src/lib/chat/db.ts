@@ -45,6 +45,51 @@ function config(): mysql.PoolOptions {
     dateStrings: false,
     timezone: 'Z',
     ssl: { rejectUnauthorized: false },
+    // This app runs on Vercel: an instance is frozen between invocations and
+    // may be thawed minutes later still holding pooled sockets the database has
+    // long since closed. Retiring idle connections means the next request opens
+    // a live one instead of writing into a socket that is already gone — which
+    // is how a sent message ended up allocating a row id and then rolling back.
+    maxIdle: 2,
+    idleTimeout: 30_000,
+  }
+}
+
+/**
+ * Errors that say "this connection is gone", not "this statement is wrong".
+ *
+ * Only these are retried: a broken pipe costs a retry, a bad query must fail
+ * loudly the first time.
+ */
+const TRANSIENT = new Set([
+  'PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ECONNREFUSED',
+  'PROTOCOL_SEQUENCE_TIMEOUT', 'ER_QUERY_INTERRUPTED', 'ER_LOCK_DEADLOCK',
+  'ER_LOCK_WAIT_TIMEOUT', 'ER_CON_COUNT_ERROR', 'POOL_CLOSED', 'POOL_CONNLIMIT',
+])
+
+function isTransient(err: unknown): boolean {
+  const e = err as { code?: string; fatal?: boolean } | null
+  return Boolean(e && (TRANSIENT.has(e.code ?? '') || (e.fatal && !e.code?.startsWith('ER_'))))
+}
+
+/**
+ * Run something against the pool, once more if the connection — not the
+ * statement — was what failed.
+ *
+ * Every caller passed here must be safe to run twice. Reads always are. Writes
+ * are the caller's responsibility: sendMessage() is idempotent through
+ * `client_uuid`, which is exactly what that column is for.
+ */
+async function withRetry<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (!isTransient(err)) throw err
+
+    console.warn(`[chat] ${what} lost its connection (${(err as { code?: string })?.code}); retrying once.`)
+    // A moment for the pool to hand out a fresh socket rather than the dead one.
+    await new Promise(r => setTimeout(r, 120))
+    return fn()
   }
 }
 
@@ -69,8 +114,10 @@ export async function chatQuery<T extends mysql.RowDataPacket>(
   sql: string,
   params: unknown[] = [],
 ): Promise<T[]> {
-  const [rows] = await pool().query<T[]>(sql, params)
-  return rows
+  return withRetry('read', async () => {
+    const [rows] = await pool().query<T[]>(sql, params)
+    return rows
+  })
 }
 
 export async function chatQueryOne<T extends mysql.RowDataPacket>(
@@ -103,6 +150,9 @@ export async function chatWrite(
     throw new Error('Refused: only one statement per write.')
   }
 
+  // Not retried: a single statement that may or may not have applied must not be
+  // replayed blindly. Callers that need durability under a dropped connection go
+  // through chatTransaction, which is retried as a whole and idempotent.
   const [res] = await pool().query<mysql.ResultSetHeader>(sql, params)
   return { affectedRows: res.affectedRows ?? 0, insertId: res.insertId ?? 0 }
 }
@@ -120,8 +170,24 @@ export async function chatTransaction<T>(
     write: (sql: string, params?: unknown[]) => Promise<{ affectedRows: number; insertId: number }>
   }) => Promise<T>,
 ): Promise<T> {
+  // Retried as a unit when the CONNECTION failed. A rolled-back transaction
+  // applied nothing, so replaying it is safe — and the callback must be written
+  // to be replayable (see sendMessage's client_uuid lookup).
+  return withRetry('transaction', () => runTransaction(fn))
+}
+
+async function runTransaction<T>(
+  fn: (tx: {
+    query: <R extends mysql.RowDataPacket>(sql: string, params?: unknown[]) => Promise<R[]>
+    write: (sql: string, params?: unknown[]) => Promise<{ affectedRows: number; insertId: number }>
+  }) => Promise<T>,
+): Promise<T> {
   const conn = await pool().getConnection()
   try {
+    // A pooled socket can be dead without anyone knowing — the instance was
+    // frozen, or the server timed it out. Finding that out here costs one
+    // round trip; finding it out after the INSERT costs the message.
+    await conn.ping()
     await conn.beginTransaction()
     const out = await fn({
       query: async <R extends mysql.RowDataPacket>(sql: string, params: unknown[] = []) => {
@@ -136,12 +202,18 @@ export async function chatTransaction<T>(
       },
     })
     await conn.commit()
+    conn.release()
     return out
   } catch (err) {
-    await conn.rollback().catch(() => {})
+    if (isTransient(err)) {
+      // Never hand a broken socket back to the pool for the next request to
+      // trip over; the retry above will open a fresh one.
+      try { conn.destroy() } catch { /* already gone */ }
+    } else {
+      await conn.rollback().catch(() => {})
+      conn.release()
+    }
     throw err
-  } finally {
-    conn.release()
   }
 }
 
