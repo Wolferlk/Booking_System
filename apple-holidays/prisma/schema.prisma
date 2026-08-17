@@ -1503,6 +1503,14 @@ model QueryMonitorEntry {
   /// increments. What the sheet's "Mails in Thread" column now shows is
   /// `inboundCount + outboundCount` — the whole conversation, both ways.
   followUpCount    Int                 @default(0)
+  /// This entry re-opened a thread that had already been answered — the agent
+  /// wrote back after `repliedAt`, so it is a new question with a clock of its
+  /// own rather than a chaser on the old one, and it takes a row of its own.
+  ///
+  /// The append guard reads it: an entry opening a round is matched only on the
+  /// exact row identity (date + allocation time + subject), never on the looser
+  /// same-day-same-subject one, which cannot tell two rounds of one thread apart.
+  newRound         Boolean             @default(false)
   /// Mails from the agent on this thread, the opening one included. Rolled up
   /// from `events` so a sheet write never has to aggregate them per row.
   inboundCount     Int                 @default(1)

@@ -220,6 +220,23 @@ export function dedupKeyFor(message: MonitoredMessage): string {
 type EntryWithMatches = Prisma.QueryMonitorEntryGetPayload<{ include: { matches: true } }>
 
 /**
+ * Has this round been closed off by an answer the new mail is a response to?
+ *
+ * A thread is not one query for ever. While a query is still open, a second mail
+ * from the agent is a chaser — the same unanswered question, and folding it into
+ * the row keeps the SLA measured from when it was first asked. Once we have
+ * actually replied, though, the round is over: the next mail is the agent coming
+ * back with something new, and it deserves a line and an SLA clock of its own.
+ *
+ * `repliedAt` is the right signal because it is only ever set by a *direct*
+ * reply addressed back to the asker — a forward to a colleague leaves it null,
+ * so passing a query on can never split the thread.
+ */
+function roundIsClosed(root: { repliedAt: Date | null }, message: MonitoredMessage): boolean {
+  return root.repliedAt !== null && root.repliedAt <= message.receivedAt
+}
+
+/**
  * The row that already stands for this mail's thread, if there is one.
  *
  * `dedupKeyFor` recognises one mail seen in several inboxes; this recognises the
@@ -227,25 +244,42 @@ type EntryWithMatches = Prisma.QueryMonitorEntryGetPayload<{ include: { matches:
  * "any update?", the agent replying into their own thread. Without it each of
  * those takes a row of its own and the sheet shows the same subject three times.
  *
- * The earliest match wins: that entry is the query as it was first asked, and it
- * is the one whose Allocation time the SLA is measured from.
+ * The *latest* unmerged match wins, not the earliest. A thread can now hold more
+ * than one round (see `roundIsClosed`), and the round still open is the last one
+ * to have been started. Within a round this changes nothing: the chasers are all
+ * MERGED, so the only unmerged entry that round has is the mail that opened it —
+ * which is exactly the one whose Allocation time the SLA is measured from.
+ *
+ * A null `root` sends the mail down the new-entry path, where it takes a row.
+ * `newRound` distinguishes the two ways that happens: a thread nobody has seen
+ * before, or one whose last round we already answered. Only the second needs the
+ * append guard relaxed, so the caller records it on the entry.
  */
+interface ThreadLookup {
+  root:     EntryWithMatches | null
+  newRound: boolean
+}
+
 async function findThreadRoot(
   message: MonitoredMessage, subjectKey: string | null, since: Date,
-): Promise<EntryWithMatches | null> {
+): Promise<ThreadLookup> {
   const identities: Prisma.QueryMonitorEntryWhereInput[] = []
   if (message.conversationId) identities.push({ conversationId: message.conversationId })
   if (subjectKey)             identities.push({ subjectKey })
 
   if (identities.length > 0) {
     const root = await prisma.queryMonitorEntry.findFirst({
-      // A follow-up folds into the thread's own root, never into another
+      // A follow-up folds into the round's own root, never into another
       // follow-up — merged entries own no row to rewrite.
       where:   { mergedIntoId: null, receivedAt: { gte: since }, OR: identities },
-      orderBy: { receivedAt: 'asc' },
+      orderBy: { receivedAt: 'desc' },
       include: { matches: true },
     })
-    if (root) return root
+    if (root) {
+      return roundIsClosed(root, message)
+        ? { root: null, newRound: true }
+        : { root, newRound: false }
+    }
   }
 
   return findSameDayResend(message)
@@ -264,9 +298,9 @@ async function findThreadRoot(
  * agency sending the same generic subject still keep a row each — that is the
  * distinction the sender address draws and the domain would not.
  */
-async function findSameDayResend(message: MonitoredMessage): Promise<EntryWithMatches | null> {
+async function findSameDayResend(message: MonitoredMessage): Promise<ThreadLookup> {
   const day = startOfDayInTz(isoDateInTz(message.receivedAt))
-  if (!day || !message.fromAddress) return null
+  if (!day || !message.fromAddress) return { root: null, newRound: false }
 
   const nextDay = new Date(day.getTime() + 24 * 3_600_000)
   const sameDay = await prisma.queryMonitorEntry.findMany({
@@ -275,13 +309,19 @@ async function findSameDayResend(message: MonitoredMessage): Promise<EntryWithMa
       fromAddress:  message.fromAddress,
       receivedAt:   { gte: day, lt: nextDay },
     },
-    orderBy: { receivedAt: 'asc' },
+    // Newest first, for the same reason as `findThreadRoot`: the round still
+    // open is the last one started.
+    orderBy: { receivedAt: 'desc' },
     include: { matches: true },
     take:    50,
   })
 
   const subject = normalizeSubject(message.subject)
-  return sameDay.find(entry => normalizeSubject(entry.subject) === subject) ?? null
+  const root = sameDay.find(entry => normalizeSubject(entry.subject) === subject)
+  if (!root) return { root: null, newRound: false }
+  return roundIsClosed(root, message)
+    ? { root: null, newRound: true }
+    : { root, newRound: false }
 }
 
 /**
@@ -896,12 +936,13 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         }
 
         // ── A later mail of a thread the sheet already carries ────────────
-        // One query, one row: the chaser rewrites that row instead of adding a
-        // second line with the same subject under it.
+        // One query, one row — while the query is open. A chaser rewrites that
+        // row instead of adding a second line with the same subject under it;
+        // a mail arriving after we replied opens a new round and takes a line.
         const subjectKey = subjectKeyFor(message)
-        const root = config.threadMergeEnabled
+        const { root, newRound } = config.threadMergeEnabled
           ? await findThreadRoot(message, subjectKey, threadWindowFrom)
-          : null
+          : { root: null, newRound: false }
 
         if (root) {
           const { toList: mergedList } = await mergeFollowUp(root, group, run.id, directory, aliasNames)
@@ -912,6 +953,13 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             + `, now ${root.followUpCount + 2} mail(s) on one row (TO list ${mergedList})`,
             { entryId: root.id, followUps: root.followUpCount + 1 })
           continue
+        }
+
+        if (newRound) {
+          log.add('info',
+            `"${displaySubject(message.subject).slice(0, 60)}" came back after we replied — `
+            + 'new round, so it takes a row of its own rather than folding into the answered one',
+            { subject: message.subject.slice(0, 120), from: message.fromAddress })
         }
 
         // ── New entry ─────────────────────────────────────────────────────
@@ -972,6 +1020,9 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
             // What every later mail of this thread will find it by.
             threadKey:      threadKeyFor(message),
             subjectKey,
+            // Re-opened an answered thread, so the append guard must match it on
+            // the exact row identity only — see the `newRound` note on the model.
+            newRound,
             lastMessageAt:  message.receivedAt,
             mailKind:       kind,
             excludeReason:  reason?.slice(0, 180) ?? null,
@@ -2048,6 +2099,88 @@ async function claimAlreadyWrittenRows(
   return { toAppend, claimed }
 }
 
+/**
+ * Where each dirty entry's row has actually got to.
+ *
+ * A stored `sheetRow` is a row *number*, and a row number only means what it
+ * meant when it was recorded for as long as nobody inserts or deletes rows above
+ * it in Excel. The team does insert rows — that is what a shared workbook is for
+ * — and on 17 Aug two hand-typed lines pushed every row below them down by two
+ * while the database went on pointing at the old numbers. Nothing complained:
+ * `updateRow` writes to the number it is given, so the next reply on that thread
+ * would have overwritten one of the lines the team had just typed in.
+ *
+ * So before rewriting anything in place, the span holding the dirty rows is read
+ * once and each entry is matched to the row that actually carries it, by the
+ * exact identity the append guard already uses — date serial, allocation-time
+ * serial and subject, the three cells nothing else edits. Three outcomes:
+ *
+ *   • **the stored row still matches** — the ordinary case, nothing to do;
+ *   • **it moved** — the pointer is corrected to where the row now is, in the
+ *     database as well as for this write, so the drift is repaired permanently;
+ *   • **it is nowhere in the span** — the write is *skipped*. A row we cannot
+ *     find is a row we must not guess at: writing blind is precisely how a
+ *     hand-typed line gets destroyed. The entry is reported and left for the
+ *     team to look at.
+ *
+ * One read per tab, not per row. If it fails, every entry is returned unverified
+ * and the old behaviour stands — a sweep must not stop because a range read did.
+ */
+async function locateDirtyRows(
+  entries: QueryMonitorEntry[],
+  keysOf: (entry: QueryMonitorEntry) => string[],
+  ref: SheetRef, tab: string, layout: SheetLayout, sessionId: string | null,
+  plan: WorkbookPlan,
+  margin = 250,
+  maxSpan = 3000,
+): Promise<Map<string, number | null>> {
+  const located = new Map<string, number | null>()
+  const rowsHeld = entries
+    .map(e => e[plan.rowField])
+    .filter((r): r is number => typeof r === 'number' && r > 1)
+  if (rowsHeld.length === 0) return located
+
+  // Padded on both sides, because the span the rows occupy is not where they may
+  // have gone. A single dirty row would otherwise be looked for in a range of
+  // exactly one row — itself — and any row that had moved would be reported lost
+  // rather than found a few lines further down. The margin is what a hand edit
+  // realistically shifts a row by; a bigger displacement is reported, not guessed.
+  const first = Math.max(2, Math.min(...rowsHeld) - margin)
+  const last  = Math.max(...rowsHeld) + margin
+  // A span this wide means something is badly out of step; reading it would cost
+  // more than the guard is worth. Leave every entry unverified.
+  if (last - first + 1 > maxSpan) return located
+
+  let rows: (string | number | boolean | null)[][]
+  try {
+    rows = await readValuesRange(ref, tab, first, last, layout, sessionId)
+  } catch {
+    return located
+  }
+
+  // Only the exact key is used here. The loose "same query" keys deliberately
+  // match more than one row — two rounds of a thread, a genuine repeat — and
+  // repointing an entry at one of those would move the write onto a row that
+  // belongs to a different mail.
+  const rowByExactKey = new Map<string, number>()
+  rows.forEach((cells, i) => {
+    // The padding runs past the last row in use, and a run of blank rows would
+    // otherwise all key alike. No entry can key that way — every one has a
+    // subject — but an empty row is not a candidate for anything.
+    if (String(cells[2] ?? '').trim() === '') return
+    const [exact] = sheetRowKeys(cells, layout)
+    if (exact && !rowByExactKey.has(exact)) rowByExactKey.set(exact, first + i)
+  })
+
+  for (const entry of entries) {
+    const stored = entry[plan.rowField]
+    if (typeof stored !== 'number' || stored <= 1) continue
+    const [exact] = keysOf(entry)
+    located.set(entry.id, exact ? rowByExactKey.get(exact) ?? null : null)
+  }
+  return located
+}
+
 /** One workbook's share of the work. See `syncEntriesToSheet`. */
 async function syncOneWorkbook(
   plan: WorkbookPlan, log?: RunLog, limit = 200,
@@ -2139,6 +2272,42 @@ async function syncOneWorkbook(
     ))
 
   /**
+   * Every identity this entry's row answers to — the exact one (date serial,
+   * allocation-time serial, subject) first, then the looser "same query" ones.
+   *
+   * Used by all three guards, so they cannot drift apart: the in-block fold, the
+   * append claim, and `locateDirtyRows` — which takes the exact key alone,
+   * because the loose keys match more than one row by design.
+   *
+   * An entry that re-opened an answered thread gets the exact key only. The
+   * loose keys are same-day-and-subject, which is exactly what two rounds of one
+   * thread look like — keeping them would claim the new round onto the old
+   * round's row and undo the split that put it there. The exact key carries the
+   * allocation time, which two rounds never share, so a write landing twice is
+   * still caught.
+   */
+  const queryKeysFor = (e: QueryMonitorEntry) => {
+    const row = buildSheetRow(e, config.writeStatusColumn, config.slaHours)
+    const exact = writtenRowKey(row.date, row.allocationTime, row.subject)
+    return e.newRound
+      ? [exact]
+      : [exact, ...sameQueryKeys(row.date, row.subject, e.fromAddress)]
+  }
+
+  /**
+   * The same, for the other-mail tab. Non-query mail is never chased for a
+   * reply, so it has no `repliedAt` and in practice never opens a round — the
+   * branch is here so the two builders cannot drift apart if it ever does.
+   */
+  const excludedKeysFor = (e: QueryMonitorEntry) => {
+    const row = buildExcludedRow(e)
+    const exact = writtenRowKey(row.date, row.receivedTime, row.subject)
+    return e.newRound
+      ? [exact]
+      : [exact, ...sameQueryKeys(row.date, row.subject, e.fromAddress)]
+  }
+
+  /**
    * Bring one row's colour up to date — green once the query has been answered.
    *
    * Skipped when the row already carries the colour it should: the remembered
@@ -2187,22 +2356,13 @@ async function syncOneWorkbook(
         }
         const queryLayout = await layoutFor(ref, config.sheetName, QUERY_LAYOUT)
 
-        /** Every identity this entry's row would answer to. */
-        const queryKeys = (e: QueryMonitorEntry) => {
-          const row = buildSheetRow(e, config.writeStatusColumn, config.slaHours)
-          return [
-            writtenRowKey(row.date, row.allocationTime, row.subject),
-            ...sameQueryKeys(row.date, row.subject, e.fromAddress),
-          ]
-        }
-
         // Two pending entries for one query never become two rows…
-        const block = await foldDuplicatesInBlock(pendingQueries, queryKeys, note)
+        const block = await foldDuplicatesInBlock(pendingQueries, queryKeysFor, note)
 
         // …and anything a previous sync already put on the sheet is claimed, not
         // written twice — see claimAlreadyWrittenRows.
         const { toAppend, claimed } = await claimAlreadyWrittenRows(
-          block, queryKeys, ref, config.sheetName, queryLayout, sessionId, plan,
+          block, queryKeysFor, ref, config.sheetName, queryLayout, sessionId, plan,
         )
         if (claimed > 0) {
           note('warn', `${claimed} row(s) were already on "${config.sheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
@@ -2239,18 +2399,11 @@ async function syncOneWorkbook(
         }
         const excludedLayout = await layoutFor(ref, config.excludedSheetName, EXCLUDED_LAYOUT)
 
-        const excludedKeys = (e: QueryMonitorEntry) => {
-          const row = buildExcludedRow(e)
-          return [
-            writtenRowKey(row.date, row.receivedTime, row.subject),
-            ...sameQueryKeys(row.date, row.subject, e.fromAddress),
-          ]
-        }
 
-        const block = await foldDuplicatesInBlock(pendingExcluded, excludedKeys, note)
+        const block = await foldDuplicatesInBlock(pendingExcluded, excludedKeysFor, note)
 
         const { toAppend, claimed } = await claimAlreadyWrittenRows(
-          block, excludedKeys, ref, config.excludedSheetName, excludedLayout, sessionId, plan,
+          block, excludedKeysFor, ref, config.excludedSheetName, excludedLayout, sessionId, plan,
         )
         if (claimed > 0) {
           note('warn', `${claimed} row(s) were already on "${config.excludedSheetName}" from an earlier sync — pointed at them instead of appending duplicates`)
@@ -2270,9 +2423,71 @@ async function syncOneWorkbook(
       }
     }
 
+    // Where those rows have actually got to, in case the team inserted or
+    // deleted rows above them since they were written — see `locateDirtyRows`.
+    const dirtyQueries  = dirty.filter(e => !isExcluded(e))
+    const dirtyExcluded = dirty.filter(e => isExcluded(e))
+    // Not fatal, on the same principle as the append guard: leaving entries
+    // unverified restores the old behaviour, while letting a range read fail the
+    // sync would cost the team every rewrite in the batch.
+    const located = new Map<string, number | null>()
+    try {
+      if (dirtyQueries.length > 0) {
+        const found = await locateDirtyRows(
+          dirtyQueries, queryKeysFor, ref, config.sheetName,
+          await layoutFor(ref, config.sheetName, QUERY_LAYOUT), sessionId, plan)
+        found.forEach((row, id) => located.set(id, row))
+      }
+      if (dirtyExcluded.length > 0) {
+        const found = await locateDirtyRows(
+          dirtyExcluded, excludedKeysFor, ref, config.excludedSheetName,
+          await layoutFor(ref, config.excludedSheetName, EXCLUDED_LAYOUT), sessionId, plan)
+        found.forEach((row, id) => located.set(id, row))
+      }
+    } catch (err) {
+      located.clear()
+      note('warn',
+        'Could not check that the rows about to be rewritten are still the right rows: '
+        + `${err instanceof Error ? err.message : String(err)}. They were rewritten by stored row `
+        + 'number, as before.')
+    }
+    let moved = 0
+
     for (const entry of dirty) {
       const tab = tabFor(entry)
-      const rowNumber = entry[plan.rowField]!
+      const stored = entry[plan.rowField]!
+      const found  = located.get(entry.id)
+
+      // Verified missing — not merely unverified, which reads as undefined.
+      if (found === null) {
+        failed += 1
+        await prisma.queryMonitorEntry.update({
+          where: { id: entry.id },
+          data: {
+            [plan.statusField]: 'FAILED',
+            [plan.errorField]:
+              `Row ${stored} on "${tab}" no longer holds this query — it was not found anywhere `
+              + 'near where it was written. Rows were probably inserted, deleted or re-sorted by '
+              + 'hand. Nothing was written, so no hand-typed line was overwritten; find the row '
+              + 'and correct it, or clear it and use "Retry failed writes" to append it again.',
+          },
+        }).catch(() => {})
+        note('error',
+          `"${tab}" row ${stored} no longer holds "${displaySubject(entry.subject).slice(0, 50)}" — `
+          + 'skipped rather than overwrite whatever is standing there now',
+          { entryId: entry.id, storedRow: stored })
+        continue
+      }
+
+      const rowNumber = found ?? stored
+      if (found !== undefined && found !== stored) {
+        moved += 1
+        await prisma.queryMonitorEntry.update({
+          where: { id: entry.id },
+          data:  { [plan.rowField]: found },
+        }).catch(() => {})
+      }
+
       try {
         if (isExcluded(entry)) {
           await updateExcludedRow(rowNumber, buildExcludedRow(entry), { sessionId, ref, sheetName: tab })
@@ -2304,6 +2519,12 @@ async function syncOneWorkbook(
 
     if (updated > 0) {
       note('success', `Rewrote ${updated} existing row(s) with the current handler, reply time and status`)
+    }
+    if (moved > 0) {
+      note('warn',
+        `${moved} row(s) had moved since they were written — rows were inserted or deleted by hand `
+        + 'above them. The stored row numbers were corrected to where the rows actually are, so the '
+        + 'rewrites landed on the right lines.')
     }
     if (painted > 0) {
       note('info', `${painted} row(s) recoloured — answered queries are green`)
