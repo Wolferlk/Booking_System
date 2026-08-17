@@ -66,6 +66,8 @@ interface ChatStore {
   live: Record<number, { last_id: number; unread: number; touched_at: string | null }>
   /** False once the poll has failed repeatedly — the UI says so rather than going quiet. */
   connected: boolean
+  /** True when messages are arriving over the push channel rather than being polled for. */
+  pushLive: boolean
   /** Set when the first load failed outright, so surfaces can offer a retry. */
   error: string | null
   /** Load everything again after a failure. */
@@ -177,6 +179,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [moved, setMoved] = useState<{ ids: number[]; at: number }>({ ids: [], at: 0 })
   const [live, setLive] = useState<Record<number, { last_id: number; unread: number; touched_at: string | null }>>({})
   const [connected, setConnected] = useState(true)
+  /** True while the hub is pushing; false means the poll is carrying the load. */
+  const [pushLive, setPushLive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [bootAttempt, setBootAttempt] = useState(0)
   const [dock, setDock] = useState<DockEntry[]>([])
@@ -188,7 +192,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const typingIn = useRef<number | null>(null)
   const lastIds = useRef<Map<number, number>>(new Map())
   const settingsRef = useRef(settings)
+  const meRef = useRef<ChatPerson | null>(null)
   const convRef = useRef<ChatConversation[]>([])
+  /** Last time a "typing" ping went out, so a fast typist sends one every 3s. */
+  const typingSentAt = useRef(0)
+  const pushLiveRef = useRef(false)
   const dockRef = useRef<DockEntry[]>([])
   const restored = useRef(false)
   const toastSeq = useRef(0)
@@ -198,6 +206,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const totalUnreadRef = useRef(0)
 
   settingsRef.current = settings
+  meRef.current = me
+  pushLiveRef.current = pushLive
   totalUnreadRef.current = totalUnread
   convRef.current = conversations
   dockRef.current = dock
@@ -274,8 +284,21 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     return () => { activeCount.current = Math.max(0, activeCount.current - 1) }
   }, [])
 
+  /**
+   * Say "typing" the cheapest way available.
+   *
+   * On the push path that is one POST at most every three seconds, and it is
+   * never written down. On the poll path it rides along on the next pulse, as
+   * before, so behaviour is unchanged where the hub is not running.
+   */
   const declareTyping = useCallback((conversationId: number | null) => {
     typingIn.current = conversationId
+
+    if (!pushLiveRef.current || !conversationId) return
+    const now = Date.now()
+    if (now - typingSentAt.current < 3000) return
+    typingSentAt.current = now
+    void chatApi('/typing', { method: 'POST', body: { conversation_id: conversationId } }).catch(() => {})
   }, [])
 
   /* ---- boot -------------------------------------------------------------- */
@@ -330,7 +353,200 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [applyConversations, bootAttempt])
 
-  /* ---- the poll loop ----------------------------------------------------- */
+  /* ---- the live stream (push) -------------------------------------------- */
+
+  /**
+   * One SSE connection carries everything the poll used to ask for.
+   *
+   * The events are deliberately thin — "thread 4's newest id is 812", never the
+   * message itself. The client compares that with what it holds and reads the
+   * gap over its own authenticated API, which is the same reconciliation the
+   * poll drove, so nothing downstream had to change and no message content
+   * passes through the hub.
+   *
+   * If this never connects, `pushLive` stays false and the poll below runs as
+   * before. Chat is never worse than it was.
+   */
+  useEffect(() => {
+    if (!ready) return
+
+    let closed = false
+    let source: EventSource | null = null
+    let renewTimer: ReturnType<typeof setTimeout> | null = null
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let attempt = 0
+
+    /**
+     * Everything below is a hint to re-read; the read itself is what is trusted.
+     *
+     * `lastId` moves the cursor an open thread chases. `touched` is for changes
+     * that create no new id — an edit, a delete, a reaction — and is kept
+     * separate so a plain message does not also trigger a whole-page re-read.
+     */
+    const bump = (conversationId: number, opts: { lastId?: number; touched?: boolean } = {}) => {
+      if (!conversationId) return
+      setLive(prev => {
+        const known = prev[conversationId]
+        const lastIdNext = Math.max(opts.lastId ?? 0, known?.last_id ?? 0)
+        const touchedNext = opts.touched ? new Date().toISOString() : (known?.touched_at ?? null)
+        if (known && known.last_id === lastIdNext && known.touched_at === touchedNext) return prev
+        return { ...prev, [conversationId]: { last_id: lastIdNext, unread: known?.unread ?? 0, touched_at: touchedNext } }
+      })
+    }
+
+    const onMessage = (data: Record<string, unknown>) => {
+      const conversationId = Number(data.conversation_id)
+      const lastId = Number(data.last_id ?? 0)
+      if (!conversationId) return
+
+      bump(conversationId, { lastId })
+      lastIds.current.set(conversationId, Math.max(lastId, lastIds.current.get(conversationId) ?? 0))
+      setMoved({ ids: [conversationId], at: Date.now() })
+
+      // Previews, ordering and unread counts still come from the API — one read
+      // per actual message instead of one every 1.5 seconds.
+      void refresh().catch(() => {})
+
+      const mine = meRef.current && data.from === meRef.current.key
+      if (mine || String(data.kind) === 'system') return
+
+      if (settingsRef.current.sound_enabled) chime()
+
+      const openIds = new Set(dockRef.current.filter(e => !e.minimized).map(e => e.id))
+      if (openIds.has(conversationId)) return
+      if (window.location.pathname.startsWith('/dashboard/chat')) return
+
+      const conv = convRef.current.find(c => c.id === conversationId)
+      if (conv?.is_muted) return
+
+      toast(
+        `${conv?.title ?? String(data.from_name ?? 'New message')}: ${String(data.preview ?? '')}`.trim(),
+        'info',
+        () => openInDock(conversationId),
+      )
+    }
+
+    const onTyping = (data: Record<string, unknown>) => {
+      const conversationId = Number(data.conversation_id)
+      const name = String(data.name ?? '')
+      if (!conversationId || !name) return
+
+      setTyping(prev => {
+        const others = (prev[conversationId] ?? []).filter(n => n !== name)
+        const next = data.stopped ? others : [...others, name]
+        return { ...prev, [conversationId]: next }
+      })
+
+      // Typing is a lease, not a state: without another event it lapses, so a
+      // closed tab cannot leave "…is typing" on screen.
+      const lease = Number(data.lease_ms ?? 5000)
+      window.setTimeout(() => {
+        setTyping(prev => ({ ...prev, [conversationId]: (prev[conversationId] ?? []).filter(n => n !== name) }))
+      }, lease)
+    }
+
+    const connect = async () => {
+      if (closed) return
+
+      let pass: { url: string | null; ticket: string | null; renew_in_seconds: number }
+      try {
+        pass = await chatApi('/live')
+      } catch {
+        // The hub may simply not be configured; fall back and stop asking.
+        setPushLive(false)
+        return
+      }
+      if (closed || !pass?.url || !pass.ticket) { setPushLive(false); return }
+
+      source = new EventSource(`${pass.url}?ticket=${encodeURIComponent(pass.ticket)}`)
+
+      source.addEventListener('hello', () => {
+        attempt = 0
+        setPushLive(true)
+        setConnected(true)
+        // A connection is also a gap: anything that happened while it was down
+        // is found by one reconcile, which is why nothing has to be replayed.
+        void refresh().catch(() => {})
+      })
+
+      source.addEventListener('message', e => { try { onMessage(JSON.parse((e as MessageEvent).data)) } catch { /* ignore */ } })
+      source.addEventListener('typing', e => { try { onTyping(JSON.parse((e as MessageEvent).data)) } catch { /* ignore */ } })
+
+      source.addEventListener('touch', e => {
+        try {
+          const data = JSON.parse((e as MessageEvent).data)
+          bump(Number(data.conversation_id), { touched: true })
+          void refresh().catch(() => {})
+        } catch { /* ignore */ }
+      })
+
+      source.addEventListener('read', e => {
+        try { bump(Number(JSON.parse((e as MessageEvent).data).conversation_id)) } catch { /* ignore */ }
+        void refresh().catch(() => {})
+      })
+
+      source.addEventListener('conversation', () => { void refresh().catch(() => {}) })
+
+      source.addEventListener('presence', () => { void 0 /* the dot is refreshed with the next read */ })
+
+      // The hub closes the stream when the ticket lapses; renew a little early.
+      if (pass.renew_in_seconds) {
+        renewTimer = setTimeout(() => {
+          source?.close()
+          void connect()
+        }, pass.renew_in_seconds * 1000)
+      }
+
+      source.onerror = () => {
+        // EventSource retries on its own while the connection is merely dropped;
+        // a CLOSED state means the ticket was rejected and a new one is needed.
+        if (closed || !source || source.readyState !== EventSource.CLOSED) return
+        source.close()
+        setPushLive(false)
+        attempt++
+        retryTimer = setTimeout(() => void connect(), Math.min(2000 * attempt, 30_000))
+      }
+    }
+
+    void connect()
+
+    return () => {
+      closed = true
+      if (renewTimer) clearTimeout(renewTimer)
+      if (retryTimer) clearTimeout(retryTimer)
+      source?.close()
+      setPushLive(false)
+    }
+  }, [ready, refresh, toast, openInDock])
+
+  /* ---- presence, and the reconcile that makes push safe ------------------ */
+
+  useEffect(() => {
+    if (!ready || !pushLive) return
+
+    // One write every 30 seconds while the tab is visible, instead of one per
+    // poll tick. The instant part of presence comes from the hub.
+    const beat = () => {
+      if (document.hidden) return
+      void chatApi('/presence', { method: 'POST', body: {} }).catch(() => {})
+    }
+    beat()
+    const timer = setInterval(beat, 30_000)
+
+    // Coming back to the tab is the one moment worth re-checking unconditionally:
+    // a laptop that slept missed its events, and this costs a single request.
+    const onFocus = () => { if (!document.hidden) void refresh().catch(() => {}) }
+    document.addEventListener('visibilitychange', onFocus)
+    window.addEventListener('focus', onFocus)
+
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [ready, pushLive, refresh])
+
+  /* ---- the poll loop: fallback and safety net ---------------------------- */
 
   useEffect(() => {
     if (!ready) return
@@ -342,6 +558,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     let failures = 0
 
     const interval = () => {
+      // While the push channel is up this is only a safety net: one request a
+      // minute with a thread open and focused, five minutes otherwise. It exists
+      // so that a lost event costs a delay rather than a missing message.
+      if (pushLive) {
+        return activeCount.current > 0 && document.hasFocus() && !document.hidden ? 60_000 : 300_000
+      }
+
       const base = document.hidden
         ? config.poll.background
         // "Active" means a thread is actually on screen and being used.
@@ -434,13 +657,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', rearm)
       window.removeEventListener('focus', rearm)
     }
-  }, [ready, config.poll, refresh, toast, openInDock])
+  }, [ready, pushLive, config.poll, refresh, toast, openInDock])
 
   const byId = useMemo(() => new Map(conversations.map(c => [c.id, c])), [conversations])
 
   const value: ChatStore = {
     ready, me, config, settings, conversations, byId, totalUnread, typing, moved,
-    live, connected, error, retry,
+    live, connected, pushLive, error, retry,
     refresh, applyConversations, claimActive, setTyping: declareTyping,
     dock, openInDock, minimizeInDock, expandInDock, closeInDock,
     toast, toasts, dismissToast,
