@@ -19,6 +19,43 @@ const ALLOWED_ROLES: UserRole[] = [
   'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
 ]
 
+/**
+ * The cancellation-approval trail, on every charted row.
+ *
+ * A file whose cancellation is still sitting with accounts is the worst kind of
+ * row on this chart: it looks like ordinary work, so drivers keep being
+ * allocated against it, while somebody has already asked for it to be called
+ * off. The chart cannot say that unless it carries who asked, when, and why —
+ * so both queries select the same trail through this one shape.
+ */
+const CANCELLATION_SELECT = {
+  cancelRequestedAt:    true,
+  cancelledByName:      true,
+  cancellationReason:   true,
+  cancellationFeeTotal: true,
+  cancelPrevStatus:     true,
+  currency:             true,
+} as const
+
+/** Flattens that trail into the plain fields the chart rows carry. */
+function cancellationFields(b: {
+  cancelRequestedAt:    Date | null
+  cancelledByName:      string | null
+  cancellationReason:   string | null
+  cancellationFeeTotal: unknown
+  cancelPrevStatus:     string | null
+  currency:             string | null
+}) {
+  return {
+    cancelRequestedAt: b.cancelRequestedAt ? b.cancelRequestedAt.toISOString() : null,
+    cancelRequestedBy: b.cancelledByName ?? null,
+    cancelReason:      b.cancellationReason ?? null,
+    cancelFeeTotal:    b.cancellationFeeTotal != null ? Number(b.cancellationFeeTotal) : null,
+    cancelHeldAt:      b.cancelPrevStatus ?? null,
+    currency:          b.currency ?? null,
+  }
+}
+
 // Merges optional search + country conditions into a single booking WHERE clause
 function buildBookingWhere(
   search: string | null,
@@ -78,6 +115,7 @@ async function hotelOnlyRows(
         select: {
           bookingRef: true, isNumber: true, agentBookingId: true,
           paxAdults: true, paxChildren: true, agent: true, status: true,
+          ...CANCELLATION_SELECT,
         },
       },
     },
@@ -139,6 +177,7 @@ async function hotelOnlyRows(
       operationCountry: null,
       agent:          s.booking.agent ?? null,
       bookingStatus:  s.booking.status,
+      ...cancellationFields(s.booking),
     }
   })
 }
@@ -218,6 +257,7 @@ export async function GET(req: NextRequest) {
               status:         true,
               // Decides which partner columns the chart shows for this row.
               operationCountry: true,
+              ...CANCELLATION_SELECT,
             },
           },
         },
@@ -299,6 +339,7 @@ export async function GET(req: NextRequest) {
     operationCountry: item.agenda.booking.operationCountry ?? null,
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
+    ...cancellationFields(item.agenda.booking),
     isHotelOnlyBooking: false,
     checkOut:       null,
     nights:         null,

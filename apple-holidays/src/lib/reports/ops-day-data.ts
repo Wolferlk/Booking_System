@@ -103,6 +103,26 @@ export interface ReconfirmCallInfo {
   completed: boolean
 }
 
+/**
+ * A cancellation request as the board needs to show it: who asked, when, why,
+ * what it costs and how long accounts has been sitting on it.
+ */
+export interface OpsCancellation {
+  /** ISO timestamp the request was raised. */
+  requestedAt: string | null
+  requestedBy: string | null
+  reason: string | null
+  /** Server-computed sum of the fee lines on the request form. */
+  feeTotal: number | null
+  currency: string | null
+  /** Status the file was held at while it waits — where it returns if rejected. */
+  heldAtLabel: string | null
+  /** Whole days the request has been waiting for a decision. */
+  waitingDays: number | null
+  /** ISO timestamp accounts decided, on rows that have been decided. */
+  decidedAt: string | null
+}
+
 export interface OpsDayRow {
   bookingRef: string
   agent: string | null
@@ -145,6 +165,20 @@ export interface OpsDayRow {
    * nothing left to get ready.
    */
   cancelled: boolean
+  /**
+   * A cancellation has been *requested* on this file and the accounts team has
+   * not decided yet. Deliberately not the same thing as `cancelled`: the guest
+   * is still coming until accounts says otherwise, so the row stays in every
+   * count and every chase. It is flagged so the board can say out loud that the
+   * work it is asking for may be about to be called off — the desk would
+   * otherwise allocate drivers and issue tickets against a dying file.
+   */
+  cancelPending: boolean
+  /**
+   * The cancellation request behind `cancelPending` (and behind a `cancelled`
+   * row that went through the approval queue). Null when nobody has asked.
+   */
+  cancellation: OpsCancellation | null
   /** Status has reached "Client Confirmed" or beyond. */
   clientConfirmed: boolean
   /** Null when no reconfirmation call has been logged for this booking. */
@@ -208,6 +242,15 @@ export interface OpsDaySummary {
    * other number here, so `onGround` still means "guests we are running".
    */
   cancelled: number
+  /**
+   * Bookings whose cancellation is sitting in the accounts approval queue. These
+   * are *inside* every other number here — they are live files until accounts
+   * decides — and counted separately so the board can flag work that may be
+   * about to be called off.
+   */
+  cancelPending: number
+  /** Total cancellation fee on those requests, in the window's own currencies. */
+  cancelPendingFee: number
   /** How many rows each filter chip would keep — the chip badges read this. */
   facets: Record<ReconfirmFacet, number>
   /** WhatsApp approval split, including the rows we cannot speak for. */
@@ -292,6 +335,43 @@ function countStates(
     else out.na += 1
   }
   return out
+}
+
+/**
+ * The cancellation trail on a booking, or null when nobody has asked for one.
+ *
+ * Read from the booking itself rather than the status event log: the request
+ * form's own fields (reason, fee lines, who asked) are what the accounts team
+ * decides on, and they are the only things worth putting in front of ops.
+ */
+function buildCancellation(
+  b: {
+    status: BookingStatus
+    currency: string | null
+    cancelPrevStatus: BookingStatus | null
+    cancelRequestedAt: Date | null
+    cancelledByName: string | null
+    cancellationReason: string | null
+    cancellationFeeTotal: Prisma.Decimal | null
+    cancelDecidedAt: Date | null
+  },
+  today: string,
+): OpsCancellation | null {
+  const requested = b.cancelRequestedAt
+  // A file cancelled outright, without ever passing through the queue, carries
+  // no request to describe — the status alone already says everything.
+  if (!requested && !b.cancellationReason && b.status !== 'PENDING_CANCELLATION') return null
+
+  return {
+    requestedAt: requested ? requested.toISOString() : null,
+    requestedBy: b.cancelledByName,
+    reason: b.cancellationReason,
+    feeTotal: b.cancellationFeeTotal != null ? Number(b.cancellationFeeTotal) : null,
+    currency: b.currency,
+    heldAtLabel: b.cancelPrevStatus ? STATUS_LABELS[b.cancelPrevStatus] ?? String(b.cancelPrevStatus) : null,
+    waitingDays: requested ? Math.max(0, daysBetween(isoDate(requested), today)) : null,
+    decidedAt: b.cancelDecidedAt ? b.cancelDecidedAt.toISOString() : null,
+  }
 }
 
 // ─── Pre-tour calls ───────────────────────────────────────────────────────────
@@ -529,6 +609,11 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       operationCountry: true, arrivalDate: true, departureDate: true,
       paxAdults: true, paxChildren: true, paxInfants: true,
       tourDestination: true, qcPassedAt: true, hotelOnly: true,
+      // The cancellation-approval trail. Read on every row, not just the pending
+      // ones, so a file cancelled during the window still explains itself.
+      currency: true, cancelPrevStatus: true, cancelRequestedAt: true,
+      cancelledByName: true, cancellationReason: true,
+      cancellationFeeTotal: true, cancelDecidedAt: true,
       passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
       tourAgenda: {
         select: {
@@ -635,6 +720,8 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       qc: readiness.qc,
       hotelOnly: b.hotelOnly,
       cancelled,
+      cancelPending: b.status === 'PENDING_CANCELLATION',
+      cancellation: buildCancellation(b, today),
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCall,
       call: callState.get(b.bookingRef) ?? NO_CALL,
@@ -696,6 +783,13 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     },
     hotelOnly: liveRows.filter(r => r.hotelOnly).length,
     cancelled: rows.length - liveRows.length,
+    // Counted over the live rows, because that is what a pending cancellation
+    // is: a file still being run, with a request against it that accounts has
+    // not answered. Once approved it becomes a cancellation and moves above.
+    cancelPending: liveRows.filter(r => r.cancelPending).length,
+    cancelPendingFee: liveRows
+      .filter(r => r.cancelPending)
+      .reduce((s, r) => s + (r.cancellation?.feeTotal ?? 0), 0),
     facets: countFacets(liveRows),
     callApproval: liveRows.reduce((acc, r) => {
       acc[r.call.approval] += 1
