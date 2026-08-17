@@ -36,18 +36,27 @@ export function ChatThread({
   onManageMembers?: () => void
   onPopOut?: () => void
 }) {
-  const { me, byId, config, typing, moved, refresh, applyConversations, claimActive, toast } = useChat()
+  const { me, byId, config, typing, live, connected, refresh, applyConversations, claimActive, toast } = useChat()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [exhausted, setExhausted] = useState(false)
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
   const [card, setCard] = useState<CardTarget | null>(null)
   const [lightbox, setLightbox] = useState<ChatAttachment | null>(null)
+  /** Set when the first page could not be read — never show an empty stream instead. */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  /** Bumped to force the first page to be read again. */
+  const [reloadKey, setReloadKey] = useState(0)
+  /** True once the first page has landed; the tail read waits for it. */
+  const [booted, setBooted] = useState(false)
+  /** Bumped after every successful tail read, so a page-sized backlog drains. */
+  const [tailNudge, setTailNudge] = useState(0)
 
   const streamRef = useRef<HTMLDivElement | null>(null)
   const lastIdRef = useRef(0)
   const oldestIdRef = useRef<number | null>(null)
   const readSentRef = useRef(0)
+  const tailBusyRef = useRef(false)
 
   const conversation = conversationId ? byId.get(conversationId) ?? null : null
 
@@ -83,10 +92,10 @@ export function ChatThread({
   /* ---- open -------------------------------------------------------------- */
 
   useEffect(() => {
-    if (!conversationId) { setMessages([]); return }
+    if (!conversationId) { setMessages([]); setBooted(false); setLoadError(null); return }
 
     let cancelled = false
-    setMessages([]); setExhausted(false); setReplyTo(null)
+    setMessages([]); setExhausted(false); setReplyTo(null); setLoadError(null); setBooted(false)
     readSentRef.current = 0
     setLoading(true)
 
@@ -95,41 +104,62 @@ export function ChatThread({
         if (cancelled) return
         setMessages(d.messages ?? [])
         if ((d.messages ?? []).length < config.page_size) setExhausted(true)
+        setBooted(true)
         requestAnimationFrame(() => scrollToBottom(true))
       })
-      .catch(err => { if (!cancelled) toast(err.message, 'bad') })
+      .catch(err => {
+        if (cancelled) return
+        // An empty stream saying "No messages yet — say hello" is a lie when the
+        // read failed, and it is precisely what made a broken read look like
+        // missing messages. Keep the failure on screen with a way out.
+        setLoadError(err?.message || 'These messages could not be loaded.')
+      })
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [conversationId, config.page_size, scrollToBottom, toast])
+  }, [conversationId, config.page_size, scrollToBottom, reloadKey])
 
   // Mark read once the first page has landed.
   useEffect(() => { if (messages.length) markRead() }, [messages.length, markRead])
 
   /* ---- the tail read ----------------------------------------------------- */
 
-  useEffect(() => {
-    if (!conversationId || !moved.ids.includes(conversationId)) return
+  /**
+   * Reconcile against the id the last pulse reported, rather than reacting to a
+   * single "it moved" event.
+   *
+   * The event form dropped messages for good: if the fetch failed, or fired
+   * while the first page was still in flight (whose result then replaced the
+   * appended rows), nothing ever asked again — the message stayed invisible
+   * until the conversation was reopened. Comparing the server's newest id with
+   * the newest id on screen makes every following pulse a fresh chance to catch
+   * up, so a failure costs a second and a half, not the message.
+   */
+  const serverLastId = conversationId ? (live[conversationId]?.last_id ?? 0) : 0
 
+  useEffect(() => {
+    if (!conversationId || !booted) return
+    if (!serverLastId || serverLastId <= lastIdRef.current) return
+    if (tailBusyRef.current) return
+
+    tailBusyRef.current = true
     const wasAtBottom = nearBottom()
-    chatApi<{ messages: ChatMessage[] }>(`/conversations/${conversationId}/messages?after=${lastIdRef.current}`)
+    const from = lastIdRef.current
+
+    chatApi<{ messages: ChatMessage[] }>(`/conversations/${conversationId}/messages?after=${from}`)
       .then(d => {
         const fresh = d.messages ?? []
         if (!fresh.length) return
-        setMessages(prev => {
-          const next = [...prev]
-          fresh.forEach(m => {
-            // Replace the optimistic bubble by its client_uuid rather than
-            // appending a second copy of the user's own message.
-            const at = next.findIndex(x => (m.client_uuid && x.client_uuid === m.client_uuid) || (x.id && x.id === m.id))
-            if (at > -1) next[at] = m; else next.push(m)
-          })
-          return next.sort((a, b) => (a.id ?? 1e15) - (b.id ?? 1e15))
-        })
+        setMessages(prev => mergeMessages(prev, fresh))
+        // More may be waiting than one page holds — ask again now that the
+        // cursor has moved.
+        setTailNudge(n => n + 1)
         if (wasAtBottom) requestAnimationFrame(() => { scrollToBottom(); markRead() })
       })
+      // Deliberately quiet: the next pulse sees the same gap and retries.
       .catch(() => {})
-  }, [moved, conversationId, scrollToBottom, markRead])
+      .finally(() => { tailBusyRef.current = false })
+  }, [serverLastId, tailNudge, booted, conversationId, scrollToBottom, markRead])
 
   /* ---- infinite scroll upwards ------------------------------------------- */
 
