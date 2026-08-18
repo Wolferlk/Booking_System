@@ -2022,3 +2022,71 @@ model BookingLastMinuteAck {
   @@index([acknowledgedAt])
   @@map("booking_last_minute_acks")
 }
+
+/// One end-of-trip Customer Experience Report: the agent mail, the evidence it
+/// was built from, and — when the trip went badly — the hold that stopped it
+/// reaching the agent. See `src/lib/te/experience-report/`.
+///
+/// Deliberately has no relation to `Booking`: the booking is referenced by its
+/// `bookingRef` string (the same way the tbl_te_* tables do) so this table can
+/// be created on the live database without adding a foreign key to `bookings`.
+model TeExperienceReport {
+  id            String @id @default(cuid())
+  bookingRef    String
+
+  /// draft → (held | queued) → sent | failed | cancelled
+  status        String @default("draft") @db.VarChar(16)
+  /// 'auto' (post-departure sweep) or 'manual' (someone pressed the button).
+  triggerSource String @default("manual") @db.VarChar(16)
+
+  /// The bad-experience gate. `riskSignals` is a JSON array of what tripped it.
+  riskLevel     String @default("none") @db.VarChar(16)
+  riskScore     Int    @default(0)
+  riskSignals   Json?
+  holdReason    String? @db.Text
+
+  /// Trip facts copied at build time, so history reads right even after the
+  /// booking is amended.
+  clientName    String?   @db.VarChar(255)
+  agentName     String?   @db.VarChar(255)
+  arrivalDate   DateTime? @db.Date
+  departureDate DateTime? @db.Date
+
+  /// Which feedback channels fed this report: calls / form / manual.
+  sources       Json?
+  /// Full evidence snapshot — itinerary, per-call feedback, transcripts, guest
+  /// form. Transcripts live here and ONLY here; they are kept out of `bodyHtml`
+  /// on purpose and are read back by the on-screen viewer.
+  dossier       Json?
+  narrative     Json?
+
+  /// Exactly what was (or would be) mailed to the agent.
+  subject       String? @db.VarChar(512)
+  bodyHtml      String? @db.MediumText
+  toEmail       String? @db.VarChar(255)
+  ccEmails      String? @db.Text
+  sentAt        DateTime?
+  sentBy        String?   @db.VarChar(255)
+
+  /// The hold escalation that goes to the escalation inbox instead of the agent.
+  escalationTo   String?   @db.VarChar(255)
+  escalationHtml String?   @db.MediumText
+  escalatedAt    DateTime?
+
+  releasedAt     DateTime?
+  releasedBy     String?   @db.VarChar(255)
+  resolutionNote String?   @db.Text
+  lastError      String?   @db.Text
+
+  /// Append-only audit trail: [{ at, actor, action, detail }]
+  events         Json?
+
+  createdBy      String?  @db.VarChar(255)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([bookingRef])
+  @@index([status, createdAt])
+  @@index([sentAt])
+  @@map("te_experience_reports")
+}

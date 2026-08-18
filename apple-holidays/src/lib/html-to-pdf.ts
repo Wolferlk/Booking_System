@@ -84,7 +84,7 @@ async function findSystemChromium(): Promise<string | null> {
   return null
 }
 
-async function launchBrowser() {
+export async function launchBrowser() {
   // 1. Explicit Chrome path via env var (admin override — takes priority everywhere)
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     const { default: puppeteerCore } = await import('puppeteer-core')

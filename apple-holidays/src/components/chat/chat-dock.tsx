@@ -51,8 +51,9 @@ export function ChatDock() {
 
   return (
     <>
-      {/* toasts */}
-      <div className="pointer-events-none fixed bottom-24 right-5 z-[105] flex flex-col items-end gap-2">
+      {/* Toasts clear the whole launcher lane (see ops-ai.tsx): the dock sits in
+          slot 0, OPS_AI in slot 1, the WhatsApp mini chat in slot 2. */}
+      <div className="pointer-events-none fixed bottom-[232px] right-5 z-[105] flex flex-col items-end gap-2">
         <AnimatePresence>
           {toasts.map(t => (
             <motion.button
@@ -73,6 +74,7 @@ export function ChatDock() {
         </AnimatePresence>
       </div>
 
+      {/* Slot 0 of the launcher lane — the corner itself. */}
       <div className="pointer-events-none fixed bottom-5 right-5 z-[100] flex items-end gap-3">
         {/* ---- open boxes and minimized bubbles ---- */}
         <AnimatePresence mode="popLayout">

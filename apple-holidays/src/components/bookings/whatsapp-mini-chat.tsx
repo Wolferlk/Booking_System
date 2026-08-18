@@ -179,15 +179,16 @@ export default function WhatsAppMiniChat({ bookingRef, booking }: Props) {
     </button>
   )
 
-  // Parked one FAB-width to the left: the bottom-right corner belongs to the
-  // OPS_AI launcher, which used to sit directly on top of this button.
+  // Slot 2 of the shared bottom-right launcher lane (see ops-ai.tsx): same
+  // right edge as the chat dock and OPS_AI, stacked above both. The panel
+  // opens upwards from the button, so it is capped to the space left above it.
   return (
-    <div className="fixed bottom-6 right-[88px] z-50 flex flex-col items-end gap-2">
+    <div className="fixed bottom-[156px] right-5 z-[102] flex flex-col items-end gap-3">
 
       {/* ── Full chat panel ─────────────────────────────────────────── */}
       {panel === 'open' && (
         <div className="w-[340px] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden"
-             style={{ height: 520 }}>
+             style={{ height: 'min(520px, calc(100vh - 240px))' }}>
 
           {/* Header */}
           <div className="flex items-center gap-2.5 px-4 py-3 bg-green-600 text-white flex-shrink-0">
