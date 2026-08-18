@@ -27,6 +27,7 @@ import {
   FEEDBACK_RATING_FIELDS, FEEDBACK_RATING_LABELS, worstRating,
   type FeedbackFormCell,
 } from '@/lib/daily-update-feedback'
+import { CALL_APPROVAL_LABEL, type CallApprovalCell } from '@/lib/daily-update-approval'
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -166,6 +167,21 @@ function feedbackCellHtml(cell: FeedbackFormCell): string {
     ${f.remarks ? `<div class="call-sum">${esc(f.remarks)}</div>` : ''}`
 }
 
+/**
+ * Whether the AI bot may call this guest, printed.
+ *
+ * Only two of the three states need ink: approved is reassurance, and *not
+ * sent* is a job — a printed sheet is where the desk spots the numbers nobody
+ * ever asked.
+ */
+function approvalCellHtml(cell: CallApprovalCell): string {
+  const stamp = cell.state === 'approved' ? cell.approvedAt : cell.requestedAt
+  const tone = cell.state === 'approved' ? 'appr-ok' : cell.state === 'sent' ? 'appr-wait' : 'appr-no'
+  return `
+    <div><span class="appr ${tone}">${esc(CALL_APPROVAL_LABEL[cell.state])}</span></div>
+    ${stamp ? `<div class="call-at">${esc(fmtStamp(stamp))}</div>` : ''}`
+}
+
 function rowHtml(r: DailyUpdateRow, index: number): string {
   const badges = [
     r.cancelled   ? '<span class="tag t-cancel">Cancelled</span>' : '',
@@ -199,6 +215,7 @@ function rowHtml(r: DailyUpdateRow, index: number): string {
     <td class="c-contact">${contactBlock(r.guestPhone, r.guestWhatsapp, r.guestEmail)}</td>
     <td><div class="name">${or(r.agent)}</div></td>
     <td class="c-contact">${contactBlock(r.agentPhone, r.agentWhatsapp, r.agentEmail)}</td>
+    <td class="c-appr">${approvalCellHtml(r.callApproval)}</td>
     ${CALL_KINDS.map(kind => `<td class="c-call">${callCellHtml(r.calls[kind])}</td>`).join('')}
     <td class="c-call c-ff">${feedbackCellHtml(r.feedbackForm)}</td>
     <td class="c-audit">
@@ -219,6 +236,7 @@ const HEAD_ROW: string = `
     <th>Guest contact</th>
     <th>Agent</th>
     <th>Agent contact</th>
+    <th class="c-appr">Call approval</th>
     ${CALL_KINDS.map(kind => `<th class="c-call">${CALL_LABELS[kind]}</th>`).join('')}
     <th class="c-call c-ff">Feedback Form</th>
     <th>Created / Updated</th>
@@ -426,6 +444,15 @@ export function buildDailyUpdateHtml(
   .ff-average   { background: #fef3c7; color: #b45309; }
   .ff-poor      { background: #ffe4e6; color: #be123c; }
   .ff-wait      { font-size: 7px; font-weight: 700; color: #b45309; }
+
+  .c-appr { width: 74px; }
+  .appr {
+    display: inline-block; border-radius: 3px; padding: 0 3px;
+    font-size: 6.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .appr-ok   { background: #dcfce7; color: #15803d; }
+  .appr-wait { background: #fef3c7; color: #b45309; }
+  .appr-no   { background: #f1f5f9; color: #64748b; }
 
   /* ── Section bands ────────────────────────────────────────────────────── */
   tr.band td {

@@ -15,6 +15,14 @@ import {
   FEEDBACK_RATING_FIELDS, emptyFeedbackForm, type FeedbackFormCell,
 } from '@/lib/daily-update-feedback'
 import { TAG_FEEDBACK_REQUEST } from '@/lib/customer-whatsapp-automation'
+import { emptyCallApproval, type CallApprovalCell } from '@/lib/daily-update-approval'
+import {
+  getApprovalLedger, resolveApprovalState, type ApprovalEntry,
+} from '@/lib/te/call-approvals'
+import { normalizePhone } from '@/lib/te/te-api'
+
+/** Call-schedule statuses that mean the bot really spoke to the guest. */
+const CONNECTED_STATUSES = new Set(['answered', 'done', 'completed'])
 
 /** First non-empty of several optional text columns, trimmed and capped. */
 function firstText(...candidates: (string | null | undefined)[]): string {
@@ -224,6 +232,87 @@ export async function fetchFeedbackFormsForBookings(
     const id = idByRef.get(s.bookingRef)
     if (!id || !out[id] || out[id].sentAt) continue
     out[id].sentAt = s.createdAt.toISOString()
+  }
+
+  return out
+}
+
+/**
+ * The WhatsApp call-approval state for a page of bookings.
+ *
+ * Three reads for the whole page, same reason as the calls above. All of them
+ * are plain reads of things that already exist — the approval ledger the TE
+ * dashboard writes, the AI service registry, and the bot's own call schedule.
+ * Nothing here writes, and no schema changed to add the column.
+ *
+ * The number the state belongs to is the one the bot would dial: the registered
+ * service number if the booking has one, otherwise the guest's WhatsApp or
+ * phone from the booking itself — which is exactly what the send button in the
+ * sheet would use.
+ */
+export async function fetchCallApprovalsForBookings(
+  bookings: { id: string; bookingRef: string; guestWhatsapp?: string | null; guestPhone?: string | null }[],
+): Promise<Record<string, CallApprovalCell>> {
+  const out: Record<string, CallApprovalCell> = {}
+  for (const b of bookings) out[b.id] = emptyCallApproval()
+  if (bookings.length === 0) return out
+
+  const refs = bookings.map(b => b.bookingRef)
+
+  const [ledger, services, schedules] = await Promise.all([
+    getApprovalLedger().catch(() => ({} as Record<string, ApprovalEntry>)),
+    prisma.tbl_te_service
+      .findMany({
+        where: { booking_ref: { in: refs } },
+        select: { booking_ref: true, call_phone: true, customer_phone: true },
+      })
+      .catch(() => []),
+    prisma.tbl_te_call_schedule
+      .findMany({
+        where: { booking_ref: { in: refs } },
+        select: { booking_ref: true, status: true, conversation_id: true },
+      })
+      .catch(() => []),
+  ])
+
+  // Index the ledger both ways. Phone is the real key, but an entry written
+  // against a booking whose number has since changed still proves the request
+  // went out, so the ref is kept as a fallback rather than thrown away.
+  const byPhone = new Map<string, ApprovalEntry>()
+  const byRef = new Map<string, ApprovalEntry>()
+  for (const [key, entry] of Object.entries(ledger)) {
+    byPhone.set(key, entry)
+    const ref = entry.bookingRef?.toUpperCase()
+    if (ref && !byRef.has(ref)) byRef.set(ref, entry)
+  }
+
+  const serviceByRef = new Map(services.map(s => [s.booking_ref, s]))
+
+  // A call that actually connected proves approval: the bot cannot place a
+  // WhatsApp call at all until the guest has accepted.
+  const connectedRefs = new Set<string>()
+  for (const s of schedules) {
+    if (CONNECTED_STATUSES.has((s.status ?? '').toLowerCase()) || s.conversation_id) {
+      connectedRefs.add(s.booking_ref)
+    }
+  }
+
+  for (const b of bookings) {
+    const ref = b.bookingRef
+    const service = serviceByRef.get(ref)
+    const phone = normalizePhone(
+      service?.call_phone ?? service?.customer_phone ?? b.guestWhatsapp ?? b.guestPhone,
+    ) || null
+    const entry = (phone ? byPhone.get(phone) : undefined) ?? byRef.get(ref.toUpperCase())
+    const resolved = resolveApprovalState(entry, connectedRefs.has(ref))
+
+    out[b.id] = {
+      // The ledger's `pending` is what the sheet calls "sent, not approved yet".
+      state:       resolved === 'approved' ? 'approved' : resolved === 'pending' ? 'sent' : 'not_sent',
+      phone,
+      requestedAt: entry?.requestedAt ?? null,
+      approvedAt:  entry?.approvedAt ?? null,
+    }
   }
 
   return out

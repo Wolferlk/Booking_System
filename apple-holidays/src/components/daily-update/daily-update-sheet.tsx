@@ -19,6 +19,7 @@ import {
   ChevronDown, SlidersHorizontal, Globe, Clock, ArrowUpDown, Ban, ExternalLink,
   PhoneCall, Bot, Plus, Trash2, X as XIcon,
   ClipboardCheck, Send, Store, Briefcase, Layers,
+  ShieldCheck, ShieldQuestion, ShieldAlert, CheckCircle2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -34,6 +35,9 @@ import {
   FEEDBACK_PURPOSE_LABELS, FEEDBACK_RATING_EMOJI, FEEDBACK_RATING_FIELDS,
   FEEDBACK_RATING_LABELS, worstRating, type FeedbackFormCell,
 } from '@/lib/daily-update-feedback'
+import {
+  CALL_APPROVAL_HINT, CALL_APPROVAL_LABEL, type CallApprovalCell,
+} from '@/lib/daily-update-approval'
 import type { BookingStatus } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -72,6 +76,7 @@ type Row = {
   source: 'B2B' | 'B2C'
   calls: BookingCalls
   feedbackForm: FeedbackFormCell
+  callApproval: CallApprovalCell
 }
 
 type Stats = {
@@ -924,6 +929,295 @@ function FfBadge({ value, large }: { value: string; large?: boolean }) {
   )
 }
 
+// ─── WhatsApp call approval ───────────────────────────────────────────────────
+
+const APPROVAL_TONE: Record<CallApprovalCell['state'], string> = {
+  approved: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  sent:     'border-amber-300 bg-amber-50/70 text-amber-700',
+  not_sent: 'border-dashed border-slate-300 bg-slate-50 text-slate-500',
+}
+
+const APPROVAL_ICON: Record<CallApprovalCell['state'], typeof ShieldCheck> = {
+  approved: ShieldCheck,
+  sent:     ShieldQuestion,
+  not_sent: ShieldAlert,
+}
+
+/**
+ * "May the bot call this guest?", per booking.
+ *
+ * The AI voice bot cannot dial anyone who has not tapped **Allow** on a
+ * WhatsApp approval message, and until now that was only visible one file at a
+ * time on the booking's TE panel. The chip answers it at a glance for the whole
+ * sheet, and the modal behind it offers the one action that follows: send the
+ * approval message — with a live re-check of the real upstream permission,
+ * since the sheet's own state comes from the ledger rather than from Meta.
+ */
+function CallApprovalCellView({
+  cell, bookingRef, guestName, canEdit, onSent,
+}: {
+  cell: CallApprovalCell
+  bookingRef: string
+  guestName: string | null
+  canEdit: boolean
+  onSent: (at: string, approved: boolean) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const Icon = APPROVAL_ICON[cell.state]
+  const stamp = cell.state === 'approved' ? cell.approvedAt : cell.requestedAt
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={CALL_APPROVAL_HINT[cell.state]}
+        className="w-full rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-slate-100"
+      >
+        <span className={cn(
+          'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-semibold',
+          APPROVAL_TONE[cell.state],
+        )}>
+          <Icon className="w-3 h-3" />
+          {cell.state === 'not_sent' && canEdit ? 'Not sent — send' : CALL_APPROVAL_LABEL[cell.state]}
+        </span>
+        {stamp && (
+          <span className="mt-0.5 block text-[10px] text-slate-400">{callStamp(stamp)}</span>
+        )}
+      </button>
+
+      {open && (
+        <CallApprovalModal
+          cell={cell}
+          bookingRef={bookingRef}
+          guestName={guestName}
+          canEdit={canEdit}
+          onClose={() => setOpen(false)}
+          onSent={onSent}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * The approval panel for one booking.
+ *
+ * Two things happen here that the cell cannot do on its own. The live
+ * permission lookup (`GET approval?to=…`) answers "have they actually allowed
+ * it?" straight from upstream — the ledger only knows what ops sent, so a guest
+ * who tapped Allow without the dashboard ever hearing about it shows as
+ * *Not approved yet* on the sheet until this check corrects it. And the send is
+ * a two-step confirm, for the same reason the feedback form's is: this messages
+ * a real guest from a dense sheet of otherwise read-only cells.
+ */
+function CallApprovalModal({
+  cell, bookingRef, guestName, canEdit, onClose, onSent,
+}: {
+  cell: CallApprovalCell
+  bookingRef: string
+  guestName: string | null
+  canEdit: boolean
+  onClose: () => void
+  onSent: (at: string, approved: boolean) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [state, setState] = useState(cell.state)
+  const [requestedAt, setRequestedAt] = useState(cell.requestedAt)
+  const [live, setLive] = useState<{ allowed: boolean | null; message?: string } | null>(null)
+  const [liveLoading, setLiveLoading] = useState(false)
+
+  const phone = cell.phone ?? ''
+
+  // Live check on open — one number, one request, so it costs the sheet nothing.
+  const checkLive = useCallback(async () => {
+    if (!phone) return
+    setLiveLoading(true)
+    try {
+      const url = new URL('/api/te/proxy', location.origin)
+      url.searchParams.set('path', 'approval')
+      url.searchParams.set('to', phone)
+      const json = await fetch(url.toString()).then(r => r.json())
+      const allowed = typeof json?.allowed === 'boolean' ? json.allowed : null
+      setLive({ allowed, message: json?.message })
+      if (allowed === true) setState('approved')
+    } catch {
+      setLive(null)
+    } finally {
+      setLiveLoading(false)
+    }
+  }, [phone])
+
+  useEffect(() => { void checkLive() }, [checkLive])
+
+  const send = useCallback(async () => {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/te/approval', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: phone, name: guestName || 'Valued Customer', bookingRef }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json?.success === false) throw new Error(json?.error ?? 'Could not send the approval message')
+      const data = (json.data ?? json) as { already_allowed?: boolean; message?: string }
+      const at = new Date().toISOString()
+      const approved = !!data.already_allowed
+      setRequestedAt(at)
+      setState(approved ? 'approved' : 'sent')
+      onSent(at, approved)
+      setConfirming(false)
+      toast.success(approved
+        ? 'This guest already allows WhatsApp calls ✓'
+        : `Approval message sent to ${guestName ?? bookingRef}`)
+      void checkLive()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the approval message')
+    } finally {
+      setBusy(false)
+    }
+  }, [phone, guestName, bookingRef, onSent, checkLive])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-3.5">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <ShieldCheck className="w-4 h-4 text-slate-400" />
+              WhatsApp call approval
+            </h3>
+            <p className="mt-0.5 truncate text-xs text-slate-500">
+              <span className="font-mono font-semibold">{bookingRef}</span>
+              {guestName ? ` · ${guestName}` : ''}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              The AI call bot may only dial a guest who has tapped Allow on this message.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3 px-5 py-4">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Number</p>
+              <p className="mt-0.5 font-mono text-xs font-semibold text-slate-700">
+                {phone || 'No number on this booking'}
+              </p>
+            </div>
+            <span className={cn(
+              'inline-flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-bold',
+              APPROVAL_TONE[state],
+            )}>
+              {CALL_APPROVAL_LABEL[state]}
+            </span>
+          </div>
+
+          <ul className="space-y-1 text-[11px] text-slate-500">
+            <li>
+              Approval message sent:{' '}
+              <span className="font-semibold text-slate-700">
+                {requestedAt ? formatDateTime(requestedAt) : 'never'}
+              </span>
+            </li>
+            <li>
+              Guest accepted:{' '}
+              <span className="font-semibold text-slate-700">
+                {cell.approvedAt ? formatDateTime(cell.approvedAt)
+                  : state === 'approved' ? 'yes' : 'not yet'}
+              </span>
+            </li>
+          </ul>
+
+          <div className="rounded-xl border border-slate-100 px-3 py-2 text-[11px]">
+            {liveLoading ? (
+              <span className="inline-flex items-center gap-1.5 text-slate-500">
+                <Loader2 className="w-3 h-3 animate-spin" /> Checking the live permission…
+              </span>
+            ) : live?.allowed === true ? (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Live check: the guest allows WhatsApp calls
+              </span>
+            ) : live?.allowed === false ? (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-amber-700">
+                <ShieldQuestion className="w-3.5 h-3.5" /> Live check: not approved yet
+                {live.message ? <span className="font-normal text-slate-400">— {live.message}</span> : null}
+              </span>
+            ) : (
+              <span className="text-slate-400">
+                Live permission unknown{phone ? '' : ' — no number to check'}.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">
+            {confirming ? (
+              <>
+                <span className="mr-auto text-[11px] font-semibold text-slate-600">
+                  Send the approval message to {phone}?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={send}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  Yes, send it
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void checkLive()}
+                  disabled={!phone || liveLoading}
+                  className="mr-auto inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-white disabled:opacity-50"
+                >
+                  <RefreshCw className={cn('w-3.5 h-3.5', liveLoading && 'animate-spin')} /> Re-check
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirming(true)}
+                  disabled={!phone || state === 'approved'}
+                  title={state === 'approved' ? 'This guest already allows calls' : undefined}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-40"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  {state === 'not_sent' ? 'Send approval message' : 'Send again'}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /**
  * The digital Guest Feedback Form, per booking.
  *
@@ -1634,7 +1928,7 @@ export default function DailyUpdateSheet() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1680px] border-collapse text-sm">
+            <table className="w-full min-w-[1820px] border-collapse text-sm">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-900 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-300">
                   <th className="px-3 py-2.5 w-10">#</th>
@@ -1654,6 +1948,12 @@ export default function DailyUpdateSheet() {
                   <th className="px-3 py-2.5">Guest contact</th>
                   <th className="px-3 py-2.5">Agent</th>
                   <th className="px-3 py-2.5">Agent contact</th>
+                  <th
+                    className="px-3 py-2.5"
+                    title="WhatsApp permission for the AI bot to call this guest — and the button to ask for it"
+                  >
+                    Call approval
+                  </th>
                   {CALL_KINDS.map(kind => (
                     <th key={kind} className="px-3 py-2.5" title={CALL_HINTS[kind]}>
                       {CALL_LABELS[kind]}
@@ -1705,7 +2005,7 @@ function SheetSection({
   return (
     <tbody className="divide-y divide-slate-100">
       <tr>
-        <td colSpan={14} className="p-0">
+        <td colSpan={15} className="p-0">
           <div className="flex items-center gap-2 bg-gradient-to-r from-slate-700 to-slate-500 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-white">
             <CalendarRange className="w-3 h-3" />
             {title}
@@ -1828,6 +2128,24 @@ function SheetSection({
               party="agent" bookingRef={r.bookingRef} canEdit={canEdit}
               phone={r.agentPhone} whatsapp={r.agentWhatsapp} email={r.agentEmail}
               onSaved={patch => onEdit(r.id, patch as Partial<Row>)}
+            />
+          </td>
+
+          {/* May the bot call them? — and the button to ask */}
+          <td className="px-2 py-2.5 align-top">
+            <CallApprovalCellView
+              cell={r.callApproval}
+              bookingRef={r.bookingRef}
+              guestName={r.guestName}
+              canEdit={canEdit}
+              onSent={(at, approved) => onEdit(r.id, {
+                callApproval: {
+                  ...r.callApproval,
+                  state: approved ? 'approved' : 'sent',
+                  requestedAt: at,
+                  approvedAt: approved ? r.callApproval.approvedAt ?? at : r.callApproval.approvedAt,
+                },
+              })}
             />
           </td>
 

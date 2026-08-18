@@ -18,7 +18,10 @@
 import { prisma } from '@/lib/prisma'
 import { emptyCalls, type BookingCalls } from '@/lib/daily-update-calls'
 import { emptyFeedbackForm, type FeedbackFormCell } from '@/lib/daily-update-feedback'
-import { fetchCallsForBookings, fetchFeedbackFormsForBookings } from '@/lib/daily-update-calls-data'
+import {
+  fetchCallApprovalsForBookings, fetchCallsForBookings, fetchFeedbackFormsForBookings,
+} from '@/lib/daily-update-calls-data'
+import { emptyCallApproval, type CallApprovalCell } from '@/lib/daily-update-approval'
 import { bookingSourceOf, bookingSourceWhere, type BookingSource } from '@/lib/booking-source'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
@@ -106,6 +109,8 @@ export type DailyUpdateRow = {
   calls:            BookingCalls
   /** The digital Guest Feedback Form: the submission, or when it was sent. */
   feedbackForm:     FeedbackFormCell
+  /** WhatsApp permission for the AI bot to call this guest. */
+  callApproval:     CallApprovalCell
 }
 
 export type DailyUpdateQuery = {
@@ -338,9 +343,15 @@ export async function fetchDailyUpdateRows(
 
   // One batched load for the whole page rather than a handful of queries per row.
   const keys = bookings.map(b => ({ id: b.id, bookingRef: b.bookingRef }))
-  const [calls, feedbackForms] = await Promise.all([
+  const [calls, feedbackForms, callApprovals] = await Promise.all([
     fetchCallsForBookings(keys),
     fetchFeedbackFormsForBookings(keys),
+    fetchCallApprovalsForBookings(
+      bookings.map(b => ({
+        id: b.id, bookingRef: b.bookingRef,
+        guestWhatsapp: b.contactWhatsapp, guestPhone: b.contactPhone,
+      })),
+    ),
   ])
 
   const todayStart = startOfDay(now).getTime()
@@ -390,6 +401,7 @@ export async function fetchDailyUpdateRows(
       source:           bookingSourceOf(b.agent),
       calls:            calls[b.id] ?? emptyCalls(),
       feedbackForm:     feedbackForms[b.id] ?? emptyFeedbackForm(),
+      callApproval:     callApprovals[b.id] ?? emptyCallApproval(),
     }
   })
 }

@@ -21,6 +21,7 @@ import {
   FEEDBACK_PURPOSE_LABELS, FEEDBACK_RATING_FIELDS, FEEDBACK_RATING_LABELS,
   feedbackFormSummary,
 } from '@/lib/daily-update-feedback'
+import { callApprovalSummary } from '@/lib/daily-update-approval'
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
@@ -85,6 +86,7 @@ export function buildDailyUpdateWorkbook(
     'Guest Name', 'Guest Contact',
     'Agent', 'Agent Contact',
     'Pax (A/C/I)', 'Total Pax', 'File Handler', 'Country', 'Status', 'Channel',
+    'Call Approval',
     ...CALL_KINDS.map(k => CALL_LABELS[k]),
     'Feedback Form',
     'Booking Created', 'Last Updated',
@@ -129,6 +131,7 @@ export function buildDailyUpdateWorkbook(
     r.operationCountry ?? '',
     r.status,
     r.source,
+    callApprovalSummary(r.callApproval),
     ...CALL_KINDS.map(k => callCell(r.calls[k])),
     feedbackFormSummary(r.feedbackForm),
     fmtDateTime(r.createdAt),
