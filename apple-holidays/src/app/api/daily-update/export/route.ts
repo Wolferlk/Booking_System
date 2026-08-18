@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError } from '@/lib/utils'
 import {
   DAILY_UPDATE_ROLES, parseDailyUpdateQuery, fetchDailyUpdateRows, sortDailyUpdateRows,
+  countCreatedToday,
 } from '@/lib/daily-update'
 import { buildDailyUpdateWorkbook } from '@/lib/daily-update-xlsx'
 import type { UserRole } from '@prisma/client'
@@ -27,8 +28,11 @@ export async function GET(req: NextRequest) {
   const now = new Date()
 
   try {
-    const rows = sortDailyUpdateRows(await fetchDailyUpdateRows(q, scope, 1500, now), q)
-    const buf = buildDailyUpdateWorkbook(rows, q, now)
+    const [rows, bookedToday] = await Promise.all([
+      fetchDailyUpdateRows(q, scope, 1500, now).then(r => sortDailyUpdateRows(r, q)),
+      countCreatedToday(q, scope, now),
+    ])
+    const buf = buildDailyUpdateWorkbook(rows, q, now, bookedToday)
     const stamp = now.toISOString().slice(0, 10)
 
     return new NextResponse(new Uint8Array(buf), {

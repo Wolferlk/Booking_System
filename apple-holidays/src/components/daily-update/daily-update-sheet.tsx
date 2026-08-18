@@ -17,6 +17,7 @@ import {
   FileSpreadsheet, FileText, RefreshCw, Loader2, Sparkles,
   Plane, PlaneLanding, Building2, Phone, Mail, MessageCircle, Pencil,
   ChevronDown, SlidersHorizontal, Globe, Clock, ArrowUpDown, Ban, ExternalLink,
+  PhoneCall, Bot, Plus, Trash2, X as XIcon,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -24,6 +25,10 @@ import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { useCountryFilter } from '@/hooks/use-country-filter'
+import {
+  CALL_KINDS, CALL_LABELS, CALL_HINTS,
+  type BookingCalls, type CallCell, type CallEntry, type CallKind,
+} from '@/lib/daily-update-calls'
 import type { BookingStatus } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,11 +64,13 @@ type Row = {
   amended: boolean
   hotelOnly: boolean
   cancelled: boolean
+  calls: BookingCalls
 }
 
 type Stats = {
   total: number
-  createdToday: number
+  /** Sold today — counted scope-wide, so it is not bounded by the window. */
+  bookedToday: number
   arrivingToday: number
   onGround: number
   missingIds: number
@@ -80,7 +87,6 @@ type Filters = {
   agent: string
   search: string
   country: string
-  includeToday: boolean
   includeCancelled: boolean
   sortBy: DateField
   sortDir: 'asc' | 'desc'
@@ -94,7 +100,6 @@ const DEFAULT_FILTERS: Filters = {
   agent: '',
   search: '',
   country: '',
-  includeToday: true,
   includeCancelled: false,
   sortBy: 'arrivalDate',
   sortDir: 'asc',
@@ -136,7 +141,6 @@ function buildQuery(f: Filters): string {
   if (f.agent) p.set('agent', f.agent)
   if (f.search) p.set('search', f.search)
   if (f.country) p.set('country', f.country)
-  p.set('includeToday', f.includeToday ? '1' : '0')
   p.set('includeCancelled', f.includeCancelled ? '1' : '0')
   p.set('sortBy', f.sortBy)
   p.set('sortDir', f.sortDir)
@@ -532,6 +536,352 @@ function EditableContact({
   )
 }
 
+
+// ─── Call columns ─────────────────────────────────────────────────────────────
+
+/** "18 Aug, 14:30" — calls are read at a glance, so the year is dropped. */
+function callStamp(iso: string): string {
+  return new Date(iso).toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+}
+
+/** The value a datetime-local input wants, in the viewer's own timezone. */
+function toLocalInput(iso: string): string {
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+const SENTIMENT_TONE: Record<string, string> = {
+  positive: 'bg-emerald-100 text-emerald-700',
+  neutral:  'bg-slate-100 text-slate-600',
+  negative: 'bg-rose-100 text-rose-700',
+}
+
+/**
+ * One call column for one booking.
+ *
+ * Done calls collapse to their latest summary plus when it happened, because
+ * that is what the desk scans for; the count badge is what makes the on-ground
+ * column meaningful, where several calls are normal. Everything else — the full
+ * history, the AI transcript summaries, add and edit — lives behind the cell,
+ * so ten columns of detail do not turn the sheet into a wall of text.
+ */
+function CallCellView({
+  kind, cell, bookingRef, guestName, canEdit, onChanged,
+}: {
+  kind: CallKind
+  cell: CallCell
+  bookingRef: string
+  guestName: string | null
+  canEdit: boolean
+  onChanged: (kind: CallKind, entries: CallEntry[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const done = cell.count > 0
+  const latest = cell.latest
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={done ? `${cell.count} logged · click for the full history` : CALL_HINTS[kind]}
+        className={cn(
+          'group/call w-full rounded-lg px-1.5 py-1 text-left transition-colors',
+          done ? 'hover:bg-slate-100' : 'hover:bg-amber-50',
+        )}
+      >
+        {done && latest ? (
+          <>
+            <div className="flex items-center gap-1">
+              <span className="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
+                <Check className="w-2.5 h-2.5" strokeWidth={3} />
+              </span>
+              <span className="text-[10px] font-semibold text-slate-700">{callStamp(latest.at)}</span>
+              {cell.count > 1 && (
+                <span className="rounded-full bg-slate-800 px-1.5 text-[9px] font-bold text-white">
+                  ×{cell.count}
+                </span>
+              )}
+              {latest.source === 'AI' && (
+                <Bot className="w-3 h-3 flex-shrink-0 text-violet-500" aria-label="Placed by the AI call bot" />
+              )}
+            </div>
+            <p className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">{latest.summary}</p>
+            {latest.sentiment && (
+              <span className={cn(
+                'mt-0.5 inline-block rounded px-1 text-[8px] font-bold uppercase',
+                SENTIMENT_TONE[latest.sentiment] ?? 'bg-slate-100 text-slate-600',
+              )}>
+                {latest.sentiment}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-[10px] font-medium',
+            canEdit
+              ? 'border-amber-400 bg-amber-50 text-amber-700'
+              : 'border-slate-200 bg-slate-50 text-slate-400',
+          )}>
+            {canEdit ? <Plus className="w-3 h-3" /> : null}
+            {canEdit ? 'Log call' : 'Not done'}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <CallHistoryModal
+          kind={kind}
+          cell={cell}
+          bookingRef={bookingRef}
+          guestName={guestName}
+          canEdit={canEdit}
+          onClose={() => setOpen(false)}
+          onChanged={onChanged}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * The full history for one call column, with add / edit / delete.
+ *
+ * AI records are shown alongside manual ones but carry no controls — this sheet
+ * reports the bot's calls, it does not own them, and letting somebody "correct"
+ * a transcript summary here would put the two out of step with no audit trail.
+ */
+function CallHistoryModal({
+  kind, cell, bookingRef, guestName, canEdit, onClose, onChanged,
+}: {
+  kind: CallKind
+  cell: CallCell
+  bookingRef: string
+  guestName: string | null
+  canEdit: boolean
+  onClose: () => void
+  onChanged: (kind: CallKind, entries: CallEntry[]) => void
+}) {
+  const [entries, setEntries] = useState<CallEntry[]>(cell.entries)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [form, setForm] = useState({ summary: '', notes: '', at: toLocalInput(new Date().toISOString()) })
+
+  const publish = useCallback((next: CallEntry[]) => {
+    const sorted = [...next].sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+    setEntries(sorted)
+    onChanged(kind, sorted)
+  }, [kind, onChanged])
+
+  const resetForm = () => {
+    setEditingId(null)
+    setForm({ summary: '', notes: '', at: toLocalInput(new Date().toISOString()) })
+  }
+
+  const submit = useCallback(async () => {
+    if (!form.summary.trim()) { toast.error('Add a short summary of the call'); return }
+    setBusy(true)
+    try {
+      const editing = editingId !== null
+      const res = await fetch('/api/daily-update/calls', {
+        method: editing ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(editing ? { id: editingId } : { bookingRef, kind }),
+          summary: form.summary.trim(),
+          notes:   form.notes.trim(),
+          // datetime-local has no timezone, so it is read as local time — which
+          // is what the person logging the call meant.
+          at: form.at ? new Date(form.at).toISOString() : new Date().toISOString(),
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json?.success === false) throw new Error(json?.error ?? 'Could not save the call')
+
+      const saved = json.data as CallEntry
+      publish(editing ? entries.map(e => (e.id === editingId ? saved : e)) : [saved, ...entries])
+      toast.success(editing ? 'Call updated' : `${CALL_LABELS[kind]} logged for ${bookingRef}`)
+      resetForm()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save the call')
+    } finally {
+      setBusy(false)
+    }
+  }, [form, editingId, entries, bookingRef, kind, publish])
+
+  const remove = useCallback(async (id: string) => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/daily-update/calls?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json?.success === false) throw new Error(json?.error ?? 'Could not remove the entry')
+      publish(entries.filter(e => e.id !== id))
+      if (editingId === id) resetForm()
+      toast.success('Call entry removed')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not remove the entry')
+    } finally {
+      setBusy(false)
+    }
+  }, [entries, editingId, publish])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-3.5">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <PhoneCall className="w-4 h-4 text-slate-400" />
+              {CALL_LABELS[kind]}
+            </h3>
+            <p className="mt-0.5 truncate text-xs text-slate-500">
+              <span className="font-mono font-semibold">{bookingRef}</span>
+              {guestName ? ` · ${guestName}` : ''}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-400">{CALL_HINTS[kind]}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[42vh] space-y-2 overflow-y-auto px-5 py-3">
+          {entries.length === 0 && (
+            <p className="py-6 text-center text-xs text-slate-400">
+              No {CALL_LABELS[kind].toLowerCase()} logged yet.
+            </p>
+          )}
+          {entries.map(e => (
+            <div
+              key={e.id}
+              className={cn(
+                'rounded-xl border p-3',
+                e.source === 'AI' ? 'border-violet-200 bg-violet-50/40' : 'border-slate-200 bg-white',
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-800">{callStamp(e.at)}</span>
+                {e.source === 'AI' ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase text-violet-700">
+                    <Bot className="w-3 h-3" /> AI bot
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">
+                    Manual
+                  </span>
+                )}
+                {e.sentiment && (
+                  <span className={cn(
+                    'rounded px-1.5 text-[10px] font-bold uppercase',
+                    SENTIMENT_TONE[e.sentiment] ?? 'bg-slate-100 text-slate-600',
+                  )}>
+                    {e.sentiment}
+                  </span>
+                )}
+                {e.outcome && <span className="text-[10px] text-slate-400">{e.outcome}</span>}
+
+                {canEdit && e.source === 'MANUAL' && (
+                  <span className="ml-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setEditingId(e.id)
+                        setForm({ summary: e.summary, notes: e.notes ?? '', at: toLocalInput(e.at) })
+                      }}
+                      className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                      title="Edit this entry"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void remove(e.id)}
+                      className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                      title="Remove this entry"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
+              <p className="mt-1.5 whitespace-pre-wrap text-xs text-slate-700">{e.summary}</p>
+              {e.notes && <p className="mt-1 whitespace-pre-wrap text-[11px] text-slate-500">{e.notes}</p>}
+              {e.by && <p className="mt-1.5 text-[10px] text-slate-400">Logged by {e.by}</p>}
+            </div>
+          ))}
+        </div>
+
+        {canEdit && (
+          <div className="space-y-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              {editingId ? 'Edit entry' : `Log a ${CALL_LABELS[kind].toLowerCase()}`}
+            </p>
+            <input
+              value={form.summary}
+              onChange={e => setForm(f => ({ ...f, summary: e.target.value }))}
+              placeholder="What came out of the call?"
+              maxLength={500}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+            />
+            <textarea
+              value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Further notes (optional)"
+              rows={2}
+              className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                <input
+                  type="datetime-local"
+                  value={form.at}
+                  onChange={e => setForm(f => ({ ...f, at: e.target.value }))}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs focus:border-slate-900 focus:outline-none"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void submit()}
+                disabled={busy}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              >
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                {editingId ? 'Save changes' : 'Log call'}
+              </button>
+              {editingId && (
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  disabled={busy}
+                  className="rounded-xl px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function DailyUpdateSheet() {
@@ -638,14 +988,6 @@ export default function DailyUpdateSheet() {
     [rows, onlyMissing],
   )
 
-  // Today's intake sits in its own band above the travel window — that split is
-  // the whole shape of a morning update, so it is rendered, not just sorted.
-  const todaysRows  = useMemo(() => visible.filter(r => r.createdToday), [visible])
-  const windowRows  = useMemo(() => visible.filter(r => !r.createdToday), [visible])
-  // Mirrors `pinsToday` on the server: an explicit from/to range asks for that
-  // span and nothing else, so today's intake is not carried on top of it.
-  const splitToday  = filters.includeToday && !filters.from && !filters.to && todaysRows.length > 0
-
   const activeField = DATE_FIELDS.find(f => f.value === filters.dateField) ?? DATE_FIELDS[0]
   const usingCustomRange = Boolean(filters.from || filters.to)
   const isDefaultView =
@@ -660,10 +1002,15 @@ export default function DailyUpdateSheet() {
           gradient="bg-gradient-to-br from-slate-700 to-slate-900"
           hint="Bookings matching the current window and filters"
         />
+        {/* The only figure that deliberately looks outside the window. Clicking
+            it retunes the sheet to the Created / Today view, which is where
+            today's intake now lives — it is no longer a second band of rows. */}
         <Tile
-          label="Booked today" value={stats?.createdToday ?? 0} icon={Sparkles}
+          label="Booked today" value={stats?.bookedToday ?? 0} icon={Sparkles}
           gradient="bg-gradient-to-br from-emerald-500 to-green-600"
-          hint="Created today — pinned to the top of the sheet"
+          active={filters.dateField === 'createdAt' && filters.days === 0 && !filters.from && !filters.to}
+          onClick={() => patch({ dateField: 'createdAt', sortBy: 'createdAt', days: 0, from: '', to: '' })}
+          hint="Bookings sold today, whatever window the sheet is showing — click to list them"
         />
         <Tile
           label="Arriving today" value={stats?.arrivingToday ?? 0} icon={PlaneLanding}
@@ -880,15 +1227,6 @@ export default function DailyUpdateSheet() {
                 <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
                   <input
                     type="checkbox"
-                    checked={filters.includeToday}
-                    onChange={e => patch({ includeToday: e.target.checked })}
-                    className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
-                  />
-                  Pin bookings created today to the top
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600">
-                  <input
-                    type="checkbox"
                     checked={filters.includeCancelled}
                     onChange={e => patch({ includeCancelled: e.target.checked })}
                     className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
@@ -969,7 +1307,7 @@ export default function DailyUpdateSheet() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1180px] border-collapse text-sm">
+            <table className="w-full min-w-[1680px] border-collapse text-sm">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-900 text-left text-[10px] font-semibold uppercase tracking-wider text-slate-300">
                   <th className="px-3 py-2.5 w-10">#</th>
@@ -989,32 +1327,21 @@ export default function DailyUpdateSheet() {
                   <th className="px-3 py-2.5">Guest contact</th>
                   <th className="px-3 py-2.5">Agent</th>
                   <th className="px-3 py-2.5">Agent contact</th>
+                  {CALL_KINDS.map(kind => (
+                    <th key={kind} className="px-3 py-2.5" title={CALL_HINTS[kind]}>
+                      {CALL_LABELS[kind]}
+                    </th>
+                  ))}
                   <th className="px-3 py-2.5">Created / Updated</th>
                 </tr>
               </thead>
 
-              {splitToday && (
-                <SheetSection
-                  title={`Booked today — ${todaysRows.length} new file${todaysRows.length === 1 ? '' : 's'}`}
-                  tone="emerald"
-                  rows={todaysRows}
-                  offset={0}
-                  canEdit={canEdit}
-                  onEdit={applyEdit}
-                />
-              )}
-              {windowRows.length > 0 && (
-                <SheetSection
-                  title={splitToday
-                    ? `${activeField.label} — ${range ? `${formatDate(range.start)} to ${formatDate(range.end)}` : 'window'}`
-                    : null}
-                  tone="slate"
-                  rows={windowRows}
-                  offset={splitToday ? todaysRows.length : 0}
-                  canEdit={canEdit}
-                  onEdit={applyEdit}
-                />
-              )}
+              <SheetSection
+                title={`${activeField.label} — ${range ? `${formatDate(range.start)} to ${formatDate(range.end)}` : 'window'}`}
+                rows={visible}
+                canEdit={canEdit}
+                onEdit={applyEdit}
+              />
             </table>
           </div>
         )}
@@ -1035,34 +1362,24 @@ export default function DailyUpdateSheet() {
 // ─── One banded group of rows ─────────────────────────────────────────────────
 
 function SheetSection({
-  title, tone, rows, offset, canEdit, onEdit,
+  title, rows, canEdit, onEdit,
 }: {
-  title: string | null
-  tone: 'emerald' | 'slate'
+  title: string
   rows: Row[]
-  offset: number
   canEdit: boolean
   onEdit: (id: string, patch: Partial<Row>) => void
 }) {
   return (
     <tbody className="divide-y divide-slate-100">
-      {title && (
-        <tr>
-          <td colSpan={10} className="p-0">
-            <div
-              className={cn(
-                'flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-white',
-                tone === 'emerald'
-                  ? 'bg-gradient-to-r from-emerald-600 to-green-500'
-                  : 'bg-gradient-to-r from-slate-700 to-slate-500',
-              )}
-            >
-              {tone === 'emerald' ? <Sparkles className="w-3 h-3" /> : <CalendarRange className="w-3 h-3" />}
-              {title}
-            </div>
-          </td>
-        </tr>
-      )}
+      <tr>
+        <td colSpan={14} className="p-0">
+          <div className="flex items-center gap-2 bg-gradient-to-r from-slate-700 to-slate-500 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-white">
+            <CalendarRange className="w-3 h-3" />
+            {title}
+            <span className="ml-1 rounded-full bg-white/25 px-1.5 py-px text-[9px]">{rows.length}</span>
+          </div>
+        </td>
+      </tr>
       {rows.map((r, i) => (
         <tr
           key={r.id}
@@ -1074,7 +1391,7 @@ function SheetSection({
         >
           <td className="relative px-3 py-2.5 align-top text-xs text-slate-400 tabular-nums">
             <span className={cn('absolute inset-y-0 left-0 w-1', accentTone(r))} />
-            {offset + i + 1}
+            {i + 1}
           </td>
 
           {/* Booking */}
@@ -1180,6 +1497,25 @@ function SheetSection({
               onSaved={patch => onEdit(r.id, patch as Partial<Row>)}
             />
           </td>
+
+          {/* Calls — pre, on-ground, post, feedback */}
+          {CALL_KINDS.map(kind => (
+            <td key={kind} className="px-2 py-2.5 align-top">
+              <CallCellView
+                kind={kind}
+                cell={r.calls[kind]}
+                bookingRef={r.bookingRef}
+                guestName={r.guestName}
+                canEdit={canEdit}
+                onChanged={(k, entries) => onEdit(r.id, {
+                  calls: {
+                    ...r.calls,
+                    [k]: { entries, count: entries.length, latest: entries[0] ?? null },
+                  },
+                })}
+              />
+            </td>
+          ))}
 
           {/* Audit dates */}
           <td className="px-3 py-2.5 align-top">

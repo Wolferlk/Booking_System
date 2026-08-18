@@ -19,9 +19,10 @@
  */
 
 import {
-  DATE_FIELD_LABELS, summarise, resolveRange, pinsToday,
+  DATE_FIELD_LABELS, summarise, resolveRange,
   type DailyUpdateQuery, type DailyUpdateRow,
 } from '@/lib/daily-update'
+import { CALL_KINDS, CALL_LABELS, type CallCell } from '@/lib/daily-update-calls'
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -47,6 +48,15 @@ function esc(value: unknown): string {
 const or = (value: unknown, fallback = '—') => {
   const s = String(value ?? '').trim()
   return s ? esc(s) : fallback
+}
+
+/** "13 Aug 26 00:30" — the audit column's form, short enough not to wrap. */
+const fmtStamp = (iso: string | null) => {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const month = d.toLocaleDateString('en-GB', { month: 'short' }).slice(0, 3)
+  return `${pad(d.getDate())} ${month} ${String(d.getFullYear()).slice(2)}  ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function whenLabel(days: number): string {
@@ -98,6 +108,30 @@ function idCell(value: string | null): string {
     : '<span class="id-missing">missing</span>'
 }
 
+/**
+ * A call column, printed.
+ *
+ * Deliberately terser than the screen: the sheet carries fourteen columns on a
+ * landscape page, so a printed call cell is a tick, when it happened, how many
+ * there were, and one clamped line of what came of it. The full history stays
+ * on screen where it can be opened.
+ */
+function callCellHtml(cell: CallCell): string {
+  if (cell.count === 0) return '<span class="call-no">—</span>'
+  const latest = cell.latest!
+  const stamp = new Date(latest.at).toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+  return `
+    <div class="call-yes">
+      <span class="call-tick">✓</span>
+      <span class="call-at">${esc(stamp)}</span>
+      ${cell.count > 1 ? `<span class="call-n">×${cell.count}</span>` : ''}
+      ${latest.source === 'AI' ? '<span class="call-ai">AI</span>' : ''}
+    </div>
+    <div class="call-sum">${esc(latest.summary)}</div>`
+}
+
 function rowHtml(r: DailyUpdateRow, index: number): string {
   const badges = [
     r.cancelled   ? '<span class="tag t-cancel">Cancelled</span>' : '',
@@ -131,14 +165,15 @@ function rowHtml(r: DailyUpdateRow, index: number): string {
     <td class="c-contact">${contactBlock(r.guestPhone, r.guestWhatsapp, r.guestEmail)}</td>
     <td><div class="name">${or(r.agent)}</div></td>
     <td class="c-contact">${contactBlock(r.agentPhone, r.agentWhatsapp, r.agentEmail)}</td>
+    ${CALL_KINDS.map(kind => `<td class="c-call">${callCellHtml(r.calls[kind])}</td>`).join('')}
     <td class="c-audit">
-      <div class="sub"><span class="lbl">Created</span>${fmtDateTime(r.createdAt)}</div>
-      <div class="sub ${r.amended ? 'upd' : ''}"><span class="lbl">Updated</span>${fmtDateTime(r.updatedAt)}</div>
+      <div class="sub"><span class="lbl">Created</span>${fmtStamp(r.createdAt)}</div>
+      <div class="sub ${r.amended ? 'upd' : ''}"><span class="lbl">Updated</span>${fmtStamp(r.updatedAt)}</div>
     </td>
   </tr>`
 }
 
-const HEAD_ROW = `
+const HEAD_ROW: string = `
   <tr>
     <th class="c-idx">#</th>
     <th>Booking</th>
@@ -149,6 +184,7 @@ const HEAD_ROW = `
     <th>Guest contact</th>
     <th>Agent</th>
     <th>Agent contact</th>
+    ${CALL_KINDS.map(kind => `<th class="c-call">${CALL_LABELS[kind]}</th>`).join('')}
     <th>Created / Updated</th>
   </tr>`
 
@@ -157,6 +193,8 @@ export type HtmlOptions = {
   generatedBy?: string | null
   /** Screen copy gets a print button; the PDF render does not. */
   interactive?: boolean
+  /** True scope-wide count of bookings sold today, for the headline. */
+  bookedToday?: number
 }
 
 export function buildDailyUpdateHtml(
@@ -165,22 +203,18 @@ export function buildDailyUpdateHtml(
   now = new Date(),
   opts: HtmlOptions = {},
 ): string {
-  const stats = summarise(rows)
+  const stats = summarise(rows, opts.bookedToday)
   const { start, end } = resolveRange(q, now)
-  const pinned = pinsToday(q)
 
-  const todays = pinned ? rows.filter(r => r.createdToday) : []
-  const rest   = pinned ? rows.filter(r => !r.createdToday) : rows
-
-  // Numbering runs continuously across both bands so a row referred to by
-  // number in a handover means the same thing on screen, in Excel and here.
+  // One band, one continuous numbering: the sheet is the date window and
+  // nothing else, so a row's number means the same thing on screen, in the
+  // workbook and here.
   let n = 0
-  const todaysHtml = todays.map(r => rowHtml(r, ++n)).join('')
-  const restHtml   = rest.map(r => rowHtml(r, ++n)).join('')
+  const rowsHtml = rows.map(r => rowHtml(r, ++n)).join('')
 
   const band = (title: string, cls: string, count: number) => `
     <tr class="band ${cls}">
-      <td colspan="10">${esc(title)} <span class="band-count">${count}</span></td>
+      <td colspan="14">${esc(title)} <span class="band-count">${count}</span></td>
     </tr>`
 
   const kpi = (label: string, value: number, cls: string) => `
@@ -197,12 +231,11 @@ export function buildDailyUpdateHtml(
   ].join(' &nbsp;·&nbsp; ')
 
   const body = rows.length === 0
-    ? '<tr><td colspan="10" class="empty">No bookings match the current filters.</td></tr>'
-    : `${todays.length ? band(`Booked today`, 'band-new', todays.length) + todaysHtml : ''}
-       ${rest.length && todays.length
-          ? band(`${DATE_FIELD_LABELS[q.dateField]} — ${fmtDate(start.toISOString())} to ${fmtDate(end.toISOString())}`, 'band-win', rest.length)
-          : ''}
-       ${restHtml}`
+    ? '<tr><td colspan="14" class="empty">No bookings match the current filters.</td></tr>'
+    : band(
+        `${DATE_FIELD_LABELS[q.dateField]} — ${fmtDate(start.toISOString())} to ${fmtDate(end.toISOString())}`,
+        'band-win', rows.length,
+      ) + rowsHtml
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -288,7 +321,8 @@ export function buildDailyUpdateHtml(
     display: inline-block; margin-right: 4px; padding: 0 3px; border-radius: 3px;
     background: #e2e8f0; color: #475569; font-size: 6.5px; font-weight: 800; letter-spacing: .03em;
   }
-  .lbl { display: inline-block; min-width: 34px; color: #cbd5e1; font-weight: 700; text-transform: uppercase; font-size: 6.5px; }
+  .lbl { display: block; color: #cbd5e1; font-weight: 700; text-transform: uppercase; font-size: 6px; }
+  .c-audit .sub { white-space: nowrap; }
   .upd { color: #7c3aed; }
   .name { font-size: 9.5px; font-weight: 600; }
   .muted { color: #cbd5e1; }
@@ -309,7 +343,7 @@ export function buildDailyUpdateHtml(
     background: #fffbeb; color: #b45309; font-size: 7.5px; font-weight: 700; font-style: italic;
   }
 
-  .c-travel { width: 132px; }
+  .c-travel { width: 116px; }
   .dates { font-size: 9px; white-space: nowrap; }
   .arrow { color: #cbd5e1; }
   .when {
@@ -318,12 +352,31 @@ export function buildDailyUpdateHtml(
   }
   .when.w-later { color: #475569; background: #e2e8f0; }
 
-  .c-contact { width: 128px; }
-  .c-line { display: block; font-size: 8px; line-height: 1.45; word-break: break-word; }
+  .c-contact { width: 104px; }
+  .c-line {
+    display: block; font-size: 8px; line-height: 1.45;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .c-line b { display: inline-block; width: 9px; color: #cbd5e1; font-weight: 800; }
   .c-wa   { color: #059669; }
   .c-mail { color: #64748b; }
-  .c-audit { width: 108px; }
+  .c-audit { width: 92px; }
+
+  .c-call { width: 92px; }
+  .call-no { color: #cbd5e1; }
+  .call-yes { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+  .call-tick {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #16a34a; color: #fff; font-size: 6px; line-height: 1;
+  }
+  .call-at { font-size: 7.5px; font-weight: 700; color: #334155; }
+  .call-n  { background: #1e293b; color: #fff; border-radius: 999px; padding: 0 3px; font-size: 6.5px; font-weight: 800; }
+  .call-ai { background: #ede9fe; color: #6d28d9; border-radius: 3px; padding: 0 3px; font-size: 6.5px; font-weight: 800; }
+  .call-sum {
+    margin-top: 1px; font-size: 7px; line-height: 1.3; color: #64748b;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
 
   /* ── Section bands ────────────────────────────────────────────────────── */
   tr.band td {
@@ -359,8 +412,7 @@ export function buildDailyUpdateHtml(
       <div>
         <h1>Daily Update Sheet</h1>
         <div class="mast-sub">
-          ${esc(DATE_FIELD_LABELS[q.dateField])} · ${fmtDate(start.toISOString())} to ${fmtDate(end.toISOString())}${
-            pinned ? ' · plus everything created today' : ''}
+          ${esc(DATE_FIELD_LABELS[q.dateField])} · ${fmtDate(start.toISOString())} to ${fmtDate(end.toISOString())}
         </div>
         <div class="mast-meta">
           Apple Holidays MMT · generated ${fmtDateTime(now.toISOString())}${
@@ -369,7 +421,7 @@ export function buildDailyUpdateHtml(
       </div>
       <div class="kpis">
         ${kpi('Bookings', stats.total, '')}
-        ${kpi('New today', stats.createdToday, 'k-new')}
+        ${kpi('Booked today', stats.bookedToday, 'k-new')}
         ${kpi('Arriving today', stats.arrivingToday, 'k-arr')}
         ${kpi('On the ground', stats.onGround, '')}
         ${kpi('Total pax', stats.totalPax, '')}

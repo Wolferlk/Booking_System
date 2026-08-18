@@ -41,9 +41,9 @@ async function run(label: string, slug: string, qs: string, render = false) {
   console.log(`   pdf  ${(pdf.length / 1024).toFixed(0)} KB in ${Date.now() - t1}ms → ${OUT}/${slug}.pdf`)
 }
 
-await run('default — 10 day arrivals + today', 'default', '', true)
+await run('default — 10 day arrival window',   'default', '', true)
 await run('created date, 7 days',              'created', 'dateField=createdAt&days=7', true)
-await run('departure, 30 days, no today pin',  'departure', 'dateField=departureDate&days=30&includeToday=0', true)
+await run('departure, 30 days',                'departure', 'dateField=departureDate&days=30', true)
 await run('single agent',                      'agent', 'agent=Make My Trip&days=30')
 await run('empty result',                      'empty', 'days=0&agent=__no_such_agent__', true)
 process.exit(0)
