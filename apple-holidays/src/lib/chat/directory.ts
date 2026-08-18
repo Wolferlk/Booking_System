@@ -11,7 +11,8 @@
  */
 import type { RowDataPacket } from 'mysql2'
 import { chatQuery, opsSchema } from './db'
-import { ONLINE_WINDOW_SECONDS, PEER_URL, SYSTEM, SYSTEMS, type ChatSystem } from './config'
+import { createHash } from 'crypto'
+import { ONLINE_WINDOW_SECONDS, SYSTEMS, type ChatSystem } from './config'
 
 export interface ChatPerson {
   key: string             // "system:user_ref" — the identity used everywhere
@@ -147,20 +148,44 @@ function initials(name: string, email: string | null): string {
 }
 
 /**
- * Each system stores avatars its own way and serves them from its own host:
- * OPS keeps an app URL, Accounts keeps a storage path. Our own rows resolve
- * locally; the other system's are prefixed with CHAT_ACCOUNTS_URL. Without that
- * we return null and the UI draws initials — plainer, but never a broken image.
+ * The photo, addressed by WHO it belongs to rather than where it is stored.
+ *
+ * Every avatar — ours and the Accounts ones — is served by this app's own
+ * /api/chat/avatar route out of the shared bucket. That is what finally makes a
+ * face cross the boundary: the browser never has to reach the Accounts host,
+ * and nothing depends on that host's public/storage symlink existing.
+ *
+ * `?v=` is a short digest of the stored path, so replacing a photo replaces the
+ * URL and the browser cannot serve the old face from cache.
+ *
+ * Mirrors ChatDirectory::avatarUrl() in the Accounts app.
  */
-function avatarUrl(system: string, raw: string | null): string | null {
+function avatarUrl(system: string, ref: string, raw: string | null): string | null {
   const value = (raw ?? '').trim()
   if (!value) return null
   if (value.startsWith('http://') || value.startsWith('https://')) return value
 
-  if (system === SYSTEM) return value.startsWith('/') ? value : `/${value}`
+  return `/api/chat/avatar/${encodeURIComponent(system)}/${encodeURIComponent(ref)}?v=${digest(value)}`
+}
 
-  // The Accounts app serves user photos out of its public storage link.
-  return PEER_URL ? `${PEER_URL}/storage/${value.replace(/^\/+/, '')}` : null
+/** Short, stable cache token for a stored path. Not security — cache busting. */
+function digest(value: string): string {
+  return createHash('md5').update(value).digest('hex').slice(0, 10)
+}
+
+/**
+ * The value the owning system's users table actually holds, for the avatar
+ * route to turn into bytes. Read live, like everything else here.
+ */
+export async function rawAvatar(system: string, ref: string): Promise<string | null> {
+  const rows = await chatQuery<RowDataPacket & { avatar_raw: string | null }>(
+    `SELECT d.\`avatar_raw\` FROM ${await source()} d
+      WHERE d.\`system\` = ? AND d.\`user_ref\` = ? LIMIT 1`,
+    [system, String(ref)],
+  )
+
+  const raw = (rows[0]?.avatar_raw ?? '').trim()
+  return raw || null
 }
 
 function shape(r: DirectoryRow): ChatPerson {
@@ -173,7 +198,7 @@ function shape(r: DirectoryRow): ChatPerson {
     user_ref: String(r.user_ref),
     name: r.name,
     email: r.email,
-    avatar: avatarUrl(system, r.avatar_raw),
+    avatar: avatarUrl(system, String(r.user_ref), r.avatar_raw),
     initials: initials(r.name, r.email),
     role_label: r.role_label ?? '',
     system_label: meta.label,

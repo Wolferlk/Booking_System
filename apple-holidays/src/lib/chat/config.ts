@@ -19,10 +19,10 @@ export const SYSTEMS: Record<ChatSystem, { label: string; short: string; accent:
 }
 
 /**
- * Where the Accounts app lives, used only to turn its stored avatar paths into
- * URLs this browser can load (an Accounts avatar is "avatars/x.jpg", which
- * resolves to /storage/avatars/x.jpg on THAT host). Unset = fall back to
- * initials, which is plainer but never broken.
+ * Where the Accounts app lives. No longer used for avatars — those are served
+ * from this host by /api/chat/avatar out of the shared bucket, so a face no
+ * longer depends on the Accounts host being reachable from the browser — but
+ * kept for links that legitimately point at the other application.
  */
 export const PEER_URL = (process.env.CHAT_ACCOUNTS_URL ?? '').replace(/\/+$/, '')
 
