@@ -12,13 +12,18 @@ import { requireTeUser } from '@/lib/te/experience-report/auth'
 import { getReport } from '@/lib/te/experience-report/store'
 import {
   addNote, cancelReport, escalate, holdReport, regenerateReport,
-  releaseHold, ReportError, sendToAgent,
+  releaseHold, ReportError, sendClientMail, sendToAgent, writeUpReport,
 } from '@/lib/te/experience-report/run'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-type Action = 'send' | 'escalate' | 'hold' | 'release' | 'cancel' | 'note' | 'regenerate'
+type Action =
+  | 'send' | 'escalate' | 'hold' | 'release' | 'cancel' | 'note' | 'regenerate'
+  /** The Experience team's own write-up for a trip that left no feedback. */
+  | 'writeup'
+  /** Send (or retry) the traveller's thank-you letter on its own. */
+  | 'client_mail'
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   const gate = await requireTeUser()
@@ -42,6 +47,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     escalationTo?: string
     overrideHold?: boolean
     skipNarrative?: boolean
+    text?: string
+    clientEmailOverride?: string
   } = {}
   try { body = await req.json() } catch { /* empty body */ }
 
@@ -90,6 +97,27 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       case 'note':
         return buildApiSuccess(await addNote(id, actor, body.note ?? ''), 'Note added.')
+
+      case 'writeup': {
+        const report = await writeUpReport(id, actor, body.text ?? '')
+        return buildApiSuccess(
+          report,
+          report.status === 'held'
+            ? 'Saved and held — what you wrote reads as a bad experience, so the agent has not been told.'
+            : 'Saved. The report is written and ready to review.',
+        )
+      }
+
+      case 'client_mail': {
+        const report = await sendClientMail(id, {
+          actor,
+          toOverride: body.clientEmailOverride ?? null,
+        })
+        return buildApiSuccess(
+          report,
+          `Thank-you letter sent to ${report.narrative?.clientMail?.to ?? 'the traveller'}.`,
+        )
+      }
 
       case 'regenerate':
         return buildApiSuccess(

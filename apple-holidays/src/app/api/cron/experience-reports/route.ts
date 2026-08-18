@@ -7,6 +7,9 @@
  * that writes AI narratives for a day's worth of trips can run for minutes and
  * should not delay the daily ops mail.
  *
+ * The sweep picks up trips that finished `quietDays` whole days ago — two by
+ * default, so a run today covers the day before yesterday's completed trips.
+ *
  * Secured by CRON_SECRET (Authorization: Bearer <secret>, or ?secret=).
  * Once a day is the right cadence — the sweep is idempotent, so a missed tick
  * is picked up by the next one anywhere inside the look-back window.
@@ -32,7 +35,10 @@ export async function GET(req: NextRequest) {
   try {
     const result = await runSweep({ actor: 'cron' })
     if (result.built) {
-      console.log(`[ExperienceReportCron] built ${result.built}, sent ${result.sent}, held ${result.held}`)
+      console.log(
+        `[ExperienceReportCron] built ${result.built}, sent ${result.sent}, ` +
+        `held ${result.held}, pending ${result.pending}, letters ${result.clientMailed}`,
+      )
     }
     return NextResponse.json({ ok: true, ...result })
   } catch (err) {

@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS `te_experience_reports` (
   `id`             VARCHAR(36)  NOT NULL,
   `bookingRef`     VARCHAR(64)  NOT NULL,
 
-  -- draft → (held | queued) → sent | failed | cancelled
+  -- pending → draft → (held | queued) → sent | failed | cancelled
+  -- 'pending' is a finished trip with neither an on-ground call nor a feedback
+  -- form: nothing is written or sent, it waits for the Experience team. All of
+  -- these fit the existing VARCHAR(16), so no ALTER is ever needed for them.
   `status`         VARCHAR(16)  NOT NULL DEFAULT 'draft',
   `triggerSource`  VARCHAR(16)  NOT NULL DEFAULT 'manual',
 

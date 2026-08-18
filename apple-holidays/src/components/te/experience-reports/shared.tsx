@@ -4,8 +4,8 @@
 
 import type { FeedbackChannel, ReportStatus, RiskLevel } from '@/lib/te/experience-report/types'
 import {
-  AlertOctagon, Ban, CheckCircle2, ClipboardList, FileText, Hand,
-  MessageSquareText, PhoneCall, Send, XCircle,
+  AlertOctagon, Ban, CheckCircle2, ClipboardList, FileText, Hand, Heart,
+  MessageSquareText, PenLine, PhoneCall, Send, XCircle,
 } from 'lucide-react'
 
 // ─── Status ───────────────────────────────────────────────────────────────────
@@ -24,6 +24,13 @@ export const STATUS_META: Record<ReportStatus, {
     pill: 'bg-rose-50 text-rose-700 border-rose-200',
     dot: 'bg-rose-500',
     icon: Hand,
+  },
+  pending: {
+    label: 'Awaiting write-up',
+    hint: 'No call and no feedback form for this trip — the Experience team writes this one by hand.',
+    pill: 'bg-violet-50 text-violet-700 border-violet-200',
+    dot: 'bg-violet-500',
+    icon: PenLine,
   },
   draft: {
     label: 'Draft',
@@ -186,5 +193,21 @@ export function Empty({ icon: Icon, title, hint }: { icon: typeof Send; title: s
       <p className="text-sm font-bold text-slate-500">{title}</p>
       {hint && <p className="max-w-sm text-xs text-slate-400">{hint}</p>}
     </div>
+  )
+}
+
+// ─── The traveller's letter ───────────────────────────────────────────────────
+
+/** Shown once the guest's own thank-you has gone out. */
+export function ClientMailChip({ sentAt }: { sentAt: string | null | undefined }) {
+  if (!sentAt) return null
+  return (
+    <span
+      title={`Thank-you letter sent to the traveller · ${fmtDateTime(sentAt)}`}
+      className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200"
+    >
+      <Heart className="h-2.5 w-2.5" strokeWidth={2.6} />
+      Guest thanked
+    </span>
   )
 }

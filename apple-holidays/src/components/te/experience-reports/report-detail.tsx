@@ -4,17 +4,22 @@
  * The report drawer: everything about one trip's report, and every action that
  * can be taken on it.
  *
- * Five tabs, in the order someone actually works them: what we're saying, the
- * mail exactly as it was (or will be) sent, the raw evidence behind it —
- * transcripts included, which is the only place they appear — the escalation
- * when the trip went badly, and the audit trail.
+ * Six tabs, in the order someone actually works them: what we're saying, the
+ * mail exactly as it was (or will be) sent, the letter the traveller gets, the
+ * raw evidence behind it — transcripts included, which is the only place they
+ * appear — the escalation when the trip went badly, and the audit trail.
+ *
+ * A trip nobody called and nobody filled a form in for arrives here as
+ * `pending`, with no mail body at all. The write-up box is the whole point of
+ * that state: what the Experience team types becomes the evidence the report
+ * is then written from.
  */
 
 import { useCallback, useEffect, useState } from 'react'
 import {
   AlertTriangle, ArrowUpRight, Ban, CheckCircle2, ClipboardList, Clock,
-  Hand, Loader2, Mail, MapPin, MessageSquareText, PhoneCall, RefreshCw,
-  Send, Sparkles, Users, X, FileWarning, History, Eye, ShieldAlert,
+  Hand, Heart, Loader2, Mail, MapPin, MessageSquareText, PenLine, PhoneCall,
+  RefreshCw, Send, Sparkles, Users, X, FileWarning, History, Eye, ShieldAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
@@ -25,7 +30,7 @@ import {
   RISK_META, RiskPill, SectionLabel, StatusPill,
 } from './shared'
 
-type Tab = 'report' | 'email' | 'evidence' | 'escalation' | 'activity'
+type Tab = 'report' | 'email' | 'letter' | 'evidence' | 'escalation' | 'activity'
 
 interface Props {
   id: string
@@ -226,6 +231,7 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
   const [busy, setBusy] = useState<string | null>(null)
   const [prompt, setPrompt] = useState<PromptSpec | null>(null)
   const [agentEmail, setAgentEmail] = useState('')
+  const [writeUp, setWriteUp] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -268,6 +274,7 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
       toast.success(json.message ?? 'Done')
       onChanged()
       setPrompt(null)
+      if (action === 'writeup') setWriteUp('')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'The action failed')
     } finally {
@@ -278,13 +285,16 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
   const dossier = report?.dossier ?? null
   const facts = dossier?.facts ?? null
   const narrative = report?.narrative ?? null
+  const clientMail = narrative?.clientMail ?? null
   const isHeld = report?.status === 'held'
+  const isPending = report?.status === 'pending'
   const isSent = report?.status === 'sent'
   const isClosed = isSent || report?.status === 'cancelled'
 
   const tabs: { key: Tab; label: string; icon: typeof Mail; badge?: number }[] = [
     { key: 'report', label: 'Report', icon: Sparkles },
     { key: 'email', label: 'The mail', icon: Mail },
+    ...(clientMail ? [{ key: 'letter' as Tab, label: 'Guest letter', icon: Heart }] : []),
     { key: 'evidence', label: 'Evidence', icon: ClipboardList, badge: dossier?.calls.length },
     ...(report?.riskSignals.length || report?.escalatedAt
       ? [{ key: 'escalation' as Tab, label: 'Concerns', icon: ShieldAlert, badge: report?.riskSignals.length }]
@@ -387,6 +397,49 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
                 </div>
               )}
 
+              {/* Awaiting write-up — nothing was sent and nothing can be until
+                  somebody writes what the trip was actually like. */}
+              {isPending && (
+                <div className="mb-5 overflow-hidden rounded-2xl border-2 border-violet-200 bg-violet-50">
+                  <div className="flex items-start gap-3 px-5 pt-4">
+                    <PenLine className="mt-0.5 h-5 w-5 shrink-0 text-violet-600" strokeWidth={2.4} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-extrabold text-violet-900">
+                        Nothing came back from this trip — no call was answered and no feedback form was filled in.
+                      </p>
+                      <p className="mt-1 text-[13px] leading-relaxed text-violet-700">
+                        So nothing was sent automatically. Write what you know about how the trip went and we will
+                        build the agent&apos;s report from it. It is graded for problems exactly like any other report,
+                        so if what you write reads badly it will be held rather than sent.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="px-5 pb-5 pt-3.5">
+                    <textarea
+                      rows={5}
+                      value={writeUp}
+                      onChange={e => setWriteUp(e.target.value)}
+                      placeholder="Spoke to the guest on the last morning. They were happy with the Hanoi hotel and loved the Ha Long cruise; the Day 3 driver was late by about 40 minutes but they were relaxed about it…"
+                      className="w-full resize-y rounded-xl border border-violet-200 bg-white px-3.5 py-3 text-[13.5px] leading-relaxed text-slate-700 outline-none transition focus:border-violet-400 focus:ring-4 focus:ring-violet-100"
+                    />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => act('writeup', { text: writeUp.trim() }, 'writeup')}
+                        disabled={!!busy || !writeUp.trim()}
+                        className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-50"
+                      >
+                        {busy === 'writeup' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                        Write the report from this
+                      </button>
+                      <p className="text-[11.5px] text-violet-600">
+                        Saved on the report only — the booking record is not changed.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {isSent && (
                 <div className="mb-5 flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" strokeWidth={2.4} />
@@ -396,6 +449,15 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
                       {fmtDateTime(report.sentAt)}{report.sentBy ? ` · by ${report.sentBy}` : ''}
                       {report.ccEmails.length > 0 && <> · cc {report.ccEmails.join(', ')}</>}
                     </p>
+                    {clientMail?.sentAt && (
+                      <button
+                        onClick={() => setTab('letter')}
+                        className="mt-1.5 inline-flex items-center gap-1.5 text-[12px] font-bold text-emerald-700 underline decoration-emerald-300 underline-offset-2"
+                      >
+                        <Heart className="h-3 w-3" />
+                        {clientMail.to} was written to as well — read the letter
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -576,6 +638,71 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
                     </div>
                   ) : (
                     <Empty icon={Mail} title="No mail body has been prepared." hint="Rewrite the report to build one." />
+                  )}
+                </div>
+              )}
+
+              {/* ── Guest letter tab ─────────────────────────────────────── */}
+              {tab === 'letter' && (
+                <div className="space-y-4">
+                  {clientMail ? (
+                    <>
+                      <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-5">
+                        <SectionLabel>{clientMail.sentAt ? 'Sent to the traveller' : 'Not sent'}</SectionLabel>
+                        <dl className="space-y-2 text-[13px]">
+                          <div className="flex gap-3">
+                            <dt className="w-20 shrink-0 font-bold text-slate-400">To</dt>
+                            <dd className="font-semibold text-slate-700">{clientMail.to ?? '—'}</dd>
+                          </div>
+                          {clientMail.cc.length > 0 && (
+                            <div className="flex gap-3">
+                              <dt className="w-20 shrink-0 font-bold text-slate-400">Cc</dt>
+                              <dd className="text-slate-600">{clientMail.cc.join(', ')}</dd>
+                            </div>
+                          )}
+                          <div className="flex gap-3">
+                            <dt className="w-20 shrink-0 font-bold text-slate-400">Subject</dt>
+                            <dd className="font-semibold text-slate-700">{clientMail.subject}</dd>
+                          </div>
+                          <div className="flex gap-3">
+                            <dt className="w-20 shrink-0 font-bold text-slate-400">When</dt>
+                            <dd className="text-slate-600">
+                              {clientMail.sentAt ? fmtDateTime(clientMail.sentAt) : 'Written but never sent'}
+                              {clientMail.testMode && (
+                                <span className="ml-2 rounded-md bg-slate-900 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                                  test mode — redirected
+                                </span>
+                              )}
+                            </dd>
+                          </div>
+                        </dl>
+                        {clientMail.error && (
+                          <p className="mt-3 rounded-xl bg-white px-3 py-2.5 text-[12px] leading-relaxed text-rose-700 ring-1 ring-rose-200">
+                            {clientMail.error}
+                          </p>
+                        )}
+                        <p className="mt-4 flex items-start gap-2 rounded-xl bg-white/70 px-3 py-2.5 text-[11.5px] leading-relaxed text-slate-500">
+                          <Heart className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          This is written for the traveller, not the agent — no ratings, no booking reference and
+                          nothing about how the trip was graded. A held trip never gets one.
+                        </p>
+                      </div>
+
+                      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <iframe
+                          title="Traveller letter preview"
+                          srcDoc={clientMail.bodyHtml}
+                          sandbox=""
+                          className="h-[900px] w-full border-0"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <Empty
+                      icon={Heart}
+                      title="No letter has been written yet."
+                      hint="One is written and sent to the traveller when the agent's report goes out on a trip that was not held."
+                    />
                   )}
                 </div>
               )}
@@ -775,7 +902,7 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
         {/* Action bar */}
         {report && !loading && (
           <footer className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
-            {!isClosed && (
+            {!isClosed && !isPending && (
               <div className="mb-3 flex items-center gap-2">
                 <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Send to</label>
                 <input
@@ -789,7 +916,12 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
             )}
 
             <div className="flex flex-wrap items-center gap-2">
-              {isHeld ? (
+              {isPending ? (
+                <p className="inline-flex items-center gap-2 rounded-xl bg-violet-50 px-4 py-2.5 text-[12.5px] font-bold text-violet-700">
+                  <PenLine className="h-4 w-4" />
+                  Write the summary above before this can be sent.
+                </p>
+              ) : isHeld ? (
                 <>
                   <button
                     onClick={() => act('escalate', {}, 'escalate')}
@@ -877,6 +1009,19 @@ export default function ReportDetail({ id, onClose, onChanged }: Props) {
                   </button>
                 </>
               ) : null}
+
+              {/* The letter normally rides along with the agent send. This is
+                  the retry for when it did not, and the way to send it late. */}
+              {isSent && !isHeld && !clientMail?.sentAt && (
+                <button
+                  onClick={() => act('client_mail', {}, 'client_mail')}
+                  disabled={!!busy}
+                  className="inline-flex items-center gap-2 rounded-xl bg-amber-500 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-amber-600 disabled:opacity-60"
+                >
+                  {busy === 'client_mail' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Heart className="h-4 w-4" />}
+                  {clientMail?.error ? 'Retry the guest letter' : 'Send the guest their letter'}
+                </button>
+              )}
 
               {!isSent && (
                 <button
