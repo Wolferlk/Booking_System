@@ -322,34 +322,211 @@ function IdCell({
 
 // ─── Contact block ────────────────────────────────────────────────────────────
 
-function Contact({ phone, whatsapp, email }: { phone: string | null; whatsapp: string | null; email: string | null }) {
-  if (!phone && !whatsapp && !email) {
-    return <span className="text-xs text-slate-300">—</span>
+/**
+ * Which booking columns a contact block writes to.
+ *
+ * The sheet shows the guest and the agent side by side, but they are different
+ * columns on `Booking` — so the party is chosen once here rather than being
+ * threaded through as six separate props.
+ */
+const CONTACT_FIELDS = {
+  guest: { phone: 'contactPhone', whatsapp: 'contactWhatsapp', email: 'contactEmail',
+           rowPhone: 'guestPhone', rowWhatsapp: 'guestWhatsapp', rowEmail: 'guestEmail' },
+  agent: { phone: 'agentPhone',   whatsapp: 'agentWhatsapp',   email: 'agentEmail',
+           rowPhone: 'agentPhone', rowWhatsapp: 'agentWhatsapp', rowEmail: 'agentEmail' },
+} as const
+
+type Party = keyof typeof CONTACT_FIELDS
+
+/**
+ * Guest and agent contact details, editable in place.
+ *
+ * Contact numbers go stale constantly — an agent forwards a new mobile, a guest
+ * changes their WhatsApp mid-trip — and this sheet is where somebody notices,
+ * because it is the page the desk reads before it calls anyone. All three
+ * fields save in one request so a correction is one action rather than three,
+ * and blanking a field clears it rather than being ignored.
+ *
+ * Like the IS / CNTL editor, the write goes through the booking PUT route,
+ * which re-checks role and country server-side and permits contact-only
+ * updates at any booking status. This component only decides whether to offer
+ * the pencil.
+ */
+function EditableContact({
+  party, bookingRef, phone, whatsapp, email, canEdit, onSaved,
+}: {
+  party: Party
+  bookingRef: string
+  phone: string | null
+  whatsapp: string | null
+  email: string | null
+  canEdit: boolean
+  onSaved: (patch: Record<string, string | null>) => void
+}) {
+  const map = CONTACT_FIELDS[party]
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [draft, setDraft] = useState({ phone: phone ?? '', whatsapp: whatsapp ?? '', email: email ?? '' })
+  const firstRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setDraft({ phone: phone ?? '', whatsapp: whatsapp ?? '', email: email ?? '' })
+  }, [phone, whatsapp, email])
+
+  useEffect(() => { if (editing) firstRef.current?.focus() }, [editing])
+
+  const cancel = useCallback(() => {
+    setDraft({ phone: phone ?? '', whatsapp: whatsapp ?? '', email: email ?? '' })
+    setEditing(false)
+  }, [phone, whatsapp, email])
+
+  const save = useCallback(async () => {
+    const next = {
+      phone:    draft.phone.trim(),
+      whatsapp: draft.whatsapp.trim(),
+      email:    draft.email.trim(),
+    }
+
+    if (next.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(next.email)) {
+      toast.error('That email address does not look right')
+      return
+    }
+
+    // Only what actually changed is sent — a booking PUT carrying every field
+    // would look like a full edit to the route's contact-only check.
+    const body: Record<string, string | null> = {}
+    const rowPatch: Record<string, string | null> = {}
+    const compare: [keyof typeof next, string, string, string | null][] = [
+      ['phone',    map.phone,    map.rowPhone,    phone],
+      ['whatsapp', map.whatsapp, map.rowWhatsapp, whatsapp],
+      ['email',    map.email,    map.rowEmail,    email],
+    ]
+    for (const [key, field, rowKey, current] of compare) {
+      if (next[key] !== (current ?? '')) {
+        body[field] = next[key] === '' ? null : next[key]
+        rowPatch[rowKey] = next[key] === '' ? null : next[key]
+      }
+    }
+
+    if (Object.keys(body).length === 0) { setEditing(false); return }
+
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json?.success === false) throw new Error(json?.error ?? 'Could not save')
+
+      onSaved(rowPatch)
+      toast.success(`${party === 'guest' ? 'Guest' : 'Agent'} contact updated for ${bookingRef}`)
+      setEditing(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save')
+      cancel()
+    } finally {
+      setSaving(false)
+    }
+  }, [draft, phone, whatsapp, email, map, bookingRef, party, onSaved, cancel])
+
+  if (editing) {
+    const field = (
+      key: 'phone' | 'whatsapp' | 'email',
+      Icon: typeof Phone,
+      placeholder: string,
+      tone: string,
+    ) => (
+      <div className="flex items-center gap-1.5">
+        <Icon className={cn('w-3 h-3 flex-shrink-0', tone)} />
+        <input
+          ref={key === 'phone' ? firstRef : undefined}
+          value={draft[key]}
+          disabled={saving}
+          onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { e.preventDefault(); void save() }
+            if (e.key === 'Escape') cancel()
+          }}
+          placeholder={placeholder}
+          className="w-full rounded-md border border-slate-300 px-1.5 py-1 text-[11px] focus:border-slate-900 focus:outline-none focus:ring-1 focus:ring-slate-900/20 disabled:bg-slate-50"
+        />
+      </div>
+    )
+
+    return (
+      <div className="w-[190px] space-y-1 rounded-lg border border-slate-900 bg-white p-1.5 shadow-lg">
+        {field('phone', Phone, 'Phone', 'text-slate-400')}
+        {field('whatsapp', MessageCircle, 'WhatsApp', 'text-emerald-500')}
+        {field('email', Mail, 'Email', 'text-slate-400')}
+        <div className="flex items-center gap-1 pt-0.5">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving}
+            className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-slate-900 px-2 py-1 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={cancel}
+            disabled={saving}
+            className="rounded-md px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
   }
+
+  const empty = !phone && !whatsapp && !email
+
   return (
-    <div className="space-y-0.5">
-      {phone && (
-        <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-xs text-slate-700 hover:text-slate-900">
-          <Phone className="w-3 h-3 flex-shrink-0 text-slate-400" />
-          <span className="truncate">{phone}</span>
-        </a>
-      )}
-      {whatsapp && whatsapp !== phone && (
-        <a
-          href={`https://wa.me/${whatsapp.replace(/[^\d]/g, '')}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-700"
+    <div className="group/contact flex items-start gap-1">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        {empty && <span className="text-xs text-slate-300">—</span>}
+        {phone && (
+          <a href={`tel:${phone}`} className="flex items-center gap-1.5 text-xs text-slate-700 hover:text-slate-900">
+            <Phone className="w-3 h-3 flex-shrink-0 text-slate-400" />
+            <span className="truncate">{phone}</span>
+          </a>
+        )}
+        {whatsapp && whatsapp !== phone && (
+          <a
+            href={`https://wa.me/${whatsapp.replace(/[^\d]/g, '')}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-700"
+          >
+            <MessageCircle className="w-3 h-3 flex-shrink-0" />
+            <span className="truncate">{whatsapp}</span>
+          </a>
+        )}
+        {email && (
+          <a href={`mailto:${email}`} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800">
+            <Mail className="w-3 h-3 flex-shrink-0 text-slate-400" />
+            <span className="truncate max-w-[150px]">{email}</span>
+          </a>
+        )}
+      </div>
+
+      {canEdit && (
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          title={`Edit ${party} phone, WhatsApp and email`}
+          className={cn(
+            'mt-0.5 flex-shrink-0 rounded p-1 transition-opacity hover:bg-slate-100',
+            // An empty block gives no other affordance, so its pencil stays put.
+            empty ? 'text-amber-500' : 'text-slate-300 opacity-0 group-hover/contact:opacity-100',
+          )}
         >
-          <MessageCircle className="w-3 h-3 flex-shrink-0" />
-          <span className="truncate">{whatsapp}</span>
-        </a>
-      )}
-      {email && (
-        <a href={`mailto:${email}`} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800">
-          <Mail className="w-3 h-3 flex-shrink-0 text-slate-400" />
-          <span className="truncate max-w-[160px]">{email}</span>
-        </a>
+          <Pencil className="w-3 h-3" />
+        </button>
       )}
     </div>
   )
@@ -446,9 +623,14 @@ export default function DailyUpdateSheet() {
     }
   }, [query])
 
-  const applyEdit = useCallback((id: string, field: 'isNumber' | 'cntlNumber', next: string | null) => {
-    setRows(rs => rs.map(r => (r.id === id ? { ...r, [field]: next } : r)))
-    setStats(s => (s ? { ...s, missingIds: Math.max(0, s.missingIds - 1) } : s))
+  const applyEdit = useCallback((id: string, patch: Partial<Row>) => {
+    setRows(rs => {
+      const next = rs.map(r => (r.id === id ? { ...r, ...patch } : r))
+      setStats(st => (st
+        ? { ...st, missingIds: next.filter(r => !r.isNumber || !r.cntlNumber).length }
+        : st))
+      return next
+    })
   }, [])
 
   const visible = useMemo(
@@ -839,6 +1021,9 @@ export default function DailyUpdateSheet() {
       </Card>
 
       <p className="px-1 text-[11px] text-slate-400">
+        {canEdit
+          ? 'IS / CNTL numbers and guest and agent contacts can be edited in place — click a value or the pencil. '
+          : ''}
         Contains guest and agent contact details — internal use only. Downloads carry exactly the rows and order
         shown above.
         {session?.user?.name ? ` Viewed by ${session.user.name}.` : ''}
@@ -857,7 +1042,7 @@ function SheetSection({
   rows: Row[]
   offset: number
   canEdit: boolean
-  onEdit: (id: string, field: 'isNumber' | 'cntlNumber', next: string | null) => void
+  onEdit: (id: string, patch: Partial<Row>) => void
 }) {
   return (
     <tbody className="divide-y divide-slate-100">
@@ -933,13 +1118,13 @@ function SheetSection({
           <td className="px-3 py-2.5 align-top">
             <IdCell
               value={r.isNumber} field="isNumber" bookingRef={r.bookingRef} canEdit={canEdit}
-              onSaved={next => onEdit(r.id, 'isNumber', next)}
+              onSaved={next => onEdit(r.id, { isNumber: next })}
             />
           </td>
           <td className="px-3 py-2.5 align-top">
             <IdCell
               value={r.cntlNumber} field="cntlNumber" bookingRef={r.bookingRef} canEdit={canEdit}
-              onSaved={next => onEdit(r.id, 'cntlNumber', next)}
+              onSaved={next => onEdit(r.id, { cntlNumber: next })}
             />
             {r.agentBookingId && (
               <div className="mt-0.5 text-[10px] text-slate-400">Agent ID {r.agentBookingId}</div>
@@ -977,7 +1162,11 @@ function SheetSection({
             )}
           </td>
           <td className="px-3 py-2.5 align-top">
-            <Contact phone={r.guestPhone} whatsapp={r.guestWhatsapp} email={r.guestEmail} />
+            <EditableContact
+              party="guest" bookingRef={r.bookingRef} canEdit={canEdit}
+              phone={r.guestPhone} whatsapp={r.guestWhatsapp} email={r.guestEmail}
+              onSaved={patch => onEdit(r.id, patch as Partial<Row>)}
+            />
           </td>
 
           {/* Agent */}
@@ -985,7 +1174,11 @@ function SheetSection({
             <p className="text-xs font-semibold text-slate-900">{r.agent ?? '—'}</p>
           </td>
           <td className="px-3 py-2.5 align-top">
-            <Contact phone={r.agentPhone} whatsapp={r.agentWhatsapp} email={r.agentEmail} />
+            <EditableContact
+              party="agent" bookingRef={r.bookingRef} canEdit={canEdit}
+              phone={r.agentPhone} whatsapp={r.agentWhatsapp} email={r.agentEmail}
+              onSaved={patch => onEdit(r.id, patch as Partial<Row>)}
+            />
           </td>
 
           {/* Audit dates */}
