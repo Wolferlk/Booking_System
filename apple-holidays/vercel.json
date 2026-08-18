@@ -51,6 +51,10 @@
     {
       "path": "/api/cron/query-monitor",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/experience-reports",
+      "schedule": "30 12 * * *"
     }
   ]
 }

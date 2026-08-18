@@ -554,6 +554,19 @@ export async function runAutoFeedbackSummaries(): Promise<{ sent: number; skippe
     return { sent: 0, skipped: 0, errors: [] }
   }
 
+  // The Experience Report Centre supersedes this sweep: it covers the same
+  // post-departure window from the same evidence, but without the transcripts
+  // and, crucially, with the bad-experience hold that keeps a report away from
+  // the agent when the trip went wrong. Both firing would mail the agent twice
+  // and the second mail would bypass that hold — so whenever the Centre is
+  // sending, this one stands down. See src/lib/te/experience-report/run.ts.
+  const { getSettings } = await import('./te/experience-report/store')
+  const centre = await getSettings().catch(() => null)
+  if (centre?.autoSend) {
+    console.log('[FeedbackAuto] Standing down — the Experience Report Centre owns end-of-trip mail')
+    return { sent: 0, skipped: 0, errors: [] }
+  }
+
   const DEDUP_PREFIX = 'feedback_summary_sent_'
 
   // Find bookings where departure was 1-3 days ago (trip just ended)
