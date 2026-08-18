@@ -7,8 +7,8 @@
  *
  * SheetJS's community build writes no cell styling, so the sheet earns its
  * legibility structurally instead: a merged banner carrying the window and the
- * filters, frozen panes, an autofilter on the header row, sized columns, and
- * the two follow-up tabs the desk actually acts on.
+ * filters, an autofilter on the header row, sized columns, and the two
+ * follow-up tabs the desk actually acts on.
  */
 
 import * as XLSX from 'xlsx'
@@ -134,9 +134,10 @@ export function buildDailyUpdateWorkbook(
   ]
 
   const headerRow = banner.length          // 0-indexed row of HEADERS
-  // Freeze the banner + header so the columns stay labelled while scrolling, and
-  // hang an autofilter off the header row so the recipient can re-slice it.
-  ws['!freeze'] = { xSplit: '3', ySplit: String(headerRow + 1), topLeftCell: `D${headerRow + 2}`, activePane: 'bottomRight', state: 'frozen' } as never
+  // An autofilter on the header row, so the recipient can re-slice the sheet
+  // without coming back for another export. (Frozen panes are deliberately not
+  // attempted: the community build of SheetJS writes no pane element, so the
+  // setting would be silently dropped — the autofilter is what actually lands.)
   ws['!autofilter'] = { ref: XLSX.utils.encode_range(
     { s: { r: headerRow, c: 0 }, e: { r: headerRow + rows.length, c: HEADERS.length - 1 } },
   ) }

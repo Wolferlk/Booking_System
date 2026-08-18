@@ -16,7 +16,7 @@ import {
   CalendarDays, CalendarRange, Users, AlertTriangle, Search, X, Check,
   FileSpreadsheet, FileText, RefreshCw, Loader2, Sparkles,
   Plane, PlaneLanding, Building2, Phone, Mail, MessageCircle, Pencil,
-  ChevronDown, SlidersHorizontal, Globe, Clock, ArrowUpDown, Ban,
+  ChevronDown, SlidersHorizontal, Globe, Clock, ArrowUpDown, Ban, ExternalLink,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -373,7 +373,7 @@ export default function DailyUpdateSheet() {
   const [error, setError] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [onlyMissing, setOnlyMissing] = useState(false)
-  const [downloading, setDownloading] = useState<'xlsx' | 'pdf' | null>(null)
+  const [downloading, setDownloading] = useState<'xlsx' | 'pdf' | 'html' | null>(null)
 
   const patch = useCallback((next: Partial<Filters>) => {
     setFilters(f => ({ ...f, ...next }))
@@ -413,12 +413,13 @@ export default function DailyUpdateSheet() {
    * Downloads go through fetch rather than a plain link so a 403 or a render
    * failure surfaces as a toast instead of a browser tab full of JSON.
    */
-  const download = useCallback(async (kind: 'xlsx' | 'pdf') => {
+  const download = useCallback(async (kind: 'xlsx' | 'pdf' | 'html') => {
     setDownloading(kind)
     try {
-      const url = kind === 'xlsx'
-        ? `/api/daily-update/export?${query}`
-        : `/api/daily-update/export-pdf?${query}`
+      const url =
+        kind === 'xlsx' ? `/api/daily-update/export?${query}`
+        : kind === 'pdf' ? `/api/daily-update/export-pdf?${query}`
+        : `/api/daily-update/export-html?${query}`
       const res = await fetch(url, { cache: 'no-store' })
       if (!res.ok) {
         const json = await res.json().catch(() => ({}))
@@ -433,7 +434,11 @@ export default function DailyUpdateSheet() {
       a.click()
       a.remove()
       URL.revokeObjectURL(href)
-      toast.success(kind === 'xlsx' ? 'Excel sheet downloaded' : 'PDF sheet downloaded')
+      toast.success(
+        kind === 'xlsx' ? 'Excel sheet downloaded'
+        : kind === 'pdf' ? 'PDF sheet downloaded'
+        : 'HTML sheet downloaded',
+      )
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Export failed')
     } finally {
@@ -609,6 +614,7 @@ export default function DailyUpdateSheet() {
                 type="button"
                 onClick={() => void download('pdf')}
                 disabled={downloading !== null}
+                title="Rendered from the same designed sheet the HTML view shows"
                 className="inline-flex items-center gap-1.5 bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
               >
                 {downloading === 'pdf'
@@ -616,6 +622,19 @@ export default function DailyUpdateSheet() {
                   : <FileText className="w-3.5 h-3.5" />}
                 PDF
               </button>
+              {/* The HTML view is the document the PDF is printed from. Opened
+                  rather than downloaded: it carries its own print button, so it
+                  also serves as the browser "save as PDF" route. */}
+              <a
+                href={`/api/daily-update/export-html?${query}&view=1`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open the designed sheet in a new tab — print or save from there"
+                className="inline-flex items-center gap-1.5 bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                HTML
+              </a>
             </div>
           </div>
 

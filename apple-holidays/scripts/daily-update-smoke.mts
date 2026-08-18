@@ -12,6 +12,7 @@ import {
 } from '../src/lib/daily-update'
 import { buildDailyUpdateWorkbook } from '../src/lib/daily-update-xlsx'
 import { buildDailyUpdatePdf } from '../src/lib/daily-update-pdf'
+import { buildDailyUpdateHtml } from '../src/lib/daily-update-html'
 
 const OUT = process.argv[2] ?? '/tmp'
 const scope = { role: 'ULTRA_SUPER_ADMIN' as const, country: 'ALL' }
@@ -29,6 +30,10 @@ async function run(label: string, slug: string, qs: string, render = false) {
   const xlsx = buildDailyUpdateWorkbook(rows, q)
   await writeFile(`${OUT}/${slug}.xlsx`, xlsx)
   console.log(`   xlsx ${(xlsx.length / 1024).toFixed(0)} KB → ${OUT}/${slug}.xlsx`)
+
+  const html = buildDailyUpdateHtml(rows, q, new Date(), { generatedBy: 'Smoke Check', interactive: true })
+  await writeFile(`${OUT}/${slug}.html`, html)
+  console.log(`   html ${(Buffer.byteLength(html) / 1024).toFixed(0)} KB → ${OUT}/${slug}.html`)
 
   const t1 = Date.now()
   const pdf = await buildDailyUpdatePdf(rows, q)
