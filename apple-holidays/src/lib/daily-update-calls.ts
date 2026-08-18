@@ -1,10 +1,18 @@
 /**
  * Guest-call tracking for the Daily Update sheet.
  *
- * Four moments the desk cares about on every file — the pre-trip call, the
- * calls made while the guest is on the ground, the wrap-up call after they
- * leave, and the call that chases a review. The sheet has to say, per booking,
- * whether each one happened, when, and what came of it.
+ * Three moments the desk cares about on every file — the pre-trip
+ * reconfirmation, the calls made while the guest is on the ground, and the
+ * post-tour feedback call once they have left. The sheet has to say, per
+ * booking, whether each one happened, when, and what came of it.
+ *
+ * There were four until the desk pointed out that "Post call" and "Feedback
+ * call" were the same conversation being logged twice: one call is made after
+ * departure and it both wraps the file up and collects the review. They are now
+ * a single **Post-tour Feedback** column. `POST` stayed the canonical kind so
+ * every `DU_CALL_POST` row already in `ContactLog` keeps its column, and
+ * `DU_CALL_FEEDBACK` is read as an alias of it — nothing was migrated, nothing
+ * was deleted, and no schema changed.
  *
  * Two sources feed each column:
  *
@@ -27,22 +35,20 @@
  * `daily-update-calls-data.ts`.
  */
 
-/** The four columns, in the order they happen. */
-export const CALL_KINDS = ['PRE', 'ON_GROUND', 'POST', 'FEEDBACK'] as const
+/** The three columns, in the order they happen. */
+export const CALL_KINDS = ['PRE', 'ON_GROUND', 'POST'] as const
 export type CallKind = typeof CALL_KINDS[number]
 
 export const CALL_LABELS: Record<CallKind, string> = {
-  PRE:       'Pre call',
+  PRE:       'Pre-trip Reconfirmation',
   ON_GROUND: 'On-ground call',
-  POST:      'Post call',
-  FEEDBACK:  'Feedback call',
+  POST:      'Post-tour Feedback',
 }
 
 export const CALL_HINTS: Record<CallKind, string> = {
-  PRE:       'Pre-trip reconfirmation — dates, flights, pax and contact confirmed before arrival',
+  PRE:       'Dates, flights, pax and contact confirmed with the guest before arrival',
   ON_GROUND: 'Calls made while the guest is on the ground — one entry per call',
-  POST:      'Wrap-up call after the guest leaves',
-  FEEDBACK:  'Review / rating collection call',
+  POST:      'The call after departure — how the trip went, and the rating collected',
 }
 
 /**
@@ -52,10 +58,18 @@ export const CALL_HINTS: Record<CallKind, string> = {
 export const CALL_TYPE_PREFIX = 'DU_CALL_'
 export const callLogType = (kind: CallKind) => `${CALL_TYPE_PREFIX}${kind}`
 
+/**
+ * Kinds that were written before the Post and Feedback columns were merged.
+ * Read, never written — the map is what keeps an already-logged entry visible
+ * in the column that replaced its own.
+ */
+const LEGACY_KIND_ALIASES: Record<string, CallKind> = { FEEDBACK: 'POST' }
+
 export function callKindFromType(type: string): CallKind | null {
   if (!type.startsWith(CALL_TYPE_PREFIX)) return null
-  const kind = type.slice(CALL_TYPE_PREFIX.length) as CallKind
-  return (CALL_KINDS as readonly string[]).includes(kind) ? kind : null
+  const kind = type.slice(CALL_TYPE_PREFIX.length)
+  if ((CALL_KINDS as readonly string[]).includes(kind)) return kind as CallKind
+  return LEGACY_KIND_ALIASES[kind] ?? null
 }
 
 export function isCallKind(value: unknown): value is CallKind {
@@ -90,5 +104,5 @@ export type BookingCalls = Record<CallKind, CallCell>
 const emptyCell = (): CallCell => ({ count: 0, latest: null, entries: [] })
 
 export function emptyCalls(): BookingCalls {
-  return { PRE: emptyCell(), ON_GROUND: emptyCell(), POST: emptyCell(), FEEDBACK: emptyCell() }
+  return Object.fromEntries(CALL_KINDS.map(k => [k, emptyCell()])) as BookingCalls
 }

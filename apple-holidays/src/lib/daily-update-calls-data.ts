@@ -11,6 +11,10 @@ import {
   CALL_KINDS, CALL_TYPE_PREFIX, callKindFromType, emptyCalls,
   type BookingCalls, type CallEntry, type CallKind,
 } from '@/lib/daily-update-calls'
+import {
+  FEEDBACK_RATING_FIELDS, emptyFeedbackForm, type FeedbackFormCell,
+} from '@/lib/daily-update-feedback'
+import { TAG_FEEDBACK_REQUEST } from '@/lib/customer-whatsapp-automation'
 
 /** First non-empty of several optional text columns, trimmed and capped. */
 function firstText(...candidates: (string | null | undefined)[]): string {
@@ -126,9 +130,9 @@ export async function fetchCallsForBookings(
   }
 
   for (const p of postTour) {
-    // The bot's post-tour call is the one that collects the rating, so it lands
-    // in the Feedback column. The Post column is the manual wrap-up call.
-    push(idByRef.get(p.booking_ref), 'FEEDBACK', {
+    // The bot's post-tour call both wraps the file up and collects the rating,
+    // which is exactly what the merged Post-tour Feedback column reports.
+    push(idByRef.get(p.booking_ref), 'POST', {
       id:        `ai-fb-${p.id}`,
       source:    'AI',
       at:        p.created_at.toISOString(),
@@ -152,6 +156,74 @@ export async function fetchCallsForBookings(
       cell.count = cell.entries.length
       cell.latest = cell.entries[0] ?? null
     }
+  }
+
+  return out
+}
+
+/**
+ * The digital feedback form for a page of bookings — the submission if there is
+ * one, and when the form was last sent on WhatsApp if there is not.
+ *
+ * Two queries for the whole page, same reason as the calls above. Both are
+ * plain reads of tables that already exist: `guest_feedback_forms` is written
+ * by the public form at `/feedback/[ref]`, and the send is inferred from the
+ * `[FEEDBACK-REQUEST]`-tagged outbound rows the automation already logs.
+ */
+export async function fetchFeedbackFormsForBookings(
+  bookings: { id: string; bookingRef: string }[],
+): Promise<Record<string, FeedbackFormCell>> {
+  const out: Record<string, FeedbackFormCell> = {}
+  for (const b of bookings) out[b.id] = emptyFeedbackForm()
+  if (bookings.length === 0) return out
+
+  const ids  = bookings.map(b => b.id)
+  const refs = bookings.map(b => b.bookingRef)
+  const idByRef = new Map(bookings.map(b => [b.bookingRef, b.id]))
+
+  const [forms, sends] = await Promise.all([
+    prisma.guestFeedbackForm.findMany({
+      where: { bookingId: { in: ids } },
+      select: {
+        bookingId: true, submittedAt: true, clientName: true, purpose: true,
+        overallExperience: true, remarks: true,
+        accommodationRoom: true, accommodationFood: true,
+        restaurantFood: true, restaurantAmbience: true,
+        transportVehicle: true, transportDriver: true,
+      },
+    }),
+    prisma.whatsAppMessage.findMany({
+      where: {
+        bookingRef: { in: refs },
+        direction: 'outbound',
+        senderName: { startsWith: TAG_FEEDBACK_REQUEST },
+      },
+      select: { bookingRef: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ])
+
+  for (const f of forms) {
+    const cell = out[f.bookingId]
+    if (!cell) continue
+    const row = f as unknown as Record<string, unknown>
+    cell.form = {
+      submittedAt: f.submittedAt.toISOString(),
+      clientName:  f.clientName,
+      purpose:     f.purpose ? String(f.purpose) : null,
+      overall:     f.overallExperience ? String(f.overallExperience) : null,
+      remarks:     f.remarks,
+      ratings: Object.fromEntries(
+        FEEDBACK_RATING_FIELDS.map(({ key }) => [key, row[key] ? String(row[key]) : null]),
+      ),
+    }
+  }
+
+  // Newest first, so the first row seen for a ref is the most recent send.
+  for (const s of sends) {
+    const id = idByRef.get(s.bookingRef)
+    if (!id || !out[id] || out[id].sentAt) continue
+    out[id].sentAt = s.createdAt.toISOString()
   }
 
   return out

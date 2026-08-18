@@ -8,7 +8,8 @@ import {
   parseDailyUpdateQuery, fetchDailyUpdateRows, sortDailyUpdateRows,
   summarise, resolveRange, countryClause, countCreatedToday,
 } from '@/lib/daily-update'
-import type { UserRole } from '@prisma/client'
+import { bookingSourceWhere } from '@/lib/booking-source'
+import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,10 +37,19 @@ export async function GET(req: NextRequest) {
   // The agent dropdown is built from the agents this user can actually see, not
   // from the filtered rows — otherwise picking an agent empties the list you
   // would need in order to pick a different one.
+  // Channel is part of that scope rather than a row filter: with B2B selected,
+  // offering "Aahaas B2C" in the list would only ever empty the sheet.
   const country = countryClause(scope, q.country)
+  const source = bookingSourceWhere(q.source === 'ALL' ? null : q.source)
   const agentGroups = await prisma.booking.groupBy({
     by: ['agent'],
-    where: { AND: [...(country ? [country] : []), { agent: { not: null } }] },
+    where: {
+      AND: [
+        ...(country ? [country] : []),
+        ...(source ? [source as Prisma.BookingWhereInput] : []),
+        { agent: { not: null } },
+      ],
+    },
     _count: { agent: true },
     orderBy: { agent: 'asc' },
   })

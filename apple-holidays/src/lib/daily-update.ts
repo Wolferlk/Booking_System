@@ -17,7 +17,9 @@
 
 import { prisma } from '@/lib/prisma'
 import { emptyCalls, type BookingCalls } from '@/lib/daily-update-calls'
-import { fetchCallsForBookings } from '@/lib/daily-update-calls-data'
+import { emptyFeedbackForm, type FeedbackFormCell } from '@/lib/daily-update-feedback'
+import { fetchCallsForBookings, fetchFeedbackFormsForBookings } from '@/lib/daily-update-calls-data'
+import { bookingSourceOf, bookingSourceWhere, type BookingSource } from '@/lib/booking-source'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import type { Prisma, UserRole } from '@prisma/client'
@@ -32,6 +34,24 @@ export const DAILY_UPDATE_ROLES: UserRole[] = [
 export const DAILY_UPDATE_EDIT_ROLES: UserRole[] = [
   'BT_USER', 'GT_USER', 'GT_TE_USER', 'TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
 ]
+
+/**
+ * Sales channel the sheet is showing.
+ *
+ * `B2B` is the default rather than `ALL` because the sheet is the agent desk's
+ * morning read: a B2C store order has no agent to chase and would otherwise
+ * pad every count. The channel is derived from `Booking.agent`, so this filter
+ * needs no column of its own — see `booking-source.ts`.
+ */
+export type SourceFilter = 'ALL' | BookingSource
+
+const SOURCE_FILTERS: SourceFilter[] = ['ALL', 'B2B', 'B2C']
+
+export const SOURCE_LABELS: Record<SourceFilter, string> = {
+  ALL: 'All bookings',
+  B2B: 'B2B (agent bookings)',
+  B2C: 'B2C (Aahaas store)',
+}
 
 /** Which date column the day-window filter is measured against. */
 export type DateField = 'arrivalDate' | 'departureDate' | 'createdAt' | 'updatedAt'
@@ -80,8 +100,12 @@ export type DailyUpdateRow = {
   amended:          boolean
   hotelOnly:        boolean
   cancelled:        boolean
-  /** Pre / on-ground / post / feedback calls, from the bot and from staff. */
+  /** B2B agent booking or a B2C storefront order. */
+  source:           BookingSource
+  /** Pre-trip / on-ground / post-tour calls, from the bot and from staff. */
   calls:            BookingCalls
+  /** The digital Guest Feedback Form: the submission, or when it was sent. */
+  feedbackForm:     FeedbackFormCell
 }
 
 export type DailyUpdateQuery = {
@@ -93,6 +117,7 @@ export type DailyUpdateQuery = {
   agent:        string
   search:       string
   country:      string
+  source:       SourceFilter
   includeCancelled: boolean
   sortBy:       DateField
   sortDir:      'asc' | 'desc'
@@ -149,6 +174,10 @@ export function parseDailyUpdateQuery(sp: URLSearchParams): DailyUpdateQuery {
     agent: (sp.get('agent') ?? '').trim(),
     search: (sp.get('search') ?? '').trim(),
     country: (sp.get('country') ?? '').trim(),
+    // Absent means the default view, which is B2B — not "everything".
+    source: (SOURCE_FILTERS as string[]).includes(sp.get('source') ?? '')
+      ? sp.get('source') as SourceFilter
+      : 'B2B',
     includeCancelled: sp.get('includeCancelled') === '1',
     sortBy,
     sortDir: sp.get('sortDir') === 'desc' ? 'desc' : 'asc',
@@ -198,6 +227,9 @@ function nonDateClauses(q: DailyUpdateQuery, scope: SessionScope): Prisma.Bookin
   if (country) and.push(country)
 
   if (q.agent) and.push({ agent: q.agent })
+
+  const source = bookingSourceWhere(q.source === 'ALL' ? null : q.source)
+  if (source) and.push(source as Prisma.BookingWhereInput)
 
   if (q.search) {
     and.push({
@@ -304,10 +336,12 @@ export async function fetchDailyUpdateRows(
     take: limit,
   })
 
-  // One batched load for the whole page rather than four queries per row.
-  const calls = await fetchCallsForBookings(
-    bookings.map(b => ({ id: b.id, bookingRef: b.bookingRef })),
-  )
+  // One batched load for the whole page rather than a handful of queries per row.
+  const keys = bookings.map(b => ({ id: b.id, bookingRef: b.bookingRef }))
+  const [calls, feedbackForms] = await Promise.all([
+    fetchCallsForBookings(keys),
+    fetchFeedbackFormsForBookings(keys),
+  ])
 
   const todayStart = startOfDay(now).getTime()
   const todayEnd   = endOfDay(now).getTime()
@@ -353,7 +387,9 @@ export async function fetchDailyUpdateRows(
       amended:          b.updatedAt.getTime() - created > 60_000,
       hotelOnly:        b.hotelOnly,
       cancelled:        String(b.status) === 'CANCELLED' || String(b.status) === 'PENDING_CANCELLATION',
+      source:           bookingSourceOf(b.agent),
       calls:            calls[b.id] ?? emptyCalls(),
+      feedbackForm:     feedbackForms[b.id] ?? emptyFeedbackForm(),
     }
   })
 }

@@ -19,10 +19,14 @@
  */
 
 import {
-  DATE_FIELD_LABELS, summarise, resolveRange,
+  DATE_FIELD_LABELS, SOURCE_LABELS, summarise, resolveRange,
   type DailyUpdateQuery, type DailyUpdateRow,
 } from '@/lib/daily-update'
 import { CALL_KINDS, CALL_LABELS, type CallCell } from '@/lib/daily-update-calls'
+import {
+  FEEDBACK_RATING_FIELDS, FEEDBACK_RATING_LABELS, worstRating,
+  type FeedbackFormCell,
+} from '@/lib/daily-update-feedback'
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
@@ -132,6 +136,36 @@ function callCellHtml(cell: CallCell): string {
     <div class="call-sum">${esc(latest.summary)}</div>`
 }
 
+/**
+ * The digital feedback form, printed.
+ *
+ * Ratings first and words second: on paper the useful signal is which section
+ * came back weak, so the overall badge leads and any section that is not
+ * Excellent is listed under it. A form that was sent and never answered says so
+ * — that is a chase, and an empty cell would hide it.
+ */
+function feedbackCellHtml(cell: FeedbackFormCell): string {
+  if (!cell.form) {
+    return cell.sentAt
+      ? `<div class="ff-wait">Sent ${fmtStamp(cell.sentAt)} · awaiting reply</div>`
+      : '<span class="call-no">—</span>'
+  }
+  const f = cell.form
+  const weak = FEEDBACK_RATING_FIELDS
+    .map(({ key, label }) => ({ label, value: f.ratings[key] }))
+    .filter(x => x.value && x.value !== 'EXCELLENT')
+    .map(x => `${esc(x.label.replace(/^.*— /, ''))}: ${esc(FEEDBACK_RATING_LABELS[x.value!] ?? x.value!)}`)
+
+  const overall = f.overall ? (FEEDBACK_RATING_LABELS[f.overall] ?? f.overall) : 'Submitted'
+  return `
+    <div class="ff-head">
+      <span class="ff-badge ff-${esc((worstRating(f) ?? 'GOOD').toLowerCase())}">${esc(overall)}</span>
+      <span class="call-at">${esc(fmtStamp(f.submittedAt))}</span>
+    </div>
+    ${weak.length ? `<div class="call-sum">${weak.join(' · ')}</div>` : ''}
+    ${f.remarks ? `<div class="call-sum">${esc(f.remarks)}</div>` : ''}`
+}
+
 function rowHtml(r: DailyUpdateRow, index: number): string {
   const badges = [
     r.cancelled   ? '<span class="tag t-cancel">Cancelled</span>' : '',
@@ -166,6 +200,7 @@ function rowHtml(r: DailyUpdateRow, index: number): string {
     <td><div class="name">${or(r.agent)}</div></td>
     <td class="c-contact">${contactBlock(r.agentPhone, r.agentWhatsapp, r.agentEmail)}</td>
     ${CALL_KINDS.map(kind => `<td class="c-call">${callCellHtml(r.calls[kind])}</td>`).join('')}
+    <td class="c-call c-ff">${feedbackCellHtml(r.feedbackForm)}</td>
     <td class="c-audit">
       <div class="sub"><span class="lbl">Created</span>${fmtStamp(r.createdAt)}</div>
       <div class="sub ${r.amended ? 'upd' : ''}"><span class="lbl">Updated</span>${fmtStamp(r.updatedAt)}</div>
@@ -185,6 +220,7 @@ const HEAD_ROW: string = `
     <th>Agent</th>
     <th>Agent contact</th>
     ${CALL_KINDS.map(kind => `<th class="c-call">${CALL_LABELS[kind]}</th>`).join('')}
+    <th class="c-call c-ff">Feedback Form</th>
     <th>Created / Updated</th>
   </tr>`
 
@@ -224,6 +260,7 @@ export function buildDailyUpdateHtml(
     </div>`
 
   const filterBits = [
+    `Channel: ${SOURCE_LABELS[q.source]}`,
     `Agent: ${q.agent || 'All'}`,
     `Country: ${q.country ? q.country.replace('_', ' & ') : 'as permitted'}`,
     q.search ? `Search: "${q.search}"` : 'Search: none',
@@ -377,6 +414,18 @@ export function buildDailyUpdateHtml(
     margin-top: 1px; font-size: 7px; line-height: 1.3; color: #64748b;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
+
+  .c-ff { width: 104px; }
+  .ff-head { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+  .ff-badge {
+    border-radius: 3px; padding: 0 3px; font-size: 6.5px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .ff-excellent { background: #dcfce7; color: #15803d; }
+  .ff-good      { background: #e0f2fe; color: #0369a1; }
+  .ff-average   { background: #fef3c7; color: #b45309; }
+  .ff-poor      { background: #ffe4e6; color: #be123c; }
+  .ff-wait      { font-size: 7px; font-weight: 700; color: #b45309; }
 
   /* ── Section bands ────────────────────────────────────────────────────── */
   tr.band td {

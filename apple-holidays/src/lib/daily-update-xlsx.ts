@@ -13,10 +13,14 @@
 
 import * as XLSX from 'xlsx'
 import {
-  DATE_FIELD_LABELS, summarise, resolveRange,
+  DATE_FIELD_LABELS, SOURCE_LABELS, summarise, resolveRange,
   type DailyUpdateQuery, type DailyUpdateRow,
 } from '@/lib/daily-update'
 import { CALL_KINDS, CALL_LABELS, type CallCell } from '@/lib/daily-update-calls'
+import {
+  FEEDBACK_PURPOSE_LABELS, FEEDBACK_RATING_FIELDS, FEEDBACK_RATING_LABELS,
+  feedbackFormSummary,
+} from '@/lib/daily-update-feedback'
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
@@ -80,8 +84,9 @@ export function buildDailyUpdateWorkbook(
     'Travel Dates', 'Nights', 'Arrival', 'Departure', 'When',
     'Guest Name', 'Guest Contact',
     'Agent', 'Agent Contact',
-    'Pax (A/C/I)', 'Total Pax', 'File Handler', 'Country', 'Status',
+    'Pax (A/C/I)', 'Total Pax', 'File Handler', 'Country', 'Status', 'Channel',
     ...CALL_KINDS.map(k => CALL_LABELS[k]),
+    'Feedback Form',
     'Booking Created', 'Last Updated',
   ]
 
@@ -98,7 +103,7 @@ export function buildDailyUpdateWorkbook(
       `Missing IS/CNTL: ${stats.missingIds}`,
     ],
     [
-      `Filters — Agent: ${q.agent || 'All'}  ·  Country: ${q.country || 'As permitted'}  ·  Search: ${q.search || 'None'}  ·  Cancelled: ${q.includeCancelled ? 'included' : 'excluded'}`,
+      `Filters — Channel: ${SOURCE_LABELS[q.source]}  ·  Agent: ${q.agent || 'All'}  ·  Country: ${q.country || 'As permitted'}  ·  Search: ${q.search || 'None'}  ·  Cancelled: ${q.includeCancelled ? 'included' : 'excluded'}`,
     ],
     [],
   ]
@@ -123,7 +128,9 @@ export function buildDailyUpdateWorkbook(
     r.fileHandler ?? '',
     r.operationCountry ?? '',
     r.status,
+    r.source,
     ...CALL_KINDS.map(k => callCell(r.calls[k])),
+    feedbackFormSummary(r.feedbackForm),
     fmtDateTime(r.createdAt),
     fmtDateTime(r.updatedAt),
   ]))
@@ -135,8 +142,9 @@ export function buildDailyUpdateWorkbook(
     { wch: 26 }, { wch: 7 }, { wch: 13 }, { wch: 13 }, { wch: 15 },
     { wch: 26 }, { wch: 30 },
     { wch: 24 }, { wch: 30 },
-    { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 20 },
-    { wch: 34 }, { wch: 34 }, { wch: 34 }, { wch: 34 },
+    { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 8 },
+    ...CALL_KINDS.map(() => ({ wch: 34 })),
+    { wch: 52 },
     { wch: 20 }, { wch: 20 },
   ]
 
@@ -225,6 +233,47 @@ export function buildDailyUpdateWorkbook(
     { s: { r: 0, c: 0 }, e: { r: Math.max(0, callRows.length - 1), c: 11 } },
   ) }
   XLSX.utils.book_append_sheet(wb, wsCalls, 'Call Log')
+
+  // ── Sheet 5: the digital feedback forms, section by section ────────────────
+  // The main sheet has one cell for the whole form, which is enough to spot
+  // that it came back but not enough to act on. Here every section rating is
+  // its own column, so a run of "Poor" against one hotel or one driver is
+  // visible by sorting rather than by opening nine bookings one at a time.
+  const ffRows: unknown[][] = [[
+    'Booking Ref', 'Guest', 'Agent', 'Arrival', 'Departure',
+    'Form Sent', 'Submitted At', 'Submitted By', 'Purpose', 'Overall',
+    ...FEEDBACK_RATING_FIELDS.map(f => f.label),
+    'Remarks',
+  ]]
+  for (const r of rows) {
+    const { form, sentAt } = r.feedbackForm
+    if (!form && !sentAt) continue
+    ffRows.push([
+      r.bookingRef, r.guestName ?? '', r.agent ?? '',
+      fmtDate(r.arrivalDate), fmtDate(r.departureDate),
+      sentAt ? fmtDateTime(sentAt) : 'Not sent',
+      form ? fmtDateTime(form.submittedAt) : 'No response yet',
+      form?.clientName ?? '',
+      form?.purpose ? (FEEDBACK_PURPOSE_LABELS[form.purpose] ?? form.purpose) : '',
+      form?.overall ? (FEEDBACK_RATING_LABELS[form.overall] ?? form.overall) : '',
+      ...FEEDBACK_RATING_FIELDS.map(({ key }) => {
+        const v = form?.ratings[key]
+        return v ? (FEEDBACK_RATING_LABELS[v] ?? v) : ''
+      }),
+      form?.remarks ?? '',
+    ])
+  }
+  const wsFeedback = XLSX.utils.aoa_to_sheet(ffRows)
+  wsFeedback['!cols'] = [
+    { wch: 16 }, { wch: 26 }, { wch: 24 }, { wch: 13 }, { wch: 13 },
+    { wch: 20 }, { wch: 20 }, { wch: 22 }, { wch: 18 }, { wch: 12 },
+    ...FEEDBACK_RATING_FIELDS.map(() => ({ wch: 22 })),
+    { wch: 60 },
+  ]
+  wsFeedback['!autofilter'] = { ref: XLSX.utils.encode_range(
+    { s: { r: 0, c: 0 }, e: { r: Math.max(0, ffRows.length - 1), c: ffRows[0].length - 1 } },
+  ) }
+  XLSX.utils.book_append_sheet(wb, wsFeedback, 'Feedback Forms')
 
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 }
