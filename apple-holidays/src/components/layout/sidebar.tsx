@@ -12,7 +12,7 @@ import {
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
-  ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare,
+  ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -36,7 +36,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
-  Sparkles, Store, BedDouble, MessagesSquare,
+  Sparkles, Store, BedDouble, MessagesSquare, CalendarDays,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -57,6 +57,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                 icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'New Booking',    href: '/dashboard/bookings/new',              icon: 'PlusCircle' },
     { label: 'Change Requests',href: '/dashboard/change-requests',           icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl',             icon: 'BarChart2' },
@@ -73,6 +74,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'My Assignments', href: '/dashboard/ground/assignments',       icon: 'MapPin' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',           icon: 'Ticket' },
     { label: 'Ticket Portals', href: '/dashboard/admin/portals',            icon: 'Store' },
     { label: 'Drivers',        href: '/dashboard/ground/drivers',           icon: 'Car' },
@@ -109,6 +111,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',       icon: 'BarChart2' },
@@ -131,6 +134,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'MC Report',       href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
     { label: 'Credit Agents',   href: '/dashboard/accounts/credit-agents',   icon: 'CreditCard' },
@@ -162,6 +166,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Ground Review',      href: '/dashboard/ground/review',               icon: 'ClipboardCheck' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',                  icon: 'Navigation2' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
@@ -203,6 +208,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Review Queue',       href: '/dashboard/te/review',                   icon: 'ClipboardCheck' },
     { label: 'My Assignments',     href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     // { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',                  icon: 'Navigation2' },
@@ -233,6 +239,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
+    { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'Ground Review',      href: '/dashboard/ground/review',               icon: 'ClipboardCheck' },
     { label: 'Driver Logs',        href: '/dashboard/driver-log',                  icon: 'Navigation2' },
@@ -287,6 +294,7 @@ type NavGroupId = 'quick' | 'bookings' | 'ops' | 'te' | 'finance' | 'reports' | 
 /** The day-to-day links, in the order they should appear when pinned. */
 const QUICK_ACCESS_HREFS = [
   '/dashboard/bookings',
+  '/dashboard/daily-update',
   '/dashboard/mc-report',
   '/dashboard/accounts/reports',
   '/dashboard/whatsapp',
@@ -328,6 +336,7 @@ function classifyNavItem(item: NavItem): NavGroupId {
   if (h.startsWith('/dashboard/admin/onedrive')) return 'comms'
   if (h.startsWith('/dashboard/admin/query-monitor')) return 'comms'
   if (h.startsWith('/dashboard/mc-report')) return 'reports'
+  if (h.startsWith('/dashboard/daily-update')) return 'reports'
   if (h.startsWith('/dashboard/reports')) return 'reports'
   if (h.startsWith('/dashboard/bookings')) return 'bookings'
   if (h.startsWith('/dashboard/as-bookings')) return 'bookings'
