@@ -7,20 +7,33 @@
  * experience, the agent mail is built but not sent; the report goes to the
  * escalation inbox instead, saying in the first line that the agent has not
  * been told. Only a person can release it after that.
+ *
+ * The second gate is evidence. Nothing is sent automatically unless the guest
+ * themselves left something behind — an on-ground call or a filled-in feedback
+ * form. A trip with neither is parked as `pending` for the Experience team to
+ * write up by hand; it is never guessed at and never mailed on its own.
+ *
+ * When a clean report does reach the agent, the traveller gets their own
+ * letter: a short written thank-you, not a copy of the agent's report.
  */
 import { prisma } from '@/lib/prisma'
 import { sendMailViaGraph } from '@/lib/send-mail'
-import { collectTripDossier, dossierChannels } from './collect'
+import { collectTripDossier, dossierChannels, hasAutoSendEvidence } from './collect'
 import { assessRisk } from './risk'
 import { generateNarrative, fallbackNarrative } from './narrative'
 import {
   buildAgentEmail, buildAgentSubject, buildEscalationEmail, buildEscalationSubject,
 } from './email'
 import {
+  buildClientEmail, buildClientSubject, generateClientLetter,
+} from './client-mail'
+import {
   appendEvent, event, getReport, getSettings, toRecord, updateReport, alreadySent,
+  OPEN_STATUSES,
 } from './store'
 import type {
-  ExperienceReportRecord, ExperienceReportSettings, RiskAssessment, TriggerSource, TripDossier,
+  ClientMail, DeskNoteEvidence, ExperienceNarrative, ExperienceReportRecord,
+  ExperienceReportSettings, RiskAssessment, TriggerSource, TripDossier,
 } from './types'
 import type { Prisma } from '@prisma/client'
 
@@ -77,27 +90,64 @@ export async function buildReport(opts: BuildOptions): Promise<ExperienceReportR
   const dossier = await collectTripDossier(opts.bookingRef)
   const channels = dossierChannels(dossier)
 
-  if (!channels.length) {
-    throw new ReportError(
-      `No feedback of any kind was collected for ${opts.bookingRef} — there is nothing to report on yet.`,
-    )
-  }
-
   const risk = assessRisk(dossier, settings.holdAtLevel)
+
+  // The evidence gate. Without an on-ground call or a feedback form there is no
+  // guest voice to report, so we do not write one — the row is parked as
+  // `pending` with the evidence we do have, and the Experience team writes the
+  // summary themselves. No mail body is prepared, which is also what stops it
+  // being sent by accident from anywhere else in this file.
+  if (!hasAutoSendEvidence(dossier)) {
+    return createRow({
+      opts, dossier, risk, settings,
+      status: 'pending',
+      narrative: fallbackNarrative(dossier),
+      subject: buildAgentSubject(dossier),
+      bodyHtml: null,
+      channels,
+      builtDetail: channels.length
+        ? 'No call and no feedback form — waiting for the Experience team to write this one.'
+        : 'Nothing was collected for this trip — waiting for the Experience team to write this one.',
+    })
+  }
 
   const narrative = opts.skipNarrative
     ? fallbackNarrative(dossier)
     : await generateNarrative({ dossier, risk })
-
-  const subject = buildAgentSubject(dossier)
-  const bodyHtml = buildAgentEmail({ dossier, narrative, isAutoSend: opts.trigger === 'auto' })
 
   const status: ExperienceReportRecord['status'] =
     risk.shouldHold ? 'held'
     : opts.draftOnly || settings.requireApproval ? 'draft'
     : 'queued'
 
-  const escalationHtml = risk.shouldHold
+  return createRow({
+    opts, dossier, risk, settings, status, narrative, channels,
+    subject: buildAgentSubject(dossier),
+    bodyHtml: buildAgentEmail({ dossier, narrative, isAutoSend: opts.trigger === 'auto' }),
+    builtDetail: `Built from ${channels.length} channel(s); risk ${risk.level} (${risk.score}).`,
+  })
+}
+
+/** The single INSERT every build path goes through. */
+async function createRow(args: {
+  opts: BuildOptions
+  dossier: TripDossier
+  risk: RiskAssessment
+  settings: ExperienceReportSettings
+  status: ExperienceReportRecord['status']
+  narrative: ExperienceNarrative
+  subject: string
+  bodyHtml: string | null
+  channels: ReturnType<typeof dossierChannels>
+  builtDetail: string
+}): Promise<ExperienceReportRecord> {
+  const { opts, dossier, risk, settings, status, narrative, subject, bodyHtml, channels } = args
+
+  // A pending report is not a hold: nobody has said the trip went badly, we
+  // simply have nothing to say yet. Only a real hold escalates.
+  const isHeld = status === 'held'
+
+  const escalationHtml = isHeld
     ? buildEscalationEmail({ dossier, narrative, risk, reviewUrl: null })
     : null
 
@@ -109,7 +159,7 @@ export async function buildReport(opts: BuildOptions): Promise<ExperienceReportR
       riskLevel: risk.level,
       riskScore: risk.score,
       riskSignals: risk.signals as unknown as Prisma.InputJsonValue,
-      holdReason: risk.reason,
+      holdReason: isHeld ? risk.reason : null,
       clientName: dossier.facts.clientName,
       agentName: dossier.facts.agentName,
       arrivalDate: dateOnly(dossier.facts.arrivalDate),
@@ -120,11 +170,11 @@ export async function buildReport(opts: BuildOptions): Promise<ExperienceReportR
       subject,
       bodyHtml,
       escalationHtml,
-      escalationTo: risk.shouldHold ? settings.escalationEmail : null,
+      escalationTo: isHeld ? settings.escalationEmail : null,
       createdBy: opts.actor,
       events: [
-        event('built', opts.actor, `Built from ${channels.length} channel(s); risk ${risk.level} (${risk.score}).`),
-        ...(risk.shouldHold ? [event('held', opts.actor, risk.reason)] : []),
+        event('built', opts.actor, args.builtDetail),
+        ...(isHeld ? [event('held', opts.actor, risk.reason)] : []),
       ] as unknown as Prisma.InputJsonValue,
     },
   })
@@ -133,7 +183,7 @@ export async function buildReport(opts: BuildOptions): Promise<ExperienceReportR
 
   // The escalation embeds a link back to itself, so it can only be rendered
   // once the row has an id. Re-render now that we have one.
-  if (risk.shouldHold) {
+  if (isHeld) {
     await prisma.teExperienceReport.update({
       where: { id: record.id },
       data: {
@@ -147,11 +197,17 @@ export async function buildReport(opts: BuildOptions): Promise<ExperienceReportR
   return (await getReport(record.id))!
 }
 
-/** Re-grade and re-write an existing report against fresh evidence. */
+/**
+ * Re-grade and re-write an existing report against fresh evidence.
+ *
+ * `extraNote` is how the Experience team's own write-up gets in: it is folded
+ * into the dossier as a desk note, so it is graded for risk and quoted by the
+ * narrative writer exactly like every other piece of evidence.
+ */
 export async function regenerateReport(
   id: string,
   actor: string | null,
-  opts?: { skipNarrative?: boolean },
+  opts?: { skipNarrative?: boolean; extraNote?: string | null },
 ): Promise<ExperienceReportRecord> {
   const existing = await getReport(id)
   if (!existing) throw new ReportError('Report not found.')
@@ -161,20 +217,62 @@ export async function regenerateReport(
 
   const settings = await getSettings()
   const dossier = await collectTripDossier(existing.bookingRef)
+
+  // Desk write-ups live on the report, not on the booking, so a fresh collect
+  // would drop them. Carry the previous ones over and append the new one.
+  const carried = (existing.dossier?.deskNotes ?? []).filter(isWriteUp)
+  const written: DeskNoteEvidence[] = opts?.extraNote?.trim()
+    ? [{
+        rating: null,
+        comment: opts.extraNote.trim(),
+        savedBy: actor,
+        createdAt: new Date().toISOString(),
+      }]
+    : []
+  dossier.deskNotes = dedupeNotes([...dossier.deskNotes, ...carried, ...written])
+
   const risk = assessRisk(dossier, settings.holdAtLevel)
+  const channels = dossierChannels(dossier)
+
+  // Still nothing from the guest and nobody has written anything either — there
+  // is no report to write, so it goes back to waiting rather than being faked.
+  if (!hasAutoSendEvidence(dossier) && !dossier.deskNotes.length) {
+    return updateReport(id, {
+      status: 'pending',
+      riskLevel: risk.level,
+      riskScore: risk.score,
+      riskSignals: risk.signals as unknown as Prisma.InputJsonValue,
+      holdReason: null,
+      sources: channels as unknown as Prisma.InputJsonValue,
+      dossier: dossier as unknown as Prisma.InputJsonValue,
+      bodyHtml: null,
+      escalationHtml: null,
+      lastError: null,
+    }, event('regenerated', actor, 'Still no call and no feedback form — left waiting for a written summary.'))
+  }
+
   const narrative = opts?.skipNarrative
     ? fallbackNarrative(dossier)
     : await generateNarrative({ dossier, risk })
 
+  // The traveller's letter, if one has already gone out, is part of the record
+  // and must survive a rewrite of the agent's side.
+  narrative.clientMail = existing.narrative?.clientMail ?? null
+
   const bodyHtml = buildAgentEmail({ dossier, narrative })
 
+  const status: ExperienceReportRecord['status'] =
+    risk.shouldHold ? 'held'
+    : existing.status === 'held' || existing.status === 'pending' ? 'draft'
+    : existing.status
+
   return updateReport(id, {
-    status: risk.shouldHold ? 'held' : existing.status === 'held' ? 'draft' : existing.status,
+    status,
     riskLevel: risk.level,
     riskScore: risk.score,
     riskSignals: risk.signals as unknown as Prisma.InputJsonValue,
-    holdReason: risk.reason,
-    sources: dossierChannels(dossier) as unknown as Prisma.InputJsonValue,
+    holdReason: risk.shouldHold ? risk.reason : null,
+    sources: channels as unknown as Prisma.InputJsonValue,
     dossier: dossier as unknown as Prisma.InputJsonValue,
     narrative: narrative as unknown as Prisma.InputJsonValue,
     subject: buildAgentSubject(dossier),
@@ -182,8 +280,50 @@ export async function regenerateReport(
     escalationHtml: risk.shouldHold
       ? buildEscalationEmail({ dossier, narrative, risk, reviewUrl: reviewUrl(id) })
       : null,
+    escalationTo: risk.shouldHold ? (existing.escalationTo ?? settings.escalationEmail) : existing.escalationTo,
     lastError: null,
-  }, event('regenerated', actor, `Risk re-graded to ${risk.level} (${risk.score}).`))
+  }, opts?.extraNote?.trim()
+    ? event('written_up', actor, `Experience team wrote the summary; risk graded ${risk.level} (${risk.score}).`)
+    : event('regenerated', actor, `Risk re-graded to ${risk.level} (${risk.score}).`))
+}
+
+/**
+ * A desk note that came from the Experience team typing it here, rather than
+ * from the booking's own saved rating. Only the former needs carrying over.
+ */
+function isWriteUp(n: DeskNoteEvidence): boolean {
+  return n.rating == null && !!n.comment?.trim()
+}
+
+function dedupeNotes(notes: DeskNoteEvidence[]): DeskNoteEvidence[] {
+  const seen = new Set<string>()
+  return notes.filter(n => {
+    const key = `${n.rating ?? '-'}|${n.comment ?? ''}|${n.createdAt}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/**
+ * The Experience team writes the feedback for a trip the guest left no trace
+ * of. Their words become the evidence, the report is written from them, and it
+ * moves out of `pending` into the normal review queue.
+ */
+export async function writeUpReport(
+  id: string,
+  actor: string | null,
+  text: string,
+): Promise<ExperienceReportRecord> {
+  if (!text.trim()) {
+    throw new ReportError('Write what the trip was like before saving — this is the only feedback the report will have.')
+  }
+  const existing = await getReport(id)
+  if (!existing) throw new ReportError('Report not found.')
+  if (existing.status === 'sent') throw new ReportError('This report has already gone to the agent.')
+  if (existing.status === 'cancelled') throw new ReportError('This report was cancelled. Rebuild it before writing it up.')
+
+  return regenerateReport(id, actor, { extraNote: text })
 }
 
 // ─── Recipients ───────────────────────────────────────────────────────────────
@@ -206,11 +346,17 @@ function resolveRecipients(
     throw new ReportError('No agent email is on file for this booking. Enter one before sending.')
   }
 
+  // The traveller used to be CC'd on the agent's report. Now that they get a
+  // letter written for them, copying them on the agent's analysis as well would
+  // mean two mails about the same trip in two completely different voices — so
+  // they are only CC'd here when the letter is switched off.
   const contact = record.dossier?.facts.contactEmail?.trim()
+  const ccClient = !settings.sendClientThankYou && contact && contact !== to
+
   const cc = [
     ...settings.ccEmails,
     ...(overrides?.cc ?? []),
-    ...(contact && contact !== to ? [contact] : []),
+    ...(ccClient ? [contact] : []),
   ]
     .map(e => e.trim())
     .filter(e => e.includes('@') && e !== to)
@@ -231,6 +377,8 @@ export interface SendOptions {
    */
   overrideHold?: boolean
   note?: string | null
+  /** Send the agent report only, and leave the traveller's letter for later. */
+  sendClientMail?: boolean
 }
 
 export async function sendToAgent(id: string, opts: SendOptions): Promise<ExperienceReportRecord> {
@@ -242,6 +390,11 @@ export async function sendToAgent(id: string, opts: SendOptions): Promise<Experi
   }
   if (record.status === 'cancelled') {
     throw new ReportError('This report was cancelled. Rebuild it before sending.')
+  }
+  if (record.status === 'pending') {
+    throw new ReportError(
+      'This trip has no call and no feedback form, so nothing has been written yet. Add the Experience team’s summary first — then it can be sent.',
+    )
   }
   if (record.status === 'held' && !opts.overrideHold) {
     throw new ReportError(
@@ -278,7 +431,7 @@ export async function sendToAgent(id: string, opts: SendOptions): Promise<Experi
     wasHeld ? `hold overridden: ${opts.note?.trim()}` : null,
   ].filter(Boolean).join(' · ')
 
-  return updateReport(id, {
+  const sent = await updateReport(id, {
     status: 'sent',
     sentAt: new Date(),
     sentBy: opts.actor,
@@ -287,6 +440,112 @@ export async function sendToAgent(id: string, opts: SendOptions): Promise<Experi
     lastError: null,
     ...(wasHeld ? { releasedAt: new Date(), releasedBy: opts.actor, resolutionNote: opts.note?.trim() ?? null } : {}),
   }, event(wasHeld ? 'released_and_sent' : 'sent', opts.actor, detail))
+
+  // The traveller's letter is a follow-on, never a precondition: the agent's
+  // report has already gone, and nothing that happens here may undo that or
+  // report the send as failed.
+  //
+  // A trip that was held at any point — including one released after somebody
+  // fixed the problem — does not get one automatically. It may well deserve
+  // one, but that is a judgement call, so it is left as the button in the
+  // drawer rather than made here.
+  const everHeld = wasHeld || !!record.releasedAt || !!record.holdReason
+
+  if (settings.sendClientThankYou && !everHeld && opts.sendClientMail !== false) {
+    try {
+      return await sendClientMail(id, { actor: opts.actor })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      await appendEvent(id, event('client_mail_skipped', opts.actor, message))
+      return (await getReport(id)) ?? sent
+    }
+  }
+
+  return sent
+}
+
+// ─── The traveller's thank-you ────────────────────────────────────────────────
+
+/**
+ * Writes and sends the guest their own letter.
+ *
+ * Held trips are refused outright. A trip somebody had to escalate is not one
+ * we write a warm note about, and the check lives here rather than only at the
+ * call site so no future caller can route around it.
+ */
+export async function sendClientMail(
+  id: string,
+  opts: { actor: string | null; toOverride?: string | null },
+): Promise<ExperienceReportRecord> {
+  const record = await getReport(id)
+  if (!record) throw new ReportError('Report not found.')
+  if (!record.dossier) throw new ReportError('This report has no evidence snapshot. Regenerate it first.')
+  if (record.status === 'held') {
+    throw new ReportError('This trip is held as a bad experience — the traveller is not sent a thank-you letter.')
+  }
+  if (record.narrative?.clientMail?.sentAt) {
+    throw new ReportError(
+      `The traveller was already written to on ${new Date(record.narrative.clientMail.sentAt).toLocaleString('en-GB')}.`,
+    )
+  }
+
+  const settings = await getSettings()
+  const mode = await getMailMode()
+
+  const intended = (opts.toOverride ?? record.dossier.facts.contactEmail ?? '').trim()
+  if (!intended.includes('@')) {
+    throw new ReportError('No traveller email is on file for this booking, so there is nobody to write to.')
+  }
+
+  const to = mode.testMode ? mode.testTo : intended
+  const cc = mode.testMode
+    ? (mode.testCc ? [mode.testCc] : [])
+    : settings.clientMailCc.filter(e => e !== to)
+
+  const letter = await generateClientLetter(record.dossier)
+  const subject = buildClientSubject(letter, record.dossier)
+  const bodyHtml = buildClientEmail({ dossier: record.dossier, letter })
+
+  const base: ClientMail = {
+    subject, bodyHtml, to: intended, cc,
+    sentAt: null, error: null, testMode: mode.testMode,
+  }
+
+  try {
+    await sendMailViaGraph({ to, cc: cc.length ? cc : undefined, subject, bodyHtml })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    await saveClientMail(id, record.narrative, { ...base, error: message })
+    await appendEvent(id, event('client_mail_failed', opts.actor, message))
+    throw new ReportError(`The traveller's letter could not be sent: ${message}`)
+  }
+
+  await saveClientMail(id, record.narrative, { ...base, sentAt: new Date().toISOString() })
+  await appendEvent(id, event(
+    'client_mail_sent',
+    opts.actor,
+    `Thank-you letter sent to ${to}${mode.testMode ? ' (test mode — redirected)' : ''}.`,
+  ))
+
+  return (await getReport(id))!
+}
+
+/**
+ * Persists the letter inside the `narrative` blob. Read back the row first so
+ * a rewrite that landed in between is not clobbered by a stale copy.
+ */
+async function saveClientMail(
+  id: string,
+  fallback: ExperienceNarrative | null,
+  clientMail: ClientMail,
+) {
+  const fresh = await getReport(id)
+  const narrative = fresh?.narrative ?? fallback
+  if (!narrative) return
+  await prisma.teExperienceReport.update({
+    where: { id },
+    data: { narrative: { ...narrative, clientMail } as unknown as Prisma.InputJsonValue },
+  })
 }
 
 // ─── Escalate a hold ──────────────────────────────────────────────────────────
@@ -391,34 +650,59 @@ export interface SweepResult {
   built: number
   sent: number
   held: number
+  /** Built but parked — no call and no form, so a person has to write it. */
+  pending: number
+  /** Agent reports whose traveller also received their thank-you letter. */
+  clientMailed: number
   skipped: number
   errors: { bookingRef: string; message: string }[]
+}
+
+/**
+ * Bookings in these states never travelled, so there is no experience to
+ * report on. Everything else that reached its departure date is fair game.
+ */
+const NOT_TRAVELLED = ['DRAFT', 'CANCELLED', 'PENDING_CANCELLATION'] as const
+
+const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0)
+const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)
+const addDays = (d: Date, n: number) => {
+  const out = new Date(d)
+  out.setDate(out.getDate() + n)
+  return out
 }
 
 /**
  * Finds trips that ended inside the look-back window and have not been reported
  * on, builds a report for each, and mails the clean ones.
  *
- * A trip only qualifies once `quietDays` have passed since departure, so a call
- * placed on the last evening or a form filled in on the flight home still makes
- * it into the report rather than arriving after it was written.
+ * A trip only qualifies once `quietDays` whole days have passed since
+ * departure — two by default, which is the desk's "the day before yesterday's
+ * finished trips" rule. Working in whole days rather than from the clock
+ * matters: a sweep that ran at 09:00 and one that ran at 23:00 have to consider
+ * exactly the same set of trips, or a run's timing would decide whether a trip
+ * was reported on that day or the next.
+ *
+ * Everything before that, back to `lookbackDays`, is still swept so a missed
+ * tick catches up on its own.
  */
 export async function runSweep(opts?: { actor?: string | null; dryRun?: boolean }): Promise<SweepResult> {
   const settings = await getSettings()
-  const result: SweepResult = { considered: 0, built: 0, sent: 0, held: 0, skipped: 0, errors: [] }
+  const result: SweepResult = {
+    considered: 0, built: 0, sent: 0, held: 0, pending: 0,
+    clientMailed: 0, skipped: 0, errors: [],
+  }
 
   if (!settings.autoSend) return result
 
-  const now = new Date()
-  const latestDeparture = new Date(now)
-  latestDeparture.setDate(latestDeparture.getDate() - settings.quietDays)
-  const earliestDeparture = new Date(now)
-  earliestDeparture.setDate(earliestDeparture.getDate() - settings.lookbackDays)
+  const today = startOfDay(new Date())
+  const latestDeparture = endOfDay(addDays(today, -settings.quietDays))
+  const earliestDeparture = startOfDay(addDays(today, -settings.lookbackDays))
 
   const candidates = await prisma.booking.findMany({
     where: {
       departureDate: { gte: earliestDeparture, lte: latestDeparture },
-      status: { notIn: ['CANCELLED'] },
+      status: { notIn: [...NOT_TRAVELLED] },
     },
     select: { bookingRef: true },
     orderBy: { departureDate: 'asc' },
@@ -429,9 +713,10 @@ export async function runSweep(opts?: { actor?: string | null; dryRun?: boolean 
 
   for (const booking of candidates) {
     try {
-      // Anything already sent, held or waiting is somebody else's business now.
+      // Anything already sent, held, waiting or pending is somebody else's
+      // business now — a second report for the same trip is never wanted.
       const existing = await prisma.teExperienceReport.findFirst({
-        where: { bookingRef: booking.bookingRef, status: { in: ['sent', 'held', 'draft', 'queued'] } },
+        where: { bookingRef: booking.bookingRef, status: { in: ['sent', ...OPEN_STATUSES] } },
         select: { id: true },
       })
       if (existing) { result.skipped++; continue }
@@ -446,6 +731,12 @@ export async function runSweep(opts?: { actor?: string | null; dryRun?: boolean 
       })
       result.built++
 
+      // No call, no form: nothing goes out. It waits for the Experience team.
+      if (report.status === 'pending') {
+        result.pending++
+        continue
+      }
+
       if (report.status === 'held') {
         // The agent must not hear about this trip. Tell the escalation inbox.
         await escalate(report.id, { actor: 'auto', note: null })
@@ -454,17 +745,12 @@ export async function runSweep(opts?: { actor?: string | null; dryRun?: boolean 
       }
 
       if (report.status === 'queued') {
-        await sendToAgent(report.id, { actor: 'auto' })
+        const sent = await sendToAgent(report.id, { actor: 'auto' })
         result.sent++
+        if (sent.narrative?.clientMail?.sentAt) result.clientMailed++
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      // "No feedback yet" is the normal case for a trip nobody called — it is
-      // not worth reporting as a failure.
-      if (err instanceof ReportError && message.includes('No feedback of any kind')) {
-        result.skipped++
-        continue
-      }
       result.errors.push({ bookingRef: booking.bookingRef, message })
     }
   }

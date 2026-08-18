@@ -42,7 +42,8 @@ export async function POST(req: NextRequest) {
     const result = await runSweep({ actor: gate.actor.label, dryRun: body.dryRun })
     const message = body.dryRun
       ? `${result.built} of ${result.considered} finished trip(s) would be reported on.`
-      : `Swept ${result.considered} finished trip(s): ${result.sent} sent, ${result.held} held, ${result.skipped} already handled.`
+      : `Swept ${result.considered} finished trip(s): ${result.sent} sent, ${result.held} held, `
+        + `${result.pending} waiting on the Experience team, ${result.skipped} already handled.`
     return buildApiSuccess(result, message)
   } catch (err) {
     return buildApiError(err instanceof Error ? err.message : 'The sweep failed')

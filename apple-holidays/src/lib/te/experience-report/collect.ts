@@ -271,8 +271,34 @@ export async function collectTripDossier(bookingRef: string): Promise<TripDossie
 /** Which channels actually produced something for this trip. */
 export function dossierChannels(d: TripDossier): FeedbackChannel[] {
   const out: FeedbackChannel[] = []
-  if (d.calls.length) out.push('ai_call')
+  if (d.calls.some(hasCallSubstance)) out.push('ai_call')
   if (d.form) out.push('guest_form')
   if (d.deskNotes.length) out.push('desk_note')
   return out
+}
+
+/**
+ * A call row exists as soon as one was attempted. That is not the same as the
+ * call having told us anything, so a placeholder carrying no sentiment, no
+ * ratings, no summary and no transcript does not count as an on-ground call.
+ */
+export function hasCallSubstance(c: CallEvidence): boolean {
+  return !!(
+    c.sentiment?.trim() || c.summary?.trim() || c.highlights?.trim() || c.issues?.trim() ||
+    c.hotelOk?.trim() || c.mealsOk?.trim() || c.driverOk?.trim() || c.vehicleOk?.trim() ||
+    c.transcript.length
+  )
+}
+
+/**
+ * The gate on automatic sending.
+ *
+ * At least one of the two guest-owned channels has to have produced something:
+ * an on-ground call the guest actually engaged with, or a feedback form they
+ * filled in. With neither, there is no trip experience to report on — only our
+ * own paperwork — so the report waits for the Experience team instead of going
+ * out on its own.
+ */
+export function hasAutoSendEvidence(d: TripDossier): boolean {
+  return d.calls.some(hasCallSubstance) || !!d.form
 }

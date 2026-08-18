@@ -2041,7 +2041,9 @@ model TeExperienceReport {
   id            String @id @default(cuid())
   bookingRef    String
 
-  /// draft → (held | queued) → sent | failed | cancelled
+  /// pending → draft → (held | queued) → sent | failed | cancelled
+  /// `pending` = the trip finished with no on-ground call and no feedback form,
+  /// so nothing was written or sent; it waits for the Experience team.
   status        String @default("draft") @db.VarChar(16)
   /// 'auto' (post-departure sweep) or 'manual' (someone pressed the button).
   triggerSource String @default("manual") @db.VarChar(16)

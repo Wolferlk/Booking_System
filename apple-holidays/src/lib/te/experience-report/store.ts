@@ -23,16 +23,25 @@ export const SETTINGS_KEY = 'te_experience_report_settings'
 export const DEFAULT_SETTINGS: ExperienceReportSettings = {
   autoSend: true,
   lookbackDays: 7,
-  // One clear day after departure — late-evening calls and forms filled in on
-  // the way home still make it into the report.
-  quietDays: 1,
+  // Two clear days after departure: the desk's rule is "day before yesterday's
+  // finished trips", which also gives a last-evening call or a form filled in
+  // on the flight home time to land before the report is written.
+  quietDays: 2,
   holdAtLevel: 'medium',
   escalationEmail: 'pradeep.kumar@aahaas.com',
   ccEmails: [],
   requireApproval: false,
+  sendClientThankYou: true,
+  clientMailCc: [],
   updatedAt: null,
   updatedBy: null,
 }
+
+/**
+ * A report in one of these states still has someone waiting on it, so the
+ * sweep leaves it alone rather than building a second one for the same trip.
+ */
+export const OPEN_STATUSES: ReportStatus[] = ['pending', 'held', 'draft', 'queued']
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
@@ -45,6 +54,7 @@ export async function getSettings(): Promise<ExperienceReportSettings> {
       ...DEFAULT_SETTINGS,
       ...parsed,
       ccEmails: Array.isArray(parsed.ccEmails) ? parsed.ccEmails : [],
+      clientMailCc: Array.isArray(parsed.clientMailCc) ? parsed.clientMailCc : [],
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
@@ -52,6 +62,11 @@ export async function getSettings(): Promise<ExperienceReportSettings> {
 }
 
 export class SettingsError extends Error {}
+
+const cleanAddresses = (list: string[]) => list
+  .map(e => e.trim())
+  .filter(e => e.includes('@'))
+  .filter((e, i, a) => a.indexOf(e) === i)
 
 export async function saveSettings(
   patch: Partial<ExperienceReportSettings>,
@@ -87,12 +102,11 @@ export async function saveSettings(
     lookbackDays,
     quietDays,
     holdAtLevel,
-    ccEmails: (patch.ccEmails ?? current.ccEmails)
-      .map(e => e.trim())
-      .filter(e => e.includes('@'))
-      .filter((e, i, a) => a.indexOf(e) === i),
+    ccEmails: cleanAddresses(patch.ccEmails ?? current.ccEmails),
+    clientMailCc: cleanAddresses(patch.clientMailCc ?? current.clientMailCc),
     autoSend: patch.autoSend ?? current.autoSend,
     requireApproval: patch.requireApproval ?? current.requireApproval,
+    sendClientThankYou: patch.sendClientThankYou ?? current.sendClientThankYou,
     updatedAt: new Date().toISOString(),
     updatedBy: actor,
   }
@@ -164,6 +178,7 @@ export function toSummary(record: ExperienceReportRecord): ExperienceReportSumma
     hasNarrative: !!narrative,
     callCount: dossier?.calls.length ?? 0,
     transcriptCount: dossier?.calls.reduce((n, c) => n + c.transcript.length, 0) ?? 0,
+    clientMailSentAt: narrative?.clientMail?.sentAt ?? null,
   } as ExperienceReportSummary
 }
 
@@ -274,7 +289,7 @@ export async function alreadySent(bookingRef: string): Promise<boolean> {
 /** Any report for this booking still waiting on a human. */
 export async function openReportFor(bookingRef: string): Promise<ExperienceReportRecord | null> {
   const row = await prisma.teExperienceReport.findFirst({
-    where: { bookingRef, status: { in: ['held', 'draft', 'queued'] } },
+    where: { bookingRef, status: { in: OPEN_STATUSES } },
     orderBy: { createdAt: 'desc' },
   })
   return row ? toRecord(row) : null

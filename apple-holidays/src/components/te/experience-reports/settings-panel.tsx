@@ -2,11 +2,12 @@
 
 /**
  * How the end-of-trip report behaves: when it goes out on its own, how bad a
- * trip has to be before it is held, and who hears about it when it is.
+ * trip has to be before it is held, who hears about it when it is, and whether
+ * the traveller gets a letter of their own.
  */
 
 import { useState } from 'react'
-import { Info, Loader2, Save, ShieldAlert, Zap } from 'lucide-react'
+import { Heart, Info, Loader2, Save, ShieldAlert, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import Modal from '@/components/ui/modal'
 import type { ExperienceReportSettings, RiskLevel } from '@/lib/te/experience-report/types'
@@ -107,7 +108,9 @@ export default function SettingsPanel({ open, settings, onClose, onSaved }: Prop
             <span>
               <span className="block text-[13px] font-bold text-slate-700">Build and send reports automatically</span>
               <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-400">
-                One report per trip once it is over. Nothing is sent day by day.
+                One report per trip once it is over. Nothing is sent day by day, and nothing is sent at all unless
+                the trip has an on-ground call or a filled-in feedback form behind it — a trip with neither waits
+                for the Experience team to write it up.
               </span>
             </span>
           </label>
@@ -128,7 +131,10 @@ export default function SettingsPanel({ open, settings, onClose, onSaved }: Prop
           </label>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Field label="Wait after departure" hint="Days to let late calls and feedback forms land before writing the report.">
+            <Field
+              label="Wait after departure"
+              hint="Whole days to let late calls and feedback forms land before writing the report. At 2, today's sweep covers the trips that finished the day before yesterday."
+            >
               <input
                 type="number" min={0} max={30}
                 value={draft.quietDays}
@@ -192,10 +198,51 @@ export default function SettingsPanel({ open, settings, onClose, onSaved }: Prop
           </div>
         </section>
 
+        {/* The traveller's letter */}
+        <section className="rounded-2xl border border-amber-200 bg-amber-50/40 p-5">
+          <div className="mb-4 flex items-center gap-2">
+            <Heart className="h-4 w-4 text-amber-500" />
+            <h3 className="text-sm font-extrabold text-slate-800">The traveller&apos;s own letter</h3>
+          </div>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl bg-white/70 p-3.5">
+            <input
+              type="checkbox"
+              checked={draft.sendClientThankYou}
+              onChange={e => set('sendClientThankYou', e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+            />
+            <span>
+              <span className="block text-[13px] font-bold text-slate-700">Write the guest a thank-you letter</span>
+              <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-400">
+                Sent to the traveller when the agent&apos;s report goes out — written for them, naming the places they
+                actually went, with no ratings and no booking reference in it. A held trip never gets one.
+              </span>
+            </span>
+          </label>
+
+          <p className="mt-3 flex items-start gap-2 rounded-xl bg-white/70 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-slate-500">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            While this is on, the traveller is no longer CC&apos;d on the agent&apos;s report — they would otherwise
+            receive two mails about the same trip. Switch it off and the old CC comes back.
+          </p>
+
+          <div className="mt-4">
+            <Field label="Copy the letter to" hint="Comma-separated. Usually left empty — this is the guest's mail.">
+              <input
+                value={draft.clientMailCc.join(', ')}
+                onChange={e => set('clientMailCc', e.target.value.split(',').map(v => v.trim()).filter(Boolean))}
+                placeholder="experience@aahaas.com"
+                className={inputClass}
+              />
+            </Field>
+          </div>
+        </section>
+
         {/* Recipients */}
         <section className="rounded-2xl border border-slate-200 p-5">
           <h3 className="mb-4 text-sm font-extrabold text-slate-800">Copies on the agent mail</h3>
-          <Field label="Always CC" hint="Comma-separated. The client's own contact email is added automatically when we hold one.">
+          <Field label="Always CC" hint="Comma-separated. Sent on every agent report, whoever the agent is.">
             <input
               value={draft.ccEmails.join(', ')}
               onChange={e => set('ccEmails', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}

@@ -6,8 +6,15 @@
  * graded for bad experience, and then either mailed to the agent or held back.
  */
 
-/** draft → (held | queued) → sent | failed | cancelled */
-export type ReportStatus = 'draft' | 'queued' | 'held' | 'sent' | 'failed' | 'cancelled'
+/** pending → draft → (held | queued) → sent | failed | cancelled */
+export type ReportStatus =
+  /**
+   * The trip is over but neither an on-ground call nor a feedback form produced
+   * anything. Nothing is auto-sent from this state — it sits here until the
+   * Experience team writes the feedback themselves.
+   */
+  | 'pending'
+  | 'draft' | 'queued' | 'held' | 'sent' | 'failed' | 'cancelled'
 
 export type RiskLevel = 'none' | 'low' | 'medium' | 'high'
 
@@ -15,6 +22,13 @@ export type TriggerSource = 'auto' | 'manual'
 
 /** Where a piece of feedback came from. */
 export type FeedbackChannel = 'ai_call' | 'guest_form' | 'desk_note'
+
+/**
+ * The two channels that can carry a report on their own. A desk note is a
+ * person's own words about the trip — valuable, but it is not the guest
+ * speaking, so it never unlocks an automatic send by itself.
+ */
+export const AUTO_SEND_CHANNELS: FeedbackChannel[] = ['ai_call', 'guest_form']
 
 // ─── Evidence ─────────────────────────────────────────────────────────────────
 
@@ -160,6 +174,46 @@ export interface ExperienceNarrative {
   keyThemes: string[]
   overallScore: string
   closingRemark: string
+  /**
+   * The traveller's thank-you mail, once one has been written. Stored here so
+   * the exact letter that was sent can be read back later — see `ClientMail`
+   * for why it lives in this blob.
+   */
+  clientMail?: ClientMail | null
+}
+
+// ─── The client thank-you ─────────────────────────────────────────────────────
+
+/**
+ * The warm, individually written note that goes to the traveller once the
+ * agent's report has gone out.
+ *
+ * It is persisted inside the `narrative` JSON blob rather than in columns of
+ * its own, deliberately: the reports table already holds live rows, and this
+ * feature ships without any migration against it.
+ */
+export interface ClientMail {
+  subject: string
+  bodyHtml: string
+  /** The traveller's own address, as resolved at send time. */
+  to: string | null
+  cc: string[]
+  sentAt: string | null
+  /** Why the last attempt failed, when it did. The agent report still stands. */
+  error: string | null
+  /** True when the send was redirected by the shared test-mode switch. */
+  testMode: boolean
+}
+
+/** The shape the model returns for the client letter. */
+export interface ClientLetter {
+  subject: string
+  greeting: string
+  /** Flowing paragraphs, in the traveller's own second person. */
+  paragraphs: string[]
+  /** One short line pulled from the trip, printed large. */
+  keepsakeLine: string
+  signOff: string
 }
 
 // ─── Persisted record ─────────────────────────────────────────────────────────
@@ -214,6 +268,8 @@ export type ExperienceReportSummary = Omit<
   hasNarrative: boolean
   callCount: number
   transcriptCount: number
+  /** When the traveller's thank-you went out, if it has. */
+  clientMailSentAt: string | null
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
@@ -233,6 +289,13 @@ export interface ExperienceReportSettings {
   ccEmails: string[]
   /** Never send without a human pressing Send, however good the trip was. */
   requireApproval: boolean
+  /**
+   * Write and send the traveller their own thank-you letter alongside the
+   * agent report. Never sent for a trip that was held.
+   */
+  sendClientThankYou: boolean
+  /** Copied on the traveller's letter — the desk's own record. */
+  clientMailCc: string[]
   updatedAt: string | null
   updatedBy: string | null
 }

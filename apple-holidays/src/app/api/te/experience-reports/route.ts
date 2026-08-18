@@ -3,7 +3,9 @@
  *
  * GET  — the history: every report ever prepared, sent, held or cancelled.
  * POST — build a report for one booking. Building never sends; it grades the
- *        trip and parks the result for a person (or the sweep) to act on.
+ *        trip and parks the result for a person (or the sweep) to act on. A
+ *        trip with no call and no feedback form is parked as `pending` rather
+ *        than refused — the evidence is still worth having on screen.
  */
 import { NextRequest } from 'next/server'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
@@ -64,6 +66,8 @@ export async function POST(req: NextRequest) {
       report,
       report.status === 'held'
         ? 'Report built and held — this trip had a bad experience.'
+        : report.status === 'pending'
+        ? 'No call and no feedback form for this trip, so nothing was written. Add your own summary and it will be built from that.'
         : 'Report built and ready to review.',
     )
   } catch (err) {

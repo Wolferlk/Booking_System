@@ -15,7 +15,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   AlertTriangle, CheckCircle2, FileText, Hand, Inbox, Loader2, Mail,
-  Plus, RefreshCw, Search, Settings2, Sparkles, X,
+  PenLine, Plus, RefreshCw, Search, Settings2, Sparkles, X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -23,7 +23,7 @@ import Modal from '@/components/ui/modal'
 import ReportDetail from '@/components/te/experience-reports/report-detail'
 import SettingsPanel from '@/components/te/experience-reports/settings-panel'
 import {
-  ChannelChips, Empty, fmtDate, fmtRelative, RiskPill, StatusPill,
+  ChannelChips, ClientMailChip, Empty, fmtDate, fmtRelative, RiskPill, StatusPill,
 } from '@/components/te/experience-reports/shared'
 import type {
   ExperienceReportSettings, ExperienceReportSummary, ReportStatus,
@@ -31,6 +31,7 @@ import type {
 
 const STATUS_TABS: { key: ReportStatus | 'all'; label: string }[] = [
   { key: 'held', label: 'Needs attention' },
+  { key: 'pending', label: 'Awaiting write-up' },
   { key: 'draft', label: 'To review' },
   { key: 'sent', label: 'Sent' },
   { key: 'failed', label: 'Failed' },
@@ -121,11 +122,14 @@ function BuildDialog({ open, onClose, onBuilt }: {
 
 function ReportRow({ item, onOpen }: { item: ExperienceReportSummary; onOpen: () => void }) {
   const held = item.status === 'held'
+  const pending = item.status === 'pending'
   return (
     <button
       onClick={onOpen}
       className={`group flex w-full items-center gap-4 border-l-4 px-5 py-4 text-left transition hover:bg-slate-50 ${
-        held ? 'border-rose-400 bg-rose-50/30' : 'border-transparent'
+        held ? 'border-rose-400 bg-rose-50/30'
+        : pending ? 'border-violet-300 bg-violet-50/30'
+        : 'border-transparent'
       }`}
     >
       <div className="min-w-0 flex-1">
@@ -153,6 +157,13 @@ function ReportRow({ item, onOpen }: { item: ExperienceReportSummary; onOpen: ()
             {item.holdReason}
           </p>
         )}
+
+        {pending && (
+          <p className="mt-1.5 flex items-start gap-1.5 text-[12px] font-semibold leading-relaxed text-violet-600">
+            <PenLine className="mt-0.5 h-3 w-3 shrink-0" />
+            No call and no feedback form — waiting for the Experience team to write this one.
+          </p>
+        )}
       </div>
 
       <div className="hidden shrink-0 text-right sm:block">
@@ -160,6 +171,7 @@ function ReportRow({ item, onOpen }: { item: ExperienceReportSummary; onOpen: ()
           {fmtDate(item.arrivalDate)} → {fmtDate(item.departureDate)}
         </p>
         <div className="mt-1 flex items-center justify-end gap-2">
+          <ClientMailChip sentAt={item.clientMailSentAt} />
           <ChannelChips channels={item.sources} />
         </div>
         <p className="mt-1 text-[11px] text-slate-400">
@@ -224,13 +236,15 @@ function ExperienceReportsPage() {
   // `?? {}` fallback would otherwise be a fresh object each time.
   const counts = useMemo(() => data?.counts ?? {}, [data])
   const heldCount = counts.held ?? 0
+  const pendingCount = counts.pending ?? 0
 
   const tiles = useMemo(() => ([
     { label: 'Held for review', value: heldCount, icon: Hand, tone: 'text-rose-600', ring: 'ring-rose-200 bg-rose-50' },
+    { label: 'Awaiting write-up', value: pendingCount, icon: PenLine, tone: 'text-violet-600', ring: 'ring-violet-200 bg-violet-50' },
     { label: 'Waiting to send', value: counts.draft ?? 0, icon: FileText, tone: 'text-amber-600', ring: 'ring-amber-200 bg-amber-50' },
     { label: 'Sent to agents', value: counts.sent ?? 0, icon: CheckCircle2, tone: 'text-emerald-600', ring: 'ring-emerald-200 bg-emerald-50' },
     { label: 'Failed to send', value: counts.failed ?? 0, icon: AlertTriangle, tone: 'text-orange-600', ring: 'ring-orange-200 bg-orange-50' },
-  ]), [counts, heldCount])
+  ]), [counts, heldCount, pendingCount])
 
   return (
     <>
@@ -285,8 +299,27 @@ function ExperienceReportsPage() {
           </button>
         )}
 
+        {/* Awaiting write-up lane — nothing was heard from these travellers */}
+        {pendingCount > 0 && status !== 'pending' && (
+          <button
+            onClick={() => setStatus('pending')}
+            className="mb-5 flex w-full items-center gap-3 rounded-2xl border-2 border-violet-200 bg-violet-50 px-5 py-4 text-left transition hover:bg-violet-100"
+          >
+            <PenLine className="h-5 w-5 shrink-0 text-violet-600" strokeWidth={2.4} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-extrabold text-violet-900">
+                {pendingCount} finished trip{pendingCount === 1 ? '' : 's'} with no call and no feedback form
+              </p>
+              <p className="text-[12.5px] text-violet-600">
+                Nothing was sent automatically. Write the summary and these can go to their agents.
+              </p>
+            </div>
+            <span className="shrink-0 text-[12px] font-bold text-violet-600">Write them →</span>
+          </button>
+        )}
+
         {/* Tiles */}
-        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
           {tiles.map(tile => {
             const Icon = tile.icon
             return (
@@ -354,15 +387,18 @@ function ExperienceReportsPage() {
           ) : !data?.items.length ? (
             <div className="p-6">
               <Empty
-                icon={status === 'held' ? CheckCircle2 : Inbox}
+                icon={status === 'held' ? CheckCircle2 : status === 'pending' ? PenLine : Inbox}
                 title={
                   status === 'held' ? 'Nothing is held right now.'
+                  : status === 'pending' ? 'Nothing is waiting to be written up.'
                   : debounced ? 'No reports match that search.'
                   : 'No reports here yet.'
                 }
                 hint={
                   status === 'held'
                     ? 'Every trip we have reported on went well enough to reach the agent.'
+                    : status === 'pending'
+                    ? 'Every finished trip had either a call or a feedback form behind it.'
                     : 'Reports appear once a trip ends and feedback has been collected. Use Build report to make one now.'
                 }
               />
