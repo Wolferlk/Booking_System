@@ -12,6 +12,7 @@ import {
   FileType, Hourglass, Pause, Pencil, Play, Reply, Smile, Trash2, Video,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { jumboCount } from './emoji'
 import { Avatar, Linkified, SystemBadge, clockTime, mmss } from './bits'
 import type { ChatAttachment, ChatMessage } from './types'
 
@@ -293,6 +294,8 @@ export function MessageBubble({
   }
 
   const fromOps = message.sender.system === 'ops'
+  // Nothing but emoji, and not a reply (a quote needs its bubble) — draw it big.
+  const jumbo = message.reply_to ? 0 : jumboCount(message.body)
 
   return (
     <motion.div
@@ -327,13 +330,19 @@ export function MessageBubble({
         ) : (message.body || message.kind === 'text') ? (
           <div className={cn(
             'relative whitespace-pre-wrap break-words rounded-[18px] px-3.5 py-2.5 text-[.855rem] leading-relaxed',
-            mine
-              ? cn('rounded-br-md border-transparent text-white shadow-lg',
-                   fromOps ? 'bg-gradient-to-br from-indigo-500 to-indigo-700' : 'bg-gradient-to-br from-teal-600 to-teal-700')
-              : cn('rounded-bl-md border bg-white text-slate-900 shadow-sm',
-                   // A message from the other system is tinted, so a cross-system
-                   // thread reads as one at a glance.
-                   fromOps ? 'border-indigo-200 bg-gradient-to-br from-white to-indigo-50/60' : 'border-teal-200 bg-gradient-to-br from-white to-teal-50/60'),
+            // A message that is nothing but a glyph or three is a sticker,
+            // however it was sent — from the sticker tray, from the Accounts
+            // system, or simply typed. It gets no bubble at all.
+            jumbo
+              ? cn('!bg-none !bg-transparent !px-0 !py-0.5 !shadow-none border-transparent leading-[1.1]',
+                   jumbo === 1 ? 'text-[3.1rem]' : jumbo === 2 ? 'text-[2.5rem]' : 'text-[2.1rem]')
+              : mine
+                ? cn('rounded-br-md border-transparent text-white shadow-lg',
+                     fromOps ? 'bg-gradient-to-br from-indigo-500 to-indigo-700' : 'bg-gradient-to-br from-teal-600 to-teal-700')
+                : cn('rounded-bl-md border bg-white text-slate-900 shadow-sm',
+                     // A message from the other system is tinted, so a cross-system
+                     // thread reads as one at a glance.
+                     fromOps ? 'border-indigo-200 bg-gradient-to-br from-white to-indigo-50/60' : 'border-teal-200 bg-gradient-to-br from-white to-teal-50/60'),
           )}>
             {message.reply_to && (
               <div className={cn(

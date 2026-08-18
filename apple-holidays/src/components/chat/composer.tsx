@@ -14,13 +14,14 @@
 
 import { AnimatePresence, motion } from 'framer-motion'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CloudUpload, Mic, Paperclip, Receipt, Send, Trash2, X } from 'lucide-react'
+import { Briefcase, CheckCircle2, CloudUpload, Clock, Hand, Heart, Mic, Paperclip, PawPrint, Plane, Receipt, Send, Smile, Sparkles, Trash2, UtensilsCrossed, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { chatApi, useChat } from './chat-store'
 // uuid(), not crypto.randomUUID() directly: that API only exists in a secure
 // context, so a plain-HTTP host (a LAN address, a staging box) turned every send
 // into a TypeError and the message simply never left the composer.
 import { mmss, uuid } from './bits'
+import { EMOJI_GROUPS, STICKERS, recentEmoji } from './emoji'
 import type { ChatMessage, PendingAttachment, StagedCard } from './types'
 
 export interface ComposerHandle { stageCard: (card: StagedCard) => void }
@@ -49,6 +50,7 @@ export function Composer({
   const [card, setCard] = useState<StagedCard | null>(null)
   const [dragging, setDragging] = useState(false)
   const [cardBoxOpen, setCardBoxOpen] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
   const [recorder, setRecorder] = useState<null | { stop: (discard?: boolean) => void }>(null)
   const [recSeconds, setRecSeconds] = useState(0)
   const [levels, setLevels] = useState<number[]>(() => Array(40).fill(0.1))
@@ -211,6 +213,43 @@ export function Composer({
     setRecorder({ stop: (discard) => { discarded = Boolean(discard); rec.stop() } })
   }
 
+  /* ---- emoji & stickers -------------------------------------------------- */
+
+  /** Write into the composer at the caret, not at the end. */
+  const insertEmoji = (glyph: string) => {
+    recentEmoji(glyph)
+    const el = inputRef.current
+    if (!el) { setText(prev => prev + glyph); return }
+    const start = el.selectionStart ?? el.value.length
+    const end = el.selectionEnd ?? start
+    const next = `${text.slice(0, start)}${glyph}${text.slice(end)}`
+    setText(next)
+    setTyping(conversationId)
+    // The caret has to be restored after React has written the new value.
+    requestAnimationFrame(() => {
+      el.focus()
+      const caret = start + glyph.length
+      try { el.setSelectionRange(caret, caret) } catch { /* older browsers */ }
+      el.style.height = 'auto'
+      el.style.height = `${Math.min(148, el.scrollHeight)}px`
+    })
+  }
+
+  /**
+   * A sticker is its own message, so anything already staged — a caption, a
+   * file, a record card — is left exactly where it is and the sticker goes out
+   * beside it.
+   */
+  const sendSticker = (glyph: string) => {
+    recentEmoji(glyph)
+    onSend({
+      body: glyph, kind: 'text', client_uuid: uuid(),
+      reply_to_id: replyTo?.id ?? null, attachment_ids: [], card_type: null, card_ref: null,
+    })
+    onClearReply()
+    setEmojiOpen(false)
+  }
+
   /* ---- send -------------------------------------------------------------- */
 
   const submit = () => {
@@ -343,6 +382,13 @@ export function Composer({
         )}
       </AnimatePresence>
 
+      {/* the emoji & sticker tray */}
+      <AnimatePresence>
+        {emojiOpen && (
+          <EmojiTray onEmoji={insertEmoji} onSticker={sendSticker} onClose={() => setEmojiOpen(false)} />
+        )}
+      </AnimatePresence>
+
       {/* input row, or the recorder */}
       {recorder ? (
         <div className="flex items-end gap-2">
@@ -400,8 +446,11 @@ export function Composer({
               onChange={e => { void upload(Array.from(e.target.files ?? [])); e.target.value = '' }}
             />
 
+            <IconButton title="Emoji and stickers" active={emojiOpen} onClick={() => { setEmojiOpen(v => !v); setCardBoxOpen(false) }}>
+              <Smile className="h-4 w-4" />
+            </IconButton>
             <IconButton title="Attach a file" onClick={() => fileRef.current?.click()}><Paperclip className="h-4 w-4" /></IconButton>
-            <IconButton title="Share an invoice, P&L, booking or agenda" active={cardBoxOpen} onClick={() => setCardBoxOpen(v => !v)}>
+            <IconButton title="Share an invoice, P&L, booking or agenda" active={cardBoxOpen} onClick={() => { setCardBoxOpen(v => !v); setEmojiOpen(false) }}>
               <Receipt className="h-4 w-4" />
             </IconButton>
             <IconButton title="Record a voice message" onClick={() => void startRecording()}><Mic className="h-4 w-4" /></IconButton>
@@ -441,6 +490,116 @@ function IconButton({ children, title, onClick, active }: { children: React.Reac
     >
       {children}
     </button>
+  )
+}
+
+/* ── emoji & stickers ──────────────────────────────────────────────────────── */
+
+const TAB_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  stickers: Sparkles, recent: Clock, smileys: Smile, gestures: Hand, love: Heart,
+  animals: PawPrint, food: UtensilsCrossed, travel: Plane, work: Briefcase, symbols: CheckCircle2,
+}
+
+/**
+ * One tray, two jobs.
+ *
+ * The emoji tabs write into the composer at the caret, so an emoji is part of
+ * the sentence being typed. The sticker tab sends immediately — a sticker is
+ * the whole message, which is why it is drawn without a bubble at the other end.
+ */
+function EmojiTray({ onEmoji, onSticker, onClose }: {
+  onEmoji: (glyph: string) => void
+  onSticker: (glyph: string) => void
+  onClose: () => void
+}) {
+  // Read once on mount: the list must not reshuffle under the cursor as it is
+  // being clicked.
+  const [recent] = useState(() => recentEmoji())
+  const [tab, setTab] = useState(() => (recent.length ? 'recent' : 'smileys'))
+  const ref = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const away = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose() }
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    // Deferred, or the click that opened the tray closes it again.
+    const t = setTimeout(() => {
+      document.addEventListener('click', away)
+      document.addEventListener('keydown', key)
+    })
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('click', away)
+      document.removeEventListener('keydown', key)
+    }
+  }, [onClose])
+
+  const tabs = [
+    { key: 'stickers', label: 'Stickers' },
+    ...(recent.length ? [{ key: 'recent', label: 'Recent' }] : []),
+    ...EMOJI_GROUPS.map(g => ({ key: g.key, label: g.label })),
+  ]
+
+  const isStickers = tab === 'stickers'
+  const glyphs = isStickers ? STICKERS
+    : tab === 'recent' ? recent
+      : EMOJI_GROUPS.find(g => g.key === tab)?.glyphs ?? []
+
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, y: 8, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      className="absolute bottom-full left-3.5 right-3.5 z-50 mb-2.5 max-w-[360px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+    >
+      <div className="flex gap-0.5 overflow-x-auto border-b border-slate-200 bg-slate-50 px-2 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {tabs.map(t => {
+          const Icon = TAB_ICONS[t.key] ?? Smile
+          return (
+            <button
+              key={t.key}
+              type="button"
+              title={t.label}
+              onClick={() => setTab(t.key)}
+              className={cn(
+                'grid h-[30px] w-8 flex-shrink-0 place-items-center rounded-lg transition',
+                tab === t.key ? 'bg-teal-600/10 text-teal-700' : 'text-slate-400 hover:bg-slate-200 hover:text-slate-700',
+              )}
+            >
+              <Icon className="h-4 w-4" />
+            </button>
+          )
+        })}
+      </div>
+
+      <div className={cn(
+        'grid max-h-[210px] overflow-y-auto p-2',
+        isStickers ? 'grid-cols-5 gap-1' : 'grid-cols-8 gap-px',
+      )}>
+        {glyphs.length === 0 ? (
+          <div className="col-span-full px-3 py-7 text-center text-[.72rem] text-slate-500">
+            Nothing here yet — the emoji you use will collect in this tab.
+          </div>
+        ) : glyphs.map((g, i) => (
+          <button
+            key={`${g}-${i}`}
+            type="button"
+            title={g}
+            onClick={() => (isStickers ? onSticker(g) : onEmoji(g))}
+            className={cn(
+              'aspect-square rounded-lg leading-none transition hover:scale-125 hover:bg-slate-100',
+              isStickers ? 'text-[2rem]' : 'text-[1.24rem]',
+            )}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
+
+      <div className="border-t border-slate-200 bg-slate-50 px-3 py-1.5 text-[.66rem] font-semibold text-slate-500">
+        {isStickers ? 'Click a sticker — it sends straight away' : 'Click to add it to your message'}
+      </div>
+    </motion.div>
   )
 }
 
