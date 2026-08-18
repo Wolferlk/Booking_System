@@ -6,7 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import {
   DAILY_UPDATE_ROLES, DAILY_UPDATE_EDIT_ROLES,
   parseDailyUpdateQuery, fetchDailyUpdateRows, sortDailyUpdateRows,
-  summarise, resolveRange, countryClause,
+  summarise, resolveRange, countryClause, countCreatedToday,
 } from '@/lib/daily-update'
 import type { UserRole } from '@prisma/client'
 
@@ -28,7 +28,10 @@ export async function GET(req: NextRequest) {
   const q = parseDailyUpdateQuery(req.nextUrl.searchParams)
   const now = new Date()
 
-  const rows = sortDailyUpdateRows(await fetchDailyUpdateRows(q, scope, 1500, now), q)
+  const [rows, bookedToday] = await Promise.all([
+    fetchDailyUpdateRows(q, scope, 1500, now).then(r => sortDailyUpdateRows(r, q)),
+    countCreatedToday(q, scope, now),
+  ])
 
   // The agent dropdown is built from the agents this user can actually see, not
   // from the filtered rows — otherwise picking an agent empties the list you
@@ -50,7 +53,7 @@ export async function GET(req: NextRequest) {
   return buildApiSuccess({
     rows,
     agents,
-    stats: summarise(rows),
+    stats: summarise(rows, bookedToday),
     range: { start: start.toISOString(), end: end.toISOString() },
     canEdit: DAILY_UPDATE_EDIT_ROLES.includes(role),
     generatedAt: now.toISOString(),

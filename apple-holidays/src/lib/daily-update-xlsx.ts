@@ -13,9 +13,10 @@
 
 import * as XLSX from 'xlsx'
 import {
-  DATE_FIELD_LABELS, summarise, resolveRange, pinsToday,
+  DATE_FIELD_LABELS, summarise, resolveRange,
   type DailyUpdateQuery, type DailyUpdateRow,
 } from '@/lib/daily-update'
+import { CALL_KINDS, CALL_LABELS, type CallCell } from '@/lib/daily-update-calls'
 
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
@@ -45,12 +46,22 @@ function contactCell(phone: string | null, whatsapp: string | null, email: strin
   return parts.join('\n')
 }
 
+/** "18 Aug 2026, 14:30 — summary (2 calls)" in a single cell. */
+function callCell(cell: CallCell): string {
+  if (cell.count === 0) return ''
+  const latest = cell.latest!
+  const head = `${fmtDateTime(latest.at)}${cell.count > 1 ? ` (${cell.count} calls)` : ''}`
+  const tail = latest.source === 'AI' ? ' [AI bot]' : ''
+  return `${head}${tail}\n${latest.summary}`
+}
+
 export function buildDailyUpdateWorkbook(
   rows: DailyUpdateRow[],
   q: DailyUpdateQuery,
   now = new Date(),
+  bookedToday?: number,
 ): Buffer {
-  const stats = summarise(rows)
+  const stats = summarise(rows, bookedToday)
   const { start, end } = resolveRange(q, now)
 
   const wb = XLSX.utils.book_new()
@@ -70,17 +81,18 @@ export function buildDailyUpdateWorkbook(
     'Guest Name', 'Guest Contact',
     'Agent', 'Agent Contact',
     'Pax (A/C/I)', 'Total Pax', 'File Handler', 'Country', 'Status',
+    ...CALL_KINDS.map(k => CALL_LABELS[k]),
     'Booking Created', 'Last Updated',
   ]
 
   const banner: unknown[][] = [
     ['APPLE HOLIDAYS MMT — DAILY UPDATE SHEET'],
-    [`Window: ${DATE_FIELD_LABELS[q.dateField]} — ${fmtDate(start.toISOString())} to ${fmtDate(end.toISOString())}${pinsToday(q) ? '  ·  plus everything created today' : ''}`],
+    [`Window: ${DATE_FIELD_LABELS[q.dateField]} — ${fmtDate(start.toISOString())} to ${fmtDate(end.toISOString())}`],
     [
       `Generated: ${fmtDateTime(now.toISOString())}`,
       '', '',
       `Bookings: ${stats.total}`, '', '',
-      `Created today: ${stats.createdToday}`, '', '',
+      `Booked today: ${stats.bookedToday}`, '', '',
       `Arriving today: ${stats.arrivingToday}`, '', '',
       `Total pax: ${stats.totalPax}`, '', '',
       `Missing IS/CNTL: ${stats.missingIds}`,
@@ -111,6 +123,7 @@ export function buildDailyUpdateWorkbook(
     r.fileHandler ?? '',
     r.operationCountry ?? '',
     r.status,
+    ...CALL_KINDS.map(k => callCell(r.calls[k])),
     fmtDateTime(r.createdAt),
     fmtDateTime(r.updatedAt),
   ]))
@@ -123,6 +136,7 @@ export function buildDailyUpdateWorkbook(
     { wch: 26 }, { wch: 30 },
     { wch: 24 }, { wch: 30 },
     { wch: 12 }, { wch: 10 }, { wch: 18 }, { wch: 18 }, { wch: 20 },
+    { wch: 34 }, { wch: 34 }, { wch: 34 }, { wch: 34 },
     { wch: 20 }, { wch: 20 },
   ]
 
@@ -146,6 +160,9 @@ export function buildDailyUpdateWorkbook(
   XLSX.utils.book_append_sheet(wb, ws, 'Daily Update')
 
   // ── Sheet 2: today's intake on its own ─────────────────────────────────────
+  // The main sheet is strictly the date window, so this tab is the only place
+  // today's new files appear — and only those of them that fall in the window.
+  // For the full day's intake, run the sheet on the Created date column.
   const todayRows = rows.filter(r => r.createdToday)
   const wsToday = XLSX.utils.aoa_to_sheet([
     [`BOOKINGS CREATED TODAY — ${fmtDate(now.toISOString())}`],
@@ -178,6 +195,36 @@ export function buildDailyUpdateWorkbook(
   ])
   wsMissing['!cols'] = [{ wch: 16 }, { wch: 24 }, { wch: 26 }, { wch: 24 }, { wch: 13 }, { wch: 16 }, { wch: 18 }]
   XLSX.utils.book_append_sheet(wb, wsMissing, 'Missing IS-CNTL')
+
+  // ── Sheet 4: the call log, flattened ───────────────────────────────────────
+  // The main sheet only has room for the latest call per column. On-ground work
+  // is several calls deep, so the full history gets a tab of its own where it
+  // can be sorted and pivoted.
+  const callRows: unknown[][] = [[
+    'Booking Ref', 'Guest', 'Agent', 'Arrival', 'Call Type', 'Called At',
+    'Source', 'Summary', 'Notes', 'Logged By', 'Sentiment', 'Outcome',
+  ]]
+  for (const r of rows) {
+    for (const kind of CALL_KINDS) {
+      for (const e of r.calls[kind].entries) {
+        callRows.push([
+          r.bookingRef, r.guestName ?? '', r.agent ?? '', fmtDate(r.arrivalDate),
+          CALL_LABELS[kind], fmtDateTime(e.at),
+          e.source === 'AI' ? 'AI bot' : 'Manual',
+          e.summary, e.notes ?? '', e.by ?? '', e.sentiment ?? '', e.outcome ?? '',
+        ])
+      }
+    }
+  }
+  const wsCalls = XLSX.utils.aoa_to_sheet(callRows)
+  wsCalls['!cols'] = [
+    { wch: 16 }, { wch: 26 }, { wch: 24 }, { wch: 13 }, { wch: 16 }, { wch: 20 },
+    { wch: 10 }, { wch: 60 }, { wch: 40 }, { wch: 20 }, { wch: 12 }, { wch: 16 },
+  ]
+  wsCalls['!autofilter'] = { ref: XLSX.utils.encode_range(
+    { s: { r: 0, c: 0 }, e: { r: Math.max(0, callRows.length - 1), c: 11 } },
+  ) }
+  XLSX.utils.book_append_sheet(wb, wsCalls, 'Call Log')
 
   return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer
 }

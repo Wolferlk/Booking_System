@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError } from '@/lib/utils'
 import {
   DAILY_UPDATE_ROLES, parseDailyUpdateQuery, fetchDailyUpdateRows, sortDailyUpdateRows,
+  countCreatedToday,
 } from '@/lib/daily-update'
 import { buildDailyUpdatePdf } from '@/lib/daily-update-pdf'
 import type { UserRole } from '@prisma/client'
@@ -31,8 +32,14 @@ export async function GET(req: NextRequest) {
   try {
     // Capped below the sheet's own limit: a PDF is a printout, and 800 rows is
     // already 30-odd pages of it.
-    const rows = sortDailyUpdateRows(await fetchDailyUpdateRows(q, scope, 800, now), q)
-    const pdf = await buildDailyUpdatePdf(rows, q, now, { generatedBy: session.user.name ?? null })
+    const [rows, bookedToday] = await Promise.all([
+      fetchDailyUpdateRows(q, scope, 800, now).then(r => sortDailyUpdateRows(r, q)),
+      countCreatedToday(q, scope, now),
+    ])
+    const pdf = await buildDailyUpdatePdf(rows, q, now, {
+      generatedBy: session.user.name ?? null,
+      bookedToday,
+    })
     const stamp = now.toISOString().slice(0, 10)
 
     return new Response(new Uint8Array(pdf), {

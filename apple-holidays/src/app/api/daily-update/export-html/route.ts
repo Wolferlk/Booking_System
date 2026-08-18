@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError } from '@/lib/utils'
 import {
   DAILY_UPDATE_ROLES, parseDailyUpdateQuery, fetchDailyUpdateRows, sortDailyUpdateRows,
+  countCreatedToday,
 } from '@/lib/daily-update'
 import { buildDailyUpdateHtml } from '@/lib/daily-update-html'
 import type { UserRole } from '@prisma/client'
@@ -33,10 +34,14 @@ export async function GET(req: NextRequest) {
   const now = new Date()
 
   try {
-    const rows = sortDailyUpdateRows(await fetchDailyUpdateRows(q, scope, 1500, now), q)
+    const [rows, bookedToday] = await Promise.all([
+      fetchDailyUpdateRows(q, scope, 1500, now).then(r => sortDailyUpdateRows(r, q)),
+      countCreatedToday(q, scope, now),
+    ])
     const html = buildDailyUpdateHtml(rows, q, now, {
       generatedBy: session.user.name ?? null,
       interactive: inline,
+      bookedToday,
     })
     const stamp = now.toISOString().slice(0, 10)
 

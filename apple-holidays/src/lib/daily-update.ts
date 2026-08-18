@@ -16,6 +16,7 @@
  */
 
 import { prisma } from '@/lib/prisma'
+import { fetchCallsForBookings, emptyCalls, type BookingCalls } from '@/lib/daily-update-calls'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import type { Prisma, UserRole } from '@prisma/client'
@@ -78,6 +79,8 @@ export type DailyUpdateRow = {
   amended:          boolean
   hotelOnly:        boolean
   cancelled:        boolean
+  /** Pre / on-ground / post / feedback calls, from the bot and from staff. */
+  calls:            BookingCalls
 }
 
 export type DailyUpdateQuery = {
@@ -89,8 +92,6 @@ export type DailyUpdateQuery = {
   agent:        string
   search:       string
   country:      string
-  /** Bookings created today are carried regardless of the date window. */
-  includeToday: boolean
   includeCancelled: boolean
   sortBy:       DateField
   sortDir:      'asc' | 'desc'
@@ -147,25 +148,10 @@ export function parseDailyUpdateQuery(sp: URLSearchParams): DailyUpdateQuery {
     agent: (sp.get('agent') ?? '').trim(),
     search: (sp.get('search') ?? '').trim(),
     country: (sp.get('country') ?? '').trim(),
-    // The "created today on top" behaviour is the default and can be switched
-    // off, but it never applies when an explicit date range is being asked for.
-    includeToday: sp.get('includeToday') !== '0',
     includeCancelled: sp.get('includeCancelled') === '1',
     sortBy,
     sortDir: sp.get('sortDir') === 'desc' ? 'desc' : 'asc',
   }
-}
-
-/**
- * Whether today's intake is carried and pinned above the window.
- *
- * An explicit from/to range means the caller asked for a specific span and
- * nothing else, so the "plus everything created today" clause is dropped —
- * and because the sort and the section headings read this same helper, they
- * cannot end up pinning rows the query never widened for.
- */
-export function pinsToday(q: DailyUpdateQuery): boolean {
-  return q.includeToday && !q.from && !q.to
 }
 
 /** The window the filters actually resolve to, for labelling the sheet. */
@@ -197,28 +183,18 @@ export function countryClause(scope: SessionScope, override: string): Prisma.Boo
 }
 
 /** Builds the Prisma WHERE the screen and both downloads all share. */
-export function buildDailyUpdateWhere(
-  q: DailyUpdateQuery,
-  scope: SessionScope,
-  now = new Date(),
-): Prisma.BookingWhereInput {
+/**
+ * Everything the sheet filters on *except* the date window.
+ *
+ * Kept separate so the "booked today" headline can reuse the identical country,
+ * agent, search and cancellation rules while asking a different date question —
+ * otherwise that number would quietly ignore the filters the user has set.
+ */
+function nonDateClauses(q: DailyUpdateQuery, scope: SessionScope): Prisma.BookingWhereInput[] {
   const and: Prisma.BookingWhereInput[] = []
 
   const country = countryClause(scope, q.country)
   if (country) and.push(country)
-
-  const { start, end } = resolveRange(q, now)
-  const windowClause: Prisma.BookingWhereInput = { [q.dateField]: { gte: start, lte: end } }
-
-  // Default sheet = "everything arriving in the window, plus anything that came
-  // in today". Today's intake is the other half of a morning update: a file
-  // sold this morning for travel in March is news even though it is nowhere
-  // near the arrival window.
-  if (pinsToday(q)) {
-    and.push({ OR: [windowClause, { createdAt: { gte: startOfDay(now), lte: endOfDay(now) } }] })
-  } else {
-    and.push(windowClause)
-  }
 
   if (q.agent) and.push({ agent: q.agent })
 
@@ -239,7 +215,47 @@ export function buildDailyUpdateWhere(
 
   if (!q.includeCancelled) and.push({ status: { notIn: ['CANCELLED'] } })
 
-  return and.length > 0 ? { AND: and } : {}
+  return and
+}
+
+export function buildDailyUpdateWhere(
+  q: DailyUpdateQuery,
+  scope: SessionScope,
+  now = new Date(),
+): Prisma.BookingWhereInput {
+  // The sheet is a window on one date column and nothing else — a booking is on
+  // it because it falls in the window, never because of when it was sold. To
+  // see today's intake, switch the window's date column to Created.
+  const { start, end } = resolveRange(q, now)
+  const and: Prisma.BookingWhereInput[] = [
+    ...nonDateClauses(q, scope),
+    { [q.dateField]: { gte: start, lte: end } },
+  ]
+
+  return { AND: and }
+}
+
+/**
+ * How many bookings were sold today, whatever window the sheet is showing.
+ *
+ * The table itself is strictly the date window, so this is the one number that
+ * deliberately looks outside it: "what came in today" is the other half of a
+ * morning update, and the headline is a link into the Created / Today view
+ * rather than a second band of rows.
+ */
+export async function countCreatedToday(
+  q: DailyUpdateQuery,
+  scope: SessionScope,
+  now = new Date(),
+): Promise<number> {
+  return prisma.booking.count({
+    where: {
+      AND: [
+        ...nonDateClauses(q, scope),
+        { createdAt: { gte: startOfDay(now), lte: endOfDay(now) } },
+      ],
+    },
+  })
 }
 
 const ROW_SELECT = {
@@ -287,6 +303,11 @@ export async function fetchDailyUpdateRows(
     take: limit,
   })
 
+  // One batched load for the whole page rather than four queries per row.
+  const calls = await fetchCallsForBookings(
+    bookings.map(b => ({ id: b.id, bookingRef: b.bookingRef })),
+  )
+
   const todayStart = startOfDay(now).getTime()
   const todayEnd   = endOfDay(now).getTime()
 
@@ -331,37 +352,56 @@ export async function fetchDailyUpdateRows(
       amended:          b.updatedAt.getTime() - created > 60_000,
       hotelOnly:        b.hotelOnly,
       cancelled:        String(b.status) === 'CANCELLED' || String(b.status) === 'PENDING_CANCELLATION',
+      calls:            calls[b.id] ?? emptyCalls(),
     }
   })
 }
 
 /**
- * Sheet order: today's intake first, then the travel window in date order.
+ * Sheet order: the window's date column, then booking ref as a stable tiebreak.
  *
- * Done here rather than in SQL because "created today" is a property of the
- * row relative to *now*, and both downloads must land on the identical order
- * the screen showed.
+ * Applied here rather than left to SQL alone so the screen and both downloads
+ * land on the identical order — a row referred to by its number in a handover
+ * has to mean the same thing in all three.
  */
 export function sortDailyUpdateRows(rows: DailyUpdateRow[], q: DailyUpdateQuery): DailyUpdateRow[] {
   const dir = q.sortDir === 'desc' ? -1 : 1
-  const pin = pinsToday(q)
   const key = (r: DailyUpdateRow) => new Date(r[q.sortBy]).getTime()
   return [...rows].sort((a, b) => {
-    if (pin && a.createdToday !== b.createdToday) return a.createdToday ? -1 : 1
     const delta = key(a) - key(b)
     if (delta !== 0) return delta * dir
     return a.bookingRef.localeCompare(b.bookingRef)
   })
 }
 
+export type DailyUpdateStats = {
+  total:         number
+  /**
+   * Bookings sold today. Everything else here is derived from the rows on the
+   * sheet; this one is counted across the whole scope, because the window the
+   * sheet is showing has nothing to do with what came in this morning. Callers
+   * that have that count pass it in — the fallback keeps the builders usable
+   * on their own.
+   */
+  bookedToday:   number
+  arrivingToday: number
+  onGround:      number
+  missingIds:    number
+  totalPax:      number
+}
+
 /** Headline counts for the sheet's summary strip and the download headers. */
-export function summarise(rows: DailyUpdateRow[]) {
+export function summarise(
+  rows: DailyUpdateRow[],
+  bookedToday?: number,
+): DailyUpdateStats {
+  const now = new Date()
   return {
-    total:        rows.length,
-    createdToday: rows.filter(r => r.createdToday).length,
+    total:         rows.length,
+    bookedToday:   bookedToday ?? rows.filter(r => r.createdToday).length,
     arrivingToday: rows.filter(r => r.daysToArrival === 0).length,
-    onGround:     rows.filter(r => r.daysToArrival < 0 && new Date(r.departureDate) >= new Date()).length,
-    missingIds:   rows.filter(r => !r.isNumber || !r.cntlNumber).length,
-    totalPax:     rows.reduce((s, r) => s + r.totalPax, 0),
+    onGround:      rows.filter(r => r.daysToArrival < 0 && new Date(r.departureDate) >= now).length,
+    missingIds:    rows.filter(r => !r.isNumber || !r.cntlNumber).length,
+    totalPax:      rows.reduce((s, r) => s + r.totalPax, 0),
   }
 }
