@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
+import type { ServiceTypeValue } from '@/lib/service-types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +15,7 @@ interface AgendaItem {
   details: string | null
   mealPlan: string | null
   meetingTime: string | null
-  serviceType: 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT'
+  serviceType: ServiceTypeValue
 }
 
 interface Flight {

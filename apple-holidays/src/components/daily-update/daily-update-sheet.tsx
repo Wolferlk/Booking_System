@@ -18,6 +18,7 @@ import {
   Plane, PlaneLanding, Building2, Phone, Mail, MessageCircle, Pencil,
   ChevronDown, SlidersHorizontal, Globe, Clock, ArrowUpDown, Ban, ExternalLink,
   PhoneCall, Bot, Plus, Trash2, X as XIcon,
+  ClipboardCheck, Send, Store, Briefcase, Layers,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -29,6 +30,10 @@ import {
   CALL_KINDS, CALL_LABELS, CALL_HINTS,
   type BookingCalls, type CallCell, type CallEntry, type CallKind,
 } from '@/lib/daily-update-calls'
+import {
+  FEEDBACK_PURPOSE_LABELS, FEEDBACK_RATING_EMOJI, FEEDBACK_RATING_FIELDS,
+  FEEDBACK_RATING_LABELS, worstRating, type FeedbackFormCell,
+} from '@/lib/daily-update-feedback'
 import type { BookingStatus } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -64,7 +69,9 @@ type Row = {
   amended: boolean
   hotelOnly: boolean
   cancelled: boolean
+  source: 'B2B' | 'B2C'
   calls: BookingCalls
+  feedbackForm: FeedbackFormCell
 }
 
 type Stats = {
@@ -87,6 +94,7 @@ type Filters = {
   agent: string
   search: string
   country: string
+  source: SourceFilter
   includeCancelled: boolean
   sortBy: DateField
   sortDir: 'asc' | 'desc'
@@ -100,6 +108,9 @@ const DEFAULT_FILTERS: Filters = {
   agent: '',
   search: '',
   country: '',
+  // B2B by default: this sheet is the agent desk's morning read, and a store
+  // order has no agent to chase. The other two channels are one click away.
+  source: 'B2B',
   includeCancelled: false,
   sortBy: 'arrivalDate',
   sortDir: 'asc',
@@ -110,6 +121,14 @@ const DATE_FIELDS: { value: DateField; label: string; short: string; icon: typeo
   { value: 'departureDate', label: 'Departure date',       short: 'Departure', icon: Plane },
   { value: 'createdAt',     label: 'Booking created date', short: 'Created',   icon: Sparkles },
   { value: 'updatedAt',     label: 'Last updated date',    short: 'Updated',   icon: Clock },
+]
+
+type SourceFilter = 'ALL' | 'B2B' | 'B2C'
+
+const SOURCES: { value: SourceFilter; label: string; icon: typeof Users; hint: string }[] = [
+  { value: 'ALL', label: 'All',  icon: Layers,    hint: 'Every booking, both channels' },
+  { value: 'B2B', label: 'B2B',  icon: Briefcase, hint: 'Agent bookings — the default view' },
+  { value: 'B2C', label: 'B2C',  icon: Store,     hint: 'Orders imported from the Aahaas storefront' },
 ]
 
 const DAY_PRESETS = [
@@ -141,6 +160,7 @@ function buildQuery(f: Filters): string {
   if (f.agent) p.set('agent', f.agent)
   if (f.search) p.set('search', f.search)
   if (f.country) p.set('country', f.country)
+  p.set('source', f.source)
   p.set('includeCancelled', f.includeCancelled ? '1' : '0')
   p.set('sortBy', f.sortBy)
   p.set('sortDir', f.sortDir)
@@ -882,6 +902,282 @@ function CallHistoryModal({
   )
 }
 
+// ─── Guest feedback form column ───────────────────────────────────────────────
+
+const FF_TONE: Record<string, string> = {
+  EXCELLENT: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
+  GOOD:      'bg-sky-100 text-sky-700 ring-sky-200',
+  AVERAGE:   'bg-amber-100 text-amber-700 ring-amber-200',
+  POOR:      'bg-rose-100 text-rose-700 ring-rose-200',
+}
+
+function FfBadge({ value, large }: { value: string; large?: boolean }) {
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded-full font-bold ring-1',
+      large ? 'px-2.5 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[9px]',
+      FF_TONE[value] ?? 'bg-slate-100 text-slate-600 ring-slate-200',
+    )}>
+      <span>{FEEDBACK_RATING_EMOJI[value] ?? ''}</span>
+      {FEEDBACK_RATING_LABELS[value] ?? value}
+    </span>
+  )
+}
+
+/**
+ * The digital Guest Feedback Form, per booking.
+ *
+ * The form is sent to the guest on WhatsApp after departure and filled in on
+ * the public `/feedback/[ref]` page; this column is the answer coming back. The
+ * cell is deliberately tri-state — never sent, sent and waiting, or in — because
+ * "no rating yet" means two completely different jobs depending on which it is.
+ *
+ * The tone follows the *weakest* rating anywhere on the form, not the overall
+ * one: a trip rated Excellent overall with a Poor driver is exactly the row the
+ * desk needs to notice while scanning.
+ */
+function FeedbackFormCellView({
+  cell, bookingRef, guestName, canEdit, onSent,
+}: {
+  cell: FeedbackFormCell
+  bookingRef: string
+  guestName: string | null
+  canEdit: boolean
+  onSent: (at: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const form = cell.form
+  const worst = form ? worstRating(form) : null
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        title={
+          form ? 'Feedback form received — click for every section'
+          : cell.sentAt ? 'Form sent, no response yet — click to see the status or resend'
+          : 'The digital feedback form has not been sent to this guest yet'
+        }
+        className="group/ff w-full rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-slate-100"
+      >
+        {form ? (
+          <>
+            <div className="flex flex-wrap items-center gap-1">
+              <FfBadge value={worst ?? form.overall ?? 'GOOD'} />
+              <span className="text-[10px] font-semibold text-slate-700">{callStamp(form.submittedAt)}</span>
+            </div>
+            {form.remarks && (
+              <p className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-500">{form.remarks}</p>
+            )}
+          </>
+        ) : cell.sentAt ? (
+          <span className="inline-flex items-center gap-1 rounded-lg border border-dashed border-amber-300 bg-amber-50/70 px-2 py-1 text-[10px] font-medium text-amber-700">
+            <Clock className="w-3 h-3" /> Sent {callStamp(cell.sentAt)}
+          </span>
+        ) : (
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-lg border border-dashed px-2 py-1 text-[10px] font-medium',
+            canEdit ? 'border-slate-300 bg-slate-50 text-slate-500' : 'border-slate-200 bg-slate-50 text-slate-400',
+          )}>
+            {canEdit ? <Send className="w-3 h-3" /> : null} Not sent
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <FeedbackFormModal
+          cell={cell}
+          bookingRef={bookingRef}
+          guestName={guestName}
+          canEdit={canEdit}
+          onClose={() => setOpen(false)}
+          onSent={onSent}
+        />
+      )}
+    </>
+  )
+}
+
+/**
+ * The full form for one booking, plus the one action this column offers:
+ * sending the guest the WhatsApp link to fill it in.
+ *
+ * The send is a two-step confirm rather than a single button. It messages a real
+ * guest, and it is reachable from a dense sheet where the neighbouring cells all
+ * open harmless read-only panels — a mis-click has to cost a second click, not a
+ * WhatsApp to somebody who already answered.
+ */
+function FeedbackFormModal({
+  cell, bookingRef, guestName, canEdit, onClose, onSent,
+}: {
+  cell: FeedbackFormCell
+  bookingRef: string
+  guestName: string | null
+  canEdit: boolean
+  onClose: () => void
+  onSent: (at: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [sentAt, setSentAt] = useState(cell.sentAt)
+  const form = cell.form
+
+  const send = useCallback(async () => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/whatsapp-customer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'feedback' }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json?.success === false) throw new Error(json?.error ?? 'Could not send the form')
+      const at = new Date().toISOString()
+      setSentAt(at)
+      onSent(at)
+      setConfirming(false)
+      toast.success(`Feedback form sent to ${guestName ?? bookingRef}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not send the form')
+    } finally {
+      setBusy(false)
+    }
+  }, [bookingRef, guestName, onSent])
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="max-h-[85vh] w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-3.5">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <ClipboardCheck className="w-4 h-4 text-slate-400" />
+              Feedback Form
+            </h3>
+            <p className="mt-0.5 truncate text-xs text-slate-500">
+              <span className="font-mono font-semibold">{bookingRef}</span>
+              {guestName ? ` · ${guestName}` : ''}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              The digital Guest Feedback Form, sent to the guest on WhatsApp after departure.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          >
+            <XIcon className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[52vh] overflow-y-auto px-5 py-4">
+          {form ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2.5">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Overall experience</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    Submitted {formatDateTime(form.submittedAt)}
+                    {form.clientName ? ` by ${form.clientName}` : ''}
+                  </p>
+                </div>
+                {form.overall
+                  ? <FfBadge value={form.overall} large />
+                  : <span className="text-xs text-slate-400">Not answered</span>}
+              </div>
+
+              {form.purpose && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500">Purpose of stay</span>
+                  <span className="font-semibold text-slate-700">
+                    {FEEDBACK_PURPOSE_LABELS[form.purpose] ?? form.purpose}
+                  </span>
+                </div>
+              )}
+
+              <div className="grid gap-x-4 gap-y-2 sm:grid-cols-2">
+                {FEEDBACK_RATING_FIELDS.map(({ key, label }) => {
+                  const value = form.ratings[key]
+                  return (
+                    <div key={key} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="truncate text-slate-500">{label}</span>
+                      {value ? <FfBadge value={value} /> : <span className="text-slate-300">—</span>}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {form.remarks && (
+                <div className="border-t border-slate-100 pt-3">
+                  <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Remarks</p>
+                  <p className="whitespace-pre-wrap text-xs leading-relaxed text-slate-700">{form.remarks}</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="py-8 text-center">
+              <ClipboardCheck className="mx-auto w-8 h-8 text-slate-200" />
+              <p className="mt-2 text-sm font-semibold text-slate-600">
+                {sentAt ? 'Sent — no response yet' : 'Not sent yet'}
+              </p>
+              <p className="mx-auto mt-1 max-w-xs text-xs text-slate-400">
+                {sentAt
+                  ? `The form link went out on ${formatDateTime(sentAt)}. Nothing has come back.`
+                  : 'The guest has not been sent the digital feedback form for this booking.'}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 bg-slate-50/60 px-5 py-3">
+            <p className="text-[11px] text-slate-500">
+              {sentAt ? `Last sent ${formatDateTime(sentAt)}` : 'Never sent'}
+            </p>
+            {confirming ? (
+              <span className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  disabled={busy}
+                  className="rounded-xl px-3 py-2 text-xs font-medium text-slate-500 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void send()}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  Send to the guest on WhatsApp
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirming(true)}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+              >
+                <Send className="w-3.5 h-3.5" />
+                {sentAt || form ? 'Send the form again' : 'Send the feedback form'}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function DailyUpdateSheet() {
@@ -1058,6 +1354,31 @@ export default function DailyUpdateSheet() {
                   >
                     <Icon className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">{f.short}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Sales channel — B2B agent bookings by default, B2C store orders
+                and the combined view one click away. */}
+            <div className="inline-flex rounded-xl bg-slate-100 p-0.5">
+              {SOURCES.map(sc => {
+                const Icon = sc.icon
+                return (
+                  <button
+                    key={sc.value}
+                    type="button"
+                    onClick={() => patch({ source: sc.value })}
+                    title={sc.hint}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-all',
+                      filters.source === sc.value
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-700',
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {sc.label}
                   </button>
                 )
               })}
@@ -1255,6 +1576,12 @@ export default function DailyUpdateSheet() {
           {range && (
             <span>{formatDate(range.start)} → {formatDate(range.end)}</span>
           )}
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
+            {filters.source === 'B2C' ? <Store className="w-3 h-3" />
+              : filters.source === 'B2B' ? <Briefcase className="w-3 h-3" />
+              : <Layers className="w-3 h-3" />}
+            {filters.source === 'ALL' ? 'All channels' : `${filters.source} only`}
+          </span>
           {filters.agent && (
             <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700">
               {filters.agent}
@@ -1332,6 +1659,12 @@ export default function DailyUpdateSheet() {
                       {CALL_LABELS[kind]}
                     </th>
                   ))}
+                  <th
+                    className="px-3 py-2.5"
+                    title="The digital Guest Feedback Form — sent to the guest on WhatsApp, filled in online"
+                  >
+                    Feedback Form
+                  </th>
                   <th className="px-3 py-2.5">Created / Updated</th>
                 </tr>
               </thead>
@@ -1498,7 +1831,7 @@ function SheetSection({
             />
           </td>
 
-          {/* Calls — pre, on-ground, post, feedback */}
+          {/* Calls — pre-trip, on-ground, post-tour */}
           {CALL_KINDS.map(kind => (
             <td key={kind} className="px-2 py-2.5 align-top">
               <CallCellView
@@ -1516,6 +1849,17 @@ function SheetSection({
               />
             </td>
           ))}
+
+          {/* The digital feedback form the guest fills in after departure */}
+          <td className="px-2 py-2.5 align-top">
+            <FeedbackFormCellView
+              cell={r.feedbackForm}
+              bookingRef={r.bookingRef}
+              guestName={r.guestName}
+              canEdit={canEdit}
+              onSent={at => onEdit(r.id, { feedbackForm: { ...r.feedbackForm, sentAt: at } })}
+            />
+          </td>
 
           {/* Audit dates */}
           <td className="px-3 py-2.5 align-top">

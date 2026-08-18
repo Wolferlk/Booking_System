@@ -18,10 +18,14 @@ import DriverVendorModal from '@/components/shared/driver-vendor-modal'
 import AssignMovementModal, { type MovementAssignment } from '@/components/shared/assign-movement-modal'
 import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
 import type { UserRole } from '@prisma/client'
+import {
+  SERVICE_TYPE_VALUES, SERVICE_TYPE_LABELS, SERVICE_TYPE_SHORT_LABELS,
+  isPrivateTransferType, isSicType, type ServiceTypeValue,
+} from '@/lib/service-types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ServiceType = 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT'
+type ServiceType = ServiceTypeValue
 
 type MCRow = {
   id:             string
@@ -146,16 +150,21 @@ type SortDir   = 'asc' | 'desc'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const SERVICE_LABELS: Record<ServiceType, string> = {
-  PVT_TRANSFER:    'Private',
-  SIC_TRANSFER:    'SIC',
-  OWN_ARRANGEMENT: 'Own Arr.',
-}
+const SERVICE_LABELS: Record<string, string> = SERVICE_TYPE_SHORT_LABELS
 
-const SERVICE_COLORS: Record<ServiceType, string> = {
-  PVT_TRANSFER:    'bg-emerald-100 text-emerald-700 ring-emerald-200',
-  SIC_TRANSFER:    'bg-blue-100 text-blue-700 ring-blue-200',
-  OWN_ARRANGEMENT: 'bg-slate-100 text-slate-600 ring-slate-200',
+const SERVICE_COLORS: Record<string, string> = {
+  PVT_TRANSFER:          'bg-emerald-100 text-emerald-700 ring-emerald-200',
+  PVT_TOUR:              'bg-emerald-100 text-emerald-700 ring-emerald-200',
+  PVT_TRANSFER_TICKET:   'bg-purple-100 text-purple-700 ring-purple-200',
+  PVT_TRANSFER_SPA:      'bg-teal-100 text-teal-700 ring-teal-200',
+  PVT_TRANSFER_SIC_TOUR: 'bg-teal-100 text-teal-700 ring-teal-200',
+  PVT_TRANSFER_MEAL:     'bg-orange-100 text-orange-700 ring-orange-200',
+  SIC_TRANSFER:          'bg-blue-100 text-blue-700 ring-blue-200',
+  SIC_TOUR:              'bg-blue-100 text-blue-700 ring-blue-200',
+  MEAL_COUPON:           'bg-orange-100 text-orange-700 ring-orange-200',
+  INTERNAL_TOUR:         'bg-purple-100 text-purple-700 ring-purple-200',
+  ACCOMMODATION:         'bg-amber-100 text-amber-700 ring-amber-200',
+  OWN_ARRANGEMENT:       'bg-slate-100 text-slate-600 ring-slate-200',
 }
 
 const MEAL_COLORS: Record<string, string> = {
@@ -167,10 +176,9 @@ const MEAL_COLORS: Record<string, string> = {
 }
 
 const SERVICE_TYPE_OPTIONS = [
-  { value: '',               label: 'All Types' },
-  { value: 'PVT_TRANSFER',  label: 'Private Transfer' },
-  { value: 'SIC_TRANSFER',  label: 'SIC Transfer' },
-  { value: 'OWN_ARRANGEMENT', label: 'Own Arrangement' },
+  { value: '', label: 'All Types' },
+  ...SERVICE_TYPE_VALUES.filter(v => v !== 'FLIGHT')
+    .map(v => ({ value: v as string, label: SERVICE_TYPE_LABELS[v] })),
 ]
 
 const COUNTRY_OPTIONS = [
@@ -703,8 +711,8 @@ export default function MCReportPage() {
 
   const totalAdults   = liveRows.reduce((s, r) => s + r.paxAdults, 0)
   const totalChildren = liveRows.reduce((s, r) => s + r.paxChildren, 0)
-  const pvtCount      = liveRows.filter(r => r.serviceType === 'PVT_TRANSFER').length
-  const sicCount      = liveRows.filter(r => r.serviceType === 'SIC_TRANSFER').length
+  const pvtCount      = liveRows.filter(r => isPrivateTransferType(r.serviceType)).length
+  const sicCount      = liveRows.filter(r => isSicType(r.serviceType)).length
   const ownCount      = liveRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = liveRows.filter(r => r.isLeisure).length
   const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly).length

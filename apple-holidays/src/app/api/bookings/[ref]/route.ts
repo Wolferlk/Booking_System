@@ -343,6 +343,8 @@ export async function PUT(
           ...(upd.roomType !== undefined && { roomType: upd.roomType as string }),
           ...(upd.address !== undefined && { address: upd.address as string }),
           ...(upd.contact !== undefined && { contact: upd.contact as string }),
+          // Who holds the reservation — drives whether pre-checking is required.
+          ...(typeof upd.ownArrangement === 'boolean' && { ownArrangement: upd.ownArrangement }),
         },
       })
     }
@@ -372,6 +374,7 @@ export async function PUT(
         mealType: (a.mealType as string) || null,
         address:  (a.address  as string) || null,
         contact:  (a.contact  as string) || null,
+        ownArrangement: a.ownArrangement === true,
       })),
     })
   }

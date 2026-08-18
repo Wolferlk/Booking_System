@@ -21,6 +21,7 @@ import type {
   BookingVersion,
   EmergencyContact,
 } from '@prisma/client'
+import type { ServiceTypeValue } from '@/lib/service-types'
 
 export type {
   User,
@@ -173,7 +174,7 @@ export type AgendaItemFormData = {
   details?: string
   mealPlan?: string
   meetingTime?: string
-  serviceType: 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT'
+  serviceType: ServiceTypeValue
 }
 
 export type PNLLineFormData = {

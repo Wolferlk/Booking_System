@@ -9,6 +9,7 @@
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-boot'
 import { readUploadAsBuffer, imageDimensions, fitImage } from './local-upload'
 import { withoutRetiredContacts } from './emergency-contacts'
+import { SERVICE_TYPE_SHORT_LABELS } from './service-types'
 import {
   parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
   categoryLabel, paxLabel, isPurchasedTicket,
@@ -38,11 +39,12 @@ const COUNTRY_LABEL: Record<string, string> = {
 }
 
 const SVC_COLOR: Record<string, string> = {
-  PVT_TRANSFER: BLUE, SIC_TRANSFER: GREEN, OWN_ARRANGEMENT: '#94A3B8',
+  PVT_TRANSFER: BLUE, PVT_TOUR: BLUE, PVT_TRANSFER_TICKET: BLUE,
+  PVT_TRANSFER_SPA: BLUE, PVT_TRANSFER_SIC_TOUR: BLUE, PVT_TRANSFER_MEAL: BLUE,
+  SIC_TRANSFER: GREEN, SIC_TOUR: GREEN,
+  OWN_ARRANGEMENT: '#94A3B8',
 }
-const SVC_LABEL: Record<string, string> = {
-  PVT_TRANSFER: 'Private', SIC_TRANSFER: 'SIC', OWN_ARRANGEMENT: 'Own Arr.',
-}
+const SVC_LABEL: Record<string, string> = SERVICE_TYPE_SHORT_LABELS
 
 function fmtDate(d: string | Date | null | undefined): string {
   if (!d) return '—'

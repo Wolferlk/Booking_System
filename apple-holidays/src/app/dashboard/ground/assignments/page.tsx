@@ -13,6 +13,7 @@ import { StatusBadge } from '@/components/ui/badge'
 import { formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import LogoSpinner from '@/components/shared/logo-spinner'
+import { SERVICE_TYPE_SHORT_LABELS } from '@/lib/service-types'
 
 interface Slot {
   agendaItemId:  string
@@ -56,15 +57,20 @@ function groupByDate(slots: Slot[]): GroupedDay[] {
 }
 
 const SVC_COLOR: Record<string, string> = {
-  PVT_TRANSFER:    'bg-blue-100 text-blue-700 border-blue-200',
-  SIC_TRANSFER:    'bg-green-100 text-green-700 border-green-200',
-  OWN_ARRANGEMENT: 'bg-slate-100 text-slate-500 border-slate-200',
+  PVT_TRANSFER:          'bg-blue-100 text-blue-700 border-blue-200',
+  PVT_TOUR:              'bg-blue-100 text-blue-700 border-blue-200',
+  PVT_TRANSFER_TICKET:   'bg-purple-100 text-purple-700 border-purple-200',
+  PVT_TRANSFER_SPA:      'bg-teal-100 text-teal-700 border-teal-200',
+  PVT_TRANSFER_SIC_TOUR: 'bg-teal-100 text-teal-700 border-teal-200',
+  PVT_TRANSFER_MEAL:     'bg-orange-100 text-orange-700 border-orange-200',
+  SIC_TRANSFER:          'bg-green-100 text-green-700 border-green-200',
+  SIC_TOUR:              'bg-green-100 text-green-700 border-green-200',
+  MEAL_COUPON:           'bg-orange-100 text-orange-700 border-orange-200',
+  INTERNAL_TOUR:         'bg-purple-100 text-purple-700 border-purple-200',
+  ACCOMMODATION:         'bg-amber-100 text-amber-700 border-amber-200',
+  OWN_ARRANGEMENT:       'bg-slate-100 text-slate-500 border-slate-200',
 }
-const SVC_LABEL: Record<string, string> = {
-  PVT_TRANSFER:    'PVT Transfer',
-  SIC_TRANSFER:    'SIC Transfer',
-  OWN_ARRANGEMENT: 'Own Arrangement',
-}
+const SVC_LABEL: Record<string, string> = SERVICE_TYPE_SHORT_LABELS
 
 export default function AssignmentsPage() {
   const router = useRouter()

@@ -52,6 +52,49 @@ import {
 } from '@/components/bookings/hotel-only-control'
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 
+/**
+ * Who holds the hotel reservation — the guest/agent, or us.
+ *
+ * Explicit on every stay the operator touches, because the fallback is a text
+ * heuristic over the hotel name (see `isOwnArrangement`): a blank or "TBA"
+ * property silently reads as own-arrangement, which is right until someone
+ * fills the name in. Making the choice part of the edit form turns that guess
+ * into a stored answer, and the answer drives whether pre-checking at D-10 is
+ * required for the stay.
+ */
+function ArrangementPicker({ value, onChange }: {
+  value: boolean | null
+  onChange: (v: boolean) => void
+}) {
+  const opts: { own: boolean; label: string; Icon: typeof Hotel; on: string }[] = [
+    { own: false, label: 'Company Arranged', Icon: Hotel,  on: 'bg-emerald-50 text-emerald-700 border-emerald-300 ring-1 ring-emerald-200' },
+    { own: true,  label: 'Own Arrangement',  Icon: Shield, on: 'bg-amber-50 text-amber-700 border-amber-300 ring-1 ring-amber-200' },
+  ]
+  return (
+    <div>
+      <label className="form-label">Arranged By *</label>
+      <div className="flex gap-2">
+        {opts.map(({ own, label, Icon, on }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => onChange(own)}
+            className={cn(
+              'flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-semibold transition-colors',
+              value === own ? on : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50',
+            )}
+          >
+            <Icon className="w-3.5 h-3.5" /> {label}
+          </button>
+        ))}
+      </div>
+      {value === null && (
+        <p className="text-[11px] text-amber-600 mt-1">Select who holds this reservation.</p>
+      )}
+    </div>
+  )
+}
+
 /** Shapes returned by the three `/extract` endpoints behind the AI Auto-fill popups. */
 type ExtractedFlight = {
   flightNo: string; date: string; fromApt: string; depTime: string
@@ -96,7 +139,7 @@ export default function BookingDetailPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [accomEdits, setAccomEdits] = useState<Record<string, any>>({})
   const [deletedAccomIds, setDeletedAccomIds] = useState<string[]>([])
-  const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; mealType: string; contact: string; address: string }[]>([])
+  const [newAccoms, setNewAccoms] = useState<{ city: string; hotel: string; checkIn: string; checkOut: string; roomType: string; mealType: string; contact: string; address: string; ownArrangement: boolean | null }[]>([])
   const [savingAccom, setSavingAccom] = useState(false)
   const [editPassengerModal, setEditPassengerModal] = useState(false)
   const [passengerEditList, setPassengerEditList] = useState<PassengerEditRow[]>([])
@@ -670,7 +713,7 @@ export default function BookingDetailPage() {
     if (extracted.length === 0) { toast.info('No hotels found'); return }
     const edits: Record<string, unknown> = {}
     accommodations.forEach((a) => {
-      edits[a.id as string] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' }
+      edits[a.id as string] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '', ownArrangement: isOwnArrangement(a) }
     })
     setAccomEdits(edits)
     setDeletedAccomIds([])
@@ -683,6 +726,9 @@ export default function BookingDetailPage() {
       mealType: String(a.mealType ?? ''),
       contact: String(a.contact ?? ''),
       address: String(a.address ?? ''),
+      // The extractor does not report this, so fall back to the text heuristic
+      // and let the operator confirm or flip it in the form.
+      ownArrangement: isOwnArrangement(a as unknown as Record<string, unknown>),
     })))
     setEditAccomModal(true)
     toast.success(`${extracted.length} hotel${extracted.length > 1 ? 's' : ''} extracted — review and save`)
@@ -764,12 +810,17 @@ export default function BookingDetailPage() {
       const accommodationUpdates = Object.entries(accomEdits)
         .filter(([id]) => !deletedAccomIds.includes(id))
         .map(([id, fields]) => ({ id, ...fields }))
-      const accommodationAdds = newAccoms
-        .filter(a => a.hotel.trim() && a.city.trim() && a.checkIn && a.checkOut)
-        .map(a => {
-          const nights = Math.max(1, Math.round((new Date(a.checkOut).getTime() - new Date(a.checkIn).getTime()) / 86400000))
-          return { ...a, nights }
-        })
+      const filledNew = newAccoms.filter(a => a.hotel.trim() && a.city.trim() && a.checkIn && a.checkOut)
+      // Own vs company arranged decides whether the stay needs a D-10 pre-check,
+      // so a new hotel is never saved on an unstated default.
+      if (filledNew.some(a => a.ownArrangement === null)) {
+        toast.error('Select who arranged each new hotel — company or own arrangement')
+        return
+      }
+      const accommodationAdds = filledNew.map(a => {
+        const nights = Math.max(1, Math.round((new Date(a.checkOut).getTime() - new Date(a.checkIn).getTime()) / 86400000))
+        return { ...a, nights, ownArrangement: a.ownArrangement === true }
+      })
       const res = await fetch(`/api/bookings/${ref}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -2348,7 +2399,9 @@ Wishing you a wonderful trip! ✈️
                   </button>
                   <button onClick={() => {
                     const edits: Record<string, unknown> = {}
-                    accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '' } })
+                    // Seeded from the same helper that renders the badge, so the
+                    // toggle opens showing what the operator was just looking at.
+                    accommodations.forEach((a) => { edits[a.id] = { hotel: a.hotel, roomType: a.roomType ?? '', address: a.address ?? '', contact: a.contact ?? '', ownArrangement: isOwnArrangement(a) } })
                     setAccomEdits(edits)
                     setDeletedAccomIds([])
                     setNewAccoms([])
@@ -3048,6 +3101,11 @@ Wishing you a wonderful trip! ✈️
                     value={(accomEdits[a.id as string]?.hotel ?? a.hotel) as string}
                     onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], hotel: e.target.value } }))} />
                 </div>
+                <div className="col-span-2">
+                  <ArrangementPicker
+                    value={(accomEdits[a.id as string]?.ownArrangement ?? isOwnArrangement(a)) as boolean}
+                    onChange={v => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], ownArrangement: v } }))} />
+                </div>
                 <div>
                   <label className="form-label">Room Type</label>
                   <input className="form-input" placeholder="e.g. Deluxe Twin"
@@ -3102,6 +3160,11 @@ Wishing you a wonderful trip! ✈️
                     value={newA.hotel}
                     onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, hotel: e.target.value } : a))} />
                 </div>
+                <div className="col-span-2">
+                  <ArrangementPicker
+                    value={newA.ownArrangement}
+                    onChange={v => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, ownArrangement: v } : a))} />
+                </div>
                 <div>
                   <label className="form-label">Check-in *</label>
                   <input type="date" className="form-input"
@@ -3139,7 +3202,7 @@ Wishing you a wonderful trip! ✈️
           {/* Add hotel button */}
           <button
             type="button"
-            onClick={() => setNewAccoms(prev => [...prev, { city: '', hotel: '', checkIn: '', checkOut: '', roomType: '', mealType: '', contact: '', address: '' }])}
+            onClick={() => setNewAccoms(prev => [...prev, { city: '', hotel: '', checkIn: '', checkOut: '', roomType: '', mealType: '', contact: '', address: '', ownArrangement: null }])}
             className="flex items-center justify-center gap-2 w-full p-3 border-2 border-dashed border-slate-200 rounded-xl text-sm text-slate-500 hover:border-brand-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
           >
             <Plus className="w-4 h-4" /> Add Another Hotel
