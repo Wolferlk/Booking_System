@@ -285,7 +285,7 @@ export default function OpsAI() {
               key="scrim"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => setOpen(false)}
-              className="fixed inset-0 z-[70] bg-slate-950/40 backdrop-blur-[2px] lg:hidden"
+              className="fixed inset-0 z-[118] bg-slate-950/40 backdrop-blur-[2px] lg:hidden"
             />
 
             <motion.aside
@@ -295,7 +295,7 @@ export default function OpsAI() {
               exit={{ x: '100%', opacity: 0.4 }}
               transition={{ type: 'spring', stiffness: 300, damping: 34 }}
               className={cn(
-                'fixed right-0 top-0 z-[80] flex h-screen w-full flex-col sm:w-[440px]',
+                'fixed right-0 top-0 z-[120] flex h-screen w-full flex-col sm:w-[440px]',
                 'border-l border-slate-700/60 bg-slate-950/95 backdrop-blur-xl',
                 'shadow-[-20px_0_60px_-15px_rgba(0,0,0,0.7)]',
               )}
@@ -408,14 +408,21 @@ export default function OpsAI() {
 
 // ── Launcher ──────────────────────────────────────────────────────────────
 
+// The bottom-right launcher lane. Every floating launcher in the dashboard
+// shares the same right edge and stacks upwards in fixed 68px slots, so they
+// can never land on top of each other:
+//   slot 0  bottom 20px  — internal chat dock  (chat-dock.tsx)
+//   slot 1  bottom 88px  — OPS_AI              (this file)
+//   slot 2  bottom 156px — WhatsApp mini chat  (whatsapp-mini-chat.tsx)
 const FAB_SIZE   = 56  // h-14 / w-14
-const FAB_INSET  = 24  // bottom-6 / right-6
+const FAB_RIGHT  = 20  // right-5
+const FAB_BOTTOM = 88  // bottom-[88px] — slot 1
 
 /** Keep the launcher fully on screen whatever the viewport does. */
 function clampOffset(x: number, y: number) {
   if (typeof window === 'undefined') return { x, y }
-  const minX = Math.min(0, -(window.innerWidth  - FAB_SIZE - FAB_INSET * 2))
-  const minY = Math.min(0, -(window.innerHeight - FAB_SIZE - FAB_INSET * 2))
+  const minX = Math.min(0, -(window.innerWidth  - FAB_SIZE - FAB_RIGHT * 2))
+  const minY = Math.min(0, -(window.innerHeight - FAB_SIZE - FAB_BOTTOM - FAB_RIGHT))
   return {
     x: Math.min(0, Math.max(minX, x)),
     y: Math.min(0, Math.max(minY, y)),
@@ -478,7 +485,7 @@ function Launcher({ open, onToggle }: { open: boolean; onToggle: () => void }) {
       whileTap={{ scale: 0.94 }}
       whileDrag={{ scale: 1.08, cursor: 'grabbing' }}
       className={cn(
-        'group fixed bottom-6 right-6 z-[75] flex h-14 w-14 cursor-grab items-center justify-center rounded-full',
+        'group fixed bottom-[88px] right-5 z-[100] flex h-14 w-14 cursor-grab items-center justify-center rounded-full',
         'bg-gradient-to-br from-slate-800 to-slate-950 ring-1 ring-white/15 touch-none select-none',
         'shadow-[0_8px_30px_-6px_rgba(234,179,8,0.45)] transition-shadow hover:shadow-[0_10px_40px_-6px_rgba(234,179,8,0.7)]',
         open && 'opacity-0 pointer-events-none',
