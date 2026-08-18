@@ -7,6 +7,7 @@ import {
   Car, User2, Navigation2, Route,
 } from 'lucide-react'
 import LogoSpinner from '@/components/shared/logo-spinner'
+import { isPrivateTransferType, isSicType, serviceTypeLabel } from '@/lib/service-types'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,8 @@ function svcLabel(t: string | null) {
   if (t === 'SIC_TRANSFER')   return { label: 'SIC Transfer',     cls: 'bg-emerald-500/15 border-emerald-500/25 text-emerald-300' }
   if (t === 'OWN_ARRANGEMENT') return { label: 'Own Arrangement', cls: 'bg-slate-500/15 border-slate-500/25 text-slate-400' }
   if (t === 'INTERNAL_TOUR')  return { label: 'Internal Tour',    cls: 'bg-purple-500/15 border-purple-500/25 text-purple-300' }
+  if (isPrivateTransferType(t)) return { label: serviceTypeLabel(t), cls: 'bg-sky-500/15 border-sky-500/25 text-sky-300' }
+  if (isSicType(t))           return { label: serviceTypeLabel(t), cls: 'bg-emerald-500/15 border-emerald-500/25 text-emerald-300' }
   return null
 }
 

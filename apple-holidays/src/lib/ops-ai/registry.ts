@@ -1,4 +1,5 @@
 import type { Permission } from '@/lib/rbac'
+import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 
 /**
  * OPS_AI_AGENT — capability registry.
@@ -102,10 +103,7 @@ export const EDITABLE_AGENDA_FIELDS = {
   serviceType: { type: 'enum',    label: 'Service type' },
 } as const
 
-export const SERVICE_TYPES = [
-  'PVT_TRANSFER', 'SIC_TRANSFER', 'OWN_ARRANGEMENT',
-  'FLIGHT', 'INTERNAL_TOUR', 'ACCOMMODATION',
-] as const
+export const SERVICE_TYPES = SERVICE_TYPE_VALUES
 
 export const BOOKING_STATUSES = [
   'DRAFT', 'BT_CONFIRMED', 'GT_REVIEW', 'CHANGE_REQUESTED', 'GT_VERIFIED',

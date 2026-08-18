@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import openai from '@/lib/openai'
@@ -357,7 +358,7 @@ ${tqDocumentText
   const AIRPORT_ROAD_RE  = /\b(airport|terminal|arr\.|dep\.|arrival|departure)\b/i
   const FLIGHT_RE        = /\b(fly|flight|✈|airline|airways)\b/i
   const SIC_RE           = /\bsic\b/i
-  const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
+  const VALID_TYPES      = new Set<string>(SERVICE_TYPE_VALUES)
 
   // Helper: subtract minutes from HH:MM string
   function subtractMinutes(time: string, mins: number): string {

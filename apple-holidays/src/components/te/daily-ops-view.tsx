@@ -12,6 +12,7 @@ import { Card } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { useCountryFilter } from '@/hooks/use-country-filter'
+import { SERVICE_TYPE_LABELS, SERVICE_TYPE_SHORT_LABELS, type ServiceTypeValue } from '@/lib/service-types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ interface AgendaItem {
   details: string | null
   mealPlan: string | null
   meetingTime: string | null
-  serviceType: 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT'
+  serviceType: ServiceTypeValue
 }
 
 interface Flight {
@@ -142,16 +143,21 @@ function matchesSearch(b: DailyBooking, q: string): boolean {
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 const SERVICE_CONFIG: Record<string, { icon: React.ComponentType<{ className?: string }>; chip: string; label: string }> = {
-  PVT_TRANSFER:    { icon: Car,       chip: 'bg-blue-100 text-blue-700',   label: 'PVT' },
-  SIC_TRANSFER:    { icon: Users,     chip: 'bg-orange-100 text-orange-700', label: 'SIC' },
-  OWN_ARRANGEMENT: { icon: Compass,   chip: 'bg-slate-100 text-slate-600',  label: 'OWN' },
+  PVT_TRANSFER:          { icon: Car,     chip: 'bg-blue-100 text-blue-700',     label: SERVICE_TYPE_SHORT_LABELS.PVT_TRANSFER },
+  PVT_TOUR:              { icon: Car,     chip: 'bg-blue-100 text-blue-700',     label: SERVICE_TYPE_SHORT_LABELS.PVT_TOUR },
+  PVT_TRANSFER_TICKET:   { icon: Car,     chip: 'bg-purple-100 text-purple-700', label: SERVICE_TYPE_SHORT_LABELS.PVT_TRANSFER_TICKET },
+  PVT_TRANSFER_SPA:      { icon: Car,     chip: 'bg-teal-100 text-teal-700',     label: SERVICE_TYPE_SHORT_LABELS.PVT_TRANSFER_SPA },
+  PVT_TRANSFER_SIC_TOUR: { icon: Car,     chip: 'bg-teal-100 text-teal-700',     label: SERVICE_TYPE_SHORT_LABELS.PVT_TRANSFER_SIC_TOUR },
+  PVT_TRANSFER_MEAL:     { icon: Car,     chip: 'bg-orange-100 text-orange-700', label: SERVICE_TYPE_SHORT_LABELS.PVT_TRANSFER_MEAL },
+  SIC_TRANSFER:          { icon: Users,   chip: 'bg-orange-100 text-orange-700', label: SERVICE_TYPE_SHORT_LABELS.SIC_TRANSFER },
+  SIC_TOUR:              { icon: Users,   chip: 'bg-orange-100 text-orange-700', label: SERVICE_TYPE_SHORT_LABELS.SIC_TOUR },
+  MEAL_COUPON:           { icon: Compass, chip: 'bg-orange-100 text-orange-700', label: SERVICE_TYPE_SHORT_LABELS.MEAL_COUPON },
+  INTERNAL_TOUR:         { icon: Compass, chip: 'bg-purple-100 text-purple-700', label: SERVICE_TYPE_SHORT_LABELS.INTERNAL_TOUR },
+  ACCOMMODATION:         { icon: Compass, chip: 'bg-amber-100 text-amber-700',   label: SERVICE_TYPE_SHORT_LABELS.ACCOMMODATION },
+  OWN_ARRANGEMENT:       { icon: Compass, chip: 'bg-slate-100 text-slate-600',   label: 'OWN' },
 }
 
-const SERVICE_LABELS_FULL: Record<string, string> = {
-  PVT_TRANSFER:    'Private Transfer',
-  SIC_TRANSFER:    'SIC Transfer',
-  OWN_ARRANGEMENT: 'Own Arrangement',
-}
+const SERVICE_LABELS_FULL: Record<string, string> = SERVICE_TYPE_LABELS
 
 // Derive the arrival movement (location / details / service type) for a booking on
 // the selected day: prefer the first scheduled agenda item, fall back to the arrival flight.

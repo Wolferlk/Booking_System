@@ -3,10 +3,14 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Image from 'next/image'
+import {
+  SERVICE_TYPE_SHORT_LABELS, isPrivateTransferType, isSicType,
+  type ServiceTypeValue,
+} from '@/lib/service-types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type ServiceType = 'PVT_TRANSFER' | 'SIC_TRANSFER' | 'OWN_ARRANGEMENT'
+type ServiceType = ServiceTypeValue
 
 type MCRow = {
   id:             string
@@ -42,11 +46,7 @@ type MCRow = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const SERVICE_LABELS: Record<string, string> = {
-  PVT_TRANSFER:    'Private',
-  SIC_TRANSFER:    'SIC',
-  OWN_ARRANGEMENT: 'Own Arr.',
-}
+const SERVICE_LABELS: Record<string, string> = SERVICE_TYPE_SHORT_LABELS
 
 function rowMatchesDeep(row: MCRow, q: string): boolean {
   return [
@@ -139,8 +139,8 @@ function PrintContent() {
 
   const totalAdults   = liveRows.reduce((s, r) => s + r.paxAdults, 0)
   const totalChildren = liveRows.reduce((s, r) => s + r.paxChildren, 0)
-  const pvtCount      = liveRows.filter(r => r.serviceType === 'PVT_TRANSFER').length
-  const sicCount      = liveRows.filter(r => r.serviceType === 'SIC_TRANSFER').length
+  const pvtCount      = liveRows.filter(r => isPrivateTransferType(r.serviceType)).length
+  const sicCount      = liveRows.filter(r => isSicType(r.serviceType)).length
   const ownCount      = liveRows.filter(r => r.serviceType === 'OWN_ARRANGEMENT').length
   const leisureCount  = liveRows.filter(r => r.isLeisure).length
   const hotelOnlyCount = liveRows.filter(r => r.isHotelOnly).length
@@ -492,10 +492,16 @@ const MEAL_FG: Record<string, string> = {
 }
 
 const SVC_BG: Record<string, string> = {
-  PVT_TRANSFER: '#dcfce7', SIC_TRANSFER: '#dbeafe', OWN_ARRANGEMENT: '#f1f5f9',
+  PVT_TRANSFER: '#dcfce7', PVT_TOUR: '#dcfce7', PVT_TRANSFER_TICKET: '#f3e8ff',
+  PVT_TRANSFER_SPA: '#ccfbf1', PVT_TRANSFER_SIC_TOUR: '#ccfbf1', PVT_TRANSFER_MEAL: '#ffedd5',
+  SIC_TRANSFER: '#dbeafe', SIC_TOUR: '#dbeafe', MEAL_COUPON: '#ffedd5',
+  INTERNAL_TOUR: '#f3e8ff', ACCOMMODATION: '#fef3c7', OWN_ARRANGEMENT: '#f1f5f9',
 }
 const SVC_FG: Record<string, string> = {
-  PVT_TRANSFER: '#166534', SIC_TRANSFER: '#1e40af', OWN_ARRANGEMENT: '#475569',
+  PVT_TRANSFER: '#166534', PVT_TOUR: '#166534', PVT_TRANSFER_TICKET: '#6b21a8',
+  PVT_TRANSFER_SPA: '#115e59', PVT_TRANSFER_SIC_TOUR: '#115e59', PVT_TRANSFER_MEAL: '#9a3412',
+  SIC_TRANSFER: '#1e40af', SIC_TOUR: '#1e40af', MEAL_COUPON: '#9a3412',
+  INTERNAL_TOUR: '#6b21a8', ACCOMMODATION: '#92400e', OWN_ARRANGEMENT: '#475569',
 }
 
 // ─── Export ───────────────────────────────────────────────────────────────────

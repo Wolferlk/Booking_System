@@ -10,7 +10,7 @@ import {
   Hotel, ShieldAlert, ChevronDown, ChevronUp, UsersRound,
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
-  ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, Store,
+  ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, Store, Utensils,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -23,6 +23,7 @@ import PartnerAssignPicker, { EMPTY_SELECTION, type PartnerSelection } from '@/c
 import { isPartnerEnabledForCountry, PARTNER_CONFIG, type PartnerKind } from '@/lib/partner-directory'
 import { formatDate } from '@/lib/utils'
 import { resolveIsLeisure } from '@/lib/leisure-day'
+import { SERVICE_TYPE_LABELS, isSicType } from '@/lib/service-types'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
@@ -81,19 +82,34 @@ function normalizeWhatsApp(raw: string | null | undefined): string {
 }
 
 const SERVICE_TYPES = [
-  { value: 'PVT_TRANSFER',    label: 'Private Transfer',       color: 'blue'   as const, icon: Car },
-  { value: 'SIC_TRANSFER',    label: 'SIC Transfer',           color: 'green'  as const, icon: Bus },
-  { value: 'OWN_ARRANGEMENT', label: 'OWN Transfer',           color: 'gray'   as const, icon: Users },
-  { value: 'INTERNAL_TOUR',   label: 'Ticket Only',  color: 'purple' as const, icon: Ticket },
+  { value: 'SIC_TOUR',              label: SERVICE_TYPE_LABELS.SIC_TOUR,              color: 'green'  as const, icon: Bus },
+  { value: 'PVT_TOUR',              label: SERVICE_TYPE_LABELS.PVT_TOUR,              color: 'blue'   as const, icon: Car },
+  { value: 'PVT_TRANSFER',          label: SERVICE_TYPE_LABELS.PVT_TRANSFER,          color: 'blue'   as const, icon: Car },
+  { value: 'PVT_TRANSFER_TICKET',   label: SERVICE_TYPE_LABELS.PVT_TRANSFER_TICKET,   color: 'purple' as const, icon: Ticket },
+  { value: 'PVT_TRANSFER_SPA',      label: SERVICE_TYPE_LABELS.PVT_TRANSFER_SPA,      color: 'teal'   as const, icon: Sparkles },
+  { value: 'INTERNAL_TOUR',         label: SERVICE_TYPE_LABELS.INTERNAL_TOUR,         color: 'purple' as const, icon: Ticket },
+  { value: 'ACCOMMODATION',         label: SERVICE_TYPE_LABELS.ACCOMMODATION,         color: 'amber'  as const, icon: Hotel },
+  { value: 'MEAL_COUPON',           label: SERVICE_TYPE_LABELS.MEAL_COUPON,           color: 'orange' as const, icon: Utensils },
+  { value: 'PVT_TRANSFER_SIC_TOUR', label: SERVICE_TYPE_LABELS.PVT_TRANSFER_SIC_TOUR, color: 'teal'   as const, icon: Bus },
+  { value: 'OWN_ARRANGEMENT',       label: SERVICE_TYPE_LABELS.OWN_ARRANGEMENT,       color: 'gray'   as const, icon: Users },
+  { value: 'SIC_TRANSFER',          label: SERVICE_TYPE_LABELS.SIC_TRANSFER,          color: 'green'  as const, icon: Bus },
+  { value: 'PVT_TRANSFER_MEAL',     label: SERVICE_TYPE_LABELS.PVT_TRANSFER_MEAL,     color: 'orange' as const, icon: Utensils },
 ]
 
 const SERVICE_STRIP: Record<string, { bg: string; iconBg: string; iconColor: string; icon: typeof Car }> = {
-  PVT_TRANSFER:    { bg: 'bg-blue-400',   iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   icon: Car },
-  SIC_TRANSFER:    { bg: 'bg-green-400',  iconBg: 'bg-green-100',  iconColor: 'text-green-600',  icon: Bus },
-  FLIGHT:          { bg: 'bg-indigo-400', iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', icon: Plane },
-  INTERNAL_TOUR:   { bg: 'bg-purple-400', iconBg: 'bg-purple-100', iconColor: 'text-purple-600', icon: Ticket },
-  ACCOMMODATION:   { bg: 'bg-amber-400',  iconBg: 'bg-amber-100',  iconColor: 'text-amber-600',  icon: Hotel },
-  OWN_ARRANGEMENT: { bg: 'bg-slate-300',  iconBg: 'bg-slate-100',  iconColor: 'text-slate-500',  icon: Users },
+  PVT_TRANSFER:          { bg: 'bg-blue-400',   iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   icon: Car },
+  PVT_TOUR:              { bg: 'bg-blue-400',   iconBg: 'bg-blue-100',   iconColor: 'text-blue-600',   icon: Car },
+  PVT_TRANSFER_TICKET:   { bg: 'bg-purple-400', iconBg: 'bg-purple-100', iconColor: 'text-purple-600', icon: Ticket },
+  PVT_TRANSFER_SPA:      { bg: 'bg-teal-400',   iconBg: 'bg-teal-100',   iconColor: 'text-teal-600',   icon: Sparkles },
+  PVT_TRANSFER_SIC_TOUR: { bg: 'bg-teal-400',   iconBg: 'bg-teal-100',   iconColor: 'text-teal-600',   icon: Bus },
+  PVT_TRANSFER_MEAL:     { bg: 'bg-orange-400', iconBg: 'bg-orange-100', iconColor: 'text-orange-600', icon: Utensils },
+  SIC_TRANSFER:          { bg: 'bg-green-400',  iconBg: 'bg-green-100',  iconColor: 'text-green-600',  icon: Bus },
+  SIC_TOUR:              { bg: 'bg-green-400',  iconBg: 'bg-green-100',  iconColor: 'text-green-600',  icon: Bus },
+  MEAL_COUPON:           { bg: 'bg-orange-400', iconBg: 'bg-orange-100', iconColor: 'text-orange-600', icon: Utensils },
+  FLIGHT:                { bg: 'bg-indigo-400', iconBg: 'bg-indigo-100', iconColor: 'text-indigo-600', icon: Plane },
+  INTERNAL_TOUR:         { bg: 'bg-purple-400', iconBg: 'bg-purple-100', iconColor: 'text-purple-600', icon: Ticket },
+  ACCOMMODATION:         { bg: 'bg-amber-400',  iconBg: 'bg-amber-100',  iconColor: 'text-amber-600',  icon: Hotel },
+  OWN_ARRANGEMENT:       { bg: 'bg-slate-300',  iconBg: 'bg-slate-100',  iconColor: 'text-slate-500',  icon: Users },
 }
 
 /** A movement needs a driver unless it is a leisure day or hotel only. */
@@ -1544,7 +1560,7 @@ export default function AgendaPage() {
                             {SERVICE_TYPES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                           </select>
                         </div>
-                        {item.serviceType === 'SIC_TRANSFER' && (
+                        {isSicType(item.serviceType) && (
                           <>
                             <div>
                               <label className="form-label text-xs">Time From</label>
@@ -1746,7 +1762,7 @@ export default function AgendaPage() {
                           {item.meetingTime && (
                             <span className="text-xs text-slate-500">Meet: {item.meetingTime}</span>
                           )}
-                          {item.serviceType === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo) && (
+                          {isSicType(item.serviceType) && (item.timeFrom || item.timeTo) && (
                             <span className="text-xs text-slate-500">
                               {item.timeFrom && `From: ${item.timeFrom}`}{item.timeFrom && item.timeTo && ' · '}{item.timeTo && `To: ${item.timeTo}`}
                             </span>

@@ -7,6 +7,7 @@ import { detectCountryFromText, detectCountryFromRef } from '@/lib/country-detec
 import { normalizeCurrencyCode } from '@/lib/utils'
 import { applySriLankaMovementDefaults } from '@/lib/agenda-sri-lanka-rules'
 import { dedupeAgendaItems } from '@/lib/agenda-dedupe'
+import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 import { recordAmendmentVersion, bumpVersionAndSnapshot, snapshotInitialVersion } from '@/lib/booking-versions'
 import { statusAfterAmendment } from '@/lib/state-machine'
 import fs from 'fs'
@@ -234,7 +235,7 @@ Return JSON { "items": [{"date":"YYYY-MM-DD","location":"string","fromPoint":"st
     const TRANSFER_RE      = /\b(transfer|transport|pick[\s-]?up|drop[\s-]?off|by (car|coach|bus|van|vehicle)|private basis|round trip|one way)\b/i
     const ACCOMMODATION_RE = /\b(check.?in|check.?out|hotel stay|accommodation)\b/i
     const SIC_RE           = /\bsic\b/i
-    const VALID_TYPES      = new Set(['PVT_TRANSFER','SIC_TRANSFER','OWN_ARRANGEMENT','FLIGHT','INTERNAL_TOUR','ACCOMMODATION'])
+    const VALID_TYPES      = new Set<string>(SERVICE_TYPE_VALUES)
 
     const aiItems = rawItems.map((item: any) => {
       const from = String(item.fromPoint ?? '')

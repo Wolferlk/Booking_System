@@ -19,6 +19,7 @@ import {
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { withoutRetiredContacts } from '@/lib/emergency-contacts'
+import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,12 +43,7 @@ function formatDate(raw: string | Date | null | undefined): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-const SVC_LABEL: Record<string, string> = {
-  PVT_TRANSFER:    'Private Transfer',
-  SIC_TRANSFER:    'SIC Transfer',
-  OWN_ARRANGEMENT: 'Own Arrangement',
-  INTERNAL_TOUR:   'Ticket Only',
-}
+const SVC_LABEL: Record<string, string> = SERVICE_TYPE_LABELS
 
 // ── Colour constants ──────────────────────────────────────────────────────────
 const CLR = {

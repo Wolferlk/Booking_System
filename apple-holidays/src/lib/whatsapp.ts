@@ -5,6 +5,7 @@
 
 import { prisma } from '@/lib/prisma'
 import { contentTypeFor } from '@/lib/storage'
+import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
 
 const WHATSAPP_API     = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
@@ -768,10 +769,11 @@ export interface BriefingMovement {
 }
 
 const SERVICE_LABEL: Record<string, string> = {
+  ...SERVICE_TYPE_LABELS,
   PVT_TRANSFER:  'Private transfer (PVT)',
   SIC_TRANSFER:  'Seat-in-coach (SIC)',
+  SIC_TOUR:      'Seat-in-coach tour (SIC)',
   INTERNAL_TOUR: 'Guided tour',
-  FLIGHT:        'Flight',
   ACCOMMODATION: 'Accommodation',
 }
 
