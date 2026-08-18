@@ -138,8 +138,31 @@ export async function putChatFile(
   return res.insertId
 }
 
-/** Raw bytes for the media route. Null once the object has been purged. */
-export async function getChatFile(key: string): Promise<Buffer | null> {
+/**
+ * Every form a stored key can legitimately take, most likely first.
+ *
+ * The two systems disagreed about what `disk_key` means and both were
+ * internally consistent, so each side served its own files and 410'd on the
+ * other's:
+ *
+ *   ops       `chat/2026/08/x.png`   — the absolute object key, written here
+ *   accounts  `2026/08/x.png`        — relative to its Laravel disk's `chat/` root
+ *
+ * The object sits in the same place either way; only the row's spelling
+ * differs, so nothing is migrated — a read simply tries both. The Accounts half
+ * is ChatMediaService::keyCandidates() and must keep agreeing with this.
+ */
+export function keyCandidates(key: string): string[] {
+  const clean = key.trim().replace(/^\/+/, '')
+  const prefix = CHAT_PREFIX.replace(/^\/+|\/+$/g, '')
+  const out = [clean]
+
+  if (prefix && !clean.startsWith(`${prefix}/`)) out.push(`${prefix}/${clean}`)
+
+  return Array.from(new Set(out.filter(Boolean)))
+}
+
+async function readObject(key: string): Promise<Buffer | null> {
   try {
     const res = await s3().send(new GetObjectCommand({ Bucket: CHAT_BUCKET, Key: key }))
     const chunks: Buffer[] = []
@@ -152,6 +175,15 @@ export async function getChatFile(key: string): Promise<Buffer | null> {
     }
     return null
   }
+}
+
+/** Raw bytes for the media route. Null once the object has been purged. */
+export async function getChatFile(key: string): Promise<Buffer | null> {
+  for (const candidate of keyCandidates(key)) {
+    const bytes = await readObject(candidate)
+    if (bytes) return bytes
+  }
+  return null
 }
 
 /** The attachment row, for the media route's membership check. */

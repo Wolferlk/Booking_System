@@ -506,6 +506,7 @@ export default function Sidebar() {
   const router = useRouter()
   const { data: session } = useSession()
   const role = session?.user?.role as UserRole | undefined
+  const [avatarFailed, setAvatarFailed] = useState(false)
   const navItems = useMemo(() => {
     const items = role ? NAV_ITEMS[role] ?? [] : []
     // Internal chat is deliberately not in the per-role lists: it is shared with
@@ -1079,23 +1080,40 @@ export default function Sidebar() {
 
         {session?.user && (
           <div className={cn('border-t border-slate-800 px-4 py-4', isCollapsed && 'lg:px-2 lg:py-3')}>
-            <div className={cn(
-              'flex items-center gap-3 mb-3',
-              isCollapsed && 'lg:justify-center lg:mb-2',
-            )}>
+            {/* The way in to /dashboard/profile, where the photo below is set.
+                Falls back to initials whenever there is no photo or it fails to
+                load, so this corner is never a broken image. */}
+            <Link
+              href="/dashboard/profile"
+              className={cn(
+                'flex items-center gap-3 mb-3 rounded-lg -mx-1 px-1 py-1 hover:bg-slate-800/60 transition-colors',
+                isCollapsed && 'lg:justify-center lg:mb-2',
+              )}
+            >
               <div
-                className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0"
+                className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0 overflow-hidden"
                 title={session.user.name ?? ''}
               >
-                <span className="text-white text-xs font-bold">
-                  {getInitials(session.user.name ?? 'U')}
-                </span>
+                {session.user.id && !avatarFailed ? (
+                  /* eslint-disable-next-line @next/next/no-img-element -- served
+                     from an authenticated route, not a static asset */
+                  <img
+                    src={`/api/chat/avatar/ops/${encodeURIComponent(session.user.id)}`}
+                    alt={session.user.name ?? 'My profile'}
+                    onError={() => setAvatarFailed(true)}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-white text-xs font-bold">
+                    {getInitials(session.user.name ?? 'U')}
+                  </span>
+                )}
               </div>
               <div className={cn('flex-1 min-w-0', isCollapsed && 'lg:hidden')}>
                 <p className="text-white text-sm font-medium truncate">{session.user.name}</p>
                 <p className="text-slate-500 text-xs truncate">{session.user.email}</p>
               </div>
-            </div>
+            </Link>
             <button
               onClick={async () => {
                 // Redirect ourselves instead of letting NextAuth use NEXTAUTH_URL,
