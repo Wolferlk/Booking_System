@@ -16,7 +16,8 @@
  */
 
 import { prisma } from '@/lib/prisma'
-import { fetchCallsForBookings, emptyCalls, type BookingCalls } from '@/lib/daily-update-calls'
+import { emptyCalls, type BookingCalls } from '@/lib/daily-update-calls'
+import { fetchCallsForBookings } from '@/lib/daily-update-calls-data'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import type { Prisma, UserRole } from '@prisma/client'
