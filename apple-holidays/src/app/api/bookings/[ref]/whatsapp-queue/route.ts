@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { prisma } from '@/lib/prisma'
+import { decodeQueuedAttachment } from '@/lib/booking-whatsapp-delivery'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,14 +26,18 @@ export async function GET(
     select:  { id: true, phone: true, body: true, mediaType: true, senderName: true, createdAt: true },
   })
 
-  const queued = rows.map(r => ({
-    id:        r.id,
-    phone:     r.phone,
-    preview:   (r.body ?? '').slice(0, 120),
-    pdfType:   r.mediaType === 'full' ? 'full' : r.mediaType === 'confirmation' ? 'confirmation' : null,
-    queuedBy:  r.senderName,
-    queuedAt:  r.createdAt,
-  }))
+  const queued = rows.map(r => {
+    const attachment = decodeQueuedAttachment(r.mediaType)
+    return {
+      id:         r.id,
+      phone:      r.phone,
+      preview:    (r.body ?? '').slice(0, 120),
+      pdfType:    attachment?.pdfType ?? null,
+      fileFormat: attachment?.fileFormat ?? null,
+      queuedBy:   r.senderName,
+      queuedAt:   r.createdAt,
+    }
+  })
 
   return buildApiSuccess({ queued, count: queued.length })
 }

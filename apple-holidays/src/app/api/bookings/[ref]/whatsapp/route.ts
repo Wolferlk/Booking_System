@@ -7,10 +7,11 @@ import {
   deliverConfirmationNow,
   sendOpenerAndQueue,
   type PdfType,
+  type FileFormat,
 } from '@/lib/booking-whatsapp-delivery'
 
 export const dynamic = 'force-dynamic'
-// Rendering the PDF (Chromium) then uploading it to Meta takes far longer than the
+// Rendering the document then uploading it to Meta takes far longer than the
 // platform's default function timeout. Without this the request is killed mid-flight
 // and the gateway serves its own HTML 502 in place of our JSON. Matches agenda/send.
 export const maxDuration = 120
@@ -36,22 +37,26 @@ export async function POST(
     return buildApiError('Forbidden', 403)
   }
 
-  const { to, name, message, attachPdf, pdfType } = await req.json() as {
-    to:         string
-    name:       string
-    message:    string
-    attachPdf?: boolean
-    pdfType?:   PdfType
+  const { to, name, message, attachPdf, pdfType, fileFormat } = await req.json() as {
+    to:          string
+    name:        string
+    message:     string
+    attachPdf?:  boolean
+    pdfType?:    PdfType
+    /** 'word' attaches the .docx twin of the same document; defaults to PDF. */
+    fileFormat?: FileFormat
   }
 
   if (!to || !message) return buildApiError('Phone number and message are required')
 
   const type       = pdfType === 'full' ? 'full' : 'confirmation'
+  const format     = fileFormat === 'word' ? 'word' : 'pdf'
   const senderName = session.user.name ?? session.user.email ?? 'Staff'
   const baseUrl    = getPublicBaseUrl(req)
   const common = {
     ref: params.ref, to, name: name ?? 'Guest', message,
-    attachPdf: Boolean(attachPdf), pdfType: type as PdfType, senderName, baseUrl,
+    attachPdf: Boolean(attachPdf), pdfType: type as PdfType,
+    fileFormat: format as FileFormat, senderName, baseUrl,
   }
 
   try {

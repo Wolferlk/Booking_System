@@ -11,6 +11,7 @@ import {
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
   ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, Store, Utensils,
+  FileType,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -28,38 +29,8 @@ import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 import JourneyMap from '@/components/bookings/journey-map'
-
-/**
- * Textarea that grows with its content instead of scrolling. Used for the
- * Activity field, where multi-attraction package names run to several lines and
- * a single-line input hides everything past the first few words.
- */
-function AutoGrowTextarea({
-  value, onChange, className = '', minRows = 1, ...rest
-}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { minRows?: number }) {
-  const ref = useRef<HTMLTextAreaElement>(null)
-
-  const resize = useCallback(() => {
-    const el = ref.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${el.scrollHeight}px`
-  }, [])
-
-  // Re-measure on external value changes (AI fill, itinerary import, load).
-  useEffect(resize, [value, resize])
-
-  return (
-    <textarea
-      ref={ref}
-      rows={minRows}
-      value={value}
-      onChange={e => { onChange?.(e); resize() }}
-      className={`resize-none overflow-hidden ${className}`}
-      {...rest}
-    />
-  )
-}
+import { ComboInput } from '@/components/ui/combo-input'
+import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions } from '@/lib/agenda-suggestions'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B':   'Breakfast',
@@ -352,9 +323,11 @@ export default function AgendaPage() {
   // Driver / vendor view modal
   const [driverModalTarget, setDriverModalTarget] = useState<AgendaItem['assignment'] | null>(null)
 
-  // PDF send modal
+  // Agenda send modal
   const [sendModal,       setSendModal]      = useState(false)
   const [sendMode,        setSendMode]       = useState<'whatsapp' | 'email'>('whatsapp')
+  // Attachment format — PDF is the default; Word ships the same .docx as "Download Word".
+  const [sendFormat,      setSendFormat]     = useState<'pdf' | 'word'>('pdf')
   const [sendDrivers,     setSendDrivers]    = useState(true)
   const [sendTo,          setSendTo]         = useState('')
   const [sendMessage,     setSendMessage]    = useState('')
@@ -408,6 +381,40 @@ export default function AgendaPage() {
   const guidesEnabled      = isPartnerEnabledForCountry(partnerCountries.guide, partnerCountry)
   const tourVendorsEnabled = isPartnerEnabledForCountry(partnerCountries.tourVendor, partnerCountry)
 
+  /**
+   * Route / activity suggestions for this booking's country. Curated seed list
+   * first, then whatever the desk has actually used on past agendas (fetched
+   * below). Every field stays free text — a tour that is not on the list is
+   * simply typed in and saved as typed.
+   */
+  const [routeOptions, setRouteOptions] = useState<{ location: string[]; fromPoint: string[]; toPoint: string[] }>({
+    location: [], fromPoint: [], toPoint: [],
+  })
+
+  useEffect(() => {
+    const country = booking?.operationCountry
+    if (!country) return
+    // Seed immediately so the dropdowns work before the history call lands.
+    setRouteOptions({
+      location:  seedSuggestions('location',  country),
+      fromPoint: seedSuggestions('fromPoint', country),
+      toPoint:   seedSuggestions('toPoint',   country),
+    })
+    let live = true
+    fetch(`/api/agenda/suggestions?country=${encodeURIComponent(country)}`)
+      .then(r => r.json())
+      .then(json => {
+        if (!live || !json.success) return
+        setRouteOptions(o => ({
+          location:  mergeSuggestions(json.data.location,  o.location),
+          fromPoint: mergeSuggestions(json.data.fromPoint, o.fromPoint),
+          toPoint:   mergeSuggestions(json.data.toPoint,   o.toPoint),
+        }))
+      })
+      .catch(() => { /* keep the seed list — suggestions are a convenience */ })
+    return () => { live = false }
+  }, [booking?.operationCountry])
+
   async function sendAgenda() {
     // WhatsApp numbers must be digits-only (no "+" / spaces); e-mail keeps its raw value.
     const recipient = sendMode === 'whatsapp' ? normalizeWhatsApp(sendTo) : sendTo.trim()
@@ -425,6 +432,7 @@ export default function AgendaPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode:        sendMode,
+          format:      sendFormat,
           showDrivers: sendDrivers,
           to:          recipient,
           message:     sendMessage || undefined,
@@ -441,7 +449,7 @@ export default function AgendaPage() {
       if (!res.ok || !json.success) {
         throw new Error(json.error || `Send failed (${res.status} ${res.statusText})`)
       }
-      toast.success(`Agenda sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
+      toast.success(`Agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'} sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
       setSendModal(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
@@ -1583,10 +1591,11 @@ export default function AgendaPage() {
                         )}
                         <div>
                           <label className="form-label text-xs">Meal Plan</label>
-                          <input
+                          <ComboInput
                             className="form-input text-sm py-1.5"
                             value={item.mealPlan}
-                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, mealPlan: e.target.value } : x))}
+                            onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, mealPlan: v } : x))}
+                            options={MEAL_PLAN_OPTIONS}
                             placeholder="B / L / D / BL / BD / LD"
                           />
                         </div>
@@ -1596,13 +1605,15 @@ export default function AgendaPage() {
                         <div className="col-span-full grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 mt-1 border-t border-slate-100">
                           <div>
                             <label className="form-label text-xs">Location</label>
-                            <input className="form-input text-sm py-1.5" value={item.location}
-                              onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, location: e.target.value } : x))} />
+                            <ComboInput className="form-input text-sm py-1.5" value={item.location}
+                              options={routeOptions.location}
+                              onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, location: v } : x))} />
                           </div>
                           <div>
                             <label className="form-label text-xs">From</label>
-                            <input className="form-input text-sm py-1.5" value={item.fromPoint}
-                              onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, fromPoint: e.target.value } : x))} />
+                            <ComboInput className="form-input text-sm py-1.5" value={item.fromPoint}
+                              options={routeOptions.fromPoint}
+                              onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, fromPoint: v } : x))} />
                           </div>
 
                           <div className="sm:col-span-2">
@@ -1612,11 +1623,13 @@ export default function AgendaPage() {
                                 {item.toPoint.length} chars
                               </span>
                             </div>
-                            <AutoGrowTextarea
+                            <ComboInput
+                              multiline
                               className="form-textarea text-sm py-1.5 leading-relaxed"
                               value={item.toPoint}
-                              onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, toPoint: e.target.value } : x))}
-                              placeholder="Destination, or the full activity / package name — e.g. 4 Island Tour (…) + Hon Thom Cable Car (One-way) + Aquatopia Water Park | Shared Transfer"
+                              options={routeOptions.toPoint}
+                              onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, toPoint: v } : x))}
+                              placeholder="Destination, or the full activity / package name — type anything; the list is only a shortcut"
                             />
                           </div>
                         </div>
@@ -2384,11 +2397,37 @@ export default function AgendaPage() {
             </button>
           </div>
 
+          {/* Attachment format */}
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Attachment Format</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {sendFormat === 'word'
+                  ? 'Sends the editable .docx movement chart'
+                  : 'Sends the print-ready PDF movement chart'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSendFormat('pdf')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${sendFormat === 'pdf' ? 'bg-rose-500 text-white border-rose-600' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+              >
+                <FileText className="w-3 h-3 inline mr-1" />PDF
+              </button>
+              <button
+                onClick={() => setSendFormat('word')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${sendFormat === 'word' ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+              >
+                <FileType className="w-3 h-3 inline mr-1" />Word
+              </button>
+            </div>
+          </div>
+
           {/* Driver toggle */}
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
             <div>
               <p className="text-sm font-semibold text-slate-800">Include Driver Allocation</p>
-              <p className="text-xs text-slate-400 mt-0.5">Show driver names, phones, and vehicle info in the PDF</p>
+              <p className="text-xs text-slate-400 mt-0.5">Show driver names, phones, and vehicle info in the {sendFormat === 'word' ? 'document' : 'PDF'}</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -2445,14 +2484,14 @@ export default function AgendaPage() {
               onChange={e => setSendMessage(e.target.value)}
               placeholder={sendMode === 'email'
                 ? 'Added on top of the standard tour confirmation message…'
-                : 'Add a custom message to include with the agenda PDF…'}
+                : `Add a custom message to include with the agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'}…`}
             />
           </div>
 
           <div className="flex gap-2 pt-1">
             <Button loading={sending} onClick={sendAgenda} className="flex-1">
               <Send className="w-4 h-4" />
-              {sending ? 'Sending…' : `Send via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}`}
+              {sending ? 'Sending…' : `Send ${sendFormat === 'word' ? 'Word' : 'PDF'} via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}`}
             </Button>
             <Button variant="ghost" onClick={() => setSendModal(false)}>Cancel</Button>
           </div>
