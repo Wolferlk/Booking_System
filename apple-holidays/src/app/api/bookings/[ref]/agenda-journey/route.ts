@@ -22,7 +22,7 @@ export const maxDuration = 60
 
 const EMPTY = {
   stops: [], hotels: [], countries: [], totalKm: 0,
-  degraded: false, basis: 'agenda' as const, dayCount: 0,
+  degraded: false, basis: 'agenda' as const, dayCount: 0, flights: [],
 }
 
 export async function GET(
@@ -53,6 +53,16 @@ export async function GET(
         orderBy: { checkIn: 'asc' },
         select: { id: true, hotel: true, city: true, checkIn: true, checkOut: true, nights: true },
       },
+      // The movement chart books the car to the airport, never the sector in
+      // between. The flight list is the only record of an internal hop, and
+      // the map weaves it in — read only, see `src/lib/agenda-journey.ts`.
+      flights: {
+        orderBy: { date: 'asc' },
+        select: {
+          id: true, flightNo: true, date: true, fromApt: true,
+          depTime: true, toApt: true, arrTime: true, airline: true,
+        },
+      },
     },
   })
   if (!booking) return buildApiError('Booking not found', 404)
@@ -62,7 +72,10 @@ export async function GET(
 
   // The item count is in the key as well as the timestamp: rows can be deleted
   // in a transaction that leaves the agenda's own `updatedAt` untouched.
-  const cacheKey = `${booking.tourAgenda?.updatedAt.toISOString()}:${items.length}`
+  // The flights are part of the route now, so an edited sector has to
+  // invalidate it — the agenda's own timestamp does not move when one changes.
+  const flightKey = booking.flights.map(f => `${f.id}${f.flightNo}${f.fromApt}${f.toApt}`).join('|')
+  const cacheKey = `${booking.tourAgenda?.updatedAt.toISOString()}:${items.length}:${flightKey}`
   const refresh = req.nextUrl.searchParams.get('refresh') === '1'
   if (!refresh) {
     const cached = getCachedAgendaJourney(booking.bookingRef, cacheKey)
@@ -76,6 +89,7 @@ export async function GET(
       tourDestination: booking.tourDestination,
       items,
       accommodations: booking.accommodations,
+      flights: booking.flights,
     })
     setCachedAgendaJourney(booking.bookingRef, cacheKey, journey)
     return buildApiSuccess(journey)
