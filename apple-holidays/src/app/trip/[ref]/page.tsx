@@ -17,6 +17,7 @@ import {
   Star, Send, Heart, PenLine,
 } from 'lucide-react'
 import { differenceInDays, format } from 'date-fns'
+import JourneyMap from '@/components/bookings/journey-map'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 interface Assignment { driverName?: string; driverPhone?: string; vehicleType?: string; vehiclePlate?: string }
@@ -571,7 +572,7 @@ export default function CustomerTripPage() {
 
             {/* ── ITINERARY ── */}
             {tab === 'itinerary' && (
-              <ItineraryView data={data} theme={theme} />
+              <ItineraryView data={data} theme={theme} refKey={ref} token={token} />
             )}
 
             {/* ── STAYS ── */}
@@ -814,7 +815,12 @@ export default function CustomerTripPage() {
 }
 
 // ─── Itinerary timeline ─────────────────────────────────────────────────────
-function ItineraryView({ data, theme }: { data: PortalData; theme: (typeof THEME)[string] }) {
+function ItineraryView({ data, theme, refKey, token }: {
+  data: PortalData
+  theme: (typeof THEME)[string]
+  refKey: string
+  token: string
+}) {
   const agendaItems = data.agenda?.items ?? []
   const useAgenda = agendaItems.length > 0
 
@@ -823,6 +829,19 @@ function ItineraryView({ data, theme }: { data: PortalData; theme: (typeof THEME
   }
 
   return (
+    <>
+      {/* The route before the reading. A list of day titles tells you what
+          happens; the map tells you where you are going and how far apart it
+          all is — which is the first thing anyone wants from a trip plan. */}
+      {data.itinerary.length > 0 && (
+        <Section icon={Globe2} title="Your Route" emoji="🗺️" accent={theme.accentText}>
+          <JourneyMap bookingRef={refKey} portalToken={token} theme="dark" />
+          <p className="mt-2.5 text-[11px] text-slate-400 leading-relaxed">
+            Tap any pin to see photos and what to expect · press ▶ to fly through your trip
+          </p>
+        </Section>
+      )}
+
     <Section icon={MapPin} title="Day by Day" emoji="🗺️" accent={theme.accentText}>
       <div className="relative pl-2">
         <div className="absolute left-[22px] top-3 bottom-3 w-0.5 bg-gradient-to-b from-white/25 via-white/10 to-transparent" />
@@ -892,6 +911,7 @@ function ItineraryView({ data, theme }: { data: PortalData; theme: (typeof THEME
         </div>
       </div>
     </Section>
+    </>
   )
 }
 
