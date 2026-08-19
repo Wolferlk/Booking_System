@@ -19,7 +19,7 @@ import {
   ChevronDown, SlidersHorizontal, Globe, Clock, ArrowUpDown, Ban, ExternalLink,
   PhoneCall, Bot, Plus, Trash2, X as XIcon,
   ClipboardCheck, Send, Store, Briefcase, Layers,
-  ShieldCheck, ShieldQuestion, ShieldAlert, CheckCircle2,
+  ShieldCheck, ShieldQuestion, ShieldAlert, CheckCircle2, ListFilter,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
@@ -36,7 +36,9 @@ import {
   FEEDBACK_RATING_LABELS, worstRating, type FeedbackFormCell,
 } from '@/lib/daily-update-feedback'
 import {
-  CALL_APPROVAL_HINT, CALL_APPROVAL_LABEL, type CallApprovalCell,
+  CALL_APPROVAL_HINT, CALL_APPROVAL_LABEL,
+  CALL_APPROVAL_FILTERS, CALL_APPROVAL_FILTER_CHIP, CALL_APPROVAL_FILTER_LABEL,
+  type CallApprovalCell, type CallApprovalFilter,
 } from '@/lib/daily-update-approval'
 import type { BookingStatus } from '@prisma/client'
 
@@ -101,6 +103,7 @@ type Filters = {
   country: string
   source: SourceFilter
   includeCancelled: boolean
+  callApproval: CallApprovalFilter
   sortBy: DateField
   sortDir: 'asc' | 'desc'
 }
@@ -117,6 +120,7 @@ const DEFAULT_FILTERS: Filters = {
   // order has no agent to chase. The other two channels are one click away.
   source: 'B2B',
   includeCancelled: false,
+  callApproval: 'all',
   sortBy: 'arrivalDate',
   sortDir: 'asc',
 }
@@ -167,6 +171,7 @@ function buildQuery(f: Filters): string {
   if (f.country) p.set('country', f.country)
   p.set('source', f.source)
   p.set('includeCancelled', f.includeCancelled ? '1' : '0')
+  if (f.callApproval !== 'all') p.set('callApproval', f.callApproval)
   p.set('sortBy', f.sortBy)
   p.set('sortDir', f.sortDir)
   return p.toString()
@@ -979,7 +984,11 @@ function CallApprovalCellView({
           APPROVAL_TONE[cell.state],
         )}>
           <Icon className="w-3 h-3" />
-          {cell.state === 'not_sent' && canEdit ? 'Not sent — send' : CALL_APPROVAL_LABEL[cell.state]}
+          {/* A row with no number cannot be sent to at all, so it must not
+              offer "send" — that is the bucket the header filter isolates. */}
+          {cell.state === 'not_sent' && !cell.phone ? 'No number'
+            : cell.state === 'not_sent' && canEdit ? 'Not sent — send'
+            : CALL_APPROVAL_LABEL[cell.state]}
         </span>
         {stamp && (
           <span className="mt-0.5 block text-[10px] text-slate-400">{callStamp(stamp)}</span>
@@ -1888,6 +1897,12 @@ export default function DailyUpdateSheet() {
               <button type="button" onClick={() => patch({ country: '' })}><X className="w-3 h-3" /></button>
             </span>
           )}
+          {filters.callApproval !== 'all' && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-700">
+              <ShieldCheck className="w-3 h-3" /> {CALL_APPROVAL_FILTER_CHIP[filters.callApproval]}
+              <button type="button" onClick={() => patch({ callApproval: 'all' })}><X className="w-3 h-3" /></button>
+            </span>
+          )}
           {onlyMissing && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-700">
               Missing IS / CNTL only
@@ -1948,11 +1963,36 @@ export default function DailyUpdateSheet() {
                   <th className="px-3 py-2.5">Guest contact</th>
                   <th className="px-3 py-2.5">Agent</th>
                   <th className="px-3 py-2.5">Agent contact</th>
+                  {/* The one filterable column header: the desk works this
+                      column as a worklist ("who still has to be asked"), and
+                      the filter is server-side, so the counts and all three
+                      downloads follow the same bucket. */}
                   <th
                     className="px-3 py-2.5"
                     title="WhatsApp permission for the AI bot to call this guest — and the button to ask for it"
                   >
-                    Call approval
+                    <span className="flex items-center gap-1.5">
+                      Call approval
+                      <span className="relative inline-flex items-center">
+                        <ListFilter
+                          className={cn(
+                            'w-3.5 h-3.5',
+                            filters.callApproval === 'all' ? 'text-slate-400' : 'text-emerald-300',
+                          )}
+                        />
+                        <select
+                          value={filters.callApproval}
+                          onChange={e => patch({ callApproval: e.target.value as CallApprovalFilter })}
+                          title={`Filter by call approval — showing: ${CALL_APPROVAL_FILTER_LABEL[filters.callApproval]}`}
+                          aria-label="Filter by call approval"
+                          className="absolute inset-0 w-full cursor-pointer opacity-0"
+                        >
+                          {CALL_APPROVAL_FILTERS.map(f => (
+                            <option key={f} value={f}>{CALL_APPROVAL_FILTER_LABEL[f]}</option>
+                          ))}
+                        </select>
+                      </span>
+                    </span>
                   </th>
                   {CALL_KINDS.map(kind => (
                     <th key={kind} className="px-3 py-2.5" title={CALL_HINTS[kind]}>

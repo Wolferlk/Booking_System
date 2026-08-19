@@ -21,7 +21,10 @@ import { emptyFeedbackForm, type FeedbackFormCell } from '@/lib/daily-update-fee
 import {
   fetchCallApprovalsForBookings, fetchCallsForBookings, fetchFeedbackFormsForBookings,
 } from '@/lib/daily-update-calls-data'
-import { emptyCallApproval, type CallApprovalCell } from '@/lib/daily-update-approval'
+import {
+  emptyCallApproval, isCallApprovalFilter, matchesCallApprovalFilter,
+  type CallApprovalCell, type CallApprovalFilter,
+} from '@/lib/daily-update-approval'
 import { bookingSourceOf, bookingSourceWhere, type BookingSource } from '@/lib/booking-source'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
@@ -124,6 +127,12 @@ export type DailyUpdateQuery = {
   country:      string
   source:       SourceFilter
   includeCancelled: boolean
+  /**
+   * Which WhatsApp call-approval bucket the sheet is showing. Applied to the
+   * rows rather than to SQL — the state is resolved from the approval ledger
+   * and the call log, neither of which is a column on `Booking`.
+   */
+  callApproval: CallApprovalFilter
   sortBy:       DateField
   sortDir:      'asc' | 'desc'
 }
@@ -184,6 +193,7 @@ export function parseDailyUpdateQuery(sp: URLSearchParams): DailyUpdateQuery {
       ? sp.get('source') as SourceFilter
       : 'B2B',
     includeCancelled: sp.get('includeCancelled') === '1',
+    callApproval: isCallApprovalFilter(sp.get('callApproval')) ? sp.get('callApproval') as CallApprovalFilter : 'all',
     sortBy,
     sortDir: sp.get('sortDir') === 'desc' ? 'desc' : 'asc',
   }
@@ -357,7 +367,7 @@ export async function fetchDailyUpdateRows(
   const todayStart = startOfDay(now).getTime()
   const todayEnd   = endOfDay(now).getTime()
 
-  return bookings.map((b) => {
+  const shaped = bookings.map((b) => {
     const lead = b.passengers.find(p => p.isLead) ?? b.passengers[0] ?? null
     const arrival = b.arrivalDate
     const created = b.createdAt.getTime()
@@ -404,6 +414,14 @@ export async function fetchDailyUpdateRows(
       callApproval:     callApprovals[b.id] ?? emptyCallApproval(),
     }
   })
+
+  // Approval is not a booking column — it is resolved above from the ledger and
+  // the call log — so this bucket filter has to be applied to the shaped rows.
+  // It runs here rather than in the screen so the counts, the row numbers and
+  // all three downloads keep showing the identical set.
+  return q.callApproval === 'all'
+    ? shaped
+    : shaped.filter(r => matchesCallApprovalFilter(r.callApproval, q.callApproval))
 }
 
 /**
