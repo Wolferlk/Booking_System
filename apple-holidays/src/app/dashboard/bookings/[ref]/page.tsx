@@ -51,6 +51,7 @@ import {
   HotelOnlyBanner, HotelOnlyButton, HotelOnlyChip,
 } from '@/components/bookings/hotel-only-control'
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
+import JourneyMap from '@/components/bookings/journey-map'
 
 /**
  * Who holds the hotel reservation — the guest/agent, or us.
@@ -2721,23 +2722,33 @@ Wishing you a wonderful trip! ✈️
               <FileText className="w-4 h-4 text-slate-400" /> Itinerary ({itinerary.length} days)
             </h3></CardHeader>
             <CardBody className="p-0">
-              <div className="divide-y divide-slate-100">
-                {itinerary.map((item) => (
-                  <div key={item.id as string} className="flex gap-4 px-6 py-4">
-                    <div className="flex-shrink-0 text-center">
-                      <div className="w-9 h-9 rounded-full bg-brand-50 border-2 border-brand-200 flex items-center justify-center">
-                        <span className="text-brand-700 text-xs font-bold">D{item.dayNo as number}</span>
+              {/* Two readings of the same days: the written itinerary on the
+                  left, the same days as a route on the right. The map is
+                  sticky so it stays in view while a long itinerary scrolls. */}
+              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,540px)]">
+                <div className="divide-y divide-slate-100 xl:border-r xl:border-slate-100">
+                  {itinerary.map((item) => (
+                    <div key={item.id as string} className="flex gap-4 px-6 py-4">
+                      <div className="flex-shrink-0 text-center">
+                        <div className="w-9 h-9 rounded-full bg-brand-50 border-2 border-brand-200 flex items-center justify-center">
+                          <span className="text-brand-700 text-xs font-bold">D{item.dayNo as number}</span>
+                        </div>
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-slate-900">{item.title as string}</p>
+                          <span className="text-xs text-slate-400">{formatDate(item.date as string)}</span>
+                        </div>
+                        {item.description && <p className="text-xs text-slate-500 mt-1">{item.description as string}</p>}
                       </div>
                     </div>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-900">{item.title as string}</p>
-                        <span className="text-xs text-slate-400">{formatDate(item.date as string)}</span>
-                      </div>
-                      {item.description && <p className="text-xs text-slate-500 mt-1">{item.description as string}</p>}
-                    </div>
+                  ))}
+                </div>
+                <div className="p-4 xl:p-4">
+                  <div className="xl:sticky xl:top-20">
+                    <JourneyMap bookingRef={ref} />
                   </div>
-                ))}
+                </div>
               </div>
             </CardBody>
           </Card>
