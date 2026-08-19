@@ -189,7 +189,9 @@ export default function BookingDetailPage() {
   const [waSending, setWaSending] = useState(false)
   const [waOpenerSending, setWaOpenerSending] = useState(false)
   const [waPdfType, setWaPdfType] = useState<'confirmation' | 'full'>('confirmation')
-  const [waQueue, setWaQueue] = useState<Array<{ id: string; phone: string; preview: string; pdfType: string | null; queuedBy: string | null; queuedAt: string }>>([])
+  // Attachment file format — the same document rendered as PDF or Word (.docx).
+  const [waFileFormat, setWaFileFormat] = useState<'pdf' | 'word'>('pdf')
+  const [waQueue, setWaQueue] = useState<Array<{ id: string; phone: string; preview: string; pdfType: string | null; fileFormat: string | null; queuedBy: string | null; queuedAt: string }>>([])
 
   // Email send modal
   const [emailModal, setEmailModal] = useState(false)
@@ -1219,8 +1221,9 @@ Wishing you a wonderful trip! ✈️
           to:        waPhone.replace(/\D/g, ''),
           name:      lead?.name ?? 'Guest',
           message:   waMessage,
-          attachPdf: waAttachPdf,
-          pdfType:   waPdfType,
+          attachPdf:  waAttachPdf,
+          pdfType:    waPdfType,
+          fileFormat: waFileFormat,
         }),
       })
       const json = await readApiResponse(res)
@@ -3789,7 +3792,8 @@ Wishing you a wonderful trip! ✈️
                 <div key={q.id} className="flex items-center justify-between gap-2 rounded bg-white/70 border border-amber-200 px-2 py-1.5">
                   <div className="min-w-0">
                     <p className="text-[11px] font-medium text-amber-900 truncate">
-                      {q.pdfType === 'full' ? 'Full Details + Vouchers' : q.pdfType === 'confirmation' ? 'Tour Confirmation' : 'Message'} · {q.phone}
+                      {q.pdfType === 'full' ? 'Full Details + Vouchers' : q.pdfType === 'confirmation' ? 'Tour Confirmation' : 'Message'}
+                      {q.pdfType ? ` (${q.fileFormat === 'word' ? 'Word' : 'PDF'})` : ''} · {q.phone}
                     </p>
                     <p className="text-[10px] text-amber-600">
                       Queued {new Date(q.queuedAt).toLocaleString()}{q.queuedBy ? ` · by ${q.queuedBy}` : ''}
@@ -3928,21 +3932,42 @@ Wishing you a wonderful trip! ✈️
             />
           </div>
 
-          {/* Attach PDF toggle */}
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              className="w-4 h-4 rounded accent-green-600"
-              checked={waAttachPdf}
-              onChange={e => setWaAttachPdf(e.target.checked)}
-            />
-            <span className="text-sm text-slate-700">
-              Attach PDF&nbsp;
-              <span className="text-slate-400 text-xs">
-                ({waPdfType === 'full' ? 'Full Details & Vouchers' : 'Tour Confirmation'})
+          {/* Attachment toggle + file format */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded accent-green-600"
+                checked={waAttachPdf}
+                onChange={e => setWaAttachPdf(e.target.checked)}
+              />
+              <span className="text-sm text-slate-700">
+                Attach {waFileFormat === 'word' ? 'Word file' : 'PDF'}&nbsp;
+                <span className="text-slate-400 text-xs">
+                  ({waPdfType === 'full' ? 'Full Details & Vouchers' : 'Tour Confirmation'})
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+
+            {waAttachPdf && (
+              <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => setWaFileFormat('pdf')}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${waFileFormat === 'pdf' ? 'bg-white shadow-sm text-rose-600' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWaFileFormat('word')}
+                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${waFileFormat === 'word' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Word
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Phone number hint */}
           <p className="text-xs text-slate-400 mt-1">Include country code without + (e.g. 94 = Sri Lanka · 91 = India · 61 = Australia)</p>

@@ -13,16 +13,36 @@
  *                     out as normal free-form.
  *
  * The queue reuses the existing whatsapp_messages table (no migration): a pending
- * outbound row stores the message in `body` and the PDF type in `mediaType`
- * ('confirmation' | 'full' | null when no PDF).
+ * outbound row stores the message in `body` and the attachment in `mediaType`
+ * ('confirmation' | 'full' | null when nothing is attached). A ':word' suffix
+ * ('full:word') means the Word version was picked; no suffix means PDF, so rows
+ * queued before the Word option existed still flush correctly.
  */
 
 import { prisma } from '@/lib/prisma'
 import { generateConfirmationPdf, generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
+import { generateConfirmationDocx, generateFullDetailsDocx } from '@/lib/generate-booking-docx'
 import { putUpload } from '@/lib/storage'
 import { sendViaMetaApi, sendViaNotifyProxy, sendViaMetaTemplate, normalisePhone } from '@/lib/whatsapp'
 
 export type PdfType = 'confirmation' | 'full'
+/** Attachment file format — the same document rendered as PDF or Word. */
+export type FileFormat = 'pdf' | 'word'
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+
+/** Encode / decode the queue's `mediaType` field: "full" (PDF) vs "full:word". */
+export function encodeQueuedAttachment(pdfType: PdfType, fileFormat: FileFormat): string {
+  return fileFormat === 'word' ? `${pdfType}:word` : pdfType
+}
+export function decodeQueuedAttachment(
+  mediaType: string | null | undefined,
+): { pdfType: PdfType; fileFormat: FileFormat } | null {
+  if (!mediaType) return null
+  const [type, format] = mediaType.split(':')
+  if (type !== 'full' && type !== 'confirmation') return null
+  return { pdfType: type, fileFormat: format === 'word' ? 'word' : 'pdf' }
+}
 
 const WINDOW_MS = 24 * 60 * 60 * 1000
 
@@ -66,26 +86,28 @@ export async function isWithin24hWindow(phone: string): Promise<boolean> {
   return Boolean(lastInbound)
 }
 
-/** Build the confirmation / full-details PDF for a booking. */
+/** Build the confirmation / full-details document for a booking, as PDF or Word. */
 export async function buildBookingPdf(
   ref: string,
   pdfType: PdfType,
-): Promise<{ buffer: Buffer; filename: string }> {
+  fileFormat: FileFormat = 'pdf',
+): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
   const isFull  = pdfType === 'full'
+  const isWord  = fileFormat === 'word'
   const booking = await prisma.booking.findUnique({
     where:   { bookingRef: ref },
     include: bookingInclude(isFull),
   })
-  if (!booking) throw new Error(`Booking ${ref} not found for PDF attachment`)
+  if (!booking) throw new Error(`Booking ${ref} not found for the attachment`)
 
-  const buffer = isFull
-    ? await generateFullDetailsPdf(booking)
-    : await generateConfirmationPdf(booking)
-  if (!buffer.length) throw new Error('Generated PDF is empty')
+  const buffer = isWord
+    ? (isFull ? await generateFullDetailsDocx(booking) : await generateConfirmationDocx(booking))
+    : (isFull ? await generateFullDetailsPdf(booking)  : await generateConfirmationPdf(booking))
+  if (!buffer.length) throw new Error(`Generated ${isWord ? 'Word file' : 'PDF'} is empty`)
 
   const typeTag  = isFull ? 'FullDetails' : 'TourConfirmation'
-  const filename = `AppleHolidays-${ref}-${typeTag}-${Date.now()}.pdf`
-  return { buffer, filename }
+  const filename = `AppleHolidays-${ref}-${typeTag}-${Date.now()}.${isWord ? 'docx' : 'pdf'}`
+  return { buffer, filename, mimeType: isWord ? DOCX_MIME : 'application/pdf' }
 }
 
 export interface ConfirmationSend {
@@ -95,8 +117,10 @@ export interface ConfirmationSend {
   message:    string
   attachPdf:  boolean
   pdfType:    PdfType
+  /** PDF (default) or the Word twin of the same document. */
+  fileFormat?: FileFormat
   senderName: string
-  /** Public base URL for the PDF link used by the notify-proxy fallback. */
+  /** Public base URL for the file link used by the notify-proxy fallback. */
   baseUrl:    string
 }
 
@@ -108,18 +132,18 @@ export async function deliverConfirmationNow(p: ConfirmationSend): Promise<void>
   const phone   = normalisePhone(p.to)
   const isFull  = p.pdfType === 'full'
 
-  let pdf: { buffer: Buffer; filename: string } | undefined
+  let pdf: { buffer: Buffer; filename: string; mimeType: string } | undefined
   let fileUrl: string | undefined
   if (p.attachPdf) {
-    pdf     = await buildBookingPdf(p.ref, p.pdfType)
-    await putUpload(`whatsapp/${pdf.filename}`, pdf.buffer, 'application/pdf')
+    pdf     = await buildBookingPdf(p.ref, p.pdfType, p.fileFormat ?? 'pdf')
+    await putUpload(`whatsapp/${pdf.filename}`, pdf.buffer, pdf.mimeType)
     fileUrl = `${p.baseUrl.replace(/\/+$/, '')}/api/uploads/whatsapp/${encodeURIComponent(pdf.filename)}`
   }
 
   const metaResult = await sendViaMetaApi({
     to: p.to,
     message: p.message,
-    ...(pdf ? { media: { buffer: pdf.buffer, filename: pdf.filename, kind: 'document' as const, caption: isFull ? 'Full tour details & vouchers PDF' : 'Tour confirmation PDF' } } : {}),
+    ...(pdf ? { media: { buffer: pdf.buffer, filename: pdf.filename, kind: 'document' as const, caption: isFull ? 'Full tour details & vouchers' : 'Tour confirmation' } } : {}),
   })
 
   let waMessageId: string | null = null
@@ -154,8 +178,8 @@ export async function sendOpenerAndQueue(p: ConfirmationSend): Promise<void> {
     throw new Error('WhatsApp Meta credentials are not configured — set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID (Aahaas Operations).')
   }
 
-  // Queue the confirmation. body = message, mediaType encodes the PDF type
-  // ('confirmation' | 'full') or null when no PDF is attached.
+  // Queue the confirmation. body = message, mediaType encodes the document type
+  // and file format ('full', 'full:word', …) or null when nothing is attached.
   await prisma.whatsAppMessage.create({
     data: {
       bookingRef: p.ref,
@@ -164,7 +188,7 @@ export async function sendOpenerAndQueue(p: ConfirmationSend): Promise<void> {
       body:       p.message,
       status:     'pending',
       senderName: p.senderName,
-      mediaType:  p.attachPdf ? p.pdfType : null,
+      mediaType:  p.attachPdf ? encodeQueuedAttachment(p.pdfType, p.fileFormat ?? 'pdf') : null,
     },
   })
 }
@@ -187,15 +211,16 @@ export async function flushPendingConfirmations(phone: string, baseUrl: string):
 
   let sent = 0
   for (const row of pending) {
-    const pdfType   = (row.mediaType === 'full' || row.mediaType === 'confirmation') ? row.mediaType as PdfType : null
+    const attachment = decodeQueuedAttachment(row.mediaType)
     try {
       await deliverConfirmationNow({
         ref:        row.bookingRef,
         to:         p,
         name:       '',
         message:    row.body ?? '',
-        attachPdf:  Boolean(pdfType),
-        pdfType:    pdfType ?? 'confirmation',
+        attachPdf:  Boolean(attachment),
+        pdfType:    attachment?.pdfType ?? 'confirmation',
+        fileFormat: attachment?.fileFormat ?? 'pdf',
         senderName: row.senderName ?? 'System',
         baseUrl,
       })
