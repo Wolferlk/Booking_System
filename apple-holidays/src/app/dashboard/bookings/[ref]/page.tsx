@@ -1394,6 +1394,17 @@ Wishing you a wonderful trip! ✈️
             itinerary, agenda and QC panels are missing further down. */}
         <HotelOnlyBanner state={booking as { hotelOnly?: boolean | null; hotelOnlyAt?: string | null; hotelOnlyBy?: string | null; hotelOnlyNote?: string | null }} />
 
+        {/* Journey — the movement chart drawn as a route, first thing on the
+            page. It sits here rather than beside the itinerary further down
+            because it is how a reader orients themselves before reading
+            anything else: where this file goes, how the guests move between
+            those places, and which hotel is theirs each night. Deliberately
+            sourced from the agenda, not the itinerary — the agenda holds the
+            real pickup and drop-off points and the booked service type. */}
+        <section data-nav="Journey Map" data-nav-icon="itinerary">
+          <JourneyMap bookingRef={ref} source="agenda" />
+        </section>
+
         {/* Lifecycle + status */}
         <section data-nav="Overview & Status" data-nav-icon="overview">
         <Card className="p-6">
@@ -2722,11 +2733,10 @@ Wishing you a wonderful trip! ✈️
               <FileText className="w-4 h-4 text-slate-400" /> Itinerary ({itinerary.length} days)
             </h3></CardHeader>
             <CardBody className="p-0">
-              {/* Two readings of the same days: the written itinerary on the
-                  left, the same days as a route on the right. The map is
-                  sticky so it stays in view while a long itinerary scrolls. */}
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,540px)]">
-                <div className="divide-y divide-slate-100 xl:border-r xl:border-slate-100">
+              {/* The map that used to sit beside these days now opens the page
+                  — see the Journey Map section above. */}
+              <div>
+                <div className="divide-y divide-slate-100">
                   {itinerary.map((item) => (
                     <div key={item.id as string} className="flex gap-4 px-6 py-4">
                       <div className="flex-shrink-0 text-center">
@@ -2743,11 +2753,6 @@ Wishing you a wonderful trip! ✈️
                       </div>
                     </div>
                   ))}
-                </div>
-                <div className="p-4 xl:p-4">
-                  <div className="xl:sticky xl:top-20">
-                    <JourneyMap bookingRef={ref} />
-                  </div>
                 </div>
               </div>
             </CardBody>

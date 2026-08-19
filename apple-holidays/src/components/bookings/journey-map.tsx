@@ -26,6 +26,7 @@ import {
   Loader2, Play, Pause, RotateCcw, Maximize2, Minimize2, Layers,
   X, Sparkles, Clock, Lightbulb, MapPin, Route, Navigation,
   ImageOff, ChevronLeft, ChevronRight, RefreshCw, Compass, SlidersHorizontal, Hand,
+  CalendarDays, ArrowRight, BedDouble, Utensils,
 } from 'lucide-react'
 import { cn, formatDate, readApiResponse } from '@/lib/utils'
 import 'leaflet/dist/leaflet.css'
@@ -36,6 +37,26 @@ type StopKind =
   | 'arrival' | 'departure' | 'transfer' | 'flight'
   | 'tour' | 'attraction' | 'beach' | 'nature'
   | 'cultural' | 'city' | 'cruise' | 'hotel' | 'leisure'
+
+/**
+ * How the guests move on a leg. Present only on the movement-chart map — the
+ * itinerary rows carry no service type, so there is nothing to say.
+ */
+interface Transport {
+  mode: 'private' | 'sic' | 'flight' | 'own' | 'ticket' | 'hotel' | 'meal'
+  label: string
+  short: string
+  emoji: string
+  hex: string
+}
+
+interface StopHotel {
+  name: string
+  city: string | null
+  lat: number | null
+  lng: number | null
+  checkIn: boolean
+}
 
 interface JourneyStop {
   id: string
@@ -51,6 +72,21 @@ interface JourneyStop {
   lng: number
   source: 'osm' | 'model'
   legKm: number | null
+
+  /** ── Movement-chart only (see src/lib/agenda-journey.ts) ── */
+  fromPlace?: string | null
+  toPlace?: string | null
+  fromLat?: number | null
+  fromLng?: number | null
+  moveKm?: number | null
+  transport?: Transport
+  timeFrom?: string | null
+  timeTo?: string | null
+  meetingTime?: string | null
+  mealPlan?: string | null
+  legOfDay?: number
+  legsThatDay?: number
+  hotel?: StopHotel | null
 }
 
 interface JourneyHotel {
@@ -65,6 +101,9 @@ interface Journey {
   countries: string[]
   totalKm: number
   degraded: boolean
+  /** Which source built the route. Absent on the older itinerary payload. */
+  basis?: 'agenda' | 'itinerary'
+  dayCount?: number
 }
 
 interface ActivityBrief {
@@ -131,6 +170,18 @@ const VEHICLE: Record<StopKind, string> = {
  */
 function headingWest(a: LatLng, b: LatLng) {
   return b[1] < a[1]
+}
+
+/**
+ * What rides into a stop.
+ *
+ * The movement chart knows the booked service — a seat-in-coach transfer runs a
+ * coach, a private transfer runs a car — so when that is on the stop it wins.
+ * The itinerary map has no service type and falls back to guessing from the
+ * destination's kind.
+ */
+function vehicleFor(stop: JourneyStop | undefined): string {
+  return stop?.transport?.emoji ?? VEHICLE[stop?.kind ?? 'transfer'] ?? '\uD83D\uDE97'
 }
 
 function glyphSvg(kind: StopKind, size = 15, color = '#fff') {
@@ -338,8 +389,13 @@ const MAP_CSS = `
 @keyframes jm-glow{0%,100%{transform:scale(.85);opacity:.55}50%{transform:scale(1.15);opacity:.9}}
 
 .jm-hotel{background:none!important;border:none!important}
-.jm-hotel-inner{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:#ea580c;
+.jm-hotel-inner{width:22px;height:22px;flex:0 0 22px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:#ea580c;
   box-shadow:0 2px 8px rgba(15,23,42,.28),0 0 0 2px rgba(255,255,255,.9);opacity:.92}
+/* Named stay marker (movement-chart map). The tag is centred on the pin and
+   sized by its own text, so a long hotel name never shifts the anchor. */
+.jm-hotel-tag{position:absolute;top:0;left:0;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.jm-hotel-name{font-size:10px;font-weight:700;color:#7c2d12;background:rgba(255,255,255,.92);border-radius:6px;padding:2px 6px;
+  box-shadow:0 1px 4px rgba(15,23,42,.18);letter-spacing:.1px}
 
 .jm-strip{scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.5) transparent}
 .jm-strip::-webkit-scrollbar{height:6px}
@@ -405,9 +461,23 @@ export interface JourneyMapProps {
    */
   portalToken?: string
   theme?: 'light' | 'dark'
+  /**
+   * Which route to draw.
+   *
+   * `agenda` reads the AI-generated movement chart — real pickup and drop-off
+   * points, the booked service type, and the hotel of the night. `itinerary`
+   * is the older marketing-prose route. They are different questions, so this
+   * is a choice the page makes, never a fallback: an agenda-sourced panel on a
+   * file with no movement chart says so rather than quietly drawing the
+   * itinerary instead.
+   */
+  source?: 'agenda' | 'itinerary'
 }
 
-export default function JourneyMap({ bookingRef, className, portalToken, theme = 'light' }: JourneyMapProps) {
+export default function JourneyMap({
+  bookingRef, className, portalToken, theme = 'light', source = 'itinerary',
+}: JourneyMapProps) {
+  const agenda = source === 'agenda'
   const guest = !!portalToken
   const skin: Skin = SKIN[theme]
   const isMobile = useIsMobile()
@@ -477,6 +547,21 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
   useEffect(() => { setInteractive(!isMobile || fullscreen) }, [isMobile, fullscreen])
   const selected = useMemo(() => stops.find(s => s.id === selectedId) ?? null, [stops, selectedId])
 
+  /**
+   * The transport mix of the whole chart — "6 private, 3 SIC, 1 flight".
+   * Empty on the itinerary map, which has no booked service types.
+   */
+  const modeCounts = useMemo(() => {
+    const m = new Map<string, { t: NonNullable<JourneyStop['transport']>; count: number }>()
+    stops.forEach(s => {
+      if (!s.transport) return
+      const hit = m.get(s.transport.mode)
+      if (hit) hit.count += 1
+      else m.set(s.transport.mode, { t: s.transport, count: 1 })
+    })
+    return Array.from(m.entries()).sort((a, b) => b[1].count - a[1].count)
+  }, [stops])
+
   const kindCounts = useMemo(() => {
     const m = new Map<StopKind, number>()
     stops.forEach(s => m.set(s.kind, (m.get(s.kind) ?? 0) + 1))
@@ -500,9 +585,10 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
     refresh ? setRefreshing(true) : setLoading(true)
     setError(null)
     try {
+      const base = agenda ? 'agenda-journey' : 'journey-map'
       const url = portalToken
-        ? `/api/public/journey-map/${bookingRef}?t=${encodeURIComponent(portalToken)}`
-        : `/api/bookings/${bookingRef}/journey-map${refresh ? '?refresh=1' : ''}`
+        ? `/api/public/${base}/${bookingRef}?t=${encodeURIComponent(portalToken)}`
+        : `/api/bookings/${bookingRef}/${base}${refresh ? '?refresh=1' : ''}`
       const res = await fetch(url)
       const json = await readApiResponse<Journey>(res)
       if (!json.success || !json.data) throw new Error(json.error || 'The journey map could not be loaded.')
@@ -514,7 +600,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
       setLoading(false)
       setRefreshing(false)
     }
-  }, [bookingRef, portalToken])
+  }, [bookingRef, portalToken, agenda])
 
   useEffect(() => { void load() }, [load])
 
@@ -616,9 +702,18 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
     // Hotels sit under the day pins — context, not the subject of the panel.
     ;(journey?.hotels ?? []).forEach(h => {
       if (h.lat == null || h.lng == null) return
+      // On the movement chart the hotel is half the answer ("where do they
+      // sleep tonight"), so it is named on the map rather than hidden behind a
+      // hover. The itinerary map keeps the quiet dot — there the hotels are
+      // background to the days.
       const icon = L.divIcon({
         className: 'jm-hotel',
-        html: `<div class="jm-hotel-inner" title="${escapeHtml(h.hotel)}">${glyphSvg('hotel', 12)}</div>`,
+        html: agenda
+          ? `<div class="jm-hotel-tag" title="${escapeHtml(h.hotel)}">` +
+            `<span class="jm-hotel-inner">${glyphSvg('hotel', 12)}</span>` +
+            `<span class="jm-hotel-name">${escapeHtml(truncate(h.hotel, 26))}</span>` +
+            `</div>`
+          : `<div class="jm-hotel-inner" title="${escapeHtml(h.hotel)}">${glyphSvg('hotel', 12)}</div>`,
         iconSize: [22, 22], iconAnchor: [11, 11],
       })
       const m = L.marker([h.lat, h.lng], { icon, zIndexOffset: -400, riseOnHover: true })
@@ -645,7 +740,10 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
       const m = L.marker([s.lat, s.lng], { icon, zIndexOffset: i, riseOnHover: true })
         .addTo(map)
         .bindTooltip(
-          `<strong>Day ${s.dayNo} · ${escapeHtml(s.place)}</strong><br/>${escapeHtml(truncate(s.title, 70))}`,
+          `<strong>Day ${s.dayNo} · ${escapeHtml(s.place)}</strong>` +
+          `<br/>${escapeHtml(truncate(s.title, 70))}` +
+          (s.transport ? `<br/><em>${s.transport.emoji} ${escapeHtml(s.transport.label)}</em>` : '') +
+          (s.hotel ? `<br/>\uD83C\uDFE8 ${escapeHtml(truncate(s.hotel.name, 40))}` : ''),
           { direction: 'top', offset: [0, -20], opacity: 0.96 },
         )
       m.on('click', () => setSelectedId(s.id))
@@ -660,7 +758,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
       pins.forEach(x => x.remove()); pins.clear()
       hotelPins.forEach(x => x.remove())
     }
-  }, [stops, geometry, journey?.hotels, basemap, mapReady])
+  }, [stops, geometry, journey?.hotels, basemap, mapReady, agenda])
 
   // ── Selection / hover / filter styling ─────────────────────────────────
 
@@ -716,7 +814,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
     const traveller = L.marker([stops[legIndex].lat, stops[legIndex].lng], {
       icon: L.divIcon({
         className: 'jm-traveller',
-        html: riderHtml(VEHICLE[stops[legIndex].kind] ?? '\uD83D\uDE97', false),
+        html: riderHtml(vehicleFor(stops[legIndex + 1] ?? stops[legIndex]), false),
         iconSize: [40, 40], iconAnchor: [20, 20],
       }),
       zIndexOffset: 1200,
@@ -740,7 +838,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
         const dest = stops[Math.min(legIndex + 1, stops.length - 1)]
         paintRider(
           traveller,
-          VEHICLE[dest.kind] ?? '\uD83D\uDE97',
+          vehicleFor(dest),
           headingWest([stops[legIndex].lat, stops[legIndex].lng], [dest.lat, dest.lng]),
         )
         trailRef.current?.setLatLngs(trailSlice(geometry.flat, legT))
@@ -793,7 +891,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
     const rider = L.marker(geometry.flat[0], {
       icon: L.divIcon({
         className: 'jm-traveller',
-        html: riderHtml(VEHICLE[stops[1]?.kind ?? 'transfer'] ?? '\uD83D\uDE97', true),
+        html: riderHtml(vehicleFor(stops[1] ?? stops[0]), true),
         iconSize: [40, 40], iconAnchor: [20, 20],
       }),
       zIndexOffset: 1100,
@@ -815,7 +913,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
       const legIndex = Math.min(Math.floor(t * (stops.length - 1)), stops.length - 2)
       const from = stops[legIndex]
       const to = stops[legIndex + 1]
-      paintRider(rider, VEHICLE[to.kind] ?? '\uD83D\uDE97', headingWest([from.lat, from.lng], [to.lat, to.lng]))
+      paintRider(rider, vehicleFor(to), headingWest([from.lat, from.lng], [to.lat, to.lng]))
       trailRef.current?.setLatLngs(trailSlice(geometry.flat, t))
 
       idleRafRef.current = requestAnimationFrame(tick)
@@ -951,12 +1049,16 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
           <p className={cn('text-sm font-medium', skin.strong)}>
             {guest
               ? 'Your map is on its way'
-              : error ? 'The journey map could not be built' : 'No mappable places on this itinerary'}
+              : error ? 'The journey map could not be built'
+              : agenda ? 'No mappable movements yet'
+              : 'No mappable places on this itinerary'}
           </p>
           <p className={cn('text-xs max-w-xs', skin.body)}>
             {guest
               ? 'We will plot your route here as soon as your day-by-day plan is confirmed.'
-              : error ?? 'The itinerary days do not name a place we can pin. Add a location to the day titles and rebuild.'}
+              : error ?? (agenda
+                ? 'This map is drawn from the movement chart. Generate the agenda — or give its rows a From and To point — and it will plot itself.'
+                : 'The itinerary days do not name a place we can pin. Add a location to the day titles and rebuild.')}
           </p>
           {!guest && (
             <button
@@ -1007,16 +1109,28 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
         <div className="pointer-events-none absolute top-3 left-3 z-[500] flex flex-col gap-2">
           <motion.div
             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-            className={cn('pointer-events-auto rounded-xl backdrop-blur-md shadow-lg ring-1 px-2.5 py-1.5 sm:px-3 sm:py-2', skin.glass)}
+            // Capped on a phone so the transport chips wrap inside the card
+            // instead of growing it under the controls in the top-right.
+            className={cn(
+              'pointer-events-auto rounded-xl backdrop-blur-md shadow-lg ring-1 px-2.5 py-1.5 sm:px-3 sm:py-2',
+              'max-w-[60vw] sm:max-w-none', skin.glass,
+            )}
           >
             <div className="flex items-center gap-1.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-brand-500">
-              <Route className="w-3 h-3" /> {guest ? 'Your journey' : 'Journey'}
+              <Route className="w-3 h-3" />
+              {guest ? 'Your journey' : agenda ? 'Movement chart' : 'Journey'}
             </div>
             <p className={cn('text-[13px] sm:text-sm font-semibold leading-tight mt-0.5', skin.title)}>
               {journey.countries.join(' · ') || 'Route'}
             </p>
             <div className={cn('flex items-center gap-2.5 sm:gap-3 mt-1 sm:mt-1.5 text-[10px] sm:text-[11px]', skin.body)}>
-              <span className="inline-flex items-center gap-1"><MapPin className={cn('w-3 h-3', skin.muted)} />{stops.length} stops</span>
+              {agenda && journey.dayCount ? (
+                <span className="inline-flex items-center gap-1"><CalendarDays className={cn('w-3 h-3', skin.muted)} />{journey.dayCount} days</span>
+              ) : null}
+              <span className="inline-flex items-center gap-1">
+                <MapPin className={cn('w-3 h-3', skin.muted)} />
+                {stops.length} {agenda ? (stops.length === 1 ? 'move' : 'moves') : 'stops'}
+              </span>
               <span className="inline-flex items-center gap-1"><Navigation className={cn('w-3 h-3', skin.muted)} />{journey.totalKm.toLocaleString()} km</span>
               {journey.hotels.length > 0 && (
                 <span className="inline-flex items-center gap-1">
@@ -1024,6 +1138,29 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
                 </span>
               )}
             </div>
+
+            {/* How the guests actually travel across the whole file, counted.
+                On a chart that is half private cars and half seat-in-coach this
+                is the first thing an operator wants off the map. */}
+            {modeCounts.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                {modeCounts.slice(0, 4).map(([mode, { t, count }]) => (
+                  <span
+                    key={mode}
+                    title={`${t.label} — ${count} movement${count === 1 ? '' : 's'}`}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-full pl-1 pr-1.5 py-[1px] text-[9px] sm:text-[10px] font-bold ring-1',
+                      theme === 'dark' ? 'bg-white/10 ring-white/15' : 'bg-white/70 ring-slate-900/10',
+                    )}
+                    style={{ color: t.hex }}
+                  >
+                    <span className="text-[11px] leading-none">{t.emoji}</span>
+                    {t.short}
+                    <span className={skin.muted}>{count}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </motion.div>
 
           {/* Legend doubles as a filter — click a kind to fade it out. */}
@@ -1113,7 +1250,7 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
           </div>
           <IconBtn label="Fit route" skin={skin} onClick={fitAll}><Compass className="w-4 h-4" /></IconBtn>
           {!guest && (
-            <IconBtn label="Rebuild from itinerary" skin={skin} onClick={() => void load(true)}>
+            <IconBtn label={agenda ? 'Rebuild from movement chart' : 'Rebuild from itinerary'} skin={skin} onClick={() => void load(true)}>
               <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
             </IconBtn>
           )}
@@ -1163,8 +1300,11 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
                     onMouseEnter={() => setHoveredId(s.id)}
                     onMouseLeave={() => setHoveredId(null)}
                     className={cn(
-                      'group/day flex-shrink-0 w-[132px] sm:w-[124px] snap-center text-left rounded-xl px-2.5 py-2 transition-all duration-200',
+                      'group/day flex-shrink-0 snap-center text-left rounded-xl px-2.5 py-2 transition-all duration-200',
                       'backdrop-blur-md shadow ring-1 hover:-translate-y-0.5 hover:shadow-lg active:scale-95',
+                      // The movement card carries a from → to line, a service
+                      // chip and the stay, so it needs the extra width.
+                      agenda ? 'w-[184px] sm:w-[176px]' : 'w-[132px] sm:w-[124px]',
                       skin.glassSolid,
                       on && 'ring-2 !ring-brand-500 -translate-y-0.5 shadow-lg',
                     )}
@@ -1175,13 +1315,57 @@ export default function JourneyMap({ bookingRef, className, portalToken, theme =
                         style={{ background: k.hex }}
                         dangerouslySetInnerHTML={{ __html: glyphSvg(s.kind, 11) }}
                       />
-                      <span className={cn('text-[10px] font-extrabold', skin.title)}>D{s.dayNo}</span>
+                      <span className={cn('text-[10px] font-extrabold', skin.title)}>
+                        D{s.dayNo}
+                        {/* Two movements can share a date; the day number alone
+                            would print twice with nothing to tell them apart. */}
+                        {agenda && (s.legsThatDay ?? 1) > 1 && (
+                          <span className={skin.muted}>.{s.legOfDay}</span>
+                        )}
+                      </span>
                       {s.date && <span className={cn('text-[9px] truncate', skin.muted)}>{formatDate(s.date)}</span>}
+                      {agenda && s.timeFrom && (
+                        <span className={cn('ml-auto text-[9px] font-semibold tabular-nums', skin.muted)}>{s.timeFrom}</span>
+                      )}
                     </div>
-                    <p className={cn('mt-1 text-[11px] font-semibold leading-tight line-clamp-2', skin.strong)}>{s.place}</p>
-                    {s.legKm != null && s.legKm > 0 && (
-                      <p className={cn('mt-0.5 text-[9px]', skin.muted)}>{s.legKm.toLocaleString()} km from D{stops[stops.indexOf(s) - 1]?.dayNo}</p>
+
+                    {agenda && s.fromPlace && s.toPlace && s.fromPlace !== s.toPlace ? (
+                      <div className="mt-1 flex items-start gap-1">
+                        <span className={cn('min-w-0 flex-1 text-[10.5px] font-semibold leading-tight line-clamp-2', skin.body)}>
+                          {s.fromPlace}
+                        </span>
+                        <ArrowRight className={cn('w-3 h-3 flex-shrink-0 mt-[1px]', skin.muted)} />
+                        <span className={cn('min-w-0 flex-1 text-[10.5px] font-bold leading-tight line-clamp-2', skin.strong)}>
+                          {s.toPlace}
+                        </span>
+                      </div>
+                    ) : (
+                      <p className={cn('mt-1 text-[11px] font-semibold leading-tight line-clamp-2', skin.strong)}>{s.place}</p>
                     )}
+
+                    {agenda && s.transport && (
+                      <div className="mt-1 flex items-center gap-1">
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9px] font-bold leading-none"
+                          style={{ background: `${s.transport.hex}1f`, color: s.transport.hex }}
+                        >
+                          <span className="text-[10px] leading-none">{s.transport.emoji}</span>
+                          {s.transport.short}
+                        </span>
+                        {s.moveKm != null && s.moveKm > 0 && (
+                          <span className={cn('text-[9px] tabular-nums', skin.muted)}>{s.moveKm.toLocaleString()} km</span>
+                        )}
+                      </div>
+                    )}
+
+                    {agenda && s.hotel ? (
+                      <p className={cn('mt-1 flex items-center gap-1 text-[9px] truncate', skin.muted)}>
+                        <BedDouble className="w-2.5 h-2.5 flex-shrink-0 text-orange-500" />
+                        <span className="truncate">{s.hotel.name}</span>
+                      </p>
+                    ) : !agenda && s.legKm != null && s.legKm > 0 ? (
+                      <p className={cn('mt-0.5 text-[9px]', skin.muted)}>{s.legKm.toLocaleString()} km from D{stops[stops.indexOf(s) - 1]?.dayNo}</p>
+                    ) : null}
                   </button>
                 )
               })}
@@ -1381,12 +1565,78 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
 
       {/* Body */}
       <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-4 overscroll-contain">
+        {/* The movement itself, when this pin came from the movement chart.
+            A from → to pair, what carries the guests, and where they sleep are
+            the three things the chart is actually for — they belong above the
+            researched write-up, not under it. */}
+        {stop.transport && (
+          <div className={cn('rounded-xl ring-1 p-3', skin.glassSolid)}>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] text-[10px] font-bold leading-none"
+                style={{ background: `${stop.transport.hex}1f`, color: stop.transport.hex }}
+              >
+                <span className="text-[12px] leading-none">{stop.transport.emoji}</span>
+                {stop.transport.label}
+              </span>
+              {(stop.timeFrom || stop.meetingTime) && (
+                <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold tabular-nums', skin.sheetMuted)}>
+                  <Clock className="w-3 h-3" />
+                  {stop.timeFrom ?? stop.meetingTime}
+                  {stop.timeTo ? `–${stop.timeTo}` : ''}
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <p className={cn('text-[9px] uppercase tracking-wider font-bold mb-0.5', skin.sheetMuted)}>From</p>
+                <p className={cn('text-[12px] font-semibold leading-snug', skin.sheetBody)}>{stop.fromPlace || '—'}</p>
+              </div>
+              <ArrowRight className={cn('w-4 h-4 flex-shrink-0 mt-3.5', skin.sheetMuted)} />
+              <div className="min-w-0 flex-1">
+                <p className={cn('text-[9px] uppercase tracking-wider font-bold mb-0.5', skin.sheetMuted)}>To</p>
+                <p className={cn('text-[12px] font-bold leading-snug', skin.sheetTitle)}>{stop.toPlace || stop.place}</p>
+              </div>
+            </div>
+
+            {stop.moveKm != null && stop.moveKm > 0 && (
+              <p className={cn('mt-2 inline-flex items-center gap-1 text-[10px]', skin.sheetMuted)}>
+                <Navigation className="w-3 h-3" /> about {stop.moveKm.toLocaleString()} km on this leg
+              </p>
+            )}
+
+            {stop.hotel && (
+              <div className={cn('mt-2.5 pt-2.5 border-t flex items-start gap-2', skin.hairline)}>
+                <BedDouble className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-orange-500" />
+                <div className="min-w-0">
+                  <p className={cn('text-[11.5px] font-semibold leading-snug', skin.sheetTitle)}>{stop.hotel.name}</p>
+                  <p className={cn('text-[10px]', skin.sheetMuted)}>
+                    {stop.hotel.checkIn ? 'Check in tonight' : 'Staying tonight'}
+                    {stop.hotel.city ? ` · ${stop.hotel.city}` : ''}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {stop.mealPlan && (
+              <p className={cn('mt-2 inline-flex items-center gap-1 text-[10px]', skin.sheetMuted)}>
+                <Utensils className="w-3 h-3" /> {stop.mealPlan}
+              </p>
+            )}
+          </div>
+        )}
+
         <div>
           <p className={cn('text-[10px] uppercase tracking-wider font-bold mb-1', skin.sheetMuted)}>
-            {guest ? 'On your plan' : 'On the itinerary'}
+            {stop.transport
+              ? (guest ? 'What happens' : 'On the movement chart')
+              : (guest ? 'On your plan' : 'On the itinerary')}
           </p>
-          <p className={cn('text-[12.5px] font-medium leading-snug', skin.strong)}>{stop.title}</p>
-          {stop.legKm != null && stop.legKm > 0 && (
+          <p className={cn('text-[12.5px] font-medium leading-snug', skin.strong)}>
+            {stop.description?.trim() || stop.title}
+          </p>
+          {!stop.transport && stop.legKm != null && stop.legKm > 0 && (
             <p className={cn('mt-1.5 inline-flex items-center gap-1 text-[10px] rounded-full px-2 py-0.5', skin.sheetBody, skin.glassSolid)}>
               <Navigation className="w-3 h-3" /> {stop.legKm.toLocaleString()} km from the previous stop
             </p>

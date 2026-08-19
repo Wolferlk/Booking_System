@@ -362,7 +362,14 @@ export default function ClientPortalPage() {
                 <MapPin className="w-4 h-4 text-brand-400" />
                 <h2 className="text-sm font-bold">Your Route</h2>
               </div>
-              <JourneyMap bookingRef={ref} theme="dark" />
+              {/* Movement chart first — it carries the real from → to points,
+                  how each leg travels, and the hotel of the night. Falls back
+                  to the itinerary route on a file with no chart yet. */}
+              <JourneyMap
+                bookingRef={ref}
+                theme="dark"
+                source={data.agenda && data.agenda.items.length > 0 ? 'agenda' : 'itinerary'}
+              />
               <p className="mt-2.5 text-[11px] text-slate-500 leading-relaxed">
                 Tap any pin for photos and what to expect · press ▶ to fly through your trip
               </p>

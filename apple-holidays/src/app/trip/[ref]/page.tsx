@@ -833,9 +833,17 @@ function ItineraryView({ data, theme, refKey, token }: {
       {/* The route before the reading. A list of day titles tells you what
           happens; the map tells you where you are going and how far apart it
           all is — which is the first thing anyone wants from a trip plan. */}
-      {data.itinerary.length > 0 && (
+      {(useAgenda || data.itinerary.length > 0) && (
         <Section icon={Globe2} title="Your Route" emoji="🗺️" accent={theme.accentText}>
-          <JourneyMap bookingRef={refKey} portalToken={token} theme="dark" />
+          {/* Sourced from the movement chart when there is one: it knows the
+              real pickup and drop-off points, how each leg is travelled, and
+              the hotel for that night — none of which the itinerary carries. */}
+          <JourneyMap
+            bookingRef={refKey}
+            portalToken={token}
+            theme="dark"
+            source={useAgenda ? 'agenda' : 'itinerary'}
+          />
           <p className="mt-2.5 text-[11px] text-slate-400 leading-relaxed">
             Tap any pin to see photos and what to expect · press ▶ to fly through your trip
           </p>
