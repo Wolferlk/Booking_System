@@ -796,11 +796,14 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
       continue
     }
 
-    // Only internal sectors get drawn. The inbound and outbound legs start or
-    // end outside the operating country, and their airports already carry the
-    // arrival and departure pins — adding them would stretch the map's bounds
-    // across a continent to draw a leg that is not part of the tour.
-    if (f.sector !== 'internal') continue
+    // Every sector is drawn, inbound and outbound included: the flight in is
+    // how the trip starts and the flight out is how it ends, and a route that
+    // begins at a hotel with no explanation of how anyone got there is a route
+    // with its first page missing. The map's bounds stretch to reach the far
+    // airport, which is the honest frame — the guests really do come from there.
+    //
+    // What cannot be drawn is a sector we could not place. An unresolved
+    // airport would put the leg at 0,0 in the Atlantic.
     if (f.fromLat == null || f.fromLng == null || f.toLat == null || f.toLng == null) continue
 
     const stay = stayOn(f.date)
