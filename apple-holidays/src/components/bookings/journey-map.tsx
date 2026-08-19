@@ -463,6 +463,16 @@ function trailSlice(path: LatLng[], t: number, span = 0.07): LatLng[] {
  */
 const MAP_HEIGHT = 'h-[68vh] min-h-[400px] max-h-[calc(100vh-7rem)] sm:h-[560px] xl:h-[720px]'
 
+/**
+ * How much of the panel the open detail drawer owns.
+ *
+ * Half, so the map keeps the other half and you can see the stop you are
+ * reading about — capped, because a true half of an ultrawide fullscreen is a
+ * 900px column of body text nobody can scan. The map chrome dodges the same
+ * measurement (as `--jm-card`), so the two can never disagree about the seam.
+ */
+const SIDE_CARD_W = 'min(50%, 560px)'
+
 const LEG_MS = 1500      // time to fly one leg during playback
 const DWELL_MS = 1100    // pause on each stop during playback
 
@@ -1111,7 +1121,7 @@ export default function JourneyMap({
         // `--jm-card` is how much of the panel the open side drawer owns. The
         // drawer sets its own width from it and every piece of map chrome keeps
         // clear of it, so the two can never disagree about where the seam is.
-        style={{ '--jm-card': sideOpen ? 'min(50%, 560px)' : '0px' } as React.CSSProperties}
+        style={{ '--jm-card': sideOpen ? SIDE_CARD_W : '0px' } as React.CSSProperties}
         className={cn(
           'jm-wrap group relative overflow-hidden border shadow-card flex flex-col',
           dark ? 'border-white/10 bg-slate-950' : skin.shell,
@@ -1522,8 +1532,10 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
       dragConstraints={{ top: 0, bottom: 0 }}
       dragElastic={{ top: 0, bottom: 0.5 }}
       onDragEnd={(_, info) => { if (info.offset.y > 90 || info.velocity.y > 550) onClose() }}
-      // The side drawer takes exactly the slice the map chrome vacated.
-      style={sheet ? undefined : { width: 'var(--jm-card)' }}
+      // Sized from the shared constant, not from `--jm-card`: the variable
+      // drops to zero the moment the stop is deselected, and a card that
+      // shrinks to nothing rather than sliding away reads as a glitch.
+      style={sheet ? undefined : { width: SIDE_CARD_W }}
       className={cn(
         'absolute z-[600] backdrop-blur-xl shadow-2xl ring-1 flex flex-col', skin.sheet,
         sheet
