@@ -185,6 +185,9 @@ const KIND: Record<StopKind, { label: string; hex: string; glow: string; path: s
  * mode is decided by where it is going: you fly to an airport, coach to a tour,
  * board a boat for a cruise.
  */
+/** The plane glyph, named because the riders check for it before rotating. */
+const PLANE = '\u2708\uFE0F'
+
 const VEHICLE: Record<StopKind, string> = {
   arrival:    '\u2708\uFE0F',
   departure:  '\u2708\uFE0F',
@@ -616,11 +619,14 @@ function planeHtml(flightNo: string) {
  * keyframes — at 60fps that reads as a stutter rather than a drive. Mutating
  * the glyph and its transform keeps the animation continuous across a leg change.
  */
-function paintRider(marker: LeafletMarker | null, vehicle: string, flip: boolean) {
+function paintRider(marker: LeafletMarker | null, vehicle: string, flip: boolean, bearing?: number) {
   const el = marker?.getElement()?.querySelector<HTMLElement>('.jm-ride-emoji')
   if (!el) return
   if (el.textContent !== vehicle) el.textContent = vehicle
-  const t = flip ? 'scaleX(-1)' : 'scaleX(1)'
+  // A plane banks along its bearing — it is drawn pointing up-right, hence the
+  // 45° correction. Everything on wheels is mirrored instead: rotating a car
+  // turns it upside-down on a southbound leg.
+  const t = bearing != null ? `rotate(${bearing - 45}deg)` : flip ? 'scaleX(-1)' : 'scaleX(1)'
   if (el.style.transform !== t) el.style.transform = t
 }
 
@@ -717,6 +723,16 @@ export default function JourneyMap({
   const [interactive, setInteractive] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
   const [playing, setPlaying] = useState(false)
+  /**
+   * Which day the fly-through covers. Null is the whole file.
+   *
+   * A twenty-day route played end to end is a screensaver: by the time it
+   * reaches the day you were asked about you have watched nineteen you were
+   * not. Scoping it to one day makes it answer a question — what does Day 4
+   * actually involve, and what is carrying them through it.
+   */
+  const [playDay, setPlayDay] = useState<number | null>(null)
+  const [showDays, setShowDays] = useState(false)
   // Leaflet arrives via a dynamic import, so the map exists a tick after the
   // effects that draw on it first run. Storing readiness in state (rather than
   // only on the ref) is what re-runs those effects once there is a map to draw
@@ -838,11 +854,35 @@ export default function JourneyMap({
     return { legs, flat, sectors, bounds, routed }
   }, [stops])
 
-  /** Internal sectors on this file — what the header counts. */
-  const interFlights = useMemo(
-    () => (journey?.flights ?? []).filter(f => f.sector === 'internal'),
-    [journey?.flights],
+  /**
+   * The booked sectors that made it onto the map, and how many of them are the
+   * ones the movement chart could never show.
+   */
+  const flightStats = useMemo(() => {
+    const drawn = stops.filter(s => s.flightRole === 'sector' && s.flight).map(s => s.flight!)
+    return { drawn, inter: drawn.filter(f => f.sector === 'internal').length }
+  }, [stops])
+
+  /** Every day number on the route, in order. */
+  const dayNumbers = useMemo(
+    () => Array.from(new Set(stops.map(s => s.dayNo))).sort((a, b) => a - b),
+    [stops],
   )
+
+  /**
+   * The stretch of the route a run covers, as stop indices.
+   *
+   * A day's run starts one stop *before* its first — the movement into a day's
+   * opening stop is that day's first leg, and starting on the stop itself would
+   * skip the very transfer the day begins with.
+   */
+  const playRange = useMemo(() => {
+    const whole = { start: 0, end: Math.max(stops.length - 1, 0) }
+    if (playDay == null) return whole
+    const idx = stops.reduce<number[]>((acc, s, i) => (s.dayNo === playDay ? [...acc, i] : acc), [])
+    if (idx.length === 0) return whole
+    return { start: Math.max(0, idx[0] - 1), end: idx[idx.length - 1] }
+  }, [playDay, stops])
 
   // ── Data ───────────────────────────────────────────────────────────────
 
@@ -1198,14 +1238,20 @@ export default function JourneyMap({
     const L = LRef.current, map = mapRef.current
     if (!L || !map) return
 
-    // Restart from the top when replaying a finished run.
     const { bounds } = geometry
-    let legIndex = progress >= 0.999
-      ? 0
-      : Math.max(0, bounds.findIndex(b => b > progress) - 1)
+    const { start, end } = playRange
+    if (end <= start) { setPlaying(false); return }
+
+    // Resume where the run was paused, but only inside the stretch this run
+    // covers — a day run always begins at that day's own first leg.
+    const resumed = progress > bounds[start] && progress < bounds[end]
+      ? Math.max(start, bounds.findIndex(b => b > progress) - 1)
+      : start
+    let legIndex = resumed
     let phase: 'dwell' | 'travel' = 'dwell'
     let phaseStart = performance.now()
 
+    setProgress(bounds[legIndex])
     setActiveId(stops[legIndex].id)
     flyTo(stops[legIndex], 9)
 
@@ -1234,22 +1280,28 @@ export default function JourneyMap({
 
         const here = walk(geometry.flat, legT)
         traveller.setLatLng(here)
-        // The vehicle is chosen by where this leg is heading, and mirrored so
-        // it always faces the way it is travelling.
+        // The vehicle is whatever the chart booked for this leg — a coach for
+        // seat-in-coach, a car for a private transfer, a plane for a sector —
+        // and it is turned to face the way it is going.
+        const from = stops[legIndex]
         const dest = stops[Math.min(legIndex + 1, stops.length - 1)]
+        const vehicle = vehicleFor(dest)
         paintRider(
           traveller,
-          vehicleFor(dest),
-          headingWest([stops[legIndex].lat, stops[legIndex].lng], [dest.lat, dest.lng]),
+          vehicle,
+          headingWest([from.lat, from.lng], [dest.lat, dest.lng]),
+          // A plane banks along its arc; a car would look wrong upside-down on
+          // a southbound leg, so it is mirrored instead.
+          vehicle === PLANE ? bearingDeg(walk(geometry.flat, Math.max(legT - 0.004, 0)), here) : undefined,
         )
         trailRef.current?.setLatLngs(trailSlice(geometry.flat, legT))
 
         if (t >= 1) {
           legIndex += 1
-          if (legIndex >= stops.length - 1) {
-            setProgress(1)
-            setActiveId(stops[stops.length - 1].id)
-            flyTo(stops[stops.length - 1], 9)
+          if (legIndex >= end) {
+            setProgress(bounds[end])
+            setActiveId(stops[end].id)
+            flyTo(stops[end], 9)
             setPlaying(false)
             return
           }
@@ -1272,7 +1324,7 @@ export default function JourneyMap({
     // `progress` is read once to decide where to resume; re-running on every
     // frame would restart the animation, so it is deliberately not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, stops, geometry, flyTo, mapReady])
+  }, [playing, stops, geometry, playRange, flyTo, mapReady])
 
   /**
    * The idle ride: when nothing is playing, a vehicle drives the finished route
@@ -1289,10 +1341,10 @@ export default function JourneyMap({
     if (typeof window !== 'undefined' &&
         window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
 
-    const rider = L.marker(geometry.flat[0], {
+    const rider = L.marker(walk(geometry.flat, geometry.bounds[playRange.start]), {
       icon: L.divIcon({
         className: 'jm-traveller',
-        html: riderHtml(vehicleFor(stops[1] ?? stops[0]), true),
+        html: riderHtml(vehicleFor(stops[playRange.start + 1] ?? stops[playRange.start]), true),
         iconSize: [40, 40], iconAnchor: [20, 20],
       }),
       zIndexOffset: 1100,
@@ -1300,21 +1352,41 @@ export default function JourneyMap({
     }).addTo(map)
     idleRiderRef.current = rider
 
-    // One lap covers every leg at a steady pace, then rests briefly at the end
-    // before restarting, so the loop reads as a journey rather than a treadmill.
-    const lapMs = Math.max(6000, (stops.length - 1) * 2600)
+    // One lap covers the chosen stretch at a steady pace, then rests briefly at
+    // the end before restarting, so the loop reads as a journey rather than a
+    // treadmill. With a day picked it laps that day only — the same scope the
+    // fly-through uses, so the two never disagree about what is being shown.
+    const { start: fromStop, end: toStop } = playRange
+    const t0 = geometry.bounds[fromStop]
+    const t1 = geometry.bounds[toStop]
+    if (!(t1 > t0)) return () => { rider.remove(); idleRiderRef.current = null }
+
+    const lapMs = Math.max(6000, (toStop - fromStop) * 2600)
     const restMs = 1400
     const start = performance.now()
 
     const tick = (now: number) => {
       const cycle = (now - start) % (lapMs + restMs)
-      const t = Math.min(cycle / lapMs, 1)
+      const t = t0 + (t1 - t0) * Math.min(cycle / lapMs, 1)
 
       rider.setLatLng(walk(geometry.flat, t))
-      const legIndex = Math.min(Math.floor(t * (stops.length - 1)), stops.length - 2)
+      // Which leg the rider is on has to be read off the real boundaries: legs
+      // are no longer interchangeable now that some are routed roads.
+      const legIndex = Math.min(
+        Math.max(geometry.bounds.findIndex(b => b > t) - 1, fromStop),
+        toStop - 1,
+      )
       const from = stops[legIndex]
       const to = stops[legIndex + 1]
-      paintRider(rider, vehicleFor(to), headingWest([from.lat, from.lng], [to.lat, to.lng]))
+      const vehicle = vehicleFor(to)
+      paintRider(
+        rider,
+        vehicle,
+        headingWest([from.lat, from.lng], [to.lat, to.lng]),
+        vehicle === PLANE
+          ? bearingDeg(walk(geometry.flat, Math.max(t - 0.004, t0)), walk(geometry.flat, t))
+          : undefined,
+      )
       trailRef.current?.setLatLngs(trailSlice(geometry.flat, t))
 
       idleRafRef.current = requestAnimationFrame(tick)
@@ -1327,7 +1399,7 @@ export default function JourneyMap({
       idleRiderRef.current = null
       trailRef.current?.setLatLngs([])
     }
-  }, [playing, stops, geometry, mapReady])
+  }, [playing, stops, geometry, playRange, mapReady])
 
   /** Draw only the travelled portion while playing; the whole route otherwise. */
   useEffect(() => {
@@ -1388,6 +1460,21 @@ export default function JourneyMap({
     }, 340)
     return () => clearTimeout(id)
   }, [fullscreen, mapReady, stops])
+
+  /**
+   * Framing follows the chosen day.
+   *
+   * Picking Day 4 out of a twenty-day file and then hunting for it on a map of
+   * the whole country is the work the picker was meant to remove.
+   */
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map || playDay == null) return
+    const onDay = stops.slice(playRange.start, playRange.end + 1)
+    if (onDay.length === 0) return
+    map.flyToBounds(L.latLngBounds(onDay.map(s => [s.lat, s.lng] as LatLng)),
+      { padding: [72, 72], maxZoom: 12, duration: 0.8 })
+  }, [playDay, playRange, stops, mapReady])
 
   /** Re-frame the route after a rebuild brings back a different set of pins. */
   const fittedRef = useRef<string>('')
@@ -1559,13 +1646,18 @@ export default function JourneyMap({
               {/* The sectors flown between destinations on this same file. The
                   chart never books them, so without this the map's own leg
                   count would quietly disagree with the route it is drawing. */}
-              {interFlights.length > 0 && (
+              {flightStats.drawn.length > 0 && (
                 <span
                   className="inline-flex items-center gap-1 font-semibold text-violet-500"
-                  title={interFlights.map(f => `${f.flightNo} ${f.fromApt}→${f.toApt}`).join(' · ')}
+                  title={flightStats.drawn
+                    .map(f => `${f.flightNo} ${f.fromApt}→${f.toApt} (${f.sector})`)
+                    .join(' · ')}
                 >
                   <Plane className="w-3 h-3" />
-                  {interFlights.length} inter-flight{interFlights.length === 1 ? '' : 's'}
+                  {flightStats.drawn.length} flight{flightStats.drawn.length === 1 ? '' : 's'}
+                  {flightStats.inter > 0 && (
+                    <span className={skin.muted}>· {flightStats.inter} inter</span>
+                  )}
                 </span>
               )}
             </div>
@@ -1656,6 +1748,63 @@ export default function JourneyMap({
               <SlidersHorizontal className="w-4 h-4" />
             </IconBtn>
           </div>
+          {/* Which day the fly-through covers. A twenty-day route played end
+              to end is a screensaver; one day is an answer. */}
+          {dayNumbers.length > 1 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowDays(v => !v)}
+                title="Choose which day the fly-through covers"
+                className={cn(
+                  'h-9 sm:h-8 px-2 rounded-lg inline-flex items-center gap-1 text-[11px] font-bold shadow-lg ring-1 backdrop-blur-md transition-all hover:scale-105 active:scale-95',
+                  playDay != null || showDays ? 'bg-brand-500 text-white ring-brand-400/40' : skin.btn,
+                )}
+              >
+                <CalendarDays className="w-4 h-4" />
+                {playDay == null ? 'All' : `D${playDay}`}
+              </button>
+              <AnimatePresence>
+                {showDays && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.94, y: -6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: -6 }}
+                    className={cn('jm-scroll absolute right-0 mt-1.5 w-44 max-h-64 overflow-y-auto rounded-xl backdrop-blur-md shadow-xl ring-1 p-1', skin.glassSolid)}
+                  >
+                    <button
+                      onClick={() => { setPlayDay(null); setShowDays(false) }}
+                      className={cn(
+                        'w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                        playDay == null
+                          ? 'bg-brand-500/15 text-brand-500'
+                          : cn(skin.body, theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-slate-100'),
+                      )}
+                    >
+                      All days
+                    </button>
+                    {dayNumbers.map(d => {
+                      const first = stops.find(x => x.dayNo === d)
+                      const legs = stops.filter(x => x.dayNo === d).length
+                      return (
+                        <button
+                          key={d}
+                          onClick={() => { setPlayDay(d); setShowDays(false) }}
+                          className={cn(
+                            'w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                            playDay === d
+                              ? 'bg-brand-500/15 text-brand-500'
+                              : cn(skin.body, theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-slate-100'),
+                          )}
+                        >
+                          <span>Day {d}</span>
+                          {first?.date && <span className={cn('text-[10px] truncate', skin.muted)}>{formatDate(first.date)}</span>}
+                          <span className={cn('ml-auto text-[10px]', skin.muted)}>{legs}</span>
+                        </button>
+                      )
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
           <div className="relative">
             <IconBtn label="Basemap" skin={skin} onClick={() => setShowLayers(v => !v)} active={showLayers}><Layers className="w-4 h-4" /></IconBtn>
             <AnimatePresence>
@@ -1711,13 +1860,15 @@ export default function JourneyMap({
                   'bg-gradient-to-br from-brand-500 to-brand-600 text-white hover:scale-105 active:scale-95',
                   'disabled:opacity-40 disabled:hover:scale-100',
                 )}
-                title={playing ? 'Pause the fly-through' : 'Fly through the journey'}
+                title={playing
+                  ? 'Pause the fly-through'
+                  : playDay != null ? `Fly through Day ${playDay}` : 'Fly through the journey'}
               >
                 {playing ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
               </button>
               {progress < 1 && !playing && (
                 <button
-                  onClick={() => { setProgress(1); setActiveId(null); setSelectedId(null); fitAll() }}
+                  onClick={() => { setProgress(1); setActiveId(null); setSelectedId(null); setPlayDay(null); fitAll() }}
                   className={cn('w-12 h-8 sm:w-11 sm:h-7 rounded-full backdrop-blur-md shadow ring-1 flex items-center justify-center', skin.btn)}
                   title="Reset"
                 >
