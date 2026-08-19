@@ -91,6 +91,57 @@ export interface AgendaStopHotel {
 }
 
 /**
+ * Where a booked sector sits in the shape of the trip.
+ *
+ * `inbound` brings the guests into the operating country and `outbound` takes
+ * them home — both already have a pin, because the movement chart opens with an
+ * airport pickup and closes with an airport drop-off. `internal` is the one the
+ * chart cannot express: a sector *between* two destinations we operate, whose
+ * airport-to-airport hop exists only in the flight list. Drawing it is the
+ * difference between a route that teleports from Ho Chi Minh to Da Nang and one
+ * that visibly flies.
+ */
+export type FlightSector = 'inbound' | 'internal' | 'outbound'
+
+/** A booked flight, resolved to two real airports. */
+export interface FlightInfo {
+  id: string
+  flightNo: string
+  airline: string | null
+  /** Calendar day, `yyyy-mm-dd` — never an instant, see `dayKey`. */
+  date: string
+  fromApt: string
+  toApt: string
+  /** Resolved airport names, null when neither the model nor OSM knew them. */
+  fromName: string | null
+  toName: string | null
+  fromCity: string | null
+  toCity: string | null
+  fromCountry: string | null
+  toCountry: string | null
+  fromLat: number | null
+  fromLng: number | null
+  toLat: number | null
+  toLng: number | null
+  depTime: string | null
+  arrTime: string | null
+  sector: FlightSector
+  /** Great-circle km between the two airports. */
+  km: number | null
+  /** Gate-to-gate minutes when both times parse, same-day only. */
+  durationMin: number | null
+}
+
+/** Why a flight is attached to a stop. */
+export type FlightRole =
+  /** The stop *is* the sector — the airport-to-airport hop itself. */
+  | 'sector'
+  /** The stop drops the guests at the departure airport for it. */
+  | 'to-airport'
+  /** The stop collects them from the arrival airport after it. */
+  | 'from-airport'
+
+/**
  * One movement chart row placed on the map.
  *
  * Structurally a superset of `JourneyStop`, so the same map component renders
@@ -129,6 +180,17 @@ export interface AgendaStop {
   legOfDay: number
   legsThatDay: number
   hotel: AgendaStopHotel | null
+
+  // ── Flights ──
+  /** The booked sector this row is part of, if any. */
+  flight: FlightInfo | null
+  flightRole: FlightRole | null
+  /**
+   * True for a row that exists on the map only — woven in from the flight list
+   * because the movement chart never had a row for that sector. Nothing here
+   * is ever written back to the agenda.
+   */
+  synthetic: boolean
 }
 
 export interface AgendaJourney {
@@ -141,6 +203,8 @@ export interface AgendaJourney {
   basis: 'agenda'
   /** Distinct dates covered, so the header can say "8 days". */
   dayCount: number
+  /** Every booked sector, resolved — the panel counts the internal ones. */
+  flights: FlightInfo[]
 }
 
 export interface AgendaJourneyInput {
@@ -166,6 +230,17 @@ export interface AgendaJourneyInput {
     id: string; hotel: string; city: string
     checkIn: Date | string; checkOut: Date | string; nights: number
   }[]
+  /** The booking's flight list. Read only — the source of the sector legs. */
+  flights?: {
+    id: string
+    flightNo: string
+    date: Date | string
+    fromApt: string
+    depTime: string | null
+    toApt: string
+    arrTime: string | null
+    airline: string | null
+  }[]
 }
 
 // ─── Place resolution ────────────────────────────────────────────────────
@@ -184,6 +259,10 @@ Rules:
 - "lat"/"lng" are your best real-world decimal coordinates. Never return 0,0.
   Never invent a place you do not know; return null lat/lng instead.
 - "city" is the nearest well-known city; "country" is the country's common English name.
+- An input shaped like "DAD airport" or "SGN airport" is an IATA airport code:
+  resolve it to that airport's real name, city and coordinates — "DAD airport" is
+  Da Nang International Airport, "SGN airport" is Tan Son Nhat International
+  Airport in Ho Chi Minh City. Never treat the three letters as a town name.
 - "kind" is one of: arrival, departure, transfer, flight, tour, attraction, beach,
   nature, cultural, city, cruise, hotel, leisure — what that place IS
   (an airport is "flight", a beach is "beach", a temple is "cultural", a hotel is "hotel").
@@ -359,6 +438,56 @@ function stopKind(opts: {
   return 'transfer'
 }
 
+// ─── Flights ─────────────────────────────────────────────────────────────
+
+/**
+ * The query we ask the resolver for an airport.
+ *
+ * `fromApt`/`toApt` are captured as IATA codes on every form we own, and a bare
+ * "DAD" geocodes to a village in Iran. Appending the word "airport" is what
+ * turns three letters into a resolvable place — see RESOLVE_PROMPT, which is
+ * told to read exactly this shape as a code.
+ */
+function airportQuery(code: string | null | undefined): string | null {
+  const s = String(code ?? '').trim().replace(/\s+/g, ' ')
+  if (!s) return null
+  return /airport/i.test(s) ? s : `${s.toUpperCase()} airport`
+}
+
+/** "09:40", "9.40", "0940" → minutes since midnight. Null when unreadable. */
+function minutesOf(t: string | null | undefined): number | null {
+  const m = String(t ?? '').trim().match(/^(\d{1,2})[:.h ]?(\d{2})/)
+  if (!m) return null
+  const h = Number(m[1]), min = Number(m[2])
+  return h <= 23 && min <= 59 ? h * 60 + min : null
+}
+
+/**
+ * How close a pin has to be to an airport before we call it the same place.
+ *
+ * Generous on purpose: "Da Nang Airport" on the chart and "Da Nang
+ * International Airport" from the resolver can land a couple of km apart, and
+ * some charts write the drop-off as the city the airport serves.
+ */
+const AIRPORT_MATCH_KM = 30
+
+/**
+ * Airport words that are strong enough to carry a match on their own.
+ *
+ * Deliberately narrower than `AIRPORT`, which is generous because it only has
+ * to nudge a pin's icon. Here a false positive re-parents a whole flight onto
+ * the wrong row, and `AIRPORT` matches the bare word "international" — which
+ * every third hotel in Asia has in its name.
+ */
+const AIRPORT_STRICT = /\b(airport|airfield|aerodrome|terminal\s*\d|intl\.?\s*airport)\b/i
+
+/** True when `code` appears in `text` as a standalone IATA token. */
+function mentionsCode(text: string | null | undefined, code: string): boolean {
+  const c = String(code ?? '').trim().toUpperCase()
+  if (c.length !== 3) return false
+  return new RegExp(`(^|[^A-Za-z])${c}([^A-Za-z]|$)`).test(String(text ?? '').toUpperCase())
+}
+
 // ─── Build ───────────────────────────────────────────────────────────────
 
 /**
@@ -376,18 +505,13 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
     return d !== 0 ? d : a.sortOrder - b.sortOrder
   })
   if (items.length === 0) {
-    return { stops: [], hotels: [], countries: [], totalKm: 0, degraded: false, basis: 'agenda', dayCount: 0 }
+    return { stops: [], hotels: [], countries: [], totalKm: 0, degraded: false, basis: 'agenda', dayCount: 0, flights: [] }
   }
 
-  // Day numbers come from the distinct calendar days present, not from the row
-  // index — two movements on the same date are both "Day 3".
-  const days = Array.from(new Set(items.map(i => dayKey(i.date)).filter(Boolean))).sort()
-  const dayNoFor = new Map(days.map((d, i) => [d, i + 1]))
-  const legsPerDay = new Map<string, number>()
-  items.forEach(i => {
-    const k = dayKey(i.date)
-    legsPerDay.set(k, (legsPerDay.get(k) ?? 0) + 1)
-  })
+  // Day numbering, leg ordering and leg distances are all computed *after* the
+  // flights are woven in — an internal sector adds a row the chart never had,
+  // and numbering the rows before that would leave the plane leg unnumbered
+  // and the day's leg count one short.
 
   // Every string we might need a coordinate for, asked once.
   const queries: string[] = []
@@ -400,6 +524,15 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
   for (const a of input.accommodations) {
     const c = cleanPlace(`${a.hotel}${a.city ? `, ${a.city}` : ''}`)
     if (c) queries.push(c)
+  }
+  // Both ends of every booked sector. They ride in the same call as everything
+  // else — `resolvePlaces` de-duplicates, so a code that is also a chart
+  // drop-off ("Da Nang Airport") costs nothing extra.
+  const flightRows = input.flights ?? []
+  for (const f of flightRows) {
+    for (const q of [airportQuery(f.fromApt), airportQuery(f.toApt)]) {
+      if (q) queries.push(q)
+    }
   }
 
   const { map: places, degraded } = await resolvePlaces(queries, countryHint, input.bookingRef)
@@ -433,7 +566,13 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
   }
 
   const stops: AgendaStop[] = []
-  const seenDay = new Map<string, number>()
+  /**
+   * The chart's own wording for each row's two ends, kept alongside the stop.
+   * The resolver rewrites "DAD" into "Da Nang International Airport", which is
+   * what the map should say — but matching a row against a booked sector needs
+   * the code the operator actually typed.
+   */
+  const rowText = new Map<string, { from: string | null; to: string | null }>()
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
@@ -453,15 +592,13 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
     const fromText = cleanPlace(it.fromPoint)
     const toText = cleanPlace(it.toPoint) ?? cleanPlace(it.location)
 
-    const legOfDay = (seenDay.get(key) ?? 0) + 1
-    seenDay.set(key, legOfDay)
-
-    const prev = stops[stops.length - 1]
     const here = { lat: toR.lat, lng: toR.lng }
+    rowText.set(it.id, { from: it.fromPoint ?? null, to: it.toPoint ?? it.location ?? null })
 
     stops.push({
       id: it.id,
-      dayNo: dayNoFor.get(key) ?? stops.length + 1,
+      // Filled in by the numbering pass below, once the flights are woven in.
+      dayNo: 0,
       // A plain calendar date, not an instant. An ISO timestamp at UTC
       // midnight renders as the *previous* day for any reader west of
       // Greenwich — a guest opening the portal from the US would see their
@@ -485,7 +622,7 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
       lat: toR.lat,
       lng: toR.lng,
       source: toR.source,
-      legKm: prev ? haversineKm(prev, here) : null,
+      legKm: null,
 
       fromPlace: fromR?.place ?? fromText,
       toPlace: toR.place,
@@ -499,8 +636,8 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
       timeTo: it.timeTo,
       meetingTime: it.meetingTime,
       mealPlan: it.mealPlan,
-      legOfDay,
-      legsThatDay: legsPerDay.get(key) ?? 1,
+      legOfDay: 0,
+      legsThatDay: 0,
       hotel: stay
         ? {
             name: stay.hotel,
@@ -510,8 +647,254 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
             checkIn: dayKey(stay.checkIn) === key,
           }
         : null,
+      flight: null,
+      flightRole: null,
+      synthetic: false,
     })
   }
+
+  // ── Flights ────────────────────────────────────────────────────────────
+  //
+  // The movement chart is a *ground* document: it books the car to the airport
+  // and the car from the next airport, and the sector between the two is
+  // somebody else's ticket. On a single-destination file that is invisible. On
+  // a file with an internal sector — Ho Chi Minh to Da Nang — it leaves the map
+  // drawing a 600 km road leg that nobody drives, or worse, no leg at all.
+  // The flight list is the only place that hop is written down, so the map
+  // reads it directly. None of this touches the agenda: the woven rows are
+  // marked `synthetic` and exist for the length of this response.
+
+  const point = (r: ResolvedPlace | null) =>
+    r && r.lat != null && r.lng != null ? { lat: r.lat, lng: r.lng } : null
+
+  const flightRowsSorted = [...flightRows].sort((a, b) => {
+    const d = dayKey(a.date).localeCompare(dayKey(b.date))
+    return d !== 0 ? d : (minutesOf(a.depTime) ?? 0) - (minutesOf(b.depTime) ?? 0)
+  })
+
+  // Which country the tour is actually operated in, counted off the pins rather
+  // than read off the booking — `tourDestination` is free text ("Vietnam &
+  // Cambodia"), and the pins are what the map is drawn from anyway.
+  const countryTally = new Map<string, number>()
+  for (const s of stops) if (s.country) countryTally.set(s.country, (countryTally.get(s.country) ?? 0) + 1)
+  const tripCountry = Array.from(countryTally.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? countryHint
+
+  const sameCountry = (a: string | null | undefined, b: string | null | undefined) =>
+    !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
+
+  const flights: FlightInfo[] = flightRowsSorted.map((f, i) => {
+    const from = lookup(airportQuery(f.fromApt))
+    const to = lookup(airportQuery(f.toApt))
+    const a = point(from)
+    const b = point(to)
+    const depIn = sameCountry(from?.country, tripCountry)
+    const arrIn = sameCountry(to?.country, tripCountry)
+
+    // Country is the real signal: a sector with both ends inside the operating
+    // country is one the guests fly *during* the tour. Position is the fallback
+    // for a file whose airports would not resolve — the first sector brings
+    // them in, the last takes them home, anything between is internal.
+    const sector: FlightSector =
+      depIn && arrIn ? 'internal'
+      : arrIn && !depIn ? 'inbound'
+      : depIn && !arrIn ? 'outbound'
+      : i === 0 ? 'inbound'
+      : i === flightRowsSorted.length - 1 ? 'outbound'
+      : 'internal'
+
+    const dep = minutesOf(f.depTime)
+    const arr = minutesOf(f.arrTime)
+
+    return {
+      id: f.id,
+      flightNo: String(f.flightNo ?? '').trim(),
+      airline: f.airline?.trim() || null,
+      date: dayKey(f.date),
+      fromApt: String(f.fromApt ?? '').trim().toUpperCase(),
+      toApt: String(f.toApt ?? '').trim().toUpperCase(),
+      fromName: from?.place ?? null,
+      toName: to?.place ?? null,
+      fromCity: from?.city ?? null,
+      toCity: to?.city ?? null,
+      fromCountry: from?.country ?? null,
+      toCountry: to?.country ?? null,
+      fromLat: a?.lat ?? null,
+      fromLng: a?.lng ?? null,
+      toLat: b?.lat ?? null,
+      toLng: b?.lng ?? null,
+      depTime: f.depTime?.trim() || null,
+      arrTime: f.arrTime?.trim() || null,
+      sector,
+      km: a && b ? haversineKm(a, b) : null,
+      // Same-day only. A red-eye's arrival is the next morning, and a negative
+      // duration is worse than no duration.
+      durationMin: dep != null && arr != null && arr > dep ? arr - dep : null,
+    }
+  })
+
+  /** An airport as something a stop can be compared against. */
+  type AptRef = { code: string; lat: number | null; lng: number | null }
+
+  /** True when this end of a row is that airport. */
+  const isAt = (
+    at: { lat: number; lng: number } | null,
+    text: string,
+    apt: AptRef,
+  ): boolean => {
+    if (mentionsCode(text, apt.code)) return true
+    if (!at || apt.lat == null || apt.lng == null) return false
+    if (haversineKm(at, { lat: apt.lat, lng: apt.lng }) > AIRPORT_MATCH_KM) return false
+    // Thirty km of an airport is most of a city, so proximity alone would match
+    // the hotel too. The row has to read like an airport as well.
+    return AIRPORT_STRICT.test(text)
+  }
+
+  const startOf = (s: AgendaStop) => ({
+    at: s.fromLat != null && s.fromLng != null ? { lat: s.fromLat, lng: s.fromLng } : null,
+    text: [rowText.get(s.id)?.from, s.fromPlace].filter(Boolean).join(' '),
+  })
+  const endOf = (s: AgendaStop) => ({
+    at: { lat: s.lat, lng: s.lng },
+    text: [rowText.get(s.id)?.to, s.toPlace, s.place].filter(Boolean).join(' '),
+  })
+
+  for (const f of flights) {
+    const dep: AptRef = { code: f.fromApt, lat: f.fromLat, lng: f.fromLng }
+    const arr: AptRef = { code: f.toApt, lat: f.toLat, lng: f.toLng }
+
+    // Did the operator already write the sector onto the chart as its own row?
+    // Only a row that runs airport → airport counts — the transfer either side
+    // touches one airport, not both.
+    const onChart = stops.find(s => {
+      if (s.date !== f.date || s.flight) return false
+      const a = startOf(s), b = endOf(s)
+      return isAt(a.at, a.text, dep) && isAt(b.at, b.text, arr)
+    })
+    if (onChart) {
+      onChart.flight = f
+      onChart.flightRole = 'sector'
+      onChart.kind = 'flight'
+      onChart.transport = transportFor('FLIGHT')
+      continue
+    }
+
+    // Only internal sectors get drawn. The inbound and outbound legs start or
+    // end outside the operating country, and their airports already carry the
+    // arrival and departure pins — adding them would stretch the map's bounds
+    // across a continent to draw a leg that is not part of the tour.
+    if (f.sector !== 'internal') continue
+    if (f.fromLat == null || f.fromLng == null || f.toLat == null || f.toLng == null) continue
+
+    const stay = stayOn(f.date)
+    const woven: AgendaStop = {
+      id: `flight-${f.id}`,
+      dayNo: 0,
+      date: f.date || null,
+      title: `${f.flightNo} · ${f.fromApt} → ${f.toApt}`,
+      description: [
+        f.airline,
+        `${f.flightNo} departs ${f.fromApt}${f.depTime ? ` at ${f.depTime}` : ''}`,
+        `arrives ${f.toApt}${f.arrTime ? ` at ${f.arrTime}` : ''}`,
+      ].filter(Boolean).join(' · '),
+      place: f.toName ?? f.toApt,
+      city: f.toCity,
+      country: f.toCountry ?? countryHint,
+      kind: 'flight',
+      lat: f.toLat,
+      lng: f.toLng,
+      source: 'model',
+      legKm: null,
+      fromPlace: f.fromName ?? f.fromApt,
+      toPlace: f.toName ?? f.toApt,
+      fromLat: f.fromLat,
+      fromLng: f.fromLng,
+      moveKm: f.km,
+      transport: transportFor('FLIGHT'),
+      timeFrom: f.depTime,
+      timeTo: f.arrTime,
+      meetingTime: null,
+      mealPlan: null,
+      legOfDay: 0,
+      legsThatDay: 0,
+      hotel: stay
+        ? {
+            name: stay.hotel,
+            city: stay.city || null,
+            lat: stay.lat,
+            lng: stay.lng,
+            checkIn: dayKey(stay.checkIn) === f.date,
+          }
+        : null,
+      flight: f,
+      flightRole: 'sector',
+      synthetic: true,
+    }
+
+    // Where the sector belongs in the day's order: straight after the transfer
+    // that delivers them to the departure airport, or straight before the one
+    // that collects them at the far end. With neither anchor, a morning flight
+    // opens the day and an afternoon one closes it.
+    const sameDay = stops.map((s, i) => ({ s, i })).filter(x => x.s.date === f.date)
+    const afterDrop = [...sameDay].reverse().find(x => {
+      const e = endOf(x.s); return isAt(e.at, e.text, dep)
+    })
+    const beforePickup = sameDay.find(x => {
+      const a = startOf(x.s); return isAt(a.at, a.text, arr)
+    })
+
+    let at: number
+    if (afterDrop) at = afterDrop.i + 1
+    else if (beforePickup) at = beforePickup.i
+    else if (sameDay.length > 0) {
+      const depMin = minutesOf(f.depTime)
+      at = depMin != null && depMin >= 12 * 60
+        ? sameDay[sameDay.length - 1].i + 1
+        : sameDay[0].i
+    } else {
+      // The chart has no rows at all that day — slot it in by date.
+      const next = stops.findIndex(s => (s.date ?? '') > f.date)
+      at = next === -1 ? stops.length : next
+    }
+    stops.splice(at, 0, woven)
+  }
+
+  // The transfers either side of a sector are what the chart *does* book, and
+  // an operator reading "Hotel → Da Nang Airport" wants to see which flight it
+  // is feeding. Tagged after the weave so a sector row is never overwritten.
+  for (const f of flights) {
+    const dep: AptRef = { code: f.fromApt, lat: f.fromLat, lng: f.fromLng }
+    const arr: AptRef = { code: f.toApt, lat: f.toLat, lng: f.toLng }
+    for (const s of stops) {
+      if (s.date !== f.date || s.flight) continue
+      const a = startOf(s), b = endOf(s)
+      if (isAt(b.at, b.text, dep)) { s.flight = f; s.flightRole = 'to-airport' }
+      else if (isAt(a.at, a.text, arr)) { s.flight = f; s.flightRole = 'from-airport' }
+    }
+  }
+
+  // ── Numbering ──────────────────────────────────────────────────────────
+  //
+  // Day numbers come from the distinct calendar days on the finished route, not
+  // from a row index — two movements on the same date are both "Day 3", and a
+  // woven sector is one of that day's legs like any other.
+  const days = Array.from(new Set(stops.map(s => s.date).filter(Boolean) as string[])).sort()
+  const dayNoFor = new Map(days.map((d, i) => [d, i + 1]))
+  const legsPerDay = new Map<string, number>()
+  for (const s of stops) {
+    const k = s.date ?? ''
+    legsPerDay.set(k, (legsPerDay.get(k) ?? 0) + 1)
+  }
+  const seenDay = new Map<string, number>()
+  stops.forEach((s, i) => {
+    const k = s.date ?? ''
+    const n = (seenDay.get(k) ?? 0) + 1
+    seenDay.set(k, n)
+    s.dayNo = dayNoFor.get(k) ?? i + 1
+    s.legOfDay = n
+    s.legsThatDay = legsPerDay.get(k) ?? 1
+    const prev = stops[i - 1]
+    s.legKm = prev ? haversineKm(prev, s) : null
+  })
 
   const countries = Array.from(new Set(stops.map(s => s.country).filter(Boolean) as string[]))
   const totalKm = stops.reduce((sum, s) => sum + (s.legKm ?? 0), 0)
@@ -524,6 +907,7 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
     degraded: degraded || stops.length === 0,
     basis: 'agenda',
     dayCount: days.length,
+    flights,
   }
 }
 

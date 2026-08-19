@@ -26,7 +26,7 @@ import {
   Loader2, Play, Pause, RotateCcw, Maximize2, Minimize2, Layers,
   X, Sparkles, Clock, Lightbulb, MapPin, Route, Navigation,
   ImageOff, ChevronLeft, ChevronRight, RefreshCw, Compass, SlidersHorizontal, Hand,
-  CalendarDays, ArrowRight, BedDouble, Utensils,
+  CalendarDays, ArrowRight, BedDouble, Utensils, Plane, PlaneTakeoff, PlaneLanding,
 } from 'lucide-react'
 import { cn, formatDate, readApiResponse } from '@/lib/utils'
 import 'leaflet/dist/leaflet.css'
@@ -49,6 +49,35 @@ interface Transport {
   emoji: string
   hex: string
 }
+
+/**
+ * A booked sector, resolved to two real airports (see src/lib/agenda-journey.ts).
+ * `internal` is the one the movement chart cannot express — an airport-to-airport
+ * hop between two destinations on the same file.
+ */
+interface FlightInfo {
+  id: string
+  flightNo: string
+  airline: string | null
+  date: string
+  fromApt: string
+  toApt: string
+  fromName: string | null
+  toName: string | null
+  fromCity: string | null
+  toCity: string | null
+  fromLat: number | null
+  fromLng: number | null
+  toLat: number | null
+  toLng: number | null
+  depTime: string | null
+  arrTime: string | null
+  sector: 'inbound' | 'internal' | 'outbound'
+  km: number | null
+  durationMin: number | null
+}
+
+type FlightRole = 'sector' | 'to-airport' | 'from-airport'
 
 interface StopHotel {
   name: string
@@ -87,6 +116,10 @@ interface JourneyStop {
   legOfDay?: number
   legsThatDay?: number
   hotel?: StopHotel | null
+  flight?: FlightInfo | null
+  flightRole?: FlightRole | null
+  /** Woven in from the flight list; never a row on the movement chart. */
+  synthetic?: boolean
 }
 
 interface JourneyHotel {
@@ -104,6 +137,7 @@ interface Journey {
   /** Which source built the route. Absent on the older itinerary payload. */
   basis?: 'agenda' | 'itinerary'
   dayCount?: number
+  flights?: FlightInfo[]
 }
 
 interface ActivityBrief {
@@ -304,7 +338,7 @@ type LatLng = [number, number]
  * halves of a loop itinerary, which is exactly the shape an operator is
  * scanning for.
  */
-function arc(a: LatLng, b: LatLng, segments = 28): LatLng[] {
+function arc(a: LatLng, b: LatLng, segments = 28, lift = 1): LatLng[] {
   const [y1, x1] = a
   const [y2, x2] = b
   const dx = x2 - x1
@@ -314,7 +348,9 @@ function arc(a: LatLng, b: LatLng, segments = 28): LatLng[] {
 
   // Bow height scales with leg length but is capped, so a 1 000 km hop and a
   // 20 km transfer both stay readable rather than one ballooning off-screen.
-  const bow = Math.min(dist * 0.18, 1.6)
+  // `lift` is how much further a leg arches: a flight is drawn well clear of
+  // the road network so it reads as air rather than as a very long drive.
+  const bow = Math.min(dist * 0.18 * lift, 1.6 * lift)
   const mx = (x1 + x2) / 2 - (dy / dist) * bow
   const my = (y1 + y2) / 2 + (dx / dist) * bow
 
@@ -331,6 +367,20 @@ function arc(a: LatLng, b: LatLng, segments = 28): LatLng[] {
 }
 
 /** Cumulative length of a polyline in degrees, used to walk it evenly. */
+/**
+ * Compass bearing a → b in degrees, for pointing a vehicle down its own leg.
+ * Screen-space rather than great-circle: the map is what the reader sees, and
+ * over a single sector the two differ by less than the glyph's own width.
+ */
+function bearingDeg(a: LatLng, b: LatLng): number {
+  return (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI
+}
+
+/** The leg into `stops[i + 1]` is the sector itself, not a road transfer. */
+function isSectorLeg(stops: JourneyStop[], i: number): boolean {
+  return stops[i + 1]?.flightRole === 'sector'
+}
+
 function walk(points: LatLng[], t: number): LatLng {
   if (points.length === 0) return [0, 0]
   if (t <= 0) return points[0]
@@ -405,6 +455,50 @@ const MAP_CSS = `
 .jm-hotel-name{font-size:10px;font-weight:700;color:#7c2d12;background:rgba(255,255,255,.92);border-radius:6px;padding:2px 6px;
   box-shadow:0 1px 4px rgba(15,23,42,.18);letter-spacing:.1px}
 
+/* ── Internal flight sectors ─────────────────────────────────────────────
+   The one leg on the chart that nobody drives. Drawn over the road route
+   rather than instead of it: a wide halo wide enough to bury the blue spine
+   underneath, a violet corridor whose dashes stream towards the destination,
+   and a thin white spark running the same line at a different rate so the
+   corridor shimmers instead of marching. */
+.jm-air-halo{stroke-linecap:round;stroke-linejoin:round}
+.jm-air{stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:15 11;animation:jm-air-stream 1.5s linear infinite;filter:drop-shadow(0 0 7px rgba(124,58,237,.55))}
+@keyframes jm-air-stream{to{stroke-dashoffset:-26}}
+.jm-air-spark{stroke-dasharray:1 24;stroke-linecap:round;animation:jm-air-spark 1.15s linear infinite}
+@keyframes jm-air-spark{to{stroke-dashoffset:-50}}
+/* The contrail the plane pulls behind it, fading back along the corridor. */
+.jm-contrail{stroke-linecap:round;filter:drop-shadow(0 0 7px rgba(196,181,253,.95))}
+
+.jm-plane{background:none!important;border:none!important}
+.jm-plane-inner{position:relative;width:46px;height:46px;display:flex;align-items:center;justify-content:center}
+.jm-plane-glow{position:absolute;width:40px;height:40px;border-radius:50%;background:radial-gradient(circle,rgba(167,139,250,.62),transparent 70%);animation:jm-glow 1.6s ease-in-out infinite}
+/* Rotated by the script to the leg's own bearing. The emoji is drawn pointing
+   up-right, so the transform carries a -45° correction. */
+.jm-plane-emoji{position:relative;font-size:25px;line-height:1;filter:drop-shadow(0 3px 6px rgba(76,29,149,.55));transform-origin:50% 50%}
+/* Sits outside the rotation, so the flight number stays readable on a
+   southbound sector instead of printing upside-down. */
+.jm-plane-tag{position:absolute;top:32px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:9px;font-weight:800;letter-spacing:.3px;
+  color:#5b21b6;background:rgba(255,255,255,.95);border-radius:9999px;padding:1px 6px;box-shadow:0 1px 5px rgba(76,29,149,.3)}
+
+/* The sector's own pin keeps a slow ring running even when nothing is
+   selected — one inter-flight among twenty road transfers has to be findable
+   without hunting for it. */
+.jm-pin-air .jm-pin-ring{animation:jm-pulse 2.6s cubic-bezier(0,.55,.45,1) infinite}
+.jm-air-code{position:absolute;top:31px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:8.5px;font-weight:900;letter-spacing:.5px;
+  color:#fff;background:linear-gradient(135deg,#6d28d9,#4f46e5);border-radius:9999px;padding:1.5px 6px;
+  box-shadow:0 2px 6px rgba(76,29,149,.42),0 0 0 1.5px rgba(255,255,255,.88)}
+
+/* The sector's card in the day strip is a boarding pass, and the little plane
+   on it taxis the dotted line between the two airport codes. */
+.jm-pass-track{position:relative;display:flex;align-items:center;height:12px}
+.jm-pass-plane{position:absolute;left:0;animation:jm-pass-fly 2.8s ease-in-out infinite}
+@keyframes jm-pass-fly{
+  0%{left:0;opacity:0}
+  14%{opacity:1}
+  86%{opacity:1}
+  100%{left:calc(100% - 9px);opacity:0}
+}
+
 /* One scrollbar treatment for every scrolling surface in the panel — the day
    strip, the mobile legend row and the drawer body. The platform default is a
    14px opaque gutter, which on a floating glass card reads as a seam. */
@@ -421,6 +515,7 @@ const MAP_CSS = `
   .jm-route{animation:none}
   .jm-pin-active .jm-pin-ring{animation:none}
   .jm-ride-emoji,.jm-ride-glow{animation:none}
+  .jm-air,.jm-air-spark,.jm-pin-air .jm-pin-ring,.jm-plane-glow,.jm-pass-plane{animation:none}
 }
 `
 
@@ -429,6 +524,15 @@ function riderHtml(vehicle: string, idle: boolean) {
   return `<div class="jm-ride${idle ? ' jm-ride-idle' : ''}">` +
     `<span class="jm-ride-glow"></span>` +
     `<span class="jm-ride-emoji">${vehicle}</span>` +
+    `</div>`
+}
+
+/** Marker HTML for the plane that flies an internal sector. */
+function planeHtml(flightNo: string) {
+  return `<div class="jm-plane-inner">` +
+    `<span class="jm-plane-glow"></span>` +
+    `<span class="jm-plane-emoji">\u2708\uFE0F</span>` +
+    (flightNo ? `<span class="jm-plane-tag">${escapeHtml(flightNo)}</span>` : '') +
     `</div>`
 }
 
@@ -559,6 +663,8 @@ export default function JourneyMap({
   const trailRef = useRef<LeafletPolyline | null>(null)
   const idleRiderRef = useRef<LeafletMarker | null>(null)
   const idleRafRef = useRef<number | null>(null)
+  /** Frame handle for the looping sector planes — cancelled on unmount. */
+  const planeRafRef = useRef<number | null>(null)
   const pinsRef = useRef<Map<string, LeafletMarker>>(new Map())
   const hotelPinsRef = useRef<LeafletMarker[]>([])
   const travellerRef = useRef<LeafletMarker | null>(null)
@@ -600,16 +706,39 @@ export default function JourneyMap({
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1])
   }, [stops])
 
-  /** Per-leg arcs plus the flattened path the traveller walks. */
+  /**
+   * Per-leg arcs, the flattened path the traveller walks, and — separately —
+   * the sector legs.
+   *
+   * The sectors are pulled out because they are drawn as an air corridor over
+   * the top of the road route and flown by their own plane. They stay in the
+   * flattened path too: the fly-through has to cross them like any other leg,
+   * it just crosses them in a plane.
+   */
   const geometry = useMemo(() => {
     const legs: LatLng[][] = []
     for (let i = 0; i < stops.length - 1; i++) {
-      legs.push(arc([stops[i].lat, stops[i].lng], [stops[i + 1].lat, stops[i + 1].lng]))
+      const air = isSectorLeg(stops, i)
+      legs.push(arc(
+        [stops[i].lat, stops[i].lng],
+        [stops[i + 1].lat, stops[i + 1].lng],
+        air ? 44 : 28,
+        air ? 1.9 : 1,
+      ))
     }
     const flat: LatLng[] = []
     legs.forEach((leg, i) => flat.push(...(i === 0 ? leg : leg.slice(1))))
-    return { legs, flat }
+    const sectors = legs
+      .map((path, i) => ({ path, stop: stops[i + 1] }))
+      .filter(x => x.stop?.flightRole === 'sector' && x.stop.flight)
+    return { legs, flat, sectors }
   }, [stops])
+
+  /** Internal sectors on this file — what the header counts. */
+  const interFlights = useMemo(
+    () => (journey?.flights ?? []).filter(f => f.sector === 'internal'),
+    [journey?.flights],
+  )
 
   // ── Data ───────────────────────────────────────────────────────────────
 
@@ -673,6 +802,7 @@ export default function JourneyMap({
   useEffect(() => () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
     if (idleRafRef.current) cancelAnimationFrame(idleRafRef.current)
+    if (planeRafRef.current) cancelAnimationFrame(planeRafRef.current)
     mapRef.current?.remove()
     mapRef.current = null
   }, [])
@@ -759,23 +889,37 @@ export default function JourneyMap({
 
     stops.forEach((s, i) => {
       const k = KIND[s.kind] ?? KIND.tour
+      const sector = s.flightRole === 'sector' ? s.flight : null
       const icon = L.divIcon({
         className: 'jm-pin',
         html:
-          `<div class="jm-pin-inner">` +
+          `<div class="jm-pin-inner${sector ? ' jm-pin-air' : ''}">` +
           `<span class="jm-pin-ring" style="box-shadow:0 0 0 8px rgba(${k.glow},.45)"></span>` +
           `<span class="jm-pin-dot" style="background:linear-gradient(145deg,${k.hex},${shade(k.hex, -18)})">${glyphSvg(s.kind)}</span>` +
           `<span class="jm-pin-day">D${s.dayNo}</span>` +
+          // The sector pin wears its own route: on a map of twenty transfers,
+          // "SGN → DAD" is the thing an operator is scanning for.
+          (sector ? `<span class="jm-air-code">${escapeHtml(sector.fromApt)}\u2192${escapeHtml(sector.toApt)}</span>` : '') +
           `</div>`,
         iconSize: [38, 38], iconAnchor: [19, 19],
       })
-      const m = L.marker([s.lat, s.lng], { icon, zIndexOffset: i, riseOnHover: true })
+      const m = L.marker([s.lat, s.lng], { icon, zIndexOffset: sector ? 700 + i : i, riseOnHover: true })
         .addTo(map)
         .bindTooltip(
-          `<strong>Day ${s.dayNo} · ${escapeHtml(s.place)}</strong>` +
-          `<br/>${escapeHtml(truncate(s.title, 70))}` +
-          (s.transport ? `<br/><em>${s.transport.emoji} ${escapeHtml(s.transport.label)}</em>` : '') +
-          (s.hotel ? `<br/>\uD83C\uDFE8 ${escapeHtml(truncate(s.hotel.name, 40))}` : ''),
+          sector
+            ? `<strong>\u2708\uFE0F ${escapeHtml(sector.flightNo)} \u00b7 ${escapeHtml(sector.fromApt)} \u2192 ${escapeHtml(sector.toApt)}</strong>` +
+              (sector.airline ? `<br/>${escapeHtml(sector.airline)}` : '') +
+              `<br/>${escapeHtml(sector.depTime ?? '--:--')} \u2013 ${escapeHtml(sector.arrTime ?? '--:--')}` +
+              (sector.km ? ` \u00b7 ${sector.km.toLocaleString()} km` : '') +
+              `<br/><em>Day ${s.dayNo} \u00b7 flight sector \u2014 not a movement chart row</em>`
+            : `<strong>Day ${s.dayNo} \u00b7 ${escapeHtml(s.place)}</strong>` +
+              `<br/>${escapeHtml(truncate(s.title, 70))}` +
+              (s.transport ? `<br/><em>${s.transport.emoji} ${escapeHtml(s.transport.label)}</em>` : '') +
+              (s.flight && s.flightRole !== 'sector'
+                ? `<br/>\u2708\uFE0F ${escapeHtml(s.flight.flightNo)} ${escapeHtml(s.flight.fromApt)}\u2192${escapeHtml(s.flight.toApt)}` +
+                  (s.flight.depTime ? ` ${escapeHtml(s.flight.depTime)}` : '')
+                : '') +
+              (s.hotel ? `<br/>\uD83C\uDFE8 ${escapeHtml(truncate(s.hotel.name, 40))}` : ''),
           { direction: 'top', offset: [0, -20], opacity: 0.96 },
         )
       m.on('click', () => setSelectedId(s.id))
@@ -791,6 +935,118 @@ export default function JourneyMap({
       hotelPins.forEach(x => x.remove())
     }
   }, [stops, geometry, journey?.hotels, basemap, mapReady, agenda])
+
+  // ── Internal flight sectors ────────────────────────────────────────────
+
+  /**
+   * The air corridor.
+   *
+   * A sector between two destinations on the same file — Ho Chi Minh to Da Nang
+   * — has no movement chart row, so before this the route either jumped the gap
+   * or drew a 600 km road leg nobody drives. It is now its own arc, drawn *over*
+   * the road route rather than instead of it: a halo wide enough to bury the
+   * blue spine underneath, a violet corridor whose dashes stream towards the
+   * destination, and a thin white spark running the same line at a different
+   * rate so it shimmers rather than marches.
+   *
+   * Stays drawn during the fly-through — the leg does not stop being a flight
+   * because someone pressed play.
+   */
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map || geometry.sectors.length === 0) return
+
+    const dark = BASEMAPS.find(b => b.id === basemap)?.dark
+    const lines = geometry.sectors.flatMap(({ path }) => [
+      L.polyline(path, {
+        className: 'jm-air-halo',
+        color: dark ? '#312e81' : '#ede9fe',
+        weight: 12, opacity: dark ? 0.85 : 0.95,
+      }).addTo(map),
+      L.polyline(path, { className: 'jm-air', color: '#7c3aed', weight: 3.8, opacity: 0.96 }).addTo(map),
+      L.polyline(path, { className: 'jm-air-spark', color: '#ffffff', weight: 2.1, opacity: 0.9 }).addTo(map),
+    ])
+
+    return () => lines.forEach(l => l.remove())
+  }, [geometry, basemap, mapReady])
+
+  /**
+   * The plane that flies the corridor, on a loop, trailing a contrail.
+   *
+   * Same job as the idle rider on the road route: a static violet line does not
+   * say which end is Ho Chi Minh. Suspended during the fly-through, where the
+   * traveller already crosses this leg in a plane of its own — two planes on
+   * one arc reads as two flights.
+   */
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map || playing || geometry.sectors.length === 0) return
+
+    const planes = geometry.sectors.map(({ path, stop }) => ({
+      path,
+      contrail: L.polyline([], { className: 'jm-contrail', color: '#c4b5fd', weight: 5, opacity: 0.9 }).addTo(map),
+      marker: L.marker(path[0], {
+        icon: L.divIcon({
+          className: 'jm-plane',
+          html: planeHtml(stop.flight?.flightNo ?? ''),
+          iconSize: [46, 46], iconAnchor: [23, 23],
+        }),
+        zIndexOffset: 1500,
+        interactive: false,
+      }).addTo(map),
+    }))
+
+    const teardown = () => planes.forEach(p => { p.marker.remove(); p.contrail.remove() })
+
+    // The corridor above is pure CSS and still reads with motion turned off —
+    // the plane just parks mid-route instead of flying laps.
+    if (typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      planes.forEach(p => p.marker.setLatLng(walk(p.path, 0.5)))
+      return teardown
+    }
+
+    const CRUISE_MS = 5200
+    const REST_MS = 1000
+    const start = performance.now()
+
+    const tick = (now: number) => {
+      const cycle = (now - start) % (CRUISE_MS + REST_MS)
+      const landed = cycle > CRUISE_MS
+      const t = Math.min(cycle / CRUISE_MS, 1)
+
+      planes.forEach(p => {
+        p.marker.setLatLng(walk(p.path, t))
+        const el = p.marker.getElement() as HTMLElement | null
+        if (el) {
+          // Rest at the gate rather than snapping back to the runway.
+          el.style.transition = 'opacity .45s ease'
+          el.style.opacity = landed ? '0' : '1'
+          const glyph = el.querySelector<HTMLElement>('.jm-plane-emoji')
+          if (glyph) {
+            // Sampled either side of the plane, so the nose still points down
+            // the arc at both ends — where one side has nothing beyond it.
+            const bearing = bearingDeg(
+              walk(p.path, Math.max(t - 0.015, 0)),
+              walk(p.path, Math.min(t + 0.015, 1)),
+            )
+            // The emoji is drawn pointing up-right, hence the 45° correction.
+            glyph.style.transform = `rotate(${bearing - 45}deg)`
+          }
+        }
+        p.contrail.setLatLngs(landed ? [] : trailSlice(p.path, t, 0.34))
+      })
+
+      planeRafRef.current = requestAnimationFrame(tick)
+    }
+    planeRafRef.current = requestAnimationFrame(tick)
+
+    return () => {
+      if (planeRafRef.current) cancelAnimationFrame(planeRafRef.current)
+      planeRafRef.current = null
+      teardown()
+    }
+  }, [geometry, mapReady, playing])
 
   // ── Selection / hover / filter styling ─────────────────────────────────
 
@@ -1176,6 +1432,18 @@ export default function JourneyMap({
                   <span className="w-2 h-2 rounded-[3px] bg-orange-500" />{journey.hotels.length} stays
                 </span>
               )}
+              {/* The sectors flown between destinations on this same file. The
+                  chart never books them, so without this the map's own leg
+                  count would quietly disagree with the route it is drawing. */}
+              {interFlights.length > 0 && (
+                <span
+                  className="inline-flex items-center gap-1 font-semibold text-violet-500"
+                  title={interFlights.map(f => `${f.flightNo} ${f.fromApt}→${f.toApt}`).join(' · ')}
+                >
+                  <Plane className="w-3 h-3" />
+                  {interFlights.length} inter-flight{interFlights.length === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
 
             {/* How the guests actually travel across the whole file, counted.
@@ -1340,6 +1608,11 @@ export default function JourneyMap({
               {stops.map(s => {
                 const k = KIND[s.kind] ?? KIND.tour
                 const on = s.id === selectedId
+                // A woven sector reads as a boarding pass rather than as a
+                // movement: it has no pickup point, no vehicle and no driver —
+                // it has a flight number and two airport codes.
+                const sector = s.flightRole === 'sector' ? s.flight : null
+                const feeder = s.flightRole && s.flightRole !== 'sector' ? s.flight : null
                 return (
                   <button
                     key={s.id}
@@ -1354,6 +1627,7 @@ export default function JourneyMap({
                       // chip and the stay, so it needs the extra width.
                       agenda ? 'w-[184px] sm:w-[176px]' : 'w-[132px] sm:w-[124px]',
                       skin.glassSolid,
+                      sector && 'ring-violet-400/60',
                       on && 'ring-2 !ring-brand-500 -translate-y-0.5 shadow-lg',
                     )}
                   >
@@ -1377,7 +1651,32 @@ export default function JourneyMap({
                       )}
                     </div>
 
-                    {agenda && s.fromPlace && s.toPlace && s.fromPlace !== s.toPlace ? (
+                    {sector ? (
+                      <div className="mt-1 rounded-lg px-1.5 py-1 bg-gradient-to-r from-violet-500/15 to-indigo-500/15 ring-1 ring-violet-500/30">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[9.5px] font-black tracking-wide text-violet-500">
+                            {sector.flightNo}
+                          </span>
+                          {sector.airline && (
+                            <span className={cn('text-[8.5px] truncate max-w-[74px]', skin.muted)}>{sector.airline}</span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <div>
+                            <p className={cn('text-[11px] font-black leading-none', skin.title)}>{sector.fromApt}</p>
+                            <p className={cn('text-[8.5px] tabular-nums leading-tight', skin.muted)}>{sector.depTime ?? '--:--'}</p>
+                          </div>
+                          <div className="jm-pass-track flex-1">
+                            <span className="block w-full border-t border-dashed border-violet-400/70" />
+                            <Plane className="jm-pass-plane w-2.5 h-2.5 text-violet-500 rotate-90" />
+                          </div>
+                          <div className="text-right">
+                            <p className={cn('text-[11px] font-black leading-none', skin.title)}>{sector.toApt}</p>
+                            <p className={cn('text-[8.5px] tabular-nums leading-tight', skin.muted)}>{sector.arrTime ?? '--:--'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ) : agenda && s.fromPlace && s.toPlace && s.fromPlace !== s.toPlace ? (
                       <div className="mt-1 flex items-start gap-1">
                         <span className={cn('min-w-0 flex-1 text-[10.5px] font-semibold leading-tight line-clamp-2', skin.body)}>
                           {s.fromPlace}
@@ -1391,7 +1690,15 @@ export default function JourneyMap({
                       <p className={cn('mt-1 text-[11px] font-semibold leading-tight line-clamp-2', skin.strong)}>{s.place}</p>
                     )}
 
-                    {agenda && s.transport && (
+                    {sector ? (
+                      <p className="mt-1 flex items-center gap-1 text-[9px] font-semibold text-violet-500">
+                        <PlaneTakeoff className="w-2.5 h-2.5 flex-shrink-0" />
+                        <span className="truncate">
+                          Flight sector
+                          {sector.km ? ` · ${sector.km.toLocaleString()} km` : ''}
+                        </span>
+                      </p>
+                    ) : agenda && s.transport && (
                       <div className="mt-1 flex items-center gap-1">
                         <span
                           className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9px] font-bold leading-none"
@@ -1402,6 +1709,17 @@ export default function JourneyMap({
                         </span>
                         {s.moveKm != null && s.moveKm > 0 && (
                           <span className={cn('text-[9px] tabular-nums', skin.muted)}>{s.moveKm.toLocaleString()} km</span>
+                        )}
+                        {feeder && (
+                          <span
+                            title={`${s.flightRole === 'to-airport' ? 'Connects to' : 'Meets'} ${feeder.flightNo} · ${feeder.fromApt} → ${feeder.toApt}`}
+                            className="ml-auto inline-flex items-center gap-0.5 rounded-full bg-violet-500/15 px-1 py-[1px] text-[8.5px] font-bold text-violet-500"
+                          >
+                            {s.flightRole === 'to-airport'
+                              ? <PlaneTakeoff className="w-2.5 h-2.5" />
+                              : <PlaneLanding className="w-2.5 h-2.5" />}
+                            {feeder.flightNo}
+                          </span>
                         )}
                       </div>
                     )}
@@ -1625,7 +1943,71 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
             A from → to pair, what carries the guests, and where they sleep are
             the three things the chart is actually for — they belong above the
             researched write-up, not under it. */}
-        {stop.transport && (
+        {/* The booked sector, as its ticket reads.
+            On a woven sector row this *is* the movement — there is no vehicle,
+            no pickup point and no driver to show, so the block below is
+            suppressed. On the transfers either side it sits above the movement
+            and answers the question that transfer exists to serve: which
+            flight, and what time does it go. */}
+        {stop.flight && (
+          <div className="rounded-xl ring-1 ring-violet-500/30 overflow-hidden bg-gradient-to-br from-violet-500/12 to-indigo-500/12">
+            <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-black tracking-wide text-violet-500">
+                <Plane className="w-3.5 h-3.5" />
+                {stop.flight.flightNo}
+                {stop.flight.airline && (
+                  <span className={cn('font-medium tracking-normal', skin.sheetMuted)}>{stop.flight.airline}</span>
+                )}
+              </span>
+              <span className={cn('text-[9.5px] font-bold uppercase tracking-wider', skin.sheetMuted)}>
+                {stop.flight.sector === 'internal' ? 'Inter-flight'
+                  : stop.flight.sector === 'inbound' ? 'Arrival flight' : 'Departure flight'}
+              </span>
+            </div>
+
+            <div className="flex items-end gap-2 px-3 pb-2.5">
+              <div className="min-w-0">
+                <p className={cn('text-[19px] font-black leading-none tracking-tight', skin.sheetTitle)}>{stop.flight.fromApt}</p>
+                <p className={cn('text-[11px] font-bold tabular-nums mt-0.5', skin.sheetBody)}>{stop.flight.depTime ?? '--:--'}</p>
+                <p className={cn('text-[9.5px] truncate max-w-[110px]', skin.sheetMuted)}>{stop.flight.fromCity ?? stop.flight.fromName ?? ''}</p>
+              </div>
+              <div className="jm-pass-track flex-1 mb-4">
+                <span className="block w-full border-t border-dashed border-violet-400/70" />
+                <Plane className="jm-pass-plane w-3 h-3 text-violet-500 rotate-90" />
+              </div>
+              <div className="min-w-0 text-right">
+                <p className={cn('text-[19px] font-black leading-none tracking-tight', skin.sheetTitle)}>{stop.flight.toApt}</p>
+                <p className={cn('text-[11px] font-bold tabular-nums mt-0.5', skin.sheetBody)}>{stop.flight.arrTime ?? '--:--'}</p>
+                <p className={cn('text-[9.5px] truncate max-w-[110px] ml-auto', skin.sheetMuted)}>{stop.flight.toCity ?? stop.flight.toName ?? ''}</p>
+              </div>
+            </div>
+
+            <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-t border-violet-500/20 text-[10px]', skin.sheetMuted)}>
+              <span className="inline-flex items-center gap-1"><CalendarDays className="w-3 h-3" />{formatDate(stop.flight.date)}</span>
+              {stop.flight.durationMin != null && (
+                <span className="inline-flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {Math.floor(stop.flight.durationMin / 60)}h {String(stop.flight.durationMin % 60).padStart(2, '0')}m
+                </span>
+              )}
+              {stop.flight.km != null && (
+                <span className="inline-flex items-center gap-1"><Navigation className="w-3 h-3" />{stop.flight.km.toLocaleString()} km</span>
+              )}
+            </div>
+
+            <p className={cn('px-3 pb-2.5 text-[10px] leading-snug', skin.sheetMuted)}>
+              {stop.flightRole === 'sector'
+                ? (guest
+                    ? 'You fly this leg — there is no road transfer between these two cities.'
+                    : 'Drawn from the booking\u2019s flight list. The movement chart has no row for a sector, so this leg is map-only \u2014 the agenda is unchanged.')
+                : stop.flightRole === 'to-airport'
+                  ? (guest ? 'This transfer takes you to the airport for this flight.' : 'This movement feeds the sector above.')
+                  : (guest ? 'This transfer meets you after this flight.' : 'This movement collects from the sector above.')}
+            </p>
+          </div>
+        )}
+
+        {stop.transport && stop.flightRole !== 'sector' && (
           <div className={cn('rounded-xl ring-1 p-3', skin.glassSolid)}>
             <div className="flex items-center justify-between gap-2 mb-2">
               <span
@@ -1685,9 +2067,11 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
 
         <div>
           <p className={cn('text-[10px] uppercase tracking-wider font-bold mb-1', skin.sheetMuted)}>
-            {stop.transport
-              ? (guest ? 'What happens' : 'On the movement chart')
-              : (guest ? 'On your plan' : 'On the itinerary')}
+            {stop.flightRole === 'sector'
+              ? (guest ? 'Your flight' : 'Flight sector')
+              : stop.transport
+                ? (guest ? 'What happens' : 'On the movement chart')
+                : (guest ? 'On your plan' : 'On the itinerary')}
           </p>
           <p className={cn('text-[12.5px] font-medium leading-snug', skin.strong)}>
             {stop.description?.trim() || stop.title}
