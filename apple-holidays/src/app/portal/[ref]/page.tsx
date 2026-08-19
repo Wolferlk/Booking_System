@@ -15,6 +15,7 @@ import { formatDate, formatCurrency } from '@/lib/utils'
 import type { BookingStatus } from '@prisma/client'
 import { differenceInDays, format } from 'date-fns'
 import LogoSpinner from '@/components/shared/logo-spinner'
+import JourneyMap from '@/components/bookings/journey-map'
 
 interface PortalData {
   bookingRef: string
@@ -353,6 +354,27 @@ export default function ClientPortalPage() {
         {/* ── ITINERARY TAB ── */}
         {activeTab === 'itinerary' && (
           <section>
+            {/* The route first: where the trip goes, before the day-by-day
+                reading of what happens on it. This portal is signed-in, so the
+                map uses the session-gated endpoint rather than a link token. */}
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-2.5">
+                <MapPin className="w-4 h-4 text-brand-400" />
+                <h2 className="text-sm font-bold">Your Route</h2>
+              </div>
+              {/* Movement chart first — it carries the real from → to points,
+                  how each leg travels, and the hotel of the night. Falls back
+                  to the itinerary route on a file with no chart yet. */}
+              <JourneyMap
+                bookingRef={ref}
+                theme="dark"
+                source={data.agenda && data.agenda.items.length > 0 ? 'agenda' : 'itinerary'}
+              />
+              <p className="mt-2.5 text-[11px] text-slate-500 leading-relaxed">
+                Tap any pin for photos and what to expect · press ▶ to fly through your trip
+              </p>
+            </div>
+
             {!data.agenda || data.agenda.items.length === 0 ? (
               <div className="text-center py-16">
                 <MapPin className="w-10 h-10 text-slate-700 mx-auto mb-3" />

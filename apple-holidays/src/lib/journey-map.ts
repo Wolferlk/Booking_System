@@ -73,10 +73,10 @@ export interface Journey {
  * appears on every Vietnam file), so this stays warm and most lookups after the
  * first few bookings never hit the network at all.
  */
-const geoCache = new Map<string, { lat: number; lng: number } | null>()
+export const geoCache = new Map<string, { lat: number; lng: number } | null>()
 
 /** Nominatim forward geocode. Returns null on any failure — never throws. */
-async function nominatim(query: string, countryHint?: string | null): Promise<{ lat: number; lng: number } | null> {
+export async function nominatim(query: string, countryHint?: string | null): Promise<{ lat: number; lng: number } | null> {
   const key = `${query}|${countryHint ?? ''}`.toLowerCase()
   if (geoCache.has(key)) return geoCache.get(key)!
 
@@ -101,7 +101,7 @@ async function nominatim(query: string, countryHint?: string | null): Promise<{ 
 }
 
 /** Great-circle distance in km, rounded to the nearest km. */
-function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+export function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 6371
   const toRad = (d: number) => (d * Math.PI) / 180
   const dLat = toRad(b.lat - a.lat)

@@ -1,14 +1,13 @@
 /**
- * POST /api/bookings/:ref/journey-map/activity
+ * POST /api/public/journey-map/:ref/activity?t=…
  *
- * The detail card behind a pin on the operations Journey Map. Read only —
- * nothing here touches booking data; see `src/lib/journey-activity.ts` for the
- * research and its cache.
+ * The traveller-facing pin detail. Same research as the operations route, but
+ * written for the guest rather than the file handler, and gated by the signed
+ * portal-link token instead of a session.
  */
 import { NextRequest } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
+import { verifyPortalLinkToken } from '@/lib/portal-link'
 import { buildActivityBrief } from '@/lib/journey-activity'
 
 export const dynamic = 'force-dynamic'
@@ -18,8 +17,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { ref: string } },
 ) {
-  const session = await getServerSession(authOptions)
-  if (!session) return buildApiError('Unauthorized', 401)
+  const token = req.nextUrl.searchParams.get('t') ?? ''
+  if (!verifyPortalLinkToken(params.ref, token)) {
+    return buildApiError('This link is invalid or has expired.', 403)
+  }
 
   const body = await req.json().catch(() => ({})) as {
     place?: string; title?: string; city?: string; country?: string
@@ -32,7 +33,7 @@ export async function POST(
     title: body.title,
     city: body.city,
     country: body.country,
-    audience: 'staff',
+    audience: 'guest',
     bookingRef: params.ref,
   })
   return buildApiSuccess(data)
