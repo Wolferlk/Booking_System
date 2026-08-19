@@ -346,6 +346,14 @@ function walk(points: LatLng[], t: number): LatLng {
 // ─── Injected map CSS ────────────────────────────────────────────────────
 
 const MAP_CSS = `
+/* Leaflet gives its panes z-index 400-700 and this panel's own overlays sit at
+   500-600. A plain position:relative does not open a stacking context, so all
+   of that used to compete directly with the app chrome — the sticky page header
+   (z-20) and the fixed sidebar (z-40) — and the map painted straight over both.
+   Isolating the wrapper keeps every one of those z-indices private to the panel;
+   fullscreen still rises above the chrome, but on the wrapper's own z-index. */
+.jm-wrap{isolation:isolate}
+
 .jm-wrap .leaflet-container{background:transparent;font-family:inherit}
 .jm-wrap .leaflet-control-attribution{font-size:9px;background:rgba(255,255,255,.72);backdrop-filter:blur(4px);border-radius:6px 0 0 0;padding:1px 6px}
 .jm-wrap .leaflet-control-zoom{border:none!important;box-shadow:0 4px 16px rgba(15,23,42,.16)!important;border-radius:12px;overflow:hidden}
@@ -397,10 +405,17 @@ const MAP_CSS = `
 .jm-hotel-name{font-size:10px;font-weight:700;color:#7c2d12;background:rgba(255,255,255,.92);border-radius:6px;padding:2px 6px;
   box-shadow:0 1px 4px rgba(15,23,42,.18);letter-spacing:.1px}
 
-.jm-strip{scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.5) transparent}
-.jm-strip::-webkit-scrollbar{height:6px}
-.jm-strip::-webkit-scrollbar-thumb{background:rgba(148,163,184,.5);border-radius:9999px}
-.jm-strip::-webkit-scrollbar-track{background:transparent}
+/* One scrollbar treatment for every scrolling surface in the panel — the day
+   strip, the mobile legend row and the drawer body. The platform default is a
+   14px opaque gutter, which on a floating glass card reads as a seam. */
+.jm-strip,.jm-scroll{scrollbar-width:thin;scrollbar-color:rgba(148,163,184,.45) transparent}
+.jm-strip::-webkit-scrollbar,.jm-scroll::-webkit-scrollbar{width:6px;height:6px}
+.jm-strip::-webkit-scrollbar-thumb,.jm-scroll::-webkit-scrollbar-thumb{background:rgba(148,163,184,.45);border-radius:9999px}
+.jm-strip::-webkit-scrollbar-thumb:hover,.jm-scroll::-webkit-scrollbar-thumb:hover{background:rgba(100,116,139,.7)}
+.jm-strip::-webkit-scrollbar-track,.jm-scroll::-webkit-scrollbar-track{background:transparent}
+/* The drawer scrolls under its own hero image, so the bar must not start at
+   the very top edge and cut across the photo's rounded corner. */
+.jm-scroll{scrollbar-gutter:stable}
 
 @media (prefers-reduced-motion:reduce){
   .jm-route{animation:none}
@@ -522,7 +537,7 @@ export default function JourneyMap({
   // Read inside `flyTo`, which must stay referentially stable for the playback
   // effect — refs let it see current state without re-triggering the animation.
   const cardOpenRef = useRef(false)
-  /** True only when the card is the right-hand drawer, not the bottom sheet. */
+  /** True when the card is the right-hand drawer, not the bottom sheet. */
   const sideCardRef = useRef(false)
   const mapRef = useRef<LeafletMap | null>(null)
   // The Leaflet module handle, populated by the dynamic import in the mount
@@ -542,10 +557,17 @@ export default function JourneyMap({
 
   const stops = useMemo(() => journey?.stops ?? [], [journey])
   useEffect(() => { cardOpenRef.current = selectedId != null }, [selectedId])
-  useEffect(() => { sideCardRef.current = fullscreen && !isMobile }, [fullscreen, isMobile])
+  useEffect(() => { sideCardRef.current = !isMobile }, [isMobile])
   // Touch devices start locked; fullscreen is an explicit request to explore.
   useEffect(() => { setInteractive(!isMobile || fullscreen) }, [isMobile, fullscreen])
   const selected = useMemo(() => stops.find(s => s.id === selectedId) ?? null, [stops, selectedId])
+  /**
+   * The right half is spoken for. Every piece of map chrome pulls back into the
+   * left half while it is, so nothing an operator needs is hiding behind the
+   * card — the panel reads as two columns, map and story, rather than as a
+   * card dropped on top of a map.
+   */
+  const sideOpen = !!selected && !isMobile
 
   /**
    * The transport mix of the whole chart — "6 private, 3 SIC, 1 flight".
@@ -791,7 +813,10 @@ export default function JourneyMap({
     let target = L.latLng(s.lat, s.lng)
     if (card) {
       const pt = map.project(target, z)
-      if (sideCardRef.current) pt.x += size.x * 0.16   // side drawer on the right
+      // The side drawer takes the right half, so the pin has to land in the
+      // middle of the left half — a quarter of the width off centre — or the
+      // very stop being described sits underneath the card describing it.
+      if (sideCardRef.current) pt.x += size.x * 0.25
       else pt.y += size.y * 0.22                        // bottom sheet
       target = map.unproject(pt, z)
     }
@@ -1083,6 +1108,10 @@ export default function JourneyMap({
           missing tiles for the length of the animation. The container snaps to
           its new size and the ResizeObserver above re-lays the tiles. */}
       <div
+        // `--jm-card` is how much of the panel the open side drawer owns. The
+        // drawer sets its own width from it and every piece of map chrome keeps
+        // clear of it, so the two can never disagree about where the seam is.
+        style={{ '--jm-card': sideOpen ? 'min(50%, 560px)' : '0px' } as React.CSSProperties}
         className={cn(
           'jm-wrap group relative overflow-hidden border shadow-card flex flex-col',
           dark ? 'border-white/10 bg-slate-950' : skin.shell,
@@ -1202,7 +1231,10 @@ export default function JourneyMap({
         </div>
 
         {/* ── Top-right: controls ── */}
-        <div className="absolute top-3 right-3 z-[500] flex items-center gap-1.5">
+        <div
+          className="absolute top-3 z-[500] flex items-center gap-1.5 transition-[right] duration-300"
+          style={{ right: 'calc(var(--jm-card) + 0.75rem)' }}
+        >
           {!fullscreen && (
             <button
               onClick={() => setInteractive(v => !v)}
@@ -1260,7 +1292,13 @@ export default function JourneyMap({
         </div>
 
         {/* ── Bottom: playback + day strip ── */}
-        <div className="absolute bottom-0 inset-x-0 z-[500] p-3 pt-10 bg-gradient-to-t from-slate-900/45 via-slate-900/10 to-transparent">
+        <div
+          className={cn(
+            'absolute bottom-0 left-0 z-[500] p-3 pt-10 transition-[right] duration-300',
+            'bg-gradient-to-t from-slate-900/45 via-slate-900/10 to-transparent',
+          )}
+          style={{ right: 'var(--jm-card)' }}
+        >
           <div className="flex items-end gap-2">
             <div className="flex flex-col gap-1.5">
               <button
@@ -1380,7 +1418,7 @@ export default function JourneyMap({
               key={selected.id}
               bookingRef={bookingRef}
               stop={selected}
-              variant={fullscreen && !isMobile ? 'side' : 'sheet'}
+              variant={isMobile ? 'sheet' : 'side'}
               skin={skin}
               guest={guest}
               portalToken={portalToken}
@@ -1484,11 +1522,17 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
       dragConstraints={{ top: 0, bottom: 0 }}
       dragElastic={{ top: 0, bottom: 0.5 }}
       onDragEnd={(_, info) => { if (info.offset.y > 90 || info.velocity.y > 550) onClose() }}
+      // The side drawer takes exactly the slice the map chrome vacated.
+      style={sheet ? undefined : { width: 'var(--jm-card)' }}
       className={cn(
         'absolute z-[600] backdrop-blur-xl shadow-2xl ring-1 flex flex-col', skin.sheet,
         sheet
           ? 'left-0 right-0 bottom-0 max-h-[62%] rounded-t-2xl overflow-hidden touch-pan-y'
-          : 'top-0 right-0 bottom-0 w-full sm:w-[380px]',
+          // Half the panel, and the map keeps the other half — the whole point
+          // of reading a stop is seeing where it is while you read it. Capped
+          // on very wide screens, where a true half would be a 900px-wide
+          // column of body text nobody can scan.
+          : 'top-0 right-0 bottom-0 rounded-l-2xl overflow-hidden',
       )}
     >
       {sheet && (
@@ -1564,7 +1608,7 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto px-4 py-3.5 space-y-4 overscroll-contain">
+      <div className="jm-scroll flex-1 overflow-y-auto px-4 py-3.5 space-y-4 overscroll-contain">
         {/* The movement itself, when this pin came from the movement chart.
             A from → to pair, what carries the guests, and where they sleep are
             the three things the chart is actually for — they belong above the
