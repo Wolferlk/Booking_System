@@ -285,11 +285,16 @@ export async function GET(req: NextRequest) {
       if (a.driverName?.trim()) seenDriver.add(a.driverName.trim().toLowerCase())
       if (a.guideName?.trim()) seenGuide.add(a.guideName.trim().toLowerCase())
 
+      // `hotel_only` is the allocation board saying this file carries no
+      // transport. It is a vehicle type in the column and a vehicle nowhere else,
+      // so it must never inflate "vehicles on the road".
+      const kind = vehicleKind(a.vehicleType)
+      if (kind === 'none') continue
+
       const key = (a.vehiclePlate?.trim() || a.driverName?.trim() || '').toLowerCase()
       if (!key) continue
       if (seenVehicle.has(key)) continue
       seenVehicle.add(key)
-      const kind = vehicleKind(a.vehicleType)
       fleetCount.set(kind, (fleetCount.get(kind) ?? 0) + 1)
     }
 

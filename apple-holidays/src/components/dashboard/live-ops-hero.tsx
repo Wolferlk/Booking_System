@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import VehicleArt from '@/components/dashboard/vehicle-art'
-import { VEHICLE_SEATS, type VehicleKind } from '@/lib/ops-geo'
+import { VEHICLE_LABEL, VEHICLE_SEATS, type VehicleKind } from '@/lib/ops-geo'
 import { cn } from '@/lib/utils'
 import type { LiveFlight, LiveOnGround } from '@/components/dashboard/live-ops-map'
 
@@ -413,7 +413,7 @@ export default function LiveOpsHero({
                   <div className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/3 loh-scan bg-gradient-to-r from-transparent via-white/8 to-transparent" />
                   <div className="flex items-baseline justify-between">
                     <span className="text-2xl font-black text-white"><Counter value={f.count} /></span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{f.kind}</span>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{VEHICLE_LABEL[f.kind] ?? f.kind}</span>
                   </div>
                   <div className="text-slate-500 mt-1">
                     <VehicleArt kind={f.kind} moving hex="#facc15" />
