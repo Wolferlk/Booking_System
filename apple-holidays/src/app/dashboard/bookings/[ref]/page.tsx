@@ -1394,17 +1394,6 @@ Wishing you a wonderful trip! ✈️
             itinerary, agenda and QC panels are missing further down. */}
         <HotelOnlyBanner state={booking as { hotelOnly?: boolean | null; hotelOnlyAt?: string | null; hotelOnlyBy?: string | null; hotelOnlyNote?: string | null }} />
 
-        {/* Journey — the movement chart drawn as a route, first thing on the
-            page. It sits here rather than beside the itinerary further down
-            because it is how a reader orients themselves before reading
-            anything else: where this file goes, how the guests move between
-            those places, and which hotel is theirs each night. Deliberately
-            sourced from the agenda, not the itinerary — the agenda holds the
-            real pickup and drop-off points and the booked service type. */}
-        <section data-nav="Journey Map" data-nav-icon="itinerary">
-          <JourneyMap bookingRef={ref} source="agenda" />
-        </section>
-
         {/* Lifecycle + status */}
         <section data-nav="Overview & Status" data-nav-icon="overview">
         <Card className="p-6">
@@ -2090,6 +2079,17 @@ Wishing you a wonderful trip! ✈️
           </Card>
           </section>
         )}
+
+        {/* Journey — the movement chart drawn as a route.
+            It sits directly above Quality Control because that is the order the
+            two are read in: see where the file actually goes and how the guests
+            move between those places, then judge whether the operation behind it
+            is sound. Deliberately sourced from the agenda, not the itinerary —
+            the agenda holds the real pickup and drop-off points, the booked
+            service type, and the hotel of each night. */}
+        <section data-nav="Journey Map" data-nav-icon="itinerary">
+          <JourneyMap bookingRef={ref} source="agenda" />
+        </section>
 
         {/* QC Panel — visible to operations/TE/admin. QC audits an operation a
             Hotel Only file does not have, so the panel goes with it. */}
