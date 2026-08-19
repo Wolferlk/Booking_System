@@ -452,16 +452,38 @@ export function countryFocus(country: string | null | undefined): CountryFocus {
 
 // ─── Vehicles ──────────────────────────────────────────────────────────────
 
-export type VehicleKind = 'car' | 'suv' | 'van' | 'minibus' | 'bus' | 'coach' | 'other'
+export type VehicleKind =
+  | 'car' | 'suv' | 'flat_roof' | 'high_roof' | 'van' | 'minibus' | 'bus' | 'coach'
+  | 'none' | 'other'
 
 /**
- * `Assignment.vehicleType` is free text typed at the movement chart — "Toyota
- * Hiace", "29 Seater Bus", "sedan". The hero draws one illustration per class,
- * so the text has to collapse to a class first.
+ * `Assignment.vehicleType` carries two vocabularies at once.
+ *
+ * The Sri Lanka driver-allocation board writes a fixed set of slugs — `car`,
+ * `flat_roof`, `high_roof`, `bus`, `hotel_only` — and those are checked first
+ * and kept as their own classes, because the ground desk genuinely allocates a
+ * flat roof differently from a high roof and collapsing the two would hide the
+ * distinction the board exists to make.
+ *
+ * Everywhere else the field is free text typed straight into the movement chart
+ * ("Toyota Hiace", "29 Seater Bus", "sedan"), so the rest is pattern matching.
+ *
+ * `hotel_only` is not a vehicle at all — it is the board's way of saying this
+ * file carries no transport — so it classes as `none` and is counted by nobody.
  */
 export function vehicleKind(raw: string | null | undefined): VehicleKind {
-  const t = (raw ?? '').toLowerCase()
-  if (!t.trim()) return 'other'
+  const t = (raw ?? '').trim().toLowerCase()
+  if (!t) return 'other'
+
+  // Fixed slugs from the Sri Lanka allocation board.
+  if (t === 'hotel_only') return 'none'
+  if (t === 'flat_roof') return 'flat_roof'
+  if (t === 'high_roof') return 'high_roof'
+  if (t === 'car') return 'car'
+  if (t === 'bus') return 'bus'
+
+  if (/flat[\s_-]?roof/.test(t)) return 'flat_roof'
+  if (/high[\s_-]?roof/.test(t)) return 'high_roof'
   if (/coach|45|49|50\s*seat/.test(t)) return 'coach'
   if (/\bbus\b|33|29\s*seat|large/.test(t)) return 'bus'
   if (/mini\s*bus|minibus|coaster|rosa|hiace|commuter|20\s*seat|16\s*seat|14\s*seat/.test(t)) return 'minibus'
@@ -471,13 +493,30 @@ export function vehicleKind(raw: string | null | undefined): VehicleKind {
   return 'other'
 }
 
+/** Human label for a class — the slugs are not readable as they are stored. */
+export const VEHICLE_LABEL: Record<VehicleKind, string> = {
+  car:       'Car',
+  suv:       'SUV',
+  flat_roof: 'Flat Roof',
+  high_roof: 'High Roof',
+  van:       'Van',
+  minibus:   'Mini Bus',
+  bus:       'Bus',
+  coach:     'Coach',
+  none:      'No Transport',
+  other:     'Other',
+}
+
 /** Seats a class typically carries — used only to sanity-label the fleet strip. */
 export const VEHICLE_SEATS: Record<VehicleKind, string> = {
-  car:     '1–3 pax',
-  suv:     '1–4 pax',
-  van:     '4–7 pax',
-  minibus: '8–18 pax',
-  bus:     '19–33 pax',
-  coach:   '34+ pax',
-  other:   'Unclassed',
+  car:       '1–3 pax',
+  suv:       '1–4 pax',
+  flat_roof: '4–6 pax',
+  high_roof: '6–9 pax',
+  van:       '4–7 pax',
+  minibus:   '8–18 pax',
+  bus:       '19–33 pax',
+  coach:     '34+ pax',
+  none:      'Hotel only',
+  other:     'Unclassed',
 }

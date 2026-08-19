@@ -57,6 +57,21 @@ const BODY: Record<string, { body: string; glass: string; wheels: [number, numbe
   },
 }
 
+// The Sri Lanka allocation board's two workhorse classes. A flat roof is a van
+// cut down to car height; a high roof is the same van with standing room — which
+// is the whole reason the desk keeps them apart, so the drawings do too.
+BODY.flat_roof = {
+  body: 'M6 40 L8 40 C8 26 14 18 28 17 L82 17 C94 17 102 23 108 31 L112 35 C114 36 115 38 115 40 L115 43 L6 43 Z',
+  glass: 'M20 22 L44 22 L44 32 L16 32 Z M50 22 L78 22 L84 32 L50 32 Z',
+  wheels: [30, 96], r: 8,
+}
+BODY.high_roof = {
+  body: 'M5 43 L5 14 C5 11 8 9 13 9 L88 9 C100 9 108 17 113 28 L116 36 C117 38 117 43 115 43 Z',
+  glass: 'M13 15 L36 15 L36 28 L13 28 Z M42 15 L66 15 L66 28 L42 28 Z M72 15 L94 15 L100 28 L72 28 Z',
+  wheels: [28, 98], r: 8,
+}
+
+BODY.none = BODY.car
 BODY.other = BODY.van
 
 export default function VehicleArt({ kind, className, moving, hex = '#facc15' }: Props) {
