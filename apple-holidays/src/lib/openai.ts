@@ -1462,73 +1462,141 @@ export async function fetchDestinationImageFromWeb(destination: string): Promise
 
 // ─── Place photos (Journey Map) ──────────────────────────────────────────
 
-/** Cheap liveness check: a photo URL that actually serves a real image. */
+/**
+ * Photo filter for a *named place*, deliberately looser than `BAD_IMG_RE`.
+ *
+ * That constant exists for bare-country hero images, where a search for
+ * "Vietnam" surfaces flags, war photography and locator maps. Here the subject
+ * is already a specific attraction, so the only real risk is chrome — flags,
+ * logos, maps, vector art. Notably `aerial` is NOT excluded: for a landmark
+ * like Ba Na Hills the aerial shots are the best photographs on Commons, and
+ * the country-level rule was throwing every one of them away.
+ */
+const BAD_PLACE_IMG_RE = /flag|locator|emblem|coat[_-]?of[_-]?arms|logo|\bicon\b|seal|\.svg|diagram|chart|\bmap\b/i
+
+/**
+ * Wikimedia Commons file search for one place.
+ *
+ * Kept separate from `commonsImageUrls` because that helper appends
+ * "tourism scenery cityscape" to the query — good for widening a bare country
+ * name, fatal for a specific attraction: Commons returns zero results for
+ * "Ba Na Hills tourism scenery cityscape" and twelve for "Ba Na Hills".
+ */
+async function commonsPlacePhotos(term: string, limit = 12): Promise<string[]> {
+  try {
+    const api = 'https://commons.wikimedia.org/w/api.php?format=json&action=query' +
+      `&generator=search&gsrnamespace=6&gsrlimit=${limit}` +
+      `&gsrsearch=${encodeURIComponent(term)}` +
+      '&prop=imageinfo&iiprop=url|mime|size&iiurlwidth=1600'
+    const res = await fetch(api, {
+      headers: { 'User-Agent': UA },
+      signal: AbortSignal.timeout(6000),
+    })
+    if (!res.ok) return []
+    const j = await res.json()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pages: any[] = Object.values(j?.query?.pages ?? {})
+    return pages
+      .map(p => p?.imageinfo?.[0])
+      .filter(info => info && typeof info.mime === 'string' && info.mime.startsWith('image/') && !info.mime.includes('svg'))
+      .map(info => info.thumburl || info.url)
+      .filter((u: string) => u && !BAD_PLACE_IMG_RE.test(u))
+  } catch { return [] }
+}
+
+/**
+ * Is this URL worth putting in the gallery?
+ *
+ * A 429 counts as a pass. Wikimedia rate-limits bursts of HEAD requests, and
+ * treating a throttled probe as a dead link would silently drop good photos —
+ * the browser fetches them later, one at a time, and the gallery drops any
+ * genuinely broken tile through the image `onError` handler anyway.
+ */
 async function imageUrlIsLive(url: string): Promise<boolean> {
-  if (BAD_IMG_RE.test(url)) return false
+  if (BAD_PLACE_IMG_RE.test(url)) return false
   try {
     const res = await fetch(url, {
       method: 'HEAD',
       headers: { 'User-Agent': UA },
       redirect: 'follow',
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(6000),
     })
+    if (res.status === 429) return true
     if (!res.ok) return false
     const ct = res.headers.get('content-type') ?? ''
     if (!ct.startsWith('image/') || ct.includes('svg')) return false
     const len = Number(res.headers.get('content-length') ?? '0')
-    // A sub-20KB payload is an icon or a flag, not a photograph.
-    return len === 0 || len > 20_000
+    // A sub-15KB payload is an icon or a badge, not a photograph.
+    return len === 0 || len > 15_000
   } catch { return false }
 }
 
 /**
  * Real, hotlinkable photographs of a place, for the Journey Map's activity popup.
  *
- * Order matters. Wikimedia Commons and Wikipedia are consulted first because
- * their URLs are addresses we resolved from an API and are therefore real; the
- * model's web-search results go last because a language model asked for URLs
- * will confidently produce ones that have never existed. Everything returned
- * has been HEAD-checked, so the gallery never renders a broken tile.
+ * Order matters. Commons and Wikipedia come first because their URLs are
+ * addresses resolved from an API and therefore exist; the model's web-search
+ * results come last, and only when the free sources came up short, because a
+ * language model asked for image URLs will confidently produce ones that never
+ * existed. Everything returned has been probed, so the gallery is not a wall
+ * of broken tiles.
  */
 export async function findPlacePhotos(subject: string, limit = 5): Promise<string[]> {
+  const place = subject.split(',')[0].trim()
+  const withCity = subject.split(',').slice(0, 2).join(',').trim()
+
   const candidates: string[] = []
 
-  candidates.push(...await commonsImageUrls(subject))
-  const wiki = await wikipediaImageUrl(subject)
+  // The specific name first, then name + city to catch places whose Commons
+  // files are titled after the city ("Golden Bridge Da Nang").
+  candidates.push(...await commonsPlacePhotos(place))
+  if (withCity && withCity !== place) candidates.push(...await commonsPlacePhotos(withCity))
+
+  const wiki = await wikipediaImageUrl(place)
   if (wiki) candidates.push(wiki)
 
-  // Only pay for a web search when the free, reliable sources came up short.
-  if (candidates.length < limit) {
-    try {
-      const res = await openai.responses.create({
-        model: process.env.OPENAI_SEARCH_MODEL || 'gpt-4o',
-        tools: [{ type: 'web_search_preview' }],
-        input:
-          `Find real, currently-working DIRECT image file URLs (ending in .jpg, .jpeg, .png or .webp) ` +
-          `of beautiful full-colour TOURISM photographs of ${subject}. ` +
-          `Strongly prefer images hosted on upload.wikimedia.org. ` +
-          `No flags, maps, logos, emblems or black-and-white archive photos. ` +
-          `Reply with 3 to 5 raw URLs only, one per line, no other text.`,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const text: string = (res as any).output_text ?? ''
-      for (const token of text.split(/\s+/)) {
-        const m = token.match(IMG_URL_RE)
-        if (m && !BAD_IMG_RE.test(m[0])) candidates.push(m[0])
-      }
-    } catch (e) {
-      console.warn('[place-photos] web search unavailable:', (e as Error).message)
+  const unique = Array.from(new Set(candidates))
+
+  // Probe in small parallel batches: sequential probing costs ~1s per photo,
+  // and an unbounded burst is what triggers Wikimedia's rate limiter.
+  const out: string[] = []
+  for (let i = 0; i < unique.length && out.length < limit; i += 4) {
+    const batch = unique.slice(i, i + 4)
+    const results = await Promise.all(batch.map(async u => [u, await imageUrlIsLive(u)] as const))
+    for (const [u, ok] of results) {
+      if (ok && out.length < limit) out.push(u)
     }
   }
 
-  const out: string[] = []
-  const seen = new Set<string>()
-  for (const url of candidates) {
-    if (out.length >= limit) break
-    if (seen.has(url)) continue
-    seen.add(url)
-    if (await imageUrlIsLive(url)) out.push(url)
+  if (out.length >= 2) return out
+
+  // Free sources were thin — fall back to a live web search.
+  try {
+    const res = await openai.responses.create({
+      model: process.env.OPENAI_SEARCH_MODEL || 'gpt-4o',
+      tools: [{ type: 'web_search_preview' }],
+      input:
+        `Find real, currently-working DIRECT image file URLs (ending in .jpg, .jpeg, .png or .webp) ` +
+        `of beautiful full-colour TOURISM photographs of ${subject}. ` +
+        `Strongly prefer images hosted on upload.wikimedia.org. ` +
+        `No flags, maps, logos or emblems. ` +
+        `Reply with 3 to 5 raw URLs only, one per line, no other text.`,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const text: string = (res as any).output_text ?? ''
+    const found: string[] = []
+    for (const token of text.split(/\s+/)) {
+      const m = token.match(IMG_URL_RE)
+      if (m && !BAD_PLACE_IMG_RE.test(m[0]) && !out.includes(m[0])) found.push(m[0])
+    }
+    for (const u of found) {
+      if (out.length >= limit) break
+      if (await imageUrlIsLive(u)) out.push(u)
+    }
+  } catch (e) {
+    console.warn('[place-photos] web search unavailable:', (e as Error).message)
   }
+
   return out
 }

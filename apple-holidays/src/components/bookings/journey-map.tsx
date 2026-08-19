@@ -100,6 +100,39 @@ const KIND: Record<StopKind, { label: string; hex: string; glow: string; path: s
   leisure:    { label: 'Leisure',     hex: '#ca8a04', glow: '234,179,8',   path: 'M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6L4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4', circles: '<circle cx="12" cy="12" r="4.5"/>' },
 }
 
+/**
+ * The vehicle that carries guests *into* a stop of this kind — what actually
+ * rides the route on the map. Keyed by the destination's kind, because a leg's
+ * mode is decided by where it is going: you fly to an airport, coach to a tour,
+ * board a boat for a cruise.
+ */
+const VEHICLE: Record<StopKind, string> = {
+  arrival:    '\u2708\uFE0F',
+  departure:  '\u2708\uFE0F',
+  flight:     '\u2708\uFE0F',
+  transfer:   '\uD83D\uDE97',
+  city:       '\uD83D\uDE95',
+  tour:       '\uD83D\uDE8C',
+  attraction: '\uD83D\uDE90',
+  cultural:   '\uD83D\uDE90',
+  nature:     '\uD83D\uDE99',
+  beach:      '\uD83D\uDE99',
+  cruise:     '\uD83D\uDEA2',
+  leisure:    '\uD83D\uDE97',
+  hotel:      '\uD83D\uDE97',
+}
+
+/**
+ * True when travel from `a` to `b` heads west.
+ *
+ * Emoji vehicles are drawn facing one way by the font, so a westbound car would
+ * otherwise reverse into its destination. Mirroring the glyph is more legible
+ * than rotating it, which turns a car upside-down on a southbound leg.
+ */
+function headingWest(a: LatLng, b: LatLng) {
+  return b[1] < a[1]
+}
+
 function glyphSvg(kind: StopKind, size = 15, color = '#fff') {
   const k = KIND[kind] ?? KIND.tour
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${color}" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="${k.path}"/>${k.circles ?? ''}</svg>`
@@ -190,11 +223,16 @@ const MAP_CSS = `
 .jm-wrap .leaflet-control-zoom a{background:rgba(255,255,255,.94);color:#334155;border-color:rgba(148,163,184,.28);font-weight:600}
 .jm-wrap .leaflet-control-zoom a:hover{background:#fff;color:#0f172a}
 
-/* The travelled route: a dashed stroke that crawls forward, so the direction
-   of travel is legible even when the map is completely still. */
-.jm-route{stroke-dasharray:1 12;stroke-linecap:round;animation:jm-crawl 1.1s linear infinite}
-@keyframes jm-crawl{to{stroke-dashoffset:-13}}
-.jm-route-base{stroke-linecap:round}
+/* The route is drawn as three stacked strokes: a soft white halo that lifts it
+   off busy tiles, a solid coloured spine, and a dashed overlay that crawls
+   forward so the direction of travel reads even when the map is still. */
+.jm-route-halo{stroke-linecap:round;stroke-linejoin:round}
+.jm-route-base{stroke-linecap:round;stroke-linejoin:round}
+.jm-route{stroke-dasharray:2 14;stroke-linecap:round;animation:jm-crawl 1s linear infinite}
+@keyframes jm-crawl{to{stroke-dashoffset:-16}}
+
+/* The lit stretch of road just behind the vehicle. */
+.jm-trail{stroke-linecap:round;filter:drop-shadow(0 0 5px rgba(245,158,11,.85))}
 
 .jm-pin{background:none!important;border:none!important}
 .jm-pin-inner{position:relative;width:38px;height:38px;display:flex;align-items:center;justify-content:center;transform-origin:50% 50%;transition:transform .22s cubic-bezier(.34,1.56,.64,1)}
@@ -213,9 +251,13 @@ const MAP_CSS = `
 .jm-pin-dim .jm-pin-inner{opacity:.22;filter:grayscale(1)}
 
 .jm-traveller{background:none!important;border:none!important}
-.jm-traveller-inner{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(140deg,#0f172a,#334155);box-shadow:0 0 0 3px #fff,0 6px 18px rgba(15,23,42,.4);animation:jm-bob 1.4s ease-in-out infinite}
-@keyframes jm-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.jm-ride{position:relative;width:40px;height:40px;display:flex;align-items:center;justify-content:center}
+.jm-ride-glow{position:absolute;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle,rgba(245,158,11,.55),transparent 70%);animation:jm-glow 1.6s ease-in-out infinite}
+.jm-ride-emoji{position:relative;font-size:25px;line-height:1;filter:drop-shadow(0 3px 5px rgba(15,23,42,.45));animation:jm-bob 1.1s ease-in-out infinite;transition:transform .3s ease}
+.jm-ride-idle .jm-ride-emoji{font-size:21px;opacity:.92}
+.jm-ride-idle .jm-ride-glow{width:26px;height:26px;opacity:.7}
+@keyframes jm-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3.5px)}}
+@keyframes jm-glow{0%,100%{transform:scale(.85);opacity:.55}50%{transform:scale(1.15);opacity:.9}}
 
 .jm-hotel{background:none!important;border:none!important}
 .jm-hotel-inner{width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:#ea580c;
@@ -229,9 +271,39 @@ const MAP_CSS = `
 @media (prefers-reduced-motion:reduce){
   .jm-route{animation:none}
   .jm-pin-active .jm-pin-ring{animation:none}
-  .jm-traveller-inner{animation:none}
+  .jm-ride-emoji,.jm-ride-glow{animation:none}
 }
 `
+
+/** Marker HTML for a vehicle riding the route. */
+function riderHtml(vehicle: string, idle: boolean) {
+  return `<div class="jm-ride${idle ? ' jm-ride-idle' : ''}">` +
+    `<span class="jm-ride-glow"></span>` +
+    `<span class="jm-ride-emoji">${vehicle}</span>` +
+    `</div>`
+}
+
+/**
+ * Repaints a rider in place rather than rebuilding its icon.
+ *
+ * `marker.setIcon()` swaps the whole DOM node, which restarts the bob and glow
+ * keyframes — at 60fps that reads as a stutter rather than a drive. Mutating
+ * the glyph and its transform keeps the animation continuous across a leg change.
+ */
+function paintRider(marker: LeafletMarker | null, vehicle: string, flip: boolean) {
+  const el = marker?.getElement()?.querySelector<HTMLElement>('.jm-ride-emoji')
+  if (!el) return
+  if (el.textContent !== vehicle) el.textContent = vehicle
+  const t = flip ? 'scaleX(-1)' : 'scaleX(1)'
+  if (el.style.transform !== t) el.style.transform = t
+}
+
+/** The lit stretch of route behind a rider at `t` along the path. */
+function trailSlice(path: LatLng[], t: number, span = 0.07): LatLng[] {
+  const end = Math.round(t * (path.length - 1))
+  const start = Math.max(0, end - Math.round(span * path.length))
+  return path.slice(start, Math.max(end + 1, start + 2))
+}
 
 // ─── Component ───────────────────────────────────────────────────────────
 
@@ -244,6 +316,12 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
+  // Two separate ideas, deliberately not one. `activeId` is which stop the map
+  // is looking at — playback moves it constantly. `selectedId` is the far
+  // heavier "the user asked to read about this one", which opens the detail
+  // card and spends a model call. Merging them made the fly-through open a
+  // card on every stop, covering the very map it was flying over.
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [hiddenKinds, setHiddenKinds] = useState<Set<StopKind>>(new Set())
@@ -251,16 +329,28 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
   const [showLayers, setShowLayers] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [playing, setPlaying] = useState(false)
+  // Leaflet arrives via a dynamic import, so the map exists a tick after the
+  // effects that draw on it first run. Storing readiness in state (rather than
+  // only on the ref) is what re-runs those effects once there is a map to draw
+  // on — a ref assignment inside the async callback renders nothing.
+  const [mapReady, setMapReady] = useState(false)
   const [progress, setProgress] = useState(1)   // 0..1 along the whole route
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // Read inside `flyTo`, which must stay referentially stable for the playback
+  // effect — refs let it see current state without re-triggering the animation.
+  const cardOpenRef = useRef(false)
+  const fullscreenRef = useRef(false)
   const mapRef = useRef<LeafletMap | null>(null)
   // The Leaflet module handle, populated by the dynamic import in the mount
   // effect. `typeof import(...)` is a type-only reference, so nothing is pulled
   // into the bundle here.
   const LRef = useRef<LeafletNS | null>(null)
   const tileRef = useRef<LeafletTileLayer | null>(null)
-  const routeRef = useRef<{ base: LeafletPolyline; live: LeafletPolyline } | null>(null)
+  const routeRef = useRef<{ halo: LeafletPolyline; base: LeafletPolyline; live: LeafletPolyline } | null>(null)
+  const trailRef = useRef<LeafletPolyline | null>(null)
+  const idleRiderRef = useRef<LeafletMarker | null>(null)
+  const idleRafRef = useRef<number | null>(null)
   const pinsRef = useRef<Map<string, LeafletMarker>>(new Map())
   const hotelPinsRef = useRef<LeafletMarker[]>([])
   const travellerRef = useRef<LeafletMarker | null>(null)
@@ -268,6 +358,8 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
   const stripRef = useRef<HTMLDivElement | null>(null)
 
   const stops = useMemo(() => journey?.stops ?? [], [journey])
+  useEffect(() => { cardOpenRef.current = selectedId != null }, [selectedId])
+  useEffect(() => { fullscreenRef.current = fullscreen }, [fullscreen])
   const selected = useMemo(() => stops.find(s => s.id === selectedId) ?? null, [stops, selectedId])
 
   const kindCounts = useMemo(() => {
@@ -335,6 +427,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
 
       map.fitBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)), { padding: [56, 56], maxZoom: 11 })
       setTimeout(() => map.invalidateSize(), 120)
+      setMapReady(true)
     })()
 
     return () => { cancelled = true }
@@ -343,6 +436,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
   // Tear the map down only when the component itself goes away.
   useEffect(() => () => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    if (idleRafRef.current) cancelAnimationFrame(idleRafRef.current)
     mapRef.current?.remove()
     mapRef.current = null
   }, [])
@@ -356,7 +450,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
     if (tileRef.current) map.removeLayer(tileRef.current)
     tileRef.current = L.tileLayer(bm.url, { attribution: bm.attr, maxZoom: 18, subdomains: 'abcd' }).addTo(map)
     tileRef.current.bringToBack()
-  }, [basemap])
+  }, [basemap, mapReady])
 
   // ── Route + markers ────────────────────────────────────────────────────
 
@@ -375,17 +469,31 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
     hotelPinsRef.current = hotelPins
 
     const dark = BASEMAPS.find(b => b.id === basemap)?.dark
+    // Halo → spine → crawling dashes. Three strokes rather than one, because a
+    // single thin line disappears into the road network on a street basemap.
+    const halo = L.polyline(geometry.flat, {
+      className: 'jm-route-halo',
+      color: dark ? '#0f172a' : '#ffffff',
+      weight: 10, opacity: dark ? 0.55 : 0.9,
+    }).addTo(map)
     const base = L.polyline(geometry.flat, {
       className: 'jm-route-base',
-      color: dark ? '#1e293b' : '#cbd5e1',
-      weight: 5, opacity: 0.85,
+      color: dark ? '#38bdf8' : '#1d4ed8',
+      weight: 4.5, opacity: 0.92,
     }).addTo(map)
     const live = L.polyline(geometry.flat, {
       className: 'jm-route',
-      color: dark ? '#f8fafc' : '#0f172a',
-      weight: 2.6, opacity: 0.95,
+      color: '#ffffff',
+      weight: 2.4, opacity: 0.95,
     }).addTo(map)
-    routeRef.current = { base, live }
+    // The glowing stretch of road just behind whichever vehicle is riding.
+    const trail = L.polyline([], {
+      className: 'jm-trail',
+      color: '#f59e0b',
+      weight: 5.5, opacity: 0.95,
+    }).addTo(map)
+    routeRef.current = { halo, base, live }
+    trailRef.current = trail
 
     // Hotels sit under the day pins — context, not the subject of the panel.
     ;(journey?.hotels ?? []).forEach(h => {
@@ -429,16 +537,17 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
     })
 
     return () => {
-      base.remove(); live.remove()
+      halo.remove(); base.remove(); live.remove(); trail.remove()
+      trailRef.current = null
       pins.forEach(x => x.remove()); pins.clear()
       hotelPins.forEach(x => x.remove())
     }
-  }, [stops, geometry, journey?.hotels, basemap])
+  }, [stops, geometry, journey?.hotels, basemap, mapReady])
 
   // ── Selection / hover / filter styling ─────────────────────────────────
 
   useEffect(() => {
-    const active = hoveredId ?? selectedId
+    const active = hoveredId ?? selectedId ?? activeId
     pinsRef.current.forEach((marker, id) => {
       const el = marker.getElement()
       if (!el) return
@@ -446,14 +555,31 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
       el.classList.toggle('jm-pin-active', id === active)
       el.classList.toggle('jm-pin-dim', !!stop && hiddenKinds.has(stop.kind))
     })
-  }, [hoveredId, selectedId, hiddenKinds, stops])
+  }, [hoveredId, selectedId, activeId, hiddenKinds, stops])
 
   // ── Playback ───────────────────────────────────────────────────────────
 
+  /**
+   * Fly to a stop, biasing the centre so the pin lands in the part of the map
+   * the detail card is not covering — up and out of the bottom sheet on a
+   * narrow panel, left of the side drawer in fullscreen. Without this the pin
+   * you just clicked ends up underneath the card describing it.
+   */
   const flyTo = useCallback((s: JourneyStop, zoom?: number) => {
-    const map = mapRef.current
-    if (!map) return
-    map.flyTo([s.lat, s.lng], zoom ?? Math.max(map.getZoom(), 9), { duration: 1.05 })
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map) return
+    const z = zoom ?? Math.max(map.getZoom(), 9)
+    const size = map.getSize()
+    const card = cardOpenRef.current
+
+    let target = L.latLng(s.lat, s.lng)
+    if (card) {
+      const pt = map.project(target, z)
+      if (fullscreenRef.current) pt.x += size.x * 0.16   // side drawer on the right
+      else pt.y += size.y * 0.20                          // bottom sheet
+      target = map.unproject(pt, z)
+    }
+    map.flyTo(target, z, { duration: 1.05 })
   }, [])
 
   useEffect(() => {
@@ -466,14 +592,14 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
     let phase: 'dwell' | 'travel' = 'dwell'
     let phaseStart = performance.now()
 
-    setSelectedId(stops[legIndex].id)
+    setActiveId(stops[legIndex].id)
     flyTo(stops[legIndex], 9)
 
     const traveller = L.marker([stops[legIndex].lat, stops[legIndex].lng], {
       icon: L.divIcon({
         className: 'jm-traveller',
-        html: `<div class="jm-traveller-inner">${glyphSvg('flight', 16)}</div>`,
-        iconSize: [34, 34], iconAnchor: [17, 17],
+        html: riderHtml(VEHICLE[stops[legIndex].kind] ?? '\uD83D\uDE97', false),
+        iconSize: [40, 40], iconAnchor: [20, 20],
       }),
       zIndexOffset: 1200,
     }).addTo(map)
@@ -488,17 +614,29 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
         const t = Math.min(elapsed / LEG_MS, 1)
         const legT = (legIndex + t) / (stops.length - 1)
         setProgress(legT)
-        traveller.setLatLng(walk(geometry.flat, legT))
+
+        const here = walk(geometry.flat, legT)
+        traveller.setLatLng(here)
+        // The vehicle is chosen by where this leg is heading, and mirrored so
+        // it always faces the way it is travelling.
+        const dest = stops[Math.min(legIndex + 1, stops.length - 1)]
+        paintRider(
+          traveller,
+          VEHICLE[dest.kind] ?? '\uD83D\uDE97',
+          headingWest([stops[legIndex].lat, stops[legIndex].lng], [dest.lat, dest.lng]),
+        )
+        trailRef.current?.setLatLngs(trailSlice(geometry.flat, legT))
+
         if (t >= 1) {
           legIndex += 1
           if (legIndex >= stops.length - 1) {
             setProgress(1)
-            setSelectedId(stops[stops.length - 1].id)
+            setActiveId(stops[stops.length - 1].id)
             flyTo(stops[stops.length - 1], 9)
             setPlaying(false)
             return
           }
-          setSelectedId(stops[legIndex].id)
+          setActiveId(stops[legIndex].id)
           flyTo(stops[legIndex], 9)
           phase = 'dwell'
           phaseStart = now
@@ -512,31 +650,119 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
       if (rafRef.current) cancelAnimationFrame(rafRef.current)
       traveller.remove()
       travellerRef.current = null
+      trailRef.current?.setLatLngs([])
     }
     // `progress` is read once to decide where to resume; re-running on every
     // frame would restart the animation, so it is deliberately not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, stops, geometry, flyTo])
+  }, [playing, stops, geometry, flyTo, mapReady])
+
+  /**
+   * The idle ride: when nothing is playing, a vehicle drives the finished route
+   * on a slow loop, trailing a lit stretch of road behind it.
+   *
+   * This is what makes the route legible at a glance. A static polyline between
+   * seven pins does not tell you which end is day one; a car pulling away from
+   * Sigiriya towards Kandy does, without anyone pressing anything.
+   */
+  useEffect(() => {
+    if (playing || stops.length < 2 || geometry.flat.length === 0) return
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map) return
+    if (typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+
+    const rider = L.marker(geometry.flat[0], {
+      icon: L.divIcon({
+        className: 'jm-traveller',
+        html: riderHtml(VEHICLE[stops[1]?.kind ?? 'transfer'] ?? '\uD83D\uDE97', true),
+        iconSize: [40, 40], iconAnchor: [20, 20],
+      }),
+      zIndexOffset: 1100,
+      interactive: false,
+    }).addTo(map)
+    idleRiderRef.current = rider
+
+    // One lap covers every leg at a steady pace, then rests briefly at the end
+    // before restarting, so the loop reads as a journey rather than a treadmill.
+    const lapMs = Math.max(6000, (stops.length - 1) * 2600)
+    const restMs = 1400
+    const start = performance.now()
+
+    const tick = (now: number) => {
+      const cycle = (now - start) % (lapMs + restMs)
+      const t = Math.min(cycle / lapMs, 1)
+
+      rider.setLatLng(walk(geometry.flat, t))
+      const legIndex = Math.min(Math.floor(t * (stops.length - 1)), stops.length - 2)
+      const from = stops[legIndex]
+      const to = stops[legIndex + 1]
+      paintRider(rider, VEHICLE[to.kind] ?? '\uD83D\uDE97', headingWest([from.lat, from.lng], [to.lat, to.lng]))
+      trailRef.current?.setLatLngs(trailSlice(geometry.flat, t))
+
+      idleRafRef.current = requestAnimationFrame(tick)
+    }
+    idleRafRef.current = requestAnimationFrame(tick)
+
+    return () => {
+      if (idleRafRef.current) cancelAnimationFrame(idleRafRef.current)
+      rider.remove()
+      idleRiderRef.current = null
+      trailRef.current?.setLatLngs([])
+    }
+  }, [playing, stops, geometry, mapReady])
 
   /** Draw only the travelled portion while playing; the whole route otherwise. */
   useEffect(() => {
     const route = routeRef.current
     if (!route || geometry.flat.length === 0) return
     const upto = Math.max(2, Math.round(progress * (geometry.flat.length - 1)) + 1)
-    route.live.setLatLngs(geometry.flat.slice(0, upto))
-  }, [progress, geometry])
+    const travelled = geometry.flat.slice(0, upto)
+    // The halo stays whole so the road ahead is still readable; the coloured
+    // spine and its dashes fill in behind the vehicle as it drives.
+    route.base.setLatLngs(travelled)
+    route.live.setLatLngs(travelled)
+  }, [progress, geometry, mapReady])
 
   // ── Fullscreen ─────────────────────────────────────────────────────────
 
+  /**
+   * Keep Leaflet's idea of its own size honest.
+   *
+   * Leaflet only lays tiles out for the size it believes it has, and it learns
+   * that size once. Entering fullscreen resizes the container over ~300ms of
+   * animation, so a single delayed `invalidateSize()` either fires mid-flight
+   * and locks in a half-size viewport, or fires late and leaves grey gaps —
+   * which is exactly the blank fullscreen map. Observing the element instead
+   * re-lays the tiles on every frame of the resize, and also covers the
+   * sidebar collapsing and the browser window changing.
+   */
   useEffect(() => {
+    const el = containerRef.current
     const map = mapRef.current
-    if (!map) return
+    if (!el || !map || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => map.invalidateSize({ animate: false }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [mapReady])
+
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map) return
     // Fullscreen is a deliberate "I am reading the map now" mode, so the wheel
     // becomes a zoom there and goes back to scrolling the page on exit.
     fullscreen ? map.scrollWheelZoom.enable() : map.scrollWheelZoom.disable()
-    const id = setTimeout(() => map.invalidateSize(), 260)
+    // The aspect ratio changes a lot between a 540px column and the viewport,
+    // so a route framed for one is badly framed for the other.
+    const id = setTimeout(() => {
+      map.invalidateSize({ animate: false })
+      if (stops.length > 0 && !cardOpenRef.current) {
+        map.flyToBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)),
+          { padding: [64, 64], maxZoom: 11, duration: 0.6 })
+      }
+    }, 340)
     return () => clearTimeout(id)
-  }, [fullscreen])
+  }, [fullscreen, mapReady, stops])
 
   /** Re-frame the route after a rebuild brings back a different set of pins. */
   const fittedRef = useRef<string>('')
@@ -549,7 +775,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
       map.flyToBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)), { padding: [56, 56], maxZoom: 11, duration: 0.9 })
     }
     fittedRef.current = signature
-  }, [stops])
+  }, [stops, mapReady])
 
   useEffect(() => {
     if (!fullscreen) return
@@ -560,10 +786,11 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
 
   // Keep the day strip tracking the selected stop during playback.
   useEffect(() => {
-    if (!selectedId || !stripRef.current) return
-    stripRef.current.querySelector<HTMLElement>(`[data-day-id="${cssEscape(selectedId)}"]`)
+    const focus = selectedId ?? activeId
+    if (!focus || !stripRef.current) return
+    stripRef.current.querySelector<HTMLElement>(`[data-day-id="${cssEscape(focus)}"]`)
       ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
-  }, [selectedId])
+  }, [selectedId, activeId])
 
   const fitAll = useCallback(() => {
     const L = LRef.current, map = mapRef.current
@@ -573,8 +800,13 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
 
   const selectStop = useCallback((s: JourneyStop) => {
     setPlaying(false)
+    setActiveId(s.id)
     setSelectedId(s.id)
+    // The card animates in over ~250ms; re-framing after it has taken up its
+    // space is what actually keeps the pin visible.
+    cardOpenRef.current = true
     flyTo(s, 10)
+    setTimeout(() => flyTo(s, 10), 280)
   }, [flyTo])
 
   // ── Render ─────────────────────────────────────────────────────────────
@@ -586,7 +818,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
   if (error || !journey || stops.length === 0) {
     return (
       <JourneyShell className={className}>
-        <div className="h-[420px] flex flex-col items-center justify-center gap-3 text-center px-8">
+        <div className="h-[520px] flex flex-col items-center justify-center gap-3 text-center px-8">
           <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center">
             <Compass className="w-6 h-6 text-slate-400" />
           </div>
@@ -612,18 +844,28 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
       <style dangerouslySetInnerHTML={{ __html: MAP_CSS }} />
       {fullscreen && <div className="fixed inset-0 z-[59] bg-slate-950/70 backdrop-blur-sm" onClick={() => setFullscreen(false)} />}
 
-      <motion.div
-        layout
+      {/* No framer `layout` prop here on purpose: animating the box size
+          scales its children, and a scaled Leaflet pane renders as smeared or
+          missing tiles for the length of the animation. The container snaps to
+          its new size and the ResizeObserver above re-lays the tiles. */}
+      <div
         className={cn(
-          'jm-wrap group relative overflow-hidden rounded-2xl border shadow-card',
+          'jm-wrap group relative overflow-hidden border shadow-card flex flex-col',
           dark ? 'border-slate-700 bg-slate-900' : 'border-slate-200 bg-slate-50',
-          fullscreen ? 'fixed inset-3 sm:inset-6 z-[60] shadow-2xl' : className,
+          fullscreen
+            ? 'fixed inset-0 sm:inset-4 z-[60] rounded-none sm:rounded-2xl shadow-2xl'
+            : cn('rounded-2xl', className),
         )}
       >
         {/* ── The map ── */}
         <div
           ref={containerRef}
-          className={cn('w-full transition-[height] duration-300', fullscreen ? 'h-full' : 'h-[520px]')}
+          // Taller than a typical card: the bottom sheet takes 58% when a stop
+          // is open, and what is left has to still read as a map.
+          className={cn(
+            'w-full',
+            fullscreen ? 'flex-1 min-h-0' : 'h-[720px] min-h-[520px] max-h-[calc(100vh-7rem)]',
+          )}
         />
 
         {/* ── Top-left: what this journey is ── */}
@@ -711,7 +953,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
           <IconBtn label="Rebuild from itinerary" onClick={() => void load(true)}>
             <RefreshCw className={cn('w-4 h-4', refreshing && 'animate-spin')} />
           </IconBtn>
-          <IconBtn label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(v => !v)}>
+          <IconBtn label={fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen'} onClick={() => setFullscreen(v => !v)}>
             {fullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </IconBtn>
         </div>
@@ -734,7 +976,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
               </button>
               {progress < 1 && !playing && (
                 <button
-                  onClick={() => { setProgress(1); setSelectedId(null); fitAll() }}
+                  onClick={() => { setProgress(1); setActiveId(null); setSelectedId(null); fitAll() }}
                   className="w-11 h-7 rounded-full bg-white/90 backdrop-blur-md shadow ring-1 ring-slate-900/5 flex items-center justify-center text-slate-600 hover:text-slate-900"
                   title="Reset"
                 >
@@ -787,6 +1029,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
               key={selected.id}
               bookingRef={bookingRef}
               stop={selected}
+              variant={fullscreen ? 'side' : 'sheet'}
               onClose={() => setSelectedId(null)}
               onPrev={() => {
                 const i = stops.findIndex(s => s.id === selected.id)
@@ -805,7 +1048,7 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
             Some days could not be placed precisely — pins are approximate.
           </div>
         )}
-      </motion.div>
+      </div>
     </>
   )
 }
@@ -813,13 +1056,22 @@ export default function JourneyMap({ bookingRef, className }: { bookingRef: stri
 // ─── Activity drawer ─────────────────────────────────────────────────────
 
 /**
- * The pin's detail card. Slides over the map rather than pushing layout, so
- * the route stays visible behind it and the pin you clicked keeps its context.
+ * The pin's detail card.
+ *
+ * It floats over the map rather than pushing layout, but never over all of it:
+ * inside the booking page the panel is only ~540px wide, so a full-height side
+ * drawer swallowed the entire map and left the route it was describing
+ * invisible. There it rises as a bottom sheet capped at 58% of the height,
+ * with `flyTo` biasing the pin up into the half that stays clear.
+ *
  * Content is researched on first open and cached server-side by place.
  */
-function ActivityDrawer({ bookingRef, stop, onClose, onPrev, onNext }: {
+function ActivityDrawer({ bookingRef, stop, variant, onClose, onPrev, onNext }: {
   bookingRef: string
   stop: JourneyStop
+  /** 'sheet' rises from the bottom and leaves the map's top half readable;
+   *  'side' is the fullscreen layout, where there is width to spare. */
+  variant: 'sheet' | 'side'
   onClose: () => void
   onPrev: () => void
   onNext: () => void
@@ -858,16 +1110,34 @@ function ActivityDrawer({ bookingRef, stop, onClose, onPrev, onNext }: {
   const images = (brief?.images ?? []).filter(u => !broken.has(u))
   const hero = images[Math.min(imgIndex, Math.max(images.length - 1, 0))]
 
+  const sheet = variant === 'sheet'
+
   return (
     <motion.div
-      initial={{ x: '104%', opacity: 0.4 }}
-      animate={{ x: 0, opacity: 1 }}
-      exit={{ x: '104%', opacity: 0.2 }}
+      initial={sheet ? { y: '104%' } : { x: '104%', opacity: 0.4 }}
+      animate={sheet ? { y: 0 } : { x: 0, opacity: 1 }}
+      exit={sheet ? { y: '104%' } : { x: '104%', opacity: 0.2 }}
       transition={{ type: 'spring', stiffness: 320, damping: 34 }}
-      className="absolute top-0 right-0 bottom-0 z-[600] w-full sm:w-[368px] bg-white/97 backdrop-blur-xl shadow-2xl ring-1 ring-slate-900/10 flex flex-col"
+      className={cn(
+        'absolute z-[600] bg-white/97 backdrop-blur-xl shadow-2xl ring-1 ring-slate-900/10 flex flex-col',
+        sheet
+          ? 'left-0 right-0 bottom-0 max-h-[58%] rounded-t-2xl overflow-hidden'
+          : 'top-0 right-0 bottom-0 w-full sm:w-[380px]',
+      )}
     >
+      {sheet && (
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-1.5 left-1/2 -translate-x-1/2 z-10 w-10 h-1.5 rounded-full bg-white/70 hover:bg-white"
+        />
+      )}
+
       {/* Hero */}
-      <div className="relative h-44 flex-shrink-0 overflow-hidden" style={{ background: `linear-gradient(140deg, ${k.hex}, ${shade(k.hex, -32)})` }}>
+      <div
+        className={cn('relative flex-shrink-0 overflow-hidden', sheet ? 'h-32' : 'h-44')}
+        style={{ background: `linear-gradient(140deg, ${k.hex}, ${shade(k.hex, -32)})` }}
+      >
         <AnimatePresence mode="wait">
           {hero ? (
             <motion.img
@@ -1045,7 +1315,7 @@ function JourneyShell({ children, className }: { children: React.ReactNode; clas
 
 function MapSkeleton() {
   return (
-    <div className="h-[520px] relative overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200">
+    <div className="h-[720px] min-h-[520px] max-h-[calc(100vh-7rem)] relative overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200">
       <div className="absolute inset-0 animate-pulse">
         {/* A faint suggestion of a route, so the loading state reads as a map. */}
         <svg viewBox="0 0 400 300" className="w-full h-full opacity-40">
