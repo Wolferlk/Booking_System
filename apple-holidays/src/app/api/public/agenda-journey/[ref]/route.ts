@@ -22,6 +22,7 @@ export const maxDuration = 60
 const EMPTY = {
   stops: [], hotels: [], countries: [], totalKm: 0,
   degraded: false, basis: 'agenda' as const, dayCount: 0, flights: [],
+  totalRoadKm: 0, totalDriveMin: 0,
 }
 
 export async function GET(

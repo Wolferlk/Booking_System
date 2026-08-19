@@ -116,6 +116,10 @@ interface JourneyStop {
   legOfDay?: number
   legsThatDay?: number
   hotel?: StopHotel | null
+  /** OSRM-encoded driving line from the previous stop into this one. */
+  roadPath?: string | null
+  roadKm?: number | null
+  roadMin?: number | null
   flight?: FlightInfo | null
   flightRole?: FlightRole | null
   /** Woven in from the flight list; never a row on the movement chart. */
@@ -138,6 +142,8 @@ interface Journey {
   basis?: 'agenda' | 'itinerary'
   dayCount?: number
   flights?: FlightInfo[]
+  totalRoadKm?: number
+  totalDriveMin?: number
 }
 
 interface ActivityBrief {
@@ -366,7 +372,6 @@ function arc(a: LatLng, b: LatLng, segments = 28, lift = 1): LatLng[] {
   return pts
 }
 
-/** Cumulative length of a polyline in degrees, used to walk it evenly. */
 /**
  * Compass bearing a → b in degrees, for pointing a vehicle down its own leg.
  * Screen-space rather than great-circle: the map is what the reader sees, and
@@ -381,15 +386,83 @@ function isSectorLeg(stops: JourneyStop[], i: number): boolean {
   return stops[i + 1]?.flightRole === 'sector'
 }
 
+/**
+ * Decodes an OSRM/Google encoded polyline (precision 5).
+ *
+ * The server sends the driving line encoded because a routed 300 km leg is a
+ * few hundred bytes this way and tens of kilobytes as an array of pairs — on
+ * every leg of every payload.
+ */
+function decodePolyline(encoded: string): LatLng[] {
+  const out: LatLng[] = []
+  let i = 0, lat = 0, lng = 0
+  while (i < encoded.length) {
+    let shift = 0, result = 0, b: number
+    do { b = encoded.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5 } while (b >= 0x20)
+    lat += (result & 1) ? ~(result >> 1) : result >> 1
+    shift = 0; result = 0
+    do { b = encoded.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5 } while (b >= 0x20)
+    lng += (result & 1) ? ~(result >> 1) : result >> 1
+    out.push([lat / 1e5, lng / 1e5])
+  }
+  return out
+}
+
+/**
+ * Normalised cumulative length of a polyline, cached per array.
+ *
+ * Everything that moves along a path — the traveller, the idle rider, the
+ * sector planes, the lit trail — is positioned by a 0..1 parameter. Before the
+ * roads arrived every leg was an arc of exactly 29 points, so walking by point
+ * index and walking by distance were the same thing. A routed leg can carry
+ * two hundred points over the distance an arc covers in 29, and walking by
+ * index makes the coach crawl through every road and skate across every arc.
+ */
+const lengthCache = new WeakMap<LatLng[], number[]>()
+function cumulative(points: LatLng[]): number[] {
+  const hit = lengthCache.get(points)
+  if (hit) return hit
+  const run = [0]
+  for (let i = 1; i < points.length; i++) {
+    run.push(run[i - 1] + Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]))
+  }
+  const total = run[run.length - 1] || 1
+  const norm = run.map(v => v / total)
+  lengthCache.set(points, norm)
+  return norm
+}
+
+/** Total length of a polyline in degrees — used to weight the leg boundaries. */
+function polylineLength(points: LatLng[]): number {
+  let sum = 0
+  for (let i = 1; i < points.length; i++) {
+    sum += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
+  }
+  return sum
+}
+
+/** Index of the last vertex at or before `t` along the path. */
+function indexAt(points: LatLng[], t: number): number {
+  const cum = cumulative(points)
+  let lo = 0, hi = cum.length - 1
+  while (lo < hi - 1) {
+    const mid = (lo + hi) >> 1
+    if (cum[mid] <= t) lo = mid; else hi = mid
+  }
+  return lo
+}
+
+/** The point `t` of the way along a polyline, measured by distance. */
 function walk(points: LatLng[], t: number): LatLng {
   if (points.length === 0) return [0, 0]
   if (t <= 0) return points[0]
   if (t >= 1) return points[points.length - 1]
-  const target = t * (points.length - 1)
-  const i = Math.floor(target)
-  const f = target - i
-  const a = points[i]
-  const b = points[Math.min(i + 1, points.length - 1)]
+  const cum = cumulative(points)
+  const lo = indexAt(points, t)
+  const hi = Math.min(lo + 1, points.length - 1)
+  const span = cum[hi] - cum[lo]
+  const f = span > 0 ? (t - cum[lo]) / span : 0
+  const a = points[lo], b = points[hi]
   return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]
 }
 
@@ -553,9 +626,13 @@ function paintRider(marker: LeafletMarker | null, vehicle: string, flip: boolean
 
 /** The lit stretch of route behind a rider at `t` along the path. */
 function trailSlice(path: LatLng[], t: number, span = 0.07): LatLng[] {
-  const end = Math.round(t * (path.length - 1))
-  const start = Math.max(0, end - Math.round(span * path.length))
-  return path.slice(start, Math.max(end + 1, start + 2))
+  if (path.length < 2) return path
+  const from = Math.max(0, t - span)
+  const start = indexAt(path, from)
+  const end = indexAt(path, t)
+  // The head and tail are interpolated onto the ends, so the lit stretch is the
+  // same length whether it is crossing a dense routed leg or a sparse arc.
+  return [walk(path, from), ...path.slice(start + 1, end + 1), walk(path, t)]
 }
 
 // ─── Component ───────────────────────────────────────────────────────────
@@ -717,21 +794,48 @@ export default function JourneyMap({
    */
   const geometry = useMemo(() => {
     const legs: LatLng[][] = []
+    const routed: boolean[] = []
+
     for (let i = 0; i < stops.length - 1; i++) {
+      const from: LatLng = [stops[i].lat, stops[i].lng]
+      const to = stops[i + 1]
       const air = isSectorLeg(stops, i)
-      legs.push(arc(
-        [stops[i].lat, stops[i].lng],
-        [stops[i + 1].lat, stops[i + 1].lng],
-        air ? 44 : 28,
-        air ? 1.9 : 1,
-      ))
+
+      // A driven leg follows the real road network. The routed line starts at
+      // the nearest road rather than at the pin, so the pins are stitched onto
+      // both ends — that short connector is the walk to the vehicle, and
+      // without it the route visibly detaches from the stop it serves.
+      const road = !air && to.roadPath ? decodePolyline(to.roadPath) : null
+      if (road && road.length > 1) {
+        legs.push([from, ...road, [to.lat, to.lng]])
+        routed.push(true)
+        continue
+      }
+
+      // No road, or a flown sector: the bowed arc, as before. A flight arches
+      // much further so it reads as air rather than as a very long drive.
+      legs.push(arc(from, [to.lat, to.lng], air ? 44 : 28, air ? 1.9 : 1))
+      routed.push(false)
     }
+
     const flat: LatLng[] = []
     legs.forEach((leg, i) => flat.push(...(i === 0 ? leg : leg.slice(1))))
+
+    // Where each stop falls along the flattened path, as a 0..1 fraction of its
+    // length. Legs used to be interchangeable — 29 points each — so a leg index
+    // could stand in for a position. A routed leg and an arc are nothing alike,
+    // so playback needs the real boundaries to know when it has arrived.
+    const lens = legs.map(polylineLength)
+    const total = lens.reduce((a, b) => a + b, 0) || 1
+    const bounds: number[] = [0]
+    lens.forEach(l => bounds.push(bounds[bounds.length - 1] + l / total))
+    bounds[bounds.length - 1] = 1
+
     const sectors = legs
       .map((path, i) => ({ path, stop: stops[i + 1] }))
       .filter(x => x.stop?.flightRole === 'sector' && x.stop.flight)
-    return { legs, flat, sectors }
+
+    return { legs, flat, sectors, bounds, routed }
   }, [stops])
 
   /** Internal sectors on this file — what the header counts. */
@@ -1095,7 +1199,10 @@ export default function JourneyMap({
     if (!L || !map) return
 
     // Restart from the top when replaying a finished run.
-    let legIndex = progress >= 0.999 ? 0 : Math.floor(progress * (stops.length - 1))
+    const { bounds } = geometry
+    let legIndex = progress >= 0.999
+      ? 0
+      : Math.max(0, bounds.findIndex(b => b > progress) - 1)
     let phase: 'dwell' | 'travel' = 'dwell'
     let phaseStart = performance.now()
 
@@ -1119,7 +1226,10 @@ export default function JourneyMap({
         if (elapsed >= DWELL_MS) { phase = 'travel'; phaseStart = now }
       } else {
         const t = Math.min(elapsed / LEG_MS, 1)
-        const legT = (legIndex + t) / (stops.length - 1)
+        // Each leg gets the same wall-clock time but its own stretch of the
+        // path, so arriving at `t === 1` is arriving at the stop — however long
+        // the road between them turned out to be.
+        const legT = bounds[legIndex] + t * ((bounds[legIndex + 1] ?? 1) - bounds[legIndex])
         setProgress(legT)
 
         const here = walk(geometry.flat, legT)
@@ -1223,8 +1333,8 @@ export default function JourneyMap({
   useEffect(() => {
     const route = routeRef.current
     if (!route || geometry.flat.length === 0) return
-    const upto = Math.max(2, Math.round(progress * (geometry.flat.length - 1)) + 1)
-    const travelled = geometry.flat.slice(0, upto)
+    const upto = Math.max(2, indexAt(geometry.flat, progress) + 1)
+    const travelled = [...geometry.flat.slice(0, upto), walk(geometry.flat, progress)]
     // The halo stays whole so the road ahead is still readable; the coloured
     // spine and its dashes fill in behind the vehicle as it drives.
     route.base.setLatLngs(travelled)
@@ -1426,7 +1536,21 @@ export default function JourneyMap({
                 <MapPin className={cn('w-3 h-3', skin.muted)} />
                 {stops.length} {agenda ? (stops.length === 1 ? 'move' : 'moves') : 'stops'}
               </span>
-              <span className="inline-flex items-center gap-1"><Navigation className={cn('w-3 h-3', skin.muted)} />{journey.totalKm.toLocaleString()} km</span>
+              {/* Road distance where the legs actually routed, straight-line
+                  where they could not — the arc's number was never a distance
+                  anybody drives. */}
+              <span
+                className="inline-flex items-center gap-1"
+                title={journey.totalRoadKm ? 'Driving distance along the routed legs' : 'Straight-line distance'}
+              >
+                <Navigation className={cn('w-3 h-3', skin.muted)} />
+                {(journey.totalRoadKm || journey.totalKm).toLocaleString()} km
+              </span>
+              {!!journey.totalDriveMin && (
+                <span className="inline-flex items-center gap-1" title="Free-flow driving time — no traffic, no stops">
+                  <Clock className={cn('w-3 h-3', skin.muted)} />{fmtDrive(journey.totalDriveMin)} drive
+                </span>
+              )}
               {journey.hotels.length > 0 && (
                 <span className="inline-flex items-center gap-1">
                   <span className="w-2 h-2 rounded-[3px] bg-orange-500" />{journey.hotels.length} stays
@@ -1707,9 +1831,14 @@ export default function JourneyMap({
                           <span className="text-[10px] leading-none">{s.transport.emoji}</span>
                           {s.transport.short}
                         </span>
-                        {s.moveKm != null && s.moveKm > 0 && (
+                        {s.roadKm != null && s.roadKm > 0 ? (
+                          <span className={cn('text-[9px] tabular-nums', skin.muted)} title="By road">
+                            {s.roadKm.toLocaleString()} km
+                            {s.roadMin ? ` · ${fmtDrive(s.roadMin)}` : ''}
+                          </span>
+                        ) : s.moveKm != null && s.moveKm > 0 ? (
                           <span className={cn('text-[9px] tabular-nums', skin.muted)}>{s.moveKm.toLocaleString()} km</span>
-                        )}
+                        ) : null}
                         {feeder && (
                           <span
                             title={`${s.flightRole === 'to-airport' ? 'Connects to' : 'Meets'} ${feeder.flightNo} · ${feeder.fromApt} → ${feeder.toApt}`}
@@ -2038,11 +2167,22 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
               </div>
             </div>
 
-            {stop.moveKm != null && stop.moveKm > 0 && (
+            {stop.roadKm != null && stop.roadKm > 0 ? (
+              <p className={cn('mt-2 inline-flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px]', skin.sheetMuted)}>
+                <span className="inline-flex items-center gap-1">
+                  <Navigation className="w-3 h-3" /> {stop.roadKm.toLocaleString()} km by road
+                </span>
+                {stop.roadMin ? (
+                  <span className="inline-flex items-center gap-1" title="Free-flow — no traffic, no stops">
+                    <Clock className="w-3 h-3" /> about {fmtDrive(stop.roadMin)} driving
+                  </span>
+                ) : null}
+              </p>
+            ) : stop.moveKm != null && stop.moveKm > 0 ? (
               <p className={cn('mt-2 inline-flex items-center gap-1 text-[10px]', skin.sheetMuted)}>
                 <Navigation className="w-3 h-3" /> about {stop.moveKm.toLocaleString()} km on this leg
               </p>
-            )}
+            ) : null}
 
             {stop.hotel && (
               <div className={cn('mt-2.5 pt-2.5 border-t flex items-start gap-2', skin.hairline)}>
@@ -2265,6 +2405,13 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, c => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
   ))
+}
+
+/** 195 → "3h 15m", 45 → "45m". Free-flow driving time, never traffic. */
+function fmtDrive(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return h > 0 ? `${h}h ${m > 0 ? `${m}m` : ''}`.trim() : `${m}m`
 }
 
 function truncate(s: string, n: number) {
