@@ -18,6 +18,7 @@ import { useCountryFilter } from '@/hooks/use-country-filter'
 import Link from 'next/link'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import { CountryFlag } from '@/components/ui/country-flag'
+import LiveOpsHero from '@/components/dashboard/live-ops-hero'
 import { TRIP_COMPLETED, TRIP_PENDING_REVIEW, type TripState } from '@/lib/trip-state'
 
 // ─── Country Meta ──────────────────────────────────────────────────────────────
@@ -318,6 +319,16 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* ── Live operations hero ────────────────────────────────────────
+            Loads and refreshes on its own timer, deliberately outside the
+            `loading` gate below: the live picture is the first thing on the page
+            and must not wait on the stats/bookings pair to settle. */}
+        <LiveOpsHero
+          country={countryFilter}
+          canFilter={canFilter}
+          userName={session?.user?.name?.split(' ')[0] ?? null}
+        />
 
         {loading ? (
           <div className="flex items-center justify-center h-64">
