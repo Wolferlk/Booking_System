@@ -1,13 +1,16 @@
 /**
  * POST /api/bookings/[ref]/agenda/send
  *
- * Generates the movement-chart agenda as a PDF and:
- *   mode = 'download' → returns the PDF as binary
+ * Generates the movement-chart agenda as a PDF or a Word (.docx) file and:
+ *   mode = 'download' → returns the file as binary
  *   mode = 'whatsapp' → sends via WhatsApp (Meta API / proxy)
  *   mode = 'email'    → sends via Microsoft Graph email
  *
  * Body:
- *   { mode, showDrivers, to, message, subject }
+ *   { mode, format, showDrivers, to, message, subject }
+ *
+ * `format` defaults to 'pdf'; 'word' attaches the .docx built by
+ * `lib/generate-agenda-docx.ts` instead.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
@@ -15,6 +18,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { generateAgendaPdf } from '@/lib/generate-agenda-pdf'
+import { generateAgendaDocx } from '@/lib/generate-agenda-docx'
 import { AGENDA_INCLUDE, buildAgendaEmailHtml, buildAgendaFileName } from '@/lib/agenda-mailer'
 import { sendMailViaGraph } from '@/lib/send-mail'
 import { putUpload } from '@/lib/storage'
@@ -52,13 +56,15 @@ async function handleSend(
 
   const body = await req.json() as {
     mode:        'download' | 'whatsapp' | 'email'
+    format?:     'pdf' | 'word'
     showDrivers?: boolean
     to?:         string
     message?:    string
     subject?:    string
   }
 
-  const { mode, showDrivers = true, to, message, subject } = body
+  const { mode, format = 'pdf', showDrivers = true, to, message, subject } = body
+  const isWord = format === 'word'
 
   // ── Load agenda data ──────────────────────────────────────────────────────
   const booking = await prisma.booking.findUnique({
@@ -70,31 +76,36 @@ async function handleSend(
 
   const agendaItems = (booking.tourAgenda as { items: unknown[] } | null)?.items ?? []
 
-  // ── Generate PDF (full-detail layout matching "Download with all details") ──
-  const driverTag  = showDrivers ? 'WithDrivers' : 'NoDrivers'
-  const filename   = buildAgendaFileName(booking as never)
+  // ── Generate the document (full-detail layout matching the manual downloads) ─
+  const driverTag   = showDrivers ? 'WithDrivers' : 'NoDrivers'
+  const filename    = buildAgendaFileName(booking as never, isWord ? 'docx' : 'pdf')
+  const contentType = isWord
+    ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    : 'application/pdf'
 
-  let pdfBuffer: Buffer
+  let docBuffer: Buffer
   try {
-    pdfBuffer = await generateAgendaPdf(
-      params.ref,
-      booking as never,
-      agendaItems as never,
-      showDrivers,
-    )
+    docBuffer = isWord
+      ? await generateAgendaDocx(params.ref, showDrivers)
+      : await generateAgendaPdf(
+          params.ref,
+          booking as never,
+          agendaItems as never,
+          showDrivers,
+        )
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return buildApiError(`PDF generation failed: ${msg}`, 500)
+    return buildApiError(`${isWord ? 'Word' : 'PDF'} generation failed: ${msg}`, 500)
   }
 
   // ── Download ──────────────────────────────────────────────────────────────
   if (mode === 'download') {
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+    return new NextResponse(new Uint8Array(docBuffer), {
       status: 200,
       headers: {
-        'Content-Type':        'application/pdf',
+        'Content-Type':        contentType,
         'Content-Disposition': `attachment; filename="${filename}"`,
-        'Content-Length':      String(pdfBuffer.length),
+        'Content-Length':      String(docBuffer.length),
       },
     })
   }
@@ -107,7 +118,7 @@ async function handleSend(
 
     const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
-    const waMessage     = message ?? `📋 Movement Chart — ${params.ref}\n\nPlease find the attached agenda PDF for your reference.`
+    const waMessage     = message ?? `📋 Movement Chart — ${params.ref}\n\nPlease find the attached agenda ${isWord ? 'Word document' : 'PDF'} for your reference.`
 
     // Try Meta API first. Wrapped so a Graph/network failure returns JSON, not an empty body.
     if (accessToken && phoneNumberId) {
@@ -130,8 +141,8 @@ async function handleSend(
         // Upload PDF and send document
         const mediaForm = new FormData()
         mediaForm.append('messaging_product', 'whatsapp')
-        const pdfBlob = new Blob([new Uint8Array(pdfBuffer)], { type: 'application/pdf' })
-        mediaForm.append('file', pdfBlob, filename)
+        const docBlob = new Blob([new Uint8Array(docBuffer)], { type: contentType })
+        mediaForm.append('file', docBlob, filename)
         const uploadRes  = await fetch(`${baseWaUrl}/media`, { method: 'POST', headers, body: mediaForm })
         const uploadJson = await uploadRes.json() as { id?: string }
 
@@ -158,7 +169,7 @@ async function handleSend(
     // Fallback: proxy — needs a public file URL, so store the PDF first (S3 → local disk).
     try {
       const storedName = `${driverTag}-${filename}`
-      const storedPath = await putUpload(`whatsapp/${storedName}`, pdfBuffer, 'application/pdf')
+      const storedPath = await putUpload(`whatsapp/${storedName}`, docBuffer, contentType)
       const baseUrl = (
         process.env.NEXT_PUBLIC_APP_URL?.trim() ||
         process.env.APP_URL?.trim() ||
@@ -200,8 +211,8 @@ async function handleSend(
         bodyHtml,
         attachment: {
           name:        filename,
-          contentType: 'application/pdf',
-          buffer:      pdfBuffer,
+          contentType,
+          buffer:      docBuffer,
         },
       })
     } catch (err) {

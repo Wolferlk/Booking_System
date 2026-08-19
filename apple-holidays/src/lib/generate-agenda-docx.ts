@@ -1,8 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
+/**
+ * Builds the Movement Chart agenda as a Word (.docx) document.
+ *
+ * Lives in lib/ rather than in the route because the same document is also
+ * attached to WhatsApp / e-mail sends from `agenda/send` when the desk picks
+ * the Word format.
+ */
 import { prisma } from '@/lib/prisma'
-import { buildApiError } from '@/lib/utils'
 import {
   Document, Packer, Paragraph, Table, TableRow, TableCell,
   TextRun, HeadingLevel, AlignmentType, WidthType, BorderStyle,
@@ -20,8 +23,6 @@ import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { withoutRetiredContacts } from '@/lib/emergency-contacts'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
-
-export const dynamic = 'force-dynamic'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
@@ -163,17 +164,17 @@ function noteBlock(icon: string, label: string, content: string): Paragraph[] {
   ]
 }
 
-// ── Route ─────────────────────────────────────────────────────────────────────
+// ── Generator ─────────────────────────────────────────────────────────────────
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: { ref: string } },
-) {
-  const session = await getServerSession(authOptions)
-  if (!session) return buildApiError('Unauthorized', 401)
-
+/**
+ * @param ref          booking reference
+ * @param showDrivers  when false, the driver column and the ground-transport
+ *                     roster are dropped — the customer-facing variant.
+ * @throws when the booking does not exist
+ */
+export async function generateAgendaDocx(ref: string, showDrivers = true): Promise<Buffer> {
   const booking = await prisma.booking.findUnique({
-    where: { bookingRef: params.ref },
+    where: { bookingRef: ref },
     include: {
       passengers:      true,
       flights:         { orderBy: { date: 'asc' } },
@@ -206,7 +207,7 @@ export async function GET(
     },
   })
 
-  if (!booking) return buildApiError('Booking not found', 404)
+  if (!booking) throw new Error('Booking not found')
 
   const items   = booking.tourAgenda?.items ?? []
   const lead    = booking.passengers.find(p => p.isLead) ?? booking.passengers[0]
@@ -229,7 +230,7 @@ export async function GET(
   children.push(
     new Paragraph({
       children: [
-        new TextRun({ text: params.ref, bold: true, size: 36, color: CLR.amber, font: 'Courier New' }),
+        new TextRun({ text: ref, bold: true, size: 36, color: CLR.amber, font: 'Courier New' }),
         new TextRun({ text: `   ${formatDate(booking.arrivalDate)} — ${formatDate(booking.departureDate)}`, size: 18, color: CLR.muted, font: 'Arial' }),
         new TextRun({ text: `   ${totalPax} pax (${booking.paxAdults} adult${booking.paxAdults !== 1 ? 's' : ''}${booking.paxChildren > 0 ? `, ${booking.paxChildren} child${booking.paxChildren !== 1 ? 'ren' : ''}` : ''}${(booking.paxInfants ?? 0) > 0 ? `, ${booking.paxInfants} infant${(booking.paxInfants ?? 0) !== 1 ? 's' : ''}` : ''})`, size: 18, color: CLR.muted, font: 'Arial' }),
       ],
@@ -395,7 +396,10 @@ export async function GET(
         layout: TableLayoutType.FIXED,
         rows: [
           new TableRow({
-            children: ['From', 'To / Activity', 'Meal', 'Meet Time', 'Service', 'Driver / Vehicle'].map(h => hCell(h)),
+            children: [
+              'From', 'To / Activity', 'Meal', 'Meet Time', 'Service',
+              ...(showDrivers ? ['Driver / Vehicle'] : []),
+            ].map(h => hCell(h)),
           }),
           ...dayItems.map((item, idx) => {
             const a = item.assignment
@@ -443,13 +447,16 @@ export async function GET(
               dCell(normalizeMealPlan(item.mealPlan), { shade }),
               dCell(meetDisplay, { bold: meetDisplay !== '—', color: meetDisplay !== '—' ? CLR.green : CLR.muted, shade }),
               dCell(isHotelOnly ? 'Hotel Only' : isLeisure ? 'Leisure Day' : SVC_LABEL[svc] ?? svc, { shade }),
-              driverCell(driverText, {
+            ]
+
+            if (showDrivers) {
+              rows.push(driverCell(driverText, {
                 italic: noDriver || driverText === 'Not assigned',
                 color: noDriver || driverText === 'Not assigned' ? CLR.muted : undefined,
                 shade,
                 photo: noDriver ? null : driverPhoto,
-              }),
-            ]
+              }))
+            }
 
             const rowCells = [new TableRow({ children: rows })]
 
@@ -457,7 +464,7 @@ export async function GET(
             if (item.details?.trim()) {
               rowCells.push(new TableRow({
                 children: [new TableCell({
-                  columnSpan: 6,
+                  columnSpan: showDrivers ? 6 : 5,
                   children: [new Paragraph({
                     children: [new TextRun({
                       text: item.details,
@@ -496,7 +503,7 @@ export async function GET(
         return true
       })
 
-    if (roster.length > 0) {
+    if (showDrivers && roster.length > 0) {
       children.push(sectionHeading('🚐', 'Ground Transport Roster'))
       children.push(new Table({
         width: { size: 100, type: WidthType.PERCENTAGE },
@@ -735,7 +742,7 @@ export async function GET(
   // ── BUILD DOCX ────────────────────────────────────────────────────────────
   const doc = new Document({
     creator:  'Apple Holidays Booking System',
-    title:    `Movement Chart — ${params.ref}`,
+    title:    `Movement Chart — ${ref}`,
     subject:  'Booking Agenda',
     sections: [{
       properties: {
@@ -747,14 +754,5 @@ export async function GET(
     }],
   })
 
-  const buffer = await Packer.toBuffer(doc)
-
-  return new NextResponse(buffer as unknown as BodyInit, {
-    status: 200,
-    headers: {
-      'Content-Type':        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'Content-Disposition': `attachment; filename="${params.ref}.docx"`,
-      'Content-Length':      String(buffer.byteLength),
-    },
-  })
+  return Packer.toBuffer(doc)
 }

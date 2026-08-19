@@ -80,7 +80,7 @@ export function buildAgendaFileName(booking: {
   bookingRef?: string
   isNumber?: string | null
   passengers?: { name: string; isLead?: boolean }[]
-}): string {
+}, ext: 'pdf' | 'docx' = 'pdf'): string {
   const leadPassenger = booking.passengers?.find(p => p.isLead) ?? booking.passengers?.[0]
   const parts = [
     booking.isNumber?.trim() || null,
@@ -88,7 +88,7 @@ export function buildAgendaFileName(booking: {
     leadPassenger?.name ?? null,
   ].map(safeFilePart).filter(Boolean)
 
-  return `${parts.join('_') || 'agenda'}.pdf`
+  return `${parts.join('_') || 'agenda'}.${ext}`
 }
 
 // ── Email body ────────────────────────────────────────────────────────────────

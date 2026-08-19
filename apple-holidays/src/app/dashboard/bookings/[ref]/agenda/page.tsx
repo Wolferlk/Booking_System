@@ -11,6 +11,7 @@ import {
   Sparkles, Eye, Mail, Info, Building2, Pencil,
   FileDown, MessageCircle, Send, ChevronRight, GripVertical, FileText,
   ClipboardList, Bus, Ticket, Hash, UserCheck, Palmtree, Store, Utensils,
+  FileType,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import Header from '@/components/layout/header'
@@ -322,9 +323,11 @@ export default function AgendaPage() {
   // Driver / vendor view modal
   const [driverModalTarget, setDriverModalTarget] = useState<AgendaItem['assignment'] | null>(null)
 
-  // PDF send modal
+  // Agenda send modal
   const [sendModal,       setSendModal]      = useState(false)
   const [sendMode,        setSendMode]       = useState<'whatsapp' | 'email'>('whatsapp')
+  // Attachment format — PDF is the default; Word ships the same .docx as "Download Word".
+  const [sendFormat,      setSendFormat]     = useState<'pdf' | 'word'>('pdf')
   const [sendDrivers,     setSendDrivers]    = useState(true)
   const [sendTo,          setSendTo]         = useState('')
   const [sendMessage,     setSendMessage]    = useState('')
@@ -429,6 +432,7 @@ export default function AgendaPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode:        sendMode,
+          format:      sendFormat,
           showDrivers: sendDrivers,
           to:          recipient,
           message:     sendMessage || undefined,
@@ -445,7 +449,7 @@ export default function AgendaPage() {
       if (!res.ok || !json.success) {
         throw new Error(json.error || `Send failed (${res.status} ${res.statusText})`)
       }
-      toast.success(`Agenda sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
+      toast.success(`Agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'} sent via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}!`)
       setSendModal(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
@@ -2393,11 +2397,37 @@ export default function AgendaPage() {
             </button>
           </div>
 
+          {/* Attachment format */}
+          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Attachment Format</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {sendFormat === 'word'
+                  ? 'Sends the editable .docx movement chart'
+                  : 'Sends the print-ready PDF movement chart'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSendFormat('pdf')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${sendFormat === 'pdf' ? 'bg-rose-500 text-white border-rose-600' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+              >
+                <FileText className="w-3 h-3 inline mr-1" />PDF
+              </button>
+              <button
+                onClick={() => setSendFormat('word')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${sendFormat === 'word' ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}
+              >
+                <FileType className="w-3 h-3 inline mr-1" />Word
+              </button>
+            </div>
+          </div>
+
           {/* Driver toggle */}
           <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
             <div>
               <p className="text-sm font-semibold text-slate-800">Include Driver Allocation</p>
-              <p className="text-xs text-slate-400 mt-0.5">Show driver names, phones, and vehicle info in the PDF</p>
+              <p className="text-xs text-slate-400 mt-0.5">Show driver names, phones, and vehicle info in the {sendFormat === 'word' ? 'document' : 'PDF'}</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -2454,14 +2484,14 @@ export default function AgendaPage() {
               onChange={e => setSendMessage(e.target.value)}
               placeholder={sendMode === 'email'
                 ? 'Added on top of the standard tour confirmation message…'
-                : 'Add a custom message to include with the agenda PDF…'}
+                : `Add a custom message to include with the agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'}…`}
             />
           </div>
 
           <div className="flex gap-2 pt-1">
             <Button loading={sending} onClick={sendAgenda} className="flex-1">
               <Send className="w-4 h-4" />
-              {sending ? 'Sending…' : `Send via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}`}
+              {sending ? 'Sending…' : `Send ${sendFormat === 'word' ? 'Word' : 'PDF'} via ${sendMode === 'whatsapp' ? 'WhatsApp' : 'Email'}`}
             </Button>
             <Button variant="ghost" onClick={() => setSendModal(false)}>Cancel</Button>
           </div>
