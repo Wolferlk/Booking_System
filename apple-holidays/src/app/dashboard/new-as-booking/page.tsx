@@ -1,23 +1,34 @@
 'use client'
 
 import { Suspense, useState } from 'react'
-import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
+import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding, Radar } from 'lucide-react'
 import Header from '@/components/layout/header'
 import SearchImportTab from '@/components/as-bookings/search-import-tab'
 import RangeImportTab from '@/components/as-bookings/range-import-tab'
 import AutoImportTab from '@/components/as-bookings/auto-import-tab'
+import WatchTab from '@/components/as-bookings/watch-tab'
 
-type TabKey = 'search' | 'range' | 'arrival' | 'auto'
+type TabKey = 'search' | 'range' | 'arrival' | 'auto' | 'watch'
 
 const TABS: { key: TabKey; label: string; icon: typeof Search; hint: string }[] = [
   { key: 'search',  label: 'Search & Import',   icon: Search,        hint: 'Find one confirmation by IS / quotation number' },
   { key: 'range',   label: 'Range Import',      icon: CalendarRange, hint: 'Bulk import confirmations by create date' },
   { key: 'arrival', label: 'Arrival Import',    icon: PlaneLanding,  hint: 'Bulk import confirmations by arrival date' },
   { key: 'auto',    label: 'Daily Auto-Import', icon: Zap,           hint: 'Automatic 6 AM import + run history' },
+  { key: 'watch',   label: 'Live Watch',        icon: Radar,         hint: 'Check for new confirmations every few minutes' },
 ]
 
+function isTabKey(v: string | null): v is TabKey {
+  return !!v && TABS.some((t) => t.key === v)
+}
+
 function NewASBookingInner() {
-  const [tab, setTab] = useState<TabKey>('search')
+  // `?tab=` lets other pages deep-link straight to a tab — the All Bookings
+  // fetch pill points its settings link at `?tab=watch`.
+  const params = useSearchParams()
+  const initial = params.get('tab')
+  const [tab, setTab] = useState<TabKey>(isTabKey(initial) ? initial : 'search')
 
   return (
     <div>
@@ -52,6 +63,7 @@ function NewASBookingInner() {
         {tab === 'range' && <RangeImportTab key="range" dateField="create" />}
         {tab === 'arrival' && <RangeImportTab key="arrival" dateField="arrival" />}
         {tab === 'auto' && <AutoImportTab />}
+        {tab === 'watch' && <WatchTab />}
       </div>
     </div>
   )

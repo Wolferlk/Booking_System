@@ -262,6 +262,19 @@ async function startAsImportCreateScheduler() {
   }
 }
 
+async function startAsWatchLiveScheduler() {
+  try {
+    // Near-realtime AppleSystem confirmation watch: a self-rescheduling timer that
+    // sweeps a rolling create-date window every N minutes (configured in the UI)
+    // and imports confirmations as they appear, instead of waiting for the 06:00
+    // daily job. Idempotent — it can never duplicate an existing booking.
+    const { startAsWatchScheduler } = await import('./as-watch-scheduler')
+    await startAsWatchScheduler()
+  } catch (err) {
+    console.error('[Scheduler] as-watch scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startB2cImportCreateScheduler() {
   try {
     // node-cron scheduler: fires once daily just after midnight (default 00:30
@@ -366,6 +379,11 @@ export function startCronJobs() {
   // AppleSystem confirmations auto-import: node-cron daily job at 06:00
   // (timezone-aware, boot catch-up). Imports yesterday's status-2 confirmations.
   void startAsImportCreateScheduler()
+
+  // AppleSystem live confirmation watch: interval-based sweep (default every 15
+  // min, off until switched on in New Booking - AppleSystem > Live Watch) that
+  // creates bookings within minutes of a confirmation rather than next morning.
+  void startAsWatchLiveScheduler()
 
   // Aahaas B2C order auto-import: node-cron daily job just after midnight
   // (timezone-aware, boot catch-up). Imports today's orders with upcoming travel.

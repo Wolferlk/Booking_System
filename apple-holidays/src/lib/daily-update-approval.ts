@@ -67,3 +67,52 @@ export function callApprovalSummary(cell: CallApprovalCell): string {
   }
   return 'Not sent'
 }
+
+// ─── Filtering the sheet by approval state ────────────────────────────────────
+
+/**
+ * The desk works this column as a worklist, not as a report: "who still has to
+ * be asked", "who was asked and never answered", "who cannot be asked at all".
+ * Scanning several hundred rows for that is exactly what the column was meant
+ * to stop, so the header offers the same four buckets as a filter.
+ *
+ * `no_phone` is not a fourth ledger state — it is the `not_sent` rows the send
+ * button cannot help, because the booking carries no number to send to. Those
+ * belong with the contact desk rather than with whoever is clicking *Send*, so
+ * `not_sent` deliberately excludes them.
+ */
+export const CALL_APPROVAL_FILTERS = ['all', 'approved', 'sent', 'not_sent', 'no_phone'] as const
+export type CallApprovalFilter = typeof CALL_APPROVAL_FILTERS[number]
+
+export const CALL_APPROVAL_FILTER_LABEL: Record<CallApprovalFilter, string> = {
+  all:      'All call approvals',
+  approved: 'Approved',
+  sent:     'Sent — not approved yet',
+  not_sent: 'Not sent',
+  no_phone: 'No contact number to send',
+}
+
+/** Short form for the context strip, where "All …" is never shown. */
+export const CALL_APPROVAL_FILTER_CHIP: Record<CallApprovalFilter, string> = {
+  all:      '',
+  approved: 'Approved only',
+  sent:     'Sent — not approved yet',
+  not_sent: 'Not sent',
+  no_phone: 'No contact number',
+}
+
+export function isCallApprovalFilter(v: string | null | undefined): v is CallApprovalFilter {
+  return !!v && (CALL_APPROVAL_FILTERS as readonly string[]).includes(v)
+}
+
+/** Does one row's cell belong in the chosen bucket? */
+export function matchesCallApprovalFilter(cell: CallApprovalCell, f: CallApprovalFilter): boolean {
+  const hasPhone = Boolean(cell.phone && cell.phone.trim())
+  switch (f) {
+    case 'approved': return cell.state === 'approved'
+    case 'sent':     return cell.state === 'sent'
+    case 'not_sent': return cell.state === 'not_sent' && hasPhone
+    case 'no_phone': return !hasPhone
+    default:         return true
+  }
+}

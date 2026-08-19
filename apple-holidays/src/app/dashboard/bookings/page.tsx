@@ -27,6 +27,7 @@ import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import QuickStatCards, { type QuickStats } from '@/components/bookings/quick-stat-cards'
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
+import AsFetchNow from '@/components/bookings/as-fetch-now'
 import PaymentStateCell from '@/components/bookings/payment-state-cell'
 import type { InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import {
@@ -679,6 +680,9 @@ function BookingsPageInner() {
         subtitle={`${total} total booking${total !== 1 ? 's' : ''}`}
         actions={
           <div className="flex items-center gap-2">
+            {/* AppleSystem live confirmation watch — status + on-demand fetch */}
+            {canCreate && <AsFetchNow onImported={fetchBookings} />}
+
             {/* Download PDF */}
             <div className="relative" ref={downloadMenuRef}>
               <button

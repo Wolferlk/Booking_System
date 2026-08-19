@@ -33,6 +33,10 @@
       "schedule": "0 6 * * *"
     },
     {
+      "path": "/api/cron/as-watch",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/b2c-import",
       "schedule": "0 19 * * *"
     },
