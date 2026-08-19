@@ -20,6 +20,7 @@
  */
 import openai, { logAiUsage } from '@/lib/openai'
 import { geoCache, nominatim, haversineKm, type StopKind, type JourneyHotel } from '@/lib/journey-map'
+import { roadLegs } from '@/lib/road-route'
 import { serviceTypeLabel, serviceTypeShortLabel } from '@/lib/service-types'
 
 const MODEL = () => process.env.OPENAI_JOURNEY_MODEL || 'gpt-4o-mini'
@@ -181,6 +182,17 @@ export interface AgendaStop {
   legsThatDay: number
   hotel: AgendaStopHotel | null
 
+  // ── The road into this stop ──
+  /**
+   * The driving line from the previous stop to this one, as an OSRM-encoded
+   * polyline (precision 5). Null when the leg is flown, or when no road
+   * connects the two — the map falls back to its arc.
+   */
+  roadPath: string | null
+  /** Driving distance and free-flow time along `roadPath`. */
+  roadKm: number | null
+  roadMin: number | null
+
   // ── Flights ──
   /** The booked sector this row is part of, if any. */
   flight: FlightInfo | null
@@ -205,6 +217,9 @@ export interface AgendaJourney {
   dayCount: number
   /** Every booked sector, resolved — the panel counts the internal ones. */
   flights: FlightInfo[]
+  /** Road distance and free-flow driving time across every routed leg. */
+  totalRoadKm: number
+  totalDriveMin: number
 }
 
 export interface AgendaJourneyInput {
@@ -505,7 +520,7 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
     return d !== 0 ? d : a.sortOrder - b.sortOrder
   })
   if (items.length === 0) {
-    return { stops: [], hotels: [], countries: [], totalKm: 0, degraded: false, basis: 'agenda', dayCount: 0, flights: [] }
+    return { stops: [], hotels: [], countries: [], totalKm: 0, degraded: false, basis: 'agenda', dayCount: 0, flights: [], totalRoadKm: 0, totalDriveMin: 0 }
   }
 
   // Day numbering, leg ordering and leg distances are all computed *after* the
@@ -647,6 +662,9 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
             checkIn: dayKey(stay.checkIn) === key,
           }
         : null,
+      roadPath: null,
+      roadKm: null,
+      roadMin: null,
       flight: null,
       flightRole: null,
       synthetic: false,
@@ -825,6 +843,9 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
             checkIn: dayKey(stay.checkIn) === f.date,
           }
         : null,
+      roadPath: null,
+      roadKm: null,
+      roadMin: null,
       flight: f,
       flightRole: 'sector',
       synthetic: true,
@@ -896,8 +917,43 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
     s.legKm = prev ? haversineKm(prev, s) : null
   })
 
+  // ── Roads ──────────────────────────────────────────────────────────────
+  //
+  // Everything that is not flown is driven, and an arc is a poor drawing of a
+  // drive: it crosses reservoirs, cuts through the middle of a national park,
+  // and makes a four-hour mountain transfer look like a short hop. Each ground
+  // leg is routed on the real network instead, which also produces the two
+  // numbers the arc could never give — road distance, and how long it takes.
+  //
+  // Best effort throughout. A leg that will not route (an island, an engine
+  // outage, a slow response past the batch deadline) keeps its arc, which is
+  // exactly what every leg looked like before this existed.
+  const roadPairs = stops.map((s, i) => {
+    const prev = stops[i - 1]
+    // A flown sector has no road by definition, and routing one would draw the
+    // coach road between two airports the guests never take.
+    if (!prev || s.flightRole === 'sector') return null
+    const from = { lat: prev.lat, lng: prev.lng }
+    const to = { lat: s.lat, lng: s.lng }
+    const apart = haversineKm(from, to)
+    // Under a kilometre there is nothing to draw; over two thousand it is not a
+    // transfer anybody booked, and asking a public engine to route it is rude.
+    if (apart < 1 || apart > 2000) return null
+    return { from, to }
+  })
+
+  const roads = await roadLegs(roadPairs)
+  stops.forEach((s, i) => {
+    const r = roads[i]
+    s.roadPath = r?.geometry ?? null
+    s.roadKm = r?.km ?? null
+    s.roadMin = r?.minutes ?? null
+  })
+
   const countries = Array.from(new Set(stops.map(s => s.country).filter(Boolean) as string[]))
   const totalKm = stops.reduce((sum, s) => sum + (s.legKm ?? 0), 0)
+  const totalRoadKm = stops.reduce((sum, s) => sum + (s.roadKm ?? 0), 0)
+  const totalDriveMin = stops.reduce((sum, s) => sum + (s.roadMin ?? 0), 0)
 
   return {
     stops,
@@ -908,6 +964,8 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
     basis: 'agenda',
     dayCount: days.length,
     flights,
+    totalRoadKm,
+    totalDriveMin,
   }
 }
 
