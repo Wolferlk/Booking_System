@@ -1459,3 +1459,76 @@ export async function fetchDestinationImageFromWeb(destination: string): Promise
 
   throw new Error('No usable web image found for destination')
 }
+
+// ─── Place photos (Journey Map) ──────────────────────────────────────────
+
+/** Cheap liveness check: a photo URL that actually serves a real image. */
+async function imageUrlIsLive(url: string): Promise<boolean> {
+  if (BAD_IMG_RE.test(url)) return false
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      headers: { 'User-Agent': UA },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return false
+    const ct = res.headers.get('content-type') ?? ''
+    if (!ct.startsWith('image/') || ct.includes('svg')) return false
+    const len = Number(res.headers.get('content-length') ?? '0')
+    // A sub-20KB payload is an icon or a flag, not a photograph.
+    return len === 0 || len > 20_000
+  } catch { return false }
+}
+
+/**
+ * Real, hotlinkable photographs of a place, for the Journey Map's activity popup.
+ *
+ * Order matters. Wikimedia Commons and Wikipedia are consulted first because
+ * their URLs are addresses we resolved from an API and are therefore real; the
+ * model's web-search results go last because a language model asked for URLs
+ * will confidently produce ones that have never existed. Everything returned
+ * has been HEAD-checked, so the gallery never renders a broken tile.
+ */
+export async function findPlacePhotos(subject: string, limit = 5): Promise<string[]> {
+  const candidates: string[] = []
+
+  candidates.push(...await commonsImageUrls(subject))
+  const wiki = await wikipediaImageUrl(subject)
+  if (wiki) candidates.push(wiki)
+
+  // Only pay for a web search when the free, reliable sources came up short.
+  if (candidates.length < limit) {
+    try {
+      const res = await openai.responses.create({
+        model: process.env.OPENAI_SEARCH_MODEL || 'gpt-4o',
+        tools: [{ type: 'web_search_preview' }],
+        input:
+          `Find real, currently-working DIRECT image file URLs (ending in .jpg, .jpeg, .png or .webp) ` +
+          `of beautiful full-colour TOURISM photographs of ${subject}. ` +
+          `Strongly prefer images hosted on upload.wikimedia.org. ` +
+          `No flags, maps, logos, emblems or black-and-white archive photos. ` +
+          `Reply with 3 to 5 raw URLs only, one per line, no other text.`,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const text: string = (res as any).output_text ?? ''
+      for (const token of text.split(/\s+/)) {
+        const m = token.match(IMG_URL_RE)
+        if (m && !BAD_IMG_RE.test(m[0])) candidates.push(m[0])
+      }
+    } catch (e) {
+      console.warn('[place-photos] web search unavailable:', (e as Error).message)
+    }
+  }
+
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const url of candidates) {
+    if (out.length >= limit) break
+    if (seen.has(url)) continue
+    seen.add(url)
+    if (await imageUrlIsLive(url)) out.push(url)
+  }
+  return out
+}
