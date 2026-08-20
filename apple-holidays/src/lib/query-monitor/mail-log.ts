@@ -95,6 +95,17 @@ export async function recordMailLog(
 }
 
 /**
+ * The entry columns a seeded row is built from. Spelled out rather than
+ * inferred: the cursor in the loop below makes the query self-referential, and
+ * TypeScript cannot infer a type that its own initializer depends on.
+ */
+type SeedRow = {
+  id: string; dedupKey: string; conversationId: string | null; subject: string
+  fromAddress: string; fromName: string; fromDomain: string; receivedAt: Date
+  toList: string; bodySnippet: string
+}
+
+/**
  * Seed the log from the entries that existed before it did.
  *
  * Without this the tab would start on the day the log was switched on and show
@@ -109,12 +120,6 @@ export async function recordMailLog(
  * everything that reached the sheet, and only the days after the switch carry
  * the full unfiltered picture.
  */
-type SeedRow = {
-  id: string; dedupKey: string; conversationId: string | null; subject: string
-  fromAddress: string; fromName: string; fromDomain: string; receivedAt: Date
-  toList: string; bodySnippet: string
-}
-
 export async function backfillMailLog(batchSize = 1000): Promise<number> {
   let cursor: string | null = null
   let seeded = 0
