@@ -37,7 +37,7 @@ export async function GET(
       },
       accommodations: {
         orderBy: { checkIn: 'asc' },
-        select: { id: true, hotel: true, city: true, checkIn: true, checkOut: true, nights: true },
+        select: { id: true, hotel: true, city: true, checkIn: true, checkOut: true, nights: true, roomType: true, mealType: true },
       },
     },
   })

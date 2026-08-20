@@ -53,6 +53,9 @@ export interface JourneyHotel {
   checkIn: string
   checkOut: string
   nights: number
+  /** What was actually booked in the hotel — shown on the traveller's card. */
+  roomType: string | null
+  mealType: string | null
   lat: number | null
   lng: number | null
 }
@@ -162,7 +165,7 @@ export interface JourneyInput {
   operationCountry?: string | null
   tourDestination?: string | null
   itinerary: { id: string; dayNo: number; date: Date | string | null; title: string; description: string | null }[]
-  accommodations: { id: string; hotel: string; city: string; checkIn: Date | string; checkOut: Date | string; nights: number }[]
+  accommodations: { id: string; hotel: string; city: string; checkIn: Date | string; checkOut: Date | string; nights: number; roomType?: string | null; mealType?: string | null }[]
 }
 
 /**
@@ -278,6 +281,8 @@ export async function buildJourney(input: JourneyInput): Promise<Journey> {
       checkIn: new Date(a.checkIn).toISOString(),
       checkOut: new Date(a.checkOut).toISOString(),
       nights: a.nights,
+      roomType: a.roomType ?? null,
+      mealType: a.mealType ?? null,
       lat: near?.lat ?? null,
       lng: near?.lng ?? null,
     }
