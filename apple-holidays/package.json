@@ -14,7 +14,8 @@
     "postinstall": "prisma generate && node scripts/copy-pdf-worker.mjs",
     "chat:guard": "tsx scripts/chat-write-guard-check.mts",
     "drivelog:guard": "tsx scripts/drive-log-write-guard-check.mts",
-    "drivelog:render": "tsx scripts/drive-log-render-check.mts"
+    "drivelog:render": "tsx scripts/drive-log-render-check.mts",
+    "sldocs:render": "tsx scripts/settlement-docs-render-check.mts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

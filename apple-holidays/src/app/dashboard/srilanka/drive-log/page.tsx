@@ -39,11 +39,12 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowDown, ArrowUp, BadgeCheck, Banknote, CalendarDays, Car, Check, ChevronDown,
-  ChevronRight, Clock, Copy, ExternalLink, FileSpreadsheet, FileText, Filter,
+  ChevronRight, Clock, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, Filter,
   Gauge, Layers, Loader2, Pencil, Phone, RefreshCw, Search, Send, Sparkles, TrendingDown,
   TrendingUp, Undo2, User2, Users, Wallet, X, XCircle,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
+import { SettlementDocsDialog } from './SettlementDocsDialog'
 import { cn } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { freshness, CATEGORY_TONE } from '@/lib/driver-advance'
@@ -884,11 +885,12 @@ function ActualsDialog({
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function Row({
-  row, onDriver, onEdit, canEdit,
+  row, onDriver, onEdit, onDocs, canEdit,
 }: {
   row: DriveLogRow
   onDriver: (row: DriveLogRow) => void
   onEdit: (row: DriveLogRow) => void
+  onDocs: (row: DriveLogRow) => void
   canEdit: boolean
 }) {
   const [open, setOpen] = useState(false)
@@ -1058,6 +1060,15 @@ function Row({
                 · P&amp;L {s.approval}
               </span>
             ) : null}
+            {/* The paperwork that travels with this file — name board and the
+                three settlement forms, prefilled from the row and printable. */}
+            <button
+              onClick={() => onDocs(row)}
+              title="Settlement documents — name board, transport, local visit, tour"
+              className="ml-auto p-1 rounded-md text-slate-500 hover:text-yellow-300 hover:bg-yellow-500/10 transition-colors"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+            </button>
           </div>
         </td>
       </tr>
@@ -1089,6 +1100,12 @@ function Row({
                   >
                     <Car className="w-3 h-3" /> Allocation board
                   </Link>
+                  <button
+                    onClick={() => onDocs(row)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-[11px] font-bold text-yellow-300 hover:bg-yellow-500/20 transition-colors"
+                  >
+                    <FileDown className="w-3 h-3" /> Documents
+                  </button>
                 </div>
               </div>
 
@@ -1192,6 +1209,8 @@ export default function DriveLogPage() {
   const [exporting, setExporting] = useState<'pdf' | 'xlsx' | null>(null)
   const [panelRow, setPanelRow]   = useState<DriveLogRow | null>(null)
   const [editRow, setEditRow]     = useState<DriveLogRow | null>(null)
+  /** The booking whose settlement paperwork is open, if any. */
+  const [docsRow, setDocsRow]     = useState<DriveLogRow | null>(null)
 
   /**
    * Who may state that the accounts system's figure is wrong.
@@ -1630,7 +1649,7 @@ export default function DriveLogPage() {
                   groups.map(g => (
                     <GroupBlock
                       key={g.key} group={g} view={view}
-                      onDriver={setPanelRow} onEdit={setEditRow} canEdit={canEditActuals}
+                      onDriver={setPanelRow} onEdit={setEditRow} onDocs={setDocsRow} canEdit={canEditActuals}
                     />
                   ))
                 )}
@@ -1691,6 +1710,14 @@ export default function DriveLogPage() {
         />
       ) : null}
 
+      {docsRow ? (
+        <SettlementDocsDialog
+          bookingRef={docsRow.bookingRef}
+          title={docsRow.isNumber ?? docsRow.bookingRef}
+          onClose={() => setDocsRow(null)}
+        />
+      ) : null}
+
       {panelRow ? (
         <DriverPanel
           driverId={panelRow.driver?.id ?? null}
@@ -1705,12 +1732,13 @@ export default function DriveLogPage() {
 
 /** One heading and its rows, with the subtotal that makes the group self-checking. */
 function GroupBlock({
-  group, view, onDriver, onEdit, canEdit,
+  group, view, onDriver, onEdit, onDocs, canEdit,
 }: {
   group: ReturnType<typeof groupDriveLogRows>[number]
   view: DriveLogView
   onDriver: (row: DriveLogRow) => void
   onEdit: (row: DriveLogRow) => void
+  onDocs: (row: DriveLogRow) => void
   canEdit: boolean
 }) {
   const [open, setOpen] = useState(true)
@@ -1777,7 +1805,7 @@ function GroupBlock({
       </tr>
 
       {open ? group.rows.map(r => (
-        <Row key={r.bookingId} row={r} onDriver={onDriver} onEdit={onEdit} canEdit={canEdit} />
+        <Row key={r.bookingId} row={r} onDriver={onDriver} onEdit={onEdit} onDocs={onDocs} canEdit={canEdit} />
       )) : null}
     </>
   )
