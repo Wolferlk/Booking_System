@@ -22,7 +22,8 @@ import {
   type ReplyStatus, type RunStatus, type RunTrigger,
 } from './constants'
 import {
-  getConfig, listActiveMailboxes, mailboxAddresses, setSetting, startDateBoundary,
+  getConfig, listActiveMailboxes, mailboxAddresses, matchSenderRule, setSetting,
+  startDateBoundary,
 } from './config'
 import { classifySubject, parseExcludePatterns } from './classify'
 import {
@@ -122,15 +123,7 @@ async function loadSenderRules() {
 export function resolveSender(
   address: string, domain: string, fromName: string, rules: SenderRule[],
 ): SenderResolution {
-  const lowerAddress = address.toLowerCase()
-  const lowerDomain  = domain.toLowerCase()
-
-  const byEmail = rules.find(r => r.matchType === 'EMAIL' && r.pattern.toLowerCase() === lowerAddress)
-  const byDomain = rules.find(r =>
-    r.matchType === 'DOMAIN' &&
-    (lowerDomain === r.pattern.toLowerCase() || lowerDomain.endsWith(`.${r.pattern.toLowerCase()}`)))
-
-  const rule = byEmail ?? byDomain
+  const rule = matchSenderRule(address, domain, rules)
   if (rule) {
     return {
       salesPerson: rule.salesPerson,
@@ -1169,8 +1162,8 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         const t = all.report.totals
         log.add('info',
           `"${all.sheetName}" rewritten — ${primary?.rows ?? 0} mail(s) over ${all.days} days `
-          + `(${t.queries} queries, ${t.followUps} follow-ups, ${t.other} other, `
-          + `${t.internal} internal, ${t.automated} automated)`)
+          + `(${t.useful} usefull, ${t.queries} queries, ${t.followUps} follow-ups, `
+          + `${t.other} other, ${t.internal} internal, ${t.automated} automated)`)
       } catch (err) {
         log.add('warn', `All-mail tab not updated: ${err instanceof Error ? err.message : String(err)}`)
       }

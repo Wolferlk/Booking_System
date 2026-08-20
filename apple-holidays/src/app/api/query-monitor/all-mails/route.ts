@@ -52,8 +52,8 @@ export async function POST(req: Request) {
     return buildApiSuccess(
       result,
       `"${result.sheetName}" rewritten — ${primary?.rows ?? 0} mail(s) over ${result.days} days: `
-      + `${t.queries} queries, ${t.followUps} follow-ups, ${t.other} other, `
-      + `${t.internal} internal, ${t.automated} automated`
+      + `${t.useful} usefull, ${t.queries} queries, ${t.followUps} follow-ups, `
+      + `${t.other} other, ${t.internal} internal, ${t.automated} automated`
       + (result.report.truncated > 0
         ? ` — the oldest ${result.report.truncated} did not fit the tab's row ceiling`
         : '')

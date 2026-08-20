@@ -308,6 +308,43 @@ export async function ensureSeedSenderRules(): Promise<void> {
   })
 }
 
+/**
+ * The rule that claims this sender, or null when none does.
+ *
+ * Exact address beats domain, and higher priority beats lower — so a single
+ * salesperson at a big agency can be split out without touching the domain
+ * rule. `rules` must already be ordered priority-first, which both loaders do.
+ *
+ * Extracted from the sweep's `resolveSender` so the all-mail tab's "Usefull
+ * mail" column asks the same question the Sales Person and Agent columns are
+ * answered from. Two copies of this matching would drift, and the day they
+ * drifted a mail would read Usefull on one tab and carry "Others" on another.
+ */
+export function matchSenderRule<T extends { matchType: string; pattern: string }>(
+  address: string, domain: string, rules: readonly T[],
+): T | null {
+  const lowerAddress = address.toLowerCase()
+  const lowerDomain  = domain.toLowerCase()
+
+  const byEmail = rules.find(r => r.matchType === 'EMAIL' && r.pattern.toLowerCase() === lowerAddress)
+  if (byEmail) return byEmail
+
+  return rules.find(r =>
+    r.matchType === 'DOMAIN'
+    && (lowerDomain === r.pattern.toLowerCase() || lowerDomain.endsWith(`.${r.pattern.toLowerCase()}`)),
+  ) ?? null
+}
+
+/** The active rules, priority first — what "is this a known sender" is asked of. */
+export async function listActiveSenderRules() {
+  await ensureSeedSenderRules()
+  return prisma.queryMonitorSenderRule.findMany({
+    where:   { isActive: true },
+    orderBy: [{ priority: 'desc' }, { pattern: 'asc' }],
+    select:  { id: true, matchType: true, pattern: true, salesPerson: true, agent: true },
+  })
+}
+
 export async function listSenderRules() {
   await ensureSeedSenderRules()
   return prisma.queryMonitorSenderRule.findMany({
