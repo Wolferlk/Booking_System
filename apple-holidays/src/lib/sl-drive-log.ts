@@ -47,6 +47,7 @@ import type {
   DriverAdvanceCategory, DriverAdvanceDetail, DriverAdvanceStage, DriverAdvanceSummary,
 } from './driver-advance'
 import type { InvoicePaymentState, InvoicePaymentSummary } from './accounts-invoice-db'
+import type { ActualsStatus, TransportActuals } from './sl-transport-actuals'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -74,8 +75,18 @@ export type DriveLogDateField = 'arrivalDate' | 'departureDate'
 export type DriveLogStage     = 'all' | 'advance_due' | 'rest_due' | 'settled' | 'uncosted'
 export type DriveLogApproval  = 'all' | 'approved' | 'pending'
 export type DriveLogDriver    = 'all' | 'assigned' | 'unassigned'
+/**
+ * Where a booking stands with the desk's own figures.
+ *
+ *   corrected  somebody has entered an actual cost or balance.
+ *   pending    submitted, waiting on the accounts team.
+ *   sent_back  the accounts team declined it — the desk has to answer.
+ *   untouched  nothing entered; running on the derived figures alone.
+ */
+export type DriveLogActuals   = 'all' | 'corrected' | 'pending' | 'sent_back' | 'untouched'
 export type DriveLogSortField =
   | 'arrival' | 'isNumber' | 'driver' | 'invoice' | 'cost' | 'advance' | 'balance' | 'profit'
+  | 'variance'
 export type DriveLogSortDir   = 'asc' | 'desc'
 export type DriveLogView      = 'day' | 'driver'
 
@@ -90,6 +101,8 @@ export interface DriveLogQuery {
   driver: DriveLogDriver
   /** Only rows with something still owed, or overpaid — the ones that need a decision. */
   openOnly: boolean
+  /** Narrow to rows the desk has corrected, submitted, or not touched at all. */
+  actuals: DriveLogActuals
   /** Hotel-only files carry no driver and no transport; off by default. */
   includeHotelOnly: boolean
   sortBy: DriveLogSortField
@@ -100,8 +113,9 @@ const DATE_FIELDS: DriveLogDateField[] = ['arrivalDate', 'departureDate']
 const STAGES:      DriveLogStage[]     = ['all', 'advance_due', 'rest_due', 'settled', 'uncosted']
 const APPROVALS:   DriveLogApproval[]  = ['all', 'approved', 'pending']
 const DRIVERS:     DriveLogDriver[]    = ['all', 'assigned', 'unassigned']
+const ACTUALS:     DriveLogActuals[]   = ['all', 'corrected', 'pending', 'sent_back', 'untouched']
 const SORT_FIELDS: DriveLogSortField[] = [
-  'arrival', 'isNumber', 'driver', 'invoice', 'cost', 'advance', 'balance', 'profit',
+  'arrival', 'isNumber', 'driver', 'invoice', 'cost', 'advance', 'balance', 'profit', 'variance',
 ]
 
 /** `yyyy-mm-dd` for a calendar day in `tz`, whatever zone the server runs in. */
@@ -160,6 +174,7 @@ export function parseDriveLogQuery(sp: URLSearchParams, now = new Date()): Drive
     stage:     pick(sp.get('stage'),    STAGES,      'all'),
     approval:  pick(sp.get('approval'), APPROVALS,   'all'),
     driver:    pick(sp.get('driver'),   DRIVERS,     'all'),
+    actuals:   pick(sp.get('actuals'),  ACTUALS,     'all'),
     openOnly:  sp.get('openOnly') === '1',
     includeHotelOnly: sp.get('hotelOnly') === '1',
     sortBy:    pick(sp.get('sortBy'), SORT_FIELDS, 'arrival'),
@@ -171,7 +186,7 @@ export function parseDriveLogQuery(sp: URLSearchParams, now = new Date()): Drive
 export function driveLogSearchParams(q: DriveLogQuery): URLSearchParams {
   const sp = new URLSearchParams({
     dateField: q.dateField, from: q.from, to: q.to,
-    stage: q.stage, approval: q.approval, driver: q.driver,
+    stage: q.stage, approval: q.approval, driver: q.driver, actuals: q.actuals,
     sortBy: q.sortBy, sortDir: q.sortDir,
   })
   if (q.search) sp.set('search', q.search)
@@ -474,6 +489,136 @@ export interface DriveLogRow {
   driver: DriveLogDriverInfo | null
   invoice: DriveLogInvoice | null
   settlement: DriveLogSettlement
+
+  /**
+   * What the desk says actually happened, and where that has got to.
+   *
+   * Null when nobody has entered anything for this booking, which is the normal
+   * state — the derived figures are right most of the time and only the
+   * exceptions get typed in. See `sl-transport-actuals.ts`.
+   */
+  actuals: TransportActuals | null
+
+  /**
+   * The figures the row actually prints, actuals applied over derived.
+   *
+   * Kept as its own block rather than folded into `settlement`, because the two
+   * have to stay tellable apart: the settlement is what the accounts system
+   * derived and is answerable for, and this is what the desk asserts on top of
+   * it. Every screen and both downloads read from here, so a row, a subtotal
+   * and a spreadsheet cell can never disagree about which figure won.
+   */
+  effective: EffectiveSettlement
+}
+
+// ── Actuals over derived ──────────────────────────────────────────────────────
+
+/**
+ * The row's money after the desk's corrections.
+ *
+ * Each field falls back to the derived figure whenever no actual was entered,
+ * so a booking with only a corrected package cost still shows a coherent line.
+ * `*Overridden` says which ones are the desk's, so the screen can mark them and
+ * a reader is never left guessing whose number they are looking at.
+ */
+export interface EffectiveSettlement {
+  totalCost: number | null
+  balancePayable: number | null
+  /** Total cost − (advance paid + actual balance payable). The spec's column 9. */
+  profitLoss: number | null
+
+  costOverridden: boolean
+  balanceOverridden: boolean
+  /** True when either figure is the desk's rather than the accounts system's. */
+  overridden: boolean
+
+  /** Actual − derived, for each figure the desk corrected. Null when it did not. */
+  costVariance: number | null
+  balanceVariance: number | null
+
+  /** How the derived P/L would have read, for the comparison the desk asked for. */
+  derivedProfitLoss: number | null
+  /** Effective P/L − derived P/L. What the corrections were worth. */
+  profitLossVariance: number | null
+}
+
+/**
+ * Apply a booking's actuals to its derived settlement.
+ *
+ * Pure arithmetic over two already-decided sets of figures — it recomputes
+ * nothing and asks nothing of either database. A booking with no actuals gets
+ * the derived numbers back unchanged, with every `*Overridden` flag false, so
+ * callers never have to branch on whether actuals exist.
+ */
+export function deriveEffective(
+  settlement: DriveLogSettlement,
+  actuals: TransportActuals | null,
+): EffectiveSettlement {
+  const derivedCost    = settlement.totalCost
+  const derivedBalance = settlement.balancePayable
+  const derivedPl      = settlement.profitLoss
+
+  // A withdrawn or rejected figure is still the desk's best information and
+  // still drives the row — the status says how far it has got with accounts,
+  // not whether it is believed. Only a booking with no figure at all falls back.
+  const actualCost    = actuals?.actualPackageCost ?? null
+  const actualBalance = actuals?.actualBalancePayable ?? null
+
+  const totalCost      = actualCost    ?? derivedCost
+  const balancePayable = actualBalance ?? derivedBalance
+
+  // What has genuinely left the building against the advance. The rest payment
+  // is deliberately *not* counted from `restPaid` here: the whole point of an
+  // actual balance is that it is what will be paid, and the row's P/L is what
+  // will be left over once it is. Where the desk has entered nothing, the
+  // derived P/L stands as it always did.
+  const advancePaid = settlement.advancePaid
+
+  let profitLoss: number | null
+  if (actualBalance !== null && isNum(totalCost) && isNum(advancePaid)) {
+    profitLoss = totalCost - (advancePaid + actualBalance)
+  } else if (actualCost !== null && isNum(totalCost) && isNum(settlement.paid)) {
+    profitLoss = totalCost - settlement.paid
+  } else {
+    profitLoss = derivedPl
+  }
+
+  const costVariance = actualCost !== null && isNum(derivedCost)
+    ? actualCost - derivedCost : null
+  const balanceVariance = actualBalance !== null && isNum(derivedBalance)
+    ? actualBalance - derivedBalance : null
+
+  return {
+    totalCost,
+    balancePayable,
+    profitLoss: profitLoss === null ? null : Math.round(profitLoss * 100) / 100,
+    costOverridden: actualCost !== null,
+    balanceOverridden: actualBalance !== null,
+    overridden: actualCost !== null || actualBalance !== null,
+    costVariance,
+    balanceVariance,
+    derivedProfitLoss: derivedPl,
+    profitLossVariance: isNum(profitLoss) && isNum(derivedPl)
+      ? Math.round((profitLoss - derivedPl) * 100) / 100
+      : null,
+  }
+}
+
+/** The label a submission state reads under, on every surface. */
+export const ACTUALS_LABEL: Record<ActualsStatus, string> = {
+  draft:     'Saved · not sent',
+  pending:   'With accounts',
+  recorded:  'Settled by accounts',
+  rejected:  'Sent back',
+  cancelled: 'Withdrawn',
+}
+
+export const ACTUALS_TONE: Record<ActualsStatus, string> = {
+  draft:     'text-slate-300 border-slate-600/40 bg-slate-700/20',
+  pending:   'text-sky-300 border-sky-500/30 bg-sky-500/10',
+  recorded:  'text-emerald-300 border-emerald-500/30 bg-emerald-500/10',
+  rejected:  'text-rose-300 border-rose-500/30 bg-rose-500/10',
+  cancelled: 'text-slate-400 border-slate-600/40 bg-slate-700/20',
 }
 
 /** One booking's invoice, flattened to what the column prints. */
@@ -525,10 +670,24 @@ export function applyDriveLogFilters(rows: DriveLogRow[], q: DriveLogQuery): Dri
     if (q.driver === 'assigned'   && !r.driver) return false
     if (q.driver === 'unassigned' && r.driver)  return false
 
+    if (q.actuals !== 'all') {
+      const a = r.actuals
+      if (q.actuals === 'corrected' && !r.effective.overridden) return false
+      if (q.actuals === 'pending'   && a?.status !== 'pending') return false
+      if (q.actuals === 'sent_back' && a?.status !== 'rejected') return false
+      if (q.actuals === 'untouched' && (a || r.effective.overridden)) return false
+    }
+
     // "Open" is anything the desk still has to act on: money owed, money
     // overpaid, or a booking nobody has costed. A settled row is finished.
     if (q.openOnly) {
-      const open = s.state !== 'ok' || (isNum(s.profitLoss) && Math.abs(s.profitLoss) >= 0.01)
+      const pl = r.effective.profitLoss
+      const open = s.state !== 'ok'
+        || (isNum(pl) && Math.abs(pl) >= 0.01)
+        // A figure sitting with the accounts team is open work even when the
+        // arithmetic says nothing is left: somebody still has to release it.
+        || r.actuals?.status === 'pending'
+        || r.actuals?.status === 'rejected'
       if (!open) return false
     }
 
@@ -545,10 +704,13 @@ export function sortDriveLogRows(rows: DriveLogRow[], q: DriveLogQuery): DriveLo
       case 'isNumber': return r.isNumber ?? r.bookingRef
       case 'driver':   return r.driver?.name.toLowerCase() ?? null
       case 'invoice':  return r.invoice?.amount ?? null
-      case 'cost':     return r.settlement.totalCost
+      // The effective figures, because those are the ones on screen: sorting a
+      // column by a number it is not showing is indistinguishable from a bug.
+      case 'cost':     return r.effective.totalCost
       case 'advance':  return r.settlement.advance
-      case 'balance':  return r.settlement.balancePayable
-      case 'profit':   return r.settlement.profitLoss
+      case 'balance':  return r.effective.balancePayable
+      case 'profit':   return r.effective.profitLoss
+      case 'variance': return r.effective.profitLossVariance
       default:         return r.arrivalDate
     }
   }
@@ -597,6 +759,28 @@ export interface DriveLogTotals {
   unassigned: number
   /** Rows where more has been paid than the booking costed. */
   overpaid: number
+
+  /* ---- The desk's own figures ---- */
+
+  /** Effective total cost — the desk's actual package cost where it gave one. */
+  effectiveTotalCost: number
+  /** Effective balance payable — the desk's actual where it gave one. */
+  effectiveBalancePayable: number
+  /** Effective P/L: cost less (advance paid + the balance that will actually be paid). */
+  effectiveProfitLoss: number
+  /** Effective P/L less derived P/L — what the corrections were worth. */
+  profitLossVariance: number
+
+  /** Rows carrying a corrected package cost. */
+  costCorrected: number
+  /** Rows carrying a corrected balance payable. */
+  balanceCorrected: number
+  /** Submissions sitting with the accounts team. */
+  awaitingAccounts: number
+  /** Submissions the accounts team settled from. */
+  settledFromActuals: number
+  /** Submissions the accounts team sent back. */
+  sentBack: number
 }
 
 /** The strip along the top of the screen, and the banner on both downloads. */
@@ -606,6 +790,9 @@ export function driveLogTotals(rows: DriveLogRow[]): DriveLogTotals {
     invoiceUsd: 0, invoiceOtherCcy: 0,
     totalCost: 0, advance: 0, balancePayable: 0, advancePaid: 0, restPaid: 0, paid: 0, profitLoss: 0,
     settled: 0, advanceDue: 0, restDue: 0, unapproved: 0, unassigned: 0, overpaid: 0,
+    effectiveTotalCost: 0, effectiveBalancePayable: 0, effectiveProfitLoss: 0, profitLossVariance: 0,
+    costCorrected: 0, balanceCorrected: 0,
+    awaitingAccounts: 0, settledFromActuals: 0, sentBack: 0,
   }
 
   for (const r of rows) {
@@ -613,6 +800,15 @@ export function driveLogTotals(rows: DriveLogRow[]): DriveLogTotals {
 
     if (!r.driver) t.unassigned++
     if (s.state === 'ok' && s.approval !== 'approved') t.unapproved++
+
+    // Counted over every row, costed or not: a booking the accounts system has
+    // not priced is exactly the kind the desk types a figure into, and those
+    // submissions must not vanish from the tally that says how many are waiting.
+    if (r.actuals?.status === 'pending')  t.awaitingAccounts++
+    if (r.actuals?.status === 'recorded') t.settledFromActuals++
+    if (r.actuals?.status === 'rejected') t.sentBack++
+    if (r.effective.costOverridden)    t.costCorrected++
+    if (r.effective.balanceOverridden) t.balanceCorrected++
 
     if (r.invoice?.amount != null) {
       if ((r.invoice.currency ?? 'USD') === 'USD') t.invoiceUsd += r.invoice.amount
@@ -630,6 +826,13 @@ export function driveLogTotals(rows: DriveLogRow[]): DriveLogTotals {
     t.restPaid       += s.restPaid       ?? 0
     t.paid           += s.paid           ?? 0
     t.profitLoss     += s.profitLoss     ?? 0
+
+    // The effective column totals the same rows the derived ones do, so the two
+    // footers are comparable line for line rather than covering different sets.
+    t.effectiveTotalCost      += r.effective.totalCost      ?? 0
+    t.effectiveBalancePayable += r.effective.balancePayable ?? 0
+    t.effectiveProfitLoss     += r.effective.profitLoss     ?? 0
+    t.profitLossVariance      += r.effective.profitLossVariance ?? 0
 
     if (s.stage === 'settled')     t.settled++
     if (s.stage === 'advance_due') t.advanceDue++

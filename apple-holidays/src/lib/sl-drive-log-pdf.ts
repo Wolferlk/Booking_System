@@ -20,8 +20,8 @@
 
 import { launchBrowser } from './html-to-pdf'
 import {
-  STAGE_LABEL, SETTLEMENT_LABEL, amount, driveLogTotals, formatDay, groupDriveLogRows,
-  windowLabel, type DriveLogQuery, type DriveLogRow,
+  ACTUALS_LABEL, STAGE_LABEL, SETTLEMENT_LABEL, amount, driveLogTotals, formatDay,
+  groupDriveLogRows, windowLabel, type DriveLogQuery, type DriveLogRow,
 } from './sl-drive-log'
 import { freshness } from './driver-advance'
 
@@ -56,8 +56,23 @@ function rowHtml(r: DriveLogRow): string {
       <td>${esc(formatDay(r.arrivalDate))}<span class="sub">${esc(r.clientName ?? '')}</span></td>
       <td>${driver}</td>
       <td class="num">${r.invoice?.amount != null ? `${esc(r.invoice.currency)} ${m(r.invoice.amount)}` : '—'}</td>
-      <td colspan="6" class="note">${esc(SETTLEMENT_LABEL[s.state])} — ${esc(s.message ?? '')}</td>
+      <td colspan="8" class="note">${esc(SETTLEMENT_LABEL[s.state])} — ${esc(s.message ?? '')}</td>
     </tr>`
+  }
+
+  const e = r.effective
+  const a = r.actuals
+
+  // A corrected figure is set in the "actual" column and marked, and the costed
+  // one stays visible beside it. A printout that quietly replaced one with the
+  // other would be unauditable — the reader has to be able to see both.
+  const actualCell = (value: number | null, variance: number | null) => {
+    if (value === null) return '<td class="num muted">—</td>'
+    return `<td class="num act">${m(value)}`
+      + (variance !== null && Math.abs(variance) >= 0.01
+          ? `<span class="sub ${variance > 0 ? 'over' : 'ok'}">${variance > 0 ? '+' : '&minus;'}${amount(Math.abs(variance))}</span>`
+          : '')
+      + '</td>'
   }
 
   return `<tr>
@@ -70,7 +85,10 @@ function rowHtml(r: DriveLogRow): string {
     <td class="num">${m(s.balancePayable)}</td>
     <td class="num">${m(s.advancePaid)}</td>
     <td class="num">${m(s.restPaid)}</td>
-    ${plCell(s.profitLoss)}
+    ${actualCell(a?.actualPackageCost ?? null, e.costVariance)}
+    ${actualCell(a?.actualBalancePayable ?? null, e.balanceVariance)}
+    ${plCell(e.profitLoss)}
+    <td class="st">${a ? esc(ACTUALS_LABEL[a.status]) : ''}</td>
   </tr>`
 }
 
@@ -92,16 +110,19 @@ export async function buildDriveLogPdf(
     .sort()[0] ?? null
 
   const dayBlocks = days.map(g => `
-    <tr class="day"><td colspan="10">${esc(g.label)} · ${g.rows.length} booking${g.rows.length === 1 ? '' : 's'}</td></tr>
+    <tr class="day"><td colspan="13">${esc(g.label)} · ${g.rows.length} booking${g.rows.length === 1 ? '' : 's'}</td></tr>
     ${g.rows.map(rowHtml).join('')}
     <tr class="subtotal">
       <td colspan="4">Subtotal · ${g.totals.costedRows} costed</td>
-      <td class="num">${m(g.totals.totalCost)}</td>
+      <td class="num">${m(g.totals.effectiveTotalCost)}</td>
       <td class="num">${m(g.totals.advance)}</td>
       <td class="num">${m(g.totals.balancePayable)}</td>
       <td class="num">${m(g.totals.advancePaid)}</td>
       <td class="num">${m(g.totals.restPaid)}</td>
-      <td class="num">${m(g.totals.profitLoss)}</td>
+      <td class="num act">${g.totals.costCorrected ? `${g.totals.costCorrected} actual` : '—'}</td>
+      <td class="num act">${g.totals.balanceCorrected ? `${g.totals.balanceCorrected} actual` : '—'}</td>
+      <td class="num">${m(g.totals.effectiveProfitLoss)}</td>
+      <td></td>
     </tr>`).join('')
 
   const driverRows = drivers.map(g => `
@@ -109,11 +130,11 @@ export async function buildDriveLogPdf(
       <td><b>${esc(g.label)}</b>${g.sublabel ? `<span class="sub">${esc(g.sublabel)}</span>` : ''}</td>
       <td>${esc([g.rows[0].driver?.bank?.name, g.rows[0].driver?.bank?.accountNo].filter(Boolean).join(' · ') || '—')}</td>
       <td class="num">${g.rows.length}</td>
-      <td class="num">${m(g.totals.totalCost)}</td>
+      <td class="num">${m(g.totals.effectiveTotalCost)}</td>
       <td class="num">${m(g.totals.advance)}</td>
       <td class="num">${m(g.totals.advancePaid)}</td>
       <td class="num">${m(g.totals.restPaid)}</td>
-      <td class="num">${m(g.totals.profitLoss)}</td>
+      <td class="num">${m(g.totals.effectiveProfitLoss)}</td>
     </tr>`).join('')
 
   const caveats: string[] = []
@@ -122,6 +143,13 @@ export async function buildDriveLogPdf(
   if (totals.invoiceOtherCcy) caveats.push(`${totals.invoiceOtherCcy} invoice(s) are billed in a currency other than USD and are excluded from the invoice total.`)
   if (totals.unapproved)   caveats.push(`${totals.unapproved} booking(s) have an unapproved P&L — Payable 1.0 will not release those advances.`)
   if (totals.unassigned)   caveats.push(`${totals.unassigned} booking(s) have no driver allocated.`)
+  if (totals.costCorrected || totals.balanceCorrected) {
+    caveats.push(
+      `Transport P/L uses the desk's own figures where it has any — ${totals.costCorrected} corrected package `
+      + `cost(s) and ${totals.balanceCorrected} corrected balance(s). The costed figures are printed beside them.`)
+  }
+  if (totals.awaitingAccounts) caveats.push(`${totals.awaitingAccounts} submitted figure(s) are waiting on the accounts team and have not been paid.`)
+  if (totals.sentBack) caveats.push(`${totals.sentBack} submitted figure(s) were sent back by accounts and need answering.`)
 
   const html = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Drive Log</title>
@@ -148,6 +176,11 @@ export async function buildDriveLogPdf(
   .muted { color: #9aa0aa; }
   .note { font-size: 8px; color: #8a6d3b; background: #fdf6e6; }
   .due  { color: #b45309; font-weight: 700; }
+  /* The desk's own figures, set apart from the costed ones beside them. */
+  .act { background: #f7f5ff; }
+  th.act { color: #6d28d9; }
+  td.act { color: #5b21b6; font-weight: 700; }
+  .st { font-size: 7px; color: #6b7280; white-space: nowrap; }
   .over { color: #b91c1c; font-weight: 700; }
   .ok   { color: #15803d; }
   tr.day td { background: #f2f4f8; font-weight: 700; font-size: 8.5px; padding: 4px 5px;
@@ -178,7 +211,10 @@ export async function buildDriveLogPdf(
   <div class="kpi"><div class="k">Driver advance</div><div class="v">${m(totals.advance)}</div></div>
   <div class="kpi"><div class="k">Balance payable</div><div class="v">${m(totals.balancePayable)}</div></div>
   <div class="kpi"><div class="k">Actually paid</div><div class="v">${m(totals.paid)}</div></div>
-  <div class="kpi"><div class="k">Transport P/L</div><div class="v">${m(totals.profitLoss)}</div></div>
+  <div class="kpi"><div class="k">Transport P/L</div><div class="v">${m(totals.effectiveProfitLoss)}</div>
+    ${Math.abs(totals.profitLossVariance) >= 0.01
+      ? `<div style="font-size:7px;color:#6d28d9">${totals.profitLossVariance > 0 ? '+' : '&minus;'}${amount(Math.abs(totals.profitLossVariance))} vs costed</div>`
+      : ''}</div>
   <div class="kpi"><div class="k">Client invoiced</div><div class="v">USD ${m(totals.invoiceUsd)}</div></div>
 </div>
 
@@ -187,18 +223,23 @@ export async function buildDriveLogPdf(
     <th>IS / CNTL</th><th>Arrival / Client</th><th>Driver</th>
     <th class="num">Invoice</th>
     <th class="num">Total cost</th><th class="num">Advance</th><th class="num">Balance payable</th>
-    <th class="num">Advance paid</th><th class="num">Paid balance</th><th class="num">Transport P/L</th>
+    <th class="num">Advance paid</th><th class="num">Paid balance</th>
+    <th class="num act">Actual pkg cost</th><th class="num act">Actual balance</th>
+    <th class="num">Transport P/L</th><th>Actuals</th>
   </tr></thead>
   <tbody>
-    ${dayBlocks || '<tr><td colspan="10" class="muted">No bookings in this window.</td></tr>'}
+    ${dayBlocks || '<tr><td colspan="13" class="muted">No bookings in this window.</td></tr>'}
     <tr class="subtotal">
       <td colspan="4">TOTAL · ${totals.costedRows} costed booking(s)</td>
-      <td class="num">${m(totals.totalCost)}</td>
+      <td class="num">${m(totals.effectiveTotalCost)}</td>
       <td class="num">${m(totals.advance)}</td>
       <td class="num">${m(totals.balancePayable)}</td>
       <td class="num">${m(totals.advancePaid)}</td>
       <td class="num">${m(totals.restPaid)}</td>
-      <td class="num">${m(totals.profitLoss)}</td>
+      <td class="num act">${totals.costCorrected ? `${totals.costCorrected} actual` : '—'}</td>
+      <td class="num act">${totals.balanceCorrected ? `${totals.balanceCorrected} actual` : '—'}</td>
+      <td class="num">${m(totals.effectiveProfitLoss)}</td>
+      <td></td>
     </tr>
   </tbody>
 </table>
@@ -217,7 +258,7 @@ ${caveats.length ? `<div class="caveats"><b>Notes</b><ul>${caveats.map(c => `<li
 
 <footer>
   Stage counts — settled ${totals.settled} · advance due ${totals.advanceDue} · rest due ${totals.restDue}${totals.overpaid ? ` · overpaid ${totals.overpaid}` : ''}.
-  Transport P/L is the total transport cost less what has actually been released to the driver; a figure in brackets means the driver has been paid more than the booking costed.
+  Transport P/L is the total transport cost less what has actually been released to the driver — the desk's actual figures where it entered any, the costed ones otherwise; a figure in brackets means the driver would be paid more than the booking cost. Shaded columns are the desk's own; submitting one does not release money.
 </footer>
 </body></html>`
 

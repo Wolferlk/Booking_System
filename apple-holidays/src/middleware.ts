@@ -33,6 +33,8 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
   '/dashboard/accounts/reports',  // Ops Board
   '/dashboard/mc-report',         // MC Report
+  '/dashboard/ground/drivers',    // Driver management
+  '/dashboard/ground/vendors',    // Vehicle vendor management
 ] as const
 
 function isGtVnPageAllowed(pathname: string): boolean {
