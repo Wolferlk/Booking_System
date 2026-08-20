@@ -727,7 +727,6 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
       try {
         const inbox = await fetchInboxSince(mailbox.email, windowFrom)
         counters.mailboxesScanned += 1
-        counters.messagesSeen += inbox.length
 
         // The log takes the lot, before anything is filtered. A mail seen in a
         // second inbox grows the row's TO list rather than taking a row of its
@@ -749,6 +748,11 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
         // the filter `fetchInboxSince` used to apply itself, moved out one step
         // so the mail it rejects can still be written down above.
         const messages = inbox.filter(m => m.fromAddress && !m.skipReason)
+        // Still the external count, not `inbox.length`. The run stat has meant
+        // "mail the sweep had to consider" since the first sweep and the team
+        // reads it against `entriesCreated`; the wider number is in the log line
+        // below, where it is new information rather than a redefinition.
+        counters.messagesSeen += messages.length
 
         // Sent Items across the chase window, so replies to older still-open
         // queries are picked up in the same pass without extra calls.

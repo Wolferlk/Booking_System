@@ -2132,8 +2132,11 @@ model QueryMonitorMail {
   /// The monitored mailboxes it reached, as the names the sheet prints. Grows
   /// when the same mail is found in a second inbox.
   toNames           String   @default("") @db.VarChar(500)
-  /// Every address on its TO/CC line, comma-joined.
-  toAddresses       String   @default("") @db.Text
+  /// Every address on its TO/CC line, comma-joined. Text rather than VarChar
+  /// because a real distribution list runs long and truncating it would lose the
+  /// only record of who was on it — so it carries no default, which MySQL
+  /// forbids on TEXT anyway. Every writer passes at least an empty string.
+  toAddresses       String   @db.Text
   hasAttachments    Boolean  @default(false)
   bodySnippet       String   @db.Text
   /// Null when the query pipeline took this mail on. Otherwise why it never

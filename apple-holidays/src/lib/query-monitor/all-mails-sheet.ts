@@ -58,18 +58,66 @@ function call<T>(path: string, sessionId: string | null, opts: RequestInit = {})
   })
 }
 
-/** Create the tab if the workbook has never had one. It is ours alone. */
-async function ensureTab(ref: SheetRef, sheetName: string, sessionId: string | null): Promise<void> {
+/**
+ * Create the tab if the workbook has never had one, and say whether it had to.
+ *
+ * The caller needs the answer: a tab this call just created is unambiguously
+ * ours and can be written without further question, and a tab that was already
+ * there has to prove it is ours before anything is cleared. See `assertOurs`.
+ */
+async function ensureTab(
+  ref: SheetRef, sheetName: string, sessionId: string | null,
+): Promise<{ created: boolean }> {
   const sheets = await call<{ value: { name: string }[] }>(
     `/drives/${ref.driveId}/items/${ref.itemId}/workbook/worksheets?$select=name`,
     sessionId,
   )
-  if ((sheets.value ?? []).some(w => w.name.toLowerCase() === sheetName.toLowerCase())) return
+  if ((sheets.value ?? []).some(w => w.name.toLowerCase() === sheetName.toLowerCase())) {
+    return { created: false }
+  }
 
   await call(
     `/drives/${ref.driveId}/items/${ref.itemId}/workbook/worksheets/add`,
     sessionId,
     { method: 'POST', body: JSON.stringify({ name: sheetName }) },
+  )
+  return { created: true }
+}
+
+/** What cell A1 of this tab says when the tab is ours. See `assertOurs`. */
+const OWNERSHIP_MARK = 'Every mail that reached the monitored mailboxes'
+
+/**
+ * Refuse to clear a tab this app does not own.
+ *
+ * Everything below this point clears several thousand cells and lays them out
+ * again, and the tab it does that to is named by a setting somebody can type
+ * into. The settings API already refuses a name that collides with one of the
+ * other four tabs, but it cannot know what else is in the team's workbook — a
+ * pivot sheet, a lookup list, a month's hand-kept notes. Typing that tab's name
+ * here must not be able to erase it.
+ *
+ * So the tab has to be one of three things: just created by this export, empty,
+ * or already carrying the title this export writes into A1. Anything else stops
+ * with a message naming the tab, and the sweep logs it as a warning rather than
+ * touching the file.
+ */
+async function assertOurs(
+  ref: SheetRef, sheetName: string, sessionId: string | null, created: boolean,
+): Promise<void> {
+  if (created) return
+
+  const range = await call<{ values?: unknown[][] }>(
+    `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent('A1:A1')}')?$select=values`,
+    sessionId,
+  )
+  const a1 = String(range.values?.[0]?.[0] ?? '').trim()
+  if (!a1 || a1.startsWith(OWNERSHIP_MARK)) return
+
+  throw new Error(
+    `"${sheetName}" already exists in ${ref.fileName} and is not this app's tab — `
+    + `cell A1 reads "${a1.slice(0, 60)}". Nothing was written. Point the all-mail tab `
+    + 'at a different name, or rename that worksheet, and run it again.',
   )
 }
 
@@ -127,7 +175,7 @@ function compose(report: AllMailsReport, timezone: string): { cells: Cell[][]; f
   })
 
   const t = report.totals
-  push(['Every mail that reached the monitored mailboxes — nothing filtered out'])
+  push([`${OWNERSHIP_MARK} — nothing filtered out`])
   push([
     `${stamp(report.from)} → ${stamp(report.to)} (${report.days} days, ${timezone}) · `
     + `rewritten ${stamp(report.generatedAt)}`,
@@ -168,7 +216,9 @@ async function writeOne(
 
   const sessionId = await openSession(ref)
   try {
-    await ensureTab(ref, sheetName, sessionId)
+    const { created } = await ensureTab(ref, sheetName, sessionId)
+    // Nothing below here runs against a tab that is not ours.
+    await assertOurs(ref, sheetName, sessionId, created)
 
     await call(
       `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(CLEAR_RANGE)}')/clear`,
