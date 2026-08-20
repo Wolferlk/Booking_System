@@ -56,7 +56,7 @@ function rowHtml(r: DriveLogRow): string {
       <td>${esc(formatDay(r.arrivalDate))}<span class="sub">${esc(r.clientName ?? '')}</span></td>
       <td>${driver}</td>
       <td class="num">${r.invoice?.amount != null ? `${esc(r.invoice.currency)} ${m(r.invoice.amount)}` : '—'}</td>
-      <td colspan="8" class="note">${esc(SETTLEMENT_LABEL[s.state])} — ${esc(s.message ?? '')}</td>
+      <td colspan="9" class="note">${esc(SETTLEMENT_LABEL[s.state])} — ${esc(s.message ?? '')}</td>
     </tr>`
   }
 
@@ -92,12 +92,20 @@ function rowHtml(r: DriveLogRow): string {
   </tr>`
 }
 
-export async function buildDriveLogPdf(
+/**
+ * The printout as HTML.
+ *
+ * Split from the rendering so the document can be built — and checked — without
+ * standing up Chromium. The table is wide and every row has to span exactly the
+ * columns its header declares; a colspan that drifts by one shears the table
+ * sideways and throws nothing, so it is worth being able to count the thing.
+ */
+export function buildDriveLogPdfHtml(
   rows: DriveLogRow[],
   q: DriveLogQuery,
   now = new Date(),
   generatedBy: string | null = null,
-): Promise<Buffer> {
+): string {
   const totals = driveLogTotals(rows)
   const days   = groupDriveLogRows(rows, 'day')
   const drivers = groupDriveLogRows(rows, 'driver')
@@ -261,6 +269,17 @@ ${caveats.length ? `<div class="caveats"><b>Notes</b><ul>${caveats.map(c => `<li
   Transport P/L is the total transport cost less what has actually been released to the driver — the desk's actual figures where it entered any, the costed ones otherwise; a figure in brackets means the driver would be paid more than the booking cost. Shaded columns are the desk's own; submitting one does not release money.
 </footer>
 </body></html>`
+
+  return html
+}
+
+export async function buildDriveLogPdf(
+  rows: DriveLogRow[],
+  q: DriveLogQuery,
+  now = new Date(),
+  generatedBy: string | null = null,
+): Promise<Buffer> {
+  const html = buildDriveLogPdfHtml(rows, q, now, generatedBy)
 
   const browser = await launchBrowser()
   try {

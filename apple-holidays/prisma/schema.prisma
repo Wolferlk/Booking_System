@@ -2152,3 +2152,22 @@ model QueryMonitorMail {
   @@index([conversationId])
   @@map("query_monitor_mails")
 }
+
+/// Sri Lanka settlement documents. One saved JSON pack per booking — the four
+/// sheets the Drive Log prints (name board, transport settlement, local visit
+/// settlement, tour settlement) as the desk edited them. Everything in the pack
+/// is typed in by hand: approved extras, agreed batta rates, shop signatures,
+/// the guest name as it should read on the board. A missing row simply means
+/// nobody has edited that booking's paperwork yet, and the sheets are printed
+/// from the derived draft instead (see `src/lib/sl-settlement-docs-server.ts`).
+/// Deliberately no FK to `bookings`: keyed by ref so it survives the child-row
+/// rewrite an amendment performs.
+model SlSettlementDoc {
+  bookingRef String   @id
+  pack       Json
+  updatedBy  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("sl_settlement_docs")
+}
