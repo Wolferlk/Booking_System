@@ -99,6 +99,16 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
  *                      own half of the row — see the column guard in
  *                      ticket-approvals.ts — never the decision or the payment.
  *
+ *   sl_transport_settlement_requests
+ *                      what the Sri Lankan desk says a booking's transport
+ *                      actually cost, and actually owes the driver, raised from
+ *                      the Drive Log (src/lib/sl-transport-actuals.ts). Exactly
+ *                      the same arrangement as ticket_approvals and for the
+ *                      same reason: this app states a figure, Payable 1.0
+ *                      decides and pays it with its own audited code, and
+ *                      neither writes the other's half of the row. Nothing here
+ *                      moves money — a row is a claim, not a payment.
+ *
  * Everything else over there stays read-only, and this guard is what keeps that
  * true: the connection is a privileged one, so the restriction cannot be left
  * to whoever writes the next query.
@@ -106,7 +116,7 @@ export async function accountsQuery<T extends mysql.RowDataPacket>(
  * @throws if the statement touches any other table.
  */
 const WRITABLE_TABLE =
-  /^\s*(insert\s+into|update|delete\s+from)\s+`?(payment_portals|ticket_approvals)`?\b/i
+  /^\s*(insert\s+into|update|delete\s+from)\s+`?(payment_portals|ticket_approvals|sl_transport_settlement_requests)`?\b/i
 
 export async function accountsWrite(
   sql: string,
@@ -114,8 +124,8 @@ export async function accountsWrite(
 ): Promise<{ affectedRows: number; insertId: number }> {
   if (!WRITABLE_TABLE.test(sql)) {
     throw new Error(
-      'Refused: this app may only write to `payment_portals` and `ticket_approvals` '
-      + 'in the Accounts database.',
+      'Refused: this app may only write to `payment_portals`, `ticket_approvals` and '
+      + '`sl_transport_settlement_requests` in the Accounts database.',
     )
   }
 

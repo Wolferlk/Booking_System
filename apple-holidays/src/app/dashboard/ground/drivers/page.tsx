@@ -149,7 +149,7 @@ function validateDriverForm(form: { name: string; phone: string; email: string; 
 export default function DriversPage() {
   const { data: session } = useSession()
   const { countryFilter } = useCountryFilter()
-  const isAdmin = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
+  const isAdmin = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
   const canDelete = isAdmin
   const userCountry = session?.user?.country ?? 'ALL'
   const isAllCountry = !userCountry || userCountry === 'ALL'

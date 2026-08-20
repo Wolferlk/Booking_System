@@ -1,7 +1,7 @@
 /**
  * Assembles the Drive Log: OPS bookings on the left, accounts money on the right.
  *
- * Three reads, one row:
+ * Four reads, one row:
  *
  *   Prisma                       the Sri Lankan bookings in the window, and who
  *                                is driving them.
@@ -9,23 +9,29 @@
  *                                handed — derived by the accounts system, read
  *                                here verbatim.
  *   generated_invoices           what the client was billed and has paid.
+ *   sl_transport_settlement_requests
+ *                                what this desk says actually happened, where
+ *                                the derived figures are wrong.
  *
- * The two accounts reads are *decorations*, not joins: either can fail and the
- * log still renders, with the affected cells saying why instead of the whole
- * screen falling over. That is the same contract the bookings list already
- * keeps with the same two databases — a supplier database being unreachable
+ * The three accounts reads are *decorations*, not joins: any of them can fail
+ * and the log still renders, with the affected cells saying why instead of the
+ * whole screen falling over. That is the same contract the bookings list
+ * already keeps with the same databases — a supplier database being unreachable
  * must never take an operations screen down.
  *
- * Everything here reads. Nothing in this file writes to either database.
+ * Everything here reads. Nothing in this file writes to either database; the
+ * desk's own figures are written from `sl-transport-actuals.ts`, through the
+ * one narrow allowlisted table.
  */
 
 import { prisma } from './prisma'
 import { fetchDriverAdvanceEnvelopes } from './accounts-driver-advance-db'
 import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from './accounts-invoice-db'
+import { fetchTransportActuals } from './sl-transport-actuals'
 import { bookingNeedsDriver } from './driver-requirement'
 import {
-  MAX_ROWS, applyDriveLogFilters, dayKey, daysBetween, deriveSettlement, emptySettlement,
-  sortDriveLogRows, toDriveLogInvoice,
+  MAX_ROWS, applyDriveLogFilters, dayKey, daysBetween, deriveEffective, deriveSettlement,
+  emptySettlement, sortDriveLogRows, toDriveLogInvoice,
   type DriveLogDriverInfo, type DriveLogQuery, type DriveLogRow,
 } from './sl-drive-log'
 import type { Prisma } from '@prisma/client'
@@ -46,6 +52,8 @@ export interface DriveLogResult {
   advancesAvailable: boolean
   /** False when the invoice ledger could not be read. */
   invoicesAvailable: boolean
+  /** False when the desk's saved actuals could not be read. */
+  actualsAvailable: boolean
   /** True when the window held more bookings than one request may carry. */
   truncated: boolean
   /** How many bookings the window actually held. */
@@ -287,18 +295,26 @@ export async function fetchDriveLogRows(q: DriveLogQuery, now = new Date()): Pro
     controlNumber: b.cntlNumber,
   }))
 
-  const [envelopes, invoices] = await Promise.all([
+  const [envelopes, invoices, actuals] = await Promise.all([
     settled(fetchDriverAdvanceEnvelopes(lookups), 'driver advance snapshots'),
     settled(
       fetchInvoicePaymentSummaries(lookups) as Promise<Map<string, InvoicePaymentSummary>>,
       'invoice ledger',
     ),
+    // The desk's own corrections. A third decoration, degrading the same way:
+    // the log still renders without them, showing the derived figures alone.
+    settled(fetchTransportActuals(bookings.map(b => b.id)), 'transport actuals'),
   ])
 
   const rows: DriveLogRow[] = bookings.map(b => {
     const arrival   = b.arrivalDate.toISOString().slice(0, 10)
     const departure = b.departureDate ? b.departureDate.toISOString().slice(0, 10) : null
     const envelope  = envelopes?.get(b.bookingRef) ?? null
+
+    const settlement = envelopes
+      ? deriveSettlement(envelope?.summary ?? null, envelope?.detail ?? null)
+      : emptySettlement('unavailable', 'The accounts database could not be reached.')
+    const rowActuals = actuals?.get(b.id) ?? null
 
     // "Needs no driver", read exactly as the allocation board reads it: the
     // booking-level flag, the hotel-only vehicle type, or a chart on which not
@@ -328,9 +344,9 @@ export async function fetchDriveLogRows(q: DriveLogQuery, now = new Date()): Pro
       invoice: invoices
         ? toDriveLogInvoice(invoices.get(b.bookingRef))
         : { ...EMPTY_INVOICE },
-      settlement: envelopes
-        ? deriveSettlement(envelope?.summary ?? null, envelope?.detail ?? null)
-        : emptySettlement('unavailable', 'The accounts database could not be reached.'),
+      settlement,
+      actuals: rowActuals,
+      effective: deriveEffective(settlement, rowActuals),
     }
   })
 
@@ -338,6 +354,7 @@ export async function fetchDriveLogRows(q: DriveLogQuery, now = new Date()): Pro
     rows: sortDriveLogRows(applyDriveLogFilters(rows, q), q),
     advancesAvailable: envelopes !== null,
     invoicesAvailable: invoices !== null,
+    actualsAvailable: actuals !== null,
     truncated: matched > bookings.length,
     matched,
     today,

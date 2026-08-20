@@ -34,24 +34,30 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, ArrowDown, ArrowUp, BadgeCheck, Banknote, CalendarDays, Car, ChevronDown,
+  AlertTriangle, ArrowDown, ArrowUp, BadgeCheck, Banknote, CalendarDays, Car, Check, ChevronDown,
   ChevronRight, Clock, Copy, ExternalLink, FileSpreadsheet, FileText, Filter,
-  Gauge, Layers, Loader2, Phone, RefreshCw, Search, Sparkles, TrendingDown, TrendingUp,
-  User2, Users, Wallet, X, XCircle,
+  Gauge, Layers, Loader2, Pencil, Phone, RefreshCw, Search, Send, Sparkles, TrendingDown,
+  TrendingUp, Undo2, User2, Users, Wallet, X, XCircle,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { cn } from '@/lib/utils'
+import { hasPermission } from '@/lib/rbac'
 import { freshness, CATEGORY_TONE } from '@/lib/driver-advance'
+import type { UserRole } from '@prisma/client'
 import {
-  DEFAULT_ARRIVAL_OFFSET_DAYS, SETTLEMENT_LABEL, SETTLEMENT_TONE, STAGE_LABEL,
+  ACTUALS_LABEL, ACTUALS_TONE, DEFAULT_ARRIVAL_OFFSET_DAYS, SETTLEMENT_LABEL, SETTLEMENT_TONE,
+  STAGE_LABEL,
   amount, arrivalLabel, dayKey, daysBetween, driveLogSearchParams, driveLogTotals, formatDay,
-  groupDriveLogRows, shiftDay, windowLabel,
-  type DriveLogApproval, type DriveLogDriver, type DriveLogQuery, type DriveLogRow,
-  type DriveLogSortField, type DriveLogStage, type DriveLogTotals, type DriveLogView,
+  deriveEffective, groupDriveLogRows, shiftDay, windowLabel,
+  type DriveLogActuals, type DriveLogApproval, type DriveLogDriver, type DriveLogQuery,
+  type DriveLogRow, type DriveLogSortField, type DriveLogStage, type DriveLogTotals,
+  type DriveLogView,
 } from '@/lib/sl-drive-log'
+import type { TransportActuals } from '@/lib/sl-transport-actuals'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -59,6 +65,7 @@ interface DriveLogResponse {
   rows: DriveLogRow[]
   advancesAvailable: boolean
   invoicesAvailable: boolean
+  actualsAvailable: boolean
   truncated: boolean
   matched: number
   today: string
@@ -439,21 +446,459 @@ function DriverPanel({
   )
 }
 
+// ── The two editable cells ────────────────────────────────────────────────────
+
+/**
+ * One actual figure, in the table.
+ *
+ * A cell rather than a read-only number, because the whole point is that the
+ * desk can put a figure in it — but it opens the dialog rather than editing in
+ * place: the two figures are entered together, against the derived ones, with a
+ * reason, and splitting them across two lonely inputs would produce half-stated
+ * corrections nobody can act on.
+ *
+ * Empty is the normal state, and it is drawn as an invitation rather than a
+ * dash: most bookings never need correcting, and the ones that do are typed in
+ * by someone who is looking for exactly this cell.
+ */
+function ActualCell({
+  row, field, value, variance, canEdit, onEdit,
+}: {
+  row: DriveLogRow
+  field: 'cost' | 'balance'
+  value: number | null
+  variance: number | null
+  canEdit: boolean
+  onEdit: (row: DriveLogRow) => void
+}) {
+  const a = row.actuals
+  const status = a?.status ?? null
+
+  if (value === null) {
+    if (!canEdit) return <span className="text-slate-700">—</span>
+    return (
+      <button
+        onClick={() => onEdit(row)}
+        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg border border-dashed border-slate-700 text-[10px] font-bold text-slate-600 hover:text-violet-300 hover:border-violet-500/50 transition-colors"
+      >
+        <Pencil className="w-2.5 h-2.5" /> add
+      </button>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => canEdit && onEdit(row)}
+      disabled={!canEdit}
+      className="text-right group disabled:cursor-default"
+      title={status ? ACTUALS_LABEL[status] : undefined}
+    >
+      <span className={cn(
+        'block tabular-nums font-bold whitespace-nowrap',
+        status === 'recorded' ? 'text-emerald-300'
+          : status === 'pending' ? 'text-sky-300'
+          : status === 'rejected' ? 'text-rose-300'
+          : 'text-violet-200',
+        canEdit && 'group-hover:underline decoration-dotted underline-offset-2',
+      )}>
+        {amount(value)}
+      </span>
+      {variance !== null && Math.abs(variance) >= 0.01 ? (
+        <span className={cn('block text-[9px] font-bold', variance > 0 ? 'text-rose-300/80' : 'text-emerald-300/80')}>
+          {variance > 0 ? '+' : '−'}{amount(Math.abs(variance))}
+        </span>
+      ) : null}
+      {/* The submission state belongs on the balance cell only — it is that
+          figure the accounts team acts on, and repeating the badge on both
+          would imply two separate requests. */}
+      {field === 'balance' && status && status !== 'draft' ? (
+        <span className={cn('mt-0.5 inline-block px-1.5 py-0.5 rounded border text-[8px] font-black uppercase tracking-wide', ACTUALS_TONE[status])}>
+          {ACTUALS_LABEL[status]}
+        </span>
+      ) : null}
+    </button>
+  )
+}
+
+// ── The actuals editor ────────────────────────────────────────────────────────
+
+/** "+4,000.00 over costed" / "1,200.00 under costed" — a variance, in words. */
+function VarianceNote({ actual, computed }: { actual: number | null; computed: number | null }) {
+  if (actual === null || computed === null) return null
+  const d = actual - computed
+  if (Math.abs(d) < 0.01) {
+    return <span className="text-[10px] text-slate-500">matches the accounts figure</span>
+  }
+  return (
+    <span className={cn('text-[10px] font-bold', d > 0 ? 'text-rose-300' : 'text-emerald-300')}>
+      {d > 0 ? '+' : '−'}{amount(Math.abs(d))} {d > 0 ? 'over' : 'under'} costed
+    </span>
+  )
+}
+
+/**
+ * Where the desk states what a booking's transport actually cost, and actually
+ * owes the driver — and sends the second figure to the accounts team.
+ *
+ * Built as a dialog rather than an inline cell on purpose. Two figures, a
+ * reason, a live comparison against what the accounts system derived and a
+ * button that asks another department for money is not something to put behind
+ * a cell that can be tabbed into by accident.
+ *
+ * The comparison is the whole point of the layout: every box sits directly
+ * under the derived figure it is correcting, and the P/L at the foot recomputes
+ * as you type, so the consequence of the correction is visible before it is
+ * saved rather than discovered on the next refresh.
+ */
+function ActualsDialog({
+  row, onClose, onSaved,
+}: {
+  row: DriveLogRow
+  onClose: () => void
+  onSaved: (bookingId: string, actuals: TransportActuals) => void
+}) {
+  const s = row.settlement
+  const a = row.actuals
+
+  const [cost, setCost]       = useState(a?.actualPackageCost != null ? String(a.actualPackageCost) : '')
+  const [balance, setBalance] = useState(a?.actualBalancePayable != null ? String(a.actualBalancePayable) : '')
+  const [note, setNote]       = useState(a?.note ?? '')
+  const [busy, setBusy]       = useState<'save' | 'submit' | 'withdraw' | null>(null)
+  const [error, setError]     = useState<string | null>(null)
+
+  // With accounts, or already settled from — the figures are no longer the
+  // desk's to change until they come back.
+  const locked = a?.status === 'pending' || a?.status === 'recorded'
+
+  const parse = (v: string): number | null => {
+    const t = v.trim()
+    if (!t) return null
+    const n = Number(t.replace(/,/g, ''))
+    return Number.isFinite(n) && n >= 0 ? n : null
+  }
+
+  const costValue    = parse(cost)
+  const balanceValue = parse(balance)
+  const costInvalid    = cost.trim() !== '' && costValue === null
+  const balanceInvalid = balance.trim() !== '' && balanceValue === null
+
+  // The consequence of what is currently typed, computed the same way the
+  // server and the table will compute it once it is saved.
+  const effTotal = costValue ?? s.totalCost
+  const previewPl = balanceValue !== null && effTotal !== null && s.advancePaid !== null
+    ? effTotal - (s.advancePaid + balanceValue)
+    : costValue !== null && effTotal !== null && s.paid !== null
+      ? effTotal - s.paid
+      : s.profitLoss
+
+  const call = async (action: 'save' | 'submit' | 'withdraw') => {
+    setBusy(action); setError(null)
+    try {
+      const res = await fetch('/api/srilanka/drive-log/actuals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          bookingId: row.bookingId,
+          actualPackageCost: cost.trim() === '' ? null : costValue,
+          actualBalancePayable: balance.trim() === '' ? null : balanceValue,
+          note: note.trim() || null,
+          computed: {
+            totalCost: s.totalCost,
+            advance: s.advance,
+            balancePayable: s.balancePayable,
+            advancePaid: s.advancePaid,
+            rate: s.rate,
+          },
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || json?.success === false) {
+        throw new Error(json?.error ?? 'That change could not be saved.')
+      }
+      onSaved(row.bookingId, json.data.actuals as TransportActuals)
+      toast.success(json.data.message ?? 'Saved.')
+      if (action !== 'save') onClose()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  /**
+   * Save, then submit, in one press.
+   *
+   * The desk types a figure and means to send it; making them press Save first
+   * and then Submit only creates a state where a figure is on screen but not on
+   * the row anyone else can see.
+   */
+  const saveAndSubmit = async () => {
+    if (balanceValue === null) {
+      setError('Enter the actual balance payable — that is the figure the accounts team acts on.')
+      return
+    }
+    setBusy('submit'); setError(null)
+    try {
+      const save = await fetch('/api/srilanka/drive-log/actuals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          bookingId: row.bookingId,
+          actualPackageCost: cost.trim() === '' ? null : costValue,
+          actualBalancePayable: balanceValue,
+          note: note.trim() || null,
+          computed: {
+            totalCost: s.totalCost, advance: s.advance, balancePayable: s.balancePayable,
+            advancePaid: s.advancePaid, rate: s.rate,
+          },
+        }),
+      })
+      const saveJson = await save.json().catch(() => null)
+      if (!save.ok || saveJson?.success === false) {
+        throw new Error(saveJson?.error ?? 'The figures could not be saved.')
+      }
+      setBusy(null)
+      await call('submit')
+    } catch (err) {
+      setError((err as Error).message)
+      setBusy(null)
+    }
+  }
+
+  const Figure = ({ label, value }: { label: string; value: number | null }) => (
+    <div>
+      <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{label}</p>
+      <p className="text-sm font-bold text-slate-200 tabular-nums">{amount(value)}</p>
+    </div>
+  )
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <div className="pointer-events-auto w-full max-w-2xl max-h-[92vh] flex flex-col bg-[#0c1225] border border-slate-800 rounded-2xl shadow-2xl shadow-black/60 overflow-hidden">
+
+          <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-800 flex-shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-violet-500/10 border border-violet-500/25 flex items-center justify-center">
+              <Pencil className="w-5 h-5 text-violet-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-white font-black text-base">Actual transport figures</p>
+              <p className="text-slate-400 text-xs mt-0.5 truncate">
+                {row.isNumber ?? row.bookingRef} · {row.clientName ?? 'Unknown guest'}
+                {row.driver ? ` · ${row.driver.name}` : ''}
+              </p>
+            </div>
+            {a ? (
+              <span className={cn('px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wide', ACTUALS_TONE[a.status])}>
+                {ACTUALS_LABEL[a.status]}
+              </span>
+            ) : null}
+            <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+            {/* What the accounts system derived — what these boxes are correcting. */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3">
+                What the accounts system says · LKR
+              </p>
+              <div className="grid grid-cols-4 gap-3">
+                <Figure label="Total cost" value={s.totalCost} />
+                <Figure label="Advance" value={s.advance} />
+                <Figure label="Balance payable" value={s.balancePayable} />
+                <Figure label="Advance paid" value={s.advancePaid} />
+              </div>
+              {s.computedAt ? (
+                <p className="text-[10px] text-slate-600 mt-3 flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> computed {freshness(s.computedAt)}
+                </p>
+              ) : null}
+            </div>
+
+            {locked ? (
+              <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-xs text-sky-200 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>
+                  {a?.status === 'pending'
+                    ? `Submitted by ${a.submittedBy ?? 'someone'} and waiting on the accounts team. Withdraw it to change the figures.`
+                    : `The accounts team settled ${a?.recordedAmountLkr !== null && a?.recordedAmountLkr !== undefined ? `LKR ${amount(a.recordedAmountLkr)}` : 'this booking'} from these figures${a?.recordedBatchRef ? ` (${a.recordedBatchRef})` : ''}. They are closed.`}
+                </span>
+              </div>
+            ) : null}
+
+            {a?.status === 'rejected' && a.decisionNote ? (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-200">
+                <span className="font-bold">Sent back by {a.decidedBy ?? 'accounts'}:</span> {a.decisionNote}
+              </div>
+            ) : null}
+
+            {/* The two figures, each under the one it corrects. */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-bold text-slate-300">Actual transport package cost</span>
+                <span className="block text-[10px] text-slate-500 mb-1.5">
+                  What the whole package really came to. Leave blank to keep {amount(s.totalCost)}.
+                </span>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-500">LKR</span>
+                  <input
+                    value={cost} onChange={e => setCost(e.target.value)} disabled={locked}
+                    inputMode="decimal" placeholder={s.totalCost !== null ? amount(s.totalCost) : '0.00'}
+                    className={cn(
+                      'w-full pl-11 pr-3 py-2 rounded-xl bg-slate-950/60 border text-sm text-white tabular-nums',
+                      'placeholder:text-slate-700 focus:outline-none disabled:opacity-50',
+                      costInvalid ? 'border-rose-500/60' : 'border-slate-800 focus:border-violet-500/60',
+                    )}
+                  />
+                </div>
+                <span className="block mt-1"><VarianceNote actual={costValue} computed={s.totalCost} /></span>
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-bold text-slate-300">Actual balance payable</span>
+                <span className="block text-[10px] text-slate-500 mb-1.5">
+                  What the driver is really owed after the advance. This is the figure accounts settles.
+                </span>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-500">LKR</span>
+                  <input
+                    value={balance} onChange={e => setBalance(e.target.value)} disabled={locked}
+                    inputMode="decimal" placeholder={s.balancePayable !== null ? amount(s.balancePayable) : '0.00'}
+                    className={cn(
+                      'w-full pl-11 pr-3 py-2 rounded-xl bg-slate-950/60 border text-sm text-white tabular-nums',
+                      'placeholder:text-slate-700 focus:outline-none disabled:opacity-50',
+                      balanceInvalid ? 'border-rose-500/60' : 'border-slate-800 focus:border-violet-500/60',
+                    )}
+                  />
+                </div>
+                <span className="block mt-1"><VarianceNote actual={balanceValue} computed={s.balancePayable} /></span>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-xs font-bold text-slate-300">Why these differ</span>
+              <span className="block text-[10px] text-slate-500 mb-1.5">
+                The accounts clerk reads this beside the figure before releasing the money.
+              </span>
+              <textarea
+                value={note} onChange={e => setNote(e.target.value)} disabled={locked} rows={2}
+                placeholder="Extra airport transfer on day 4, agreed with the operator at LKR 6,000."
+                className="w-full px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800 text-sm text-white placeholder:text-slate-700 focus:outline-none focus:border-violet-500/60 disabled:opacity-50"
+              />
+            </label>
+
+            {/* The consequence, live. */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3">
+                Transport P/L if this is recorded
+              </p>
+              <div className="flex flex-wrap items-end gap-6">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-600 font-bold">As costed</p>
+                  <p className="text-base font-bold text-slate-400 tabular-nums">{amount(s.profitLoss)}</p>
+                </div>
+                <div className="text-slate-700">→</div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">With your figures</p>
+                  <p className={cn(
+                    'text-xl font-black tabular-nums',
+                    previewPl === null ? 'text-slate-600'
+                      : previewPl < -0.01 ? 'text-rose-300'
+                      : previewPl < 0.01 ? 'text-emerald-300' : 'text-amber-300',
+                  )}>
+                    {amount(previewPl)}
+                  </p>
+                </div>
+                {previewPl !== null && s.profitLoss !== null && Math.abs(previewPl - s.profitLoss) >= 0.01 ? (
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-slate-600 font-bold">Difference</p>
+                    <p className={cn(
+                      'text-base font-bold tabular-nums',
+                      previewPl - s.profitLoss > 0 ? 'text-amber-300' : 'text-emerald-300',
+                    )}>
+                      {previewPl - s.profitLoss > 0 ? '+' : '−'}{amount(Math.abs(previewPl - s.profitLoss))}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+              <p className="text-[10px] text-slate-600 mt-3">
+                Total cost − (advance paid + actual balance payable). Positive means money still to leave the
+                building; negative means the driver would be paid more than the booking cost.
+              </p>
+            </div>
+
+            {error ? (
+              <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-200">
+                {error}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="flex items-center gap-2 px-6 py-4 border-t border-slate-800 flex-shrink-0">
+            <p className="flex-1 text-[10px] text-slate-600 leading-snug">
+              Submitting does not pay anyone. It puts your figure in front of the accounts team, who release the
+              money on Payable 1.0 as they do today.
+            </p>
+
+            {a?.status === 'pending' ? (
+              <button
+                onClick={() => call('withdraw')} disabled={!!busy}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/70 border border-slate-700 text-xs font-bold text-slate-200 hover:border-slate-600 transition-colors disabled:opacity-50"
+              >
+                {busy === 'withdraw' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                Withdraw
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => call('save')} disabled={!!busy || locked || costInvalid || balanceInvalid}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/70 border border-slate-700 text-xs font-bold text-slate-200 hover:border-slate-600 transition-colors disabled:opacity-50"
+                >
+                  {busy === 'save' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                  Save
+                </button>
+                <button
+                  onClick={saveAndSubmit}
+                  disabled={!!busy || locked || costInvalid || balanceInvalid || balanceValue === null}
+                  title={balanceValue === null ? 'Enter the actual balance payable first' : undefined}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-violet-500/20 border border-violet-500/40 text-xs font-bold text-violet-200 hover:bg-violet-500/30 transition-colors disabled:opacity-50"
+                >
+                  {busy === 'submit' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  Submit to Accounts
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ── Row ───────────────────────────────────────────────────────────────────────
 
 function Row({
-  row, onDriver,
+  row, onDriver, onEdit, canEdit,
 }: {
   row: DriveLogRow
   onDriver: (row: DriveLogRow) => void
+  onEdit: (row: DriveLogRow) => void
+  canEdit: boolean
 }) {
   const [open, setOpen] = useState(false)
   const s = row.settlement
+  const e = row.effective
   const inv = row.invoice
 
-  const plTone = s.profitLoss === null ? 'muted'
-    : s.profitLoss < -0.01 ? 'over'
-    : s.profitLoss < 0.01 ? 'good'
+  const plTone = e.profitLoss === null ? 'muted'
+    : e.profitLoss < -0.01 ? 'over'
+    : e.profitLoss < 0.01 ? 'good'
     : 'due'
 
   return (
@@ -539,7 +984,17 @@ function Row({
         {/* The five settlement columns */}
         {s.state === 'ok' ? (
           <>
-            <td className="px-3 py-2.5 align-top text-right"><Num value={s.totalCost} bold /></td>
+            <td className="px-3 py-2.5 align-top text-right">
+              <Num value={e.totalCost} bold />
+              {/* A corrected figure says so, and says what it replaced — a
+                  number that silently differs from the accounts system is
+                  exactly what this feature exists to stop. */}
+              {e.costOverridden ? (
+                <span className="block text-[9px] text-violet-300 font-bold" title={`Accounts costed ${amount(s.totalCost)}`}>
+                  actual
+                </span>
+              ) : null}
+            </td>
             <td className="px-3 py-2.5 align-top text-right">
               <Num value={s.advance} />
               {s.edited ? <span className="block text-[9px] text-violet-300 font-bold">edited</span> : null}
@@ -547,10 +1002,37 @@ function Row({
             <td className="px-3 py-2.5 align-top text-right"><Num value={s.balancePayable} /></td>
             <td className="px-3 py-2.5 align-top text-right"><Num value={s.advancePaid} tone={(s.advancePaid ?? 0) > 0 ? 'good' : 'muted'} /></td>
             <td className="px-3 py-2.5 align-top text-right"><Num value={s.restPaid} tone={(s.restPaid ?? 0) > 0 ? 'good' : 'muted'} /></td>
-            <td className="px-3 py-2.5 align-top text-right"><Num value={s.profitLoss} tone={plTone} bold /></td>
+
+            {/* ── The desk's own two columns ── */}
+            <td className="px-3 py-2.5 align-top text-right">
+              <ActualCell
+                row={row} field="cost" canEdit={canEdit} onEdit={onEdit}
+                value={row.actuals?.actualPackageCost ?? null}
+                variance={e.costVariance}
+              />
+            </td>
+            <td className="px-3 py-2.5 align-top text-right">
+              <ActualCell
+                row={row} field="balance" canEdit={canEdit} onEdit={onEdit}
+                value={row.actuals?.actualBalancePayable ?? null}
+                variance={e.balanceVariance}
+              />
+            </td>
+
+            <td className="px-3 py-2.5 align-top text-right">
+              <Num value={e.profitLoss} tone={plTone} bold />
+              {e.overridden && e.profitLossVariance !== null && Math.abs(e.profitLossVariance) >= 0.01 ? (
+                <span
+                  className={cn('block text-[9px] font-bold', e.profitLossVariance > 0 ? 'text-amber-300' : 'text-emerald-300')}
+                  title={`As costed this read ${amount(e.derivedProfitLoss)}`}
+                >
+                  {e.profitLossVariance > 0 ? '+' : '−'}{amount(Math.abs(e.profitLossVariance))} vs costed
+                </span>
+              ) : null}
+            </td>
           </>
         ) : (
-          <td colSpan={6} className="px-3 py-2.5 align-top">
+          <td colSpan={8} className="px-3 py-2.5 align-top">
             <span className={cn(
               'inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-bold',
               SETTLEMENT_TONE[s.state],
@@ -582,7 +1064,7 @@ function Row({
 
       {open ? (
         <tr className="border-b border-slate-800/50 bg-slate-950/60">
-          <td colSpan={11} className="px-6 py-4">
+          <td colSpan={13} className="px-6 py-4">
             <div className="grid gap-5 lg:grid-cols-3">
 
               <div>
@@ -671,6 +1153,7 @@ const SORT_LABELS: { value: DriveLogSortField; label: string }[] = [
   { value: 'advance',  label: 'Advance' },
   { value: 'balance',  label: 'Balance payable' },
   { value: 'profit',   label: 'Transport P/L' },
+  { value: 'variance', label: 'P/L vs costed' },
 ]
 
 const STAGE_CHIPS: { value: DriveLogStage; label: string }[] = [
@@ -682,6 +1165,7 @@ const STAGE_CHIPS: { value: DriveLogStage; label: string }[] = [
 ]
 
 export default function DriveLogPage() {
+  const { data: session } = useSession()
   const today = useMemo(() => dayKey(), [])
   const defaultDay = useMemo(() => shiftDay(today, DEFAULT_ARRIVAL_OFFSET_DAYS), [today])
 
@@ -693,6 +1177,7 @@ export default function DriveLogPage() {
     stage: 'all',
     approval: 'all',
     driver: 'all',
+    actuals: 'all',
     openOnly: false,
     includeHotelOnly: false,
     sortBy: 'arrival',
@@ -706,6 +1191,19 @@ export default function DriveLogPage() {
   const [view, setView]       = useState<DriveLogView>('day')
   const [exporting, setExporting] = useState<'pdf' | 'xlsx' | null>(null)
   const [panelRow, setPanelRow]   = useState<DriveLogRow | null>(null)
+  const [editRow, setEditRow]     = useState<DriveLogRow | null>(null)
+
+  /**
+   * Who may state that the accounts system's figure is wrong.
+   *
+   * Deliberately narrower than who may read this page: the whole log runs on
+   * `pnl:read`, but entering an actual and asking for money to be released
+   * against it is `pnl:view_profit` — the Accounts and admin roles. The API
+   * enforces the same rule; this only decides whether the cells offer to be
+   * typed in, so a Ground user is not shown a control that will refuse them.
+   */
+  const role = session?.user?.role as UserRole | undefined
+  const canEditActuals = !!role && hasPermission(role, 'pnl:view_profit')
 
   // The search box types faster than the accounts database answers.
   useEffect(() => {
@@ -737,10 +1235,37 @@ export default function DriveLogPage() {
   // yields a fresh array on every render, which would recompute the groups and
   // the freshness stamp on every keystroke.
   const rows   = useMemo(() => data?.rows ?? [], [data])
-  const totals = data?.totals ?? driveLogTotals([])
+  // Recomputed here rather than read off the response: a figure saved a moment
+  // ago is already folded into `rows`, and a footer still showing the totals
+  // the server sent would contradict the line above it.
+  const totals = useMemo(() => driveLogTotals(rows), [rows])
   const groups = useMemo(() => groupDriveLogRows(rows, view), [rows, view])
 
   const set = (patch: Partial<DriveLogQuery>) => setQuery(q => ({ ...q, ...patch }))
+
+  /**
+   * Fold a saved figure back into the rows on screen.
+   *
+   * Patched in place rather than refetched: re-reading the whole window means
+   * three database round trips and a visible flicker, to learn one thing this
+   * request already returned. The effective figures are recomputed with the
+   * same function the server uses, so the row, its group subtotal and the
+   * footer all move together and none of them can drift from the API's answer.
+   */
+  const applyActuals = useCallback((bookingId: string, actuals: TransportActuals) => {
+    setData(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        rows: prev.rows.map(r => r.bookingId === bookingId
+          ? { ...r, actuals, effective: deriveEffective(r.settlement, actuals) }
+          : r),
+      }
+    })
+    setEditRow(prev => (prev && prev.bookingId === bookingId
+      ? { ...prev, actuals, effective: deriveEffective(prev.settlement, actuals) }
+      : prev))
+  }, [])
 
   const setDay = (day: string) => set({ from: day, to: day })
   const setSpan = (fromDay: string, days: number) => set({ from: fromDay, to: shiftDay(fromDay, days) })
@@ -845,6 +1370,13 @@ export default function DriveLogPage() {
             The invoice ledger could not be read — the Invoice column is blank, every other figure is current.
           </div>
         ) : null}
+        {data && data.advancesAvailable && !data.actualsAvailable ? (
+          <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 px-4 py-2.5 text-xs text-orange-200 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            The desk&rsquo;s saved actual figures could not be read, so every row is showing the costed figures
+            alone. Do not enter new ones until this clears — a save would not be able to see what is already there.
+          </div>
+        ) : null}
         {data?.truncated ? (
           <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200 flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
@@ -856,7 +1388,7 @@ export default function DriveLogPage() {
         {/* ── KPIs ── */}
         <div className="flex flex-wrap gap-3">
           <Kpi
-            label="Total transport cost" value={`LKR ${amount(totals.totalCost)}`}
+            label="Total transport cost" value={`LKR ${amount(totals.effectiveTotalCost)}`}
             sub={`${totals.costedRows} costed file${totals.costedRows === 1 ? '' : 's'}`}
             icon={Layers} tone="bg-slate-500/10 border-slate-500/30 text-slate-300"
           />
@@ -876,12 +1408,21 @@ export default function DriveLogPage() {
             icon={BadgeCheck} tone="bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
           />
           <Kpi
-            label="Transport P/L" value={`LKR ${amount(totals.profitLoss)}`}
-            sub={totals.overpaid ? `${totals.overpaid} overpaid file${totals.overpaid === 1 ? '' : 's'}` : 'still owed · cost less what was released'}
-            icon={totals.profitLoss > 0.01 ? TrendingUp : TrendingDown}
-            tone={totals.profitLoss > 0.01
+            label="Transport P/L" value={`LKR ${amount(totals.effectiveProfitLoss)}`}
+            sub={Math.abs(totals.profitLossVariance) >= 0.01
+              ? `${totals.profitLossVariance > 0 ? '+' : '−'}${amount(Math.abs(totals.profitLossVariance))} vs costed`
+              : totals.overpaid ? `${totals.overpaid} overpaid file${totals.overpaid === 1 ? '' : 's'}` : 'still owed · cost less what was released'}
+            icon={totals.effectiveProfitLoss > 0.01 ? TrendingUp : TrendingDown}
+            tone={totals.effectiveProfitLoss > 0.01
               ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
               : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}
+          />
+          <Kpi
+            label="Actuals" value={`${totals.costCorrected + totals.balanceCorrected} corrected`}
+            sub={totals.awaitingAccounts
+              ? `${totals.awaitingAccounts} with accounts${totals.sentBack ? ` · ${totals.sentBack} sent back` : ''}`
+              : totals.settledFromActuals ? `${totals.settledFromActuals} settled from them` : 'nothing submitted'}
+            icon={Send} tone="bg-violet-500/10 border-violet-500/30 text-violet-300"
           />
           <Kpi
             label="Client invoiced" value={`USD ${amount(totals.invoiceUsd)}`}
@@ -986,6 +1527,26 @@ export default function DriveLogPage() {
             </div>
 
             <div className="flex items-center gap-1.5 pt-2">
+              {([
+                ['all', 'Any figures'],
+                ['corrected', 'Corrected'],
+                ['pending', 'With accounts'],
+                ['sent_back', 'Sent back'],
+                ['untouched', 'Untouched'],
+              ] as [DriveLogActuals, string][]).map(([v, label]) => (
+                <Chip
+                  key={v} active={query.actuals === v} onClick={() => set({ actuals: v })}
+                  tone={v === 'sent_back'
+                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                    : v === 'pending' ? 'bg-sky-500/15 border-sky-500/40 text-sky-300'
+                    : 'bg-violet-500/15 border-violet-500/40 text-violet-300'}
+                >
+                  {label}
+                </Chip>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1.5 pt-2">
               <Chip
                 active={query.openOnly} onClick={() => set({ openOnly: !query.openOnly })}
                 tone="bg-amber-500/15 border-amber-500/40 text-amber-300"
@@ -1037,19 +1598,21 @@ export default function DriveLogPage() {
                   <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="The rest payment: total cost less the advance">Balance payable</th>
                   <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Of the envelope, what has actually been handed over">Advance paid</th>
                   <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Of the rest payment, what the accounts team has released">Paid balance</th>
-                  <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Transport P/L — total cost less (advance paid + paid balance). Positive: still owed to the driver. Negative: the driver has been paid more than the booking costed.">Transport P/L</th>
+                  <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-violet-400/70 font-black" title="What the desk says the whole transport package really cost. Overrides Total cost in the P/L when set.">Actual pkg cost</th>
+                  <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-violet-400/70 font-black" title="What the desk says the driver is really owed after the advance. This is the figure submitted to the accounts team.">Actual balance</th>
+                  <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Transport P/L — total cost less (advance paid + the balance that will actually be paid). Actuals win over the costed figures. Positive: still owed to the driver. Negative: the driver would be paid more than the booking cost.">Transport P/L</th>
                   <th className="px-3 py-2.5 text-left text-[10px] uppercase tracking-wider text-slate-500 font-black">Settlement</th>
                 </tr>
               </thead>
 
               <tbody>
                 {loading && rows.length === 0 ? (
-                  <tr><td colSpan={11} className="px-6 py-16 text-center">
+                  <tr><td colSpan={13} className="px-6 py-16 text-center">
                     <Loader2 className="w-6 h-6 text-slate-600 animate-spin mx-auto" />
                     <p className="text-sm text-slate-500 mt-3">Reading bookings, driver advances and invoices…</p>
                   </td></tr>
                 ) : error ? (
-                  <tr><td colSpan={11} className="px-6 py-16 text-center">
+                  <tr><td colSpan={13} className="px-6 py-16 text-center">
                     <AlertTriangle className="w-6 h-6 text-rose-400 mx-auto" />
                     <p className="text-sm text-rose-300 mt-3">{error}</p>
                     <button onClick={() => load(query)} className="mt-3 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200">
@@ -1057,7 +1620,7 @@ export default function DriveLogPage() {
                     </button>
                   </td></tr>
                 ) : rows.length === 0 ? (
-                  <tr><td colSpan={11} className="px-6 py-16 text-center">
+                  <tr><td colSpan={13} className="px-6 py-16 text-center">
                     <CalendarDays className="w-6 h-6 text-slate-700 mx-auto" />
                     <p className="text-sm text-slate-500 mt-3">
                       No Sri Lankan bookings match these filters in {windowLabel(query).toLowerCase()}.
@@ -1065,7 +1628,10 @@ export default function DriveLogPage() {
                   </td></tr>
                 ) : (
                   groups.map(g => (
-                    <GroupBlock key={g.key} group={g} view={view} onDriver={setPanelRow} />
+                    <GroupBlock
+                      key={g.key} group={g} view={view}
+                      onDriver={setPanelRow} onEdit={setEditRow} canEdit={canEditActuals}
+                    />
                   ))
                 )}
               </tbody>
@@ -1076,12 +1642,32 @@ export default function DriveLogPage() {
                     <td colSpan={4} className="px-3 py-3 text-xs font-black text-slate-300 uppercase tracking-wider">
                       Total · {totals.costedRows} costed
                     </td>
-                    <td className="px-3 py-3 text-right"><Num value={totals.totalCost} bold /></td>
+                    <td className="px-3 py-3 text-right"><Num value={totals.effectiveTotalCost} bold /></td>
                     <td className="px-3 py-3 text-right"><Num value={totals.advance} bold /></td>
                     <td className="px-3 py-3 text-right"><Num value={totals.balancePayable} bold /></td>
                     <td className="px-3 py-3 text-right"><Num value={totals.advancePaid} tone="good" bold /></td>
                     <td className="px-3 py-3 text-right"><Num value={totals.restPaid} tone="good" bold /></td>
-                    <td className="px-3 py-3 text-right"><Num value={totals.profitLoss} tone={totals.profitLoss > 0.01 ? 'due' : 'good'} bold /></td>
+                    <td className="px-3 py-3 text-right">
+                      <span className="block text-[9px] uppercase tracking-wide text-violet-400/70 font-black">
+                        {totals.costCorrected} corrected
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <span className="block text-[9px] uppercase tracking-wide text-violet-400/70 font-black">
+                        {totals.balanceCorrected} corrected
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <Num value={totals.effectiveProfitLoss} tone={totals.effectiveProfitLoss > 0.01 ? 'due' : 'good'} bold />
+                      {Math.abs(totals.profitLossVariance) >= 0.01 ? (
+                        <span
+                          className={cn('block text-[9px] font-bold', totals.profitLossVariance > 0 ? 'text-amber-300' : 'text-emerald-300')}
+                          title={`As costed the total P/L reads ${amount(totals.profitLoss)}`}
+                        >
+                          {totals.profitLossVariance > 0 ? '+' : '−'}{amount(Math.abs(totals.profitLossVariance))} vs costed
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-3 text-[10px] text-slate-600">LKR</td>
                   </tr>
                 </tfoot>
@@ -1097,6 +1683,14 @@ export default function DriveLogPage() {
         </p>
       </div>
 
+      {editRow ? (
+        <ActualsDialog
+          row={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={applyActuals}
+        />
+      ) : null}
+
       {panelRow ? (
         <DriverPanel
           driverId={panelRow.driver?.id ?? null}
@@ -1111,11 +1705,13 @@ export default function DriveLogPage() {
 
 /** One heading and its rows, with the subtotal that makes the group self-checking. */
 function GroupBlock({
-  group, view, onDriver,
+  group, view, onDriver, onEdit, canEdit,
 }: {
   group: ReturnType<typeof groupDriveLogRows>[number]
   view: DriveLogView
   onDriver: (row: DriveLogRow) => void
+  onEdit: (row: DriveLogRow) => void
+  canEdit: boolean
 }) {
   const [open, setOpen] = useState(true)
   const t = group.totals
@@ -1139,14 +1735,34 @@ function GroupBlock({
                 {t.unapproved} P&amp;L pending
               </span>
             ) : null}
+            {t.awaitingAccounts ? (
+              <span className="px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[9px] font-black uppercase">
+                {t.awaitingAccounts} with accounts
+              </span>
+            ) : null}
+            {t.sentBack ? (
+              <span className="px-1.5 py-0.5 rounded bg-rose-500/15 border border-rose-500/30 text-rose-300 text-[9px] font-black uppercase">
+                {t.sentBack} sent back
+              </span>
+            ) : null}
           </button>
         </td>
-        <td className="px-3 py-2 text-right"><Num value={t.totalCost} tone="muted" /></td>
+        <td className="px-3 py-2 text-right"><Num value={t.effectiveTotalCost} tone="muted" /></td>
         <td className="px-3 py-2 text-right"><Num value={t.advance} tone="muted" /></td>
         <td className="px-3 py-2 text-right"><Num value={t.balancePayable} tone="muted" /></td>
         <td className="px-3 py-2 text-right"><Num value={t.advancePaid} tone="muted" /></td>
         <td className="px-3 py-2 text-right"><Num value={t.restPaid} tone="muted" /></td>
-        <td className="px-3 py-2 text-right"><Num value={t.profitLoss} tone={t.profitLoss > 0.01 ? 'due' : 'good'} /></td>
+        <td className="px-3 py-2 text-right">
+          {t.costCorrected ? (
+            <span className="text-[9px] uppercase tracking-wide text-violet-400/70 font-black">{t.costCorrected} actual</span>
+          ) : null}
+        </td>
+        <td className="px-3 py-2 text-right">
+          {t.balanceCorrected ? (
+            <span className="text-[9px] uppercase tracking-wide text-violet-400/70 font-black">{t.balanceCorrected} actual</span>
+          ) : null}
+        </td>
+        <td className="px-3 py-2 text-right"><Num value={t.effectiveProfitLoss} tone={t.effectiveProfitLoss > 0.01 ? 'due' : 'good'} /></td>
         <td className="px-3 py-2">
           <div className="flex items-center gap-1 text-[10px] text-slate-600">
             <Users className="w-3 h-3" /> {group.rows.length}
@@ -1160,7 +1776,9 @@ function GroupBlock({
         </td>
       </tr>
 
-      {open ? group.rows.map(r => <Row key={r.bookingId} row={r} onDriver={onDriver} />) : null}
+      {open ? group.rows.map(r => (
+        <Row key={r.bookingId} row={r} onDriver={onDriver} onEdit={onEdit} canEdit={canEdit} />
+      )) : null}
     </>
   )
 }

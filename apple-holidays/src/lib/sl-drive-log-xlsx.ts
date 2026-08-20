@@ -15,8 +15,8 @@
 
 import * as XLSX from 'xlsx'
 import {
-  STAGE_LABEL, SETTLEMENT_LABEL, driveLogTotals, formatDay, groupDriveLogRows, windowLabel,
-  type DriveLogQuery, type DriveLogRow,
+  ACTUALS_LABEL, STAGE_LABEL, SETTLEMENT_LABEL, driveLogTotals, formatDay, groupDriveLogRows,
+  windowLabel, type DriveLogQuery, type DriveLogRow,
 } from './sl-drive-log'
 
 /** A money cell, or blank — never a zero standing in for "not costed". */
@@ -41,7 +41,14 @@ const LEDGER_HEADERS = [
   'Driver', 'Driver Phone', 'Vehicle', 'Bank Details',
   'Invoice No', 'Invoice Ccy', 'Invoice Amount', 'Invoice Paid', 'Invoice Balance',
   'Currency', 'Total Transport Cost', 'Driver Advance', 'Balance Payable',
-  'Advance Paid', 'Actual Paid Balance', 'Total Paid', 'Transport P/L',
+  'Advance Paid', 'Actual Paid Balance', 'Total Paid',
+  // The desk's own figures, and what they did to the answer. Kept beside the
+  // costed ones rather than replacing them: an accountant checking this sheet
+  // has to be able to see both and the difference between them.
+  'Actual Package Cost', 'Actual Balance Payable', 'Variance vs Costed',
+  'Transport P/L (costed)', 'Transport P/L',
+  'Actuals Status', 'Actuals Note', 'Submitted By', 'Submitted At',
+  'Settled By Accounts', 'Settlement Ref',
   'Stage', 'P&L Approval', 'Costing', 'Computed At',
 ]
 
@@ -56,7 +63,15 @@ function ledgerRow(r: DriveLogRow): (string | number)[] {
     cell(r.invoice?.amount), cell(r.invoice?.paid), cell(r.invoice?.balance),
     s.state === 'ok' ? s.currency : '',
     cell(s.totalCost), cell(s.advance), cell(s.balancePayable),
-    cell(s.advancePaid), cell(s.restPaid), cell(s.paid), cell(s.profitLoss),
+    cell(s.advancePaid), cell(s.restPaid), cell(s.paid),
+    cell(r.actuals?.actualPackageCost), cell(r.actuals?.actualBalancePayable),
+    cell(r.effective.profitLossVariance),
+    cell(s.profitLoss), cell(r.effective.profitLoss),
+    r.actuals ? ACTUALS_LABEL[r.actuals.status] : '',
+    r.actuals?.note ?? '',
+    r.actuals?.submittedBy ?? '',
+    r.actuals?.submittedAt ? new Date(r.actuals.submittedAt).toLocaleString('en-GB', { hour12: false }) : '',
+    cell(r.actuals?.recordedAmountLkr), r.actuals?.recordedBatchRef ?? '',
     s.stage ? STAGE_LABEL[s.stage] : '',
     s.approval,
     SETTLEMENT_LABEL[s.state],
@@ -98,12 +113,18 @@ export function buildDriveLogWorkbook(
       cell(totals.invoiceUsd), '', '',
       'LKR',
       cell(totals.totalCost), cell(totals.advance), cell(totals.balancePayable),
-      cell(totals.advancePaid), cell(totals.restPaid), cell(totals.paid), cell(totals.profitLoss),
+      cell(totals.advancePaid), cell(totals.restPaid), cell(totals.paid),
+      cell(totals.effectiveTotalCost), '', cell(totals.profitLossVariance),
+      cell(totals.profitLoss), cell(totals.effectiveProfitLoss),
     ],
     [`Totalled over ${totals.costedRows} costed booking(s).`
       + (totals.uncostedRows ? ` ${totals.uncostedRows} not costed yet.` : '')
       + (totals.noRateRows ? ` ${totals.noRateRows} carry no LKR rate and are excluded.` : '')
       + (totals.invoiceOtherCcy ? ` ${totals.invoiceOtherCcy} invoice(s) in another currency are excluded.` : '')],
+    [`Transport P/L uses the desk's actual figures where it has any: `
+      + `${totals.costCorrected} corrected package cost(s), ${totals.balanceCorrected} corrected balance(s). `
+      + `${totals.awaitingAccounts} awaiting the accounts team, ${totals.settledFromActuals} already settled from them`
+      + (totals.sentBack ? `, ${totals.sentBack} sent back.` : '.')],
   ])
 
   const headerRow = banner.length
@@ -124,7 +145,9 @@ export function buildDriveLogWorkbook(
     { wch: 26 }, { wch: 15 }, { wch: 26 }, { wch: 38 },
     { wch: 16 }, { wch: 6 }, { wch: 14 }, { wch: 13 }, { wch: 13 },
     { wch: 6 }, { wch: 18 }, { wch: 15 }, { wch: 15 },
-    { wch: 14 }, { wch: 18 }, { wch: 13 }, { wch: 14 },
+    { wch: 14 }, { wch: 18 }, { wch: 13 },
+    { wch: 19 }, { wch: 21 }, { wch: 17 }, { wch: 20 }, { wch: 15 },
+    { wch: 17 }, { wch: 40 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 22 },
     { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 18 },
   ]
   XLSX.utils.book_append_sheet(wb, ledger, 'Drive Log')
@@ -136,19 +159,22 @@ export function buildDriveLogWorkbook(
     [`${windowLabel(q)} · one line per driver, LKR`],
     [],
     ['Driver', 'Phone', 'Vehicle', 'Bank Details', 'Bookings',
-     'Total Cost', 'Advance', 'Balance Payable', 'Advance Paid', 'Actual Paid Balance', 'Transport P/L'],
+     'Total Cost', 'Advance', 'Balance Payable', 'Advance Paid', 'Actual Paid Balance',
+     'Transport P/L', 'Corrected', 'With Accounts'],
     ...byDriver.map(g => {
       const first = g.rows[0]
       return [
         g.label, first.driver?.phone ?? '', vehicleLine(first), bankLine(first), g.rows.length,
-        cell(g.totals.totalCost), cell(g.totals.advance), cell(g.totals.balancePayable),
-        cell(g.totals.advancePaid), cell(g.totals.restPaid), cell(g.totals.profitLoss),
+        cell(g.totals.effectiveTotalCost), cell(g.totals.advance), cell(g.totals.effectiveBalancePayable),
+        cell(g.totals.advancePaid), cell(g.totals.restPaid), cell(g.totals.effectiveProfitLoss),
+        g.totals.costCorrected + g.totals.balanceCorrected, g.totals.awaitingAccounts,
       ]
     }),
   ])
   driverSheet['!cols'] = [
     { wch: 28 }, { wch: 15 }, { wch: 26 }, { wch: 38 }, { wch: 9 },
     { wch: 14 }, { wch: 14 }, { wch: 15 }, { wch: 14 }, { wch: 18 }, { wch: 14 },
+    { wch: 11 }, { wch: 14 },
   ]
   XLSX.utils.book_append_sheet(wb, driverSheet, 'By Driver')
 
@@ -157,7 +183,9 @@ export function buildDriveLogWorkbook(
     r.settlement.state !== 'ok'
     || r.settlement.approval !== 'approved'
     || !r.driver
-    || (r.settlement.profitLoss !== null && r.settlement.profitLoss < -0.01))
+    || (r.effective.profitLoss !== null && r.effective.profitLoss < -0.01)
+    || r.actuals?.status === 'rejected'
+    || r.actuals?.status === 'pending')
 
   const reason = (r: DriveLogRow): string => {
     const why: string[] = []
@@ -166,8 +194,14 @@ export function buildDriveLogWorkbook(
       why.push('P&L not approved — Payable 1.0 will not release the advance')
     }
     if (!r.driver) why.push('No driver allocated')
-    if (r.settlement.profitLoss !== null && r.settlement.profitLoss < -0.01) {
+    if (r.effective.profitLoss !== null && r.effective.profitLoss < -0.01) {
       why.push('Paid more than the booking costed')
+    }
+    if (r.actuals?.status === 'pending') {
+      why.push('Actual balance submitted — waiting on the accounts team')
+    }
+    if (r.actuals?.status === 'rejected') {
+      why.push(`Accounts sent the figure back: ${r.actuals.decisionNote ?? 'no reason given'}`)
     }
     return why.join(' · ')
   }
@@ -179,8 +213,8 @@ export function buildDriveLogWorkbook(
     ['IS Number', 'Arrival', 'Client', 'Driver', 'Total Cost', 'Advance', 'Transport P/L', 'Why'],
     ...exceptions.map(r => [
       r.isNumber ?? r.bookingRef, formatDay(r.arrivalDate), r.clientName ?? '',
-      r.driver?.name ?? '', cell(r.settlement.totalCost), cell(r.settlement.advance),
-      cell(r.settlement.profitLoss), reason(r),
+      r.driver?.name ?? '', cell(r.effective.totalCost), cell(r.settlement.advance),
+      cell(r.effective.profitLoss), reason(r),
     ]),
     ...(exceptions.length === 0 ? [['Nothing outstanding in this window.']] : []),
   ])

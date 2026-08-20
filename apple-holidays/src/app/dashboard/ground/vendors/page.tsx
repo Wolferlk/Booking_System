@@ -115,7 +115,7 @@ const emptyDriverForm = () => ({
 export default function VendorsPage() {
   const { data: session } = useSession()
   const { countryFilter } = useCountryFilter()
-  const isAdmin = ['GT_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
+  const isAdmin = ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(session?.user?.role ?? '')
 
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [loading, setLoading] = useState(true)

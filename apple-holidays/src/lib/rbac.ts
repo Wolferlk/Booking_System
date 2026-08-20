@@ -106,8 +106,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   // Vietnam Ground Team — Limited. Same ground work as GT_USER (agenda, driver
   // allocation, tickets) but a locked-down surface: dashboard, bookings list,
   // booking detail, the booking P&L (read only — that page is the Accounts
-  // Detailed P&L costing sheet the tickets are built from), the MC Report and
-  // the Ops Board. No vendors, no admin tools.
+  // Detailed P&L costing sheet the tickets are built from), the MC Report, the
+  // Ops Board and the driver and vehicle-vendor registries. No admin tools.
   //
   // It also runs the live customer-facing steps the Vietnam desk owns: the
   // portal link, the booking WhatsApp messages (T-7 confirmation and the T-3
@@ -244,6 +244,8 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
+    { label: 'Drivers',           href: '/dashboard/ground/drivers',   icon: 'Car' },
+    { label: 'Vendors',           href: '/dashboard/ground/vendors',   icon: 'Building2' },
   ],
   TE_USER: [
     { label: 'Dashboard',  href: '/dashboard',              icon: 'LayoutDashboard' },
