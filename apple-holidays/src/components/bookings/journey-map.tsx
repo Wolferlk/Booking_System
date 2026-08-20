@@ -27,8 +27,13 @@ import {
   X, Sparkles, Clock, Lightbulb, MapPin, Route, Navigation,
   ImageOff, ChevronLeft, ChevronRight, RefreshCw, Compass, SlidersHorizontal, Hand,
   CalendarDays, ArrowRight, BedDouble, Utensils, Plane, PlaneTakeoff, PlaneLanding,
+  Gauge, ZoomIn, ZoomOut, RotateCw, Crosshair, ArrowDownRight, ArrowUpRight,
 } from 'lucide-react'
 import { cn, formatDate, readApiResponse } from '@/lib/utils'
+import {
+  DEFAULT_JM_SETTINGS, JM_SPEED_STEPS, clampSpeed, dwellDurationMs,
+  legDurationMs, speedLabel, type JourneyMapSettings,
+} from '@/lib/journey-map-settings'
 import 'leaflet/dist/leaflet.css'
 
 // ─── Types (mirror src/lib/journey-map.ts) ───────────────────────────────
@@ -85,6 +90,12 @@ interface StopHotel {
   lat: number | null
   lng: number | null
   checkIn: boolean
+  /** What was booked in the room, where the file records it. */
+  roomType?: string | null
+  mealType?: string | null
+  nights?: number | null
+  checkInDate?: string | null
+  checkOutDate?: string | null
 }
 
 interface JourneyStop {
@@ -129,7 +140,40 @@ interface JourneyStop {
 interface JourneyHotel {
   id: string; hotel: string; city: string
   checkIn: string; checkOut: string; nights: number
+  roomType?: string | null; mealType?: string | null
   lat: number | null; lng: number | null
+}
+
+/**
+ * A real place on the route — somewhere the guests actually stand.
+ *
+ * The movement chart is a list of *movements*: "Noi Bai Airport → Hanoi Anise
+ * Hotel". Read as a strip of cards that is the trip told as a list of car
+ * journeys, and the same hotel prints twice — once as the end of the transfer
+ * in and once as the start of the transfer out. This is the other reading of
+ * the very same rows: the ordered places, each carrying how the guests arrive,
+ * when they leave again, and what is booked for them there.
+ */
+interface Place {
+  id: string
+  /** 1-based position along the route — the number printed on pin and card. */
+  seq: number
+  name: string
+  city: string | null
+  country: string | null
+  lat: number
+  lng: number
+  kind: StopKind
+  dayNo: number
+  date: string | null
+  /** The movement that ends here. Null at the very first place. */
+  arrive: JourneyStop | null
+  /** The movement that leaves here. Null at the very last place. */
+  depart: JourneyStop | null
+  hotel: StopHotel | null
+  /** The booked sector this place is an end of, and which end it is. */
+  flight: FlightInfo | null
+  flightEnd: 'from' | 'to' | null
 }
 
 interface Journey {
@@ -223,10 +267,6 @@ function headingWest(a: LatLng, b: LatLng) {
  * The itinerary map has no service type and falls back to guessing from the
  * destination's kind.
  */
-function vehicleFor(stop: JourneyStop | undefined): string {
-  return stop?.transport?.emoji ?? VEHICLE[stop?.kind ?? 'transfer'] ?? '\uD83D\uDE97'
-}
-
 function glyphSvg(kind: StopKind, size = 15, color = '#fff') {
   const k = KIND[kind] ?? KIND.tour
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="${color}" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="${k.path}"/>${k.circles ?? ''}</svg>`
@@ -384,9 +424,178 @@ function bearingDeg(a: LatLng, b: LatLng): number {
   return (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI
 }
 
-/** The leg into `stops[i + 1]` is the sector itself, not a road transfer. */
-function isSectorLeg(stops: JourneyStop[], i: number): boolean {
-  return stops[i + 1]?.flightRole === 'sector'
+// ─── Places ──────────────────────────────────────────────────────────────
+
+/** Angle wrapped into (-180, 180] so a bearing never accumulates to 900°. */
+function normalizeAngle(deg: number): number {
+  let d = deg % 360
+  if (d > 180) d -= 360
+  if (d <= -180) d += 360
+  return d
+}
+
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+/** Two names for the same place — "Hanoi Anise Hotel" and "Hanoi Anise Hotel & Spa". */
+function sameName(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = norm(a ?? ''), y = norm(b ?? '')
+  if (!x || !y) return false
+  return x === y || (x.length > 5 && y.length > 5 && (x.includes(y) || y.includes(x)))
+}
+
+/**
+ * Whether two ends of consecutive movements are in fact the same place.
+ *
+ * Coordinates first, because the same hotel geocoded from two differently
+ * spelled rows lands within a few hundred metres. Names are only allowed to
+ * merge points that are already close: "Hanoi" and "Hanoi Anise Hotel" are the
+ * same string family but 6 km and one card apart.
+ */
+function samePlace(
+  a: { lat: number; lng: number; name: string },
+  b: { lat: number; lng: number; name: string },
+): boolean {
+  const d = Math.hypot(a.lat - b.lat, a.lng - b.lng)
+  if (d < 0.0035) return true            // ~350 m
+  return d < 0.03 && sameName(a.name, b.name)
+}
+
+/**
+ * What kind of place a movement was collected from.
+ *
+ * Only the destination of a row carries a kind — the chart classifies what the
+ * guests are going to do, never where they were picked up. The origin has to be
+ * read off the row around it: the far end of a sector is an airport, a pickup
+ * from the hotel of the night is that hotel, and everything else is a place in
+ * a town.
+ */
+function originKind(stop: JourneyStop): StopKind {
+  const name = (stop.fromPlace ?? '').toLowerCase()
+  if (stop.flightRole === 'sector' || stop.flightRole === 'from-airport') return 'flight'
+  if (/\bairport\b|\bintl\b|international air/.test(name)) return 'flight'
+  if (/\bhotel\b|resort|villa|\bspa\b|lodge|\binn\b|homestay/.test(name)) return 'hotel'
+  if (stop.hotel && sameName(stop.hotel.name, stop.fromPlace)) return 'hotel'
+  return 'city'
+}
+
+/**
+ * The movement rows, re-read as the ordered places they connect.
+ *
+ * Each row contributes up to two places — where it collects from and where it
+ * drops off — and consecutive rows that meet at the same point collapse into
+ * one card carrying both halves: how the guests arrived, and how they leave
+ * again. A row whose pickup point is somewhere the previous row did not end
+ * (the arrival airport at the start of a file, most often) opens a place of its
+ * own, which is how the departure airport of the inbound sector finally gets
+ * onto the map at all.
+ */
+function buildPlaces(stops: JourneyStop[]): Place[] {
+  const out: Place[] = []
+  let cursor: Place | null = null
+
+  const add = (p: Omit<Place, 'id' | 'seq'>) => {
+    if (cursor && samePlace(cursor, p)) {
+      if (!cursor.arrive && p.arrive) cursor.arrive = p.arrive
+      if (!cursor.depart && p.depart) cursor.depart = p.depart
+      if (!cursor.hotel && p.hotel) cursor.hotel = p.hotel
+      if (!cursor.flight && p.flight) { cursor.flight = p.flight; cursor.flightEnd = p.flightEnd }
+      if (!cursor.city && p.city) cursor.city = p.city
+      if (!cursor.country && p.country) cursor.country = p.country
+      if (!cursor.date && p.date) cursor.date = p.date
+      if (!cursor.dayNo && p.dayNo) cursor.dayNo = p.dayNo
+      // A named kind beats the guessed one an origin node gets.
+      if (cursor.kind === 'city' && p.kind !== 'city') cursor.kind = p.kind
+      // The longer, more specific spelling wins the label.
+      if (p.name.length > cursor.name.length && sameName(cursor.name, p.name)) cursor.name = p.name
+      return
+    }
+    const next = { ...p, id: '', seq: 0 } as Place
+    out.push(next)
+    cursor = next
+  }
+
+  stops.forEach(stop => {
+    // Where this movement collects from.
+    if (stop.fromPlace && stop.fromLat != null && stop.fromLng != null) {
+      add({
+        name: stop.fromPlace,
+        city: stop.city ?? null,
+        country: stop.country ?? null,
+        lat: stop.fromLat,
+        lng: stop.fromLng,
+        kind: originKind(stop),
+        dayNo: stop.dayNo,
+        date: stop.date,
+        arrive: null,
+        depart: stop,
+        hotel: stop.hotel && sameName(stop.hotel.name, stop.fromPlace) ? stop.hotel : null,
+        flight: stop.flight ?? null,
+        flightEnd: stop.flight ? 'from' : null,
+      })
+    } else if (cursor && !(cursor as Place).depart) {
+      // No pickup point on the row: the guests leave from wherever the last
+      // row put them, which is exactly what the previous card already says.
+      ;(cursor as Place).depart = stop
+    }
+
+    // Where it drops them off — always a place, and always this row's own kind.
+    add({
+      name: stop.toPlace || stop.place,
+      city: stop.city ?? null,
+      country: stop.country ?? null,
+      lat: stop.lat,
+      lng: stop.lng,
+      kind: stop.kind,
+      dayNo: stop.dayNo,
+      date: stop.date,
+      arrive: stop,
+      depart: null,
+      hotel: stop.hotel ?? null,
+      flight: stop.flight ?? null,
+      flightEnd: stop.flight ? (stop.flightRole === 'from-airport' ? 'to' : stop.flightRole === 'to-airport' ? 'from' : 'to') : null,
+    })
+  })
+
+  return out.map((p, i) => ({ ...p, id: `place-${i}-${p.arrive?.id ?? p.depart?.id ?? 'x'}`, seq: i + 1 }))
+}
+
+/**
+ * What rides into a place.
+ *
+ * The movement chart knows the booked service — a seat-in-coach transfer runs a
+ * coach, a private transfer runs a car — so when that is on the arriving row it
+ * wins. The itinerary map has no service type and falls back to guessing from
+ * the place's own kind.
+ */
+function vehicleForPlace(place: Place | undefined): string {
+  return place?.arrive?.transport?.emoji ?? VEHICLE[place?.kind ?? 'transfer'] ?? '\uD83D\uDE97'
+}
+
+/** The hover card on a pin. Raw HTML — Leaflet tooltips take no React. */
+function placeTooltip(p: Place): string {
+  const rows: string[] = [
+    `<strong>${p.seq}. ${escapeHtml(p.name)}</strong>`,
+    p.city && !sameName(p.city, p.name) ? escapeHtml(p.city) : '',
+    p.dayNo > 0 ? `<em>Day ${p.dayNo}${p.date ? ` \u00b7 ${escapeHtml(formatDate(p.date))}` : ''}</em>` : '',
+  ]
+  if (p.flight) {
+    rows.push(
+      `\u2708\uFE0F ${escapeHtml(p.flight.flightNo)} ${escapeHtml(p.flight.fromApt)} \u2192 ${escapeHtml(p.flight.toApt)}` +
+      ` ${escapeHtml(p.flight.depTime ?? '--:--')}\u2013${escapeHtml(p.flight.arrTime ?? '--:--')}`,
+    )
+  } else if (p.arrive?.transport) {
+    rows.push(
+      `${p.arrive.transport.emoji} Arrives by ${escapeHtml(p.arrive.transport.label)}` +
+      (p.arrive.roadKm ? ` \u00b7 ${p.arrive.roadKm.toLocaleString()} km` : ''),
+    )
+  }
+  if (p.hotel) {
+    rows.push(
+      `\uD83C\uDFE8 ${escapeHtml(truncate(p.hotel.name, 40))}` +
+      (p.hotel.roomType ? `<br/><span style="opacity:.75">${escapeHtml(p.hotel.roomType)}</span>` : ''),
+    )
+  }
+  return rows.filter(Boolean).join('<br/>')
 }
 
 /**
@@ -478,7 +687,33 @@ const MAP_CSS = `
    (z-20) and the fixed sidebar (z-40) — and the map painted straight over both.
    Isolating the wrapper keeps every one of those z-indices private to the panel;
    fullscreen still rises above the chrome, but on the wrapper's own z-index. */
-.jm-wrap{isolation:isolate}
+.jm-wrap{isolation:isolate;--jm-rot:0deg;--jm-unrot:0deg;--jm-bleed:0px}
+
+/* The surface that turns.
+   Only the tiles and the markers rotate; the panel's own chrome is laid over
+   the frame outside this element, so the controls, the strip and the drawer
+   stay square while the map underneath them faces any direction. A rotated
+   square leaves four triangles of nothing in the corners, so the rotor is
+   oversized by --jm-bleed — but only while the map is actually turned, or
+   every map would pay for tiles nobody can see. */
+.jm-rotor{position:absolute;inset:var(--jm-bleed);transform:rotate(var(--jm-rot));transform-origin:50% 50%;will-change:transform}
+
+/* Everything that is a *label* rather than a piece of the map spins back the
+   other way, so a rotated map still has upright pins and readable names. */
+.jm-pin-inner,.jm-hotel-tag,.jm-ride,.jm-plane-inner{transform:rotate(var(--jm-unrot))}
+.jm-hotel-tag{transform-origin:11px 11px}
+.jm-compass{display:inline-flex;transition:transform .25s ease}
+
+/* The fly-through's own frame. Off entirely when nothing is playing — a
+   vignette on a still map is just a dirty screen. */
+.jm-vignette{opacity:0;transition:opacity .5s ease;
+  background:radial-gradient(120% 85% at 50% 50%,transparent 45%,rgba(2,6,23,.42) 100%)}
+.jm-playing .jm-vignette{opacity:1}
+
+.jm-hud-pulse{animation:jm-hud-pulse 1.5s ease-in-out infinite}
+@keyframes jm-hud-pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(59,130,246,.55)}50%{opacity:.65;box-shadow:0 0 0 6px rgba(59,130,246,0)}}
+.jm-play-on{box-shadow:0 0 0 0 rgba(59,130,246,.55);animation:jm-play-ring 1.9s ease-out infinite}
+@keyframes jm-play-ring{0%{box-shadow:0 0 0 0 rgba(59,130,246,.5)}70%{box-shadow:0 0 0 14px rgba(59,130,246,0)}100%{box-shadow:0 0 0 0 rgba(59,130,246,0)}}
 
 .jm-wrap .leaflet-container{background:transparent;font-family:inherit}
 .jm-wrap .leaflet-control-attribution{font-size:9px;background:rgba(255,255,255,.72);backdrop-filter:blur(4px);border-radius:6px 0 0 0;padding:1px 6px}
@@ -504,11 +739,18 @@ const MAP_CSS = `
   box-shadow:0 4px 12px rgba(15,23,42,.3),0 0 0 3px rgba(255,255,255,.92);cursor:pointer}
 .jm-pin-day{position:absolute;top:-7px;right:-9px;min-width:19px;height:19px;padding:0 4px;border-radius:9999px;background:#0f172a;color:#fff;
   font-size:10px;font-weight:800;line-height:19px;text-align:center;box-shadow:0 0 0 2px #fff;letter-spacing:.2px}
-.jm-pin:hover .jm-pin-inner{transform:scale(1.16) translateY(-2px);z-index:900}
+.jm-pin:hover .jm-pin-inner{transform:rotate(var(--jm-unrot)) scale(1.16) translateY(-2px);z-index:900}
+/* The place's own number along the route — the one thing a strip of pins has
+   to make obvious, and a repeated day number never did. */
+.jm-pin-seq{position:absolute;bottom:-6px;left:-7px;min-width:17px;height:17px;padding:0 4px;border-radius:9999px;background:#fff;color:#0f172a;
+  font-size:9.5px;font-weight:900;line-height:17px;text-align:center;box-shadow:0 1px 4px rgba(15,23,42,.35),0 0 0 1.5px rgba(15,23,42,.9)}
+/* Already driven through: still on the map, no longer the story. */
+.jm-pin-done .jm-pin-dot{filter:saturate(.55) brightness(.92)}
+.jm-pin-done .jm-pin-ring{opacity:.2}
 
 /* Active pin: a slow radar pulse. Only ever one on the map at a time, so it
    reads as "you are here" rather than as decoration. */
-.jm-pin-active .jm-pin-inner{transform:scale(1.22) translateY(-3px)}
+.jm-pin-active .jm-pin-inner{transform:rotate(var(--jm-unrot)) scale(1.22) translateY(-3px)}
 .jm-pin-active .jm-pin-ring{animation:jm-pulse 1.9s cubic-bezier(0,.55,.45,1) infinite}
 @keyframes jm-pulse{0%{transform:scale(.6);opacity:.7}70%{transform:scale(2.1);opacity:0}100%{opacity:0}}
 .jm-pin-dim .jm-pin-inner{opacity:.22;filter:grayscale(1)}
@@ -592,6 +834,7 @@ const MAP_CSS = `
   .jm-pin-active .jm-pin-ring{animation:none}
   .jm-ride-emoji,.jm-ride-glow{animation:none}
   .jm-air,.jm-air-spark,.jm-pin-air .jm-pin-ring,.jm-plane-glow,.jm-pass-plane{animation:none}
+  .jm-hud-pulse,.jm-play-on{animation:none}
 }
 `
 
@@ -660,8 +903,8 @@ const MAP_HEIGHT = 'h-[68vh] min-h-[400px] max-h-[calc(100vh-7rem)] sm:h-[560px]
  */
 const SIDE_CARD_W = 'min(50%, 560px)'
 
-const LEG_MS = 1500      // time to fly one leg during playback
-const DWELL_MS = 1100    // pause on each stop during playback
+/** Where a viewer's own speed choice is remembered, per browser. */
+const SPEED_KEY = 'jm.speed'
 
 export interface JourneyMapProps {
   bookingRef: string
@@ -698,11 +941,21 @@ export default function JourneyMap({
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
-  // Two separate ideas, deliberately not one. `activeId` is which stop the map
+  /**
+   * How the fly-through behaves, as set once for everyone on the admin config
+   * page. Starts at the built-in defaults so the map animates correctly even
+   * if the read fails — an animation is never worth failing a panel over.
+   */
+  const [settings, setSettings] = useState<JourneyMapSettings>(DEFAULT_JM_SETTINGS)
+  /** This viewer's own override of the shared pace. Null means "use the setting". */
+  const [speedOverride, setSpeedOverride] = useState<number | null>(null)
+
+  // Two separate ideas, deliberately not one. `activeId` is which place the map
   // is looking at — playback moves it constantly. `selectedId` is the far
   // heavier "the user asked to read about this one", which opens the detail
-  // card and spends a model call. Merging them made the fly-through open a
-  // card on every stop, covering the very map it was flying over.
+  // card and spends a model call. Merging them made every click of the
+  // fly-through open a card, covering the very map it was flying over — the
+  // cinematic mode below re-couples them on purpose, once per arrival.
   const [activeId, setActiveId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [hoveredId, setHoveredId] = useState<string | null>(null)
@@ -710,6 +963,7 @@ export default function JourneyMap({
   const [basemap, setBasemap] = useState<BasemapId>(theme === 'dark' ? 'midnight' : 'voyager')
   const [showLayers, setShowLayers] = useState(false)
   const [showLegend, setShowLegend] = useState(false)
+  const [showSpeed, setShowSpeed] = useState(false)
   /**
    * Whether the map gets to own touch gestures.
    *
@@ -717,12 +971,22 @@ export default function JourneyMap({
    * dragging handler swallows every vertical swipe that starts over the map —
    * the reader gets stuck panning Sri Lanka instead of scrolling to their
    * hotels. Off by default on touch, so a swipe scrolls the page while pins,
-   * the day strip and the fly-through all still work; "Explore" hands the
-   * gestures over when panning is actually what someone wants.
+   * the day strip and the fly-through all still work; "Explore", fullscreen
+   * and pressing play all hand the gestures over, which is every moment
+   * someone is actually reading the map rather than the page around it.
    */
   const [interactive, setInteractive] = useState(true)
   const [fullscreen, setFullscreen] = useState(false)
   const [playing, setPlaying] = useState(false)
+  /**
+   * The viewer took the camera off the vehicle — pinched, dragged or zoomed
+   * mid-flight. Playback carries on; the camera simply stops chasing until
+   * they ask for it back, because a camera that snaps home half a second after
+   * every gesture cannot be steered at all.
+   */
+  const [freeLook, setFreeLook] = useState(false)
+  /** Map bearing in degrees, from a two-finger twist or the rotate buttons. */
+  const [rotation, setRotation] = useState(0)
   /**
    * Which day the fly-through covers. Null is the whole file.
    *
@@ -740,6 +1004,7 @@ export default function JourneyMap({
   const [mapReady, setMapReady] = useState(false)
   const [progress, setProgress] = useState(1)   // 0..1 along the whole route
 
+  const frameRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Read inside `flyTo`, which must stay referentially stable for the playback
   // effect — refs let it see current state without re-triggering the animation.
@@ -763,13 +1028,46 @@ export default function JourneyMap({
   const travellerRef = useRef<LeafletMarker | null>(null)
   const rafRef = useRef<number | null>(null)
   const stripRef = useRef<HTMLDivElement | null>(null)
+  /** Read inside the two-finger handler, which must not re-bind on every degree. */
+  const rotationRef = useRef(0)
+
+  // The animation loop runs for the length of a run and must not restart when
+  // one of these changes — a restarting fly-through jumps back to the first
+  // stop. It reads them off refs instead, so a mid-flight speed change is
+  // picked up on the very next frame.
+  const speed = speedOverride ?? settings.speed
+  const speedRef = useRef(speed)
+  const cinematicRef = useRef(settings.cinematic)
+  const autoOpenRef = useRef(settings.autoOpen)
+  const followZoomRef = useRef(settings.followZoom)
+  const freeLookRef = useRef(false)
+  const playingRef = useRef(false)
+  useEffect(() => { speedRef.current = speed }, [speed])
+  useEffect(() => { cinematicRef.current = settings.cinematic }, [settings.cinematic])
+  useEffect(() => { autoOpenRef.current = settings.autoOpen }, [settings.autoOpen])
+  useEffect(() => { followZoomRef.current = settings.followZoom }, [settings.followZoom])
+  useEffect(() => { freeLookRef.current = freeLook }, [freeLook])
+  useEffect(() => { playingRef.current = playing }, [playing])
 
   const stops = useMemo(() => journey?.stops ?? [], [journey])
+
+  /**
+   * The route as places, not as movements.
+   *
+   * Everything below — the pins, the card strip, the fly-through — is keyed on
+   * this rather than on the raw movement rows. See `buildPlaces`: a chart of
+   * eight transfers is really nine places, and it is the places a traveller
+   * recognises.
+   */
+  const places = useMemo(() => buildPlaces(stops), [stops])
+
   useEffect(() => { cardOpenRef.current = selectedId != null }, [selectedId])
   useEffect(() => { sideCardRef.current = !isMobile }, [isMobile])
-  // Touch devices start locked; fullscreen is an explicit request to explore.
-  useEffect(() => { setInteractive(!isMobile || fullscreen) }, [isMobile, fullscreen])
-  const selected = useMemo(() => stops.find(s => s.id === selectedId) ?? null, [stops, selectedId])
+  // Touch devices start locked; fullscreen and playback are both explicit
+  // "I am reading the map now" moments, so both hand the gestures over.
+  useEffect(() => { setInteractive(!isMobile || fullscreen || playing) }, [isMobile, fullscreen, playing])
+
+  const selected = useMemo(() => places.find(p => p.id === selectedId) ?? null, [places, selectedId])
   /**
    * The right half is spoken for. Every piece of map chrome pulls back into the
    * left half while it is, so nothing an operator needs is hiding behind the
@@ -795,9 +1093,9 @@ export default function JourneyMap({
 
   const kindCounts = useMemo(() => {
     const m = new Map<StopKind, number>()
-    stops.forEach(s => m.set(s.kind, (m.get(s.kind) ?? 0) + 1))
+    places.forEach(p => m.set(p.kind, (m.get(p.kind) ?? 0) + 1))
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1])
-  }, [stops])
+  }, [places])
 
   /**
    * Per-leg arcs, the flattened path the traveller walks, and — separately —
@@ -812,16 +1110,19 @@ export default function JourneyMap({
     const legs: LatLng[][] = []
     const routed: boolean[] = []
 
-    for (let i = 0; i < stops.length - 1; i++) {
-      const from: LatLng = [stops[i].lat, stops[i].lng]
-      const to = stops[i + 1]
-      const air = isSectorLeg(stops, i)
+    for (let i = 0; i < places.length - 1; i++) {
+      const from: LatLng = [places[i].lat, places[i].lng]
+      const to = places[i + 1]
+      // The movement that ends at `to` is the one that knows how this leg is
+      // travelled and which road it takes.
+      const via = to.arrive
+      const air = via?.flightRole === 'sector'
 
       // A driven leg follows the real road network. The routed line starts at
       // the nearest road rather than at the pin, so the pins are stitched onto
       // both ends — that short connector is the walk to the vehicle, and
       // without it the route visibly detaches from the stop it serves.
-      const road = !air && to.roadPath ? decodePolyline(to.roadPath) : null
+      const road = !air && via?.roadPath ? decodePolyline(via.roadPath) : null
       if (road && road.length > 1) {
         legs.push([from, ...road, [to.lat, to.lng]])
         routed.push(true)
@@ -837,10 +1138,10 @@ export default function JourneyMap({
     const flat: LatLng[] = []
     legs.forEach((leg, i) => flat.push(...(i === 0 ? leg : leg.slice(1))))
 
-    // Where each stop falls along the flattened path, as a 0..1 fraction of its
-    // length. Legs used to be interchangeable — 29 points each — so a leg index
-    // could stand in for a position. A routed leg and an arc are nothing alike,
-    // so playback needs the real boundaries to know when it has arrived.
+    // Where each place falls along the flattened path, as a 0..1 fraction of
+    // its length. Legs are nothing alike — a routed road carries two hundred
+    // points over the distance an arc covers in 29 — so playback needs the real
+    // boundaries to know when it has arrived.
     const lens = legs.map(polylineLength)
     const total = lens.reduce((a, b) => a + b, 0) || 1
     const bounds: number[] = [0]
@@ -848,11 +1149,11 @@ export default function JourneyMap({
     bounds[bounds.length - 1] = 1
 
     const sectors = legs
-      .map((path, i) => ({ path, stop: stops[i + 1] }))
-      .filter(x => x.stop?.flightRole === 'sector' && x.stop.flight)
+      .map((path, i) => ({ path, place: places[i + 1] }))
+      .filter(x => x.place?.arrive?.flightRole === 'sector' && x.place.flight)
 
     return { legs, flat, sectors, bounds, routed }
-  }, [stops])
+  }, [places])
 
   /**
    * The booked sectors that made it onto the map, and how many of them are the
@@ -865,24 +1166,35 @@ export default function JourneyMap({
 
   /** Every day number on the route, in order. */
   const dayNumbers = useMemo(
-    () => Array.from(new Set(stops.map(s => s.dayNo))).sort((a, b) => a - b),
-    [stops],
+    () => Array.from(new Set(places.map(p => p.dayNo).filter(d => d > 0))).sort((a, b) => a - b),
+    [places],
   )
 
   /**
-   * The stretch of the route a run covers, as stop indices.
+   * The stretch of the route a run covers, as place indices.
    *
-   * A day's run starts one stop *before* its first — the movement into a day's
-   * opening stop is that day's first leg, and starting on the stop itself would
-   * skip the very transfer the day begins with.
+   * A day's run starts one place *before* its first — the movement into a day's
+   * opening place is that day's first leg, and starting on the place itself
+   * would skip the very transfer the day begins with.
    */
   const playRange = useMemo(() => {
-    const whole = { start: 0, end: Math.max(stops.length - 1, 0) }
+    const whole = { start: 0, end: Math.max(places.length - 1, 0) }
     if (playDay == null) return whole
-    const idx = stops.reduce<number[]>((acc, s, i) => (s.dayNo === playDay ? [...acc, i] : acc), [])
+    const idx = places.reduce<number[]>((acc, p, i) => (p.dayNo === playDay ? [...acc, i] : acc), [])
     if (idx.length === 0) return whole
     return { start: Math.max(0, idx[0] - 1), end: idx[idx.length - 1] }
-  }, [playDay, stops])
+  }, [playDay, places])
+
+  /** Which place the vehicle is at or heading for, derived from `progress`. */
+  const legIndexNow = useMemo(() => {
+    const b = geometry.bounds
+    if (b.length < 2) return 0
+    const last = Math.max(b.length - 2, 0)
+    const i = b.findIndex(x => x > progress)
+    // Nothing ahead of `progress` means the route is finished, which is the
+    // last leg — not the first, which is what a bare `findIndex` - 1 gives.
+    return i < 0 ? last : Math.min(Math.max(i - 1, 0), last)
+  }, [progress, geometry])
 
   // ── Data ───────────────────────────────────────────────────────────────
 
@@ -909,10 +1221,35 @@ export default function JourneyMap({
 
   useEffect(() => { void load() }, [load])
 
+  /** The shared animation settings, and this browser's own speed override. */
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch('/api/public/journey-map-settings')
+        const json = await readApiResponse<JourneyMapSettings>(res)
+        if (!cancelled && json.success && json.data) setSettings({ ...DEFAULT_JM_SETTINGS, ...json.data })
+      } catch { /* the built-in pace is a perfectly good fallback */ }
+    })()
+    try {
+      const saved = window.localStorage.getItem(SPEED_KEY)
+      if (saved) setSpeedOverride(clampSpeed(Number(saved)))
+    } catch { /* private browsing */ }
+    return () => { cancelled = true }
+  }, [])
+
+  const pickSpeed = useCallback((next: number | null) => {
+    setSpeedOverride(next)
+    try {
+      if (next == null) window.localStorage.removeItem(SPEED_KEY)
+      else window.localStorage.setItem(SPEED_KEY, String(next))
+    } catch { /* private browsing */ }
+  }, [])
+
   // ── Map lifecycle ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!containerRef.current || stops.length === 0 || mapRef.current) return
+    if (!containerRef.current || places.length === 0 || mapRef.current) return
     let cancelled = false
 
     ;(async () => {
@@ -921,12 +1258,13 @@ export default function JourneyMap({
       LRef.current = L
 
       const map = L.map(containerRef.current, {
-        zoomControl: true,
+        zoomControl: false,
         attributionControl: true,
         // The panel sits mid-page, so a wheel over it must scroll the booking
-        // rather than zoom. Fullscreen re-enables it (see the effect below).
+        // rather than zoom. Fullscreen and playback re-enable it below.
         scrollWheelZoom: false,
         worldCopyJump: true,
+        zoomSnap: 0.25,
       })
       map.getContainer().style.outline = 'none'
       mapRef.current = map
@@ -934,13 +1272,13 @@ export default function JourneyMap({
       const bm = BASEMAPS.find(b => b.id === basemap) ?? BASEMAPS[0]
       tileRef.current = L.tileLayer(bm.url, { attribution: bm.attr, maxZoom: 18, subdomains: 'abcd' }).addTo(map)
 
-      map.fitBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)), { padding: [56, 56], maxZoom: 11 })
+      map.fitBounds(L.latLngBounds(places.map(p => [p.lat, p.lng] as LatLng)), { padding: [56, 56], maxZoom: 11 })
       setTimeout(() => map.invalidateSize(), 120)
       setMapReady(true)
     })()
 
     return () => { cancelled = true }
-  }, [stops, basemap])
+  }, [places, basemap])
 
   // Tear the map down only when the component itself goes away.
   useEffect(() => () => {
@@ -966,7 +1304,7 @@ export default function JourneyMap({
 
   useEffect(() => {
     const L = LRef.current, map = mapRef.current
-    if (!L || !map || stops.length === 0) return
+    if (!L || !map || places.length === 0) return
 
     const pins = pinsRef.current
     const hotelPins: LeafletMarker[] = []
@@ -1005,13 +1343,12 @@ export default function JourneyMap({
     routeRef.current = { halo, base, live }
     trailRef.current = trail
 
-    // Hotels sit under the day pins — context, not the subject of the panel.
+    // Hotels sit under the place pins — context, not the subject of the panel.
+    // A stay whose own pin is already on the route is skipped: the place card
+    // says everything the tag would, and the two overlapping read as two hotels.
     ;(journey?.hotels ?? []).forEach(h => {
       if (h.lat == null || h.lng == null) return
-      // On the movement chart the hotel is half the answer ("where do they
-      // sleep tonight"), so it is named on the map rather than hidden behind a
-      // hover. The itinerary map keeps the quiet dot — there the hotels are
-      // background to the days.
+      if (places.some(p => p.kind === 'hotel' && Math.abs(p.lat - h.lat!) < 0.004 && Math.abs(p.lng - h.lng!) < 0.004)) return
       const icon = L.divIcon({
         className: 'jm-hotel',
         html: agenda
@@ -1025,51 +1362,40 @@ export default function JourneyMap({
       const m = L.marker([h.lat, h.lng], { icon, zIndexOffset: -400, riseOnHover: true })
         .addTo(map)
         .bindTooltip(
-          `<strong>${escapeHtml(h.hotel)}</strong><br/>${h.nights} night${h.nights === 1 ? '' : 's'} · ${escapeHtml(h.city)}`,
+          `<strong>${escapeHtml(h.hotel)}</strong><br/>${h.nights} night${h.nights === 1 ? '' : 's'} · ${escapeHtml(h.city)}` +
+          (h.roomType ? `<br/>${escapeHtml(h.roomType)}` : ''),
           { direction: 'top', offset: [0, -10], opacity: 0.95 },
         )
       hotelPins.push(m)
     })
 
-    stops.forEach((s, i) => {
-      const k = KIND[s.kind] ?? KIND.tour
-      const sector = s.flightRole === 'sector' ? s.flight : null
+    places.forEach((p, i) => {
+      const k = KIND[p.kind] ?? KIND.tour
+      const apt = p.flight ? (p.flightEnd === 'from' ? p.flight.fromApt : p.flight.toApt) : null
       const icon = L.divIcon({
         className: 'jm-pin',
         html:
-          `<div class="jm-pin-inner${sector ? ' jm-pin-air' : ''}">` +
+          `<div class="jm-pin-inner${p.flight ? ' jm-pin-air' : ''}">` +
           `<span class="jm-pin-ring" style="box-shadow:0 0 0 8px rgba(${k.glow},.45)"></span>` +
-          `<span class="jm-pin-dot" style="background:linear-gradient(145deg,${k.hex},${shade(k.hex, -18)})">${glyphSvg(s.kind)}</span>` +
-          `<span class="jm-pin-day">D${s.dayNo}</span>` +
-          // The sector pin wears its own route: on a map of twenty transfers,
-          // "SGN → DAD" is the thing an operator is scanning for.
-          (sector ? `<span class="jm-air-code">${escapeHtml(sector.fromApt)}\u2192${escapeHtml(sector.toApt)}</span>` : '') +
+          `<span class="jm-pin-dot" style="background:linear-gradient(145deg,${k.hex},${shade(k.hex, -18)})">${glyphSvg(p.kind)}</span>` +
+          // The place's own number along the route. The pin used to carry the
+          // day, which repeats four times on a busy day and tells you nothing
+          // about the order the four happen in.
+          `<span class="jm-pin-seq">${p.seq}</span>` +
+          (p.dayNo > 0 ? `<span class="jm-pin-day">D${p.dayNo}</span>` : '') +
+          // An airport wears its code: on a map of twenty transfers, "HAN" is
+          // the thing an operator is scanning for.
+          (apt ? `<span class="jm-air-code">${escapeHtml(apt)}</span>` : '') +
           `</div>`,
         iconSize: [38, 38], iconAnchor: [19, 19],
       })
-      const m = L.marker([s.lat, s.lng], { icon, zIndexOffset: sector ? 700 + i : i, riseOnHover: true })
+      const m = L.marker([p.lat, p.lng], { icon, zIndexOffset: p.flight ? 700 + i : i, riseOnHover: true })
         .addTo(map)
-        .bindTooltip(
-          sector
-            ? `<strong>\u2708\uFE0F ${escapeHtml(sector.flightNo)} \u00b7 ${escapeHtml(sector.fromApt)} \u2192 ${escapeHtml(sector.toApt)}</strong>` +
-              (sector.airline ? `<br/>${escapeHtml(sector.airline)}` : '') +
-              `<br/>${escapeHtml(sector.depTime ?? '--:--')} \u2013 ${escapeHtml(sector.arrTime ?? '--:--')}` +
-              (sector.km ? ` \u00b7 ${sector.km.toLocaleString()} km` : '') +
-              `<br/><em>Day ${s.dayNo} \u00b7 flight sector \u2014 not a movement chart row</em>`
-            : `<strong>Day ${s.dayNo} \u00b7 ${escapeHtml(s.place)}</strong>` +
-              `<br/>${escapeHtml(truncate(s.title, 70))}` +
-              (s.transport ? `<br/><em>${s.transport.emoji} ${escapeHtml(s.transport.label)}</em>` : '') +
-              (s.flight && s.flightRole !== 'sector'
-                ? `<br/>\u2708\uFE0F ${escapeHtml(s.flight.flightNo)} ${escapeHtml(s.flight.fromApt)}\u2192${escapeHtml(s.flight.toApt)}` +
-                  (s.flight.depTime ? ` ${escapeHtml(s.flight.depTime)}` : '')
-                : '') +
-              (s.hotel ? `<br/>\uD83C\uDFE8 ${escapeHtml(truncate(s.hotel.name, 40))}` : ''),
-          { direction: 'top', offset: [0, -20], opacity: 0.96 },
-        )
-      m.on('click', () => setSelectedId(s.id))
-      m.on('mouseover', () => setHoveredId(s.id))
+        .bindTooltip(placeTooltip(p), { direction: 'top', offset: [0, -20], opacity: 0.96 })
+      m.on('click', () => setSelectedId(p.id))
+      m.on('mouseover', () => setHoveredId(p.id))
       m.on('mouseout', () => setHoveredId(null))
-      pins.set(s.id, m)
+      pins.set(p.id, m)
     })
 
     return () => {
@@ -1078,7 +1404,7 @@ export default function JourneyMap({
       pins.forEach(x => x.remove()); pins.clear()
       hotelPins.forEach(x => x.remove())
     }
-  }, [stops, geometry, journey?.hotels, basemap, mapReady, agenda])
+  }, [places, geometry, journey?.hotels, basemap, mapReady, agenda])
 
   // ── Internal flight sectors ────────────────────────────────────────────
 
@@ -1091,7 +1417,7 @@ export default function JourneyMap({
    * the road route rather than instead of it: a halo wide enough to bury the
    * blue spine underneath, a violet corridor whose dashes stream towards the
    * destination, and a thin white spark running the same line at a different
-   * rate so it shimmers rather than marches.
+   * rate so it shimmers rather than marching.
    *
    * Stays drawn during the fly-through — the leg does not stop being a flight
    * because someone pressed play.
@@ -1126,13 +1452,13 @@ export default function JourneyMap({
     const L = LRef.current, map = mapRef.current
     if (!L || !map || playing || geometry.sectors.length === 0) return
 
-    const planes = geometry.sectors.map(({ path, stop }) => ({
+    const planes = geometry.sectors.map(({ path, place }) => ({
       path,
       contrail: L.polyline([], { className: 'jm-contrail', color: '#c4b5fd', weight: 5, opacity: 0.9 }).addTo(map),
       marker: L.marker(path[0], {
         icon: L.divIcon({
           className: 'jm-plane',
-          html: planeHtml(stop.flight?.flightNo ?? ''),
+          html: planeHtml(place.flight?.flightNo ?? ''),
           iconSize: [46, 46], iconAnchor: [23, 23],
         }),
         zIndexOffset: 1500,
@@ -1150,8 +1476,12 @@ export default function JourneyMap({
       return teardown
     }
 
-    const CRUISE_MS = 5200
-    const REST_MS = 1000
+    // The idle loops answer to the same speed control as the fly-through, so
+    // turning the animation down turns *all* of it down rather than leaving a
+    // plane tearing across a map somebody slowed on purpose.
+    const rate = clampSpeed(speed)
+    const CRUISE_MS = 5200 / rate
+    const REST_MS = 1000 / rate
     const start = performance.now()
 
     const tick = (now: number) => {
@@ -1190,7 +1520,7 @@ export default function JourneyMap({
       planeRafRef.current = null
       teardown()
     }
-  }, [geometry, mapReady, playing])
+  }, [geometry, mapReady, playing, speed])
 
   // ── Selection / hover / filter styling ─────────────────────────────────
 
@@ -1199,42 +1529,61 @@ export default function JourneyMap({
     pinsRef.current.forEach((marker, id) => {
       const el = marker.getElement()
       if (!el) return
-      const stop = stops.find(s => s.id === id)
+      const place = places.find(p => p.id === id)
       el.classList.toggle('jm-pin-active', id === active)
-      el.classList.toggle('jm-pin-dim', !!stop && hiddenKinds.has(stop.kind))
+      el.classList.toggle('jm-pin-dim', !!place && hiddenKinds.has(place.kind))
+      // Every place the vehicle has already been through is marked done, so a
+      // paused fly-through still reads as a journey with a past and a future.
+      el.classList.toggle('jm-pin-done', !!place && place.seq - 1 < legIndexNow && progress < 1)
     })
-  }, [hoveredId, selectedId, activeId, hiddenKinds, stops])
+  }, [hoveredId, selectedId, activeId, hiddenKinds, places, legIndexNow, progress])
 
   // ── Playback ───────────────────────────────────────────────────────────
 
   /**
-   * Fly to a stop, biasing the centre so the pin lands in the part of the map
+   * The camera target for a point, biased so it lands in the part of the map
    * the detail card is not covering — up and out of the bottom sheet on a
    * narrow panel, left of the side drawer in fullscreen. Without this the pin
    * you just clicked ends up underneath the card describing it.
    */
-  const flyTo = useCallback((s: JourneyStop, zoom?: number) => {
+  const biased = useCallback((lat: number, lng: number, zoom: number) => {
     const L = LRef.current, map = mapRef.current
-    if (!L || !map) return
-    const z = zoom ?? Math.max(map.getZoom(), 9)
-    const size = map.getSize()
-    const card = cardOpenRef.current
-
-    let target = L.latLng(s.lat, s.lng)
-    if (card) {
-      const pt = map.project(target, z)
-      // The side drawer takes the right half, so the pin has to land in the
+    if (!L || !map) return null
+    let target = L.latLng(lat, lng)
+    if (cardOpenRef.current) {
+      const pt = map.project(target, zoom)
+      // The side drawer takes the right half, so the point has to land in the
       // middle of the left half — a quarter of the width off centre — or the
-      // very stop being described sits underneath the card describing it.
-      if (sideCardRef.current) pt.x += size.x * 0.25
-      else pt.y += size.y * 0.22                        // bottom sheet
-      target = map.unproject(pt, z)
+      // very place being described sits underneath the card describing it.
+      if (sideCardRef.current) pt.x += map.getSize().x * 0.25
+      else pt.y += map.getSize().y * 0.22                        // bottom sheet
+      target = map.unproject(pt, zoom)
     }
-    map.flyTo(target, z, { duration: 1.05 })
+    return target
   }, [])
 
+  const flyTo = useCallback((lat: number, lng: number, zoom?: number, duration = 1.05) => {
+    const map = mapRef.current
+    if (!map) return
+    const z = zoom ?? Math.max(map.getZoom(), 9)
+    const target = biased(lat, lng, z)
+    if (target) map.flyTo(target, z, { duration })
+  }, [biased])
+
+  /**
+   * The fly-through.
+   *
+   * Two things changed here and they are the whole point of the mode. The
+   * camera *rides with the vehicle* — panned onto it every frame at a real
+   * street-level zoom rather than cutting between stops from altitude — and on
+   * arrival it pushes in on the place and opens its card, so the answer to
+   * "what is this" is on screen at the moment the guests get there.
+   *
+   * Both are abandoned the instant the viewer touches the map: `freeLook`
+   * leaves the animation running and hands the camera back.
+   */
   useEffect(() => {
-    if (!playing || stops.length < 2) return
+    if (!playing || places.length < 2) return
     const L = LRef.current, map = mapRef.current
     if (!L || !map) return
 
@@ -1250,15 +1599,20 @@ export default function JourneyMap({
     let legIndex = resumed
     let phase: 'dwell' | 'travel' = 'dwell'
     let phaseStart = performance.now()
+    /** While a scripted camera move is in flight, the follow keeps its hands off. */
+    let settleUntil = performance.now() + 1200
+
+    const arrivalZoom = () => Math.min(followZoomRef.current + 1.4, 16)
 
     setProgress(bounds[legIndex])
-    setActiveId(stops[legIndex].id)
-    flyTo(stops[legIndex], 9)
+    setActiveId(places[legIndex].id)
+    if (autoOpenRef.current) setSelectedId(places[legIndex].id)
+    flyTo(places[legIndex].lat, places[legIndex].lng, cinematicRef.current ? arrivalZoom() : 9, 1.2)
 
-    const traveller = L.marker([stops[legIndex].lat, stops[legIndex].lng], {
+    const traveller = L.marker([places[legIndex].lat, places[legIndex].lng], {
       icon: L.divIcon({
         className: 'jm-traveller',
-        html: riderHtml(vehicleFor(stops[legIndex + 1] ?? stops[legIndex]), false),
+        html: riderHtml(vehicleForPlace(places[legIndex + 1] ?? places[legIndex]), false),
         iconSize: [40, 40], iconAnchor: [20, 20],
       }),
       zIndexOffset: 1200,
@@ -1267,15 +1621,27 @@ export default function JourneyMap({
 
     const tick = (now: number) => {
       const elapsed = now - phaseStart
+      const rate = speedRef.current
+      const cinematic = cinematicRef.current && !freeLookRef.current
 
       if (phase === 'dwell') {
-        if (elapsed >= DWELL_MS) { phase = 'travel'; phaseStart = now }
+        if (elapsed >= dwellDurationMs(rate)) {
+          phase = 'travel'
+          phaseStart = now
+          // Pull back out of the arrival push-in to the travelling altitude,
+          // then let the follow take over once the move has landed.
+          if (cinematic) {
+            flyTo(places[legIndex].lat, places[legIndex].lng, followZoomRef.current, 0.7)
+            settleUntil = now + 720
+          }
+        }
       } else {
-        const t = Math.min(elapsed / LEG_MS, 1)
-        // Each leg gets the same wall-clock time but its own stretch of the
-        // path, so arriving at `t === 1` is arriving at the stop — however long
-        // the road between them turned out to be.
-        const legT = bounds[legIndex] + t * ((bounds[legIndex + 1] ?? 1) - bounds[legIndex])
+        const span = (bounds[legIndex + 1] ?? 1) - bounds[legIndex]
+        const t = Math.min(elapsed / legDurationMs(rate, span), 1)
+        // Each leg gets its own stretch of the path and a duration weighted by
+        // how much of the route it is, so arriving at `t === 1` is arriving at
+        // the place — however long the road between them turned out to be.
+        const legT = bounds[legIndex] + t * span
         setProgress(legT)
 
         const here = walk(geometry.flat, legT)
@@ -1283,9 +1649,9 @@ export default function JourneyMap({
         // The vehicle is whatever the chart booked for this leg — a coach for
         // seat-in-coach, a car for a private transfer, a plane for a sector —
         // and it is turned to face the way it is going.
-        const from = stops[legIndex]
-        const dest = stops[Math.min(legIndex + 1, stops.length - 1)]
-        const vehicle = vehicleFor(dest)
+        const from = places[legIndex]
+        const dest = places[Math.min(legIndex + 1, places.length - 1)]
+        const vehicle = vehicleForPlace(dest)
         paintRider(
           traveller,
           vehicle,
@@ -1296,17 +1662,31 @@ export default function JourneyMap({
         )
         trailRef.current?.setLatLngs(trailSlice(geometry.flat, legT))
 
+        // The camera rides along. `panTo` without animation is the only way to
+        // track at 60fps — Leaflet's animated moves queue up and the vehicle
+        // slides off the far edge while the map is still easing to where it was.
+        if (cinematic && now > settleUntil) {
+          const target = biased(here[0], here[1], map.getZoom())
+          if (target) map.panTo(target, { animate: false })
+        }
+
         if (t >= 1) {
           legIndex += 1
-          if (legIndex >= end) {
-            setProgress(bounds[end])
-            setActiveId(stops[end].id)
-            flyTo(stops[end], 9)
-            setPlaying(false)
-            return
+          const done = legIndex >= end
+          const at = places[done ? end : legIndex]
+          setProgress(bounds[done ? end : legIndex])
+          setActiveId(at.id)
+          // The arrival: push in on the place and open its card. This is the
+          // question the fly-through exists to answer — where are they now,
+          // and what is this place.
+          if (autoOpenRef.current) setSelectedId(at.id)
+          if (cinematic) {
+            flyTo(at.lat, at.lng, arrivalZoom(), 0.95)
+            settleUntil = now + 1000
+          } else {
+            flyTo(at.lat, at.lng, 9)
           }
-          setActiveId(stops[legIndex].id)
-          flyTo(stops[legIndex], 9)
+          if (done) { setPlaying(false); return }
           phase = 'dwell'
           phaseStart = now
         }
@@ -1324,7 +1704,7 @@ export default function JourneyMap({
     // `progress` is read once to decide where to resume; re-running on every
     // frame would restart the animation, so it is deliberately not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, stops, geometry, playRange, flyTo, mapReady])
+  }, [playing, places, geometry, playRange, flyTo, biased, mapReady])
 
   /**
    * The idle ride: when nothing is playing, a vehicle drives the finished route
@@ -1335,7 +1715,7 @@ export default function JourneyMap({
    * Sigiriya towards Kandy does, without anyone pressing anything.
    */
   useEffect(() => {
-    if (playing || stops.length < 2 || geometry.flat.length === 0) return
+    if (playing || places.length < 2 || geometry.flat.length === 0) return
     const L = LRef.current, map = mapRef.current
     if (!L || !map) return
     if (typeof window !== 'undefined' &&
@@ -1344,7 +1724,7 @@ export default function JourneyMap({
     const rider = L.marker(walk(geometry.flat, geometry.bounds[playRange.start]), {
       icon: L.divIcon({
         className: 'jm-traveller',
-        html: riderHtml(vehicleFor(stops[playRange.start + 1] ?? stops[playRange.start]), true),
+        html: riderHtml(vehicleForPlace(places[playRange.start + 1] ?? places[playRange.start]), true),
         iconSize: [40, 40], iconAnchor: [20, 20],
       }),
       zIndexOffset: 1100,
@@ -1356,13 +1736,14 @@ export default function JourneyMap({
     // the end before restarting, so the loop reads as a journey rather than a
     // treadmill. With a day picked it laps that day only — the same scope the
     // fly-through uses, so the two never disagree about what is being shown.
-    const { start: fromStop, end: toStop } = playRange
-    const t0 = geometry.bounds[fromStop]
-    const t1 = geometry.bounds[toStop]
+    const { start: fromPlace, end: toPlace } = playRange
+    const t0 = geometry.bounds[fromPlace]
+    const t1 = geometry.bounds[toPlace]
     if (!(t1 > t0)) return () => { rider.remove(); idleRiderRef.current = null }
 
-    const lapMs = Math.max(6000, (toStop - fromStop) * 2600)
-    const restMs = 1400
+    const rate = clampSpeed(speed)
+    const lapMs = Math.max(6000, (toPlace - fromPlace) * 2600) / rate
+    const restMs = 1400 / rate
     const start = performance.now()
 
     const tick = (now: number) => {
@@ -1373,12 +1754,13 @@ export default function JourneyMap({
       // Which leg the rider is on has to be read off the real boundaries: legs
       // are no longer interchangeable now that some are routed roads.
       const legIndex = Math.min(
-        Math.max(geometry.bounds.findIndex(b => b > t) - 1, fromStop),
-        toStop - 1,
+        Math.max(geometry.bounds.findIndex(b => b > t) - 1, fromPlace),
+        toPlace - 1,
       )
-      const from = stops[legIndex]
-      const to = stops[legIndex + 1]
-      const vehicle = vehicleFor(to)
+      const from = places[legIndex]
+      const to = places[legIndex + 1]
+      if (!from || !to) { idleRafRef.current = requestAnimationFrame(tick); return }
+      const vehicle = vehicleForPlace(to)
       paintRider(
         rider,
         vehicle,
@@ -1399,7 +1781,7 @@ export default function JourneyMap({
       idleRiderRef.current = null
       trailRef.current?.setLatLngs([])
     }
-  }, [playing, stops, geometry, playRange, mapReady])
+  }, [playing, places, geometry, playRange, mapReady, speed])
 
   /** Draw only the travelled portion while playing; the whole route otherwise. */
   useEffect(() => {
@@ -1413,6 +1795,102 @@ export default function JourneyMap({
     route.live.setLatLngs(travelled)
   }, [progress, geometry, mapReady])
 
+  // ── Camera hand-over ───────────────────────────────────────────────────
+
+  /**
+   * Any real gesture over the map during playback takes the camera off the
+   * vehicle. Bound to raw input rather than to Leaflet's `movestart`, which
+   * the fly-through's own camera moves would trip on every leg.
+   */
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const grab = () => { if (playingRef.current) setFreeLook(true) }
+    el.addEventListener('pointerdown', grab, { passive: true })
+    el.addEventListener('wheel', grab, { passive: true })
+    el.addEventListener('touchstart', grab, { passive: true })
+    return () => {
+      el.removeEventListener('pointerdown', grab)
+      el.removeEventListener('wheel', grab)
+      el.removeEventListener('touchstart', grab)
+    }
+  }, [mapReady])
+
+  /**
+   * Two fingers: pinch to zoom, twist to rotate.
+   *
+   * Leaflet does the pinch itself, and has no idea what a bearing is. Rather
+   * than reimplement its touch stack, this reads the *angle* between the same
+   * two fingers Leaflet is already reading the distance between, and spins the
+   * whole map surface with a CSS rotation — the two gestures ride the same
+   * touch without either handler knowing about the other. Nothing is
+   * `preventDefault`ed here, so taps on pins still land.
+   */
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !interactive) return
+
+    let startAngle: number | null = null
+    let startRotation = 0
+    let twisting = false
+
+    const angleOf = (t: TouchList) =>
+      (Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX) * 180) / Math.PI
+
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) { startAngle = null; twisting = false; return }
+      startAngle = angleOf(e.touches)
+      startRotation = rotationRef.current
+      twisting = false
+    }
+    const onMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || startAngle == null) return
+      let delta = angleOf(e.touches) - startAngle
+      if (delta > 180) delta -= 360
+      if (delta < -180) delta += 360
+      // A deliberate twist, not the wobble in every pinch. Once past the
+      // threshold the rotation tracks the fingers exactly, with the dead zone
+      // subtracted so it does not jump 12° the moment it engages.
+      if (!twisting) {
+        if (Math.abs(delta) < 12) return
+        twisting = true
+        startAngle += delta > 0 ? 12 : -12
+        delta += delta > 0 ? -12 : 12
+      }
+      setRotation(normalizeAngle(startRotation + delta))
+    }
+    const onEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) { startAngle = null; twisting = false }
+    }
+
+    el.addEventListener('touchstart', onStart, { passive: true })
+    el.addEventListener('touchmove', onMove, { passive: true })
+    el.addEventListener('touchend', onEnd, { passive: true })
+    el.addEventListener('touchcancel', onEnd, { passive: true })
+    return () => {
+      el.removeEventListener('touchstart', onStart)
+      el.removeEventListener('touchmove', onMove)
+      el.removeEventListener('touchend', onEnd)
+      el.removeEventListener('touchcancel', onEnd)
+    }
+  }, [interactive, mapReady])
+
+  useEffect(() => { rotationRef.current = rotation }, [rotation])
+
+  /** Hand the camera back to the vehicle, wherever it has got to. */
+  const recenter = useCallback(() => {
+    setFreeLook(false)
+    const here = geometry.flat.length > 1 ? walk(geometry.flat, progress) : null
+    if (here) flyTo(here[0], here[1], Math.max(mapRef.current?.getZoom() ?? 12, followZoomRef.current), 0.8)
+  }, [geometry, progress, flyTo])
+
+  const zoomBy = useCallback((delta: number) => {
+    const map = mapRef.current
+    if (!map) return
+    if (playingRef.current) setFreeLook(true)
+    map.setZoom(map.getZoom() + delta, { animate: true })
+  }, [])
+
   // ── Fullscreen ─────────────────────────────────────────────────────────
 
   /**
@@ -1424,7 +1902,7 @@ export default function JourneyMap({
    * and locks in a half-size viewport, or fires late and leaves grey gaps —
    * which is exactly the blank fullscreen map. Observing the element instead
    * re-lays the tiles on every frame of the resize, and also covers the
-   * sidebar collapsing and the browser window changing.
+   * sidebar collapsing, the rotation bleed, and the browser window changing.
    */
   useEffect(() => {
     const el = containerRef.current
@@ -1446,20 +1924,26 @@ export default function JourneyMap({
   useEffect(() => {
     const L = LRef.current, map = mapRef.current
     if (!L || !map) return
-    // Fullscreen is a deliberate "I am reading the map now" mode, so the wheel
-    // becomes a zoom there and goes back to scrolling the page on exit.
-    fullscreen ? map.scrollWheelZoom.enable() : map.scrollWheelZoom.disable()
+    // Fullscreen and playback are both deliberate "I am reading the map now"
+    // modes, so the wheel becomes a zoom in either and goes back to scrolling
+    // the page on exit.
+    fullscreen || playing ? map.scrollWheelZoom.enable() : map.scrollWheelZoom.disable()
+  }, [fullscreen, playing, mapReady])
+
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map) return
     // The aspect ratio changes a lot between a 540px column and the viewport,
     // so a route framed for one is badly framed for the other.
     const id = setTimeout(() => {
       map.invalidateSize({ animate: false })
-      if (stops.length > 0 && !cardOpenRef.current) {
-        map.flyToBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)),
+      if (places.length > 0 && !cardOpenRef.current && !playingRef.current) {
+        map.flyToBounds(L.latLngBounds(places.map(p => [p.lat, p.lng] as LatLng)),
           { padding: [64, 64], maxZoom: 11, duration: 0.6 })
       }
     }, 340)
     return () => clearTimeout(id)
-  }, [fullscreen, mapReady, stops])
+  }, [fullscreen, mapReady, places])
 
   /**
    * Framing follows the chosen day.
@@ -1470,24 +1954,24 @@ export default function JourneyMap({
   useEffect(() => {
     const L = LRef.current, map = mapRef.current
     if (!L || !map || playDay == null) return
-    const onDay = stops.slice(playRange.start, playRange.end + 1)
+    const onDay = places.slice(playRange.start, playRange.end + 1)
     if (onDay.length === 0) return
-    map.flyToBounds(L.latLngBounds(onDay.map(s => [s.lat, s.lng] as LatLng)),
+    map.flyToBounds(L.latLngBounds(onDay.map(p => [p.lat, p.lng] as LatLng)),
       { padding: [72, 72], maxZoom: 12, duration: 0.8 })
-  }, [playDay, playRange, stops, mapReady])
+  }, [playDay, playRange, places, mapReady])
 
   /** Re-frame the route after a rebuild brings back a different set of pins. */
   const fittedRef = useRef<string>('')
   useEffect(() => {
     const L = LRef.current, map = mapRef.current
-    if (!L || !map || stops.length === 0) return
-    const signature = stops.map(s => `${s.lat.toFixed(3)},${s.lng.toFixed(3)}`).join('|')
+    if (!L || !map || places.length === 0) return
+    const signature = places.map(p => `${p.lat.toFixed(3)},${p.lng.toFixed(3)}`).join('|')
     if (fittedRef.current === signature) return
     if (fittedRef.current !== '') {
-      map.flyToBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)), { padding: [56, 56], maxZoom: 11, duration: 0.9 })
+      map.flyToBounds(L.latLngBounds(places.map(p => [p.lat, p.lng] as LatLng)), { padding: [56, 56], maxZoom: 11, duration: 0.9 })
     }
     fittedRef.current = signature
-  }, [stops, mapReady])
+  }, [places, mapReady])
 
   useEffect(() => {
     if (!fullscreen) return
@@ -1496,30 +1980,50 @@ export default function JourneyMap({
     return () => window.removeEventListener('keydown', onKey)
   }, [fullscreen])
 
-  // Keep the day strip tracking the selected stop during playback.
+  // Keep the place strip tracking whichever card the map is on.
   useEffect(() => {
     const focus = selectedId ?? activeId
     if (!focus || !stripRef.current) return
-    stripRef.current.querySelector<HTMLElement>(`[data-day-id="${cssEscape(focus)}"]`)
+    stripRef.current.querySelector<HTMLElement>(`[data-place-id="${cssEscape(focus)}"]`)
       ?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
   }, [selectedId, activeId])
 
   const fitAll = useCallback(() => {
     const L = LRef.current, map = mapRef.current
-    if (!L || !map || stops.length === 0) return
-    map.flyToBounds(L.latLngBounds(stops.map(s => [s.lat, s.lng] as LatLng)), { padding: [56, 56], maxZoom: 11, duration: 0.9 })
-  }, [stops])
+    if (!L || !map || places.length === 0) return
+    setFreeLook(false)
+    map.flyToBounds(L.latLngBounds(places.map(p => [p.lat, p.lng] as LatLng)), { padding: [56, 56], maxZoom: 11, duration: 0.9 })
+  }, [places])
 
-  const selectStop = useCallback((s: JourneyStop) => {
+  const selectPlace = useCallback((p: Place) => {
     setPlaying(false)
-    setActiveId(s.id)
-    setSelectedId(s.id)
+    setActiveId(p.id)
+    setSelectedId(p.id)
     // The card animates in over ~250ms; re-framing after it has taken up its
     // space is what actually keeps the pin visible.
     cardOpenRef.current = true
-    flyTo(s, 10)
-    setTimeout(() => flyTo(s, 10), 280)
+    flyTo(p.lat, p.lng, 12)
+    setTimeout(() => flyTo(p.lat, p.lng, 12), 280)
   }, [flyTo])
+
+  /**
+   * Play, and on the traveller's own portal go fullscreen with it.
+   *
+   * The trip page is a long scroll on a phone; a fly-through playing inside a
+   * 40%-tall card in the middle of it is a thumbnail of a film. Fullscreen for
+   * the length of the run is the whole difference between a decoration and
+   * something a guest actually watches.
+   */
+  const togglePlay = useCallback(() => {
+    setPlaying(prev => {
+      const next = !prev
+      if (next) {
+        setFreeLook(false)
+        if (settings.portalFullscreen && (guest || isMobile)) setFullscreen(true)
+      }
+      return next
+    })
+  }, [guest, isMobile, settings.portalFullscreen])
 
   // ── Render ─────────────────────────────────────────────────────────────
 
@@ -1527,7 +2031,7 @@ export default function JourneyMap({
 
   if (loading) return <JourneyShell className={className} skin={skin}><MapSkeleton skin={skin} /></JourneyShell>
 
-  if (error || !journey || stops.length === 0) {
+  if (error || !journey || places.length === 0) {
     return (
       <JourneyShell className={className} skin={skin}>
         <div className="h-[420px] sm:h-[520px] flex flex-col items-center justify-center gap-3 text-center px-8">
@@ -1561,6 +2065,9 @@ export default function JourneyMap({
     )
   }
 
+  const nextPlace = places[Math.min(legIndexNow + 1, places.length - 1)]
+  const legNow = nextPlace?.arrive ?? null
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: MAP_CSS }} />
@@ -1574,28 +2081,46 @@ export default function JourneyMap({
         // `--jm-card` is how much of the panel the open side drawer owns. The
         // drawer sets its own width from it and every piece of map chrome keeps
         // clear of it, so the two can never disagree about where the seam is.
-        style={{ '--jm-card': sideOpen ? SIDE_CARD_W : '0px' } as React.CSSProperties}
+        // `--jm-rot` is the map's bearing, and `--jm-unrot` its inverse, which
+        // every pin and label uses to stay upright inside a rotated map.
+        style={{
+          '--jm-card': sideOpen ? SIDE_CARD_W : '0px',
+          '--jm-rot': `${rotation}deg`,
+          '--jm-unrot': `${-rotation}deg`,
+          // A rotated square leaves triangles of nothing in the corners, so the
+          // map surface is oversized while the map is turned — and only while.
+          '--jm-bleed': rotation === 0 ? '0px' : '-22%',
+        } as React.CSSProperties}
         className={cn(
           'jm-wrap group relative overflow-hidden border shadow-card flex flex-col',
           dark ? 'border-white/10 bg-slate-950' : skin.shell,
+          playing && 'jm-playing',
           fullscreen
             ? 'fixed inset-0 sm:inset-4 z-[60] rounded-none sm:rounded-2xl shadow-2xl'
             : cn('rounded-2xl', className),
         )}
       >
-        {/* ── The map ── */}
+        {/* ── The map ──
+            The frame is the clip; the rotor inside it is what actually turns,
+            so the chrome laid over the top never rotates with the tiles. */}
         <div
-          ref={containerRef}
-          // Taller than a typical card: the bottom sheet takes 58% when a stop
-          // is open, and what is left has to still read as a map.
+          ref={frameRef}
           className={cn(
-            'w-full',
+            'relative w-full overflow-hidden',
             fullscreen ? 'flex-1 min-h-0' : MAP_HEIGHT,
             // Belt and braces with `dragging.disable()`: tells the browser it
             // may scroll the page from a gesture that starts here.
             !interactive && 'touch-pan-y',
           )}
-        />
+        >
+          <div className="jm-rotor">
+            <div ref={containerRef} className="w-full h-full" />
+          </div>
+          {/* A vignette that only shows during the fly-through. It is what
+              makes the mode read as a film rather than as a map that has
+              started moving on its own. */}
+          <div className="jm-vignette pointer-events-none absolute inset-0 z-[450]" />
+        </div>
 
         {/* ── Top-left: what this journey is ── */}
         <div className="pointer-events-none absolute top-3 left-3 z-[500] flex flex-col gap-2">
@@ -1621,7 +2146,7 @@ export default function JourneyMap({
               ) : null}
               <span className="inline-flex items-center gap-1">
                 <MapPin className={cn('w-3 h-3', skin.muted)} />
-                {stops.length} {agenda ? (stops.length === 1 ? 'move' : 'moves') : 'stops'}
+                {places.length} place{places.length === 1 ? '' : 's'}
               </span>
               {/* Road distance where the legs actually routed, straight-line
                   where they could not — the arc's number was never a distance
@@ -1694,6 +2219,7 @@ export default function JourneyMap({
               // A wrapped legend eats a phone's map. On mobile it collapses
               // behind the filter button and opens as one scrolling row.
               'hidden sm:flex sm:flex-wrap sm:max-w-[230px]',
+              playing && 'sm:hidden',
               showLegend && '!flex max-w-[calc(100vw-6rem)] overflow-x-auto jm-strip flex-nowrap sm:flex-wrap',
             )}
           >
@@ -1724,6 +2250,62 @@ export default function JourneyMap({
           </motion.div>
         </div>
 
+        {/* ── Now playing: what the vehicle is doing, while it does it ── */}
+        <AnimatePresence>
+          {playing && nextPlace && (
+            <motion.div
+              initial={{ opacity: 0, y: -10, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.97 }}
+              className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-[520] w-[min(92%,420px)]"
+              style={{ marginLeft: 'calc(var(--jm-card) / -2)' }}
+            >
+              <div className={cn('jm-hud rounded-2xl backdrop-blur-xl shadow-2xl ring-1 px-3 py-2', skin.glassSolid)}>
+                <div className="flex items-center gap-2">
+                  <span className="jm-hud-pulse w-2 h-2 rounded-full bg-brand-500 flex-shrink-0" />
+                  <span className={cn('text-[9.5px] font-black uppercase tracking-[0.14em]', skin.muted)}>
+                    Leg {Math.min(legIndexNow + 1, places.length - 1)} of {places.length - 1}
+                  </span>
+                  {legNow?.transport && (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9px] font-bold leading-none"
+                      style={{ background: `${legNow.transport.hex}22`, color: legNow.transport.hex }}
+                    >
+                      <span className="text-[10px] leading-none">{legNow.transport.emoji}</span>
+                      {legNow.transport.short}
+                    </span>
+                  )}
+                  <span className={cn('ml-auto text-[9.5px] font-bold tabular-nums', skin.muted)}>
+                    {speedLabel(speed)}
+                  </span>
+                </div>
+                <p className={cn('mt-0.5 text-[13px] font-bold leading-tight truncate', skin.title)}>
+                  {nextPlace.name}
+                </p>
+                <div className={cn('mt-0.5 flex items-center gap-2.5 text-[10px]', skin.body)}>
+                  {nextPlace.date && (
+                    <span className="inline-flex items-center gap-1"><CalendarDays className="w-3 h-3" />{formatDate(nextPlace.date)}</span>
+                  )}
+                  {legNow?.roadKm ? (
+                    <span className="inline-flex items-center gap-1"><Navigation className="w-3 h-3" />{legNow.roadKm.toLocaleString()} km</span>
+                  ) : legNow?.moveKm ? (
+                    <span className="inline-flex items-center gap-1"><Navigation className="w-3 h-3" />{legNow.moveKm.toLocaleString()} km</span>
+                  ) : null}
+                  {legNow?.roadMin ? (
+                    <span className="inline-flex items-center gap-1"><Clock className="w-3 h-3" />{fmtDrive(legNow.roadMin)}</span>
+                  ) : null}
+                </div>
+                <div className={cn('mt-1.5 h-1 rounded-full overflow-hidden', theme === 'dark' ? 'bg-white/10' : 'bg-slate-900/10')}>
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600 transition-[width] duration-150"
+                    style={{ width: `${Math.round(progress * 100)}%` }}
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* ── Top-right: controls ── */}
         <div
           className="absolute top-3 z-[500] flex items-center gap-1.5 transition-[right] duration-300"
@@ -1744,7 +2326,7 @@ export default function JourneyMap({
           {/* Filters live behind a button on phones, where the legend would
               otherwise cover a third of the map. */}
           <div className="sm:hidden">
-            <IconBtn label="Filter stops" skin={skin} onClick={() => setShowLegend(v => !v)} active={showLegend}>
+            <IconBtn label="Filter places" skin={skin} onClick={() => setShowLegend(v => !v)} active={showLegend}>
               <SlidersHorizontal className="w-4 h-4" />
             </IconBtn>
           </div>
@@ -1781,8 +2363,8 @@ export default function JourneyMap({
                       All days
                     </button>
                     {dayNumbers.map(d => {
-                      const first = stops.find(x => x.dayNo === d)
-                      const legs = stops.filter(x => x.dayNo === d).length
+                      const first = places.find(x => x.dayNo === d)
+                      const legs = places.filter(x => x.dayNo === d).length
                       return (
                         <button
                           key={d}
@@ -1805,6 +2387,58 @@ export default function JourneyMap({
               </AnimatePresence>
             </div>
           )}
+
+          {/* Speed. The shared default comes from the settings page; this is
+              the viewer's own override, remembered in their browser. */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSpeed(v => !v)}
+              title="Playback speed"
+              className={cn(
+                'h-9 sm:h-8 px-2 rounded-lg inline-flex items-center gap-1 text-[11px] font-bold shadow-lg ring-1 backdrop-blur-md transition-all hover:scale-105 active:scale-95',
+                showSpeed || speedOverride != null ? 'bg-brand-500 text-white ring-brand-400/40' : skin.btn,
+              )}
+            >
+              <Gauge className="w-4 h-4" />
+              {speedLabel(speed)}
+            </button>
+            <AnimatePresence>
+              {showSpeed && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.94, y: -6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: -6 }}
+                  className={cn('absolute right-0 mt-1.5 w-40 rounded-xl backdrop-blur-md shadow-xl ring-1 p-1', skin.glassSolid)}
+                >
+                  <p className={cn('px-2.5 pt-1 pb-1.5 text-[9px] font-bold uppercase tracking-wider', skin.muted)}>
+                    Fly-through speed
+                  </p>
+                  {JM_SPEED_STEPS.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => { pickSpeed(s); setShowSpeed(false) }}
+                      className={cn(
+                        'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                        Math.abs(speed - s) < 1e-6
+                          ? 'bg-brand-500/15 text-brand-500'
+                          : cn(skin.body, theme === 'dark' ? 'hover:bg-white/10' : 'hover:bg-slate-100'),
+                      )}
+                    >
+                      {speedLabel(s)}
+                      <span className={cn('ml-auto text-[9.5px] font-medium', skin.muted)}>
+                        {s < 1 ? 'slower' : s > 1 ? 'faster' : 'normal'}
+                      </span>
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => { pickSpeed(null); setShowSpeed(false) }}
+                    className={cn('w-full text-left px-2.5 py-1.5 mt-0.5 rounded-lg text-[10.5px] font-semibold border-t', skin.muted, skin.hairline)}
+                  >
+                    Use the saved default ({speedLabel(settings.speed)})
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
           <div className="relative">
             <IconBtn label="Basemap" skin={skin} onClick={() => setShowLayers(v => !v)} active={showLayers}><Layers className="w-4 h-4" /></IconBtn>
             <AnimatePresence>
@@ -1842,7 +2476,53 @@ export default function JourneyMap({
           </IconBtn>
         </div>
 
-        {/* ── Bottom: playback + day strip ── */}
+        {/* ── Right rail: zoom and bearing ──
+            Always there, playback included: the camera riding with the vehicle
+            is a default, not a cage, and someone watching a coach come into
+            Kandy should be able to pull in closer without stopping the film. */}
+        <div
+          className="absolute z-[500] top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5 transition-[right] duration-300"
+          style={{ right: 'calc(var(--jm-card) + 0.75rem)' }}
+        >
+          <IconBtn label="Zoom in" skin={skin} onClick={() => zoomBy(1)}><ZoomIn className="w-4 h-4" /></IconBtn>
+          <IconBtn label="Zoom out" skin={skin} onClick={() => zoomBy(-1)}><ZoomOut className="w-4 h-4" /></IconBtn>
+          <IconBtn label="Rotate left" skin={skin} onClick={() => setRotation(r => normalizeAngle(r - 15))}>
+            <RotateCcw className="w-4 h-4" />
+          </IconBtn>
+          <IconBtn label="Rotate right" skin={skin} onClick={() => setRotation(r => normalizeAngle(r + 15))}>
+            <RotateCw className="w-4 h-4" />
+          </IconBtn>
+          {rotation !== 0 && (
+            <button
+              onClick={() => setRotation(0)}
+              title="Face north"
+              className={cn(
+                'w-9 h-9 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center shadow-lg ring-1 backdrop-blur-md transition-all hover:scale-105 active:scale-95',
+                skin.btn,
+              )}
+            >
+              <span className="jm-compass" style={{ transform: `rotate(${rotation}deg)` }}>
+                <Navigation className="w-4 h-4 text-rose-500" />
+              </span>
+            </button>
+          )}
+        </div>
+
+        {/* The camera is the viewer's now — offered back, never taken. */}
+        <AnimatePresence>
+          {playing && freeLook && (
+            <motion.button
+              initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+              onClick={recenter}
+              className="absolute z-[520] bottom-[124px] left-1/2 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full bg-brand-500 text-white px-3 py-1.5 text-[11px] font-bold shadow-xl ring-1 ring-white/30 active:scale-95"
+              style={{ marginLeft: 'calc(var(--jm-card) / -2)' }}
+            >
+              <Crosshair className="w-3.5 h-3.5" /> Follow the vehicle
+            </motion.button>
+          )}
+        </AnimatePresence>
+
+        {/* ── Bottom: playback + place strip ── */}
         <div
           className={cn(
             'absolute bottom-0 left-0 z-[500] p-3 pt-10 transition-[right] duration-300',
@@ -1853,12 +2533,13 @@ export default function JourneyMap({
           <div className="flex items-end gap-2">
             <div className="flex flex-col gap-1.5">
               <button
-                onClick={() => setPlaying(p => !p)}
-                disabled={stops.length < 2}
+                onClick={togglePlay}
+                disabled={places.length < 2}
                 className={cn(
-                  'w-12 h-12 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shadow-lg ring-1 ring-white/40 transition-all',
+                  'jm-play w-12 h-12 sm:w-11 sm:h-11 rounded-full flex items-center justify-center shadow-lg ring-1 ring-white/40 transition-all',
                   'bg-gradient-to-br from-brand-500 to-brand-600 text-white hover:scale-105 active:scale-95',
                   'disabled:opacity-40 disabled:hover:scale-100',
+                  playing && 'jm-play-on',
                 )}
                 title={playing
                   ? 'Pause the fly-through'
@@ -1877,144 +2558,24 @@ export default function JourneyMap({
               )}
             </div>
 
-            {/* Scroll-snapped on touch so a flick lands on a day rather than
-                between two. */}
+            {/* One card per *place*, in the order the guests reach them —
+                see `buildPlaces`. Scroll-snapped on touch so a flick lands on a
+                place rather than between two. */}
             <div ref={stripRef} className="jm-strip flex-1 flex gap-1.5 overflow-x-auto pb-1.5 snap-x snap-mandatory">
-              {stops.map(s => {
-                const k = KIND[s.kind] ?? KIND.tour
-                const on = s.id === selectedId
-                // A woven sector reads as a boarding pass rather than as a
-                // movement: it has no pickup point, no vehicle and no driver —
-                // it has a flight number and two airport codes.
-                const sector = s.flightRole === 'sector' ? s.flight : null
-                const feeder = s.flightRole && s.flightRole !== 'sector' ? s.flight : null
-                return (
-                  <button
-                    key={s.id}
-                    data-day-id={s.id}
-                    onClick={() => selectStop(s)}
-                    onMouseEnter={() => setHoveredId(s.id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    className={cn(
-                      'group/day flex-shrink-0 snap-center text-left rounded-xl px-2.5 py-2 transition-all duration-200',
-                      'backdrop-blur-md shadow ring-1 hover:-translate-y-0.5 hover:shadow-lg active:scale-95',
-                      // The movement card carries a from → to line, a service
-                      // chip and the stay, so it needs the extra width.
-                      agenda ? 'w-[184px] sm:w-[176px]' : 'w-[132px] sm:w-[124px]',
-                      skin.glassSolid,
-                      sector && 'ring-violet-400/60',
-                      on && 'ring-2 !ring-brand-500 -translate-y-0.5 shadow-lg',
-                    )}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span
-                        className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
-                        style={{ background: k.hex }}
-                        dangerouslySetInnerHTML={{ __html: glyphSvg(s.kind, 11) }}
-                      />
-                      <span className={cn('text-[10px] font-extrabold', skin.title)}>
-                        D{s.dayNo}
-                        {/* Two movements can share a date; the day number alone
-                            would print twice with nothing to tell them apart. */}
-                        {agenda && (s.legsThatDay ?? 1) > 1 && (
-                          <span className={skin.muted}>.{s.legOfDay}</span>
-                        )}
-                      </span>
-                      {s.date && <span className={cn('text-[9px] truncate', skin.muted)}>{formatDate(s.date)}</span>}
-                      {agenda && s.timeFrom && (
-                        <span className={cn('ml-auto text-[9px] font-semibold tabular-nums', skin.muted)}>{s.timeFrom}</span>
-                      )}
-                    </div>
-
-                    {sector ? (
-                      <div className="mt-1 rounded-lg px-1.5 py-1 bg-gradient-to-r from-violet-500/15 to-indigo-500/15 ring-1 ring-violet-500/30">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[9.5px] font-black tracking-wide text-violet-500">
-                            {sector.flightNo}
-                          </span>
-                          {sector.airline && (
-                            <span className={cn('text-[8.5px] truncate max-w-[74px]', skin.muted)}>{sector.airline}</span>
-                          )}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-1.5">
-                          <div>
-                            <p className={cn('text-[11px] font-black leading-none', skin.title)}>{sector.fromApt}</p>
-                            <p className={cn('text-[8.5px] tabular-nums leading-tight', skin.muted)}>{sector.depTime ?? '--:--'}</p>
-                          </div>
-                          <div className="jm-pass-track flex-1">
-                            <span className="block w-full border-t border-dashed border-violet-400/70" />
-                            <Plane className="jm-pass-plane w-2.5 h-2.5 text-violet-500 rotate-90" />
-                          </div>
-                          <div className="text-right">
-                            <p className={cn('text-[11px] font-black leading-none', skin.title)}>{sector.toApt}</p>
-                            <p className={cn('text-[8.5px] tabular-nums leading-tight', skin.muted)}>{sector.arrTime ?? '--:--'}</p>
-                          </div>
-                        </div>
-                      </div>
-                    ) : agenda && s.fromPlace && s.toPlace && s.fromPlace !== s.toPlace ? (
-                      <div className="mt-1 flex items-start gap-1">
-                        <span className={cn('min-w-0 flex-1 text-[10.5px] font-semibold leading-tight line-clamp-2', skin.body)}>
-                          {s.fromPlace}
-                        </span>
-                        <ArrowRight className={cn('w-3 h-3 flex-shrink-0 mt-[1px]', skin.muted)} />
-                        <span className={cn('min-w-0 flex-1 text-[10.5px] font-bold leading-tight line-clamp-2', skin.strong)}>
-                          {s.toPlace}
-                        </span>
-                      </div>
-                    ) : (
-                      <p className={cn('mt-1 text-[11px] font-semibold leading-tight line-clamp-2', skin.strong)}>{s.place}</p>
-                    )}
-
-                    {sector ? (
-                      <p className="mt-1 flex items-center gap-1 text-[9px] font-semibold text-violet-500">
-                        <PlaneTakeoff className="w-2.5 h-2.5 flex-shrink-0" />
-                        <span className="truncate">
-                          Flight sector
-                          {sector.km ? ` · ${sector.km.toLocaleString()} km` : ''}
-                        </span>
-                      </p>
-                    ) : agenda && s.transport && (
-                      <div className="mt-1 flex items-center gap-1">
-                        <span
-                          className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9px] font-bold leading-none"
-                          style={{ background: `${s.transport.hex}1f`, color: s.transport.hex }}
-                        >
-                          <span className="text-[10px] leading-none">{s.transport.emoji}</span>
-                          {s.transport.short}
-                        </span>
-                        {s.roadKm != null && s.roadKm > 0 ? (
-                          <span className={cn('text-[9px] tabular-nums', skin.muted)} title="By road">
-                            {s.roadKm.toLocaleString()} km
-                            {s.roadMin ? ` · ${fmtDrive(s.roadMin)}` : ''}
-                          </span>
-                        ) : s.moveKm != null && s.moveKm > 0 ? (
-                          <span className={cn('text-[9px] tabular-nums', skin.muted)}>{s.moveKm.toLocaleString()} km</span>
-                        ) : null}
-                        {feeder && (
-                          <span
-                            title={`${s.flightRole === 'to-airport' ? 'Connects to' : 'Meets'} ${feeder.flightNo} · ${feeder.fromApt} → ${feeder.toApt}`}
-                            className="ml-auto inline-flex items-center gap-0.5 rounded-full bg-violet-500/15 px-1 py-[1px] text-[8.5px] font-bold text-violet-500"
-                          >
-                            {s.flightRole === 'to-airport'
-                              ? <PlaneTakeoff className="w-2.5 h-2.5" />
-                              : <PlaneLanding className="w-2.5 h-2.5" />}
-                            {feeder.flightNo}
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {agenda && s.hotel ? (
-                      <p className={cn('mt-1 flex items-center gap-1 text-[9px] truncate', skin.muted)}>
-                        <BedDouble className="w-2.5 h-2.5 flex-shrink-0 text-orange-500" />
-                        <span className="truncate">{s.hotel.name}</span>
-                      </p>
-                    ) : !agenda && s.legKm != null && s.legKm > 0 ? (
-                      <p className={cn('mt-0.5 text-[9px]', skin.muted)}>{s.legKm.toLocaleString()} km from D{stops[stops.indexOf(s) - 1]?.dayNo}</p>
-                    ) : null}
-                  </button>
-                )
-              })}
+              {places.map(p => (
+                <PlaceCard
+                  key={p.id}
+                  place={p}
+                  skin={skin}
+                  theme={theme}
+                  agenda={agenda}
+                  selected={p.id === selectedId}
+                  active={p.id === activeId}
+                  passed={p.seq - 1 < legIndexNow && progress < 1}
+                  onSelect={() => selectPlace(p)}
+                  onHover={setHoveredId}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -2025,19 +2586,19 @@ export default function JourneyMap({
             <ActivityDrawer
               key={selected.id}
               bookingRef={bookingRef}
-              stop={selected}
+              place={selected}
               variant={isMobile ? 'sheet' : 'side'}
               skin={skin}
               guest={guest}
               portalToken={portalToken}
               onClose={() => setSelectedId(null)}
               onPrev={() => {
-                const i = stops.findIndex(s => s.id === selected.id)
-                if (i > 0) selectStop(stops[i - 1])
+                const i = places.findIndex(p => p.id === selected.id)
+                if (i > 0) selectPlace(places[i - 1])
               }}
               onNext={() => {
-                const i = stops.findIndex(s => s.id === selected.id)
-                if (i < stops.length - 1) selectStop(stops[i + 1])
+                const i = places.findIndex(p => p.id === selected.id)
+                if (i < places.length - 1) selectPlace(places[i + 1])
               }}
             />
           )}
@@ -2053,6 +2614,187 @@ export default function JourneyMap({
   )
 }
 
+// ─── The place card ──────────────────────────────────────────────────────
+
+/**
+ * One place, as a card in the bottom strip.
+ *
+ * This used to be one card per movement — "Hanoi Anise Hotel → Train Street" —
+ * which reads as a list of car journeys and prints the same hotel twice. A card
+ * is now a *place*, numbered in the order it is reached, and it carries the
+ * three things somebody actually asks about it: how they get there, when, and
+ * what is booked for them once they arrive.
+ */
+function PlaceCard({ place, skin, theme, agenda, selected, active, passed, onSelect, onHover }: {
+  place: Place
+  skin: Skin
+  theme: 'light' | 'dark'
+  agenda: boolean
+  selected: boolean
+  active: boolean
+  passed: boolean
+  onSelect: () => void
+  onHover: (id: string | null) => void
+}) {
+  const k = KIND[place.kind] ?? KIND.tour
+  const arrive = place.arrive
+  const flight = place.flight
+  const hotel = place.hotel
+  // The hotel block is only worth the height where the stay *is* this place —
+  // on a sightseeing stop it would repeat the same hotel on eight cards.
+  const stayHere = hotel && (place.kind === 'hotel' || sameName(hotel.name, place.name))
+  const km = arrive?.roadKm ?? arrive?.moveKm ?? null
+  const arriveAt = arrive?.timeTo ?? (flight && place.flightEnd === 'to' ? flight.arrTime : null)
+  const leaveAt = place.depart?.timeFrom ?? place.depart?.meetingTime
+    ?? (flight && place.flightEnd === 'from' ? flight.depTime : null)
+
+  return (
+    <button
+      data-place-id={place.id}
+      onClick={onSelect}
+      onMouseEnter={() => onHover(place.id)}
+      onMouseLeave={() => onHover(null)}
+      className={cn(
+        'jm-card group/place relative flex-shrink-0 snap-center text-left rounded-2xl p-2.5 transition-all duration-200',
+        'backdrop-blur-md shadow ring-1 hover:-translate-y-1 hover:shadow-xl active:scale-95',
+        agenda ? 'w-[206px] sm:w-[196px]' : 'w-[168px] sm:w-[160px]',
+        skin.glassSolid,
+        flight && 'ring-violet-400/60',
+        passed && 'opacity-60 saturate-[.7]',
+        active && !selected && 'ring-2 ring-brand-400/70',
+        selected && 'ring-2 !ring-brand-500 -translate-y-1 shadow-xl',
+      )}
+    >
+      {/* The order along the route, which is the one thing a strip of cards
+          has to make obvious and a repeated day number never did. */}
+      <span
+        className="jm-card-seq absolute -top-1 -left-1 w-5 h-5 rounded-full flex items-center justify-center text-[9.5px] font-black text-white shadow"
+        style={{ background: k.hex }}
+      >
+        {place.seq}
+      </span>
+
+      <div className="flex items-center gap-1.5 pl-3">
+        <span
+          className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
+          style={{ background: k.hex }}
+          dangerouslySetInnerHTML={{ __html: glyphSvg(place.kind, 11) }}
+        />
+        {place.dayNo > 0 && (
+          <span className={cn('text-[10px] font-extrabold', skin.title)}>D{place.dayNo}</span>
+        )}
+        {place.date && <span className={cn('text-[9px] truncate', skin.muted)}>{formatDate(place.date)}</span>}
+      </div>
+
+      <p className={cn('mt-1.5 text-[12px] font-bold leading-tight line-clamp-2', skin.title)}>
+        {place.name}
+      </p>
+      {place.city && !sameName(place.city, place.name) && (
+        <p className={cn('text-[9.5px] truncate', skin.muted)}>{place.city}</p>
+      )}
+
+      {/* When they are here. Two times, because "arrives 10:50, leaves 12:30"
+          is the shape of a stop and a single clock is the shape of a row. */}
+      {(arriveAt || leaveAt) && (
+        <div className={cn('mt-1 flex items-center gap-1.5 text-[9.5px] font-semibold tabular-nums', skin.body)}>
+          {arriveAt && (
+            <span className="inline-flex items-center gap-0.5" title="Arrives">
+              <ArrowDownRight className="w-2.5 h-2.5 text-emerald-500" />{arriveAt}
+            </span>
+          )}
+          {leaveAt && (
+            <span className="inline-flex items-center gap-0.5" title="Leaves">
+              <ArrowUpRight className="w-2.5 h-2.5 text-rose-500" />{leaveAt}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* How they got here. A sector reads as a boarding pass: no vehicle, no
+          pickup point, no driver — a flight number and two airport codes. */}
+      {flight ? (
+        <div className="mt-1.5 rounded-xl px-1.5 py-1 bg-gradient-to-r from-violet-500/15 to-indigo-500/15 ring-1 ring-violet-500/30">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-[9.5px] font-black tracking-wide text-violet-500">{flight.flightNo}</span>
+            {flight.airline && (
+              <span className={cn('text-[8.5px] truncate max-w-[86px]', skin.muted)}>{flight.airline}</span>
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-1.5">
+            <div>
+              <p className={cn('text-[11px] font-black leading-none', place.flightEnd === 'from' ? skin.title : skin.muted)}>{flight.fromApt}</p>
+              <p className={cn('text-[8.5px] tabular-nums leading-tight', skin.muted)}>{flight.depTime ?? '--:--'}</p>
+            </div>
+            <div className="jm-pass-track flex-1">
+              <span className="block w-full border-t border-dashed border-violet-400/70" />
+              <Plane className="jm-pass-plane w-2.5 h-2.5 text-violet-500 rotate-90" />
+            </div>
+            <div className="text-right">
+              <p className={cn('text-[11px] font-black leading-none', place.flightEnd === 'to' ? skin.title : skin.muted)}>{flight.toApt}</p>
+              <p className={cn('text-[8.5px] tabular-nums leading-tight', skin.muted)}>{flight.arrTime ?? '--:--'}</p>
+            </div>
+          </div>
+          <p className={cn('mt-0.5 flex items-center gap-1 text-[8.5px] font-semibold', skin.muted)}>
+            {place.flightEnd === 'from'
+              ? <><PlaneTakeoff className="w-2.5 h-2.5" /> Departs from here</>
+              : <><PlaneLanding className="w-2.5 h-2.5" /> Lands here</>}
+            {flight.durationMin != null && <span>· {fmtDrive(flight.durationMin)}</span>}
+            {flight.km != null && <span>· {flight.km.toLocaleString()} km</span>}
+          </p>
+        </div>
+      ) : arrive?.transport ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          <span
+            className="inline-flex items-center gap-1 rounded-full px-1.5 py-[1px] text-[9px] font-bold leading-none"
+            style={{ background: `${arrive.transport.hex}1f`, color: arrive.transport.hex }}
+            title={`Arrives by ${arrive.transport.label}`}
+          >
+            <span className="text-[10px] leading-none">{arrive.transport.emoji}</span>
+            {arrive.transport.short}
+          </span>
+          {km != null && km > 0 && (
+            <span className={cn('text-[9px] tabular-nums', skin.muted)} title={arrive.roadKm ? 'By road' : 'Straight line'}>
+              {km.toLocaleString()} km{arrive.roadMin ? ` · ${fmtDrive(arrive.roadMin)}` : ''}
+            </span>
+          )}
+        </div>
+      ) : null}
+
+      {/* What is booked for them here — the room, not just the hotel name. */}
+      {stayHere && hotel ? (
+        <div className={cn('mt-1.5 pt-1.5 border-t', skin.hairline)}>
+          <p className={cn('flex items-center gap-1 text-[9.5px] font-bold truncate', skin.strong)}>
+            <BedDouble className="w-2.5 h-2.5 flex-shrink-0 text-orange-500" />
+            <span className="truncate">{hotel.roomType || (hotel.checkIn ? 'Check in' : 'Overnight')}</span>
+            {hotel.nights ? <span className={skin.muted}>· {hotel.nights}n</span> : null}
+          </p>
+          {(hotel.mealType || arrive?.mealPlan) && (
+            <p className={cn('flex items-center gap-1 text-[9px] truncate', skin.muted)}>
+              <Utensils className="w-2.5 h-2.5 flex-shrink-0" />
+              <span className="truncate">{hotel.mealType || arrive?.mealPlan}</span>
+            </p>
+          )}
+        </div>
+      ) : hotel ? (
+        <p className={cn('mt-1.5 flex items-center gap-1 text-[9px] truncate', skin.muted)}>
+          <BedDouble className="w-2.5 h-2.5 flex-shrink-0 text-orange-500" />
+          <span className="truncate">{hotel.name}</span>
+        </p>
+      ) : null}
+
+      {/* A hairline that fills as the vehicle crosses the leg into this place. */}
+      <span
+        className={cn(
+          'absolute left-2.5 right-2.5 bottom-1 h-[2px] rounded-full transition-opacity',
+          active ? 'opacity-100' : 'opacity-0',
+          theme === 'dark' ? 'bg-brand-400' : 'bg-brand-500',
+        )}
+      />
+    </button>
+  )
+}
+
+
 // ─── Activity drawer ─────────────────────────────────────────────────────
 
 /**
@@ -2066,9 +2808,9 @@ export default function JourneyMap({
  *
  * Content is researched on first open and cached server-side by place.
  */
-function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, onClose, onPrev, onNext }: {
+function ActivityDrawer({ bookingRef, place, variant, skin, guest, portalToken, onClose, onPrev, onNext }: {
   bookingRef: string
-  stop: JourneyStop
+  place: Place
   skin: Skin
   guest: boolean
   portalToken?: string
@@ -2085,6 +2827,14 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
   const [imgIndex, setImgIndex] = useState(0)
   const [broken, setBroken] = useState<Set<string>>(new Set())
 
+  // The movement that brought them here is what describes the place; where
+  // there is none — the very first place on a file — the one that takes them
+  // away is the only row that mentions it at all.
+  const anchor = place.arrive ?? place.depart
+  const flight = place.flight
+  const hotel = place.hotel
+  const stayHere = hotel && (place.kind === 'hotel' || sameName(hotel.name, place.name))
+
   useEffect(() => {
     let cancelled = false
     setLoading(true); setFailed(false); setBrief(null); setImgIndex(0)
@@ -2097,7 +2847,8 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            place: stop.place, title: stop.title, city: stop.city, country: stop.country,
+            place: place.name, title: anchor?.title ?? place.name,
+            city: place.city, country: place.country,
           }),
         })
         const json = await readApiResponse<ActivityBrief>(res)
@@ -2110,9 +2861,9 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
       }
     })()
     return () => { cancelled = true }
-  }, [bookingRef, portalToken, stop.place, stop.title, stop.city, stop.country])
+  }, [bookingRef, portalToken, place.name, place.city, place.country, anchor?.title])
 
-  const k = KIND[stop.kind] ?? KIND.tour
+  const k = KIND[place.kind] ?? KIND.tour
   const images = (brief?.images ?? []).filter(u => !broken.has(u))
   const hero = images[Math.min(imgIndex, Math.max(images.length - 1, 0))]
 
@@ -2163,7 +2914,7 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
             <motion.img
               key={hero}
               src={hero}
-              alt={stop.place}
+              alt={place.name}
               initial={{ opacity: 0, scale: 1.08 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
@@ -2184,8 +2935,8 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
 
         <div className="absolute top-2.5 left-3 right-2.5 flex items-start justify-between gap-2">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/22 backdrop-blur-md px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/30">
-            <span dangerouslySetInnerHTML={{ __html: glyphSvg(stop.kind, 11) }} />
-            Day {stop.dayNo} · {k.label}
+            <span dangerouslySetInnerHTML={{ __html: glyphSvg(place.kind, 11) }} />
+            {place.dayNo > 0 ? `Day ${place.dayNo} · ` : ''}{k.label}
           </span>
           <div className="flex items-center gap-1">
             <DrawerBtn onClick={onPrev} label="Previous day"><ChevronLeft className="w-4 h-4" /></DrawerBtn>
@@ -2195,11 +2946,14 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
         </div>
 
         <div className="absolute bottom-2.5 left-3 right-3">
-          <h4 className="text-white font-bold text-[17px] leading-tight drop-shadow">{stop.place}</h4>
+          <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-white/85 text-slate-900 text-[10px] font-black align-middle mr-1.5">
+            {place.seq}
+          </span>
+          <h4 className="inline text-white font-bold text-[17px] leading-tight drop-shadow align-middle">{place.name}</h4>
           <p className="text-white/80 text-[11px] mt-0.5 flex items-center gap-1.5">
             <MapPin className="w-3 h-3" />
-            {[stop.city, stop.country].filter(Boolean).join(', ') || '—'}
-            {stop.date && <><span className="opacity-50">·</span>{formatDate(stop.date)}</>}
+            {[place.city, place.country].filter(Boolean).join(', ') || '—'}
+            {place.date && <><span className="opacity-50">·</span>{formatDate(place.date)}</>}
           </p>
         </div>
 
@@ -2219,157 +2973,202 @@ function ActivityDrawer({ bookingRef, stop, variant, skin, guest, portalToken, o
 
       {/* Body */}
       <div className="jm-scroll flex-1 overflow-y-auto px-4 py-3.5 space-y-4 overscroll-contain">
-        {/* The movement itself, when this pin came from the movement chart.
-            A from → to pair, what carries the guests, and where they sleep are
-            the three things the chart is actually for — they belong above the
-            researched write-up, not under it. */}
-        {/* The booked sector, as its ticket reads.
-            On a woven sector row this *is* the movement — there is no vehicle,
-            no pickup point and no driver to show, so the block below is
-            suppressed. On the transfers either side it sits above the movement
-            and answers the question that transfer exists to serve: which
-            flight, and what time does it go. */}
-        {stop.flight && (
+        {/* The place, as it is booked.
+            Three questions in the order anyone asks them: how do they get
+            here, what is waiting for them when they do, and how do they leave
+            again. All three come off the movement chart, so they sit above the
+            researched write-up rather than under it. */}
+
+        {/* The booked sector, as its ticket reads. */}
+        {flight && (
           <div className="rounded-xl ring-1 ring-violet-500/30 overflow-hidden bg-gradient-to-br from-violet-500/12 to-indigo-500/12">
             <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-2">
               <span className="inline-flex items-center gap-1.5 text-[11px] font-black tracking-wide text-violet-500">
                 <Plane className="w-3.5 h-3.5" />
-                {stop.flight.flightNo}
-                {stop.flight.airline && (
-                  <span className={cn('font-medium tracking-normal', skin.sheetMuted)}>{stop.flight.airline}</span>
+                {flight.flightNo}
+                {flight.airline && (
+                  <span className={cn('font-medium tracking-normal', skin.sheetMuted)}>{flight.airline}</span>
                 )}
               </span>
               <span className={cn('text-[9.5px] font-bold uppercase tracking-wider', skin.sheetMuted)}>
-                {stop.flight.sector === 'internal' ? 'Inter-flight'
-                  : stop.flight.sector === 'inbound' ? 'Arrival flight' : 'Departure flight'}
+                {flight.sector === 'internal' ? 'Inter-flight'
+                  : flight.sector === 'inbound' ? 'Arrival flight' : 'Departure flight'}
               </span>
             </div>
 
             <div className="flex items-end gap-2 px-3 pb-2.5">
               <div className="min-w-0">
-                <p className={cn('text-[19px] font-black leading-none tracking-tight', skin.sheetTitle)}>{stop.flight.fromApt}</p>
-                <p className={cn('text-[11px] font-bold tabular-nums mt-0.5', skin.sheetBody)}>{stop.flight.depTime ?? '--:--'}</p>
-                <p className={cn('text-[9.5px] truncate max-w-[110px]', skin.sheetMuted)}>{stop.flight.fromCity ?? stop.flight.fromName ?? ''}</p>
+                <p className={cn('text-[19px] font-black leading-none tracking-tight', place.flightEnd === 'from' ? skin.sheetTitle : skin.sheetMuted)}>{flight.fromApt}</p>
+                <p className={cn('text-[11px] font-bold tabular-nums mt-0.5', skin.sheetBody)}>{flight.depTime ?? '--:--'}</p>
+                <p className={cn('text-[9.5px] truncate max-w-[110px]', skin.sheetMuted)}>{flight.fromCity ?? flight.fromName ?? ''}</p>
               </div>
               <div className="jm-pass-track flex-1 mb-4">
                 <span className="block w-full border-t border-dashed border-violet-400/70" />
                 <Plane className="jm-pass-plane w-3 h-3 text-violet-500 rotate-90" />
               </div>
               <div className="min-w-0 text-right">
-                <p className={cn('text-[19px] font-black leading-none tracking-tight', skin.sheetTitle)}>{stop.flight.toApt}</p>
-                <p className={cn('text-[11px] font-bold tabular-nums mt-0.5', skin.sheetBody)}>{stop.flight.arrTime ?? '--:--'}</p>
-                <p className={cn('text-[9.5px] truncate max-w-[110px] ml-auto', skin.sheetMuted)}>{stop.flight.toCity ?? stop.flight.toName ?? ''}</p>
+                <p className={cn('text-[19px] font-black leading-none tracking-tight', place.flightEnd === 'to' ? skin.sheetTitle : skin.sheetMuted)}>{flight.toApt}</p>
+                <p className={cn('text-[11px] font-bold tabular-nums mt-0.5', skin.sheetBody)}>{flight.arrTime ?? '--:--'}</p>
+                <p className={cn('text-[9.5px] truncate max-w-[110px] ml-auto', skin.sheetMuted)}>{flight.toCity ?? flight.toName ?? ''}</p>
               </div>
             </div>
 
             <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 border-t border-violet-500/20 text-[10px]', skin.sheetMuted)}>
-              <span className="inline-flex items-center gap-1"><CalendarDays className="w-3 h-3" />{formatDate(stop.flight.date)}</span>
-              {stop.flight.durationMin != null && (
+              <span className="inline-flex items-center gap-1"><CalendarDays className="w-3 h-3" />{formatDate(flight.date)}</span>
+              {flight.durationMin != null && (
                 <span className="inline-flex items-center gap-1">
                   <Clock className="w-3 h-3" />
-                  {Math.floor(stop.flight.durationMin / 60)}h {String(stop.flight.durationMin % 60).padStart(2, '0')}m
+                  {Math.floor(flight.durationMin / 60)}h {String(flight.durationMin % 60).padStart(2, '0')}m
                 </span>
               )}
-              {stop.flight.km != null && (
-                <span className="inline-flex items-center gap-1"><Navigation className="w-3 h-3" />{stop.flight.km.toLocaleString()} km</span>
+              {flight.km != null && (
+                <span className="inline-flex items-center gap-1"><Navigation className="w-3 h-3" />{flight.km.toLocaleString()} km</span>
               )}
             </div>
 
             <p className={cn('px-3 pb-2.5 text-[10px] leading-snug', skin.sheetMuted)}>
-              {stop.flightRole === 'sector'
-                ? (guest
-                    ? 'You fly this leg — there is no road transfer between these two cities.'
-                    : 'Drawn from the booking\u2019s flight list. The movement chart has no row for a sector, so this leg is map-only \u2014 the agenda is unchanged.')
-                : stop.flightRole === 'to-airport'
-                  ? (guest ? 'This transfer takes you to the airport for this flight.' : 'This movement feeds the sector above.')
-                  : (guest ? 'This transfer meets you after this flight.' : 'This movement collects from the sector above.')}
+              {place.flightEnd === 'from'
+                ? (guest ? 'Your flight leaves from here.' : 'The sector departs this airport.')
+                : (guest ? 'You land here.' : 'The sector lands at this airport.')}
+              {anchor?.flightRole === 'sector' && !guest &&
+                ' Drawn from the booking’s flight list — the movement chart has no row for a sector, so this leg is map-only.'}
             </p>
           </div>
         )}
 
-        {stop.transport && stop.flightRole !== 'sector' && (
+        {/* Getting here. */}
+        {place.arrive && place.arrive.flightRole !== 'sector' && place.arrive.transport && (
           <div className={cn('rounded-xl ring-1 p-3', skin.glassSolid)}>
             <div className="flex items-center justify-between gap-2 mb-2">
-              <span
-                className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] text-[10px] font-bold leading-none"
-                style={{ background: `${stop.transport.hex}1f`, color: stop.transport.hex }}
-              >
-                <span className="text-[12px] leading-none">{stop.transport.emoji}</span>
-                {stop.transport.label}
+              <span className={cn('text-[9px] uppercase tracking-wider font-bold', skin.sheetMuted)}>
+                {guest ? 'Getting here' : 'Movement in'}
               </span>
-              {(stop.timeFrom || stop.meetingTime) && (
+              {(place.arrive.timeFrom || place.arrive.meetingTime) && (
                 <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold tabular-nums', skin.sheetMuted)}>
                   <Clock className="w-3 h-3" />
-                  {stop.timeFrom ?? stop.meetingTime}
-                  {stop.timeTo ? `–${stop.timeTo}` : ''}
+                  {place.arrive.timeFrom ?? place.arrive.meetingTime}
+                  {place.arrive.timeTo ? `–${place.arrive.timeTo}` : ''}
                 </span>
               )}
             </div>
 
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <p className={cn('text-[9px] uppercase tracking-wider font-bold mb-0.5', skin.sheetMuted)}>From</p>
-                <p className={cn('text-[12px] font-semibold leading-snug', skin.sheetBody)}>{stop.fromPlace || '—'}</p>
-              </div>
-              <ArrowRight className={cn('w-4 h-4 flex-shrink-0 mt-3.5', skin.sheetMuted)} />
-              <div className="min-w-0 flex-1">
-                <p className={cn('text-[9px] uppercase tracking-wider font-bold mb-0.5', skin.sheetMuted)}>To</p>
-                <p className={cn('text-[12px] font-bold leading-snug', skin.sheetTitle)}>{stop.toPlace || stop.place}</p>
-              </div>
+            <div className="flex items-center gap-2">
+              <span
+                className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] text-[10px] font-bold leading-none flex-shrink-0"
+                style={{ background: `${place.arrive.transport.hex}1f`, color: place.arrive.transport.hex }}
+              >
+                <span className="text-[12px] leading-none">{place.arrive.transport.emoji}</span>
+                {place.arrive.transport.label}
+              </span>
+              <span className={cn('min-w-0 text-[11.5px] font-semibold leading-snug truncate', skin.sheetBody)}>
+                from {place.arrive.fromPlace || '—'}
+              </span>
             </div>
 
-            {stop.roadKm != null && stop.roadKm > 0 ? (
+            {place.arrive.roadKm != null && place.arrive.roadKm > 0 ? (
               <p className={cn('mt-2 inline-flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px]', skin.sheetMuted)}>
                 <span className="inline-flex items-center gap-1">
-                  <Navigation className="w-3 h-3" /> {stop.roadKm.toLocaleString()} km by road
+                  <Navigation className="w-3 h-3" /> {place.arrive.roadKm.toLocaleString()} km by road
                 </span>
-                {stop.roadMin ? (
+                {place.arrive.roadMin ? (
                   <span className="inline-flex items-center gap-1" title="Free-flow — no traffic, no stops">
-                    <Clock className="w-3 h-3" /> about {fmtDrive(stop.roadMin)} driving
+                    <Clock className="w-3 h-3" /> about {fmtDrive(place.arrive.roadMin)} driving
                   </span>
                 ) : null}
               </p>
-            ) : stop.moveKm != null && stop.moveKm > 0 ? (
+            ) : place.arrive.moveKm != null && place.arrive.moveKm > 0 ? (
               <p className={cn('mt-2 inline-flex items-center gap-1 text-[10px]', skin.sheetMuted)}>
-                <Navigation className="w-3 h-3" /> about {stop.moveKm.toLocaleString()} km on this leg
+                <Navigation className="w-3 h-3" /> about {place.arrive.moveKm.toLocaleString()} km on this leg
               </p>
             ) : null}
+          </div>
+        )}
 
-            {stop.hotel && (
-              <div className={cn('mt-2.5 pt-2.5 border-t flex items-start gap-2', skin.hairline)}>
-                <BedDouble className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-orange-500" />
-                <div className="min-w-0">
-                  <p className={cn('text-[11.5px] font-semibold leading-snug', skin.sheetTitle)}>{stop.hotel.name}</p>
-                  <p className={cn('text-[10px]', skin.sheetMuted)}>
-                    {stop.hotel.checkIn ? 'Check in tonight' : 'Staying tonight'}
-                    {stop.hotel.city ? ` · ${stop.hotel.city}` : ''}
-                  </p>
-                </div>
-              </div>
-            )}
+        {/* Staying here. The room and the board, not just the hotel's name —
+            "Deluxe Double, half board, 2 nights" is what was actually sold. */}
+        {stayHere && hotel && (
+          <div className="rounded-xl ring-1 ring-orange-500/25 bg-gradient-to-br from-orange-500/10 to-amber-500/10 p-3">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-orange-500">
+                <BedDouble className="w-3.5 h-3.5" />
+                {hotel.checkIn ? (guest ? 'Check in' : 'Check-in tonight') : (guest ? 'Your stay' : 'Overnight')}
+              </span>
+              {hotel.nights ? (
+                <span className={cn('text-[10px] font-bold', skin.sheetMuted)}>
+                  {hotel.nights} night{hotel.nights === 1 ? '' : 's'}
+                </span>
+              ) : null}
+            </div>
+            <p className={cn('text-[13px] font-bold leading-snug', skin.sheetTitle)}>{hotel.name}</p>
+            {hotel.city && <p className={cn('text-[10px]', skin.sheetMuted)}>{hotel.city}</p>}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {hotel.roomType && (
+                <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[10px] font-semibold ring-1', skin.glassSolid, skin.sheetBody)}>
+                  <BedDouble className="w-3 h-3 text-orange-500" />{hotel.roomType}
+                </span>
+              )}
+              {(hotel.mealType || place.arrive?.mealPlan) && (
+                <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[10px] font-semibold ring-1', skin.glassSolid, skin.sheetBody)}>
+                  <Utensils className="w-3 h-3 text-emerald-500" />{hotel.mealType || place.arrive?.mealPlan}
+                </span>
+              )}
+              {hotel.checkInDate && hotel.checkOutDate && (
+                <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-[2px] text-[10px] font-semibold ring-1', skin.glassSolid, skin.sheetBody)}>
+                  <CalendarDays className="w-3 h-3" />
+                  {formatDate(hotel.checkInDate)} – {formatDate(hotel.checkOutDate)}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
-            {stop.mealPlan && (
-              <p className={cn('mt-2 inline-flex items-center gap-1 text-[10px]', skin.sheetMuted)}>
-                <Utensils className="w-3 h-3" /> {stop.mealPlan}
-              </p>
-            )}
+        {/* Leaving again — the other half of a place, and the half a strip of
+            movement cards could never show without printing it twice. */}
+        {place.depart && (
+          <div className={cn('rounded-xl ring-1 p-3', skin.glassSolid)}>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className={cn('text-[9px] uppercase tracking-wider font-bold', skin.sheetMuted)}>
+                {guest ? 'Leaving here' : 'Movement out'}
+              </span>
+              {(place.depart.timeFrom || place.depart.meetingTime) && (
+                <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold tabular-nums', skin.sheetMuted)}>
+                  <Clock className="w-3 h-3" />
+                  {place.depart.meetingTime ? `Meet ${place.depart.meetingTime}` : place.depart.timeFrom}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {place.depart.transport && (
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] text-[10px] font-bold leading-none flex-shrink-0"
+                  style={{ background: `${place.depart.transport.hex}1f`, color: place.depart.transport.hex }}
+                >
+                  <span className="text-[12px] leading-none">{place.depart.transport.emoji}</span>
+                  {place.depart.transport.short}
+                </span>
+              )}
+              <ArrowRight className={cn('w-3.5 h-3.5 flex-shrink-0', skin.sheetMuted)} />
+              <span className={cn('min-w-0 text-[11.5px] font-bold leading-snug truncate', skin.sheetTitle)}>
+                {place.depart.toPlace || place.depart.place}
+              </span>
+            </div>
           </div>
         )}
 
         <div>
           <p className={cn('text-[10px] uppercase tracking-wider font-bold mb-1', skin.sheetMuted)}>
-            {stop.flightRole === 'sector'
+            {anchor?.flightRole === 'sector'
               ? (guest ? 'Your flight' : 'Flight sector')
-              : stop.transport
+              : anchor?.transport
                 ? (guest ? 'What happens' : 'On the movement chart')
                 : (guest ? 'On your plan' : 'On the itinerary')}
           </p>
           <p className={cn('text-[12.5px] font-medium leading-snug', skin.strong)}>
-            {stop.description?.trim() || stop.title}
+            {anchor?.description?.trim() || anchor?.title || place.name}
           </p>
-          {!stop.transport && stop.legKm != null && stop.legKm > 0 && (
+          {!anchor?.transport && anchor?.legKm != null && anchor.legKm > 0 && (
             <p className={cn('mt-1.5 inline-flex items-center gap-1 text-[10px] rounded-full px-2 py-0.5', skin.sheetBody, skin.glassSolid)}>
-              <Navigation className="w-3 h-3" /> {stop.legKm.toLocaleString()} km from the previous stop
+              <Navigation className="w-3 h-3" /> {anchor.legKm.toLocaleString()} km from the previous place
             </p>
           )}
         </div>

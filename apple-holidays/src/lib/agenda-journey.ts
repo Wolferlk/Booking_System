@@ -89,6 +89,12 @@ export interface AgendaStopHotel {
   lng: number | null
   /** Set when this row is the night the guests check in to that hotel. */
   checkIn: boolean
+  /** What was booked in the room — the traveller's card names it. */
+  roomType: string | null
+  mealType: string | null
+  nights: number | null
+  checkInDate: string | null
+  checkOutDate: string | null
 }
 
 /**
@@ -244,6 +250,7 @@ export interface AgendaJourneyInput {
   accommodations: {
     id: string; hotel: string; city: string
     checkIn: Date | string; checkOut: Date | string; nights: number
+    roomType?: string | null; mealType?: string | null
   }[]
   /** The booking's flight list. Read only — the source of the sector legs. */
   flights?: {
@@ -569,6 +576,8 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
       checkIn: new Date(a.checkIn).toISOString(),
       checkOut: new Date(a.checkOut).toISOString(),
       nights: a.nights,
+      roomType: a.roomType ?? null,
+      mealType: a.mealType ?? null,
       lat: r?.lat ?? null,
       lng: r?.lng ?? null,
     }
@@ -660,6 +669,11 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
             lat: stay.lat,
             lng: stay.lng,
             checkIn: dayKey(stay.checkIn) === key,
+            roomType: stay.roomType,
+            mealType: stay.mealType,
+            nights: stay.nights,
+            checkInDate: stay.checkIn,
+            checkOutDate: stay.checkOut,
           }
         : null,
       roadPath: null,
@@ -844,6 +858,11 @@ export async function buildAgendaJourney(input: AgendaJourneyInput): Promise<Age
             lat: stay.lat,
             lng: stay.lng,
             checkIn: dayKey(stay.checkIn) === f.date,
+            roomType: stay.roomType,
+            mealType: stay.mealType,
+            nights: stay.nights,
+            checkInDate: stay.checkIn,
+            checkOutDate: stay.checkOut,
           }
         : null,
       roadPath: null,

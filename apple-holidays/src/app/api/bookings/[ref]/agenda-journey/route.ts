@@ -52,7 +52,7 @@ export async function GET(
       },
       accommodations: {
         orderBy: { checkIn: 'asc' },
-        select: { id: true, hotel: true, city: true, checkIn: true, checkOut: true, nights: true },
+        select: { id: true, hotel: true, city: true, checkIn: true, checkOut: true, nights: true, roomType: true, mealType: true },
       },
       // The movement chart books the car to the airport, never the sector in
       // between. The flight list is the only record of an internal hop, and

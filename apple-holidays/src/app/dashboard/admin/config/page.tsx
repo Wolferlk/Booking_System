@@ -9,6 +9,7 @@ import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import AiUsageMonitor from '@/components/settings/ai-usage-monitor'
 import LastMinuteAlertSettings from '@/components/settings/last-minute-alert-settings'
+import JourneyMapCard from '@/components/settings/journey-map-card'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
@@ -41,6 +42,12 @@ interface Settings {
   // Countries that require a guide / tour vendor (JSON array of country codes)
   guide_countries?: string
   tour_vendor_countries?: string
+  // Journey map fly-through — pace and camera, shared by ops and the portal
+  journey_map_speed?: string
+  journey_map_follow_zoom?: string
+  journey_map_cinematic?: string
+  journey_map_auto_open?: string
+  journey_map_portal_fullscreen?: string
 }
 
 /**
@@ -370,6 +377,9 @@ export default function ConfigPage() {
 
         {/* Which countries operate with guides / tour vendors */}
         <PartnerCountriesCard settings={settings} saving={saving} onSave={saveSetting} />
+
+        {/* How the journey map's fly-through plays, for everyone */}
+        <JourneyMapCard settings={settings} saving={saving} onSave={saveSetting} />
 
         {/* Data Mode Toggle */}
         <Card>
