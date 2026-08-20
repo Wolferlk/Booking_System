@@ -322,7 +322,7 @@ function DriverPanel({
               <div><p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Total transport cost</p><p className="font-bold text-white tabular-nums">LKR {amount(totals.totalCost)}</p></div>
               <div><p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Advance</p><p className="font-bold text-white tabular-nums">LKR {amount(totals.advance)}</p></div>
               <div><p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Actually paid</p><p className="font-bold text-emerald-300 tabular-nums">LKR {amount(totals.paid)}</p></div>
-              <div><p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Still owed</p><p className={cn('font-bold tabular-nums', totals.profitLoss > 0.01 ? 'text-amber-300' : 'text-emerald-300')}>LKR {amount(totals.profitLoss)}</p></div>
+              <div><p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Transport P/L</p><p className={cn('font-bold tabular-nums', totals.profitLoss > 0.01 ? 'text-amber-300' : 'text-emerald-300')}>LKR {amount(totals.profitLoss)}</p></div>
             </div>
             {d ? (
               <p className="mt-3 pt-3 border-t border-emerald-500/15 text-[11px] text-slate-400">
@@ -670,7 +670,7 @@ const SORT_LABELS: { value: DriveLogSortField; label: string }[] = [
   { value: 'cost',     label: 'Total cost' },
   { value: 'advance',  label: 'Advance' },
   { value: 'balance',  label: 'Balance payable' },
-  { value: 'profit',   label: 'Still owed' },
+  { value: 'profit',   label: 'Transport P/L' },
 ]
 
 const STAGE_CHIPS: { value: DriveLogStage; label: string }[] = [
@@ -876,8 +876,8 @@ export default function DriveLogPage() {
             icon={BadgeCheck} tone="bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
           />
           <Kpi
-            label="Still owed" value={`LKR ${amount(totals.profitLoss)}`}
-            sub={totals.overpaid ? `${totals.overpaid} overpaid file${totals.overpaid === 1 ? '' : 's'}` : 'cost less what was released'}
+            label="Transport P/L" value={`LKR ${amount(totals.profitLoss)}`}
+            sub={totals.overpaid ? `${totals.overpaid} overpaid file${totals.overpaid === 1 ? '' : 's'}` : 'still owed · cost less what was released'}
             icon={totals.profitLoss > 0.01 ? TrendingUp : TrendingDown}
             tone={totals.profitLoss > 0.01
               ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
@@ -1037,7 +1037,7 @@ export default function DriveLogPage() {
                   <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="The rest payment: total cost less the advance">Balance payable</th>
                   <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Of the envelope, what has actually been handed over">Advance paid</th>
                   <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Of the rest payment, what the accounts team has released">Paid balance</th>
-                  <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Total cost less (advance paid + paid balance)">Still owed</th>
+                  <th className="px-3 py-2.5 text-right text-[10px] uppercase tracking-wider text-slate-500 font-black" title="Transport P/L — total cost less (advance paid + paid balance). Positive: still owed to the driver. Negative: the driver has been paid more than the booking costed.">Transport P/L</th>
                   <th className="px-3 py-2.5 text-left text-[10px] uppercase tracking-wider text-slate-500 font-black">Settlement</th>
                 </tr>
               </thead>

@@ -54,14 +54,35 @@ export interface DriveLogResult {
   today: string
 }
 
-/** Runs a decoration under a budget; a failure is a `null`, never a throw. */
+/**
+ * Runs a decoration under a budget; a failure is a `null`, never a throw.
+ *
+ * The rejection is caught on `work` itself rather than on the race, because a
+ * query that loses the race and fails *afterwards* would otherwise reject with
+ * nobody listening — an unhandled rejection that takes the whole server process
+ * down on Node's default policy, over a supplier database being slow.
+ *
+ * The timer is cleared on the way out so a fast read does not hold the event
+ * loop open for the rest of the budget.
+ */
 async function settled<T>(work: Promise<T>, label: string): Promise<T | null> {
-  const timeout = new Promise<null>(resolve => setTimeout(() => resolve(null), ACCOUNTS_BUDGET_MS))
-  try {
-    return await Promise.race([work, timeout])
-  } catch (err) {
+  const guarded = work.catch((err: unknown) => {
     console.error(`[drive-log] ${label} skipped (non-fatal):`, err)
     return null
+  })
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<null>(resolve => {
+    timer = setTimeout(() => {
+      console.error(`[drive-log] ${label} exceeded ${ACCOUNTS_BUDGET_MS}ms — showing the page without it`)
+      resolve(null)
+    }, ACCOUNTS_BUDGET_MS)
+  })
+
+  try {
+    return await Promise.race([guarded, timeout])
+  } finally {
+    clearTimeout(timer)
   }
 }
 

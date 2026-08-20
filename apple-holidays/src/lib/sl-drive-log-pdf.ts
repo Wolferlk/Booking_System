@@ -178,7 +178,7 @@ export async function buildDriveLogPdf(
   <div class="kpi"><div class="k">Driver advance</div><div class="v">${m(totals.advance)}</div></div>
   <div class="kpi"><div class="k">Balance payable</div><div class="v">${m(totals.balancePayable)}</div></div>
   <div class="kpi"><div class="k">Actually paid</div><div class="v">${m(totals.paid)}</div></div>
-  <div class="kpi"><div class="k">Still owed</div><div class="v">${m(totals.profitLoss)}</div></div>
+  <div class="kpi"><div class="k">Transport P/L</div><div class="v">${m(totals.profitLoss)}</div></div>
   <div class="kpi"><div class="k">Client invoiced</div><div class="v">USD ${m(totals.invoiceUsd)}</div></div>
 </div>
 
@@ -187,7 +187,7 @@ export async function buildDriveLogPdf(
     <th>IS / CNTL</th><th>Arrival / Client</th><th>Driver</th>
     <th class="num">Invoice</th>
     <th class="num">Total cost</th><th class="num">Advance</th><th class="num">Balance payable</th>
-    <th class="num">Advance paid</th><th class="num">Paid balance</th><th class="num">Still owed</th>
+    <th class="num">Advance paid</th><th class="num">Paid balance</th><th class="num">Transport P/L</th>
   </tr></thead>
   <tbody>
     ${dayBlocks || '<tr><td colspan="10" class="muted">No bookings in this window.</td></tr>'}
@@ -208,7 +208,7 @@ export async function buildDriveLogPdf(
   <thead><tr>
     <th>Driver</th><th>Bank</th><th class="num">Files</th>
     <th class="num">Total cost</th><th class="num">Advance</th>
-    <th class="num">Advance paid</th><th class="num">Paid balance</th><th class="num">Still owed</th>
+    <th class="num">Advance paid</th><th class="num">Paid balance</th><th class="num">Transport P/L</th>
   </tr></thead>
   <tbody>${driverRows || '<tr><td colspan="8" class="muted">Nothing to summarise.</td></tr>'}</tbody>
 </table>

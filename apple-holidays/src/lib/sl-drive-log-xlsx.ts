@@ -136,7 +136,7 @@ export function buildDriveLogWorkbook(
     [`${windowLabel(q)} · one line per driver, LKR`],
     [],
     ['Driver', 'Phone', 'Vehicle', 'Bank Details', 'Bookings',
-     'Total Cost', 'Advance', 'Balance Payable', 'Advance Paid', 'Actual Paid Balance', 'Still Owed'],
+     'Total Cost', 'Advance', 'Balance Payable', 'Advance Paid', 'Actual Paid Balance', 'Transport P/L'],
     ...byDriver.map(g => {
       const first = g.rows[0]
       return [
@@ -176,7 +176,7 @@ export function buildDriveLogWorkbook(
     ['Exceptions'],
     ['Bookings in this window that need a decision before the driver can be paid.'],
     [],
-    ['IS Number', 'Arrival', 'Client', 'Driver', 'Total Cost', 'Advance', 'Still Owed', 'Why'],
+    ['IS Number', 'Arrival', 'Client', 'Driver', 'Total Cost', 'Advance', 'Transport P/L', 'Why'],
     ...exceptions.map(r => [
       r.isNumber ?? r.bookingRef, formatDay(r.arrivalDate), r.clientName ?? '',
       r.driver?.name ?? '', cell(r.settlement.totalCost), cell(r.settlement.advance),
