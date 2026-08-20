@@ -223,6 +223,141 @@ export function airport(code: string | null | undefined): AirportRef | null {
   return AIRPORTS[code.trim().toUpperCase()] ?? null
 }
 
+// ─── Airports by the names people actually type ────────────────────────────
+//
+// Movement charts and itineraries do not write IATA codes; they write
+// "Bandaranaike International Airport" or "Colombo Airport". Geocoding those as
+// prose is where airports end up in the wrong place — "Colombo Airport,
+// Colombo" resolves to *Ratmalana*, the city's other airfield 40 km south of
+// the runway a guest actually lands on, and "Bandaranaike International
+// Airport, Colombo" resolves to nothing at all because the field is in
+// Katunayake. An airport is a fixed, known point; it should never be a search.
+
+/**
+ * Proper names, as they appear on tickets and charts. Only airports whose real
+ * name is commonly typed instead of the city — the city fallback below covers
+ * the rest.
+ */
+const AIRPORT_NAME_ROWS: [alias: string, iata: string][] = [
+  // Sri Lanka
+  ['bandaranaike', 'CMB'], ['katunayake airport', 'CMB'], ['bia', 'CMB'],
+  ['mattala', 'HRI'], ['mattala rajapaksa', 'HRI'], ['ratmalana', 'RML'],
+  ['palaly', 'JAF'], ['china bay', 'TRR'],
+  // Vietnam
+  ['noi bai', 'HAN'], ['tan son nhat', 'SGN'], ['tan son nhut', 'SGN'],
+  ['cam ranh', 'CXR'], ['cat bi', 'HPH'], ['phu bai', 'HUI'],
+  ['duong dong', 'PQC'], ['lien khuong', 'DLI'], ['van don', 'VDO'],
+  ['phu cat', 'UIH'], ['tra noc', 'VCA'], ['vinh city', 'VII'],
+  // Singapore / Malaysia
+  ['changi', 'SIN'], ['seletar', 'XSP'],
+  ['klia', 'KUL'], ['kuala lumpur international', 'KUL'], ['sepang airport', 'KUL'],
+  ['subang', 'SZB'], ['sultan abdul aziz shah', 'SZB'],
+  ['bayan lepas', 'PEN'], ['sultan abdul halim', 'LGK'],
+  ['senai', 'JHB'], ['sultan ismail airport', 'JHB'],
+  // Thailand / Indochina
+  ['suvarnabhumi', 'BKK'], ['don mueang', 'DMK'], ['don muang', 'DMK'],
+  ['mai khao', 'HKT'], ['siem reap angkor', 'SAI'], ['angkor international', 'REP'],
+  ['wattay', 'VTE'], ['pochentong', 'PNH'],
+  // South Asia
+  ['indira gandhi', 'DEL'], ['chhatrapati shivaji', 'BOM'],
+  ['kempegowda', 'BLR'], ['meenambakkam', 'MAA'],
+  ['netaji subhas', 'CCU'], ['rajiv gandhi', 'HYD'],
+  ['cochin international', 'COK'], ['kochi international', 'COK'],
+  ['trivandrum international', 'TRV'], ['sardar vallabhbhai patel', 'AMD'],
+  ['dabolim', 'GOI'], ['manohar international', 'GOX'], ['mopa', 'GOX'],
+  ['velana', 'MLE'], ['ibrahim nasir', 'MLE'], ['male international', 'MLE'],
+  ['tribhuvan', 'KTM'], ['hazrat shahjalal', 'DAC'], ['jinnah international', 'KHI'],
+  ['allama iqbal', 'LHE'], ['islamabad international', 'ISB'],
+  // Gulf
+  ['al maktoum', 'DWC'], ['zayed international', 'AUH'], ['hamad international', 'DOH'],
+  ['king abdulaziz', 'JED'], ['king khalid', 'RUH'], ['ben gurion', 'TLV'],
+  // East Asia / Oceania
+  ['chek lap kok', 'HKG'], ['taoyuan', 'TPE'], ['pudong', 'PVG'], ['hongqiao', 'SHA'],
+  ['daxing', 'PKX'], ['baiyun', 'CAN'], ['bao an', 'SZX'], ['tianfu', 'CTU'],
+  ['narita', 'NRT'], ['haneda', 'HND'], ['kansai', 'KIX'], ['chubu centrair', 'NGO'],
+  ['incheon', 'ICN'], ['gimpo', 'GMP'], ['gimhae', 'PUS'],
+  ['kingsford smith', 'SYD'], ['tullamarine', 'MEL'], ['soekarno hatta', 'CGK'],
+  ['ngurah rai', 'DPS'], ['denpasar', 'DPS'], ['ninoy aquino', 'MNL'],
+  // Europe / Africa
+  ['heathrow', 'LHR'], ['gatwick', 'LGW'], ['stansted', 'LTN'],
+  ['charles de gaulle', 'CDG'], ['roissy', 'CDG'], ['schiphol', 'AMS'],
+  ['fiumicino', 'FCO'], ['malpensa', 'MXP'], ['barajas', 'MAD'], ['el prat', 'BCN'],
+  ['zaventem', 'BRU'], ['kastrup', 'CPH'], ['arlanda', 'ARN'], ['gardermoen', 'OSL'],
+  ['vantaa', 'HEL'], ['chopin airport', 'WAW'], ['vaclav havel', 'PRG'],
+  ['jomo kenyatta', 'NBO'], ['or tambo', 'JNB'], ['bole international', 'ADD'],
+  ['sir seewoosagur', 'MRU'],
+]
+
+/**
+ * Words that make a string an airport rather than the town it is named after.
+ *
+ * Two strengths, and the difference matters. The strict one is the only thing
+ * allowed to turn a *city* into its airport, because "international" is in the
+ * name of every third hotel in Asia — "Hotel International Colombo" is a bed,
+ * not a runway. The loose one only ever unlocks a code that was already typed
+ * as a code.
+ */
+const AIRPORT_WORD_STRICT = /\b(airport|airfield|aerodrome)\b/i
+const AIRPORT_WORD = /\b(airport|airfield|aerodrome|intl|international|terminal)\b/i
+
+/** One normaliser for every fuzzy match in this file — airports and towns alike. */
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
+const AIRPORT_NAMES: [alias: string, iata: string][] = AIRPORT_NAME_ROWS.map(([alias, iata]) => [norm(alias), iata])
+
+/**
+ * The field a city means when someone writes "<city> airport".
+ *
+ * First row wins, and the table is ordered with the primary field first — so
+ * "Colombo Airport" is Bandaranaike and not Ratmalana, "Bangkok Airport" is
+ * Suvarnabhumi and not Don Mueang.
+ */
+const PRIMARY_BY_CITY: [city: string, iata: string][] = []
+AIRPORT_ROWS.forEach(([iata, , , city]) => {
+  const k = norm(city)
+  if (!PRIMARY_BY_CITY.some(([c]) => c === k)) PRIMARY_BY_CITY.push([k, iata])
+})
+
+/**
+ * Resolve free-typed text to a real airport, offline.
+ *
+ * Three passes, most specific first: a proper name we know, an IATA code
+ * written as a code, then "<city> + an airport word". Returns null for anything
+ * that is not clearly an airport — a hotel in Katunayake and the town of Can
+ * Tho both have to come back empty, or this does more damage than the geocoder
+ * it replaces.
+ */
+export function airportByName(text: string | null | undefined): AirportRef | null {
+  if (!text) return null
+  const raw = String(text)
+  const hay = ` ${norm(raw)} `
+  if (hay.trim().length === 0) return null
+
+  for (const [alias, iata] of AIRPORT_NAMES) {
+    if (hay.includes(` ${alias} `)) return AIRPORTS[iata] ?? null
+  }
+
+  // An IATA code, but only where it is written as one: upper-case in the
+  // original, and either standing alone or next to an airport word. Without
+  // that guard "Can Tho" is Guangzhou and "Hotel Rex, HAN" is a coin toss.
+  const airporty = AIRPORT_WORD.test(raw)
+  const tokens = raw.toUpperCase().match(/(?:^|[^A-Z])([A-Z]{3})(?![A-Z])/g) ?? []
+  if (airporty || norm(raw).length <= 3) {
+    for (const t of tokens) {
+      const code = t.replace(/[^A-Z]/g, '')
+      // Case matters: the code has to be upper-case where it was typed.
+      if (!new RegExp(`(^|[^A-Za-z])${code}([^A-Za-z]|$)`).test(raw)) continue
+      if (AIRPORTS[code]) return AIRPORTS[code]
+    }
+  }
+
+  if (!AIRPORT_WORD_STRICT.test(raw)) return null
+  for (const [city, iata] of PRIMARY_BY_CITY) {
+    if (hay.includes(` ${city} `)) return AIRPORTS[iata] ?? null
+  }
+  return null
+}
+
 // ─── Places we operate in ──────────────────────────────────────────────────
 //
 // Matched against free-typed movement-chart text, so the list carries the names
@@ -368,9 +503,6 @@ const CITIES: CityRef[] = CITY_ROWS
   .map(([name, lat, lng, country]) => ({ name, lat, lng, country }))
   .sort((a, b) => b.name.length - a.name.length)
 
-const normalise = (s: string) =>
-  s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-
 /**
  * Best-effort place resolve for free-typed movement-chart text.
  *
@@ -380,11 +512,11 @@ const normalise = (s: string) =>
  */
 export function place(text: string | null | undefined, country?: OpCountry | null): CityRef | null {
   if (!text) return null
-  const hay = ` ${normalise(text)} `
+  const hay = ` ${norm(text)} `
   if (hay.trim().length === 0) return null
   for (const c of CITIES) {
     if (country && c.country !== country) continue
-    if (hay.includes(` ${normalise(c.name)} `) || hay.includes(normalise(c.name))) return c
+    if (hay.includes(` ${norm(c.name)} `) || hay.includes(norm(c.name))) return c
   }
   return null
 }

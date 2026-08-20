@@ -16,6 +16,7 @@
  *     file would otherwise stall the panel for half a minute.
  */
 import openai, { logAiUsage } from '@/lib/openai'
+import { airportByName } from '@/lib/ops-geo'
 
 const UA = 'AppleHolidays-Ops/1.0 (+https://aahaas.com)'
 const MODEL = process.env.OPENAI_JOURNEY_MODEL || 'gpt-4o-mini'
@@ -242,11 +243,18 @@ export async function buildJourney(input: JourneyInput): Promise<Journey> {
     const modelOk = Number.isFinite(lat) && Number.isFinite(lng) &&
       Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0)
 
+    // An airport is a fixed point and never a search — see `airportByName`.
+    // Arrival and departure days name one almost every time, and geocoding it
+    // as prose is what puts a guest's landing 40 km from the runway.
+    const apt = airportByName(place)
+
     // Refine with OSM. Cached places are free; a cold miss costs one 4s-capped
     // request, and we only pay it when the model gave us nothing usable.
     const cacheKey = `${place}, ${m.city ?? ''}|${country ?? ''}`.toLowerCase()
     const cached = geoCache.get(cacheKey)
-    if (cached || !modelOk) {
+    if (apt) {
+      lat = apt.lat; lng = apt.lng; source = 'osm'
+    } else if (cached || !modelOk) {
       const geo = cached ?? await nominatim(`${place}${m.city ? `, ${m.city}` : ''}`, country)
       if (geo) { lat = geo.lat; lng = geo.lng; source = 'osm' }
     }
@@ -261,9 +269,9 @@ export async function buildJourney(input: JourneyInput): Promise<Journey> {
       title: d.title,
       description: d.description,
       place,
-      city: (m.city ?? '').trim() || null,
-      country: country ?? null,
-      kind: coerceKind(m.kind),
+      city: apt?.city ?? ((m.city ?? '').trim() || null),
+      country: apt?.country ?? (country ?? null),
+      kind: apt ? 'flight' : coerceKind(m.kind),
       lat, lng, source,
       legKm: prev ? haversineKm(prev, { lat, lng }) : null,
     })
