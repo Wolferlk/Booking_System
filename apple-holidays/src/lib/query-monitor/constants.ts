@@ -62,6 +62,18 @@ export const SETTINGS = {
   dailyStatsSheetName: 'query_monitor_daily_stats_sheet_name',
   /** How many days the daily counts cover, newest first. */
   dailyStatsDays:     'query_monitor_daily_stats_days',
+  /** Worksheet tab every collected mail is rewritten onto, unfiltered. */
+  allMailsSheetName:  'query_monitor_all_mails_sheet_name',
+  /** How many days of mail that tab covers, newest first. */
+  allMailsDays:       'query_monitor_all_mails_days',
+  /** Rewrite the all-mail tab at the end of every sweep. */
+  allMailsAutoWrite:  'query_monitor_all_mails_auto_write',
+  /**
+   * Set once the raw-mail log has been seeded from the entries that existed
+   * before it did. See `backfillMailLog` — the tab would otherwise start on the
+   * day the log was switched on and show nothing behind it.
+   */
+  allMailsBackfilled: 'query_monitor_all_mails_backfilled',
   /** Rewrite the daily counts tab at the end of every sweep. */
   dailyStatsAutoWrite: 'query_monitor_daily_stats_auto_write',
   /** Paint a query's row green once it has been answered. */
@@ -153,6 +165,9 @@ export const DEFAULTS = {
   dailyStatsSheetName: 'Daily Mail Stats',
   dailyStatsDays:      '30',
   dailyStatsAutoWrite: 'true',
+  allMailsSheetName:   'All Mails',
+  allMailsDays:        '30',
+  allMailsAutoWrite:   'true',
   highlightReplied:    'true',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
@@ -354,6 +369,85 @@ export const DAILY_STATS_NUMBER_FORMATS = [
   '#,##0',                // H Answered by them
   '0%',                   // I Reply rate
 ] as const
+
+// ── Fourth tab: every mail, unfiltered ───────────────────────────────────────
+
+/**
+ * The "All Mails" tab: **one row per message that reached a monitored mailbox,
+ * with nothing filtered out and nothing folded away.**
+ *
+ * The other three tabs each answer a narrower question, and all three of them
+ * hide mail on purpose — the query sheet folds a chaser into the row its thread
+ * already owns, the other-mail tab holds only what the exclusion patterns
+ * diverted, and neither has ever seen internal or automated mail, which the
+ * sweep discards at the mailbox. This tab is the raw ledger underneath all of
+ * that: every mail, once, in the order it arrived.
+ *
+ * The columns are the query sheet's, minus the three that only mean anything on
+ * a query — Replied time, Sales Person and Destination. Everything a mail's
+ * thread knows (status, SLA, reply detail, summaries) is filled in from the
+ * entry it belongs to; a mail that never became an entry carries its identity in
+ * Status and leaves those columns blank.
+ *
+ * Like the daily counts and the AI usage report and unlike the two query tabs,
+ * this one is entirely the app's: every export clears it and lays it out again,
+ * because a status on it moves whenever a reply lands.
+ */
+export const ALL_MAILS_SHEET_COLUMNS = [
+  'Date', 'Status', 'Subject', 'Allocation time', 'File Handler',
+  'From', 'From Email', 'TO List', 'Agent', 'Travel Date', 'CNTL',
+  'Amendment', 'Region', 'Replied By', 'Response (hrs)', 'SLA',
+  'Mails in Thread', 'Last Mail', 'AI Summary', 'Replied By Email',
+  'Replied To', 'Reply Type', 'Forward Chain', 'Reply Summary',
+  'Duplicate Reason',
+] as const
+
+export const ALL_MAILS_FIRST_COLUMN = 'A'
+export const ALL_MAILS_LAST_COLUMN  = 'Y'
+
+export const ALL_MAILS_NUMBER_FORMATS = [
+  '[$-en-US]dd-mmm-yy;@', // A Date
+  'General',              // B Status
+  'General',              // C Subject
+  'm/d/yyyy h:mm',        // D Allocation time
+  'General',              // E File Handler
+  'General',              // F From
+  'General',              // G From Email
+  'General',              // H TO List
+  'General',              // I Agent
+  'm/d/yyyy',             // J Travel Date
+  'General',              // K CNTL
+  'General',              // L Amendment
+  'General',              // M Region
+  'General',              // N Replied By
+  '0.00',                 // O Response (hrs) — a real number, so it averages
+  'General',              // P SLA
+  '0',                    // Q Mails in Thread
+  'm/d/yyyy h:mm',        // R Last Mail
+  'General',              // S AI Summary
+  'General',              // T Replied By Email
+  'General',              // U Replied To
+  'General',              // V Reply Type
+  'General',              // W Forward Chain
+  'General',              // X Reply Summary
+  'General',              // Y Duplicate Reason
+] as const
+
+/**
+ * Column B on that tab — what this mail *is*, which on a raw ledger has to say
+ * more than a reply status can.
+ *
+ * A query's row shows where it stands (Replied / Pending / Overdue). Everything
+ * else shows why it is not a query: it chased a thread that already has a row,
+ * an exclusion pattern diverted it, or the sweep never took it on at all.
+ */
+export const ALL_MAILS_STATUS = {
+  FOLLOW_UP: 'Follow-up',
+  EXCLUDED:  'Other mail',
+  INTERNAL:  'Internal',
+  AUTOMATED: 'Automated',
+  UNTRACKED: 'Not tracked',
+} as const
 
 // ── Domain ignore list ───────────────────────────────────────────────────────
 

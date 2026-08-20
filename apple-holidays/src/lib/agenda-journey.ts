@@ -22,6 +22,7 @@ import openai, { logAiUsage } from '@/lib/openai'
 import { geoCache, nominatim, haversineKm, type StopKind, type JourneyHotel } from '@/lib/journey-map'
 import { roadLegs } from '@/lib/road-route'
 import { serviceTypeLabel, serviceTypeShortLabel } from '@/lib/service-types'
+import { airportByName } from '@/lib/ops-geo'
 
 const MODEL = () => process.env.OPENAI_JOURNEY_MODEL || 'gpt-4o-mini'
 
@@ -383,6 +384,33 @@ async function resolvePlaces(
     const place = String(m.place ?? '').trim() || q
     const city = String(m.city ?? '').trim() || null
     const country = String(m.country ?? '').trim() || countryHint
+
+    /**
+     * An airport is a fixed point, so it is never a search.
+     *
+     * Geocoding one as prose is where they end up in the wrong place:
+     * "Colombo Airport, Colombo, Sri Lanka" resolves to *Ratmalana*, the city's
+     * other airfield 40 km from the runway anybody lands on, and "Bandaranaike
+     * International Airport, Colombo" resolves to nothing at all — the field is
+     * in Katunayake, not Colombo. The offline gazetteer knows both, so where it
+     * recognises the string it wins outright, over the model and over OSM.
+     */
+    const apt = airportByName(q) ?? airportByName(place)
+    if (apt) {
+      map.set(q.toLowerCase(), {
+        // The model's name is usually the airport's full proper name, which is
+        // better label text than "CMB airport" — but only when it really named
+        // the airport rather than the town it serves.
+        place: /\b(airport|airfield|aerodrome)\b/i.test(place) ? place : `${apt.city} International Airport`,
+        city: apt.city,
+        country: apt.country,
+        kind: 'flight',
+        lat: apt.lat,
+        lng: apt.lng,
+        source: 'osm',
+      })
+      continue
+    }
 
     let lat = Number(m.lat)
     let lng = Number(m.lng)

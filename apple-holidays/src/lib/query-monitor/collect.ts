@@ -28,7 +28,22 @@ export interface MonitoredMessage {
    * the mail is read out of a member's inbox and the group is recognised here.
    */
   recipients:        string[]
+  /**
+   * Null on the mail the query pipeline works with. Otherwise why this message
+   * is not an inbound agent query: INTERNAL (our own tenant) or AUTOMATED
+   * (noreply addresses, mailer daemons, tenant notifications).
+   *
+   * Such mail used to be dropped inside `fetchInboxSince` and never seen again.
+   * It is carried out instead so the raw mail log can record it — the "All
+   * Mails" tab is the one place in this system where *everything* that landed in
+   * a monitored inbox has to appear. Callers that want queries only filter on
+   * this being null, which is exactly what the sweep does.
+   */
+  skipReason:        SkipReason | null
 }
+
+/** Why a message is not an inbound agent query. See `MonitoredMessage.skipReason`. */
+export type SkipReason = 'INTERNAL' | 'AUTOMATED'
 
 interface GraphRecipient { emailAddress?: { address?: string; name?: string } }
 
@@ -107,18 +122,35 @@ export function domainOf(address: string): string {
   return at === -1 ? '' : address.slice(at + 1).toLowerCase().trim()
 }
 
+/**
+ * Why this sender is not a customer query, or null if it might be.
+ *
+ * An address with no `@` in it at all is treated as automated: it is a
+ * system-generated envelope rather than a person, and it is the only case here
+ * that is about the address being malformed rather than about who owns it.
+ */
+export function skipReasonFor(address: string): SkipReason | null {
+  const lower = address.toLowerCase()
+  if (!lower.includes('@')) return 'AUTOMATED'
+  if (IGNORED_SENDER_PATTERNS.some(p => lower.includes(p))) return 'AUTOMATED'
+  return INTERNAL_DOMAINS.includes(domainOf(lower)) ? 'INTERNAL' : null
+}
+
 /** Automated senders and our own staff are not customer queries. */
 export function isIgnorableSender(address: string): boolean {
-  const lower = address.toLowerCase()
-  if (!lower.includes('@')) return true
-  if (IGNORED_SENDER_PATTERNS.some(p => lower.includes(p))) return true
-  return INTERNAL_DOMAINS.includes(domainOf(lower))
+  return skipReasonFor(address) !== null
 }
 
 /**
- * Inbox messages received since `since`. External senders only — the sweep is
- * about inbound agent queries, so internal chatter is dropped at the source
- * rather than filling the entries table.
+ * Inbox messages received since `since` — **every one of them**, each carrying
+ * its own `skipReason`.
+ *
+ * This used to return external senders only, dropping internal chatter and
+ * automated mail here at the source so it never reached the entries table. It
+ * still must never reach the entries table, and the sweep still filters on
+ * exactly that; but the mail has to be *seen* first, because the raw mail log
+ * behind the "All Mails" tab is meant to hold everything that arrived. Dropping
+ * it here would mean a second read of every inbox to get it back.
  */
 export async function fetchInboxSince(
   mailboxEmail: string, since: Date, limit = 200,
@@ -150,9 +182,9 @@ export async function fetchInboxSince(
         hasAttachments:    msg.hasAttachments ?? false,
         folder:            'Inbox',
         recipients:        recipientsOf(msg),
+        skipReason:        skipReasonFor(address),
       }
     })
-    .filter(m => m.fromAddress && !isIgnorableSender(m.fromAddress))
 }
 
 /**

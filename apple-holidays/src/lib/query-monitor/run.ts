@@ -42,7 +42,12 @@ import {
   reassignThreadEvents, recordThreadEvent, rollUpEntry, timelineLines,
   type Directory, type EventKind, type ThreadRollUp,
 } from './thread-events'
+import {
+  REPLY_TYPE_SHEET_LABEL, responseHours, slaOutcome, threadMailCount,
+} from './row-fields'
+import { recordMailLog, type LoggedMail } from './mail-log'
 import { exportDailyStatsToSheet } from './daily-stats-sheet'
+import { exportAllMailsToSheet } from './all-mails-sheet'
 import {
   EXCLUDED_LAYOUT, QUERY_LAYOUT, appendExcludedRows, appendRows, closeSession,
   deleteRowsAt, ensureWorksheet, findLastDataRow, layoutFor, openSession, readValuesRange,
@@ -471,35 +476,10 @@ function ledgerPatch(ledger: ThreadRollUp) {
 
 // ── Sheet row assembly ───────────────────────────────────────────────────────
 
-/**
- * How long the team took to answer, in hours to two decimals.
- *
- * A number, not "2h 15m": the column exists so the team can average it and sort
- * on it, which text cannot do. Blank while the query is still open — a zero
- * there would drag every average down and read as "answered instantly".
- */
-export function responseHours(receivedAt: Date, repliedAt: Date | null): number | '' {
-  if (!repliedAt) return ''
-  const hours = (repliedAt.getTime() - receivedAt.getTime()) / 3_600_000
-  // Clock skew between Graph's received and sent stamps can put a fast reply a
-  // hair before the mail it answers; floor at zero rather than show a negative.
-  return Number(Math.max(0, hours).toFixed(2))
-}
-
-/**
- * Met / Missed, which the Status column cannot say.
- *
- * Status is where the query stands *now* — Replied, Pending, Overdue. This is
- * whether the SLA was honoured, and the two come apart on exactly the row that
- * matters: a query answered six hours late reads "Replied" forever, and only
- * this column remembers that it was late.
- */
-export function slaOutcome(
-  receivedAt: Date, repliedAt: Date | null, slaHours: number,
-): string {
-  if (!repliedAt) return ''
-  return repliedAt.getTime() - receivedAt.getTime() <= slaHours * 3_600_000 ? 'Met' : 'Missed'
-}
+// The four derivations every row builder shares now live in row-fields.ts — the
+// all-mail ledger needs the same answers and cannot import this module back.
+// Re-exported here because they were part of this module's surface first.
+export { responseHours, slaOutcome, threadMailCount } from './row-fields'
 
 export function buildSheetRow(
   entry: QueryMonitorEntry, writeStatus: boolean, slaHours = 2,
@@ -550,27 +530,6 @@ export function buildSheetRow(
     // Why this row is the one that survived, when others folded into it.
     duplicateReason: entry.duplicateReason ?? '',
   }
-}
-
-/**
- * How many mails this row stands for — theirs and ours.
- *
- * Rows written before the ledger existed have an empty one, and `inboundCount`
- * defaults to 1 on every one of them. So the old counter is kept as a floor: a
- * row that folded in four chasers last week still says five, not one, and starts
- * counting our side of the conversation from the next mail that lands.
- */
-export function threadMailCount(entry: {
-  inboundCount: number; outboundCount: number; followUpCount: number
-}): number {
-  return Math.max(entry.inboundCount + entry.outboundCount, entry.followUpCount + 1)
-}
-
-/** Column Y, in the team's words rather than the database's. */
-const REPLY_TYPE_SHEET_LABEL: Record<string, string> = {
-  DIRECT:   'Direct reply',
-  FORWARD:  'Forwarded on',
-  INTERNAL: 'Internal only',
 }
 
 /** The same entry as a row on the second tab. */
@@ -755,13 +714,44 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
     }
 
     const groups = new Map<string, MessageGroup>()
+    /**
+     * Every message read this sweep, keyed the same way the entries are — the
+     * raw ledger behind the "All Mails" tab. Internal and automated mail is in
+     * here and in nothing else: `groups` below holds only what can be a query.
+     */
+    const allMail = new Map<string, LoggedMail>()
     /** mailboxId → that handler's Sent Items over the chase window. */
     const sentIndexes = new Map<string, SentIndex>()
 
     for (const mailbox of mailboxes) {
       try {
-        const messages = await fetchInboxSince(mailbox.email, windowFrom)
+        const inbox = await fetchInboxSince(mailbox.email, windowFrom)
         counters.mailboxesScanned += 1
+
+        // The log takes the lot, before anything is filtered. A mail seen in a
+        // second inbox grows the row's TO list rather than taking a row of its
+        // own — the same rule the query sheet follows, for the same reason.
+        for (const message of inbox) {
+          const key = dedupKeyFor(message)
+          const logged = allMail.get(key)
+          if (logged) {
+            if (!logged.handlerNames.includes(mailbox.displayName)) {
+              logged.handlerNames.push(mailbox.displayName)
+            }
+            if (message.receivedAt < logged.message.receivedAt) logged.message = message
+          } else {
+            allMail.set(key, { dedupKey: key, message, handlerNames: [mailbox.displayName] })
+          }
+        }
+
+        // What the query pipeline may work with: external senders only. This is
+        // the filter `fetchInboxSince` used to apply itself, moved out one step
+        // so the mail it rejects can still be written down above.
+        const messages = inbox.filter(m => m.fromAddress && !m.skipReason)
+        // Still the external count, not `inbox.length`. The run stat has meant
+        // "mail the sweep had to consider" since the first sweep and the team
+        // reads it against `entriesCreated`; the wider number is in the log line
+        // below, where it is new information rather than a redefinition.
         counters.messagesSeen += messages.length
 
         // Sent Items across the chase window, so replies to older still-open
@@ -817,9 +807,10 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           },
         })
 
-        log.add('info', `${mailbox.email} — ${messages.length} external message(s)`, {
-          mailbox: mailbox.email, count: messages.length,
-        })
+        log.add('info',
+          `${mailbox.email} — ${inbox.length} message(s), ${messages.length} of them external`, {
+            mailbox: mailbox.email, count: messages.length, seen: inbox.length,
+          })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         log.add('error', `${mailbox.email} — mailbox read failed: ${msg}`, { mailbox: mailbox.email })
@@ -850,6 +841,27 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
       }).catch(() => {})
 
       log.add('info', `${alias.displayName} (group) — on ${seen.length} of this window's mail(s)`)
+    }
+
+    // The groups belong on the ledger's TO lists too — a mail addressed to
+    // availcheck@ reached availcheck@ whether or not it became a query.
+    for (const logged of Array.from(allMail.values())) {
+      for (const handler of aliasHandlersFor(logged.message, aliases)) {
+        if (!logged.handlerNames.includes(handler.handlerName)) {
+          logged.handlerNames.push(handler.handlerName)
+        }
+      }
+    }
+
+    // Written before the entries are, and never able to fail the sweep: the
+    // ledger is a record *of* this run's reading, not a step in it.
+    try {
+      const logged = await recordMailLog(Array.from(allMail.values()), run.id)
+      log.add(logged.failed === 0 ? 'info' : 'warn',
+        `Mail log — ${logged.written} message(s) recorded`
+        + (logged.failed > 0 ? `, ${logged.failed} could not be` : ''))
+    } catch (err) {
+      log.add('warn', `Mail log not updated: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     log.add('info', `${groups.size} unique quer${groups.size === 1 ? 'y' : 'ies'} after dedup across handlers`)
@@ -1143,6 +1155,24 @@ export async function runQueryMonitorSweep(options: RunOptions = {}): Promise<Ru
           + `(${stats.stats.totals.total} mails, ${stats.stats.totals.useful} useful, ${stats.stats.totals.other} other)`)
       } catch (err) {
         log.add('warn', `Daily counts not updated: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+
+    // ── 6. Rewrite the all-mail ledger ──────────────────────────────────────
+    // Last for the same reason as the daily counts, and just as unable to fail
+    // the sweep: it is a report about the mail this run read, and a workbook
+    // that refuses it must not cost the rows that did land.
+    if (config.allMailsAutoWrite) {
+      try {
+        const all = await exportAllMailsToSheet()
+        const primary = all.workbooks.find(w => w.target === 'primary')
+        const t = all.report.totals
+        log.add('info',
+          `"${all.sheetName}" rewritten — ${primary?.rows ?? 0} mail(s) over ${all.days} days `
+          + `(${t.queries} queries, ${t.followUps} follow-ups, ${t.other} other, `
+          + `${t.internal} internal, ${t.automated} automated)`)
+      } catch (err) {
+        log.add('warn', `All-mail tab not updated: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 
