@@ -37,6 +37,12 @@ export interface QueryMonitorConfig {
   dailyStatsDays:      number
   /** Rewrite the daily counts at the end of every sweep. */
   dailyStatsAutoWrite: boolean
+  /** Tab every collected mail is rewritten onto, unfiltered — also the app's. */
+  allMailsSheetName:   string
+  /** How many days of mail that tab covers, newest first. */
+  allMailsDays:        number
+  /** Rewrite the all-mail tab at the end of every sweep. */
+  allMailsAutoWrite:   boolean
   /** Paint a query's row green in the workbook once it has been answered. */
   highlightReplied:    boolean
   /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
@@ -109,6 +115,13 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     // mailboxes is a report nobody reads and a payload that times the write out.
     dailyStatsDays:      Math.min(180, Math.max(1, num(SETTINGS.dailyStatsDays, DEFAULTS.dailyStatsDays))),
     dailyStatsAutoWrite: bool(SETTINGS.dailyStatsAutoWrite, DEFAULTS.dailyStatsAutoWrite),
+    allMailsSheetName:   str(SETTINGS.allMailsSheetName, DEFAULTS.allMailsSheetName)
+                         || DEFAULTS.allMailsSheetName,
+    // Capped harder than the daily counts: this tab is one row per *mail*, not
+    // per day per mailbox, so 90 days of it is already thousands of rows being
+    // laid down again on every sweep.
+    allMailsDays:        Math.min(90, Math.max(1, num(SETTINGS.allMailsDays, DEFAULTS.allMailsDays))),
+    allMailsAutoWrite:   bool(SETTINGS.allMailsAutoWrite, DEFAULTS.allMailsAutoWrite),
     highlightReplied:    bool(SETTINGS.highlightReplied,    DEFAULTS.highlightReplied),
     startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
     backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
@@ -155,6 +168,12 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   }
   if (patch.dailyStatsDays      !== undefined) put(SETTINGS.dailyStatsDays, Math.min(180, Math.max(1, Number(patch.dailyStatsDays) || 30)))
   if (patch.dailyStatsAutoWrite !== undefined) put(SETTINGS.dailyStatsAutoWrite, !!patch.dailyStatsAutoWrite)
+  if (patch.allMailsSheetName !== undefined) {
+    const tab = String(patch.allMailsSheetName).trim()
+    if (tab) put(SETTINGS.allMailsSheetName, tab)
+  }
+  if (patch.allMailsDays      !== undefined) put(SETTINGS.allMailsDays, Math.min(90, Math.max(1, Number(patch.allMailsDays) || 30)))
+  if (patch.allMailsAutoWrite !== undefined) put(SETTINGS.allMailsAutoWrite, !!patch.allMailsAutoWrite)
   if (patch.highlightReplied    !== undefined) put(SETTINGS.highlightReplied,    !!patch.highlightReplied)
 
   if (patch.backupEnabled !== undefined) put(SETTINGS.backupEnabled, !!patch.backupEnabled)

@@ -2099,3 +2099,53 @@ model TeExperienceReport {
   @@index([sentAt])
   @@map("te_experience_reports")
 }
+
+/// Every message the sweep reads out of a monitored inbox — the raw mail log
+/// behind the "All Mails" tab.
+///
+/// `QueryMonitorEntry` is deliberately a record of *queries*: internal chatter
+/// and automated mail never reach it, non-queries are diverted to another tab,
+/// and a chaser is folded into the row its thread already owns. That is right
+/// for the SLA pivots and wrong for the question the team also asks — **what
+/// actually landed in these mailboxes?** This table answers that one: one row
+/// per message, nothing filtered, nothing folded.
+///
+/// It costs no extra Graph call. The sweep already reads the whole inbox window
+/// and then discards the mail it has no use for; this is that same list, written
+/// down before the discarding happens.
+///
+/// `dedupKey` is computed exactly as `QueryMonitorEntry.dedupKey` is, so the two
+/// tables join on it without a foreign key — which is what lets a mail pick up
+/// its entry's status, SLA and thread columns while staying a row of its own.
+model QueryMonitorMail {
+  id                String   @id @default(cuid())
+  /// internetMessageId when Graph gives one, else conversation+subject — the
+  /// same key the entries table uses, so the join is exact. See `dedupKeyFor`.
+  dedupKey          String   @unique @db.VarChar(190)
+  internetMessageId String?  @db.VarChar(190)
+  conversationId    String?  @db.VarChar(190)
+  subject           String   @db.Text
+  fromAddress       String   @db.VarChar(320)
+  fromName          String   @default("") @db.VarChar(190)
+  fromDomain        String   @default("") @db.VarChar(190)
+  receivedAt        DateTime
+  /// The monitored mailboxes it reached, as the names the sheet prints. Grows
+  /// when the same mail is found in a second inbox.
+  toNames           String   @default("") @db.VarChar(500)
+  /// Every address on its TO/CC line, comma-joined.
+  toAddresses       String   @default("") @db.Text
+  hasAttachments    Boolean  @default(false)
+  bodySnippet       String   @db.Text
+  /// Null when the query pipeline took this mail on. Otherwise why it never
+  /// became an entry: INTERNAL (our own tenant) or AUTOMATED (noreply, mailer
+  /// daemons, tenant notifications). Such mail exists *only* here.
+  skipReason        String?  @db.VarChar(32)
+  firstRunId        String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([receivedAt])
+  @@index([skipReason])
+  @@index([conversationId])
+  @@map("query_monitor_mails")
+}

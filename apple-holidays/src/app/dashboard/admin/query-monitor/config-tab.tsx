@@ -149,6 +149,12 @@ function ScheduleCard({
           label="Rewrite the daily mail counts each sweep"
           description={`Refreshes the "${draft.dailyStatsSheetName}" tab — mail per day per address, useful against other.`}
         />
+        <Toggle
+          checked={draft.allMailsAutoWrite}
+          onChange={v => save({ allMailsAutoWrite: v })}
+          label="Rewrite the all-mail tab each sweep"
+          description={`Refreshes the "${draft.allMailsSheetName}" tab — every mail that reached these inboxes, one row each, nothing filtered out. Leave this on: it is the only tab that shows internal and automated mail at all.`}
+        />
 
         <div className="grid grid-cols-2 gap-3 md:col-span-2">
           <Field label="Sweep every (minutes)" hint="60 = hourly. Minimum 5.">
@@ -199,6 +205,24 @@ function ScheduleCard({
               value={draft.dailyStatsDays}
               onChange={e => setDraft({ ...draft, dailyStatsDays: Number(e.target.value) })}
               onBlur={() => save({ dailyStatsDays: draft.dailyStatsDays })}
+            />
+          </Field>
+          <Field label="All-mail tab" hint="One row per mail, unfiltered. Rewritten in full each time — nothing on it is hand-edited.">
+            <input
+              className={inputCls}
+              value={draft.allMailsSheetName}
+              onChange={e => setDraft({ ...draft, allMailsSheetName: e.target.value })}
+              onBlur={() => draft.allMailsSheetName.trim()
+                && draft.allMailsSheetName !== config?.allMailsSheetName
+                && save({ allMailsSheetName: draft.allMailsSheetName })}
+            />
+          </Field>
+          <Field label="All mails cover (days)" hint="Newest first. Capped at 90 — this tab is one row per mail, not per day.">
+            <input
+              type="number" min={1} max={90} className={inputCls}
+              value={draft.allMailsDays}
+              onChange={e => setDraft({ ...draft, allMailsDays: Number(e.target.value) })}
+              onBlur={() => save({ allMailsDays: draft.allMailsDays })}
             />
           </Field>
         </div>
@@ -719,11 +743,12 @@ function DuplicatesCard({
   )
 }
 
-// ── The two tabs the app owns outright ───────────────────────────────────────
+// ── The tabs the app owns outright ───────────────────────────────────────────
 
 /**
- * Actions on the parts of the workbook nobody hand-edits: the daily counts tab,
- * which is rewritten whole, and the green fill on answered rows.
+ * Actions on the parts of the workbook nobody hand-edits: the daily counts tab
+ * and the all-mail ledger, both rewritten whole, and the green fill on answered
+ * rows.
  *
  * The recolour button exists because a sweep only paints rows it is already
  * writing. Every query answered before the highlight was switched on is sitting
@@ -731,6 +756,7 @@ function DuplicatesCard({
  */
 function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
   const [writing, setWriting] = useState(false)
+  const [writingAll, setWritingAll] = useState(false)
   const [painting, setPainting] = useState(false)
 
   async function writeDailyStats() {
@@ -743,6 +769,18 @@ function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not write the daily counts tab')
     } finally { setWriting(false) }
+  }
+
+  async function writeAllMails() {
+    setWritingAll(true)
+    try {
+      const res = await fetch('/api/query-monitor/all-mails', { method: 'POST' })
+      const d   = await res.json()
+      if (!d.success) { toast.error(d.error); return }
+      toast.success(d.message ?? 'All-mail tab written', { duration: 10000 })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not write the all-mail tab')
+    } finally { setWritingAll(false) }
   }
 
   async function recolour() {
@@ -760,7 +798,7 @@ function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
   return (
     <Card
       icon={<Wrench className="w-4 h-4" />}
-      title="Daily counts & row colour"
+      title="Daily counts, all mails & row colour"
       description="The parts of the workbook this app owns outright — nothing on them is hand-edited"
     >
       <div className="space-y-3">
@@ -781,6 +819,29 @@ function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
           >
             {writing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Table2 className="w-4 h-4" />}
             Write daily counts
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-slate-200 p-3 flex flex-wrap items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-slate-700">
+              Rewrite “{config?.allMailsSheetName ?? 'All Mails'}” now
+            </p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Every mail that reached the monitored inboxes over the last{' '}
+              {config?.allMailsDays ?? 30} days — one row each, newest first, nothing filtered out.
+              A chaser that the query sheet folds away has its own line here, and so does the
+              internal and automated mail no other tab has ever shown. Columns that describe the
+              conversation are filled in from the query the mail belongs to. It happens
+              automatically after every sweep unless that is switched off.
+            </p>
+          </div>
+          <button
+            onClick={writeAllMails} disabled={writingAll}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50"
+          >
+            {writingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Table2 className="w-4 h-4" />}
+            Write all mails
           </button>
         </div>
 

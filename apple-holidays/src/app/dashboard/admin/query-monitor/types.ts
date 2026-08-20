@@ -188,6 +188,12 @@ export interface QmConfig {
   dailyStatsDays:      number
   /** Rewrite the counts at the end of every sweep. */
   dailyStatsAutoWrite: boolean
+  /** Tab every collected mail is rewritten onto, unfiltered. */
+  allMailsSheetName:   string
+  /** How many days of mail that tab covers. */
+  allMailsDays:        number
+  /** Rewrite the all-mail tab at the end of every sweep. */
+  allMailsAutoWrite:   boolean
   /** Turn an answered query's row green in the workbook. */
   highlightReplied:    boolean
   /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
