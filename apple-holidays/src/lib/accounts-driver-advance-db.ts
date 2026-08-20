@@ -293,3 +293,97 @@ export async function fetchDriverAdvanceDetail(
     computedAt: dateStr(row.computed_at),
   }
 }
+
+// ── The whole envelope, in bulk — for the Drive Log ───────────────────────────
+
+/**
+ * A booking's advance summary *and* the stored calculation behind it.
+ *
+ * `fetchDriverAdvances` deliberately leaves `payload` out: the allocation board
+ * prints one figure per row and parsing a hundred JSON blobs to render a
+ * hundred numbers would be waste. The Drive Log needs more than one figure — it
+ * splits what was handed over at the start of the tour from what was settled at
+ * the end, and only the payload records that split — so it pays the parse
+ * knowingly, over a window that is a day or two wide rather than the whole book.
+ *
+ * The detail is `null` for a booking the accounts system has not costed; the
+ * summary still comes back and still says why.
+ */
+export interface DriverAdvanceEnvelope {
+  summary: DriverAdvanceSummary
+  detail: DriverAdvanceDetail | null
+}
+
+/**
+ * How many payloads one request may parse.
+ *
+ * Each is a few tens of kilobytes of JSON. A day of Sri Lankan arrivals is
+ * dozens of bookings, so this is roughly a fortnight of headroom — and a
+ * deliberate ceiling on what an over-wide date filter can drag into memory.
+ */
+export const MAX_ENVELOPES = 400
+
+/** One envelope per requested booking, keyed by the reference that was asked. */
+export async function fetchDriverAdvanceEnvelopes(
+  lookups: AdvanceLookup[],
+): Promise<Map<string, DriverAdvanceEnvelope>> {
+  const out = new Map<string, DriverAdvanceEnvelope>()
+  if (lookups.length === 0) return out
+
+  const capped = lookups.slice(0, MAX_ENVELOPES)
+
+  const allKeys = Array.from(new Set(
+    capped.flatMap(l => [...keysFor(l.reference), ...keysFor(l.controlNumber)]),
+  ))
+  if (allKeys.length === 0) return out
+
+  const placeholders = allKeys.map(() => '?').join(',')
+  const rows = await accountsQuery<SnapshotRow>(
+    `SELECT ${SUMMARY_COLUMNS}, payload
+       FROM sl_driver_advance_snapshots
+      WHERE is_key IN (${placeholders}) OR control_key IN (${placeholders})`,
+    [...allKeys, ...allKeys],
+  )
+
+  const byKey = new Map<string, SnapshotRow>()
+  for (const r of rows) {
+    if (r.is_key) byKey.set(r.is_key, r)
+    // The IS number is the stronger identifier — see fetchDriverAdvances.
+    if (r.control_key && !byKey.has(r.control_key)) byKey.set(r.control_key, r)
+  }
+
+  for (const l of capped) {
+    let row: SnapshotRow | undefined
+    for (const key of [...keysFor(l.reference), ...keysFor(l.controlNumber)]) {
+      row = byKey.get(key)
+      if (row) break
+    }
+
+    if (!row) {
+      out.set(l.reference, {
+        summary: {
+          reference: l.reference, found: false, state: 'no_pnl',
+          message: 'No P&L record for this booking in the accounts system yet.',
+        },
+        detail: null,
+      })
+      continue
+    }
+
+    // A payload that will not parse is treated exactly like one that is absent:
+    // the summary columns still carry the headline figures, and the Drive Log
+    // falls back to deriving the split from them.
+    let detail: DriverAdvanceDetail | null = null
+    if (row.payload) {
+      try {
+        detail = { ...(JSON.parse(row.payload) as DriverAdvanceDetail), reference: l.reference }
+      } catch {
+        detail = null
+      }
+    }
+
+    out.set(l.reference, { summary: toSummary(l.reference, row), detail })
+  }
+
+  return out
+}

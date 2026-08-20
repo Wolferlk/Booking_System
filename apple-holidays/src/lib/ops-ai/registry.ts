@@ -146,6 +146,7 @@ export const NAVIGABLE_ROUTES: { path: string; label: string; hint: string }[] =
   { path: '/dashboard/driver-log',            label: 'Driver Logs',      hint: 'Driver trip logs' },
   { path: '/dashboard/mc-report',             label: 'MC Report',        hint: 'Movement control report' },
   { path: '/dashboard/srilanka/driver-allocation', label: 'SL Driver Allocation', hint: 'Sri Lanka driver allocation board' },
+  { path: '/dashboard/srilanka/drive-log',    label: 'SL Drive Log',     hint: 'Sri Lanka transport cost, driver advance and settlement' },
   { path: '/dashboard/admin/users',           label: 'Users',            hint: 'User administration' },
   { path: '/dashboard/admin/audit',           label: 'Audit Log',        hint: 'System activity audit trail' },
   { path: '/dashboard/admin/config',          label: 'Config',           hint: 'System settings' },
