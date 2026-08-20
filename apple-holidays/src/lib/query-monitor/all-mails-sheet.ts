@@ -181,7 +181,8 @@ function compose(report: AllMailsReport, timezone: string): { cells: Cell[][]; f
     + `rewritten ${stamp(report.generatedAt)}`,
   ])
   push([
-    `${t.total} mail(s): ${t.queries} opened a query, ${t.followUps} chased one, `
+    `${t.total} mail(s): ${t.useful} usefull (from a sender the rules know), `
+    + `${t.total - t.useful} not. ${t.queries} opened a query, ${t.followUps} chased one, `
     + `${t.other} were other mail, ${t.internal} internal, ${t.automated} automated`
     + (report.truncated > 0
       ? ` — the oldest ${report.truncated} are not shown, the tab holds ${MAX_ALL_MAILS_ROWS} rows`

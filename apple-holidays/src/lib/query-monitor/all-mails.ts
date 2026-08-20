@@ -22,51 +22,62 @@
  */
 import { prisma } from '@/lib/prisma'
 import type { QueryMonitorEntry, QueryMonitorMail } from '@prisma/client'
-import { ALL_MAILS_STATUS, REPLY_STATUS_SHEET_LABEL, type ReplyStatus } from './constants'
-import { getConfig, startDateBoundary } from './config'
+import {
+  ALL_MAILS_STATUS, REPLY_STATUS_SHEET_LABEL, USEFUL_MAIL_LABEL, type ReplyStatus,
+} from './constants'
+import {
+  getConfig, listActiveSenderRules, matchSenderRule, startDateBoundary,
+} from './config'
 import { toExcelDateSerial, toExcelDateTimeSerial } from './dates'
 import {
   REPLY_TYPE_SHEET_LABEL, responseHours, slaOutcome, threadMailCount,
 } from './row-fields'
 
 /**
- * A row on the all-mail tab, columns A–Y.
+ * A row on the all-mail tab, columns A–Z.
  *
- * The query sheet's columns minus the three that only mean anything on a query:
- * Replied time (a raw mail has no clock of its own), Sales Person and
- * Destination. See `ALL_MAILS_SHEET_COLUMNS`.
+ * The query sheet's columns minus the three that only mean anything on a query
+ * — Replied time (a raw mail has no clock of its own), Sales Person and
+ * Destination — plus Usefull mail, which only this tab has.
+ * See `ALL_MAILS_SHEET_COLUMNS`.
  */
 export interface AllMailsRowValues {
   date:            number | ''  // A — Excel date serial
   status:          string       // B — where the query stands, or what this mail is
-  subject:         string       // C — as it was actually sent, prefixes and all
-  allocationTime:  number | ''  // D — Excel datetime serial
-  fileHandler:     string       // E
-  from:            string       // F
-  fromEmail:       string       // G
-  toList:          string       // H — every monitored mailbox it reached
-  agent:           string       // I
-  travelDate:      number | ''  // J
-  cntl:            string       // K
-  amendment:       string       // L
-  region:          string       // M
-  repliedBy:       string       // N
-  responseHours:   number | ''  // O
-  sla:             string       // P
-  threadCount:     number | ''  // Q
-  lastMail:        number | ''  // R
-  aiSummary:       string       // S
-  repliedByEmail:  string       // T
-  repliedTo:       string       // U
-  replyType:       string       // V
-  forwardChain:    string       // W
-  replySummary:    string       // X
-  duplicateReason: string       // Y
+  /**
+   * C — Usefull / NotUsefull: does an active sender rule claim this address or
+   * its domain? See `USEFUL_MAIL_LABEL`. Never blank — a mail is one or the
+   * other, and a blank would read as "not checked".
+   */
+  usefulMail:      string
+  subject:         string       // D — as it was actually sent, prefixes and all
+  allocationTime:  number | ''  // E — Excel datetime serial
+  fileHandler:     string       // F
+  from:            string       // G
+  fromEmail:       string       // H
+  toList:          string       // I — every monitored mailbox it reached
+  agent:           string       // J
+  travelDate:      number | ''  // K
+  cntl:            string       // L
+  amendment:       string       // M
+  region:          string       // N
+  repliedBy:       string       // O
+  responseHours:   number | ''  // P
+  sla:             string       // Q
+  threadCount:     number | ''  // R
+  lastMail:        number | ''  // S
+  aiSummary:       string       // T
+  repliedByEmail:  string       // U
+  repliedTo:       string       // V
+  replyType:       string       // W
+  forwardChain:    string       // X
+  replySummary:    string       // Y
+  duplicateReason: string       // Z
 }
 
 export function allMailsRowToCells(row: AllMailsRowValues): (string | number)[] {
   return [
-    row.date, row.status, row.subject, row.allocationTime, row.fileHandler,
+    row.date, row.status, row.usefulMail, row.subject, row.allocationTime, row.fileHandler,
     row.from, row.fromEmail, row.toList, row.agent, row.travelDate, row.cntl,
     row.amendment, row.region, row.repliedBy, row.responseHours, row.sla,
     row.threadCount, row.lastMail, row.aiSummary, row.repliedByEmail,
@@ -99,6 +110,8 @@ export interface AllMailsReport {
     internal:  number
     /** …from noreply addresses, mailer daemons and tenant notifications. */
     automated: number
+    /** …whose sender an active rule claims — the Usefull mail column, counted. */
+    useful:    number
   }
 }
 
@@ -154,10 +167,29 @@ function statusFor(
   return REPLY_STATUS_SHEET_LABEL[entry.replyStatus as ReplyStatus] ?? ''
 }
 
+/** A sender rule, as the useful-mail test needs it. See `matchSenderRule`. */
+export type RuleForMatch = { matchType: string; pattern: string }
+
+/**
+ * Usefull / NotUsefull for one sender.
+ *
+ * Asked of the *mail's own* sender, not of the thread's — on a ledger of raw
+ * mail, a colleague's internal forward of an MMT query is not itself mail from
+ * MMT, and calling it Usefull would double-count the agency's traffic.
+ */
+export function usefulMailFor(
+  mail: Pick<QueryMonitorMail, 'fromAddress' | 'fromDomain'>, rules: readonly RuleForMatch[],
+): string {
+  return matchSenderRule(mail.fromAddress, mail.fromDomain, rules)
+    ? USEFUL_MAIL_LABEL.USEFUL
+    : USEFUL_MAIL_LABEL.NOT_USEFUL
+}
+
 /** One log row, with the query it belongs to filled in around it. */
 export function buildAllMailsRow(
   mail: QueryMonitorMail, entry: SourceEntry | undefined,
   root: SourceEntry | undefined, slaHours: number,
+  rules: readonly RuleForMatch[] = [],
 ): AllMailsRowValues {
   // The columns that describe the *conversation* come from the row that owns
   // it. For a chaser that is the thread's root; for anything else, itself.
@@ -166,6 +198,7 @@ export function buildAllMailsRow(
   return {
     date:           toExcelDateSerial(mail.receivedAt),
     status:         statusFor(mail, entry, root),
+    usefulMail:     usefulMailFor(mail, rules),
     // Left exactly as sent, "Re:" and all — unlike the query sheet, which
     // titles a row with the query rather than with the newest envelope. Here
     // the row *is* the envelope, and hiding that it was a reply would hide the
@@ -223,6 +256,10 @@ export async function getAllMailsReport(days?: number): Promise<AllMailsReport> 
 
   const total = await prisma.queryMonitorMail.count({ where: { receivedAt: { gte: from } } })
 
+  // The same active rules, in the same priority order, that fill the Agent
+  // column on the query sheet — so Usefull mail can never disagree with it.
+  const rules = await listActiveSenderRules()
+
   const mails = await prisma.queryMonitorMail.findMany({
     where:   { receivedAt: { gte: from } },
     orderBy: { receivedAt: 'desc' },
@@ -253,7 +290,8 @@ export async function getAllMailsReport(days?: number): Promise<AllMailsReport> 
   ])
 
   const totals = {
-    total, tracked: 0, queries: 0, followUps: 0, other: 0, internal: 0, automated: 0,
+    total, tracked: 0, queries: 0, followUps: 0, other: 0, internal: 0,
+    automated: 0, useful: 0,
   }
 
   const rows = mails.map(mail => {
@@ -270,7 +308,9 @@ export async function getAllMailsReport(days?: number): Promise<AllMailsReport> 
       else totals.queries += 1
     }
 
-    return buildAllMailsRow(mail, entry, root, cfg.slaHours)
+    const row = buildAllMailsRow(mail, entry, root, cfg.slaHours, rules)
+    if (row.usefulMail === USEFUL_MAIL_LABEL.USEFUL) totals.useful += 1
+    return row
   })
 
   return {

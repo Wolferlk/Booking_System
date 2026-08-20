@@ -384,17 +384,22 @@ export const DAILY_STATS_NUMBER_FORMATS = [
  * that: every mail, once, in the order it arrived.
  *
  * The columns are the query sheet's, minus the three that only mean anything on
- * a query — Replied time, Sales Person and Destination. Everything a mail's
- * thread knows (status, SLA, reply detail, summaries) is filled in from the
- * entry it belongs to; a mail that never became an entry carries its identity in
- * Status and leaves those columns blank.
+ * a query — Replied time, Sales Person and Destination — plus **Usefull mail**,
+ * which is this tab's alone: on a ledger that holds everything, the first thing
+ * worth knowing about a row is whether it came from a sender the team has a
+ * rule for. Everything a mail's thread knows (status, SLA, reply detail,
+ * summaries) is filled in from the entry it belongs to; a mail that never became
+ * an entry carries its identity in Status and leaves those columns blank.
  *
  * Like the daily counts and the AI usage report and unlike the two query tabs,
  * this one is entirely the app's: every export clears it and lays it out again,
  * because a status on it moves whenever a reply lands.
  */
 export const ALL_MAILS_SHEET_COLUMNS = [
-  'Date', 'Status', 'Subject', 'Allocation time', 'File Handler',
+  // Usefull mail sits beside Status because the two are read together: what
+  // this mail is, and whether it came from a sender the team has a rule for.
+  // Off at the far right it would be a column nobody filters on.
+  'Date', 'Status', 'Usefull mail', 'Subject', 'Allocation time', 'File Handler',
   'From', 'From Email', 'TO List', 'Agent', 'Travel Date', 'CNTL',
   'Amendment', 'Region', 'Replied By', 'Response (hrs)', 'SLA',
   'Mails in Thread', 'Last Mail', 'AI Summary', 'Replied By Email',
@@ -403,34 +408,54 @@ export const ALL_MAILS_SHEET_COLUMNS = [
 ] as const
 
 export const ALL_MAILS_FIRST_COLUMN = 'A'
-export const ALL_MAILS_LAST_COLUMN  = 'Y'
+export const ALL_MAILS_LAST_COLUMN  = 'Z'
+
+/**
+ * Column C — is this mail from a sender the team has a rule for?
+ *
+ * The sender rules map a domain (or an exact address) to a Sales Person and an
+ * Agent: `makemytrip.in` is MMT, `tripfactory.travel` is Trip Factory. A mail
+ * whose sender matches one of them came from an agency the team works with, and
+ * that is what this column calls useful — the same match that fills the Agent
+ * column, asked as a yes or no so the tab can be filtered on it.
+ *
+ * Deliberately *not* the same question as Status. A voucher from MMT is Other
+ * mail and still Usefull; a genuine-looking query from a domain nobody has
+ * written a rule for is Pending and still NotUsefull, which is exactly the
+ * prompt to go and add the rule.
+ */
+export const USEFUL_MAIL_LABEL = {
+  USEFUL:     'Usefull',
+  NOT_USEFUL: 'NotUsefull',
+} as const
 
 export const ALL_MAILS_NUMBER_FORMATS = [
   '[$-en-US]dd-mmm-yy;@', // A Date
   'General',              // B Status
-  'General',              // C Subject
-  'm/d/yyyy h:mm',        // D Allocation time
-  'General',              // E File Handler
-  'General',              // F From
-  'General',              // G From Email
-  'General',              // H TO List
-  'General',              // I Agent
-  'm/d/yyyy',             // J Travel Date
-  'General',              // K CNTL
-  'General',              // L Amendment
-  'General',              // M Region
-  'General',              // N Replied By
-  '0.00',                 // O Response (hrs) — a real number, so it averages
-  'General',              // P SLA
-  '0',                    // Q Mails in Thread
-  'm/d/yyyy h:mm',        // R Last Mail
-  'General',              // S AI Summary
-  'General',              // T Replied By Email
-  'General',              // U Replied To
-  'General',              // V Reply Type
-  'General',              // W Forward Chain
-  'General',              // X Reply Summary
-  'General',              // Y Duplicate Reason
+  'General',              // C Usefull mail
+  'General',              // D Subject
+  'm/d/yyyy h:mm',        // E Allocation time
+  'General',              // F File Handler
+  'General',              // G From
+  'General',              // H From Email
+  'General',              // I TO List
+  'General',              // J Agent
+  'm/d/yyyy',             // K Travel Date
+  'General',              // L CNTL
+  'General',              // M Amendment
+  'General',              // N Region
+  'General',              // O Replied By
+  '0.00',                 // P Response (hrs) — a real number, so it averages
+  'General',              // Q SLA
+  '0',                    // R Mails in Thread
+  'm/d/yyyy h:mm',        // S Last Mail
+  'General',              // T AI Summary
+  'General',              // U Replied By Email
+  'General',              // V Replied To
+  'General',              // W Reply Type
+  'General',              // X Forward Chain
+  'General',              // Y Reply Summary
+  'General',              // Z Duplicate Reason
 ] as const
 
 /**
