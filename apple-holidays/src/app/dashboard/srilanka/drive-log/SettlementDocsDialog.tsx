@@ -33,18 +33,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, Check, Download, Eye, FileText, ImagePlus, Loader2, MessageCircle, Plus,
-  RefreshCw, Save, Trash2, Undo2, Upload, X,
+  AlertTriangle, Check, CheckCircle2, Circle, Download, Eye, FileText, ImagePlus, ListPlus,
+  Loader2, MessageCircle, Plus, RefreshCw, Save, Search, Tags, Trash2, Undo2, Upload, Users, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SendDocsWhatsAppDialog } from './SendDocsWhatsAppDialog'
 import {
   BUILTIN_LOGOS, DEFAULT_LOGO, DEFAULT_ORIENTATION, DOC_BLURB, DOC_KINDS, DOC_LABEL,
-  NAME_BOARD_ACCENTS, NAME_BOARD_THEMES, SUB_LOGOS, money, orientationOf, rowId,
-  tourLineTotal, tourTotal, transportTotals,
+  NAME_BOARD_ACCENTS, NAME_BOARD_THEMES, SUB_LOGOS, catalogLine, missingCatalogItems, money,
+  orientationOf, rowId, tourLineTotal, tourTotal, transportTotals,
   type DocOrientation, type NameBoardTheme, type SettlementDocKind, type SettlementDocPack,
-  type SettlementDocState,
+  type SettlementDocState, type TourLine,
 } from '@/lib/sl-settlement-docs'
+import { TICKET_GROUP_OF, TOUR_TICKET_GROUPS, normaliseTicketName } from '@/lib/sl-tour-tickets'
+
+/** Where a line the desk typed in itself is grouped — it is in no catalogue. */
+const ADDED_HERE = 'Added on this sheet'
 
 /**
  * Print a document with the browser this page is open in.
@@ -906,84 +910,567 @@ function LocalVisitEditor({ pack, patch }: { pack: SettlementDocPack; patch: Pat
   )
 }
 
-function TourEditor({ pack, patch }: { pack: SettlementDocPack; patch: Patch }) {
-  const to = pack.tour
-  const total = useMemo(() => tourTotal(to), [to])
+// ── Tour settlement ───────────────────────────────────────────────────────────
 
-  const setLine = (id: string, field: 'name' | 'perPersonRate' | 'count' | 'totalCost', v: string | number | null) =>
-    patch(p => ({ ...p, tour: { ...p.tour, lines: p.tour.lines.map(l => (l.id === id ? { ...l, [field]: v } : l)) } }))
+/**
+ * The shared rate card, opened over the sheet.
+ *
+ * Every Tour Settlement in the office settles the same thirty-odd gates, and
+ * until now each handler retyped the prices from memory — which is how one
+ * attraction ends up settled at three rates in a week. This panel is that price
+ * list, edited once and read by every sheet opened afterwards.
+ *
+ * Editing the card never reaches back into a booking that has already been
+ * saved: "Fill blanks" and "Overwrite rates" are buttons somebody presses, on
+ * the sheet in front of them.
+ */
+interface RateRow {
+  name: string
+  adultRate: number | null
+  childRate: number | null
+  note: string
+  group: string | null
+  inCatalog: boolean
+  updatedAt: string | null
+  updatedBy: string | null
+}
 
-  const numberCell = (id: string, field: 'perPersonRate' | 'count' | 'totalCost', value: number | null, placeholder: string) => (
+/** A figure typed into a small grid cell. Empty stays empty — it is not zero. */
+function CellNumber({
+  value, onChange, placeholder, className, disabled,
+}: {
+  value: number | null
+  onChange: (v: number | null) => void
+  placeholder?: string
+  className?: string
+  disabled?: boolean
+}) {
+  const [draft, setDraft] = useState(value === null ? '' : String(value))
+  const seen = useRef(value)
+
+  useEffect(() => {
+    if (seen.current !== value) {
+      seen.current = value
+      setDraft(value === null ? '' : String(value))
+    }
+  }, [value])
+
+  return (
     <input
       type="text"
       inputMode="decimal"
-      value={value === null ? '' : String(value)}
-      placeholder={placeholder}
+      value={draft}
+      disabled={disabled}
+      placeholder={placeholder ?? '—'}
       onChange={e => {
-        const raw = e.target.value.replace(/,/g, '').trim()
-        if (raw === '') return setLine(id, field, null)
-        const n = Number(raw)
-        if (Number.isFinite(n)) setLine(id, field, n)
+        const raw = e.target.value
+        setDraft(raw)
+        const trimmed = raw.replace(/,/g, '').trim()
+        if (trimmed === '') { seen.current = null; onChange(null); return }
+        const n = Number(trimmed)
+        if (Number.isFinite(n)) { seen.current = n; onChange(n) }
       }}
-      className={cn(INPUT, 'text-right tabular-nums')}
+      className={cn(INPUT, 'text-right tabular-nums px-2 py-1', className)}
     />
+  )
+}
+
+function RateCardPanel({
+  canWrite, onFill, onClose,
+}: {
+  canWrite: boolean
+  onFill: (rates: RateRow[], mode: 'blanks' | 'all') => void
+  onClose: () => void
+}) {
+  const [rows, setRows] = useState<RateRow[] | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [q, setQ] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/srilanka/drive-log/documents/rate-card')
+      .then(async res => {
+        const json = await res.json().catch(() => null)
+        if (!res.ok) throw new Error(json?.error ?? 'The rate card could not be loaded')
+        return json.data as { rates: RateRow[]; notice: string | null }
+      })
+      .then(data => {
+        if (cancelled) return
+        setRows(data.rates)
+        setNotice(data.notice)
+      })
+      .catch(err => {
+        if (cancelled) return
+        setRows([])
+        toast.error((err as Error).message)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  const set = (name: string, field: 'adultRate' | 'childRate', v: number | null) => {
+    setDirty(true)
+    setRows(rs => (rs ?? []).map(r => (r.name === name ? { ...r, [field]: v } : r)))
+  }
+
+  const save = async () => {
+    if (!rows || !canWrite) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/srilanka/drive-log/documents/rate-card', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rates: rows.map(r => ({ name: r.name, adultRate: r.adultRate, childRate: r.childRate, note: r.note })) }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(json?.error ?? 'The rate card could not be saved')
+      setRows(json.data.rates as RateRow[])
+      setNotice(json.data.notice ?? null)
+      setDirty(false)
+      toast.success('Rate card saved — every sheet opened from now on starts from these prices')
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const shown = useMemo(() => {
+    const list = rows ?? []
+    const needle = q.trim().toLowerCase()
+    if (!needle) return list
+    return list.filter(r => r.name.toLowerCase().includes(needle))
+  }, [rows, q])
+
+  const priced = (rows ?? []).filter(r => r.adultRate !== null || r.childRate !== null).length
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-[60]" onClick={onClose} />
+      <div className="fixed inset-x-4 top-8 bottom-8 md:inset-x-24 lg:inset-x-40 z-[61] flex flex-col rounded-2xl bg-[#0c1225] border border-slate-700 shadow-2xl shadow-black/70 overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-3.5 border-b border-slate-800 flex-shrink-0">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center">
+            <Tags className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-black text-sm">Entrance rate card</p>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              The gate price for every attraction, shared by every booking. {priced} of {(rows ?? []).length} priced.
+            </p>
+          </div>
+          <div className="relative hidden sm:block">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="Find an attraction"
+              className={cn(INPUT, 'pl-8 w-56')}
+            />
+          </div>
+          <button type="button" onClick={onClose} className="p-2 text-slate-400 hover:text-white transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-4">
+          {notice ? (
+            <div className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-px" /> {notice}
+            </div>
+          ) : null}
+
+          {rows === null ? (
+            <div className="flex items-center justify-center py-16 text-slate-500 text-sm gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" /> Reading the rate card…
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <div className="grid grid-cols-[1fr_110px_110px] gap-2 px-1 text-[10px] uppercase tracking-wider text-slate-500 font-bold sticky top-0 bg-[#0c1225] py-1">
+                <span>Attraction</span>
+                <span className="text-right">Adult rate</span>
+                <span className="text-right">Child rate</span>
+              </div>
+              {shown.map(r => {
+                const on = r.adultRate !== null || r.childRate !== null
+                return (
+                  <div
+                    key={r.name}
+                    className={cn(
+                      'grid grid-cols-[1fr_110px_110px] gap-2 items-center rounded-lg px-2 py-1 border border-transparent',
+                      on ? 'bg-slate-900/60 border-slate-800' : 'hover:bg-slate-900/40',
+                    )}
+                  >
+                    <span className="min-w-0">
+                      <span className={cn('block text-xs truncate', on ? 'text-slate-100 font-bold' : 'text-slate-500')}>
+                        {r.name}
+                      </span>
+                      <span className="block text-[10px] text-slate-600 truncate">
+                        {r.group ?? 'Added by the desk'}
+                        {r.updatedBy ? ` · ${r.updatedBy}` : ''}
+                      </span>
+                    </span>
+                    <CellNumber value={r.adultRate} onChange={v => set(r.name, 'adultRate', v)} disabled={!canWrite} />
+                    <CellNumber value={r.childRate} onChange={v => set(r.name, 'childRate', v)} disabled={!canWrite} />
+                  </div>
+                )
+              })}
+              {shown.length === 0 ? (
+                <p className="text-xs text-slate-500 py-8 text-center">Nothing matches “{q}”.</p>
+              ) : null}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-800 flex-shrink-0 flex-wrap">
+          <div className="flex items-center gap-2">
+            <RowButton onClick={() => { onFill(rows ?? [], 'blanks'); onClose() }}>
+              <Plus className="w-3 h-3" /> Fill blanks on this sheet
+            </RowButton>
+            <RowButton onClick={() => { onFill(rows ?? [], 'all'); onClose() }}>
+              <RefreshCw className="w-3 h-3" /> Overwrite this sheet&rsquo;s rates
+            </RowButton>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-600 hidden md:inline">
+              Saved rates are shared. This booking&rsquo;s figures stay with this booking.
+            </span>
+            <button
+              type="button"
+              onClick={save}
+              disabled={!canWrite || saving || !dirty || rows === null}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors',
+                canWrite && dirty
+                  ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-200 hover:bg-emerald-500/25'
+                  : 'bg-slate-800/60 border border-slate-700 text-slate-500 cursor-not-allowed',
+              )}
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              Save rate card
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/**
+ * The Tour Settlement editor.
+ *
+ * The sheet is the whole catalogue of attractions, not a blank list: the ones
+ * this tour took are lit and bold, the ones it did not stay faded underneath so
+ * a handler scanning the sheet can see what was considered. Typing any figure
+ * on a faded line lights it — nobody prices a ticket they are not settling —
+ * and the toggle puts it back.
+ *
+ * Adults and children are priced apart because every gate in the country
+ * charges that way. Both counts come off the booking's own P&L split and both
+ * are editable, because a child who turned twelve mid-tour is charged as an
+ * adult at the gate.
+ */
+function TourEditor({ pack, patch, canWrite }: { pack: SettlementDocPack; patch: Patch; canWrite: boolean }) {
+  const to = pack.tour
+  const total = useMemo(() => tourTotal(to), [to])
+  const [q, setQ] = useState('')
+  const [filter, setFilter] = useState<'all' | 'on' | 'off'>('all')
+  const [rateCard, setRateCard] = useState(false)
+
+  const adults   = pack.header.paxAdults
+  const children = pack.header.paxChildren
+
+  const setDoc = (changes: Partial<SettlementDocPack['tour']>) =>
+    patch(p => ({ ...p, tour: { ...p.tour, ...changes } }))
+
+  const setLine = (id: string, changes: Partial<TourLine>) =>
+    patch(p => ({ ...p, tour: { ...p.tour, lines: p.tour.lines.map(l => (l.id === id ? { ...l, ...changes } : l)) } }))
+
+  /**
+   * A figure typed onto a line lights it.
+   *
+   * Pricing a ticket you are not settling is not a thing anybody does, and
+   * making the desk reach for a separate toggle first is the kind of friction
+   * that sends people back to the spreadsheet. Clearing figures never puts a
+   * line out again — only the toggle does, because deactivating a line the
+   * moment its last box is emptied would fight somebody retyping a rate.
+   */
+  const setFigure = (l: TourLine, field: 'perPersonRate' | 'count' | 'childRate' | 'childCount' | 'totalCost', v: number | null) =>
+    setLine(l.id, { [field]: v, ...(v !== null && !l.active ? { active: true } : {}) })
+
+  const toggle = (l: TourLine) => {
+    // Lighting a line with no counts on it fills them from the booking, which
+    // is what the handler was about to type anyway.
+    const counts = l.active ? {} : {
+      count:      l.count      ?? (l.perPersonRate !== null ? adults : null),
+      childCount: l.childCount ?? (l.childRate !== null ? children : null),
+    }
+    setLine(l.id, { active: !l.active, ...counts })
+  }
+
+  /** The sheet, grouped the way a handler thinks about a day. */
+  const groups = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    const order = [...TOUR_TICKET_GROUPS.map(g => g.title), ADDED_HERE]
+    const buckets = new Map<string, TourLine[]>(order.map(t => [t, []]))
+
+    for (const l of to.lines) {
+      if (filter === 'on' && !l.active) continue
+      if (filter === 'off' && l.active) continue
+      if (needle && !l.name.toLowerCase().includes(needle)) continue
+      const title = TICKET_GROUP_OF[l.name] ?? ADDED_HERE
+      const bucket = buckets.get(title)
+      if (bucket) bucket.push(l)
+      else buckets.set(title, [l])
+    }
+    return Array.from(buckets.entries()).filter(([, ls]) => ls.length > 0)
+  }, [to.lines, q, filter])
+
+  const settled = to.lines.filter(l => l.active)
+  const missing = useMemo(() => missingCatalogItems(to.lines), [to.lines])
+
+  /** Push the shared card's prices onto this sheet. */
+  const fillFromCard = (rates: RateRow[], mode: 'blanks' | 'all') => {
+    const card = new Map(rates.map(r => [normaliseTicketName(r.name), r]))
+    let touched = 0
+    patch(p => ({
+      ...p,
+      tour: {
+        ...p.tour,
+        lines: p.tour.lines.map(l => {
+          const r = card.get(normaliseTicketName(l.name))
+          if (!r) return l
+          const next = { ...l }
+          if (r.adultRate !== null && (mode === 'all' || l.perPersonRate === null)) next.perPersonRate = r.adultRate
+          if (r.childRate !== null && (mode === 'all' || l.childRate === null)) next.childRate = r.childRate
+          if (next.perPersonRate !== l.perPersonRate || next.childRate !== l.childRate) touched++
+          return next
+        }),
+      },
+    }))
+    toast.success(touched ? `${touched} line${touched === 1 ? '' : 's'} priced from the rate card` : 'Nothing on this sheet needed a rate')
+  }
+
+  /** The booking's split, onto every line that is priced for that half. */
+  const applyPax = () => {
+    patch(p => ({
+      ...p,
+      tour: {
+        ...p.tour,
+        lines: p.tour.lines.map(l => (!l.active ? l : {
+          ...l,
+          count:      l.perPersonRate !== null ? p.header.paxAdults   : l.count,
+          childCount: l.childRate     !== null ? p.header.paxChildren : l.childCount,
+        })),
+      },
+    }))
+    toast.success('Pax counts taken from the booking')
+  }
+
+  const chip = (id: 'all' | 'on' | 'off', label: string, n: number) => (
+    <button
+      key={id}
+      type="button"
+      onClick={() => setFilter(id)}
+      className={cn(
+        'px-2.5 py-1 rounded-lg border text-[11px] font-bold transition-colors',
+        filter === id
+          ? 'bg-yellow-500/15 border-yellow-500/40 text-yellow-200'
+          : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700',
+      )}
+    >
+      {label} <span className="tabular-nums opacity-70">{n}</span>
+    </button>
   )
 
   return (
     <div className="space-y-4">
+      {rateCard ? (
+        <RateCardPanel canWrite={canWrite} onFill={fillFromCard} onClose={() => setRateCard(false)} />
+      ) : null}
+
       <Section title="Who ran the tour">
         <div className="grid grid-cols-2 gap-3">
-          <Text label="Guide name" value={to.guideName} onChange={v => patch(p => ({ ...p, tour: { ...p.tour, guideName: v } }))} />
-          <Text label="Chauffeur name" value={to.chauffeurName} onChange={v => patch(p => ({ ...p, tour: { ...p.tour, chauffeurName: v } }))} />
+          <Text label="Guide name" value={to.guideName} onChange={v => setDoc({ guideName: v })} />
+          <Text label="Chauffeur name" value={to.chauffeurName} onChange={v => setDoc({ chauffeurName: v })} />
+        </div>
+      </Section>
+
+      <Section
+        title="Who is being charged for"
+        hint="Adults and children off the booking's own P&L split. Every gate prices them apart, so the sheet does too."
+      >
+        <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end">
+          <Money label="Adults" value={adults} onChange={v => patch(p => ({ ...p, header: { ...p.header, paxAdults: v, pax: (v ?? 0) + (p.header.paxChildren ?? 0) || null } }))} />
+          <Money label="Children" value={children} onChange={v => patch(p => ({ ...p, header: { ...p.header, paxChildren: v, pax: (p.header.paxAdults ?? 0) + (v ?? 0) || null } }))} />
+          <div>
+            <span className={LABEL}>Total pax</span>
+            <div className="px-2.5 py-1.5 rounded-lg bg-slate-900/60 border border-slate-800 text-xs text-slate-300 tabular-nums text-right">
+              {pack.header.pax ?? '—'}
+            </div>
+          </div>
+          <RowButton onClick={applyPax}>
+            <Users className="w-3 h-3" /> Use on every settled line
+          </RowButton>
         </div>
       </Section>
 
       <Section
         title="Entrance tickets"
-        hint="Prefilled from the attraction lines the accounts system costed. Leave the total blank to have it read rate × count."
+        hint="The whole catalogue is on the sheet. Price a line and it lights up and totals; leave it faded and it is not charged."
       >
-        <div className="space-y-2">
-          <div className="grid grid-cols-[1fr_100px_70px_110px_auto] gap-2 text-[10px] uppercase tracking-wider text-slate-500 font-bold">
-            <span>Item</span><span className="text-right">Per person</span><span className="text-right">Count</span><span className="text-right">Total</span><span />
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <div className="relative flex-1 min-w-[160px]">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <input
+              value={q}
+              onChange={e => setQ(e.target.value)}
+              placeholder="Find an attraction"
+              className={cn(INPUT, 'pl-8')}
+            />
           </div>
-          {to.lines.map(l => (
-            <div key={l.id} className="grid grid-cols-[1fr_100px_70px_110px_auto] gap-2 items-center">
-              <input
-                type="text"
-                value={l.name}
-                onChange={e => setLine(l.id, 'name', e.target.value)}
-                placeholder="Sigiriya"
-                className={INPUT}
-              />
-              {numberCell(l.id, 'perPersonRate', l.perPersonRate, '—')}
-              {numberCell(l.id, 'count', l.count, '—')}
-              {numberCell(l.id, 'totalCost', l.totalCost, money(tourLineTotal(l)) || '—')}
-              <button
-                type="button"
-                onClick={() => patch(p => ({ ...p, tour: { ...p.tour, lines: p.tour.lines.filter(x => x.id !== l.id) } }))}
-                className="p-1.5 text-slate-500 hover:text-rose-300 transition-colors"
-                title="Remove this line"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+          {chip('all', 'All', to.lines.length)}
+          {chip('on', 'Settled', settled.length)}
+          {chip('off', 'Not taken', to.lines.length - settled.length)}
+          <RowButton onClick={() => setRateCard(true)}>
+            <Tags className="w-3 h-3" /> Rate card
+          </RowButton>
+        </div>
+
+        <div className="grid grid-cols-[22px_1fr_78px_52px_78px_52px_86px_24px] gap-1.5 px-1 pb-1 text-[9px] uppercase tracking-wider text-slate-500 font-bold">
+          <span />
+          <span>Item</span>
+          <span className="text-right">Adult rate</span>
+          <span className="text-right">Ad</span>
+          <span className="text-right">Child rate</span>
+          <span className="text-right">Ch</span>
+          <span className="text-right">Total</span>
+          <span />
+        </div>
+
+        <div className="space-y-3">
+          {groups.map(([title, lines]) => (
+            <div key={title}>
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold px-1 pb-1 flex items-center gap-2">
+                {title}
+                <span className="h-px flex-1 bg-slate-800" />
+              </p>
+              <div className="space-y-1">
+                {lines.map(l => {
+                  const lineTotal = tourLineTotal(l)
+                  return (
+                    <div
+                      key={l.id}
+                      className={cn(
+                        'grid grid-cols-[22px_1fr_78px_52px_78px_52px_86px_24px] gap-1.5 items-center rounded-lg px-1 py-1 border transition-colors',
+                        l.active
+                          ? 'bg-slate-900/70 border-slate-700'
+                          : 'border-transparent opacity-55 hover:opacity-90',
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggle(l)}
+                        title={l.active ? 'Taken on this tour — click to leave it off the sheet' : 'Not taken — click to settle it'}
+                        className="flex items-center justify-center"
+                      >
+                        {l.active
+                          ? <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          : <Circle className="w-4 h-4 text-slate-600" />}
+                      </button>
+                      <input
+                        type="text"
+                        value={l.name}
+                        onChange={e => setLine(l.id, { name: e.target.value })}
+                        placeholder="Attraction"
+                        className={cn(
+                          INPUT, 'px-2 py-1 truncate',
+                          l.active ? 'font-bold text-slate-50' : 'text-slate-400',
+                        )}
+                      />
+                      <CellNumber value={l.perPersonRate} onChange={v => setFigure(l, 'perPersonRate', v)} />
+                      <CellNumber value={l.count} onChange={v => setFigure(l, 'count', v)} placeholder={adults === null ? '—' : String(adults)} />
+                      <CellNumber value={l.childRate} onChange={v => setFigure(l, 'childRate', v)} />
+                      <CellNumber value={l.childCount} onChange={v => setFigure(l, 'childCount', v)} placeholder={children === null ? '—' : String(children)} />
+                      <CellNumber
+                        value={l.totalCost}
+                        onChange={v => setFigure(l, 'totalCost', v)}
+                        placeholder={money(lineTotal) || '—'}
+                        className={l.active && l.totalCost === null && lineTotal !== null ? 'text-emerald-300/80' : undefined}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => patch(p => ({ ...p, tour: { ...p.tour, lines: p.tour.lines.filter(x => x.id !== l.id) } }))}
+                        className="p-1 text-slate-600 hover:text-rose-300 transition-colors"
+                        title="Take this line off the sheet altogether"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           ))}
-          <div className="flex items-center justify-between pt-1">
+
+          {groups.length === 0 ? (
+            <p className="text-xs text-slate-500 py-6 text-center">
+              Nothing here matches that. {filter !== 'all' ? 'Try “All”.' : ''}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
             <RowButton onClick={() => patch(p => ({
               ...p,
-              tour: { ...p.tour, lines: [...p.tour.lines, { id: rowId('e'), name: '', perPersonRate: null, count: p.header.pax, totalCost: null }] },
+              tour: {
+                ...p.tour,
+                lines: [...p.tour.lines, {
+                  id: rowId('e'), name: '',
+                  perPersonRate: null, count: p.header.paxAdults,
+                  childRate: null, childCount: null,
+                  totalCost: null, active: true,
+                }],
+              },
             }))}>
-              <Plus className="w-3 h-3" /> Add ticket
+              <Plus className="w-3 h-3" /> Add an item
             </RowButton>
-            <span className="text-[11px] text-slate-400">
-              Total tour cost <span className="tabular-nums font-black text-slate-100">{money(total) || '—'}</span>
-            </span>
+            {missing.length ? (
+              <RowButton onClick={() => patch(p => ({
+                ...p,
+                tour: { ...p.tour, lines: [...p.tour.lines, ...missing.map((item, i) => catalogLine(item, p.tour.lines.length + i + 1))] },
+              }))}>
+                <ListPlus className="w-3 h-3" /> Put back {missing.length} catalogue item{missing.length === 1 ? '' : 's'}
+              </RowButton>
+            ) : null}
           </div>
+          <span className="text-[11px] text-slate-400">
+            {settled.length} settled · total{' '}
+            <span className="tabular-nums font-black text-slate-100">{money(total) || '—'}</span>
+          </span>
         </div>
       </Section>
 
+      <Section
+        title="What prints"
+        hint="A driver is normally handed the lines he is settling. Turn this on to print the whole catalogue, the untaken ones greyed."
+      >
+        <label className="flex items-center gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={to.showUnusedOnPrint}
+            onChange={e => setDoc({ showUnusedOnPrint: e.target.checked })}
+            className="w-4 h-4 rounded border-slate-700 bg-slate-950 accent-yellow-500"
+          />
+          <span className="text-xs text-slate-300">
+            Print the lines that were not taken, faded
+          </span>
+        </label>
+      </Section>
+
       <Section title="Note">
-        <Text label="Printed at the foot" value={to.note} onChange={v => patch(p => ({ ...p, tour: { ...p.tour, note: v } }))} area />
+        <Text label="Printed at the foot" value={to.note} onChange={v => setDoc({ note: v })} area />
       </Section>
     </div>
   )
@@ -1326,7 +1813,7 @@ export function SettlementDocsDialog({
                   <HeaderEditor pack={pack} patch={patch} />
                   {tab === 'transport'   ? <TransportEditor  pack={pack} patch={patch} /> : null}
                   {tab === 'local_visit' ? <LocalVisitEditor pack={pack} patch={patch} /> : null}
-                  {tab === 'tour'        ? <TourEditor       pack={pack} patch={patch} /> : null}
+                  {tab === 'tour'        ? <TourEditor       pack={pack} patch={patch} canWrite={canWrite} /> : null}
                 </>
               )}
 

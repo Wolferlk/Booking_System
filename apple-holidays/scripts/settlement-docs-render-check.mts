@@ -16,6 +16,7 @@ function samplePack(): SettlementDocPack {
   const p = emptyPack('IS46348', 'IS46348')
   p.header = {
     tourNo: 'IS46348', arrivalDate: '2025-12-02', departureDate: '2025-12-14', pax: 9,
+    paxAdults: 7, paxChildren: 2,
     tourHandler: 'Arosha', driverName: 'Sheshan', driverPhone: '0771234567',
     guideName: 'Susantha', vehicleType: 'KDH High Roof', vehiclePlate: 'KY 9127',
   }
@@ -30,16 +31,23 @@ function samplePack(): SettlementDocPack {
   }
   p.localVisit = { ...defaultLocalVisit(), driverRef: '473030CNTL', note: '' }
   p.tour = {
+    ...p.tour,
     guideName: 'Susantha', chauffeurName: 'Sheshan',
-    lines: [
-      { id: 'e-1', name: 'Pinnawala', perPersonRate: 3540, count: 10, totalCost: null },
-      { id: 'e-2', name: 'Temple of the Tooth', perPersonRate: 1500, count: 10, totalCost: null },
-      { id: 'e-3', name: 'Sigiriya', perPersonRate: 6200, count: 10, totalCost: null },
-      { id: 'e-4', name: 'Yala Jeep', perPersonRate: 15000, count: 2, totalCost: 30000 },
-      { id: 'e-5', name: 'Guide fee + guide accommodation', perPersonRate: null, count: null, totalCost: 135000 },
-    ],
+    showUnusedOnPrint: false,
+    // The catalogue is already on the sheet; this is a tour that took five of it.
+    lines: p.tour.lines.map(l => {
+      switch (l.name) {
+        case 'Pinnawala Orphanage':  return { ...l, active: true, perPersonRate: 3540, count: 7, childRate: 1770, childCount: 2, totalCost: null }
+        case 'Temple of Tooth':      return { ...l, active: true, perPersonRate: 1500, count: 7, childRate: 750,  childCount: 2, totalCost: null }
+        case 'Sigiriya':             return { ...l, active: true, perPersonRate: 6200, count: 7, childRate: 3100, childCount: 2, totalCost: null }
+        case 'Safari Jeep':          return { ...l, active: true, perPersonRate: null, count: null, childRate: null, childCount: null, totalCost: 30000 }
+        case 'Guide Package':        return { ...l, active: true, perPersonRate: null, count: null, childRate: null, childCount: null, totalCost: 135000 }
+        default: return l
+      }
+    }),
     note: '',
   }
+
   return p
 }
 

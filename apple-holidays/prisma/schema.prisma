@@ -2171,3 +2171,23 @@ model SlSettlementDoc {
 
   @@map("sl_settlement_docs")
 }
+
+/// The Sri Lankan entrance-ticket rate card — one row per attraction, the adult
+/// and child gate price the desk currently settles at. Shared across every
+/// booking: a Tour Settlement sheet starts from these figures so a handler is
+/// correcting a price rather than remembering one. Keyed by the attraction name
+/// as it is printed, which is also how a costed line is matched back to it
+/// (see `src/lib/sl-tour-tickets.ts`). Nothing here is per-booking — what a
+/// particular tour was charged lives in that booking's saved pack.
+model SlTourRate {
+  name      String   @id
+  adultRate Decimal? @db.Decimal(12, 2)
+  childRate Decimal? @db.Decimal(12, 2)
+  note      String?  @db.Text
+  sortOrder Int      @default(0)
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sl_tour_rates")
+}

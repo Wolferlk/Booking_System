@@ -29,7 +29,7 @@ import { ensurePdfkitDataFiles, loadPdfDocumentCtor } from '@/lib/pdfkit-boot'
 import { getUpload } from '@/lib/storage'
 import {
   DEFAULT_ACCENT, DEFAULT_LOGO, DOC_SLUG, SUB_LOGOS, docDate, isSafeLogoPath, money,
-  orientationOf, tourLineTotal, tourTotal, transportTotals,
+  orientationOf, tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from '@/lib/sl-settlement-docs'
 
@@ -137,6 +137,8 @@ interface Cell {
   bold?: boolean
   fill?: string
   size?: number
+  /** Ink for this cell. Grey is how an unsettled line prints. */
+  color?: string
 }
 
 /**
@@ -159,7 +161,7 @@ function row(doc: Doc, x: number, y: number, widths: number[], cells: Cell[], h:
 
     const t = txt(cell.text)
     if (t) {
-      doc.fillColor(INK)
+      doc.fillColor(cell.color ?? INK)
         .font(cell.bold ? 'Helvetica-Bold' : 'Helvetica')
         .fontSize(cell.size ?? 8)
         .text(t, cx + 4, y + (h - (cell.size ?? 8)) / 2 - 1, {
@@ -522,14 +524,31 @@ function localVisitPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
 
 // ── Tour settlement ──────────────────────────────────────────────────────────
 
+/**
+ * The Tour Settlement sheet, drawn.
+ *
+ * Six columns to the HTML renderer's six, in the same order and with the same
+ * wording: adults and children are priced apart at every gate in the country.
+ * An unsettled line prints grey, and the sheet runs onto a second page rather
+ * than losing rows off the bottom — a settlement form that silently stops at
+ * eighteen entries is worse than one that takes two sheets.
+ */
 function tourPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   const to = pack.tour
   const W = PAGE_W - MARGIN * 2
+  const ROW = 15
+  const layout = orientationOf(pack, 'tour')
 
   let y = masthead(doc, marks, 'TOUR SETTLEMENT')
 
+  const paxLine = [
+    pack.header.paxAdults !== null ? `${pack.header.paxAdults} adult${pack.header.paxAdults === 1 ? '' : 's'}` : '',
+    pack.header.paxChildren ? `${pack.header.paxChildren} child${pack.header.paxChildren === 1 ? '' : 'ren'}` : '',
+  ].filter(Boolean).join(' - ') || (pack.header.pax === null ? '' : `${pack.header.pax} pax`)
+
   const hdr: [string, string][] = [
     ['Tour No', pack.header.tourNo],
+    ['No of Pax', paxLine],
     ['Guide Name', to.guideName],
     ['Chauffeur Name', to.chauffeurName],
     ['Tour Handler', pack.header.tourHandler],
@@ -539,28 +558,50 @@ function tourPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   }
   y += 8
 
-  const cols = fit(W, [269, 110, 60, 100])
-  y = row(doc, MARGIN, y, cols, [
+  const cols = fit(W, [200, 78, 48, 78, 48, 87])
+
+  const headRow = (at: number): number => row(doc, MARGIN, at, cols, [
     { text: 'Entrance Tickets', bold: true, fill: HEAD, align: 'center', size: 7.5 },
-    { text: 'Per Person Rate', bold: true, fill: HEAD, align: 'center', size: 7.5 },
-    { text: 'Count', bold: true, fill: HEAD, align: 'center', size: 7.5 },
-    { text: 'Total Cost', bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    { text: 'Adult Rate',       bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    { text: 'Adults',           bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    { text: 'Child Rate',       bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    { text: 'Children',         bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    { text: 'Total Cost',       bold: true, fill: HEAD, align: 'center', size: 7.5 },
   ], 16)
 
-  const lines = to.lines.slice(0, 18)
-  for (const l of lines) {
-    y = row(doc, MARGIN, y, cols, [
-      { text: l.name },
-      { text: money(l.perPersonRate), align: 'right' },
-      { text: l.count === null ? '' : String(l.count), align: 'center' },
-      { text: money(tourLineTotal(l)), align: 'right' },
-    ], 16)
-  }
-  for (let i = lines.length; i < 18; i++) {
-    y = row(doc, MARGIN, y, cols, [{ text: '' }, { text: '' }, { text: '' }, { text: '' }], 16)
+  y = headRow(y)
+
+  /** Room for this row, the total line and the signatures — or a fresh sheet. */
+  const room = (need: number): void => {
+    if (y + need <= PAGE_H - MARGIN - 46) return
+    doc.addPage({ size: 'A4', layout, margin: MARGIN })
+    y = MARGIN
+    y = headRow(y)
   }
 
-  y = row(doc, MARGIN, y, [cols[0] + cols[1] + cols[2], cols[3]], [
+  const printed = tourPrintedLines(to)
+  for (const l of printed) {
+    room(ROW)
+    const ink = l.active ? INK : '#9AA0A6'
+    y = row(doc, MARGIN, y, cols, [
+      { text: l.name, bold: l.active, color: ink },
+      { text: money(l.perPersonRate), align: 'right', color: ink },
+      { text: l.count === null ? '' : String(l.count), align: 'center', color: ink },
+      { text: money(l.childRate), align: 'right', color: ink },
+      { text: l.childCount === null ? '' : String(l.childCount), align: 'center', color: ink },
+      { text: l.active ? money(tourLineTotal(l)) : '', align: 'right', color: ink },
+    ], ROW)
+  }
+
+  // Room to write, exactly as the paper form leaves it.
+  const blanks = to.showUnusedOnPrint ? 2 : Math.max(4, 16 - printed.length)
+  for (let i = 0; i < blanks; i++) {
+    room(ROW)
+    y = row(doc, MARGIN, y, cols, cols.map(() => ({ text: '' })), ROW)
+  }
+
+  room(18)
+  y = row(doc, MARGIN, y, [W - cols[5], cols[5]], [
     { text: 'Total Tour Cost', bold: true, fill: TOTAL, align: 'right' },
     { text: money(tourTotal(to)), bold: true, fill: TOTAL, align: 'right' },
   ], 18)

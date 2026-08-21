@@ -28,11 +28,13 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 import { fetchDriverAdvanceDetail } from './accounts-driver-advance-db'
-import type { DriverAdvanceDetail, DriverAdvanceLine } from './driver-advance'
+import type { DriverAdvanceDetail } from './driver-advance'
 import {
-  defaultLocalVisit, emptyPack, emptyTransportTotals, parsePack, rowId,
+  catalogLine, defaultLocalVisit, emptyPack, emptyTransportTotals, parsePack, rowId,
   type SettlementDocPack, type SettlementDocState, type TourLine, type TransportLine,
 } from './sl-settlement-docs'
+import { TOUR_TICKET_CATALOG, matchTicket, normaliseTicketName } from './sl-tour-tickets'
+import { rateLookup } from './sl-tour-rate-card'
 
 /** `yyyy-mm-dd` from a stored midnight-UTC calendar day. */
 const day = (d: Date | null | undefined): string | null =>
@@ -64,6 +66,15 @@ const BOOKING_SELECT = {
             },
           },
         },
+      },
+    },
+  },
+  pnl: {
+    select: {
+      paxAdults: true, paxChildren: true,
+      lineItems: {
+        orderBy: { sortOrder: 'asc' } as const,
+        select: { activity: true, category: true, adEntrance: true, chEntrance: true },
       },
     },
   },
@@ -187,32 +198,129 @@ function transportLines(b: BookingRow): TransportLine[] {
 }
 
 /**
- * Entrance tickets, from the lines the accounts system costed.
+ * The Tour sheet's ticket lines: the whole catalogue, priced from three places.
  *
- * Attractions and the guide's own charges are what the Tour Settlement is
- * about, so those two categories come across and the rest (transport, hotels,
- * meals) do not — they are settled on the other sheets. The per-person rate is
- * shown as the costed total over the pax count, and the *total* is carried as
- * the authoritative figure so a rounding artefact in the division can never
- * change what the sheet adds up to.
+ * The sheet always carries every attraction the desk sells — the ones this tour
+ * did not take stay on it, faded and unpriced — and three sources are laid over
+ * it in increasing order of authority:
+ *
+ *   1. the shared rate card, which is this season's gate prices and prices even
+ *      the lines nobody took, so the handler is correcting a figure rather than
+ *      remembering one;
+ *   2. the booking's own P&L, which is the only place an *adult and child*
+ *      split exists — `adEntrance` and `chEntrance` per attraction, exactly the
+ *      two columns this sheet prints — and which marks a line as taken;
+ *   3. the accounts system's costed lines, which are money that has actually
+ *      been reckoned, and are carried across as the line's total.
+ *
+ * A costed total is only written where the P&L gave no per-head split. Where it
+ * did, the rates and counts are left to price themselves out, so the sheet a
+ * driver checks adds up in front of him instead of showing a total that does
+ * not tie to the two columns beside it.
+ *
+ * Anything named by either system that the catalogue does not know is appended
+ * as its own line rather than dropped — an unlisted attraction is still money.
  */
-function tourLines(detail: DriverAdvanceDetail | null, pax: number): TourLine[] {
-  if (!detail) return []
-  const wanted = (l: DriverAdvanceLine) => l.category === 'ATTRACTION' || l.category === 'OTHERS'
 
-  return detail.lines.filter(wanted).map((l, idx) => {
-    const total = typeof l.lkr_amount === 'number' && Number.isFinite(l.lkr_amount)
-      ? l.lkr_amount
-      : l.actual_amount
-    const amount = Number.isFinite(total) ? Math.round(total * 100) / 100 : null
-    return {
-      id: rowId('e', idx + 1),
-      name: clean(l.activity_name) || clean(l.category_label),
-      perPersonRate: amount !== null && pax > 0 ? Math.round((amount / pax) * 100) / 100 : null,
-      count: pax > 0 ? pax : null,
-      totalCost: amount,
+/** The P&L categories that are settled on the Tour sheet rather than another one. */
+const TOUR_PNL_CATEGORIES = new Set(['TICKETS', 'GUIDES', 'WATER', 'CRUISE', 'OTHER'])
+
+/**
+ * A rate off a Decimal column, or null.
+ *
+ * Zero is read as "no price", not as free entry: `adEntrance` and `chEntrance`
+ * default to 0.00 on every P&L line, so a zero is overwhelmingly a column
+ * nobody filled in, and printing 0.00 against Sigiriya on a sheet a driver
+ * settles against would be a statement rather than a blank.
+ */
+function rateOf(v: unknown): number | null {
+  if (v === null || v === undefined) return null
+  const n = Number(v)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return Math.round(n * 100) / 100
+}
+
+type RateCard = Map<string, { adultRate: number | null; childRate: number | null }>
+
+function tourLines(
+  b: BookingRow,
+  detail: DriverAdvanceDetail | null,
+  adults: number,
+  children: number,
+  rates: RateCard,
+): TourLine[] {
+  const lines = TOUR_TICKET_CATALOG.map((item, i) => catalogLine(item, i + 1))
+  const byKey = new Map(lines.map(l => [normaliseTicketName(l.name), l]))
+  const pax = adults + children
+
+  /** The catalogue row this name belongs on, or a new line at the bottom. */
+  const lineFor = (rawName: string): TourLine | null => {
+    const name = clean(rawName)
+    if (!name) return null
+    const match = matchTicket(name)
+    const known = match ? byKey.get(normaliseTicketName(match.name)) : undefined
+    if (known) return known
+
+    const key = normaliseTicketName(name)
+    const already = byKey.get(key)
+    if (already) return already
+
+    const extra: TourLine = {
+      id: rowId('e', lines.length + 1), name,
+      perPersonRate: null, count: null, childRate: null, childCount: null,
+      totalCost: null, active: false,
     }
-  })
+    lines.push(extra)
+    byKey.set(key, extra)
+    return extra
+  }
+
+  // 1 — this season's prices, on every line, taken or not.
+  for (const l of lines) {
+    const r = rates.get(normaliseTicketName(l.name))
+    if (!r) continue
+    l.perPersonRate = r.adultRate
+    l.childRate = r.childRate
+  }
+
+  // 2 — the booking's own P&L: the adult / child split, and what was taken.
+  const split = new Set<string>()
+  for (const item of b.pnl?.lineItems ?? []) {
+    if (!TOUR_PNL_CATEGORIES.has(String(item.category))) continue
+    const adult = rateOf(item.adEntrance)
+    const child = rateOf(item.chEntrance)
+    if (adult === null && child === null) continue
+
+    const line = lineFor(item.activity)
+    if (!line) continue
+    line.active = true
+    if (adult !== null) { line.perPersonRate = adult; line.count = adults || null }
+    if (child !== null) { line.childRate = child; line.childCount = children || null }
+    split.add(line.id)
+  }
+
+  // 3 — what the accounts system actually costed.
+  if (detail) {
+    for (const l of detail.lines) {
+      if (l.category !== 'ATTRACTION' && l.category !== 'OTHERS') continue
+
+      const raw = typeof l.lkr_amount === 'number' && Number.isFinite(l.lkr_amount) ? l.lkr_amount : l.actual_amount
+      const amount = Number.isFinite(raw) ? Math.round(raw * 100) / 100 : null
+
+      const line = lineFor(clean(l.activity_name) || clean(l.category_label))
+      if (!line) continue
+      line.active = true
+      if (amount === null || split.has(line.id)) continue
+
+      line.totalCost = amount
+      if (line.perPersonRate === null && line.childRate === null && pax > 0) {
+        line.perPersonRate = Math.round((amount / pax) * 100) / 100
+        line.count = pax
+      }
+    }
+  }
+
+  return lines
 }
 
 /** The transport section's costed total, in rupees where a rate resolved. */
@@ -271,16 +379,31 @@ export async function derivePack(bookingRef: string): Promise<DerivedPack | null
     notices.push('The accounts database could not be read, so the costed figures are blank on these sheets.')
   }
 
-  const pax    = (b.paxAdults ?? 0) + (b.paxChildren ?? 0)
-  const driver = resolveDriver(b)
-  const guide  = resolveGuide(b)
-  const pack   = emptyPack(b.bookingRef, b.isNumber)
+  // The P&L's own split is preferred where it exists: Accounts reconcile the
+  // gate prices against that count, and the sheet has to agree with the money.
+  const adults   = b.pnl?.paxAdults || b.paxAdults || 0
+  const children = b.pnl?.paxChildren ?? b.paxChildren ?? 0
+  const pax      = adults + children
+  const driver   = resolveDriver(b)
+  const guide    = resolveGuide(b)
+  const pack     = emptyPack(b.bookingRef, b.isNumber)
+
+  // The rate card is a convenience, not a dependency: an unmigrated database or
+  // an empty card leaves the prices blank and everything else still derives.
+  let rates: Awaited<ReturnType<typeof rateLookup>> = new Map()
+  try {
+    rates = await rateLookup()
+  } catch (err) {
+    console.error('[sl-settlement-docs] rate card read failed', err)
+  }
 
   pack.header = {
     tourNo:        clean(b.isNumber) || b.bookingRef,
     arrivalDate:   day(b.arrivalDate),
     departureDate: day(b.departureDate),
     pax:           pax || null,
+    paxAdults:     adults || null,
+    paxChildren:   children || null,
     tourHandler:   clean(b.fileHandler),
     driverName:    clean(driver?.name),
     driverPhone:   clean(driver?.phone),
@@ -319,7 +442,8 @@ export async function derivePack(bookingRef: string): Promise<DerivedPack | null
   pack.tour = {
     guideName:     guide,
     chauffeurName: clean(driver?.name),
-    lines:         tourLines(detail, pax),
+    lines:         tourLines(b, detail, adults, children, rates),
+    showUnusedOnPrint: false,
     note: '',
   }
 
