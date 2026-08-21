@@ -25,7 +25,9 @@ import {
   DRIVER_TEMPLATE_LANG,
 } from '@/lib/driver-assignment-whatsapp'
 import { TEMPLATE_DRIVER_ADVANCE, DRIVER_ADVANCE_BODY } from '@/lib/driver-log-notify'
+import { TEMPLATE_SETTLEMENT_DOCS, SETTLEMENT_DOCS_BODY } from '@/lib/sl-settlement-docs-notify'
 import { sampleAdvanceSheetPdf } from '@/lib/generate-driver-log-pdf'
+import { sampleSettlementDocsPdf } from '@/lib/sl-settlement-docs-pdfkit'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -38,6 +40,9 @@ const TEMPLATES: {
   footerText: string
   /** DOCUMENT-header templates carry the generated PDF; needs a sample attachment. */
   headerFormat?: 'DOCUMENT'
+  /** The sample Meta reviews the header against — one per document, not shared. */
+  sample?: () => Promise<Buffer>
+  sampleName?: string
 }[] = [
   {
     name:     TEMPLATE_DRIVER_ASSIGN,
@@ -62,6 +67,8 @@ const TEMPLATES: {
     name:         TEMPLATE_DRIVER_ADVANCE,
     bodyText:     DRIVER_ADVANCE_BODY,
     headerFormat: 'DOCUMENT',
+    sample:       sampleAdvanceSheetPdf,
+    sampleName:   'DriverAdvanceSheet-sample.pdf',
     bodyExamples: [
       'Sunil',
       'IS48305',
@@ -70,6 +77,22 @@ const TEMPLATES: {
       'LKR 116,251.63 (100%)',
       'LKR 0.00 (30%)',
       'LKR 116,251.63',
+    ],
+    footerText: 'AppleHolidays Operations',
+  },
+  {
+    name:         TEMPLATE_SETTLEMENT_DOCS,
+    bodyText:     SETTLEMENT_DOCS_BODY,
+    headerFormat: 'DOCUMENT',
+    sample:       sampleSettlementDocsPdf,
+    sampleName:   'TourDocuments-sample.pdf',
+    bodyExamples: [
+      'Sunil',
+      'IS48305',
+      '30 Jun 2026 to 05 Jul 2026',
+      'Mr. Harre - 2 pax',
+      'Car - ABC-1234',
+      'Name board, Transport settlement, Local visit settlement, Tour settlement',
     ],
     footerText: 'AppleHolidays Operations',
   },
@@ -96,8 +119,8 @@ export async function POST(_req: NextRequest) {
   for (const t of TEMPLATES) {
     try {
       // A media header needs an uploaded sample before Meta will review it.
-      const headerHandle = t.headerFormat === 'DOCUMENT'
-        ? await uploadTemplateHeaderHandle(await sampleAdvanceSheetPdf(), 'DriverAdvanceSheet-sample.pdf')
+      const headerHandle = t.headerFormat === 'DOCUMENT' && t.sample
+        ? await uploadTemplateHeaderHandle(await t.sample(), t.sampleName ?? 'sample.pdf')
         : undefined
 
       const created = await createMetaTemplate({
