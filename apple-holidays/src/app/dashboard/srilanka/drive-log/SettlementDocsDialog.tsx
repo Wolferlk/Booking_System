@@ -33,10 +33,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, Check, Download, Eye, FileText, ImagePlus, Loader2, Plus, RefreshCw,
-  Save, Trash2, Undo2, Upload, X,
+  AlertTriangle, Check, Download, Eye, FileText, ImagePlus, Loader2, MessageCircle, Plus,
+  RefreshCw, Save, Trash2, Undo2, Upload, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { SendDocsWhatsAppDialog } from './SendDocsWhatsAppDialog'
 import {
   BUILTIN_LOGOS, DEFAULT_LOGO, DOC_BLURB, DOC_KINDS, DOC_LABEL, NAME_BOARD_ACCENTS,
   NAME_BOARD_THEMES, SUB_LOGOS, money, rowId, tourLineTotal, tourTotal, transportTotals,
@@ -919,6 +920,8 @@ export function SettlementDocsDialog({
   const [tab, setTab]       = useState<SettlementDocKind>('name_board')
   const [dirty, setDirty]   = useState(false)
   const [busy, setBusy]     = useState<'save' | 'reset' | 'download' | null>(null)
+  /** The WhatsApp send box, over this dialog. */
+  const [sendingTo, setSendingTo] = useState(false)
 
   const [preview, setPreview]         = useState<string | null>(null)
   const [previewing, setPreviewing]   = useState(false)
@@ -1101,6 +1104,15 @@ export function SettlementDocsDialog({
 
   return (
     <>
+      {/* The paperwork's other destination: the driver's phone, not the printer. */}
+      {sendingTo ? (
+        <SendDocsWhatsAppDialog
+          bookingRef={bookingRef}
+          title={title}
+          pack={pack}
+          onClose={() => setSendingTo(false)}
+        />
+      ) : null}
       <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-40" onClick={onClose} />
       <div className="fixed inset-3 md:inset-6 z-50 flex flex-col rounded-2xl bg-[#0c1225] border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden">
 
@@ -1140,6 +1152,14 @@ export function SettlementDocsDialog({
                 </button>
               </>
             ) : null}
+            <button
+              onClick={() => setSendingTo(true)}
+              disabled={loading || !pack}
+              title="Send the documents to the driver on WhatsApp"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 transition-colors disabled:opacity-40"
+            >
+              <MessageCircle className="w-3.5 h-3.5" /> Send to driver
+            </button>
             <button
               onClick={() => download([tab])}
               disabled={!!busy || loading || !pack}
