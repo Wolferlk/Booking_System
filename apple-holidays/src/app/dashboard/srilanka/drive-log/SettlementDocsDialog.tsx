@@ -33,13 +33,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, Check, Download, Eye, FileText, Loader2, Plus, RefreshCw, Save,
-  Trash2, Undo2, X,
+  AlertTriangle, Check, Download, Eye, FileText, ImagePlus, Loader2, Plus, RefreshCw,
+  Save, Trash2, Undo2, Upload, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  DOC_BLURB, DOC_KINDS, DOC_LABEL, money, rowId, tourLineTotal, tourTotal, transportTotals,
-  type SettlementDocKind, type SettlementDocPack, type SettlementDocState,
+  BUILTIN_LOGOS, DEFAULT_LOGO, DOC_BLURB, DOC_KINDS, DOC_LABEL, NAME_BOARD_ACCENTS,
+  NAME_BOARD_THEMES, SUB_LOGOS, money, rowId, tourLineTotal, tourTotal, transportTotals,
+  type NameBoardTheme, type SettlementDocKind, type SettlementDocPack, type SettlementDocState,
 } from '@/lib/sl-settlement-docs'
 
 interface DocsResponse extends SettlementDocState {
@@ -202,28 +203,345 @@ function HeaderEditor({ pack, patch }: { pack: SettlementDocPack; patch: Patch }
   )
 }
 
-function NameBoardEditor({ pack, patch }: { pack: SettlementDocPack; patch: Patch }) {
+/** A logo as the gallery lists it. */
+interface GalleryLogo { url: string; label: string; uploadedAt?: string | null }
+
+/**
+ * The marks the board may be printed with.
+ *
+ * The gallery is the bucket, read once when the board tab is opened: whatever
+ * anyone has uploaded is what everyone may choose from, so a logo added for one
+ * booking is on the next person's list without anything being seeded or synced.
+ */
+function useLogoGallery(active: boolean) {
+  const [builtin, setBuiltin]   = useState<GalleryLogo[]>(BUILTIN_LOGOS)
+  const [uploaded, setUploaded] = useState<GalleryLogo[]>([])
+  const [canUpload, setCanUpload] = useState(false)
+  const [loading, setLoading]   = useState(false)
+  const asked = useRef(false)
+
+  useEffect(() => {
+    if (!active || asked.current) return
+    asked.current = true
+    setLoading(true)
+    fetch('/api/srilanka/drive-log/documents/logos')
+      .then(r => r.json())
+      .then(json => {
+        const d = json?.data
+        if (!d) return
+        if (Array.isArray(d.builtin)) setBuiltin(d.builtin)
+        if (Array.isArray(d.uploaded)) setUploaded(d.uploaded)
+        setCanUpload(!!d.canUpload)
+      })
+      .catch(() => { /* the built-in marks are still selectable offline */ })
+      .finally(() => setLoading(false))
+  }, [active])
+
+  const add = useCallback((logo: GalleryLogo) => {
+    setUploaded(prev => [logo, ...prev.filter(l => l.url !== logo.url)])
+  }, [])
+
+  return { builtin, uploaded, canUpload, loading, add }
+}
+
+/** A switch. Reads as on/off across the room, which a checkbox does not. */
+function Toggle({
+  checked, onChange, label, hint,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  label: string
+  hint?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="w-full flex items-center gap-3 text-left group"
+    >
+      <span
+        className={cn(
+          'relative w-9 h-5 rounded-full flex-shrink-0 transition-colors',
+          checked ? 'bg-emerald-500/80' : 'bg-slate-700',
+        )}
+      >
+        <span
+          className={cn(
+            'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all',
+            checked ? 'left-[18px]' : 'left-0.5',
+          )}
+        />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[11px] font-bold text-slate-200 group-hover:text-white transition-colors">{label}</span>
+        {hint ? <span className="block text-[10px] text-slate-500 leading-snug">{hint}</span> : null}
+      </span>
+    </button>
+  )
+}
+
+/** A miniature of one layout, drawn in the chosen accent. */
+function ThemeSwatch({ theme, accent }: { theme: NameBoardTheme; accent: string }) {
+  const bar = { background: accent }
+  return (
+    <span className="block h-12 rounded-md bg-white overflow-hidden relative border border-slate-300">
+      {theme === 'ribbon' ? (
+        <>
+          <span className="absolute inset-x-0 top-0 h-3" style={bar} />
+          <span className="absolute inset-x-0 bottom-0 h-1.5" style={bar} />
+          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-2 w-14 rounded-sm bg-slate-800" />
+        </>
+      ) : theme === 'frame' ? (
+        <>
+          <span className="absolute inset-1 border" style={{ borderColor: accent }} />
+          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-2 w-12 rounded-sm bg-slate-800" />
+        </>
+      ) : theme === 'minimal' ? (
+        <>
+          <span className="absolute left-2 top-2 h-1.5 w-5 rounded-sm bg-slate-300" />
+          <span className="absolute left-2 top-1/2 -translate-y-1/2 h-2.5 w-16 rounded-sm bg-slate-800" />
+          <span className="absolute left-2 bottom-2.5 h-1 w-8 rounded-sm" style={bar} />
+        </>
+      ) : (
+        <>
+          <span className="absolute inset-x-0 top-0 h-1" style={bar} />
+          <span
+            className="absolute inset-0"
+            style={{ background: `radial-gradient(60% 60% at 50% 45%, ${accent}22, #fff 70%)` }}
+          />
+          <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-2.5 w-16 rounded-sm bg-slate-800" />
+          <span className="absolute left-1/2 bottom-2.5 -translate-x-1/2 h-1 w-6 rounded-sm" style={bar} />
+        </>
+      )}
+    </span>
+  )
+}
+
+/**
+ * The name board editor.
+ *
+ * The board is the one sheet in the pack a *guest* sees, so it is the one sheet
+ * worth dressing: the desk picks a layout, a colour and the mark at the top,
+ * and the preview beside it is the real print. Everything here is stored on the
+ * pack, so a board that was got right once prints the same way next time.
+ */
+function NameBoardEditor({ pack, patch, canWrite }: { pack: SettlementDocPack; patch: Patch; canWrite: boolean }) {
   const nb = pack.nameBoard
   const set = <K extends keyof typeof nb>(k: K, v: (typeof nb)[K]) =>
     patch(p => ({ ...p, nameBoard: { ...p.nameBoard, [k]: v } }))
 
+  const gallery = useLogoGallery(true)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const current = nb.logoUrl ?? DEFAULT_LOGO
+
+  const upload = async (file: File) => {
+    setUploading(true)
+    try {
+      const body = new FormData()
+      body.append('file', file)
+      const res = await fetch('/api/srilanka/drive-log/documents/logos', { method: 'POST', body })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(json?.error ?? 'The logo could not be uploaded')
+      const logo = json.data.logo as GalleryLogo
+      gallery.add(logo)
+      set('logoUrl', logo.url)
+      toast.success('Logo added to the gallery')
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const logos: GalleryLogo[] = [...gallery.builtin, ...gallery.uploaded]
+
   return (
-    <Section title="Name board" hint="Landscape sheet. The name is printed as large as it fits; everything else is small.">
-      <div className="space-y-3">
-        <Text label="Guest name" value={nb.guestName} onChange={v => set('guestName', v)} placeholder="Mr & Mrs Perera" />
-        <Text label="Line underneath" value={nb.subtitle} onChange={v => set('subtitle', v)} placeholder="Welcome to Sri Lanka" />
-        <Text label="Footnote" value={nb.footnote} onChange={v => set('footnote', v)} placeholder="9 pax · UL 504" />
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={nb.showReference}
-            onChange={e => set('showReference', e.target.checked)}
-            className="w-3.5 h-3.5 rounded border-slate-700 bg-slate-950"
-          />
-          <span className="text-[11px] text-slate-300 font-bold">Print the tour number in the corner</span>
-        </label>
-      </div>
-    </Section>
+    <div className="space-y-4">
+      {/* What it says */}
+      <Section title="What the board says" hint="Read from ten metres away — the name is printed as large as it fits.">
+        <div className="space-y-3">
+          <label className="block">
+            <span className={LABEL}>Guest name</span>
+            <input
+              type="text"
+              value={nb.guestName}
+              placeholder="Mr & Mrs Perera"
+              onChange={e => set('guestName', e.target.value)}
+              className={cn(INPUT, 'text-base font-black py-2.5 tracking-tight')}
+            />
+          </label>
+          <Text label="Line underneath" value={nb.subtitle} onChange={v => set('subtitle', v)} placeholder="Welcome to Sri Lanka" />
+          <Text label="Footnote" value={nb.footnote} onChange={v => set('footnote', v)} placeholder="9 pax · UL 504" />
+          <div className="pt-1">
+            <Toggle
+              checked={nb.showReference}
+              onChange={v => set('showReference', v)}
+              label="Print the tour number in the corner"
+              hint="Leave off for a guest who should not see a booking reference."
+            />
+          </div>
+        </div>
+      </Section>
+
+      {/* Layout */}
+      <Section title="Board design" hint="Four dressings of the same sheet. The name stays the same size in all of them.">
+        <div className="grid grid-cols-2 gap-2.5">
+          {NAME_BOARD_THEMES.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => set('theme', t.id)}
+              className={cn(
+                'rounded-xl border p-2 text-left transition-all',
+                nb.theme === t.id
+                  ? 'border-yellow-500/60 bg-yellow-500/10 ring-1 ring-yellow-500/30'
+                  : 'border-slate-800 bg-slate-950/50 hover:border-slate-700',
+              )}
+            >
+              <ThemeSwatch theme={t.id} accent={nb.accent} />
+              <span className="mt-2 flex items-center gap-1.5">
+                <span className={cn('text-[11px] font-black', nb.theme === t.id ? 'text-yellow-200' : 'text-slate-200')}>
+                  {t.label}
+                </span>
+                {nb.theme === t.id ? <Check className="w-3 h-3 text-yellow-300" /> : null}
+              </span>
+              <span className="block text-[10px] text-slate-500 leading-snug mt-0.5">{t.blurb}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-4">
+          <span className={LABEL}>Accent colour</span>
+          <div className="flex flex-wrap items-center gap-2">
+            {NAME_BOARD_ACCENTS.map(a => (
+              <button
+                key={a.value}
+                type="button"
+                title={a.label}
+                onClick={() => set('accent', a.value)}
+                className={cn(
+                  'w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center',
+                  nb.accent.toLowerCase() === a.value.toLowerCase() ? 'border-white' : 'border-slate-700',
+                )}
+                style={{ background: a.value }}
+              >
+                {nb.accent.toLowerCase() === a.value.toLowerCase()
+                  ? <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                  : null}
+              </button>
+            ))}
+            <label className="ml-1 inline-flex items-center gap-1.5 cursor-pointer text-[10px] text-slate-500 hover:text-slate-300">
+              <input
+                type="color"
+                value={nb.accent}
+                onChange={e => set('accent', e.target.value)}
+                className="w-7 h-7 rounded-full bg-transparent border border-slate-700 cursor-pointer p-0"
+              />
+              Custom
+            </label>
+          </div>
+        </div>
+      </Section>
+
+      {/* Logos */}
+      <Section title="Logo" hint="Printed large at the top of the board. Upload one and it stays in the gallery for everyone.">
+        <div className="flex items-center gap-3 mb-3">
+          <span className="w-24 h-16 rounded-xl bg-white border border-slate-700 flex items-center justify-center p-2 flex-shrink-0">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={current} alt="" className="max-h-full max-w-full object-contain" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold text-slate-200 truncate">
+              {logos.find(l => l.url === current)?.label ?? 'Selected logo'}
+            </p>
+            <p className="text-[10px] text-slate-500 truncate">{current}</p>
+            {nb.logoUrl && nb.logoUrl !== DEFAULT_LOGO ? (
+              <button
+                type="button"
+                onClick={() => set('logoUrl', null)}
+                className="mt-1 text-[10px] font-bold text-slate-400 hover:text-white underline underline-offset-2"
+              >
+                Back to the default mark
+              </button>
+            ) : (
+              <p className="mt-1 text-[10px] text-emerald-400/80 font-bold">House default</p>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2">
+          {logos.map(l => (
+            <button
+              key={l.url}
+              type="button"
+              title={l.label}
+              onClick={() => set('logoUrl', l.url === DEFAULT_LOGO ? null : l.url)}
+              className={cn(
+                'h-14 rounded-lg bg-white border p-1.5 flex items-center justify-center transition-all',
+                current === l.url ? 'border-yellow-400 ring-2 ring-yellow-400/40' : 'border-slate-700 hover:border-slate-400',
+              )}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={l.url} alt={l.label} className="max-h-full max-w-full object-contain" />
+            </button>
+          ))}
+
+          {canWrite && gallery.canUpload ? (
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="h-14 rounded-lg border border-dashed border-slate-700 hover:border-yellow-500/60 hover:text-yellow-300 text-slate-400 flex flex-col items-center justify-center gap-0.5 transition-colors disabled:opacity-50"
+            >
+              {uploading
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <ImagePlus className="w-4 h-4" />}
+              <span className="text-[9px] font-bold uppercase tracking-wide">{uploading ? 'Saving' : 'Add logo'}</span>
+            </button>
+          ) : null}
+        </div>
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={e => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) upload(f)
+          }}
+        />
+        {gallery.loading ? (
+          <p className="mt-2 text-[10px] text-slate-500 flex items-center gap-1.5">
+            <Loader2 className="w-3 h-3 animate-spin" /> Reading the gallery…
+          </p>
+        ) : (
+          <p className="mt-2 text-[10px] text-slate-600 flex items-center gap-1.5">
+            <Upload className="w-3 h-3" /> PNG, JPEG or WebP, under 3 MB. Uploads are kept in the bucket.
+          </p>
+        )}
+      </Section>
+
+      {/* House marks */}
+      <Section title="House marks" hint="The small row along the foot of the board.">
+        <Toggle
+          checked={nb.showSubLogos}
+          onChange={v => set('showSubLogos', v)}
+          label="Show the aahaas and Apple Holidays marks"
+          hint="Printed small at the bottom, whichever logo is large at the top."
+        />
+        <div className={cn('mt-3 flex items-center gap-3 transition-opacity', nb.showSubLogos ? 'opacity-100' : 'opacity-30')}>
+          {SUB_LOGOS.map(url => (
+            <span key={url} className="h-9 px-2 rounded-lg bg-white border border-slate-700 flex items-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={url} alt="" className="max-h-6 max-w-[70px] object-contain" />
+            </span>
+          ))}
+        </div>
+      </Section>
+    </div>
   )
 }
 
@@ -829,7 +1147,7 @@ export function SettlementDocsDialog({
               ) : null}
 
               {tab === 'name_board' ? (
-                <NameBoardEditor pack={pack} patch={patch} />
+                <NameBoardEditor pack={pack} patch={patch} canWrite={canWrite} />
               ) : (
                 <>
                   <HeaderEditor pack={pack} patch={patch} />

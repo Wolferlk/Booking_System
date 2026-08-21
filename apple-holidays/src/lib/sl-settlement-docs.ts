@@ -174,6 +174,93 @@ export interface NameBoardDoc {
   footnote: string
   /** Off for a guest who should not see a booking reference on a board. */
   showReference: boolean
+  /** The mark printed at the top. Null means the house default. */
+  logoUrl: string | null
+  /** The small row of company marks along the foot. On unless switched off. */
+  showSubLogos: boolean
+  /** Which of the printed layouts the board uses. */
+  theme: NameBoardTheme
+  /** The one colour the layout is drawn in, as `#rrggbb`. */
+  accent: string
+}
+
+// ── How the board is printed ──────────────────────────────────────────────────
+
+/**
+ * The board layouts.
+ *
+ * A name board is read across an arrivals hall from ten metres away, so every
+ * one of these keeps the name enormous and everything else quiet; they differ
+ * in how the sheet is dressed around it, not in how loud the name is. Choosing
+ * a layout is the desk's decision — a corporate arrival and a honeymoon
+ * transfer want different paper.
+ */
+export type NameBoardTheme = 'spotlight' | 'ribbon' | 'frame' | 'minimal'
+
+export const NAME_BOARD_THEMES: { id: NameBoardTheme; label: string; blurb: string }[] = [
+  { id: 'spotlight', label: 'Spotlight', blurb: 'A soft wash of colour behind the name, logo above it, centred.' },
+  { id: 'ribbon',    label: 'Ribbon',    blurb: 'A colour band top and bottom, the logo reversed out of it.' },
+  { id: 'frame',     label: 'Frame',     blurb: 'A ruled border with corner ticks — the formal, hotel-desk look.' },
+  { id: 'minimal',   label: 'Minimal',   blurb: 'White paper, the name set left, one hairline. Nothing else.' },
+]
+
+const THEME_IDS = NAME_BOARD_THEMES.map(t => t.id)
+
+/** The colour the board is drawn in. Apple red is the house mark. */
+export const NAME_BOARD_ACCENTS: { label: string; value: string }[] = [
+  { label: 'Apple red', value: '#d1002a' },
+  { label: 'Ink',       value: '#111827' },
+  { label: 'Ceylon',    value: '#0f766e' },
+  { label: 'Midnight',  value: '#1e3a8a' },
+  { label: 'Saffron',   value: '#b45309' },
+  { label: 'Orchid',    value: '#7e22ce' },
+]
+
+export const DEFAULT_ACCENT = NAME_BOARD_ACCENTS[0].value
+
+/** The mark the board carries when nobody has chosen another. */
+export const DEFAULT_LOGO = '/png/AppleHolidaysLogo.png'
+
+/** The marks that ship with the app — always in the gallery, never deletable. */
+export const BUILTIN_LOGOS: { url: string; label: string }[] = [
+  { url: '/png/AppleHolidaysLogo.png', label: 'Apple Holidays' },
+  { url: '/png/aahaas.png',            label: 'aahaas' },
+  { url: '/png/aahaslogo.png',         label: 'aahaas mark' },
+  { url: '/logo.png',                  label: 'Apple mark' },
+]
+
+/**
+ * The small marks along the foot of the board.
+ *
+ * Both houses appear on the sheet a guest is met with, whichever single logo is
+ * printed large at the top. Fixed rather than editable: this is a branding
+ * rule, not a per-booking decision.
+ */
+export const SUB_LOGOS: string[] = [
+  '/png/aahaas.png',
+  '/png/aahaslogo.png',
+  '/png/AppleHolidaysLogo.png',
+]
+
+/** Where an uploaded logo lives under the uploads prefix. */
+export const LOGO_UPLOAD_DIR = 'branding/logos'
+
+/**
+ * Is this a logo path we are willing to print?
+ *
+ * The value arrives from a browser and is turned into a file read on the
+ * server, so it is whitelisted rather than sanitised: one of the marks shipped
+ * in `public/png`, the Apple mark, or something previously uploaded into the
+ * bucket under `uploads/branding/logos/`. Anything else — an absolute URL, a
+ * traversal, a path into the rest of `public` — is refused and the board falls
+ * back to the default.
+ */
+export function isSafeLogoPath(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length > 300) return false
+  if (v.includes('..') || v.includes('\0')) return false
+  if (/^\/png\/[A-Za-z0-9._-]+\.(png|jpg|jpeg|webp|svg)$/i.test(v)) return true
+  if (v === '/logo.png') return true
+  return new RegExp(`^/api/uploads/${LOGO_UPLOAD_DIR}/[A-Za-z0-9._-]+\\.(png|jpg|jpeg|webp|svg)$`, 'i').test(v)
 }
 
 export interface SettlementDocPack {
@@ -272,7 +359,10 @@ export function emptyPack(bookingRef: string, isNumber: string | null = null): S
     bookingRef,
     isNumber,
     header: emptyHeader(),
-    nameBoard: { guestName: '', subtitle: 'Welcome to Sri Lanka', footnote: '', showReference: true },
+    nameBoard: {
+      guestName: '', subtitle: 'Welcome to Sri Lanka', footnote: '', showReference: true,
+      logoUrl: null, showSubLogos: true, theme: 'spotlight', accent: DEFAULT_ACCENT,
+    },
     transport: {
       vehicleType: '', perKmRate: null, maxMileage: null, km: null, packageCost: null,
       lines: [], totals: emptyTransportTotals(),
@@ -408,6 +498,10 @@ export function parsePack(raw: unknown, fallback: SettlementDocPack): Settlement
     subtitle:      str(nb.subtitle, 120),
     footnote:      str(nb.footnote, 200),
     showReference: nb.showReference !== false,
+    logoUrl:       isSafeLogoPath(nb.logoUrl) ? nb.logoUrl : null,
+    showSubLogos:  nb.showSubLogos !== false,
+    theme:         THEME_IDS.includes(nb.theme as NameBoardTheme) ? (nb.theme as NameBoardTheme) : 'spotlight',
+    accent:        /^#[0-9a-f]{6}$/i.test(String(nb.accent ?? '')) ? String(nb.accent) : DEFAULT_ACCENT,
   }
 
   const tr = (src.transport ?? {}) as Record<string, any>

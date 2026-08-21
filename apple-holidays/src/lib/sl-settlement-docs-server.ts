@@ -290,6 +290,7 @@ export async function derivePack(bookingRef: string): Promise<DerivedPack | null
   }
 
   pack.nameBoard = {
+    ...pack.nameBoard,
     guestName: leadGuest(b),
     subtitle:  'Welcome to Sri Lanka',
     footnote:  pax ? `${pax} pax` : '',

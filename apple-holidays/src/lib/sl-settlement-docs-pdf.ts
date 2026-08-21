@@ -26,8 +26,10 @@
 import { readFile } from 'fs/promises'
 import path from 'path'
 import { launchBrowser } from './html-to-pdf'
+import { getUpload } from './storage'
 import {
-  DOC_LABEL, docDate, money, tourLineTotal, tourTotal, transportTotals,
+  DEFAULT_LOGO, DOC_LABEL, SUB_LOGOS, docDate, isSafeLogoPath, money, tourLineTotal,
+  tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from './sl-settlement-docs'
 
@@ -44,27 +46,69 @@ const COMPANY = {
   line:  '# 148, Aluthmawatha Road, Colombo 15, Telephone No : 0117423700',
 }
 
-// ── The logo ──────────────────────────────────────────────────────────────────
+// ── The logos ─────────────────────────────────────────────────────────────────
 
-let logoCache: string | null | undefined
+const logoCache = new Map<string, string | null>()
 
 /**
- * The Apple Holidays mark, inlined as a data URI.
+ * One mark, inlined as a data URI.
  *
- * Chromium renders the page with no network and no origin, so a `/logo.png`
- * would silently print as a broken image. Read once per process and cached;
- * a missing file is not an error — the sheets fall back to the wordmark, which
- * is what the paper forms carry anyway.
+ * Chromium renders the page with no network and no origin, so a `/png/x.png`
+ * would silently print as a broken image, and the editor's preview — which is
+ * this same HTML in a sandboxed iframe — has no origin either. So every mark is
+ * read on the server and embedded in the document.
+ *
+ * Two kinds of path are understood, and nothing else: a file shipped in
+ * `public`, and something uploaded into the bucket under `uploads/`. The path
+ * has already been whitelisted by `isSafeLogoPath`; this re-checks it anyway,
+ * because it is the function that actually opens a file. A mark that cannot be
+ * read is not an error — the sheet falls back to the wordmark, which is what
+ * the paper forms carry.
  */
-async function logoDataUri(): Promise<string | null> {
-  if (logoCache !== undefined) return logoCache
+async function logoDataUri(url: string | null | undefined): Promise<string | null> {
+  if (!url) return null
+  if (logoCache.has(url)) return logoCache.get(url) ?? null
+  if (!isSafeLogoPath(url)) { logoCache.set(url, null); return null }
+
+  let uri: string | null = null
   try {
-    const buf = await readFile(path.join(process.cwd(), 'public', 'logo.png'))
-    logoCache = `data:image/png;base64,${buf.toString('base64')}`
+    if (url.startsWith('/api/uploads/')) {
+      const stored = await getUpload(url.slice('/api/uploads/'.length))
+      if (stored) uri = `data:${stored.contentType};base64,${stored.buffer.toString('base64')}`
+    } else {
+      const buf = await readFile(path.join(process.cwd(), 'public', ...url.slice(1).split('/')))
+      const ext = url.split('.').pop()?.toLowerCase()
+      const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+        : ext === 'webp' ? 'image/webp'
+        : ext === 'svg' ? 'image/svg+xml'
+        : 'image/png'
+      uri = `data:${mime};base64,${buf.toString('base64')}`
+    }
   } catch {
-    logoCache = null
+    uri = null
   }
-  return logoCache
+
+  logoCache.set(url, uri)
+  return uri
+}
+
+/** Every mark one render needs, read once and handed to each sheet. */
+interface Marks {
+  /** The house mark on the settlement forms' masthead. */
+  house: string | null
+  /** The mark printed large at the top of the name board. */
+  board: string | null
+  /** The small row of company marks along the foot of the board. */
+  subs: string[]
+}
+
+async function readMarks(pack: SettlementDocPack): Promise<Marks> {
+  const [house, board, subs] = await Promise.all([
+    logoDataUri('/logo.png'),
+    logoDataUri(pack.nameBoard.logoUrl ?? DEFAULT_LOGO),
+    Promise.all(SUB_LOGOS.map(logoDataUri)),
+  ])
+  return { house, board, subs: subs.filter((s): s is string => !!s) }
 }
 
 // ── Shared pieces ─────────────────────────────────────────────────────────────
@@ -107,29 +151,112 @@ function blankRows(count: number, cells: number, cls = ''): string {
 // ── Name board ────────────────────────────────────────────────────────────────
 
 /**
+ * The type size for the name.
+ *
+ * One line if it can possibly be one line: the board is read across a crowded
+ * hall, and a name broken over three lines reads as three names. The size steps
+ * down with the longest word as well as the whole string, because "Wickramasinghe"
+ * cannot be hyphenated on an arrivals board.
+ */
+function nameSize(name: string, base: number): number {
+  const longest = name.split(/\s+/).reduce((n, w) => Math.max(n, w.length), 0)
+  const byLength = name.length > 34 ? 0.52 : name.length > 24 ? 0.68 : name.length > 16 ? 0.84 : 1
+  const byWord   = longest > 16 ? 0.6 : longest > 12 ? 0.78 : 1
+  return Math.round(base * Math.min(byLength, byWord))
+}
+
+/** The small row of house marks along the foot, when the desk leaves it on. */
+function subLogoRow(pack: SettlementDocPack, marks: Marks): string {
+  if (!pack.nameBoard.showSubLogos || marks.subs.length === 0) return ''
+  return `<div class="board-marks">
+    ${marks.subs.map(src => `<img src="${src}" alt="">`).join('<span class="dot"></span>')}
+  </div>`
+}
+
+/**
  * The arrivals-hall board.
  *
  * One name, as large as the sheet allows, because it is read across a crowded
- * hall — everything else on the page is deliberately small, the logo included.
- * The type size steps down as the name gets longer so a four-word name still
- * fits on one line rather than wrapping to three.
+ * hall — everything else on the page is deliberately small, the logos included.
+ * The four layouts differ only in how the sheet is dressed around that name:
+ * the accent colour and the type scale are the same decisions in each, so a
+ * board is recognisably ours whichever one the desk picks.
  */
-function nameBoardHtml(pack: SettlementDocPack, logo: string | null): string {
+function nameBoardHtml(pack: SettlementDocPack, marks: Marks): string {
   const nb = pack.nameBoard
   const name = nb.guestName || '—'
-  const size = name.length > 34 ? 68 : name.length > 24 ? 88 : name.length > 16 ? 110 : 132
+  const ref = nb.showReference && pack.header.tourNo ? pack.header.tourNo : ''
+  const logo = marks.board
 
-  return `<section class="board">
-    <div class="board-inner">
-      ${logo ? `<img class="board-logo" src="${logo}" alt="">` : `<div class="board-wordmark">${esc(COMPANY.site)}</div>`}
-      <div class="board-name" style="font-size:${size}px">${esc(name)}</div>
-      ${nb.subtitle ? `<div class="board-sub">${esc(nb.subtitle)}</div>` : ''}
-      <div class="board-foot">
-        ${nb.footnote ? `<span>${esc(nb.footnote)}</span>` : ''}
-        ${nb.showReference && pack.header.tourNo ? `<span class="board-ref">${esc(pack.header.tourNo)}</span>` : ''}
-      </div>
-    </div>
-  </section>`
+  const mark = logo
+    ? `<img class="board-logo" src="${logo}" alt="">`
+    : `<div class="board-wordmark">${esc(COMPANY.site)}</div>`
+
+  const foot = `<div class="board-foot">
+      ${nb.footnote ? `<span>${esc(nb.footnote)}</span>` : ''}
+      ${ref ? `<span class="board-ref">${esc(ref)}</span>` : ''}
+    </div>`
+
+  const sub = nb.subtitle ? `<div class="board-sub">${esc(nb.subtitle)}</div>` : ''
+  const size = nameSize(name, nb.theme === 'minimal' ? 124 : 132)
+  const nameEl = `<div class="board-name" style="font-size:${size}px">${esc(name)}</div>`
+
+  const body = (() => {
+    switch (nb.theme) {
+      case 'ribbon':
+        return `<div class="ribbon-top">
+            ${logo ? `<span class="chip"><img src="${logo}" alt=""></span>` : ''}
+            <span class="ribbon-site">${esc(COMPANY.site)}</span>
+          </div>
+          <div class="board-inner">
+            ${nameEl}
+            ${sub}
+            ${foot}
+          </div>
+          ${subLogoRow(pack, marks)}
+          <div class="ribbon-bottom"></div>`
+
+      case 'frame': {
+        // The arrival day rather than a company name: whichever mark is printed
+        // at the top may not be ours, and a board must never greet a guest in
+        // the wrong house's name.
+        const arrival = docDate(pack.header.arrivalDate)
+        return `<div class="frame-rule"></div>
+          <div class="board-inner">
+            ${mark}
+            <div class="frame-eyebrow">${arrival ? `Arrival · ${esc(arrival)}` : 'Welcome'}</div>
+            ${nameEl}
+            <div class="board-rule"></div>
+            ${sub}
+            ${foot}
+          </div>
+          ${subLogoRow(pack, marks)}`
+      }
+
+      case 'minimal':
+        return `<div class="board-inner">
+            ${mark}
+            <div class="board-name min-name" style="font-size:${size}px">${esc(name)}<span class="min-dot"></span></div>
+            <div class="board-rule"></div>
+            ${sub}
+            ${foot}
+          </div>
+          ${subLogoRow(pack, marks)}`
+
+      default:
+        return `<div class="wash"></div>
+          <div class="board-inner">
+            ${mark}
+            ${nameEl}
+            <div class="board-rule"></div>
+            ${sub}
+            ${foot}
+          </div>
+          ${subLogoRow(pack, marks)}`
+    }
+  })()
+
+  return `<section class="board board-${esc(nb.theme)}" style="--accent:${esc(nb.accent)}">${body}</section>`
 }
 
 // ── Transport settlement ──────────────────────────────────────────────────────
@@ -289,11 +416,11 @@ function tourHtml(pack: SettlementDocPack, logo: string | null): string {
 
 // ── The document ──────────────────────────────────────────────────────────────
 
-const RENDERERS: Record<SettlementDocKind, (p: SettlementDocPack, logo: string | null) => string> = {
+const RENDERERS: Record<SettlementDocKind, (p: SettlementDocPack, m: Marks) => string> = {
   name_board:  nameBoardHtml,
-  transport:   transportHtml,
-  local_visit: localVisitHtml,
-  tour:        tourHtml,
+  transport:   (p, m) => transportHtml(p, m.house),
+  local_visit: (p, m) => localVisitHtml(p, m.house),
+  tour:        (p, m) => tourHtml(p, m.house),
 }
 
 const STYLES = `
@@ -314,15 +441,70 @@ const STYLES = `
   section.form  { page: form; break-after: page; }
   section:last-child { break-after: auto; }
 
-  /* ── Name board ── */
-  .board-inner { text-align: center; padding: 0 18mm; width: 100%; }
-  .board-logo { height: 62px; margin-bottom: 26px; }
-  .board-wordmark { font-size: 20px; font-weight: 700; color: #d1002a; letter-spacing: -.5px; margin-bottom: 26px; }
-  .board-name { font-weight: 800; line-height: 1.06; letter-spacing: -1.5px; word-break: break-word; }
-  .board-sub { margin-top: 20px; font-size: 26px; color: #444; font-weight: 500; }
-  .board-foot { margin-top: 34px; font-size: 13px; color: #8a8f98; display: flex;
-                gap: 16px; justify-content: center; }
+  /* ── Name board ──
+     Four dressings of one idea: an enormous name, one accent colour, and the
+     house marks kept small. Everything below is measured from that. */
+  section.board { position: relative; overflow: hidden; }
+  .board-inner { text-align: center; padding: 0 18mm; width: 100%; position: relative; z-index: 1; }
+  .board-logo { height: 66px; margin-bottom: 26px; object-fit: contain; }
+  .board-wordmark { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -.5px; margin-bottom: 26px; }
+  .board-name { font-weight: 800; line-height: 1.04; letter-spacing: -2px; word-break: break-word; color: #0b1020; }
+  .board-rule { width: 88px; height: 4px; background: var(--accent); border-radius: 4px; margin: 22px auto 0; }
+  .board-sub { margin-top: 20px; font-size: 26px; color: #3f4654; font-weight: 500; }
+  .board-foot { margin-top: 26px; font-size: 13px; color: #8a8f98; display: flex;
+                gap: 16px; justify-content: center; letter-spacing: .4px; }
   .board-ref { font-family: "Courier New", monospace; }
+
+  /* The row of house marks along the foot — small on purpose, and the same
+     size on every layout so the board is recognisable at a glance. */
+  .board-marks { position: absolute; left: 0; right: 0; bottom: 11mm; z-index: 1;
+                 display: flex; align-items: center; justify-content: center; gap: 16px; }
+  .board-marks img { height: 24px; max-width: 130px; object-fit: contain; opacity: .85; }
+  .board-marks .dot { width: 3px; height: 3px; border-radius: 50%; background: #c8ccd4; }
+
+  /* Spotlight — a wash of the accent behind the name. */
+  /* Tinting is done with opacity over white rather than a mixed colour, so the
+     wash is the accent whatever colour the desk picked and needs no colour
+     arithmetic from the print engine. */
+  .board-spotlight .wash { position: absolute; inset: 0; opacity: .12;
+    background: radial-gradient(58% 62% at 50% 40%, var(--accent) 0%, #fff 70%); }
+  .board-spotlight::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 6px;
+    background: linear-gradient(90deg, var(--accent), rgba(255,255,255,0)); }
+
+  /* Ribbon — a band top and bottom, the mark reversed out of the top one. */
+  .board-ribbon .ribbon-top { position: absolute; top: 0; left: 0; right: 0; height: 26mm;
+    background: var(--accent); display: flex; align-items: center; gap: 14px; padding: 0 16mm; }
+  .board-ribbon .chip { background: #fff; border-radius: 10px; padding: 7px 12px; display: inline-flex; }
+  .board-ribbon .chip img { height: 34px; object-fit: contain; }
+  .board-ribbon .ribbon-site { color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase; opacity: .92; }
+  .board-ribbon .ribbon-bottom { position: absolute; bottom: 0; left: 0; right: 0; height: 7mm; background: var(--accent); }
+  .board-ribbon .board-inner { padding-top: 12mm; }
+  .board-ribbon .board-marks { bottom: 12mm; }
+
+  /* Frame — ruled border and corner ticks; the formal, hotel-desk sheet. */
+  .board-frame .frame-rule { position: absolute; inset: 9mm; border: 2px solid var(--accent); }
+  .board-frame .frame-rule::before {
+    content: ''; position: absolute; inset: 3mm; border: 1px solid var(--accent); opacity: .35; }
+  .board-frame .board-name { font-family: Georgia, "Times New Roman", serif; letter-spacing: -1px; }
+  .board-frame .frame-eyebrow { font-size: 14px; letter-spacing: 5px; text-transform: uppercase;
+    color: var(--accent); font-weight: 700; margin-bottom: 16px; }
+  .board-frame .board-sub { font-style: italic; }
+  .board-frame .board-marks { bottom: 15mm; }
+
+  /* Minimal — white paper, the name set left, one hairline. */
+  .board-minimal { align-items: stretch; }
+  .board-minimal .board-inner { text-align: left; padding: 18mm 20mm; display: flex;
+    flex-direction: column; justify-content: center; }
+  .board-minimal .board-logo { height: 44px; margin-bottom: 34px; align-self: flex-start; }
+  .board-minimal .board-wordmark { text-align: left; }
+  /* The full stop after the name sits *in* the line, so it follows the last
+     word however the name wraps rather than drifting to the margin. */
+  .board-minimal .min-dot { display: inline-block; width: .12em; height: .12em; border-radius: 50%;
+    background: var(--accent); margin-left: .08em; vertical-align: baseline; }
+  .board-minimal .board-rule { margin: 24px 0 0; width: 120px; height: 3px; }
+  .board-minimal .board-foot { justify-content: flex-start; }
+  .board-minimal .board-marks { justify-content: flex-end; right: 20mm; left: auto; bottom: 12mm; }
 
   /* ── Forms ── */
   .masthead { display: flex; align-items: center; gap: 10px; justify-content: center; }
@@ -388,8 +570,8 @@ export async function buildDocsHtml(
   pack: SettlementDocPack,
   kinds: SettlementDocKind[],
 ): Promise<string> {
-  const logo = await logoDataUri()
-  const body = kinds.map(k => RENDERERS[k](pack, logo)).join('\n')
+  const marks = await readMarks(pack)
+  const body = kinds.map(k => RENDERERS[k](pack, marks)).join('\n')
   const title = kinds.length === 1
     ? `${DOC_LABEL[kinds[0]]} · ${pack.header.tourNo || pack.bookingRef}`
     : `Settlement documents · ${pack.header.tourNo || pack.bookingRef}`
