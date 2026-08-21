@@ -84,6 +84,22 @@ async function findSystemChromium(): Promise<string | null> {
   return null
 }
 
+/**
+ * No Chromium on this host.
+ *
+ * Thrown where the failure is the *environment* rather than the document: an
+ * arm64 server with only the x64 payload, a payload that never shipped, a
+ * corrupt extract. Callers that have a second way to produce the file — handing
+ * the print-ready HTML to the user's own browser, say — catch this and take it,
+ * instead of showing an operator a message about ELF headers.
+ */
+export class PdfEngineUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PdfEngineUnavailableError'
+  }
+}
+
 export async function launchBrowser() {
   // 1. Explicit Chrome path via env var (admin override — takes priority everywhere)
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
@@ -118,14 +134,14 @@ export async function launchBrowser() {
 
     if (!check.ok) {
       if (check.reason === 'missing') {
-        throw new Error(
+        throw new PdfEngineUnavailableError(
           `Chromium binary missing at ${executablePath}. The @sparticuz/chromium payload ` +
             `was not deployed with the server bundle. Original error: ${check.detail}`
         )
       }
 
       if (check.reason === 'wrong-arch') {
-        throw new Error(
+        throw new PdfEngineUnavailableError(
           `Chromium at ${executablePath} cannot run on this host — ${check.detail}. ` +
             `The @sparticuz/chromium npm package bundles x64 binaries only. On arm64 hosts, ` +
             `install a distro Chromium (apt-get install -y chromium) or set ` +
@@ -134,7 +150,7 @@ export async function launchBrowser() {
       }
 
       await rm(executablePath, { force: true }).catch(() => {})
-      throw new Error(
+      throw new PdfEngineUnavailableError(
         `Chromium at ${executablePath} is not an ELF executable — ${check.detail}. The extract ` +
           `was corrupt or incomplete (check that @sparticuz/chromium is listed in ` +
           `serverComponentsExternalPackages, and that the runtime has enough free /tmp space). ` +

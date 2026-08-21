@@ -43,6 +43,50 @@ import {
   type NameBoardTheme, type SettlementDocKind, type SettlementDocPack, type SettlementDocState,
 } from '@/lib/sl-settlement-docs'
 
+/**
+ * Print a document with the browser this page is open in.
+ *
+ * Used when the server has no Chromium to render a PDF with. The document goes
+ * into an off-screen same-origin iframe and that frame is printed, so the print
+ * job is the settlement pack alone — not this dark dialog around it, and with
+ * no window for a pop-up blocker to stop.
+ *
+ * Deliberately *not* sandboxed, unlike the preview pane: `print()` on a
+ * sandboxed frame is refused, and this is our own server-rendered document with
+ * no script in it. The frame is left in place until the print job is done
+ * because removing it early cancels the job in every browser.
+ */
+function printInBrowser(html: string): Promise<void> {
+  return new Promise(resolve => {
+    const frame = document.createElement('iframe')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0;border:0'
+    frame.srcdoc = html
+
+    let done = false
+    const cleanUp = () => {
+      if (done) return
+      done = true
+      frame.remove()
+      resolve()
+    }
+
+    frame.onload = () => {
+      const win = frame.contentWindow
+      if (!win) { cleanUp(); return }
+      win.addEventListener('afterprint', cleanUp)
+      // A last resort: Safari never fires `afterprint` for an iframe, and a
+      // dialog left open for two minutes has been answered one way or another.
+      setTimeout(cleanUp, 120_000)
+      win.focus()
+      win.print()
+      resolve()
+    }
+
+    document.body.appendChild(frame)
+  })
+}
+
 interface DocsResponse extends SettlementDocState {
   canWrite: boolean
 }
@@ -981,7 +1025,19 @@ export function SettlementDocsDialog({
     }
   }
 
-  /** `kinds` empty means the whole pack — one PDF, board first. */
+  /**
+   * Get the sheets out of the screen and onto paper.
+   *
+   * `kinds` empty means the whole pack — board first, then the three forms.
+   *
+   * The server renders the PDF where it has a Chromium to do it with. Where it
+   * has not — an arm64 host the bundled x64 build cannot run on — it answers
+   * with the *same* HTML document instead, and the operator's own browser
+   * prints it: Chrome's "Save as PDF" produces the identical sheets, mixed
+   * orientation and all, because the `@page` boxes are in the document itself.
+   * The desk gets its paperwork either way and never sees the difference except
+   * in which dialog opens.
+   */
   const download = async (kinds: SettlementDocKind[]) => {
     if (!pack) return
     setBusy('download')
@@ -995,6 +1051,15 @@ export function SettlementDocsDialog({
         const json = await res.json().catch(() => null)
         throw new Error(json?.error ?? 'The download could not be generated')
       }
+
+      const what = kinds.length === 1 ? DOC_LABEL[kinds[0]] : 'All four documents'
+
+      if (res.headers.get('X-Print-Fallback') === 'browser') {
+        await printInBrowser(await res.text())
+        toast.success(`${what} — choose "Save as PDF" in the print dialog`, { duration: 6000 })
+        return
+      }
+
       const blob = await res.blob()
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a')
@@ -1003,7 +1068,7 @@ export function SettlementDocsDialog({
       a.download = kinds.length === 1 ? `${stem}-${kinds[0]}.pdf` : `${stem}-settlement-documents.pdf`
       document.body.appendChild(a); a.click(); a.remove()
       URL.revokeObjectURL(url)
-      toast.success(kinds.length === 1 ? `${DOC_LABEL[kinds[0]]} downloaded` : 'All four documents downloaded')
+      toast.success(kinds.length === 1 ? `${what} downloaded` : 'All four documents downloaded')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {

@@ -13,6 +13,16 @@
  * printing order — which is what "download all in one" asks for: a single PDF
  * with the landscape name board first and the three portrait forms behind it.
  *
+ * ---- Two ways to make the PDF ----
+ *
+ * Chromium on the server, when the host has one. When it does not — an arm64
+ * server the bundled x64 Chromium cannot run on, for instance — the same HTML
+ * is returned instead, marked `X-Print-Fallback: browser`, and the editor hands
+ * it to the operator's own browser to print. It is the *same document* either
+ * way, so the sheets are identical; only the machine that renders them differs,
+ * and a host that later gains a Chromium starts returning PDFs again with no
+ * change here or in the editor.
+ *
  * Read-only in both databases. Rendering writes nothing; the POST body is
  * printed and discarded, never stored — saving is the other route's job.
  */
@@ -52,24 +62,37 @@ async function render(
 ): Promise<Response> {
   const kinds = parseDocKinds(kindsRaw)
 
-  if (format === 'html') {
-    const html = await buildDocsHtml(pack, kinds)
-    // Framed by the editor's preview pane, so it is served as a document rather
-    // than a download, and never cached — an edited pack must never be answered
-    // with the previous render.
-    return new Response(html, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
-    })
-  }
-
-  const pdf = await buildDocsPdf(pack, kinds)
-  return new Response(new Uint8Array(pdf), {
+  // Framed by the editor's preview pane, or printed by the operator's browser:
+  // served as a document rather than a download, and never cached — an edited
+  // pack must never be answered with the previous render.
+  const asHtml = async (fallback: boolean) => new Response(await buildDocsHtml(pack, kinds), {
     headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${fileName(pack, kinds)}"`,
+      'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
+      ...(fallback ? { 'X-Print-Fallback': 'browser', 'X-Print-Filename': fileName(pack, kinds) } : {}),
     },
   })
+
+  if (format === 'html') return asHtml(false)
+
+  try {
+    const pdf = await buildDocsPdf(pack, kinds)
+    return new Response(new Uint8Array(pdf), {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${fileName(pack, kinds)}"`,
+        'Cache-Control': 'no-store',
+      },
+    })
+  } catch (err) {
+    // Any rendering failure falls back rather than failing the download: the
+    // desk needs the sheet in its hands, and the browser can print the very
+    // same document. The reason is logged so a broken server-side renderer is
+    // still visible to us rather than hidden behind a working print dialog.
+    console.warn('[drive-log/documents/print] PDF rendering unavailable, returning HTML to print:',
+      err instanceof Error ? err.message : err)
+    return asHtml(true)
+  }
 }
 
 export async function GET(req: NextRequest) {
