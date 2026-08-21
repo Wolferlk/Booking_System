@@ -7,7 +7,6 @@
  * /api/cron/customer-feedback-request) for GCP/Vercel schedulers, plus the
  * in-process scheduler fallback in cron-scheduler.ts.
  */
-import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import {
   sendWhatsAppText,
@@ -66,21 +65,11 @@ async function alreadySentToday(bookingRef: string, tag: string): Promise<boolea
   return Boolean(existing)
 }
 
-/** Signed token for the public feedback link — HMAC of the booking ref. */
-export function feedbackLinkToken(bookingRef: string): string {
-  const secret = process.env.FEEDBACK_LINK_SECRET || process.env.NEXTAUTH_SECRET || 'apple-holidays-feedback'
-  return crypto.createHmac('sha256', secret).update(bookingRef).digest('hex').slice(0, 32)
-}
-
-export function verifyFeedbackLinkToken(bookingRef: string, token: string): boolean {
-  if (!token) return false
-  const expected = feedbackLinkToken(bookingRef)
-  try {
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(token))
-  } catch {
-    return false
-  }
-}
+// The link tokens live in `feedback-link.ts` so the printed QR card can derive
+// the same URL without importing this module. Re-exported here because callers
+// have always found them at this address.
+export { feedbackLinkToken, verifyFeedbackLinkToken } from './feedback-link'
+import { feedbackLinkToken } from './feedback-link'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Daily briefing — tomorrow's itinerary to every guest mid-trip

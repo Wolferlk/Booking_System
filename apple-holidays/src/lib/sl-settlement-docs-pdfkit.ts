@@ -28,8 +28,8 @@ import path from 'path'
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor } from '@/lib/pdfkit-boot'
 import { getUpload } from '@/lib/storage'
 import {
-  DEFAULT_ACCENT, DEFAULT_LOGO, DOC_SLUG, SUB_LOGOS, docDate, isSafeLogoPath, money,
-  orientationOf, tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
+  DEFAULT_ACCENT, DEFAULT_LOGO, DOC_SLUG, SUB_LOGOS, WORDMARK_LOGO, docDate, isSafeLogoPath,
+  money, orientationOf, tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from '@/lib/sl-settlement-docs'
 
@@ -112,17 +112,20 @@ async function readMark(url: string | null | undefined): Promise<Buffer | null> 
 
 interface Marks {
   house: Buffer | null
+  /** The "appleholidaysds.com" wordmark the forms are headed with. */
+  wordmark: Buffer | null
   board: Buffer | null
   subs: Buffer[]
 }
 
 async function readMarks(pack: SettlementDocPack): Promise<Marks> {
-  const [house, board, subs] = await Promise.all([
+  const [house, wordmark, board, subs] = await Promise.all([
     readMark('/logo.png'),
+    readMark(WORDMARK_LOGO),
     readMark(pack.nameBoard.logoUrl ?? DEFAULT_LOGO),
     Promise.all(SUB_LOGOS.map(readMark)),
   ])
-  return { house, board, subs: subs.filter((b): b is Buffer => !!b) }
+  return { house, wordmark, board, subs: subs.filter((b): b is Buffer => !!b) }
 }
 
 // ── Drawing helpers ──────────────────────────────────────────────────────────
@@ -204,8 +207,20 @@ function masthead(doc: Doc, marks: Marks, title: string): number {
     } catch { /* an unreadable mark is not worth failing a settlement sheet for */ }
   }
 
-  doc.fillColor(INK).font('Helvetica-Bold').fontSize(17)
-    .text(COMPANY_SITE, MARGIN, y, { width: PAGE_W - MARGIN * 2, align: 'center' })
+  // The wordmark as artwork, centred on the sheet; the same words set in type
+  // when the file cannot be read, which is how the paper originals carry it.
+  const markW = 168
+  let drawn = false
+  if (marks.wordmark) {
+    try {
+      doc.image(marks.wordmark, (PAGE_W - markW) / 2, y, { fit: [markW, 20], align: 'center', valign: 'top' })
+      drawn = true
+    } catch { /* fall through to the typed line */ }
+  }
+  if (!drawn) {
+    doc.fillColor(INK).font('Helvetica-Bold').fontSize(17)
+      .text(COMPANY_SITE, MARGIN, y, { width: PAGE_W - MARGIN * 2, align: 'center' })
+  }
   y += 20
   doc.fillColor(MUTED).font('Helvetica').fontSize(6.5)
     .text(COMPANY_LINE, MARGIN, y, { width: PAGE_W - MARGIN * 2, align: 'center' })
