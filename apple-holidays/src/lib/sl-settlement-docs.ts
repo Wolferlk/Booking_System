@@ -35,6 +35,8 @@
  * zero on a settlement sheet is a statement that nothing is owed.
  */
 
+import { TOUR_TICKET_CATALOG, normaliseTicketName, type TourTicketItem } from './sl-tour-tickets'
+
 // ── Documents ─────────────────────────────────────────────────────────────────
 
 export type SettlementDocKind = 'name_board' | 'transport' | 'local_visit' | 'tour'
@@ -108,7 +110,18 @@ export interface SettlementDocHeader {
   tourNo: string
   arrivalDate: string | null
   departureDate: string | null
+  /** Everybody travelling — adults and children together. What the forms print. */
   pax: number | null
+  /**
+   * The same count, split the way the attractions charge for it.
+   *
+   * Every entrance in the country has an adult price and a child price, so the
+   * Tour Settlement needs the split and not just the headline pax. Both come
+   * off the booking and both are editable: a child who has turned twelve
+   * mid-tour is charged as an adult at the gate and the sheet has to say so.
+   */
+  paxAdults: number | null
+  paxChildren: number | null
   tourHandler: string
   driverName: string
   driverPhone: string
@@ -180,20 +193,45 @@ export interface LocalVisitDoc {
   note: string
 }
 
-/** One entrance ticket line on the Tour sheet. */
+/**
+ * One entrance ticket line on the Tour sheet.
+ *
+ * Adults and children are priced apart because that is how every gate in the
+ * country sells: Sigiriya is $30 and $15, the safari jeep is one price for the
+ * vehicle, the guide package is one figure for the tour. `perPersonRate` and
+ * `count` are the *adult* columns and keep their old names on purpose — a pack
+ * saved before the child columns existed reads straight back as adult figures
+ * instead of quietly losing them.
+ *
+ * `active` is what a blue pen does to the printed form. The sheet carries the
+ * whole catalogue of attractions, and the ones this tour did not take are not
+ * deleted — they stay on it, faded, so the desk and the driver can both see
+ * they were considered and not settled. Only active lines are totalled.
+ */
 export interface TourLine {
   id: string
   name: string
   perPersonRate: number | null
   count: number | null
-  /** Left null to mean rate × count; typed in when the desk overrides it. */
+  childRate: number | null
+  childCount: number | null
+  /** Left null to mean adults + children priced out; typed in to override. */
   totalCost: number | null
+  active: boolean
 }
 
 export interface TourDoc {
   guideName: string
   chauffeurName: string
   lines: TourLine[]
+  /**
+   * Whether the untaken lines are printed at all.
+   *
+   * Off by default: a driver is handed a sheet of what he is settling, not a
+   * price list. Turned on when the desk wants the full catalogue on paper —
+   * the faded rows then print greyed, exactly as they look on screen.
+   */
+  showUnusedOnPrint: boolean
   note: string
 }
 
@@ -360,7 +398,8 @@ export function rowId(prefix: string, n?: number): string {
 
 export function emptyHeader(): SettlementDocHeader {
   return {
-    tourNo: '', arrivalDate: null, departureDate: null, pax: null,
+    tourNo: '', arrivalDate: null, departureDate: null,
+    pax: null, paxAdults: null, paxChildren: null,
     tourHandler: '', driverName: '', driverPhone: '', guideName: '',
     vehicleType: '', vehiclePlate: '',
   }
@@ -376,6 +415,47 @@ export function defaultLocalVisit(): LocalVisitDoc {
     })),
     note: '',
   }
+}
+
+/** A catalogue row as it starts life on a sheet: printed, priced at nothing, faded. */
+export function catalogLine(item: TourTicketItem, n: number): TourLine {
+  return {
+    id: rowId('e', n),
+    name: item.name,
+    perPersonRate: null, count: null,
+    childRate: null, childCount: null,
+    totalCost: null,
+    active: false,
+  }
+}
+
+/**
+ * The Tour sheet as it comes out of the drawer: every attraction the desk sells,
+ * in catalogue order, all of them faded until somebody prices one.
+ *
+ * The alternative — an empty sheet the handler types thirty names into — is
+ * what the spreadsheet does today, and it is why the same attraction is spelt
+ * four ways across four files. Starting from the catalogue means a rate lands
+ * on a row that already has the right name on it.
+ */
+export function defaultTourLines(): TourLine[] {
+  return TOUR_TICKET_CATALOG.map((item, i) => catalogLine(item, i + 1))
+}
+
+export function defaultTour(): TourDoc {
+  return { guideName: '', chauffeurName: '', lines: defaultTourLines(), showUnusedOnPrint: false, note: '' }
+}
+
+/** Catalogue rows this sheet no longer has, so the editor can offer them back. */
+export function missingCatalogItems(lines: TourLine[]): TourTicketItem[] {
+  const have = new Set(lines.map(l => normaliseTicketName(l.name)).filter(Boolean))
+  return TOUR_TICKET_CATALOG.filter(i => !have.has(normaliseTicketName(i.name)))
+}
+
+/** Has anybody written a figure on this line? */
+export function tourLineIsPriced(l: TourLine): boolean {
+  return [l.perPersonRate, l.count, l.childRate, l.childCount, l.totalCost]
+    .some(v => typeof v === 'number' && Number.isFinite(v))
 }
 
 export function emptyTransportTotals(): TransportTotals {
@@ -404,7 +484,7 @@ export function emptyPack(bookingRef: string, isNumber: string | null = null): S
       chequeFavour: '', bankDetails: '', idNo: '', note: '',
     },
     localVisit: defaultLocalVisit(),
-    tour: { guideName: '', chauffeurName: '', lines: [], note: '' },
+    tour: defaultTour(),
   }
 }
 
@@ -419,15 +499,30 @@ function sum(values: (number | null | undefined)[]): number | null {
   return Math.round(present.reduce((a, b) => a + b, 0) * 100) / 100
 }
 
-/** What one Tour line comes to: the typed total, or rate × count. */
+/**
+ * What one Tour line comes to: the typed total, or the two halves priced out.
+ *
+ * A typed total always wins — the gate charged what it charged, and a family
+ * ticket or a jeep hired for the vehicle does not divide into per-head rates.
+ * Otherwise adults and children are priced separately and added; a half that
+ * was never filled in contributes nothing rather than blocking the other.
+ */
 export function tourLineTotal(l: TourLine): number | null {
   if (isNum(l.totalCost)) return l.totalCost
-  if (isNum(l.perPersonRate) && isNum(l.count)) return Math.round(l.perPersonRate * l.count * 100) / 100
-  return null
+  const adults  = isNum(l.perPersonRate) && isNum(l.count)      ? l.perPersonRate * l.count : null
+  const children = isNum(l.childRate)    && isNum(l.childCount) ? l.childRate * l.childCount : null
+  if (adults === null && children === null) return null
+  return Math.round(((adults ?? 0) + (children ?? 0)) * 100) / 100
 }
 
+/** The tour's cost: the lines that were actually taken. Faded rows add nothing. */
 export function tourTotal(doc: TourDoc): number | null {
-  return sum(doc.lines.map(tourLineTotal))
+  return sum(doc.lines.filter(l => l.active).map(tourLineTotal))
+}
+
+/** The lines that print — all of them, or only the ones settled. */
+export function tourPrintedLines(doc: TourDoc): TourLine[] {
+  return doc.showUnusedOnPrint ? doc.lines : doc.lines.filter(l => l.active)
 }
 
 /**
@@ -519,6 +614,8 @@ export function parsePack(raw: unknown, fallback: SettlementDocPack): Settlement
     arrivalDate:   dayOrNull(h.arrivalDate),
     departureDate: dayOrNull(h.departureDate),
     pax:           figure(h.pax),
+    paxAdults:     figure(h.paxAdults),
+    paxChildren:   figure(h.paxChildren),
     tourHandler:   str(h.tourHandler, 120),
     driverName:    str(h.driverName, 120),
     driverPhone:   str(h.driverPhone, 60),
@@ -596,16 +693,25 @@ export function parsePack(raw: unknown, fallback: SettlementDocPack): Settlement
   }
 
   const to = (src.tour ?? {}) as Record<string, any>
+  const tourLines: TourLine[] = (Array.isArray(to.lines) ? to.lines : []).slice(0, MAX_LINES).map((l: any, i: number) => ({
+    id:            str(l?.id, 40) || rowId('e', i + 1),
+    name:          str(l?.name, 200),
+    perPersonRate: figure(l?.perPersonRate),
+    count:         figure(l?.count),
+    childRate:     figure(l?.childRate),
+    childCount:    figure(l?.childCount),
+    totalCost:     figure(l?.totalCost),
+    // A pack saved before the catalogue existed held only lines that were
+    // actually settled, so a missing flag means active — never faded, which
+    // would drop a figure out of a total somebody has already signed.
+    active:        typeof l?.active === 'boolean' ? l.active : true,
+  }))
   const tour: TourDoc = {
     guideName:     str(to.guideName, 120),
     chauffeurName: str(to.chauffeurName, 120),
-    lines: (Array.isArray(to.lines) ? to.lines : []).slice(0, MAX_LINES).map((l: any, i: number) => ({
-      id:            str(l?.id, 40) || rowId('e', i + 1),
-      name:          str(l?.name, 200),
-      perPersonRate: figure(l?.perPersonRate),
-      count:         figure(l?.count),
-      totalCost:     figure(l?.totalCost),
-    })),
+    // An empty list is a sheet nobody has opened; it starts from the catalogue.
+    lines: tourLines.length ? tourLines : base.tour.lines,
+    showUnusedOnPrint: to.showUnusedOnPrint === true,
     note: str(to.note, 1000),
   }
 

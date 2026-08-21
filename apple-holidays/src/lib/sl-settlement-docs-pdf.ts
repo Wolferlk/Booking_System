@@ -30,7 +30,7 @@ import { launchBrowser } from './html-to-pdf'
 import { getUpload } from './storage'
 import {
   DEFAULT_LOGO, DOC_LABEL, SUB_LOGOS, docDate, isSafeLogoPath, money, orientationOf,
-  tourLineTotal, tourTotal, transportTotals,
+  tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from './sl-settlement-docs'
 
@@ -374,39 +374,70 @@ function localVisitHtml(pack: SettlementDocPack, logo: string | null): string {
 
 // ── Tour settlement ───────────────────────────────────────────────────────────
 
+/**
+ * The Tour Settlement sheet.
+ *
+ * Six columns, because every gate in the country charges adults and children
+ * differently and the desk has always written both by hand in the margin. The
+ * lines the tour did not take print greyed when the pack asks for them —
+ * "considered, not settled" — and are simply absent when it does not, which is
+ * what a driver is normally handed.
+ *
+ * The blank rows at the foot are on purpose: the sheet goes out with the tour
+ * and comes back with a ticket price written into it that nobody costed.
+ */
 function tourHtml(pack: SettlementDocPack, logo: string | null): string {
   const to = pack.tour
   const total = tourTotal(to)
+  const printed = tourPrintedLines(to)
 
-  const lines = to.lines.map(l => `<tr>
+  const cell = (v: number | null): string => esc(v === null ? '' : money(v))
+  const whole = (v: number | null): string => esc(v === null ? '' : String(v))
+
+  const lines = printed.map(l => `<tr class="${l.active ? 'on' : 'off'}">
       <td class="ent">${esc(l.name)}</td>
-      <td class="amt">${esc(money(l.perPersonRate))}</td>
-      <td class="cnt">${esc(l.count === null ? '' : String(l.count))}</td>
-      <td class="amt">${esc(money(tourLineTotal(l)))}</td>
+      <td class="amt">${cell(l.perPersonRate)}</td>
+      <td class="cnt">${whole(l.count)}</td>
+      <td class="amt">${cell(l.childRate)}</td>
+      <td class="cnt">${whole(l.childCount)}</td>
+      <td class="amt">${l.active ? esc(money(tourLineTotal(l))) : ''}</td>
     </tr>`).join('')
 
-  const pad = blankRows(Math.max(0, 18 - to.lines.length), 4)
+  // A full catalogue fills the page on its own; a short sheet keeps the room to
+  // write that the paper form has always had.
+  const pad = blankRows(to.showUnusedOnPrint ? 2 : Math.max(4, 16 - printed.length), 6)
+
+  const paxLine = [
+    pack.header.paxAdults !== null ? `${pack.header.paxAdults} adult${pack.header.paxAdults === 1 ? '' : 's'}` : '',
+    pack.header.paxChildren ? `${pack.header.paxChildren} child${pack.header.paxChildren === 1 ? '' : 'ren'}` : '',
+  ].filter(Boolean).join(' · ') || (pack.header.pax === null ? '' : `${pack.header.pax} pax`)
 
   return `<section class="form pg-tour">
     ${masthead('TOUR SETTLEMENT', logo)}
 
     <table class="hdr">
       <tr><th>Tour No</th><td>${esc(pack.header.tourNo)}</td></tr>
+      <tr><th>No of Pax</th><td>${esc(paxLine)}</td></tr>
       <tr><th>Guide Name</th><td>${esc(to.guideName)}</td></tr>
       <tr><th>Chauffeur Name</th><td>${esc(to.chauffeurName)}</td></tr>
       <tr><th>Tour Handler</th><td>${esc(pack.header.tourHandler)}</td></tr>
     </table>
 
-    <table class="grid">
+    <table class="grid tour">
       <thead><tr>
-        <th class="ent">Entrance Tickets</th>
-        <th class="amt">Per Person Rate</th>
+        <th class="ent" rowspan="2">Entrance Tickets</th>
+        <th colspan="2">Adult</th>
+        <th colspan="2">Child</th>
+        <th class="amt" rowspan="2">Total Cost</th>
+      </tr><tr>
+        <th class="amt">Rate</th>
         <th class="cnt">Count</th>
-        <th class="amt">Total Cost</th>
+        <th class="amt">Rate</th>
+        <th class="cnt">Count</th>
       </tr></thead>
       <tbody>
         ${lines}${pad}
-        <tr class="sum"><th colspan="3">Total Tour Cost</th><td class="amt">${esc(money(total))}</td></tr>
+        <tr class="sum"><th colspan="5">Total Tour Cost</th><td class="amt">${esc(money(total))}</td></tr>
       </tbody>
     </table>
 
@@ -549,6 +580,19 @@ const STYLES = `
   .grid .cnt { width: 60px; text-align: center; }
   .grid .ent { text-align: left; }
   .grid .sum th, .grid .sum td { font-weight: 800; background: #f7f7f7; text-align: right; }
+
+  /* The tour sheet's two-tier head, and the two states a ticket line has:
+     settled, which is what the driver is signing for, and considered, which is
+     printed grey so it reads as a blank rather than as a claim. */
+  .grid.tour thead th { vertical-align: middle; }
+  .grid.tour .ent { width: 34%; }
+  .grid.tour .amt { width: 78px; }
+  .grid.tour .cnt { width: 48px; }
+  .grid.tour tr.on  td.ent { font-weight: 700; }
+  .grid.tour tr.off td { color: #9aa0a6; }
+  /* A long catalogue runs onto a second sheet; the head is repeated on it. */
+  .grid.tour thead { display: table-header-group; }
+  .grid.tour tr { break-inside: avoid; }
   .blank td { height: 15px; }
 
   .visits .cat  { width: 150px; text-align: left; font-weight: 700; vertical-align: top; background: #fafafa; }
