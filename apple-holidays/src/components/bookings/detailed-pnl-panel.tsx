@@ -21,6 +21,7 @@ import { toast } from 'sonner'
 import {
   Loader2, RefreshCw, X, Table2, Ticket, Maximize2,
   ChevronDown, ChevronRight, CheckCircle2, ArrowRight, Sparkles,
+  Download, FileSpreadsheet, Printer, FileCode2,
 } from 'lucide-react'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
@@ -100,6 +101,9 @@ export default function DetailedPnlPanel({
   const [autoRunning, setAutoRunning] = useState(false)
   const [lastSync, setLastSync] = useState<{ created: number; updated: number; skipped: number } | null>(null)
   const [ticketCount, setTicketCount] = useState<number | null>(null)
+  const [downloadOpen, setDownloadOpen] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const downloadRef = useRef<HTMLDivElement | null>(null)
 
   // Auto-create fires once per booking, never on every re-render or refresh.
   const autoRan = useRef<string | null>(null)
@@ -145,6 +149,21 @@ export default function DetailedPnlPanel({
       document.body.style.overflow = ''
     }
   }, [open])
+
+  // The download menu closes on an outside click or Escape, like any menu.
+  useEffect(() => {
+    if (!downloadOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (!downloadRef.current?.contains(e.target as Node)) setDownloadOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDownloadOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [downloadOpen])
 
   /**
    * One call path for every ticket creation on this panel — the manual button,
@@ -194,6 +213,134 @@ export default function DetailedPnlPanel({
     try { await runCreate({ resync: true }) }
     catch (err) { toast.error(err instanceof Error ? err.message : 'Re-sync failed') }
     finally { setResyncing(false) }
+  }
+
+  /* ---------------------------------------------------------------- download
+
+     The sheet is already a finished, self-contained block of HTML built from
+     the Accounts payload, so every download here is that same markup — no
+     second renderer to keep in step with the screen. */
+
+  /** File name stem: the IS number when the sheet has one, else the booking. */
+  const downloadName = useCallback(() => {
+    const d = data?.available === true ? data : null
+    const id = (d?.source.isNumber ?? bookingRef).replace(/\s+/g, '')
+    const rev = d?.source.revision != null ? `-rev${d.source.revision}` : ''
+    return `Detailed-PNL-${id}${rev}`
+  }, [data, bookingRef])
+
+  /** The costing sheet as a standalone HTML document, styles included. */
+  const standaloneHtml = useCallback(() => {
+    const d = data?.available === true ? data : null
+    if (!d) return ''
+    const title = `Detailed P&L — ${d.source.isNumber ?? bookingRef}`
+    return `<!doctype html><html><head><meta charset="utf-8">`
+      + `<title>${title}</title>`
+      + `<style>${DETAILED_PNL_CSS}`
+      + `body{margin:0;padding:24px;background:#fff;font-family:ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}`
+      + `@page{size:A4 landscape;margin:10mm}`
+      + `@media print{body{padding:0}.dt-scroll{overflow:visible}}`
+      + `</style></head><body><div class="dtp-root">${d.html}</div></body></html>`
+  }, [data, bookingRef])
+
+  function saveBlob(content: BlobPart, filename: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    // Revoked on the next tick — Safari cancels the download if it goes sooner.
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  function downloadHtml() {
+    setDownloadOpen(false)
+    const html = standaloneHtml()
+    if (!html) return
+    saveBlob(html, `${downloadName()}.html`, 'text/html;charset=utf-8')
+  }
+
+  /**
+   * PDF is the browser's own "Save as PDF" over a print window holding the same
+   * standalone document. No server round trip, and what prints is what is on
+   * screen.
+   */
+  function downloadPdf() {
+    setDownloadOpen(false)
+    const html = standaloneHtml()
+    if (!html) return
+    const w = window.open('', '_blank')
+    if (!w) {
+      toast.error('Allow pop-ups for this site to print or save the sheet as PDF')
+      return
+    }
+    w.document.open()
+    w.document.write(html)
+    w.document.close()
+    // Give the styles a tick to apply before the print dialog takes its snapshot.
+    w.onload = () => { w.focus(); w.print() }
+    setTimeout(() => { try { w.focus(); w.print() } catch { /* already printed */ } }, 600)
+  }
+
+  /**
+   * Excel gets one worksheet per section of the sheet, read off the rendered
+   * tables. SheetJS reads from a live DOM node, so the markup is mounted
+   * off-screen for the length of the export and then removed.
+   */
+  async function downloadExcel() {
+    setDownloadOpen(false)
+    const d = data?.available === true ? data : null
+    if (!d) return
+    setDownloading(true)
+    const host = document.createElement('div')
+    host.style.cssText = 'position:fixed;left:-10000px;top:0;width:1400px'
+    host.innerHTML = d.html
+    document.body.appendChild(host)
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+
+      // Summary first: the totals the panel shows above the sheet.
+      const summary: (string | number)[][] = [
+        ['Detailed P&L', d.source.isNumber ?? bookingRef],
+        ['Booking', bookingRef],
+        ['Quotation No', d.source.quotationNo ?? ''],
+        ['Revision', d.source.revision ?? ''],
+        ['Currency', d.currency],
+        [],
+        ['Section', 'Lines', `Total (${d.currency})`],
+        ...SECTIONS.map(([key, label]) => [label, d.lineCounts[key], d.totals[key]] as (string | number)[]),
+        [],
+        ['Total Tour Cost', '', d.totals.grand],
+        ['Without Markup', '', d.totals.cost],
+        ['Profit', `${d.totals.margin.toFixed(1)}%`, d.totals.profit],
+      ]
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Summary')
+
+      // One sheet per section table, named after the section heading.
+      const used = new Set(['Summary'])
+      host.querySelectorAll<HTMLElement>('.dt-block').forEach((block, i) => {
+        const table = block.querySelector('table')
+        if (!table) return
+        const raw = (block.querySelector('.dt-block-head .t')?.textContent ?? `Section ${i + 1}`).trim()
+        // Excel sheet names: 31 chars, no []:*?/\, and unique in the workbook.
+        let name = (raw.replace(/[\\/?*[\]:]/g, ' ').trim() || `Section ${i + 1}`).slice(0, 28)
+        let n = 2
+        while (used.has(name)) name = `${name.slice(0, 26)} ${n++}`
+        used.add(name)
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.table_to_sheet(table), name)
+      })
+
+      XLSX.writeFile(wb, `${downloadName()}.xlsx`)
+      toast.success('Detailed P&L downloaded')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Excel export failed')
+    } finally {
+      host.remove()
+      setDownloading(false)
+    }
   }
 
   const available = data?.available === true
@@ -251,6 +398,56 @@ export default function DetailedPnlPanel({
               </Button>
               {available && (
                 <>
+                  <div className="relative" ref={downloadRef}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setDownloadOpen(o => !o)}
+                      disabled={downloading}
+                      aria-haspopup="menu"
+                      aria-expanded={downloadOpen}
+                    >
+                      {downloading
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        : <Download className="w-3.5 h-3.5" />}
+                      Download
+                      <ChevronDown className="w-3 h-3 -mr-0.5" />
+                    </Button>
+                    {downloadOpen && (
+                      <div
+                        role="menu"
+                        className="absolute right-0 z-20 mt-1 w-56 rounded-xl border border-slate-200 bg-white shadow-lg py-1"
+                      >
+                        <button
+                          role="menuitem"
+                          onClick={downloadExcel}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                          Excel (.xlsx)
+                          <span className="ml-auto text-[10px] font-normal text-slate-400">1 tab per section</span>
+                        </button>
+                        <button
+                          role="menuitem"
+                          onClick={downloadPdf}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-rose-600" />
+                          PDF / Print
+                          <span className="ml-auto text-[10px] font-normal text-slate-400">via print dialog</span>
+                        </button>
+                        <button
+                          role="menuitem"
+                          onClick={downloadHtml}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <FileCode2 className="w-3.5 h-3.5 text-indigo-600" />
+                          HTML sheet
+                          <span className="ml-auto text-[10px] font-normal text-slate-400">offline copy</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <Button variant="secondary" size="sm" onClick={() => setSheetOpen(o => !o)}>
                     {sheetOpen ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
                     {sheetOpen ? 'Collapse sheet' : 'Expand sheet'}
@@ -416,13 +613,24 @@ export default function DetailedPnlPanel({
                   matched on {(data as Extract<Payload, { available: true }>).source.matchedBy.replace(/_/g, ' ')}
                 </span>
               </div>
-              <button
-                onClick={() => setOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
-                aria-label="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button variant="secondary" size="sm" onClick={downloadExcel} disabled={downloading}>
+                  {downloading
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <FileSpreadsheet className="w-3.5 h-3.5" />}
+                  Excel
+                </Button>
+                <Button variant="secondary" size="sm" onClick={downloadPdf}>
+                  <Printer className="w-3.5 h-3.5" /> PDF
+                </Button>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="overflow-y-auto px-5 py-4">
