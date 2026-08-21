@@ -37,6 +37,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/as-prearrival-sync",
+      "schedule": "0 * * * *"
+    },
+    {
       "path": "/api/cron/b2c-import",
       "schedule": "0 19 * * *"
     },

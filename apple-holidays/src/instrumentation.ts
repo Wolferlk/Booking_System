@@ -33,6 +33,12 @@ export async function register() {
       // query_monitor_enabled switch inside the tick.
       const { startQueryMonitorScheduler } = await import('@/lib/query-monitor/scheduler')
       startQueryMonitorScheduler()
+
+      // Pre-Arrival Sync — refreshes bookings from AppleSystem N days before
+      // arrival (default T−3). Gated by the as_presync_enabled switch inside the
+      // job, and ships OFF, so booting this only arms the timer.
+      const { startPreArrivalSyncScheduler } = await import('@/lib/as-prearrival-scheduler')
+      void startPreArrivalSyncScheduler()
     }
   }
 }

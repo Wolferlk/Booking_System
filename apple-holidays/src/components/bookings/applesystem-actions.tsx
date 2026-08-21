@@ -5,27 +5,35 @@
  *
  * Two buttons on the booking detail page:
  *
- *  • "Fetch Data from API" — opens a picker for which part of the booking to
- *    re-pull from AppleSystem (Itinerary, Accommodations; Flights is disabled
- *    because the AppleSystem quote payload never carries flight data — see
- *    `flights: never[]` in `as-booking-map.ts`). The import path is
- *    idempotent, so a booking created before a mapper fix keeps its stale
- *    data forever; this is the only way to correct it in place. It overwrites
- *    data, so it asks first and shows a before/after diff.
+ *  • "Fetch Data from API" — opens a picker for what to re-pull from
+ *    AppleSystem: the whole booking (dates, pax, agent, totals, terms,
+ *    itinerary, hotels, guest), or just the itinerary / just the hotels.
+ *    Flights is disabled because the AppleSystem quote payload never carries
+ *    flight data — see `flights: never[]` in `as-booking-map.ts`. The import
+ *    path is idempotent, so a booking whose upstream quotation was amended
+ *    after confirmation keeps the old copy forever; this is the only way to
+ *    correct it in place. It overwrites data, so it asks first and shows a
+ *    before/after diff.
+ *
+ *    The full sync never writes workflow state — status, tickets, driver
+ *    allocation, client confirmation, QC and the operation checklist are all
+ *    left exactly as they are. See `src/lib/as-booking-sync.ts`.
+ *
+ *    The time of the last successful full sync is shown next to the button.
  *
  *  • "Raw API Response" — read-only popup of the untouched
  *    `POST /api/quotation/template/quote` payload for this booking's IS number,
  *    for checking what AppleSystem actually sent.
  */
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { RefreshCw, Code2, Copy, Check, Plane, Hotel, Map, Lock } from 'lucide-react'
+import { RefreshCw, Code2, Copy, Check, Plane, Hotel, Map, Lock, ShieldCheck } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
 import { readApiResponse, cn } from '@/lib/utils'
 
-type FetchType = 'itinerary' | 'accommodations'
+type FetchType = 'full' | 'itinerary' | 'accommodations'
 
 interface ItinPreview {
   dayNo: number
@@ -61,6 +69,38 @@ interface AccRefetchResult {
   accommodations: AccPreview[]
 }
 
+interface FieldChange {
+  field: string
+  from: string | null
+  to: string | null
+}
+
+interface SectionChange {
+  section: 'itinerary' | 'accommodations' | 'passengers' | 'emergencyContacts'
+  previousCount: number
+  newCount: number
+  skipped?: string
+}
+
+interface FullSyncResult {
+  bookingRef: string
+  quotationNo: string | null
+  revision: number | null
+  fields: FieldChange[]
+  sections: SectionChange[]
+  unchanged: boolean
+  syncedAt: string
+}
+
+interface LastSync {
+  at: string
+  by: string
+  mode: 'manual' | 'prearrival'
+  quotationNo: string | null
+  revision: number | null
+  changed: string[]
+}
+
 interface RawResult {
   isNumber: string
   quotationNo: string
@@ -79,8 +119,16 @@ const FETCH_OPTIONS: {
   icon: typeof Map
 }[] = [
   {
+    type: 'full',
+    label: 'Everything (full booking sync)',
+    description:
+      'Dates, pax, agent, file handler, totals, terms, itinerary, hotels and guest details. ' +
+      'Workflow status, tickets, drivers and confirmations are not touched.',
+    icon: RefreshCw,
+  },
+  {
     type: 'itinerary',
-    label: 'Itinerary',
+    label: 'Itinerary only',
     description: 'Day-by-day itinerary items and activities.',
     icon: Map,
   },
@@ -111,6 +159,9 @@ export default function AppleSystemActions({
   const [refetching, setRefetching] = useState(false)
   const [itinResult, setItinResult] = useState<ItinRefetchResult | null>(null)
   const [accResult, setAccResult] = useState<AccRefetchResult | null>(null)
+  const [fullResult, setFullResult] = useState<FullSyncResult | null>(null)
+
+  const [lastSync, setLastSync] = useState<LastSync | null>(null)
 
   const [rawOpen, setRawOpen] = useState(false)
   const [rawLoading, setRawLoading] = useState(false)
@@ -118,10 +169,27 @@ export default function AppleSystemActions({
   const [rawError, setRawError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
+  // "Last updated from API" marker. Loaded once; refreshed after every sync so
+  // the pill is right without a page reload.
+  const loadLastSync = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/as-sync`)
+      const json = await readApiResponse<{ lastSync: LastSync | null }>(res)
+      if (json.success) setLastSync(json.data?.lastSync ?? null)
+    } catch {
+      /* the pill is informational — a failed load just leaves it hidden */
+    }
+  }, [bookingRef])
+
+  useEffect(() => {
+    if (canRefetch || canViewRaw) void loadLastSync()
+  }, [canRefetch, canViewRaw, loadLastSync])
+
   function pick(type: FetchType) {
     setPickerOpen(false)
     setItinResult(null)
     setAccResult(null)
+    setFullResult(null)
     setConfirmType(type)
   }
 
@@ -129,9 +197,18 @@ export default function AppleSystemActions({
     if (!confirmType) return
     setRefetching(true)
     try {
-      const endpoint = confirmType === 'itinerary' ? 'as-refetch' : 'as-refetch-accommodations'
+      const endpoint =
+        confirmType === 'full' ? 'as-sync'
+        : confirmType === 'itinerary' ? 'as-refetch'
+        : 'as-refetch-accommodations'
       const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/${endpoint}`, { method: 'POST' })
-      if (confirmType === 'itinerary') {
+      if (confirmType === 'full') {
+        const json = await readApiResponse<FullSyncResult>(res)
+        if (!json.success) throw new Error(json.error || 'Sync failed')
+        setFullResult(json.data ?? null)
+        if (json.data?.unchanged) toast.info(json.message || 'Already up to date')
+        else toast.success(json.message || 'Booking updated from AppleSystem')
+      } else if (confirmType === 'itinerary') {
         const json = await readApiResponse<ItinRefetchResult>(res)
         if (!json.success) throw new Error(json.error || 'Refetch failed')
         setItinResult(json.data ?? null)
@@ -143,6 +220,7 @@ export default function AppleSystemActions({
         toast.success(json.message || 'Accommodations refetched')
       }
       onRefetched?.()
+      void loadLastSync()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Refetch failed')
       setConfirmType(null)
@@ -183,11 +261,16 @@ export default function AppleSystemActions({
     setConfirmType(null)
     setItinResult(null)
     setAccResult(null)
+    setFullResult(null)
   }
 
   if (!canRefetch && !canViewRaw) return null
 
-  const result = confirmType === 'itinerary' ? itinResult : confirmType === 'accommodations' ? accResult : null
+  const result =
+    confirmType === 'full' ? fullResult
+    : confirmType === 'itinerary' ? itinResult
+    : confirmType === 'accommodations' ? accResult
+    : null
 
   return (
     <>
@@ -199,6 +282,21 @@ export default function AppleSystemActions({
         >
           <RefreshCw className="w-3.5 h-3.5" /> Fetch Data from API
         </button>
+      )}
+
+      {lastSync && (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-600"
+          title={`Last full sync from AppleSystem: ${fmtDateTime(lastSync.at)} by ${lastSync.by}${
+            lastSync.changed.length ? ` — changed: ${lastSync.changed.join(', ')}` : ' — nothing changed'
+          }`}
+        >
+          <RefreshCw className="w-3 h-3 text-slate-400" />
+          <span>
+            API updated <span className="font-semibold text-slate-700">{relTimeAgo(lastSync.at)}</span>
+            {lastSync.mode === 'prearrival' && <span className="ml-1 text-slate-400">(auto)</span>}
+          </span>
+        </span>
       )}
 
       {canViewRaw && (
@@ -255,9 +353,11 @@ export default function AppleSystemActions({
         open={confirmType !== null}
         onClose={closeConfirm}
         title={
-          result
-            ? `${confirmType === 'itinerary' ? 'Itinerary' : 'Accommodations'} Refetched`
-            : `Refetch ${confirmType === 'itinerary' ? 'Itinerary' : 'Accommodations'} from AppleSystem?`
+          confirmType === 'full'
+            ? (fullResult ? 'Booking Synced from AppleSystem' : 'Sync the whole booking from AppleSystem?')
+            : result
+              ? `${confirmType === 'itinerary' ? 'Itinerary' : 'Accommodations'} Refetched`
+              : `Refetch ${confirmType === 'itinerary' ? 'Itinerary' : 'Accommodations'} from AppleSystem?`
         }
         size={result ? '4xl' : 'lg'}
         footer={
@@ -266,12 +366,48 @@ export default function AppleSystemActions({
           ) : (
             <>
               <Button variant="secondary" onClick={closeConfirm} disabled={refetching}>Cancel</Button>
-              <Button loading={refetching} onClick={doRefetch}>Refetch &amp; Replace</Button>
+              <Button loading={refetching} onClick={doRefetch}>
+                {confirmType === 'full' ? 'Fetch & Update' : 'Refetch & Replace'}
+              </Button>
             </>
           )
         }
       >
-        {!result ? (
+        {!result && confirmType === 'full' ? (
+          <div className="space-y-3 text-sm text-slate-700">
+            <p>
+              This re-pulls <span className="font-mono font-semibold">{isNumber || bookingRef}</span> from
+              AppleSystem and updates <strong>this booking&apos;s details</strong> to match what
+              AppleSystem currently holds.
+            </p>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">Updated</p>
+              <ul className="list-disc pl-5 space-y-0.5 text-slate-600">
+                <li>Arrival &amp; departure dates, pax counts</li>
+                <li>Agent, file handler, CNTL / IS number</li>
+                <li>Quoted total &amp; currency</li>
+                <li>Terms, inclusions, exclusions, value-added services</li>
+                <li>Itinerary and hotels (replaced with the current ones)</li>
+                <li>Guest &amp; emergency contact — only if none are recorded yet</li>
+              </ul>
+            </div>
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-800">
+                <ShieldCheck className="w-3.5 h-3.5" /> Never touched
+              </p>
+              <ul className="list-disc pl-5 space-y-0.5 text-emerald-900">
+                <li>Booking status and the operation checklist</li>
+                <li>Tickets, driver allocation, agenda and P&amp;L</li>
+                <li>Client verification, QC passes and confirmations</li>
+                <li>Anything AppleSystem sends blank keeps its current value</li>
+              </ul>
+            </div>
+            <p className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-900">
+              Manual edits to the itinerary and hotel rows are overwritten, and the agenda is not
+              regenerated automatically — open the Agenda page afterwards if the dates moved.
+            </p>
+          </div>
+        ) : !result ? (
           <div className="space-y-3 text-sm text-slate-700">
             <p>
               This re-pulls <span className="font-mono font-semibold">{isNumber || bookingRef}</span> from
@@ -301,6 +437,8 @@ export default function AppleSystemActions({
               </p>
             )}
           </div>
+        ) : confirmType === 'full' && fullResult ? (
+          <FullSyncSummary result={fullResult} />
         ) : confirmType === 'itinerary' && itinResult ? (
           <div className="space-y-4">
             <p className="text-sm text-slate-700">
@@ -367,6 +505,131 @@ export default function AppleSystemActions({
         ) : null}
       </Modal>
     </>
+  )
+}
+
+/** Human labels for the booking columns a sync can change. */
+const FIELD_LABELS: Record<string, string> = {
+  isNumber: 'IS number',
+  cntlNumber: 'CNTL number',
+  agent: 'Agent',
+  fileHandler: 'File handler',
+  arrivalDate: 'Arrival date',
+  departureDate: 'Departure date',
+  paxAdults: 'Adults',
+  paxChildren: 'Children',
+  quotedTotal: 'Quoted total',
+  currency: 'Currency',
+  terms: 'Terms & conditions',
+  packageIncludes: 'Package includes',
+  packageExcludes: 'Package excludes',
+  valueAddedServices: 'Value-added services',
+  contactEmail: 'Contact email',
+}
+
+const SECTION_LABELS: Record<SectionChange['section'], string> = {
+  itinerary: 'Itinerary',
+  accommodations: 'Hotels',
+  passengers: 'Guests',
+  emergencyContacts: 'Emergency contacts',
+}
+
+/** "2026-08-21T09:14:00Z" → "21 Aug 2026, 09:14". */
+function fmtDateTime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  return d.toLocaleString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+}
+
+/** Coarse "how long ago" label — the pill only needs the order of magnitude. */
+function relTimeAgo(iso: string): string {
+  const then = Date.parse(iso)
+  if (!Number.isFinite(then)) return '—'
+  const mins = Math.max(0, Math.round((Date.now() - then) / 60_000))
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return fmtDateTime(iso)
+}
+
+/**
+ * What the full sync actually did: the scalar fields it rewrote (with
+ * before/after), then one line per child collection — including the ones it
+ * deliberately left alone and why.
+ */
+function FullSyncSummary({ result }: { result: FullSyncResult }) {
+  const longValue = (v: string | null) => (v ?? '').length > 60
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-700">
+        Quotation <span className="font-mono">{result.quotationNo || '—'}</span>
+        {result.revision != null && <span className="text-slate-500"> · rev {result.revision}</span>}
+        {' — '}
+        {result.unchanged
+          ? 'this booking already matched AppleSystem. Nothing was changed.'
+          : `${result.fields.length} field(s) updated.`}
+      </p>
+
+      {result.fields.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-2 font-semibold">Field</th>
+                <th className="px-3 py-2 font-semibold">Before</th>
+                <th className="px-3 py-2 font-semibold">After</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {result.fields.map((f) => (
+                <tr key={f.field} className="align-top">
+                  <td className="px-3 py-2 font-semibold text-slate-800">
+                    {FIELD_LABELS[f.field] ?? f.field}
+                  </td>
+                  <td className={cn('px-3 py-2 text-slate-500', longValue(f.from) && 'max-w-[18rem]')}>
+                    <span className="line-clamp-3 whitespace-pre-wrap">{f.from ?? <em className="text-slate-400">empty</em>}</span>
+                  </td>
+                  <td className={cn('px-3 py-2 font-medium text-emerald-700', longValue(f.to) && 'max-w-[18rem]')}>
+                    <span className="line-clamp-3 whitespace-pre-wrap">{f.to ?? <em className="text-slate-400">empty</em>}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        {result.sections.map((sec) => (
+          <div
+            key={sec.section}
+            className={cn(
+              'rounded-lg border px-3 py-2',
+              sec.skipped ? 'border-slate-200 bg-slate-50' : 'border-emerald-200 bg-emerald-50',
+            )}
+          >
+            <p className="text-xs font-semibold text-slate-800">
+              {SECTION_LABELS[sec.section]}{' '}
+              <span className="font-normal text-slate-500">
+                {sec.skipped ? `${sec.previousCount} kept` : `${sec.previousCount} → ${sec.newCount}`}
+              </span>
+            </p>
+            {sec.skipped && <p className="mt-0.5 text-[11px] text-slate-500">{sec.skipped}</p>}
+          </div>
+        ))}
+      </div>
+
+      <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-900">
+        Booking status, the operation checklist, tickets, driver allocation, agenda, P&amp;L and all
+        confirmations were left untouched by this sync.
+      </p>
+    </div>
   )
 }
 

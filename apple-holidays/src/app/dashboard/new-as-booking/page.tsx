@@ -2,14 +2,15 @@
 
 import { Suspense, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding, Radar } from 'lucide-react'
+import { PlusCircle, Search, CalendarRange, Zap, PlaneLanding, Radar, CalendarClock } from 'lucide-react'
 import Header from '@/components/layout/header'
 import SearchImportTab from '@/components/as-bookings/search-import-tab'
 import RangeImportTab from '@/components/as-bookings/range-import-tab'
 import AutoImportTab from '@/components/as-bookings/auto-import-tab'
 import WatchTab from '@/components/as-bookings/watch-tab'
+import PreArrivalTab from '@/components/as-bookings/prearrival-tab'
 
-type TabKey = 'search' | 'range' | 'arrival' | 'auto' | 'watch'
+type TabKey = 'search' | 'range' | 'arrival' | 'auto' | 'watch' | 'presync'
 
 const TABS: { key: TabKey; label: string; icon: typeof Search; hint: string }[] = [
   { key: 'search',  label: 'Search & Import',   icon: Search,        hint: 'Find one confirmation by IS / quotation number' },
@@ -17,6 +18,7 @@ const TABS: { key: TabKey; label: string; icon: typeof Search; hint: string }[] 
   { key: 'arrival', label: 'Arrival Import',    icon: PlaneLanding,  hint: 'Bulk import confirmations by arrival date' },
   { key: 'auto',    label: 'Daily Auto-Import', icon: Zap,           hint: 'Automatic 6 AM import + run history' },
   { key: 'watch',   label: 'Live Watch',        icon: Radar,         hint: 'Check for new confirmations every few minutes' },
+  { key: 'presync', label: 'Pre-Arrival Sync',  icon: CalendarClock, hint: 'Refresh bookings from the API a few days before arrival' },
 ]
 
 function isTabKey(v: string | null): v is TabKey {
@@ -64,6 +66,7 @@ function NewASBookingInner() {
         {tab === 'arrival' && <RangeImportTab key="arrival" dateField="arrival" />}
         {tab === 'auto' && <AutoImportTab />}
         {tab === 'watch' && <WatchTab />}
+        {tab === 'presync' && <PreArrivalTab />}
       </div>
     </div>
   )
