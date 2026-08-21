@@ -28,9 +28,10 @@ import { readFile } from 'fs/promises'
 import path from 'path'
 import { launchBrowser } from './html-to-pdf'
 import { getUpload } from './storage'
+import { guestLinks, prettyLink, qrDataUri, type GuestLinks } from './sl-settlement-qr'
 import {
-  DEFAULT_LOGO, DOC_LABEL, SUB_LOGOS, docDate, isSafeLogoPath, money, orientationOf,
-  tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
+  DEFAULT_LOGO, DOC_LABEL, SUB_LOGOS, WORDMARK_LOGO, docDate, isSafeLogoPath, money,
+  orientationOf, tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from './sl-settlement-docs'
 
@@ -97,29 +98,53 @@ async function logoDataUri(url: string | null | undefined): Promise<string | nul
 interface Marks {
   /** The house mark on the settlement forms' masthead. */
   house: string | null
+  /** The "appleholidaysds.com" wordmark the forms are headed with. */
+  wordmark: string | null
   /** The mark printed large at the top of the name board. */
   board: string | null
+  /** The mark at the top of the guest QR card. */
+  card: string | null
   /** The small row of company marks along the foot of the board. */
   subs: string[]
+  /** The guest's two login-free links, and the codes they print as. */
+  links: GuestLinks
+  qrPortal: string | null
+  qrFeedback: string | null
 }
 
 async function readMarks(pack: SettlementDocPack): Promise<Marks> {
-  const [house, board, subs] = await Promise.all([
+  const links = guestLinks(pack.bookingRef)
+  const [house, wordmark, board, card, subs, qrPortal, qrFeedback] = await Promise.all([
     logoDataUri('/logo.png'),
+    logoDataUri(WORDMARK_LOGO),
     logoDataUri(pack.nameBoard.logoUrl ?? DEFAULT_LOGO),
+    logoDataUri(pack.qrCard.logoUrl ?? DEFAULT_LOGO),
     Promise.all(SUB_LOGOS.map(logoDataUri)),
+    qrDataUri(links.portal),
+    qrDataUri(links.feedback),
   ])
-  return { house, board, subs: subs.filter((s): s is string => !!s) }
+  return { house, wordmark, board, card, subs: subs.filter((s): s is string => !!s), links, qrPortal, qrFeedback }
 }
 
 // ── Shared pieces ─────────────────────────────────────────────────────────────
 
-/** The masthead the printed forms carry. */
-function masthead(title: string, logo: string | null): string {
+/**
+ * The masthead the printed forms carry.
+ *
+ * The wordmark is the artwork when it can be read, and the same words set in
+ * type when it cannot — a settlement sheet is never worth failing over a mark
+ * that would not load, and the desk's paper originals carry the line as type
+ * anyway.
+ */
+function masthead(title: string, marks: Marks): string {
+  const brand = marks.wordmark
+    ? `<img class="wordmark" src="${marks.wordmark}" alt="${esc(COMPANY.site)}">`
+    : `<div class="site">${esc(COMPANY.site)}</div>`
+
   return `<div class="masthead">
-    ${logo ? `<img class="mark" src="${logo}" alt="">` : ''}
+    ${marks.house ? `<img class="mark" src="${marks.house}" alt="">` : ''}
     <div class="brand">
-      <div class="site">${esc(COMPANY.site)}</div>
+      ${brand}
       <div class="addr">${esc(COMPANY.line)}</div>
     </div>
   </div>
@@ -266,7 +291,7 @@ function nameBoardHtml(pack: SettlementDocPack, marks: Marks): string {
 
 // ── Transport settlement ──────────────────────────────────────────────────────
 
-function transportHtml(pack: SettlementDocPack, logo: string | null): string {
+function transportHtml(pack: SettlementDocPack, marks: Marks): string {
   const t = pack.transport
   const totals = transportTotals(t)
 
@@ -285,7 +310,7 @@ function transportHtml(pack: SettlementDocPack, logo: string | null): string {
     </tr>`
 
   return `<section class="form pg-transport">
-    ${masthead('TRANSPORT SETTLEMENT', logo)}
+    ${masthead('TRANSPORT SETTLEMENT', marks)}
     ${headerTable(pack, {})}
 
     <table class="meta">
@@ -336,7 +361,7 @@ function transportHtml(pack: SettlementDocPack, logo: string | null): string {
 
 // ── Local visit settlement ────────────────────────────────────────────────────
 
-function localVisitHtml(pack: SettlementDocPack, logo: string | null): string {
+function localVisitHtml(pack: SettlementDocPack, marks: Marks): string {
   const lv = pack.localVisit
 
   const sections = lv.sections.map(sec => {
@@ -351,7 +376,7 @@ function localVisitHtml(pack: SettlementDocPack, logo: string | null): string {
   }).join('')
 
   return `<section class="form pg-local_visit">
-    ${masthead('LOCAL VISIT SETTLEMENT', logo)}
+    ${masthead('LOCAL VISIT SETTLEMENT', marks)}
     ${headerTable(pack, {
       tourNo: 'Tour No', arrival: 'Arrival', departure: 'Departure',
       pax: 'Pax Count', handler: 'Tour Handler', driver: 'Driver / Supplier',
@@ -386,7 +411,7 @@ function localVisitHtml(pack: SettlementDocPack, logo: string | null): string {
  * The blank rows at the foot are on purpose: the sheet goes out with the tour
  * and comes back with a ticket price written into it that nobody costed.
  */
-function tourHtml(pack: SettlementDocPack, logo: string | null): string {
+function tourHtml(pack: SettlementDocPack, marks: Marks): string {
   const to = pack.tour
   const total = tourTotal(to)
   const printed = tourPrintedLines(to)
@@ -413,7 +438,7 @@ function tourHtml(pack: SettlementDocPack, logo: string | null): string {
   ].filter(Boolean).join(' · ') || (pack.header.pax === null ? '' : `${pack.header.pax} pax`)
 
   return `<section class="form pg-tour">
-    ${masthead('TOUR SETTLEMENT', logo)}
+    ${masthead('TOUR SETTLEMENT', marks)}
 
     <table class="hdr">
       <tr><th>Tour No</th><td>${esc(pack.header.tourNo)}</td></tr>
@@ -450,13 +475,159 @@ function tourHtml(pack: SettlementDocPack, logo: string | null): string {
   </section>`
 }
 
+// ── Guest QR card ─────────────────────────────────────────────────────────────
+
+/**
+ * The card the driver hands the guest.
+ *
+ * Two squares, each with one job, and as little else on the page as the
+ * message allows: it is read once, at the end of a tour, by somebody holding a
+ * suitcase. The codes are drawn large — 58mm — because a phone camera in an
+ * arrivals hall is not a scanner in good light.
+ *
+ * A code that could not be built prints as a dashed box saying so, rather than
+ * as a blank the desk might mistake for a card that worked.
+ */
+function qrCardHtml(pack: SettlementDocPack, marks: Marks): string {
+  const c = pack.qrCard
+  const landscape = orientationOf(pack, 'qr_card') === 'landscape'
+
+  const panel = (
+    show: boolean,
+    caption: string,
+    blurb: string,
+    code: string | null,
+    url: string | null,
+    badge: string,
+  ): string => {
+    if (!show) return ''
+    return `<div class="qr-panel">
+      <div class="qr-badge">${esc(badge)}</div>
+      <div class="qr-caption">${esc(caption)}</div>
+      <div class="qr-box">
+        ${code
+          ? `<img src="${code}" alt="">`
+          : `<div class="qr-missing">The link for this code is not available on this server.</div>`}
+      </div>
+      ${blurb ? `<div class="qr-blurb">${esc(blurb)}</div>` : ''}
+      ${c.showUrls && url ? `<div class="qr-url">${esc(prettyLink(url))}</div>` : ''}
+    </div>`
+  }
+
+  const panels = [
+    panel(c.showPortal, c.portalCaption, c.portalBlurb, marks.qrPortal, marks.links.portal, '1'),
+    panel(c.showFeedback, c.feedbackCaption, c.feedbackBlurb, marks.qrFeedback, marks.links.feedback, '2'),
+  ].filter(Boolean).join('')
+
+  const ref = pack.header.tourNo || pack.bookingRef
+
+  return `<section class="form pg-qr_card qr-card${landscape ? ' landscape' : ''}" style="--accent:${esc(c.accent)}">
+    <div class="qr-head">
+      ${marks.card ? `<img class="qr-logo" src="${marks.card}" alt="">` : ''}
+      <div class="qr-headline">${esc(c.headline)}</div>
+      ${c.subtitle ? `<div class="qr-sub">${esc(c.subtitle)}</div>` : ''}
+    </div>
+
+    ${c.guestName ? `<div class="qr-guest">${esc(c.guestName)}</div>` : ''}
+
+    <div class="qr-grid">${panels}</div>
+
+    ${c.note ? `<p class="qr-note">${escLines(c.note)}</p>` : ''}
+
+    <div class="qr-foot">
+      <span>${esc(COMPANY.site)}</span>
+      <span class="qr-ref">${esc(ref)}</span>
+    </div>
+  </section>`
+}
+
+// ── Feedback form ─────────────────────────────────────────────────────────────
+
+/**
+ * The paper feedback sheet.
+ *
+ * The same questions as the form at `/feedback/[ref]`, in the same order, so
+ * the two can be counted together. Every answer is a box to tick with a pen,
+ * and the comments block is ruled, because an unruled space on a form comes
+ * back with two words in it.
+ */
+function feedbackFormHtml(pack: SettlementDocPack, marks: Marks): string {
+  const f = pack.feedbackForm
+  const cols = f.ratings.length || 1
+
+  const guestBlock = f.showGuestBlock
+    ? `<table class="hdr fb-guest">
+        <tr><th>Name</th><td></td><th>Tour no</th><td>${esc(pack.header.tourNo)}</td></tr>
+        <tr><th>Country</th><td></td><th>Dates</th><td>${esc([docDate(pack.header.arrivalDate), docDate(pack.header.departureDate)].filter(Boolean).join(' – '))}</td></tr>
+        <tr><th>Email</th><td></td><th>Contact no</th><td></td></tr>
+      </table>`
+    : ''
+
+  const rows = f.sections.map(sec => {
+    const items = sec.items.length ? sec.items : [{ id: `${sec.id}-blank`, label: '' }]
+    return items.map((item, i) => `<tr>
+        ${i === 0 ? `<th class="fb-sec" rowspan="${items.length}">${esc(sec.title)}</th>` : ''}
+        <td class="fb-item">${esc(item.label)}</td>
+        ${f.ratings.map(() => '<td class="fb-tick"></td>').join('')}
+      </tr>`).join('')
+  }).join('')
+
+  const purpose = f.askPurpose
+    ? `<table class="grid fb-purpose">
+        <tr>
+          <th class="fb-sec">Purpose of your visit</th>
+          ${f.purposeOptions.map(o => `<td class="fb-opt"><span class="box"></span>${esc(o)}</td>`).join('')}
+        </tr>
+      </table>`
+    : ''
+
+  const qr = f.showQr && marks.qrFeedback
+    ? `<div class="fb-qr">
+        <img src="${marks.qrFeedback}" alt="">
+        <span>Rather do it on your phone?<br>Scan this.</span>
+      </div>`
+    : ''
+
+  return `<section class="form pg-feedback_form">
+    ${masthead('GUEST FEEDBACK FORM', marks)}
+
+    ${f.intro ? `<p class="fb-intro">${escLines(f.intro)}</p>` : ''}
+    ${guestBlock}
+
+    <table class="grid fb-grid">
+      <thead><tr>
+        <th class="fb-sec">Section</th>
+        <th class="fb-item">How was it?</th>
+        ${f.ratings.map(r => `<th class="fb-tick">${esc(r)}</th>`).join('')}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+
+    ${purpose}
+
+    <div class="fb-comments">
+      <div class="fb-comments-label">${esc(f.commentsLabel)}</div>
+      ${'<div class="fb-rule"></div>'.repeat(5)}
+    </div>
+
+    ${f.note ? `<p class="note">${escLines(f.note)}</p>` : ''}
+
+    <div class="fb-foot">
+      <div class="sign fb-sign">Guest signature</div>
+      ${qr}
+    </div>
+  </section>`
+}
+
 // ── The document ──────────────────────────────────────────────────────────────
 
 const RENDERERS: Record<SettlementDocKind, (p: SettlementDocPack, m: Marks) => string> = {
   name_board:  nameBoardHtml,
-  transport:   (p, m) => transportHtml(p, m.house),
-  local_visit: (p, m) => localVisitHtml(p, m.house),
-  tour:        (p, m) => tourHtml(p, m.house),
+  transport:   transportHtml,
+  local_visit: localVisitHtml,
+  tour:        tourHtml,
+  qr_card:       qrCardHtml,
+  feedback_form: feedbackFormHtml,
 }
 
 const STYLES = `
@@ -555,6 +726,9 @@ const STYLES = `
   .masthead .mark { height: 26px; }
   .masthead .brand { text-align: center; }
   .masthead .site { font-size: 21px; font-weight: 800; letter-spacing: -.6px; }
+  /* Sized by height so the artwork keeps its proportions whatever the file is. */
+  .masthead .wordmark { height: 24px; width: auto; max-width: 300px; object-fit: contain;
+                        display: block; margin: 0 auto; }
   .masthead .addr { font-size: 8px; color: #444; margin-top: 1px; }
   .doc-title { text-align: center; font-size: 13px; letter-spacing: 1px; margin: 7px 0 9px;
                text-decoration: underline; text-underline-offset: 3px; }
@@ -612,6 +786,62 @@ const STYLES = `
   .note { margin-top: 8px; font-size: 9px; color: #333; white-space: pre-wrap;
           border: 1px dashed #bbb; padding: 5px 6px; }
 
+  /* ── Guest QR card ──
+     Two squares and as little else as the message allows: it is read once, at
+     the end of a tour, by somebody holding a suitcase. */
+  .qr-card { height: 100vh; padding: 16mm 14mm 12mm; display: flex; flex-direction: column;
+             --accent: #d1002a; }
+  .qr-head { text-align: center; }
+  .qr-logo { height: 40px; object-fit: contain; margin-bottom: 12px; }
+  .qr-headline { font-size: 27px; font-weight: 800; letter-spacing: -.7px; color: #0b1020; line-height: 1.15; }
+  .qr-headline::after { content: ''; display: block; width: 74px; height: 4px; border-radius: 4px;
+                        background: var(--accent); margin: 12px auto 0; }
+  .qr-sub { font-size: 12px; color: #5b6270; margin-top: 12px; }
+  .qr-guest { text-align: center; margin-top: 14px; font-size: 15px; font-weight: 700; color: #111; }
+
+  .qr-grid { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10mm; margin: 8mm 0; }
+  .qr-card.landscape .qr-grid { gap: 16mm; }
+  .qr-panel { flex: 1; max-width: 84mm; text-align: center; border: 1px solid #e3e5ea; border-radius: 10px;
+              padding: 7mm 5mm; position: relative; }
+  .qr-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+              width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff;
+              font-size: 12px; font-weight: 800; line-height: 22px; }
+  .qr-caption { font-size: 14px; font-weight: 800; color: #0b1020; margin-bottom: 5mm; }
+  /* A fixed box, so a card with one code and a card with two print the same
+     size square and the pair line up on the page. */
+  .qr-box { width: 58mm; height: 58mm; margin: 0 auto; display: flex; align-items: center; justify-content: center; }
+  .qr-box img { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+  .qr-missing { border: 1px dashed #c4c8ce; border-radius: 8px; padding: 8mm 4mm; font-size: 9px; color: #8a8f98; }
+  .qr-blurb { font-size: 10px; color: #5b6270; margin-top: 5mm; line-height: 1.45; }
+  .qr-url { font-family: "Courier New", monospace; font-size: 8px; color: #8a8f98; margin-top: 3mm;
+            word-break: break-all; }
+  .qr-note { font-size: 10px; color: #444; text-align: center; white-space: pre-wrap; margin: 0 0 4mm; }
+  .qr-foot { display: flex; justify-content: space-between; font-size: 9px; color: #8a8f98;
+             border-top: 1px solid #eceef1; padding-top: 3mm; }
+  .qr-ref { font-family: "Courier New", monospace; }
+
+  /* ── Feedback form ──
+     The digital form's questions, as boxes to tick with a pen. */
+  .fb-intro { font-size: 10px; color: #333; margin: 0 0 8px; line-height: 1.5; }
+  .fb-guest th { width: 70px; }
+  .fb-guest td { min-width: 90px; }
+  .fb-grid { margin-top: 8px; }
+  .fb-grid thead th { font-size: 8.5px; }
+  .fb-sec  { width: 108px; text-align: left; font-weight: 700; background: #fafafa; vertical-align: middle; }
+  .fb-item { text-align: left; }
+  .fb-tick { width: 60px; text-align: center; height: 19px; }
+  .fb-purpose { margin-top: 8px; }
+  .fb-opt { text-align: left; font-size: 9.5px; white-space: nowrap; }
+  .fb-opt .box { display: inline-block; width: 10px; height: 10px; border: 1px solid #111;
+                 margin-right: 6px; vertical-align: -1px; }
+  .fb-comments { margin-top: 10px; border: 1px solid #111; padding: 5px 6px; }
+  .fb-comments-label { font-size: 9px; font-weight: 700; margin-bottom: 7px; }
+  .fb-rule { border-bottom: 1px dotted #999; height: 17px; }
+  .fb-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-top: 16px; }
+  .fb-sign { width: 46%; }
+  .fb-qr { display: flex; align-items: center; gap: 8px; font-size: 8.5px; color: #5b6270; text-align: left; }
+  .fb-qr img { width: 22mm; height: 22mm; object-fit: contain; image-rendering: pixelated; }
+
   .signs { display: flex; justify-content: space-between; margin-top: 26px; font-size: 9px; }
   .sign { width: 44%; border-top: 1px dotted #111; padding-top: 3px; text-align: center; }
 `
@@ -627,7 +857,9 @@ const STYLES = `
  */
 function pageBoxes(pack: SettlementDocPack, kinds: SettlementDocKind[]): string {
   return kinds.map(k => {
-    const margin = k === 'name_board' ? '0' : '10mm 9mm 12mm'
+    // The board and the guest card are drawn edge to edge and pad themselves;
+    // the forms keep the margins the paper originals are typed inside.
+    const margin = k === 'name_board' || k === 'qr_card' ? '0' : '10mm 9mm 12mm'
     return `@page ${k} { size: A4 ${orientationOf(pack, k)}; margin: ${margin}; }
   section.pg-${k} { page: ${k}; }`
   }).join('\n  ')

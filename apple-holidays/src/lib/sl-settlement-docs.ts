@@ -39,22 +39,39 @@ import { TOUR_TICKET_CATALOG, normaliseTicketName, type TourTicketItem } from '.
 
 // ── Documents ─────────────────────────────────────────────────────────────────
 
-export type SettlementDocKind = 'name_board' | 'transport' | 'local_visit' | 'tour'
+export type SettlementDocKind =
+  | 'name_board' | 'transport' | 'local_visit' | 'tour' | 'qr_card' | 'feedback_form'
 
-export const DOC_KINDS: SettlementDocKind[] = ['name_board', 'transport', 'local_visit', 'tour']
+export const DOC_KINDS: SettlementDocKind[] =
+  ['name_board', 'transport', 'local_visit', 'tour', 'qr_card', 'feedback_form']
 
 export const DOC_LABEL: Record<SettlementDocKind, string> = {
-  name_board:  'Name board',
-  transport:   'Transport settlement',
-  local_visit: 'Local visit settlement',
-  tour:        'Tour settlement',
+  name_board:    'Name board',
+  transport:     'Transport settlement',
+  local_visit:   'Local visit settlement',
+  tour:          'Tour settlement',
+  qr_card:       'Guest QR card',
+  feedback_form: 'Feedback form',
 }
+
+/**
+ * The two guest-facing sheets.
+ *
+ * They travel in the same pack as the settlement forms because the same person
+ * carries them — the driver hands the card to the guest at the end of the tour
+ * and brings the filled-in form back with the signed settlement sheets. They
+ * are marked out here so the editor and the send box can say plainly which
+ * sheets are the driver's paperwork and which are the guest's.
+ */
+export const GUEST_DOCS: SettlementDocKind[] = ['qr_card', 'feedback_form']
 
 export const DOC_BLURB: Record<SettlementDocKind, string> = {
   name_board:  'Landscape sheet for the arrivals hall — the guest name large, the logo small.',
   transport:   'What the driver is owed for the vehicle: package, extras, batta, tickets and advances.',
   local_visit: 'The shopping stops, for each one to sign and seal as the tour passes through.',
   tour:        'Entrance tickets and the guide, per person, totalled for the tour.',
+  qr_card:       'A card for the guest: one scan opens their trip, the other leaves the feedback.',
+  feedback_form: 'The feedback sheet on paper, for a guest who would rather write than scan.',
 }
 
 /** The file name one document downloads under. */
@@ -63,6 +80,8 @@ export const DOC_SLUG: Record<SettlementDocKind, string> = {
   transport:   'transport-settlement',
   local_visit: 'local-visit-settlement',
   tour:        'tour-settlement',
+  qr_card:       'guest-qr-card',
+  feedback_form: 'feedback-form',
 }
 
 // ── Paper ─────────────────────────────────────────────────────────────────────
@@ -84,6 +103,10 @@ export const DEFAULT_ORIENTATION: Record<SettlementDocKind, DocOrientation> = {
   transport:   'portrait',
   local_visit: 'portrait',
   tour:        'portrait',
+  // The QR card is portrait because it is handed to a guest and read at arm's
+  // length, and the feedback form because it is a form.
+  qr_card:       'portrait',
+  feedback_form: 'portrait',
 }
 
 export const defaultLayout = (): Record<SettlementDocKind, DocOrientation> => ({ ...DEFAULT_ORIENTATION })
@@ -235,6 +258,87 @@ export interface TourDoc {
   note: string
 }
 
+/**
+ * The guest QR card.
+ *
+ * ---- What it is for ----
+ *
+ * Every booking already has two login-free links: the trip portal
+ * (`/trip/<ref>?t=…`) that shows the guest their own itinerary, hotels, driver
+ * and vouchers, and the feedback form (`/feedback/<ref>?t=…`) that the
+ * post-departure WhatsApp asks them to fill in. Both are long signed URLs
+ * nobody types off a phone screen, and the WhatsApp message that carries them
+ * only reaches a guest whose number we hold and who reads it.
+ *
+ * So they are printed. The driver hands the card over at the start of the tour
+ * and points at a square: one scan opens the trip, the other leaves the
+ * feedback. Nothing on it needs a login.
+ *
+ * ---- What is *not* stored here ----
+ *
+ * The URLs. They are HMACs of the booking reference, derived on the server at
+ * print time from `portal-link.ts` and the feedback-link secret, so a card
+ * printed today and a card printed next month carry the same working links and
+ * nothing signed is ever kept in a document a browser can POST back.
+ */
+export interface QrCardDoc {
+  /** The line across the top. */
+  headline: string
+  subtitle: string
+  /** Who the card is for. Usually the lead passenger. */
+  guestName: string
+  showPortal: boolean
+  portalCaption: string
+  portalBlurb: string
+  showFeedback: boolean
+  feedbackCaption: string
+  feedbackBlurb: string
+  /** Print the link itself under each code, for a phone that will not scan. */
+  showUrls: boolean
+  /** The mark at the top. Null means the house default. */
+  logoUrl: string | null
+  /** The one colour the card is drawn in, as `#rrggbb`. */
+  accent: string
+  note: string
+}
+
+/** One thing a guest is asked to rate. */
+export interface FeedbackItem {
+  id: string
+  label: string
+}
+
+export interface FeedbackSection {
+  id: string
+  title: string
+  items: FeedbackItem[]
+}
+
+/**
+ * The feedback form, on paper.
+ *
+ * The same questions as the digital form at `/feedback/[ref]`, in the same
+ * order, so the two can be read side by side and counted together. It exists
+ * because a guest at the airport with a dead phone still has an opinion, and
+ * because a driver who hands over a sheet and a pen gets an answer far more
+ * often than a WhatsApp link sent after they have flown home.
+ */
+export interface FeedbackFormDoc {
+  intro: string
+  /** The rating columns, printed as ticked boxes. */
+  ratings: string[]
+  sections: FeedbackSection[]
+  /** "Purpose of your visit" — the digital form asks it, so does this. */
+  askPurpose: boolean
+  purposeOptions: string[]
+  /** The block for the guest's own details at the top. */
+  showGuestBlock: boolean
+  /** A small code in the corner, for a guest who would rather do it on a phone. */
+  showQr: boolean
+  commentsLabel: string
+  note: string
+}
+
 export interface NameBoardDoc {
   /** The line printed large. Usually the lead passenger. */
   guestName: string
@@ -291,9 +395,21 @@ export const DEFAULT_ACCENT = NAME_BOARD_ACCENTS[0].value
 /** The mark the board carries when nobody has chosen another. */
 export const DEFAULT_LOGO = '/png/AppleHolidaysLogo.png'
 
+/**
+ * The house wordmark — "appleholidaysds.com" set as artwork.
+ *
+ * The settlement forms used to print that line as *type*, in whatever the
+ * printer's Arial happened to be, which is not the mark: the wordmark has its
+ * own weight, spacing and the red/black split across "appleholidays·ds·.com".
+ * It is the same image on all three forms and along the foot of the board, so
+ * every sheet in a pack carries one identical mark.
+ */
+export const WORDMARK_LOGO = '/png/appleholidaysds.png'
+
 /** The marks that ship with the app — always in the gallery, never deletable. */
 export const BUILTIN_LOGOS: { url: string; label: string }[] = [
   { url: '/png/AppleHolidaysLogo.png', label: 'Apple Holidays' },
+  { url: WORDMARK_LOGO,                label: 'appleholidaysds.com' },
   { url: '/png/aahaas.png',            label: 'aahaas' },
   { url: '/png/aahaslogo.png',         label: 'aahaas mark' },
   { url: '/logo.png',                  label: 'Apple mark' },
@@ -310,6 +426,7 @@ export const SUB_LOGOS: string[] = [
   '/png/aahaas.png',
   '/png/aahaslogo.png',
   '/png/AppleHolidaysLogo.png',
+  WORDMARK_LOGO,
 ]
 
 /** Where an uploaded logo lives under the uploads prefix. */
@@ -345,6 +462,8 @@ export interface SettlementDocPack {
   transport: TransportDoc
   localVisit: LocalVisitDoc
   tour: TourDoc
+  qrCard: QrCardDoc
+  feedbackForm: FeedbackFormDoc
 }
 
 /** What the API hands the editor: the pack in force, and what the systems say today. */
@@ -377,6 +496,27 @@ export const LOCAL_VISIT_SECTIONS: { title: string; shops: string[] }[] = [
   { title: 'Tea Tasting',            shops: ['Tea Bush', 'Ebilimeegama'] },
   { title: 'Madu River Boat Riding', shops: ['Mangrove Cave'] },
 ]
+
+// ── The feedback form as it is printed ────────────────────────────────────────
+
+/**
+ * The questions, in the order the digital form asks them.
+ *
+ * Deliberately identical to `/feedback/[ref]`: a form filled in on paper and
+ * one filled in on a phone have to be countable together, and a paper sheet
+ * that asks something the digital one does not is an answer nobody can file.
+ * The desk can still add a line on any particular sheet — this is the default,
+ * not a constraint.
+ */
+export const FEEDBACK_SECTIONS: { title: string; items: string[] }[] = [
+  { title: 'Accommodation',     items: ['Room', 'Quality of Food'] },
+  { title: 'Restaurants',       items: ['Quality of Food', 'Ambience'] },
+  { title: 'Transport & Guide', items: ['Quality of Vehicle', 'Service Delivery of Driver'] },
+]
+
+export const FEEDBACK_RATINGS = ['Excellent', 'Good', 'Average', 'Poor']
+
+export const FEEDBACK_PURPOSES = ['Only Leisure', 'Only Business', 'Business & Leisure']
 
 // ── Identity ──────────────────────────────────────────────────────────────────
 
@@ -458,6 +598,42 @@ export function tourLineIsPriced(l: TourLine): boolean {
     .some(v => typeof v === 'number' && Number.isFinite(v))
 }
 
+export function defaultQrCard(): QrCardDoc {
+  return {
+    headline: 'Your trip, in two squares',
+    subtitle: 'Scan with the camera — no app, no login, no password.',
+    guestName: '',
+    showPortal: true,
+    portalCaption: 'Your trip',
+    portalBlurb: 'Itinerary, hotels, flights, your driver and your vouchers — kept up to date while you travel.',
+    showFeedback: true,
+    feedbackCaption: 'Tell us how it went',
+    feedbackBlurb: 'Two minutes, and it reaches the people who arranged your tour.',
+    showUrls: false,
+    logoUrl: null,
+    accent: DEFAULT_ACCENT,
+    note: '',
+  }
+}
+
+export function defaultFeedbackForm(): FeedbackFormDoc {
+  return {
+    intro: 'Thank you for travelling with us. Please tell us how it went — your driver will bring this sheet back to the office.',
+    ratings: [...FEEDBACK_RATINGS],
+    sections: FEEDBACK_SECTIONS.map((sec, i) => ({
+      id: rowId('fs', i + 1),
+      title: sec.title,
+      items: sec.items.map((label, j) => ({ id: rowId(`fi-${i + 1}`, j + 1), label })),
+    })),
+    askPurpose: true,
+    purposeOptions: [...FEEDBACK_PURPOSES],
+    showGuestBlock: true,
+    showQr: true,
+    commentsLabel: 'Comments and suggestions',
+    note: '',
+  }
+}
+
 export function emptyTransportTotals(): TransportTotals {
   return {
     totalMileageRate: null, totalMileageAmount: null,
@@ -485,6 +661,8 @@ export function emptyPack(bookingRef: string, isNumber: string | null = null): S
     },
     localVisit: defaultLocalVisit(),
     tour: defaultTour(),
+    qrCard: defaultQrCard(),
+    feedbackForm: defaultFeedbackForm(),
   }
 }
 
@@ -715,7 +893,56 @@ export function parsePack(raw: unknown, fallback: SettlementDocPack): Settlement
     note: str(to.note, 1000),
   }
 
-  return { version: 1, bookingRef: fallback.bookingRef, isNumber: fallback.isNumber, header, layout, nameBoard, transport, localVisit, tour }
+  const qr = (src.qrCard ?? {}) as Record<string, unknown>
+  const qrCard: QrCardDoc = {
+    headline:        str(qr.headline, 120)        || base.qrCard.headline,
+    subtitle:        str(qr.subtitle, 200),
+    guestName:       str(qr.guestName, 120),
+    showPortal:      qr.showPortal !== false,
+    portalCaption:   str(qr.portalCaption, 80)    || base.qrCard.portalCaption,
+    portalBlurb:     str(qr.portalBlurb, 300),
+    showFeedback:    qr.showFeedback !== false,
+    feedbackCaption: str(qr.feedbackCaption, 80)  || base.qrCard.feedbackCaption,
+    feedbackBlurb:   str(qr.feedbackBlurb, 300),
+    showUrls:        qr.showUrls === true,
+    logoUrl:         isSafeLogoPath(qr.logoUrl) ? qr.logoUrl : null,
+    accent:          /^#[0-9a-f]{6}$/i.test(String(qr.accent ?? '')) ? String(qr.accent) : DEFAULT_ACCENT,
+    note:            str(qr.note, 400),
+  }
+
+  const fb = (src.feedbackForm ?? {}) as Record<string, any>
+  const fbSections = (Array.isArray(fb.sections) ? fb.sections : []).slice(0, 20)
+  const fbRatings = (Array.isArray(fb.ratings) ? fb.ratings : [])
+    .map((r: unknown) => str(r, 30)).filter(Boolean).slice(0, 6)
+  const feedbackForm: FeedbackFormDoc = {
+    intro:    str(fb.intro, 600) || base.feedbackForm.intro,
+    // A form with no rating columns cannot be filled in, so an empty list falls
+    // back to the printed four rather than producing a sheet of blank boxes.
+    ratings:  fbRatings.length ? fbRatings : base.feedbackForm.ratings,
+    sections: fbSections.length
+      ? fbSections.map((sec: any, i: number) => ({
+          id:    str(sec?.id, 40) || rowId('fs', i + 1),
+          title: str(sec?.title, 120),
+          items: (Array.isArray(sec?.items) ? sec.items : []).slice(0, 20).map((it: any, j: number) => ({
+            id:    str(it?.id, 40) || rowId(`fi-${i + 1}`, j + 1),
+            label: str(it?.label, 160),
+          })),
+        }))
+      : base.feedbackForm.sections,
+    askPurpose:     fb.askPurpose !== false,
+    purposeOptions: (Array.isArray(fb.purposeOptions) ? fb.purposeOptions : [])
+      .map((o: unknown) => str(o, 60)).filter(Boolean).slice(0, 6),
+    showGuestBlock: fb.showGuestBlock !== false,
+    showQr:         fb.showQr !== false,
+    commentsLabel:  str(fb.commentsLabel, 120) || base.feedbackForm.commentsLabel,
+    note:           str(fb.note, 600),
+  }
+  if (!feedbackForm.purposeOptions.length) feedbackForm.purposeOptions = base.feedbackForm.purposeOptions
+
+  return {
+    version: 1, bookingRef: fallback.bookingRef, isNumber: fallback.isNumber,
+    header, layout, nameBoard, transport, localVisit, tour, qrCard, feedbackForm,
+  }
 }
 
 /** The documents a request asked for, defaulting to all four in printing order. */

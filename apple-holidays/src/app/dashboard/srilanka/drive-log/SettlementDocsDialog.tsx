@@ -1668,6 +1668,8 @@ export function SettlementDocsDialog({
         case 'transport':   return { ...p, transport: { ...d.transport, note: p.transport.note } }
         case 'local_visit': return { ...p, localVisit: d.localVisit }
         case 'tour':        return { ...p, tour: { ...d.tour, note: p.tour.note } }
+        case 'qr_card':       return { ...p, qrCard: d.qrCard }
+        case 'feedback_form': return { ...p, feedbackForm: d.feedbackForm }
       }
     })
     toast.success(`${DOC_LABEL[kind]} reset to the derived figures`)
