@@ -5,7 +5,12 @@
  *                 number as it is stored, and that number as WhatsApp will
  *                 actually receive it. The send box shows both, so a desk can
  *                 see "0775622923 → +94 77 562 2923" before committing.
- *   POST  ?ref=…  send them. Body: { pack?, docs?, phone? }.
+ *   POST  ?ref=…  send them. Body: { pack?, docs?, phone?, includeBooking? }.
+ *
+ * `includeBooking` adds the booking sheet — guests, flights, hotels, the agenda
+ * and the vouchers — as a second WhatsApp message, because WhatsApp carries one
+ * document per message. It is the same PDF the operations email sends and it
+ * prints no money, which is why it may go to a driver at all.
  *
  * `pack` is the version on screen, so unsaved corrections go out with the
  * documents rather than a stale saved copy. `phone` overrides the number on the
@@ -91,7 +96,7 @@ export async function POST(req: NextRequest) {
   const ref = refOf(req)
   if (!ref) return buildApiError('A booking reference is required.', 400)
 
-  let body: { pack?: unknown; docs?: string; phone?: string }
+  let body: { pack?: unknown; docs?: string; phone?: string; includeBooking?: boolean }
   try {
     body = await req.json()
   } catch {
@@ -111,6 +116,7 @@ export async function POST(req: NextRequest) {
       pack:          pack ?? derived.pack,
       kinds,
       phoneOverride: typeof body.phone === 'string' ? body.phone : null,
+      includeBooking: body.includeBooking === true,
       sentBy:        session.user.name ?? session.user.email ?? null,
     })
 

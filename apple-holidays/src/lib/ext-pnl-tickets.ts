@@ -9,6 +9,7 @@
  * tickets are updated on resync.
  */
 import { prisma } from './prisma'
+import { clearNoTicketsMark } from '@/lib/no-tickets-clear'
 
 export const PNL_ITEM_NOTE_PREFIX = 'PNL Item #'
 
@@ -96,6 +97,8 @@ export async function syncTicketsFromPnl(
       skipped++
     }
   }
+
+  if (created > 0) await clearNoTicketsMark(bookingId)
 
   return { created, updated, skipped }
 }

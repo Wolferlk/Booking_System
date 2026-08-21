@@ -1,6 +1,7 @@
 'use client'
 
 import { CheckCircle2, XCircle, MinusCircle, Send, Loader2, Clock, Mail, MessageCircle } from 'lucide-react'
+import { NO_TICKETS_DONE, isNoTicketsBooking } from '@/lib/no-tickets'
 
 interface QCCheck {
   label: string
@@ -55,22 +56,29 @@ function computeQCChecks(booking: BookingQCPanelProps['booking']): {
   }
 
   // Check 3: Ticket Activation
+  //
+  // A booking marked "No Tickets" has been *decided* to have none, so the rung
+  // reads as done rather than N/A — a grey dash here is indistinguishable from
+  // "nobody has got to it yet", which is the whole reason the mark exists.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tickets: any[] = booking.tickets ?? []
   const activeTickets = tickets.filter((t: any) => t.activated)
   const allTicketsPurchased = activeTickets.every(
     (t: any) => t.status === 'PURCHASED' || t.status === 'PAID'
   )
+  const noTickets = isNoTicketsBooking(booking) && activeTickets.length === 0
   const ticketCheck: QCCheck = {
     label: 'Ticket Activation',
-    passed: activeTickets.length === 0 ? true : allTicketsPurchased,
-    na: activeTickets.length === 0,
-    detail: activeTickets.length === 0
-      ? 'No tickets added to this booking'
-      : allTicketsPurchased
-        ? `All ${activeTickets.length} ticket(s) purchased`
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        : `${activeTickets.filter((t: any) => t.status === 'DRAFT').length} ticket(s) still in Draft`,
+    passed: noTickets ? true : activeTickets.length === 0 ? true : allTicketsPurchased,
+    na: !noTickets && activeTickets.length === 0,
+    detail: noTickets
+      ? NO_TICKETS_DONE.detail
+      : activeTickets.length === 0
+        ? 'No tickets added to this booking'
+        : allTicketsPurchased
+          ? `All ${activeTickets.length} ticket(s) purchased`
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          : `${activeTickets.filter((t: any) => t.status === 'DRAFT').length} ticket(s) still in Draft`,
   }
 
   const checks = [clientCheck, driverCheck, ticketCheck]

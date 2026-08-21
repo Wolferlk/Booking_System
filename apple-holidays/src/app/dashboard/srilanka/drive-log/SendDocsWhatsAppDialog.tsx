@@ -18,9 +18,14 @@
  *
  * ---- What goes ----
  *
- * All four sheets by default, as one PDF. Opened from the editor it sends the
- * pack *on screen*, unsaved corrections included; opened from a Drive Log row it
+ * Every sheet by default, as one PDF. Opened from the editor it sends the pack
+ * *on screen*, unsaved corrections included; opened from a Drive Log row it
  * sends the saved pack, or the derived draft when nothing has been saved.
+ *
+ * The booking sheet can go with them — guests, flights, hotels, the agenda and
+ * the vouchers — as a second message, because WhatsApp carries one document per
+ * message. It is the PDF the operations email already sends, and it prints no
+ * rate, no cost and no payment, which is what makes it fit for a driver.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -45,6 +50,8 @@ interface SendOutcome {
   channel: 'template' | 'freeform'
   filename: string
   preview: string
+  /** Present when the booking sheet was ticked — it goes as its own message. */
+  bookingSheet?: { ok: boolean; filename?: string; reason?: string }
 }
 
 export function SendDocsWhatsAppDialog({
@@ -61,6 +68,7 @@ export function SendDocsWhatsAppDialog({
   const [error, setError]     = useState<string | null>(null)
   const [phone, setPhone]     = useState('')
   const [kinds, setKinds]     = useState<SettlementDocKind[]>([...DOC_KINDS])
+  const [withBooking, setWithBooking] = useState(false)
   const [sending, setSending] = useState(false)
   const [sent, setSent]       = useState<SendOutcome | null>(null)
 
@@ -95,7 +103,7 @@ export function SendDocsWhatsAppDialog({
       const res = await fetch(`/api/srilanka/drive-log/documents/whatsapp?ref=${encodeURIComponent(bookingRef)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pack: pack ?? undefined, docs: kinds.join(','), phone }),
+        body: JSON.stringify({ pack: pack ?? undefined, docs: kinds.join(','), phone, includeBooking: withBooking }),
       })
       const json = await res.json().catch(() => null)
       if (!res.ok) throw new Error(json?.error ?? 'The documents could not be sent')
@@ -163,6 +171,23 @@ export function SendDocsWhatsAppDialog({
               </p>
               <p className="mt-1 text-emerald-300/60 font-mono text-[10px]">{sent.filename}</p>
             </div>
+            {sent.bookingSheet ? (
+              <div className={cn(
+                'rounded-xl border px-4 py-3 text-xs',
+                sent.bookingSheet.ok
+                  ? 'border-sky-500/30 bg-sky-500/10 text-sky-200'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-200',
+              )}>
+                <p className="font-bold flex items-center gap-1.5">
+                  {sent.bookingSheet.ok
+                    ? <><Check className="w-3.5 h-3.5" /> Booking details sent as a second message</>
+                    : <><AlertTriangle className="w-3.5 h-3.5" /> The booking details did not go</>}
+                </p>
+                <p className="mt-1 font-mono text-[10px] opacity-80">
+                  {sent.bookingSheet.ok ? sent.bookingSheet.filename : sent.bookingSheet.reason}
+                </p>
+              </div>
+            ) : null}
             <pre className="rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap font-sans leading-relaxed max-h-52 overflow-y-auto">
               {sent.preview}
             </pre>
@@ -264,6 +289,34 @@ export function SendDocsWhatsAppDialog({
               </div>
             </div>
 
+            {/* The booking sheet — a second message, and a different document. */}
+            <button
+              type="button"
+              onClick={() => setWithBooking(v => !v)}
+              className={cn(
+                'w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl border text-left transition-colors',
+                withBooking
+                  ? 'bg-sky-500/10 border-sky-500/30'
+                  : 'bg-slate-900/50 border-slate-800 hover:border-slate-700',
+              )}
+            >
+              <span className={cn(
+                'w-3.5 h-3.5 rounded border flex items-center justify-center flex-shrink-0 mt-0.5',
+                withBooking ? 'bg-sky-400 border-sky-400' : 'border-slate-600',
+              )}>
+                {withBooking ? <Check className="w-2.5 h-2.5 text-slate-950" /> : null}
+              </span>
+              <span className="min-w-0">
+                <span className={cn('block text-[11px] font-bold', withBooking ? 'text-sky-200' : 'text-slate-300')}>
+                  Also send the booking details PDF
+                </span>
+                <span className="block text-[10px] text-slate-500 leading-snug">
+                  Guests, flights, hotels, the day-by-day agenda and the vouchers — as a second message.
+                  It carries no rates or costs.
+                </span>
+              </span>
+            </button>
+
             {!contact?.canSend ? (
               <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300">
                 Sending documents to a driver is for the operations desk, Accounts and admins.
@@ -276,7 +329,9 @@ export function SendDocsWhatsAppDialog({
               className="w-full py-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-xs font-black text-emerald-200 hover:bg-emerald-500/25 transition-colors disabled:opacity-40 disabled:hover:bg-emerald-500/15 flex items-center justify-center gap-2"
             >
               {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              {sending ? 'Sending…' : `Send ${kinds.length} document${kinds.length === 1 ? '' : 's'}`}
+              {sending
+                ? 'Sending…'
+                : `Send ${kinds.length} document${kinds.length === 1 ? '' : 's'}${withBooking ? ' + booking sheet' : ''}`}
             </button>
             <p className="text-[10px] text-slate-600 text-center -mt-1">
               {pack ? 'Sends the version on screen, including unsaved edits.' : 'Sends the saved documents for this booking.'}

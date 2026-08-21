@@ -1,10 +1,11 @@
 /**
  * Sending a driver the settlement paperwork over WhatsApp.
  *
- * The four sheets travel with the driver: he holds the name board up in the
- * arrivals hall, and he brings the three settlement forms back signed. Getting
- * them to him has meant printing at the desk and handing them over in person,
- * which does not work for a driver who starts from home at 4am.
+ * The whole pack travels with the driver: he holds the name board up in the
+ * arrivals hall, hands the guest the QR card and the feedback sheet at the end
+ * of the tour, and brings the three settlement forms back signed. Getting them
+ * to him has meant printing at the desk and handing them over in person, which
+ * does not work for a driver who starts from home at 4am.
  *
  * ---- Why a template ----
  *
@@ -38,6 +39,7 @@ import {
 import { putUpload } from '@/lib/storage'
 import { normaliseSriLankanPhone, type NormalisedPhone } from '@/lib/sl-phone'
 import { generateSettlementDocsPdf } from '@/lib/sl-settlement-docs-pdfkit'
+import { generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { packForPrint } from '@/lib/sl-settlement-docs-server'
 import {
   DOC_KINDS, DOC_LABEL, docDate,
@@ -103,6 +105,56 @@ export function settlementDocsParams(pack: SettlementDocPack, kinds: SettlementD
   ]
 }
 
+// ── The booking details sheet ────────────────────────────────────────────────
+
+/**
+ * The booking, as the PDF the office already sends everywhere else.
+ *
+ * The desk asks for it alongside the settlement pack often enough that it is a
+ * tick box on the send dialog: the driver gets the paperwork he signs *and* the
+ * file he is driving — guests, flights, hotels, the day-by-day agenda and the
+ * vouchers. It is the same `generateFullDetailsPdf` the operations email and
+ * the ops-AI download use, so there is one booking sheet in the company and not
+ * a second one that drifts.
+ *
+ * It carries no money. That is a property of the document itself — it prints no
+ * rate, no cost and no payment — which is exactly why it is the one that may go
+ * to a driver.
+ */
+async function bookingDetailsPdf(bookingRef: string): Promise<{ buffer: Buffer; filename: string } | null> {
+  const booking = await prisma.booking.findUnique({
+    where: { bookingRef },
+    include: {
+      passengers:        { orderBy: [{ isLead: 'desc' }, { name: 'asc' }] },
+      flights:           { orderBy: { date: 'asc' } },
+      accommodations:    { orderBy: { checkIn: 'asc' } },
+      itineraryItems:    { orderBy: { dayNo: 'asc' } },
+      emergencyContacts: true,
+      tourAgenda: {
+        include: {
+          items: {
+            orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
+            include: { assignment: true },
+          },
+        },
+      },
+      tickets: { orderBy: { createdAt: 'asc' } },
+    },
+  })
+  if (!booking) return null
+
+  const buffer = await generateFullDetailsPdf(booking)
+  const stem = (booking.isNumber || booking.bookingRef).replace(/[^A-Za-z0-9_-]+/g, '-')
+  return { buffer, filename: `${stem}-booking-details.pdf` }
+}
+
+/** What happened to the second attachment, when one was asked for. */
+export interface BookingSheetResult {
+  ok: boolean
+  filename?: string
+  reason?: string
+}
+
 // ── Sending ──────────────────────────────────────────────────────────────────
 
 export interface SettlementSendResult {
@@ -118,6 +170,92 @@ export interface SettlementSendResult {
   /** The message body as the driver receives it. */
   preview?: string
   filename?: string
+  /**
+   * What happened to the booking sheet, when it was ticked.
+   *
+   * Reported separately and never fatal: the settlement documents are the
+   * message that had to arrive, and a driver who has them plus a failed second
+   * attachment is in a far better place than one who has neither because the
+   * booking sheet would not render.
+   */
+  bookingSheet?: BookingSheetResult
+}
+
+/**
+ * Send the booking sheet as a second message.
+ *
+ * A second message rather than a second attachment because WhatsApp carries one
+ * document per message: a template's header holds exactly one, and even inside
+ * the 24-hour window each document is its own send. `windowOpen` is the reading
+ * already taken for the settlement pack, reused so the two attachments cannot
+ * take different routes a second apart.
+ */
+async function sendBookingSheet(
+  bookingRef: string,
+  pack: SettlementDocPack,
+  msisdn: string,
+  windowOpen: boolean,
+  sentBy: string | null,
+): Promise<BookingSheetResult> {
+  let pdf: { buffer: Buffer; filename: string } | null
+  try {
+    pdf = await bookingDetailsPdf(bookingRef)
+  } catch (err) {
+    return { ok: false, reason: `The booking sheet could not be rendered: ${err instanceof Error ? err.message : err}` }
+  }
+  if (!pdf) return { ok: false, reason: `Booking ${bookingRef} was not found, so no booking sheet was sent.` }
+
+  await putUpload(`settlement-docs/${pdf.filename}`, pdf.buffer, 'application/pdf').catch(err => {
+    console.warn('[SettlementDocs] booking sheet archive failed:', err instanceof Error ? err.message : err)
+  })
+
+  // The approved template says what is attached in its last parameter, so the
+  // driver is told this is the booking file and not a second copy of the pack.
+  const params  = settlementDocsParams(pack, [])
+  params[5]     = param('Booking details')
+  const preview = renderBody(SETTLEMENT_DOCS_BODY, params)
+
+  try {
+    let result: unknown
+    if (windowOpen) {
+      const sent = await sendViaMetaApi({
+        to: msisdn,
+        message: preview,
+        media: { buffer: pdf.buffer, filename: pdf.filename, kind: 'document', caption: pdf.filename },
+      })
+      if (!sent) return { ok: false, reason: 'WhatsApp is not configured on this server.' }
+      result = sent.media ?? sent.text
+    } else {
+      const mediaId = await uploadMetaMedia(pdf.buffer, pdf.filename)
+      const sent = await sendViaMetaTemplate({
+        to:           msisdn,
+        templateName: TEMPLATE_SETTLEMENT_DOCS,
+        lang:         SETTLEMENT_DOCS_TEMPLATE_LANG,
+        bodyParams:   params,
+        headerDocument: { id: mediaId, filename: pdf.filename },
+      })
+      if (!sent) return { ok: false, reason: 'WhatsApp is not configured on this server.' }
+      result = sent.template
+    }
+
+    await prisma.whatsAppMessage.create({
+      data: {
+        bookingRef,
+        phone:       msisdn,
+        direction:   'outbound',
+        body:        preview,
+        waMessageId: (result as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null,
+        status:      'sent',
+        senderName:  `${SETTLEMENT_TAG} Booking sheet${sentBy ? ` · ${sentBy}` : ''}`,
+      },
+    }).catch(err => {
+      console.warn('[SettlementDocs] booking sheet log failed:', err instanceof Error ? err.message : err)
+    })
+
+    return { ok: true, filename: pdf.filename }
+  } catch (err) {
+    return { ok: false, reason: err instanceof Error ? err.message : 'The booking sheet could not be sent.' }
+  }
 }
 
 /**
@@ -137,6 +275,8 @@ export async function sendSettlementDocs(
     kinds?: SettlementDocKind[]
     /** What the desk typed in the send box, when they corrected the number. */
     phoneOverride?: string | null
+    /** Send the booking sheet — guests, flights, hotels, agenda — as a second message. */
+    includeBooking?: boolean
     sentBy?: string | null
   } = {},
 ): Promise<SettlementSendResult> {
@@ -220,6 +360,10 @@ export async function sendSettlementDocs(
       console.warn('[SettlementDocs] message log failed:', err instanceof Error ? err.message : err)
     })
 
+    const bookingSheet = opts.includeBooking
+      ? await sendBookingSheet(bookingRef, pack, phone.msisdn, open, opts.sentBy ?? null)
+      : undefined
+
     return {
       ok: true,
       phone: phone.msisdn,
@@ -227,6 +371,7 @@ export async function sendSettlementDocs(
       channel,
       preview,
       filename: pdf.filename,
+      bookingSheet,
     }
   } catch (err) {
     return {

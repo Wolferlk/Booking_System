@@ -10,7 +10,7 @@ import {
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
   Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
   Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle, HardDrive,
-  Database, Store,
+  Database, Store, Ban, Undo2,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -24,6 +24,7 @@ import CloudFilePicker, { type CloudFile } from '@/components/shared/cloud-file-
 import PasteDropzone from '@/components/shared/paste-dropzone'
 import LogoSpinner from '@/components/shared/logo-spinner'
 import TicketApprovalPanel from '@/components/tickets/ticket-approval-panel'
+import { NO_TICKETS_LABEL, NO_TICKETS_DONE } from '@/lib/no-tickets'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,6 +94,15 @@ interface Ticket {
 }
 
 /** One row of the shared portal registry, as /api/portals returns it. */
+/** The No Tickets decision as the API reports it, plus whether this user may change it. */
+interface NoTicketsState {
+  noTickets: boolean
+  noTicketsAt?: string | null
+  noTicketsBy?: string | null
+  noTicketsNote?: string | null
+  canSet: boolean
+}
+
 interface Portal {
   id: number
   country: string
@@ -295,6 +305,15 @@ export default function TicketsPage() {
   const canPnlSync  = ['AC_USER', 'BT_USER', 'GT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
 
   // ── Accounts PNL import state ─────────────────────────────────────────────
+  // ── "No Tickets" mark ─────────────────────────────────────────────────────
+  // Some bookings sell nothing at all. Without a decision recorded, this page
+  // and QC can only report the emptiness as unknown; with it, Ticket Activation
+  // reads as done. See `@/lib/no-tickets`.
+  const [noTickets,      setNoTickets]      = useState<NoTicketsState>({ noTickets: false, canSet: false })
+  const [noTicketsModal, setNoTicketsModal] = useState(false)
+  const [noTicketsNote,  setNoTicketsNote]  = useState('')
+  const [noTicketsSaving, setNoTicketsSaving] = useState(false)
+
   const [pnlLinked,    setPnlLinked]    = useState(false)
   const [pnlImporting, setPnlImporting] = useState(false)
   const [pnlSyncing,   setPnlSyncing]   = useState(false)
@@ -385,6 +404,35 @@ export default function TicketsPage() {
     } finally { setLoading(false) }
   }
 
+  async function loadNoTickets() {
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/no-tickets`)
+      const json = await res.json()
+      if (json.success) setNoTickets(json.data as NoTicketsState)
+    } catch { /* silent — the mark is informational, the ticket list is the page */ }
+  }
+
+  async function toggleNoTickets() {
+    setNoTicketsSaving(true)
+    try {
+      const res = await fetch(`/api/bookings/${ref}/no-tickets`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ noTickets: !noTickets.noTickets, note: noTicketsNote }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error ?? 'Could not save')
+      toast.success(json.message ?? 'Saved')
+      setNoTicketsModal(false)
+      setNoTicketsNote('')
+      await loadNoTickets()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setNoTicketsSaving(false)
+    }
+  }
+
   // Is an Accounts costing sheet available for this booking? Read-only: this
   // check writes nothing, so opening the page never creates a ticket. Ticket
   // creation happens only when someone presses "Generate Tickets from P&L".
@@ -447,7 +495,7 @@ export default function TicketsPage() {
     }
   }
 
-  useEffect(() => { load() }, [ref])
+  useEffect(() => { load(); loadNoTickets() }, [ref])
   useEffect(() => { setPreviewError(false) }, [viewFile])
 
   // Paste a screenshot straight into the open Activate modal → AI extract
@@ -920,6 +968,25 @@ export default function TicketsPage() {
                 <Printer className="w-4 h-4" /> Print Tickets ({purchased})
               </Link>
             )}
+            {/* The mark is only offered where it can be true: a booking that
+                already has tickets on it plainly has some. Removing it is
+                always available, so a mistake is never stuck. */}
+            {noTickets.canSet && (noTickets.noTickets || tickets.length === 0) && (
+              <button
+                onClick={() => { setNoTicketsNote(''); setNoTicketsModal(true) }}
+                className={`btn btn-sm flex items-center gap-1.5 ${
+                  noTickets.noTickets
+                    ? 'bg-slate-700 text-white border border-slate-800 hover:bg-slate-800'
+                    : 'bg-slate-50 text-slate-700 border border-slate-300 hover:bg-slate-100'
+                }`}
+                title={noTickets.noTickets
+                  ? 'This booking is marked as selling no tickets — click to require tickets again'
+                  : 'This booking sells no tickets — mark it so QC reads Ticket Activation as done'}
+              >
+                {noTickets.noTickets ? <Undo2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                {noTickets.noTickets ? `Remove ${NO_TICKETS_LABEL}` : `Mark as ${NO_TICKETS_LABEL}`}
+              </button>
+            )}
             {canCreate && (
               <button onClick={() => setNewModal(true)} className="btn-primary btn">
                 <Plus className="w-4 h-4" /> Add Ticket
@@ -1163,6 +1230,30 @@ export default function TicketsPage() {
                   </div>
                 )
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ── "No Tickets" banner ─────────────────────────────────────────
+            Shown so the empty page below reads as a decision somebody made
+            rather than work nobody has started. */}
+        {noTickets.noTickets && (
+          <div className="rounded-xl border border-slate-300 bg-slate-50 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-slate-700 text-white flex items-center justify-center shrink-0">
+              <Ban className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-slate-800">{NO_TICKETS_LABEL} — nothing to buy on this booking</p>
+              <p className="text-xs text-slate-600 leading-snug">
+                {NO_TICKETS_DONE.detail}. Adding a ticket here clears the mark automatically.
+              </p>
+              {noTickets.noTicketsNote && (
+                <p className="text-xs text-slate-500 italic mt-1">“{noTickets.noTicketsNote}”</p>
+              )}
+            </div>
+            <div className="sm:ml-auto text-[11px] text-slate-500 sm:text-right shrink-0">
+              {noTickets.noTicketsBy && <p>Marked by <span className="font-semibold">{noTickets.noTicketsBy}</span></p>}
+              {noTickets.noTicketsAt && <p>{formatDate(noTickets.noTicketsAt)}</p>}
             </div>
           </div>
         )}
@@ -1467,13 +1558,94 @@ export default function TicketsPage() {
           </div>
         )}
 
-        {tickets.length === 0 && (
+        {tickets.length === 0 && !noTickets.noTickets && (
           <Card className="p-12 text-center">
             <ShoppingCart className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-slate-400 text-sm">No tickets yet — they will appear here after P&L is uploaded</p>
+            {noTickets.canSet && (
+              <button
+                onClick={() => { setNoTicketsNote(''); setNoTicketsModal(true) }}
+                className="btn btn-sm mt-4 inline-flex items-center gap-1.5 bg-slate-50 text-slate-700 border border-slate-300 hover:bg-slate-100"
+              >
+                <Ban className="w-3.5 h-3.5" /> This booking has no tickets
+              </button>
+            )}
           </Card>
         )}
       </div>
+
+      {/* ── "No Tickets" confirmation ───────────────────────────────────────
+          Not an "are you sure?" — it says what the mark changes downstream, so
+          nobody sets it expecting a cosmetic label. */}
+      <Modal
+        open={noTicketsModal}
+        onClose={() => !noTicketsSaving && setNoTicketsModal(false)}
+        title={noTickets.noTickets
+          ? `Remove the ${NO_TICKETS_LABEL} mark?`
+          : `Mark ${ref} as ${NO_TICKETS_LABEL}?`}
+        footer={
+          <>
+            <button
+              onClick={() => setNoTicketsModal(false)}
+              disabled={noTicketsSaving}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={toggleNoTickets}
+              disabled={noTicketsSaving}
+              className={`btn text-white flex items-center gap-1.5 ${
+                noTickets.noTickets
+                  ? 'bg-slate-700 border border-slate-800 hover:bg-slate-800'
+                  : 'bg-emerald-600 border border-emerald-700 hover:bg-emerald-700'
+              } disabled:opacity-60`}
+            >
+              {noTicketsSaving
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : noTickets.noTickets ? <Undo2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+              {noTickets.noTickets ? 'Require tickets again' : `Confirm — ${NO_TICKETS_LABEL}`}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {noTickets.noTickets ? (
+            <p className="text-sm text-slate-700">
+              Ticket Activation goes back to reading as outstanding on QC and on the
+              operations board until tickets are added and purchased.
+            </p>
+          ) : (
+            <>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 flex gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-semibold text-emerald-900">QC will read Ticket Activation as done</p>
+                  <p className="text-emerald-800 mt-0.5">“{NO_TICKETS_DONE.detail}”</p>
+                </div>
+              </div>
+              <p className="text-sm text-slate-600">
+                Use this for a booking that sells no attractions, entrances or vouchers —
+                a pure transfer file. Nothing else about the booking changes, and adding a
+                ticket later clears the mark on its own.
+              </p>
+            </>
+          )}
+          <label className="block">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Reason (optional)</span>
+            <textarea
+              value={noTicketsNote}
+              onChange={e => setNoTicketsNote(e.target.value)}
+              rows={2}
+              placeholder={noTickets.noTickets
+                ? 'Why are tickets needed again?'
+                : 'e.g. Transfers only — no attractions sold on this package'}
+              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            />
+          </label>
+          <p className="text-xs text-slate-400">Recorded against your name in the booking history.</p>
+        </div>
+      </Modal>
 
       {/* ── Activate Modal ──────────────────────────────────────────────────── */}
       <Modal

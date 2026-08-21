@@ -8,6 +8,7 @@ import { countryScope } from '@/lib/country-detection'
 import { resolvePortalSelection } from '@/lib/portals'
 import { syncApprovalMirror } from '@/lib/ticket-approvals'
 import type { UserRole, OperationCountry } from '@prisma/client'
+import { clearNoTicketsMark } from '@/lib/no-tickets-clear'
 
 export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
@@ -132,6 +133,9 @@ export async function POST(req: NextRequest) {
       status: 'DRAFT',
     },
   })
+
+  // The booking now has a ticket, so a standing "No Tickets" mark is no longer true.
+  await clearNoTicketsMark(booking.id)
 
   return buildApiSuccess(ticket, 'Ticket created')
 }
