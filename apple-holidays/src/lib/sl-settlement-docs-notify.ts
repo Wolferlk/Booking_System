@@ -47,7 +47,7 @@ import {
 // ── Template ─────────────────────────────────────────────────────────────────
 
 export const TEMPLATE_SETTLEMENT_DOCS =
-  process.env.WHATSAPP_DRIVER_DOCS_TEMPLATE?.trim() || 'apple_holidays_driver_settlement_docs'
+  process.env.WHATSAPP_DRIVER_DOCS_TEMPLATE?.trim() || 'aahaas_driver_settlement_doc'
 
 export const SETTLEMENT_DOCS_TEMPLATE_LANG =
   process.env.WHATSAPP_DRIVER_TEMPLATE_LANG?.trim() || 'en'

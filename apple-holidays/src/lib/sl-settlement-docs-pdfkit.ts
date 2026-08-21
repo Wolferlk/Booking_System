@@ -29,7 +29,7 @@ import { ensurePdfkitDataFiles, loadPdfDocumentCtor } from '@/lib/pdfkit-boot'
 import { getUpload } from '@/lib/storage'
 import {
   DEFAULT_ACCENT, DEFAULT_LOGO, DOC_SLUG, SUB_LOGOS, docDate, isSafeLogoPath, money,
-  tourLineTotal, tourTotal, transportTotals,
+  orientationOf, tourLineTotal, tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from '@/lib/sl-settlement-docs'
 
@@ -38,6 +38,18 @@ import {
 const A4_W = 595.28
 const A4_H = 841.89
 const MARGIN = 28
+
+/**
+ * The page currently being drawn on.
+ *
+ * PDFKit sizes each page as it is added and every sheet here is laid out from
+ * the page's own width, so the orientation saved on the pack is applied by
+ * setting these when the page is added rather than by threading a size through
+ * every table and rule. Set only in `generateSettlementDocsPdf`, which draws
+ * one page to completion before adding the next.
+ */
+let PAGE_W = A4_W
+let PAGE_H = A4_H
 
 const INK   = '#111111'
 const MUTED = '#555555'
@@ -181,7 +193,7 @@ function fit(total: number, weights: number[]): number[] {
 
 /** The masthead every settlement form carries. */
 function masthead(doc: Doc, marks: Marks, title: string): number {
-  const centre = A4_W / 2
+  const centre = PAGE_W / 2
   let y = MARGIN
 
   if (marks.house) {
@@ -191,14 +203,14 @@ function masthead(doc: Doc, marks: Marks, title: string): number {
   }
 
   doc.fillColor(INK).font('Helvetica-Bold').fontSize(17)
-    .text(COMPANY_SITE, MARGIN, y, { width: A4_W - MARGIN * 2, align: 'center' })
+    .text(COMPANY_SITE, MARGIN, y, { width: PAGE_W - MARGIN * 2, align: 'center' })
   y += 20
   doc.fillColor(MUTED).font('Helvetica').fontSize(6.5)
-    .text(COMPANY_LINE, MARGIN, y, { width: A4_W - MARGIN * 2, align: 'center' })
+    .text(COMPANY_LINE, MARGIN, y, { width: PAGE_W - MARGIN * 2, align: 'center' })
   y += 14
 
   doc.fillColor(INK).font('Helvetica-Bold').fontSize(10.5)
-    .text(title, MARGIN, y, { width: A4_W - MARGIN * 2, align: 'center', characterSpacing: 1 })
+    .text(title, MARGIN, y, { width: PAGE_W - MARGIN * 2, align: 'center', characterSpacing: 1 })
   const tw = doc.widthOfString(title, { characterSpacing: 1 })
   y += 13
   doc.moveTo(centre - tw / 2, y).lineTo(centre + tw / 2, y).lineWidth(0.8).strokeColor(INK).stroke()
@@ -209,7 +221,7 @@ function masthead(doc: Doc, marks: Marks, title: string): number {
 /** The six-line block that heads each settlement form. */
 function headerBlock(doc: Doc, pack: SettlementDocPack, y: number, labels: Record<string, string> = {}): number {
   const h = pack.header
-  const W = A4_W - MARGIN * 2
+  const W = PAGE_W - MARGIN * 2
   const widths = [110, W - 110]
   const rows: [string, string][] = [
     [labels.tourNo ?? 'Tour No', h.tourNo],
@@ -231,7 +243,7 @@ function headerBlock(doc: Doc, pack: SettlementDocPack, y: number, labels: Recor
 
 /** The two signature rules every form ends with. */
 function signatures(doc: Doc, y: number): void {
-  const W = A4_W - MARGIN * 2
+  const W = PAGE_W - MARGIN * 2
   const colW = W * 0.42
   const right = MARGIN + W - colW
   doc.dash(1.5, { space: 1.5 }).lineWidth(0.7).strokeColor(INK)
@@ -247,7 +259,7 @@ function signatures(doc: Doc, y: number): void {
 function noteBlock(doc: Doc, note: string, y: number): number {
   const clean = txt(note)
   if (!clean) return y
-  const W = A4_W - MARGIN * 2
+  const W = PAGE_W - MARGIN * 2
   const h = doc.font('Helvetica').fontSize(7.5).heightOfString(clean, { width: W - 12 }) + 10
   doc.dash(2, { space: 2 }).rect(MARGIN, y, W, h).lineWidth(0.6).strokeColor('#BBBBBB').stroke().undash()
   doc.fillColor('#333333').font('Helvetica').fontSize(7.5).text(clean, MARGIN + 6, y + 5, { width: W - 12 })
@@ -265,8 +277,8 @@ function noteBlock(doc: Doc, note: string, y: number): number {
  * character count as the CSS sheet has to.
  */
 function nameBoardPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
-  const W = A4_H   // landscape: the long edge is the width
-  const H = A4_W
+  const W = PAGE_W
+  const H = PAGE_H
   const nb = pack.nameBoard
   const accent = /^#[0-9a-f]{6}$/i.test(nb.accent) ? nb.accent : DEFAULT_ACCENT
   const inner = W - 100
@@ -297,7 +309,9 @@ function nameBoardPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   const eyebrowH = nb.theme === 'frame' ? 22 : 0
 
   let size = 90
-  const maxH = 210
+  // A share of the sheet rather than a fixed height, so a board turned portrait
+  // gives the name the same proportion of the paper it gets in landscape.
+  const maxH = Math.round(H * 0.35)
   while (size > 24 && doc.font('Helvetica-Bold').fontSize(size).heightOfString(name, { width: inner }) > maxH) {
     size -= 2
   }
@@ -380,7 +394,7 @@ function nameBoardPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
 function transportPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   const t = pack.transport
   const totals = transportTotals(t)
-  const W = A4_W - MARGIN * 2
+  const W = PAGE_W - MARGIN * 2
 
   let y = masthead(doc, marks, 'TRANSPORT SETTLEMENT')
   y = headerBlock(doc, pack, y)
@@ -455,14 +469,14 @@ function transportPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
 
   y = Math.max(totalsBottom, by) + 8
   y = noteBlock(doc, t.note, y)
-  signatures(doc, Math.max(y + 14, A4_H - MARGIN - 30))
+  signatures(doc, Math.max(y + 14, PAGE_H - MARGIN - 30))
 }
 
 // ── Local visit settlement ───────────────────────────────────────────────────
 
 function localVisitPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   const lv = pack.localVisit
-  const W = A4_W - MARGIN * 2
+  const W = PAGE_W - MARGIN * 2
 
   let y = masthead(doc, marks, 'LOCAL VISIT SETTLEMENT')
   y = headerBlock(doc, pack, y, {
@@ -503,14 +517,14 @@ function localVisitPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   }
 
   y = noteBlock(doc, lv.note, y + 8)
-  signatures(doc, Math.max(y + 14, A4_H - MARGIN - 30))
+  signatures(doc, Math.max(y + 14, PAGE_H - MARGIN - 30))
 }
 
 // ── Tour settlement ──────────────────────────────────────────────────────────
 
 function tourPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   const to = pack.tour
-  const W = A4_W - MARGIN * 2
+  const W = PAGE_W - MARGIN * 2
 
   let y = masthead(doc, marks, 'TOUR SETTLEMENT')
 
@@ -552,7 +566,7 @@ function tourPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   ], 18)
 
   y = noteBlock(doc, to.note, y + 8)
-  signatures(doc, Math.max(y + 14, A4_H - MARGIN - 30))
+  signatures(doc, Math.max(y + 14, PAGE_H - MARGIN - 30))
 }
 
 // ── The document ─────────────────────────────────────────────────────────────
@@ -567,9 +581,10 @@ export function settlementDocsFilename(pack: SettlementDocPack, kinds: Settlemen
 /**
  * The pack as a PDF, without a browser.
  *
- * The name board is a landscape page and the three forms are portrait pages, in
- * one file — PDFKit sizes each page as it is added, so the mixed orientation
- * needs no special handling here.
+ * The name board is a landscape page and the three forms are portrait pages by
+ * default, and any of them can be saved turned round — all in one file, since
+ * PDFKit sizes each page as it is added. `PAGE_W`/`PAGE_H` are set alongside
+ * the page so the sheet is drawn to the paper it is on.
  */
 export async function generateSettlementDocsPdf(
   pack: SettlementDocPack,
@@ -589,12 +604,17 @@ export async function generateSettlementDocsPdf(
     doc.info.Title = `Settlement documents - ${pack.header.tourNo || pack.bookingRef}`
 
     for (const kind of kinds) {
+      const layout = orientationOf(pack, kind)
+      const landscape = layout === 'landscape'
+      PAGE_W = landscape ? A4_H : A4_W
+      PAGE_H = landscape ? A4_W : A4_H
+
       if (kind === 'name_board') {
-        doc.addPage({ size: 'A4', layout: 'landscape', margin: 0 })
+        doc.addPage({ size: 'A4', layout, margin: 0 })
         nameBoardPage(doc, pack, marks)
         continue
       }
-      doc.addPage({ size: 'A4', layout: 'portrait', margin: MARGIN })
+      doc.addPage({ size: 'A4', layout, margin: MARGIN })
       if (kind === 'transport')   transportPage(doc, pack, marks)
       if (kind === 'local_visit') localVisitPage(doc, pack, marks)
       if (kind === 'tour')        tourPage(doc, pack, marks)
