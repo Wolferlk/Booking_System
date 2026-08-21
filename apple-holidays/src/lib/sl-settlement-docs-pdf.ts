@@ -9,11 +9,12 @@
  *
  * ---- One PDF, two orientations ----
  *
- * The name board is landscape and the three settlement forms are portrait, and
+ * The name board is landscape and the three settlement forms are portrait by
+ * default — and any one of them can be turned round and saved that way — while
  * the whole pack is expected to come down as *one* file. Chromium is asked for
- * `preferCSSPageSize`, and each section names a `@page` box of its own — so the
- * board is an A4 landscape page and the forms are A4 portrait pages inside a
- * single document. Nothing is rotated and nothing is scaled to fit; each sheet
+ * `preferCSSPageSize`, and each document names a `@page` box of its own, sized
+ * from the orientation saved on the pack, so a mixed-orientation pack prints as
+ * a single document. Nothing is rotated and nothing is scaled to fit; each sheet
  * prints at the size it was drawn for.
  *
  * ---- Rendered from the pack, never from the databases ----
@@ -28,8 +29,8 @@ import path from 'path'
 import { launchBrowser } from './html-to-pdf'
 import { getUpload } from './storage'
 import {
-  DEFAULT_LOGO, DOC_LABEL, SUB_LOGOS, docDate, isSafeLogoPath, money, tourLineTotal,
-  tourTotal, transportTotals,
+  DEFAULT_LOGO, DOC_LABEL, SUB_LOGOS, docDate, isSafeLogoPath, money, orientationOf,
+  tourLineTotal, tourTotal, transportTotals,
   type SettlementDocKind, type SettlementDocPack,
 } from './sl-settlement-docs'
 
@@ -198,7 +199,11 @@ function nameBoardHtml(pack: SettlementDocPack, marks: Marks): string {
     </div>`
 
   const sub = nb.subtitle ? `<div class="board-sub">${esc(nb.subtitle)}</div>` : ''
-  const size = nameSize(name, nb.theme === 'minimal' ? 124 : 132)
+  // A portrait board is 210mm across instead of 297mm, so the name starts from
+  // a smaller base before the length stepping is applied to it.
+  const portrait = orientationOf(pack, 'name_board') === 'portrait'
+  const base = portrait ? (nb.theme === 'minimal' ? 84 : 90) : (nb.theme === 'minimal' ? 124 : 132)
+  const size = nameSize(name, base)
   const nameEl = `<div class="board-name" style="font-size:${size}px">${esc(name)}</div>`
 
   const body = (() => {
@@ -256,7 +261,7 @@ function nameBoardHtml(pack: SettlementDocPack, marks: Marks): string {
     }
   })()
 
-  return `<section class="board board-${esc(nb.theme)}" style="--accent:${esc(nb.accent)}">${body}</section>`
+  return `<section class="board pg-name_board${portrait ? ' portrait' : ''} board-${esc(nb.theme)}" style="--accent:${esc(nb.accent)}">${body}</section>`
 }
 
 // ── Transport settlement ──────────────────────────────────────────────────────
@@ -279,7 +284,7 @@ function transportHtml(pack: SettlementDocPack, logo: string | null): string {
       <th>${esc(label)}</th><td class="rate">${esc(rate)}</td><td class="amt">${esc(value)}</td>
     </tr>`
 
-  return `<section class="form">
+  return `<section class="form pg-transport">
     ${masthead('TRANSPORT SETTLEMENT', logo)}
     ${headerTable(pack, {})}
 
@@ -345,7 +350,7 @@ function localVisitHtml(pack: SettlementDocPack, logo: string | null): string {
     return shops || `<tr><th class="cat">${esc(sec.title)}</th><td class="shop">&nbsp;</td><td class="sig">&nbsp;</td></tr>`
   }).join('')
 
-  return `<section class="form">
+  return `<section class="form pg-local_visit">
     ${masthead('LOCAL VISIT SETTLEMENT', logo)}
     ${headerTable(pack, {
       tourNo: 'Tour No', arrival: 'Arrival', departure: 'Departure',
@@ -382,7 +387,7 @@ function tourHtml(pack: SettlementDocPack, logo: string | null): string {
 
   const pad = blankRows(Math.max(0, 18 - to.lines.length), 4)
 
-  return `<section class="form">
+  return `<section class="form pg-tour">
     ${masthead('TOUR SETTLEMENT', logo)}
 
     <table class="hdr">
@@ -432,13 +437,12 @@ const STYLES = `
   body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 10px;
          -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-  /* Two page boxes in one document — the board is landscape, the forms are not. */
-  @page board { size: A4 landscape; margin: 0; }
-  @page form  { size: A4 portrait;  margin: 10mm 9mm 12mm; }
-
-  section.board { page: board; break-after: page; height: 100vh; width: 100%;
+  /* The @page boxes themselves are generated per document from the pack's
+     saved orientation - see pageBoxes(). These are the parts that hold
+     whichever way up the sheet is printed. */
+  section.board { break-after: page; height: 100vh; width: 100%;
                   display: flex; align-items: center; justify-content: center; }
-  section.form  { page: form; break-after: page; }
+  section.form  { break-after: page; }
   section:last-child { break-after: auto; }
 
   /* ── Name board ──
@@ -506,6 +510,15 @@ const STYLES = `
   .board-minimal .board-foot { justify-content: flex-start; }
   .board-minimal .board-marks { justify-content: flex-end; right: 20mm; left: auto; bottom: 12mm; }
 
+  /* A board turned portrait: the same sheet, with the type and the padding
+     taken in so an arrivals-hall name still fits the narrower paper. The name
+     size itself is set inline, measured from the orientation. */
+  .board.portrait .board-inner { padding: 0 12mm; }
+  .board.portrait .board-sub { font-size: 21px; margin-top: 16px; }
+  .board.portrait .board-logo { height: 56px; margin-bottom: 20px; }
+  .board.portrait .board-foot { font-size: 12px; }
+  .board.portrait.board-ribbon .ribbon-top { height: 22mm; padding: 0 10mm; }
+
   /* ── Forms ── */
   .masthead { display: flex; align-items: center; gap: 10px; justify-content: center; }
   .masthead .mark { height: 26px; }
@@ -560,6 +573,23 @@ const STYLES = `
 `
 
 /**
+ * One `@page` box per document, sized from the pack.
+ *
+ * Named boxes rather than one document-wide page rule: a pack is printed as a
+ * single file and the sheets in it need not agree about which way up they are,
+ * so each document names its own box and Chromium is asked to honour it
+ * (`preferCSSPageSize`). The board is printed edge to edge; the forms keep the
+ * margins the paper originals are typed inside.
+ */
+function pageBoxes(pack: SettlementDocPack, kinds: SettlementDocKind[]): string {
+  return kinds.map(k => {
+    const margin = k === 'name_board' ? '0' : '10mm 9mm 12mm'
+    return `@page ${k} { size: A4 ${orientationOf(pack, k)}; margin: ${margin}; }
+  section.pg-${k} { page: ${k}; }`
+  }).join('\n  ')
+}
+
+/**
  * The whole pack as one HTML document.
  *
  * Exported so the editor can preview exactly what will print, in an iframe,
@@ -578,7 +608,8 @@ export async function buildDocsHtml(
 
   return `<!doctype html><html><head><meta charset="utf-8">
 <title>${esc(title)}</title>
-<style>${STYLES}</style>
+<style>${STYLES}
+  ${pageBoxes(pack, kinds)}</style>
 </head><body>${body}</body></html>`
 }
 

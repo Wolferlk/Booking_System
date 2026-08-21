@@ -63,6 +63,38 @@ export const DOC_SLUG: Record<SettlementDocKind, string> = {
   tour:        'tour-settlement',
 }
 
+// ── Paper ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Which way up a sheet is printed.
+ *
+ * The name board is landscape because it is held up in an arrivals hall and the
+ * name has to be as wide as the paper allows; the three settlement forms are
+ * portrait because that is the paper the desk, the driver and the shops already
+ * fill in. Those are the defaults and nothing else is normally wanted — but a
+ * desk that needs a portrait board for a narrow stand, or a landscape transport
+ * sheet for a long itinerary, can turn one round and save it with the pack.
+ */
+export type DocOrientation = 'portrait' | 'landscape'
+
+export const DEFAULT_ORIENTATION: Record<SettlementDocKind, DocOrientation> = {
+  name_board:  'landscape',
+  transport:   'portrait',
+  local_visit: 'portrait',
+  tour:        'portrait',
+}
+
+export const defaultLayout = (): Record<SettlementDocKind, DocOrientation> => ({ ...DEFAULT_ORIENTATION })
+
+/** The way this document is printed, falling back to its default. */
+export function orientationOf(
+  pack: { layout?: Partial<Record<SettlementDocKind, DocOrientation>> | null },
+  kind: SettlementDocKind,
+): DocOrientation {
+  const v = pack.layout?.[kind]
+  return v === 'portrait' || v === 'landscape' ? v : DEFAULT_ORIENTATION[kind]
+}
+
 // ── Shapes ────────────────────────────────────────────────────────────────────
 
 /**
@@ -269,6 +301,8 @@ export interface SettlementDocPack {
   bookingRef: string
   isNumber: string | null
   header: SettlementDocHeader
+  /** Which way up each sheet prints. Defaults in `DEFAULT_ORIENTATION`. */
+  layout: Record<SettlementDocKind, DocOrientation>
   nameBoard: NameBoardDoc
   transport: TransportDoc
   localVisit: LocalVisitDoc
@@ -359,6 +393,7 @@ export function emptyPack(bookingRef: string, isNumber: string | null = null): S
     bookingRef,
     isNumber,
     header: emptyHeader(),
+    layout: defaultLayout(),
     nameBoard: {
       guestName: '', subtitle: 'Welcome to Sri Lanka', footnote: '', showReference: true,
       logoUrl: null, showSubLogos: true, theme: 'spotlight', accent: DEFAULT_ACCENT,
@@ -492,6 +527,13 @@ export function parsePack(raw: unknown, fallback: SettlementDocPack): Settlement
     vehiclePlate:  str(h.vehiclePlate, 40),
   }
 
+  const rawLayout = (src.layout ?? {}) as Record<string, unknown>
+  const layout = { ...DEFAULT_ORIENTATION }
+  for (const k of DOC_KINDS) {
+    const v = rawLayout[k]
+    if (v === 'portrait' || v === 'landscape') layout[k] = v
+  }
+
   const nb = (src.nameBoard ?? {}) as Record<string, unknown>
   const nameBoard: NameBoardDoc = {
     guestName:     str(nb.guestName, 120),
@@ -567,7 +609,7 @@ export function parsePack(raw: unknown, fallback: SettlementDocPack): Settlement
     note: str(to.note, 1000),
   }
 
-  return { version: 1, bookingRef: fallback.bookingRef, isNumber: fallback.isNumber, header, nameBoard, transport, localVisit, tour }
+  return { version: 1, bookingRef: fallback.bookingRef, isNumber: fallback.isNumber, header, layout, nameBoard, transport, localVisit, tour }
 }
 
 /** The documents a request asked for, defaulting to all four in printing order. */

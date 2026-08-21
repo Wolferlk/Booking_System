@@ -39,9 +39,11 @@ import {
 import { cn } from '@/lib/utils'
 import { SendDocsWhatsAppDialog } from './SendDocsWhatsAppDialog'
 import {
-  BUILTIN_LOGOS, DEFAULT_LOGO, DOC_BLURB, DOC_KINDS, DOC_LABEL, NAME_BOARD_ACCENTS,
-  NAME_BOARD_THEMES, SUB_LOGOS, money, rowId, tourLineTotal, tourTotal, transportTotals,
-  type NameBoardTheme, type SettlementDocKind, type SettlementDocPack, type SettlementDocState,
+  BUILTIN_LOGOS, DEFAULT_LOGO, DEFAULT_ORIENTATION, DOC_BLURB, DOC_KINDS, DOC_LABEL,
+  NAME_BOARD_ACCENTS, NAME_BOARD_THEMES, SUB_LOGOS, money, orientationOf, rowId,
+  tourLineTotal, tourTotal, transportTotals,
+  type DocOrientation, type NameBoardTheme, type SettlementDocKind, type SettlementDocPack,
+  type SettlementDocState,
 } from '@/lib/sl-settlement-docs'
 
 /**
@@ -211,6 +213,90 @@ function RowButton({ onClick, children, tone = 'slate' }: { onClick: () => void;
 // ── The editors ───────────────────────────────────────────────────────────────
 
 type Patch = (fn: (p: SettlementDocPack) => SettlementDocPack) => void
+
+/**
+ * Which way up this sheet prints.
+ *
+ * The defaults are the paper the desk already uses — the name board landscape
+ * because it is held up in an arrivals hall, the three settlement forms
+ * portrait — and they are what a booking gets without anybody touching this.
+ * It is here because paper is occasionally not standard: a narrow board stand,
+ * an itinerary that wants the wider sheet. The choice is part of the pack, so
+ * it is kept by Save like everything else on these documents and comes back the
+ * same way next time the file is opened.
+ */
+function OrientationPicker({
+  kind, pack, patch, canWrite,
+}: {
+  kind: SettlementDocKind
+  pack: SettlementDocPack
+  patch: Patch
+  canWrite: boolean
+}) {
+  const current = orientationOf(pack, kind)
+  const fallback = DEFAULT_ORIENTATION[kind]
+
+  const set = (v: DocOrientation) => {
+    if (!canWrite) return
+    patch(p => ({ ...p, layout: { ...DEFAULT_ORIENTATION, ...p.layout, [kind]: v } }))
+  }
+
+  const options: { id: DocOrientation; label: string; w: string; h: string }[] = [
+    { id: 'portrait',  label: 'Portrait',  w: 'w-6', h: 'h-8' },
+    { id: 'landscape', label: 'Landscape', w: 'w-8', h: 'h-6' },
+  ]
+
+  return (
+    <Section
+      title="Paper"
+      hint={`A4, printed ${fallback} for this sheet unless you turn it round. Saved with the documents.`}
+    >
+      <div className="flex items-center gap-2">
+        {options.map(o => {
+          const on = current === o.id
+          return (
+            <button
+              key={o.id}
+              type="button"
+              onClick={() => set(o.id)}
+              disabled={!canWrite}
+              className={cn(
+                'flex-1 flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors text-left disabled:opacity-50',
+                on
+                  ? 'bg-yellow-500/10 border-yellow-500/40'
+                  : 'bg-slate-900/50 border-slate-800 hover:border-slate-700',
+              )}
+            >
+              <span
+                className={cn(
+                  'rounded-sm border-2 flex-shrink-0',
+                  o.w, o.h,
+                  on ? 'border-yellow-400/80 bg-yellow-400/10' : 'border-slate-600 bg-slate-800/60',
+                )}
+              />
+              <span className="min-w-0">
+                <span className={cn('block text-[11px] font-bold', on ? 'text-yellow-200' : 'text-slate-300')}>
+                  {o.label}
+                  {on ? <Check className="w-3 h-3 inline ml-1 -mt-px" /> : null}
+                </span>
+                <span className="block text-[10px] text-slate-500">
+                  {o.id === fallback ? 'Default for this sheet' : 'A4, turned round'}
+                </span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      {current !== fallback && canWrite ? (
+        <div className="mt-2.5">
+          <RowButton onClick={() => set(fallback)}>
+            <Undo2 className="w-3 h-3" /> Back to {fallback}
+          </RowButton>
+        </div>
+      ) : null}
+    </Section>
+  )
+}
 
 function HeaderEditor({ pack, patch }: { pack: SettlementDocPack; patch: Patch }) {
   const set = <K extends keyof SettlementDocPack['header']>(k: K, v: SettlementDocPack['header'][K]) =>
@@ -1230,6 +1316,8 @@ export function SettlementDocsDialog({
                   and admins. Anything you type here prints, but will not be saved.
                 </div>
               ) : null}
+
+              <OrientationPicker kind={tab} pack={pack} patch={patch} canWrite={canWrite} />
 
               {tab === 'name_board' ? (
                 <NameBoardEditor pack={pack} patch={patch} canWrite={canWrite} />
