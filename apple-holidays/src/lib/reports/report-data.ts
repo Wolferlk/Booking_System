@@ -449,6 +449,7 @@ const BOOKING_SELECT = {
   tourDestination: true,
   createdAt: true,
   hotelOnly: true,
+  noTickets: true,
 } satisfies Prisma.BookingSelect
 
 type RawBooking = Prisma.BookingGetPayload<{ select: typeof BOOKING_SELECT }>
@@ -626,6 +627,7 @@ async function collectReadiness(w: ReportWindow, countries: string[], maxRows: n
         status: r.status,
         qcPassedAt: r.qcPassedAt,
         hotelOnly: r.hotelOnly,
+        noTickets: r.noTickets,
         tourAgenda: r.tourAgenda,
         slDriverAllocation: r.slDriverAllocation,
         tickets: r.tickets,

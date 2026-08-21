@@ -171,6 +171,13 @@ model Booking {
   hotelOnlyAt            DateTime?
   hotelOnlyBy            String?
   hotelOnlyNote          String?                   @db.Text
+  // No Tickets — an explicit operator decision that this booking sells no
+  // tickets at all, so the ticket rung of the checklist is *done* rather than
+  // merely empty. See `src/lib/no-tickets.ts`.
+  noTickets              Boolean                   @default(false)
+  noTicketsAt            DateTime?
+  noTicketsBy            String?
+  noTicketsNote          String?                   @db.Text
   accommodations         Accommodation[]
   versions               BookingVersion[]
   clientUser             User?                     @relation("ClientUser", fields: [clientUserId], references: [id])

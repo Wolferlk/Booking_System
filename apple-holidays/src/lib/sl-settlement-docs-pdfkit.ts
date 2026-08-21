@@ -27,6 +27,7 @@ import { readFile } from 'fs/promises'
 import path from 'path'
 import { ensurePdfkitDataFiles, loadPdfDocumentCtor } from '@/lib/pdfkit-boot'
 import { getUpload } from '@/lib/storage'
+import { guestLinks, prettyLink, qrPngBuffer, type GuestLinks } from '@/lib/sl-settlement-qr'
 import {
   DEFAULT_ACCENT, DEFAULT_LOGO, DOC_SLUG, SUB_LOGOS, WORDMARK_LOGO, docDate, isSafeLogoPath,
   money, orientationOf, tourLineTotal, tourPrintedLines, tourTotal, transportTotals,
@@ -115,17 +116,31 @@ interface Marks {
   /** The "appleholidaysds.com" wordmark the forms are headed with. */
   wordmark: Buffer | null
   board: Buffer | null
+  /** The mark at the top of the guest QR card. */
+  card: Buffer | null
   subs: Buffer[]
+  /** The guest's two login-free links, and the squares they print as. */
+  links: GuestLinks
+  qrPortal: Buffer | null
+  qrFeedback: Buffer | null
 }
 
 async function readMarks(pack: SettlementDocPack): Promise<Marks> {
-  const [house, wordmark, board, subs] = await Promise.all([
+  const links = guestLinks(pack.bookingRef)
+  const [house, wordmark, board, card, subs, qrPortal, qrFeedback] = await Promise.all([
     readMark('/logo.png'),
     readMark(WORDMARK_LOGO),
     readMark(pack.nameBoard.logoUrl ?? DEFAULT_LOGO),
+    readMark(pack.qrCard.logoUrl ?? DEFAULT_LOGO),
     Promise.all(SUB_LOGOS.map(readMark)),
+    qrPngBuffer(links.portal),
+    qrPngBuffer(links.feedback),
   ])
-  return { house, wordmark, board, subs: subs.filter((b): b is Buffer => !!b) }
+  return {
+    house, wordmark, board, card,
+    subs: subs.filter((b): b is Buffer => !!b),
+    links, qrPortal, qrFeedback,
+  }
 }
 
 // ── Drawing helpers ──────────────────────────────────────────────────────────
@@ -625,6 +640,227 @@ function tourPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
   signatures(doc, Math.max(y + 14, PAGE_H - MARGIN - 30))
 }
 
+// ── Guest QR card ────────────────────────────────────────────────────────────
+
+/**
+ * The card the driver hands the guest, drawn.
+ *
+ * Same two squares as the HTML renderer, same order, same words. Plainer around
+ * them — no tinted panels — because this is the renderer that runs when nobody
+ * is at a screen, and what has to survive is the code itself: 165pt square,
+ * quiet zone included, which a phone camera reads across a counter.
+ */
+function qrCardPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
+  const c = pack.qrCard
+  const W = PAGE_W - MARGIN * 2
+  const accent = /^#[0-9a-f]{6}$/i.test(c.accent) ? c.accent : DEFAULT_ACCENT
+
+  let y = MARGIN + 10
+
+  if (marks.card) {
+    try {
+      doc.image(marks.card, PAGE_W / 2 - 30, y, { fit: [60, 34], align: 'center' })
+      y += 42
+    } catch { /* an unreadable mark is not worth failing a guest card for */ }
+  }
+
+  doc.fillColor(INK).font('Helvetica-Bold').fontSize(20)
+    .text(txt(c.headline), MARGIN, y, { width: W, align: 'center' })
+  y += doc.heightOfString(txt(c.headline) || ' ', { width: W }) + 8
+
+  doc.rect(PAGE_W / 2 - 26, y, 52, 3).fill(accent)
+  y += 14
+
+  if (txt(c.subtitle)) {
+    doc.fillColor(MUTED).font('Helvetica').fontSize(9.5)
+      .text(txt(c.subtitle), MARGIN + 40, y, { width: W - 80, align: 'center' })
+    y += doc.heightOfString(txt(c.subtitle), { width: W - 80 }) + 10
+  }
+
+  if (txt(c.guestName)) {
+    doc.fillColor(INK).font('Helvetica-Bold').fontSize(12)
+      .text(txt(c.guestName), MARGIN, y, { width: W, align: 'center' })
+    y += 20
+  }
+
+  const panels: { caption: string; blurb: string; code: Buffer | null; url: string | null }[] = []
+  if (c.showPortal)   panels.push({ caption: c.portalCaption,   blurb: c.portalBlurb,   code: marks.qrPortal,   url: marks.links.portal })
+  if (c.showFeedback) panels.push({ caption: c.feedbackCaption, blurb: c.feedbackBlurb, code: marks.qrFeedback, url: marks.links.feedback })
+
+  const QR = 165
+  const colW = panels.length > 1 ? (W - 24) / 2 : W
+  const x = MARGIN
+
+  // The squares sit in the middle of what is left of the sheet rather than
+  // straight under the headline: the card is looked at held in one hand, and a
+  // block of white below the codes reads as a page that did not finish printing.
+  const blockH = 20 + QR + 12 + (panels.some(pn => txt(pn.blurb)) ? 26 : 0) + (c.showUrls ? 14 : 0)
+  const room   = (PAGE_H - MARGIN - 40) - y
+  const top    = y + Math.max(12, (room - blockH) / 2)
+
+  panels.forEach((panel, i) => {
+    const cx = panels.length > 1 ? x + i * (colW + 24) : MARGIN
+    let py = top
+
+    doc.fillColor(INK).font('Helvetica-Bold').fontSize(11.5)
+      .text(txt(panel.caption), cx, py, { width: colW, align: 'center' })
+    py += 20
+
+    const qx = cx + (colW - QR) / 2
+    if (panel.code) {
+      try {
+        doc.image(panel.code, qx, py, { fit: [QR, QR] })
+      } catch { /* fall through to the dashed box below */ }
+    } else {
+      doc.dash(3, { space: 3 }).rect(qx, py, QR, QR).lineWidth(0.7).strokeColor('#C4C8CE').stroke().undash()
+      doc.fillColor(MUTED).font('Helvetica').fontSize(7.5)
+        .text('The link for this code is not available on this server.', qx + 12, py + QR / 2 - 10, { width: QR - 24, align: 'center' })
+    }
+    py += QR + 12
+
+    if (txt(panel.blurb)) {
+      doc.fillColor(MUTED).font('Helvetica').fontSize(8)
+        .text(txt(panel.blurb), cx + 6, py, { width: colW - 12, align: 'center' })
+      py += doc.heightOfString(txt(panel.blurb), { width: colW - 12 }) + 6
+    }
+    if (c.showUrls && panel.url) {
+      doc.fillColor('#8A8F98').font('Courier').fontSize(6.5)
+        .text(txt(prettyLink(panel.url)), cx + 4, py, { width: colW - 8, align: 'center' })
+    }
+  })
+
+  // The foot: the house line and the reference, ruled off.
+  const footY = PAGE_H - MARGIN - 16
+  doc.moveTo(MARGIN, footY - 8).lineTo(PAGE_W - MARGIN, footY - 8).lineWidth(0.6).strokeColor('#ECEEF1').stroke()
+  doc.fillColor('#8A8F98').font('Helvetica').fontSize(7.5)
+    .text(COMPANY_SITE, MARGIN, footY, { width: W / 2 })
+  doc.font('Courier').fontSize(7.5)
+    .text(txt(pack.header.tourNo || pack.bookingRef), MARGIN + W / 2, footY, { width: W / 2, align: 'right' })
+
+  if (txt(c.note)) {
+    doc.fillColor('#444444').font('Helvetica').fontSize(8)
+      .text(txt(c.note), MARGIN, footY - 30, { width: W, align: 'center' })
+  }
+}
+
+// ── Feedback form ────────────────────────────────────────────────────────────
+
+/** The paper feedback sheet: the digital form's questions, as boxes to tick. */
+function feedbackFormPage(doc: Doc, pack: SettlementDocPack, marks: Marks): void {
+  const f = pack.feedbackForm
+  const W = PAGE_W - MARGIN * 2
+
+  let y = masthead(doc, marks, 'GUEST FEEDBACK FORM')
+
+  if (txt(f.intro)) {
+    doc.fillColor('#333333').font('Helvetica').fontSize(8)
+      .text(txt(f.intro), MARGIN, y, { width: W })
+    y += doc.heightOfString(txt(f.intro), { width: W }) + 8
+  }
+
+  if (f.showGuestBlock) {
+    const cols = fit(W, [60, 150, 70, 130])
+    const dates = [docDate(pack.header.arrivalDate), docDate(pack.header.departureDate)].filter(Boolean).join(' - ')
+    const rows: [string, string, string, string][] = [
+      ['Name', '', 'Tour no', pack.header.tourNo],
+      ['Country', '', 'Dates', dates],
+      ['Email', '', 'Contact no', ''],
+    ]
+    for (const [k1, v1, k2, v2] of rows) {
+      y = row(doc, MARGIN, y, cols, [
+        { text: k1, bold: true, fill: SOFT },
+        { text: v1 },
+        { text: k2, bold: true, fill: SOFT },
+        { text: v2 },
+      ], 17)
+    }
+    y += 8
+  }
+
+  const ratings = f.ratings.length ? f.ratings : ['Excellent', 'Good', 'Average', 'Poor']
+  const tickW = 58
+  const cols = fit(W, [110, W - 110 - tickW * ratings.length, ...ratings.map(() => tickW)])
+
+  y = row(doc, MARGIN, y, cols, [
+    { text: 'Section', bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    { text: 'How was it?', bold: true, fill: HEAD, align: 'center', size: 7.5 },
+    ...ratings.map(r => ({ text: r, bold: true, fill: HEAD, align: 'center' as const, size: 7.5 })),
+  ], 17)
+
+  for (const sec of f.sections) {
+    const items = sec.items.length ? sec.items : [{ id: '', label: '' }]
+    const top = y
+    for (const item of items) {
+      // The section name is drawn once, spanning its questions, as the printed
+      // form groups them — same trick the local visit sheet uses for a stop.
+      y = row(doc, MARGIN + cols[0], y, cols.slice(1), [
+        { text: item.label },
+        ...ratings.map(() => ({ text: '' })),
+      ], 19)
+    }
+    doc.rect(MARGIN, top, cols[0], y - top).lineWidth(0.7).strokeColor(RULE).stroke()
+    doc.rect(MARGIN + 0.4, top + 0.4, cols[0] - 0.8, y - top - 0.8).fill(SOFT)
+    doc.rect(MARGIN, top, cols[0], y - top).lineWidth(0.7).strokeColor(RULE).stroke()
+    doc.fillColor(INK).font('Helvetica-Bold').fontSize(8)
+      .text(txt(sec.title), MARGIN + 5, top + 6, { width: cols[0] - 10 })
+  }
+
+  if (f.askPurpose && f.purposeOptions.length) {
+    y += 8
+    const opts = f.purposeOptions.slice(0, 4)
+    const pCols = fit(W, [110, ...opts.map(() => (W - 110) / opts.length)])
+    const rowTop = y
+    y = row(doc, MARGIN, y, pCols, [
+      { text: 'Purpose of your visit', bold: true, fill: SOFT },
+      ...opts.map(() => ({ text: '' })),
+    ], 19)
+    // A box to tick, drawn inside each option cell rather than typed as a
+    // character: PDFKit's standard fonts have no ballot box.
+    let ox = MARGIN + pCols[0]
+    opts.forEach((opt, i) => {
+      const w = pCols[i + 1]
+      doc.rect(ox + 8, rowTop + 5.5, 8, 8).lineWidth(0.7).strokeColor(INK).stroke()
+      doc.fillColor(INK).font('Helvetica').fontSize(8)
+        .text(txt(opt), ox + 21, rowTop + 6, { width: w - 26, lineBreak: false, ellipsis: true })
+      ox += w
+    })
+  }
+
+  y += 10
+
+  // Comments: ruled, because an unruled space comes back with two words in it.
+  const LINES = 5
+  const boxH = 18 + LINES * 17
+  doc.rect(MARGIN, y, W, boxH).lineWidth(0.7).strokeColor(RULE).stroke()
+  doc.fillColor(INK).font('Helvetica-Bold').fontSize(8)
+    .text(txt(f.commentsLabel), MARGIN + 6, y + 5, { width: W - 12 })
+  for (let i = 1; i <= LINES; i++) {
+    const ly = y + 16 + i * 17
+    doc.dash(1.5, { space: 1.5 }).moveTo(MARGIN + 6, ly).lineTo(MARGIN + W - 6, ly)
+      .lineWidth(0.5).strokeColor('#999999').stroke().undash()
+  }
+  y += boxH + 10
+
+  y = noteBlock(doc, f.note, y)
+
+  const footY = Math.max(y + 16, PAGE_H - MARGIN - 62)
+  doc.dash(1.5, { space: 1.5 }).lineWidth(0.7).strokeColor(INK)
+  doc.moveTo(MARGIN, footY).lineTo(MARGIN + W * 0.44, footY).stroke()
+  doc.undash()
+  doc.fillColor(MUTED).font('Helvetica').fontSize(7.5)
+    .text('Guest signature', MARGIN, footY + 4, { width: W * 0.44, align: 'center' })
+
+  if (f.showQr && marks.qrFeedback) {
+    const size = 62
+    const qx = PAGE_W - MARGIN - size
+    try {
+      doc.image(marks.qrFeedback, qx, footY - 22, { fit: [size, size] })
+      doc.fillColor(MUTED).font('Helvetica').fontSize(7)
+        .text('Rather do it on your phone? Scan this.', qx - 130, footY + 4, { width: 124, align: 'right' })
+    } catch { /* the paper form is complete without it */ }
+  }
+}
+
 // ── The document ─────────────────────────────────────────────────────────────
 
 /** "IS48776-settlement-documents.pdf" — the name the driver sees in WhatsApp. */
@@ -673,7 +909,9 @@ export async function generateSettlementDocsPdf(
       doc.addPage({ size: 'A4', layout, margin: MARGIN })
       if (kind === 'transport')   transportPage(doc, pack, marks)
       if (kind === 'local_visit') localVisitPage(doc, pack, marks)
-      if (kind === 'tour')        tourPage(doc, pack, marks)
+      if (kind === 'tour')          tourPage(doc, pack, marks)
+      if (kind === 'qr_card')       qrCardPage(doc, pack, marks)
+      if (kind === 'feedback_form') feedbackFormPage(doc, pack, marks)
     }
 
     doc.end()

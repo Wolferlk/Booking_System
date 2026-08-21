@@ -2,7 +2,8 @@
  * The Drive Log's settlement paperwork for one booking.
  *
  *   GET    ?ref=…   the pack in force, plus the draft the systems would build
- *                   today and any reason a costed figure is missing.
+ *                   today, the guest's two login-free links (which the QR card
+ *                   prints as codes) and any reason a costed figure is missing.
  *   PUT    ?ref=…   save the desk's edited pack. Replaces the row wholesale.
  *   DELETE ?ref=…   throw the saved pack away and go back to the draft.
  *
@@ -26,6 +27,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { loadDocState, resetDocPack, saveDocPack } from '@/lib/sl-settlement-docs-server'
+import { guestLinks } from '@/lib/sl-settlement-qr'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -54,7 +56,7 @@ export async function GET(req: NextRequest) {
   try {
     const state = await loadDocState(ref)
     if (!state) return buildApiError(`Booking ${ref} was not found.`, 404)
-    return buildApiSuccess({ ...state, canWrite: canWrite(role) })
+    return buildApiSuccess({ ...state, canWrite: canWrite(role), links: guestLinks(ref) })
   } catch (err) {
     console.error('[drive-log/documents GET]', err)
     return buildApiError('The settlement documents could not be loaded.', 500)
@@ -83,7 +85,7 @@ export async function PUT(req: NextRequest) {
   try {
     const state = await saveDocPack(ref, (body as { pack?: unknown })?.pack ?? body, session.user.name ?? session.user.email ?? null)
     if (!state) return buildApiError(`Booking ${ref} was not found.`, 404)
-    return buildApiSuccess({ ...state, canWrite: true })
+    return buildApiSuccess({ ...state, canWrite: true, links: guestLinks(ref) })
   } catch (err) {
     console.error('[drive-log/documents PUT]', err)
     return buildApiError('The settlement documents could not be saved.', 500)
@@ -105,7 +107,7 @@ export async function DELETE(req: NextRequest) {
   try {
     const state = await resetDocPack(ref)
     if (!state) return buildApiError(`Booking ${ref} was not found.`, 404)
-    return buildApiSuccess({ ...state, canWrite: true })
+    return buildApiSuccess({ ...state, canWrite: true, links: guestLinks(ref) })
   } catch (err) {
     console.error('[drive-log/documents DELETE]', err)
     return buildApiError('The saved documents could not be cleared.', 500)

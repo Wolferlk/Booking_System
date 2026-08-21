@@ -22,6 +22,7 @@ import { prisma } from '../prisma'
 import { fitTicketType, TICKET_TYPE_MAX } from '../utils'
 import { pnum } from './derive'
 import type { DetailedPnl } from './render'
+import { clearNoTicketsMark } from '@/lib/no-tickets-clear'
 
 export const DETAILED_TAG_PREFIX = 'Detailed P&L #'
 
@@ -311,6 +312,8 @@ export async function syncTicketsFromDetailed(
       skipped++
     }
   }
+
+  if (created > 0) await clearNoTicketsMark(bookingId)
 
   return { created, updated, skipped, notRequested }
 }

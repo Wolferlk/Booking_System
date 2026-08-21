@@ -34,6 +34,7 @@ import type { BookingStatus } from '@prisma/client'
 import { getCurrentStep } from '@/lib/state-machine'
 import { HOTEL_ONLY_VEHICLE, resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { HOTEL_ONLY_NA, isHotelOnlyBooking, waives } from '@/lib/hotel-only'
+import { NO_TICKETS_DONE, isNoTicketsBooking } from '@/lib/no-tickets'
 
 /**
  * `PARTIAL` matters as much as the other three: a tour with three of five
@@ -103,6 +104,11 @@ export interface ReadinessBooking {
    * reconfirmation and QC in one go; see `hotel-only.ts`.
    */
   hotelOnly?: boolean | null
+  /**
+   * No Tickets — an explicit decision that this booking sells none, which makes
+   * the ticket check done rather than empty; see `no-tickets.ts`.
+   */
+  noTickets?: boolean | null
   tourAgenda?: { items?: ReadinessAgendaItem[] | null } | null
   /** Sri Lanka allocates one driver per booking rather than per agenda row. */
   slDriverAllocation?: {
@@ -247,9 +253,20 @@ function ticketsCheck(b: ReadinessBooking): ReadinessCheck {
 
   const active = (b.tickets ?? []).filter(t => t.activated !== false)
   if (!active.length) {
-    // Same rule the QC panel uses: a booking with no tickets on it has nothing
-    // to purchase. Plenty of tours are pure transfers, so flagging every one of
-    // them red would drown the bookings that do have unissued tickets.
+    // Somebody has decided this file sells no tickets, so the rung is finished
+    // rather than empty — the same answer the QC panel gives.
+    if (isNoTicketsBooking(b)) {
+      return {
+        state: 'DONE',
+        short: NO_TICKETS_DONE.short,
+        detail: NO_TICKETS_DONE.detail,
+        done: 0, required: 0,
+      }
+    }
+    // Undecided and empty. Same rule the QC panel uses: a booking with no
+    // tickets on it has nothing to purchase. Plenty of tours are pure
+    // transfers, so flagging every one of them red would drown the bookings
+    // that do have unissued tickets.
     return {
       state: hasReached(b.status, 'TICKETS_ISSUED') ? 'DONE' : 'NA',
       short: hasReached(b.status, 'TICKETS_ISSUED') ? 'Issued' : 'None',

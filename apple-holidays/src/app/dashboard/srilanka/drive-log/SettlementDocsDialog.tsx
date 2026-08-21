@@ -5,7 +5,7 @@
  *
  * ---- What it is for ----
  *
- * The Sri Lankan desk fills four sheets in by hand for every file: a name board
+ * The Sri Lankan desk fills these sheets in by hand for every file: a name board
  * for the arrivals hall, a Transport Settlement, a Local Visit Settlement and a
  * Tour Settlement. Everything printable about them is already in the two
  * systems — the tour number, the dates, the pax, the handler, the driver, the
@@ -33,8 +33,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, Check, CheckCircle2, Circle, Download, Eye, FileText, ImagePlus, ListPlus,
-  Loader2, MessageCircle, Plus, RefreshCw, Save, Search, Tags, Trash2, Undo2, Upload, Users, X,
+  AlertTriangle, Check, CheckCircle2, Circle, Copy, Download, ExternalLink, Eye, FileText,
+  ImagePlus, ListPlus, Loader2, MessageCircle, Plus, RefreshCw, Save, Search, Tags, Trash2,
+  Undo2, Upload, Users, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { SendDocsWhatsAppDialog } from './SendDocsWhatsAppDialog'
@@ -43,7 +44,7 @@ import {
   NAME_BOARD_ACCENTS, NAME_BOARD_THEMES, SUB_LOGOS, catalogLine, missingCatalogItems, money,
   orientationOf, rowId, tourLineTotal, tourTotal, transportTotals,
   type DocOrientation, type NameBoardTheme, type SettlementDocKind, type SettlementDocPack,
-  type SettlementDocState, type TourLine,
+  type FeedbackSection, type SettlementDocState, type TourLine,
 } from '@/lib/sl-settlement-docs'
 import { TICKET_GROUP_OF, TOUR_TICKET_GROUPS, normaliseTicketName } from '@/lib/sl-tour-tickets'
 
@@ -94,8 +95,22 @@ function printInBrowser(html: string): Promise<void> {
   })
 }
 
+/**
+ * The guest's two login-free links, as the API reports them.
+ *
+ * Derived on the server from the booking reference — never edited, never stored
+ * in the pack — and null together when this deployment does not know its own
+ * public address, in which case `reason` says so in words fit for the screen.
+ */
+interface GuestLinks {
+  portal: string | null
+  feedback: string | null
+  reason: string | null
+}
+
 interface DocsResponse extends SettlementDocState {
   canWrite: boolean
+  links: GuestLinks
 }
 
 // ── Small field primitives ────────────────────────────────────────────────────
@@ -1476,6 +1491,319 @@ function TourEditor({ pack, patch, canWrite }: { pack: SettlementDocPack; patch:
   )
 }
 
+// ── Guest QR card ─────────────────────────────────────────────────────────────
+
+/**
+ * The card the driver hands the guest.
+ *
+ * Two squares: one opens the trip portal, one opens the feedback form. Neither
+ * URL is edited here — they are HMACs of the booking reference, derived on the
+ * server every time the card prints — so what this editor changes is what the
+ * card *says* around them, and whether each square is on the sheet at all.
+ */
+function QrCardEditor({
+  pack, patch, links, canWrite,
+}: {
+  pack: SettlementDocPack
+  patch: Patch
+  links: GuestLinks | null
+  canWrite: boolean
+}) {
+  const c = pack.qrCard
+  const set = <K extends keyof typeof c>(k: K, v: (typeof c)[K]) =>
+    patch(p => ({ ...p, qrCard: { ...p.qrCard, [k]: v } }))
+
+  const gallery = useLogoGallery(true)
+  const logos: GalleryLogo[] = [...gallery.builtin, ...gallery.uploaded]
+  const current = c.logoUrl ?? DEFAULT_LOGO
+
+  const copy = async (url: string | null, what: string) => {
+    if (!url) return
+    try {
+      await navigator.clipboard.writeText(url)
+      toast.success(`${what} link copied`)
+    } catch {
+      toast.error('The link could not be copied — select it and copy by hand.')
+    }
+  }
+
+  const linkRow = (label: string, url: string | null) => (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-2.5 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{label}</p>
+      <p className="text-[10px] text-slate-400 font-mono break-all mt-0.5">{url ?? 'Not available on this server'}</p>
+      {url ? (
+        <div className="flex items-center gap-2 mt-1.5">
+          <RowButton onClick={() => copy(url, label)}>
+            <Copy className="w-3 h-3" /> Copy
+          </RowButton>
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-800/70 text-[11px] font-bold text-slate-200 hover:border-slate-600 transition-colors"
+          >
+            <ExternalLink className="w-3 h-3" /> Open
+          </a>
+        </div>
+      ) : null}
+    </div>
+  )
+
+  return (
+    <div className="space-y-4">
+      <Section
+        title="What the card says"
+        hint="Handed to the guest at the end of the tour. One scan opens their trip, the other leaves the feedback."
+      >
+        <div className="space-y-3">
+          <label className="block">
+            <span className={LABEL}>Headline</span>
+            <input
+              type="text"
+              value={c.headline}
+              placeholder="Your trip, in two squares"
+              onChange={e => set('headline', e.target.value)}
+              className={cn(INPUT, 'text-sm font-black py-2 tracking-tight')}
+            />
+          </label>
+          <Text label="Line underneath" value={c.subtitle} onChange={v => set('subtitle', v)} placeholder="Scan with the camera — no app, no login." />
+          <div className="grid grid-cols-[1fr_auto] gap-2 items-end">
+            <Text label="Guest name" value={c.guestName} onChange={v => set('guestName', v)} placeholder="Mr & Mrs Perera" />
+            {pack.nameBoard.guestName && pack.nameBoard.guestName !== c.guestName ? (
+              <RowButton onClick={() => set('guestName', pack.nameBoard.guestName)}>
+                <Undo2 className="w-3 h-3" /> Use the name board&rsquo;s
+              </RowButton>
+            ) : null}
+          </div>
+        </div>
+      </Section>
+
+      <Section title="The squares" hint="Turn one off and the other prints alone, centred and larger on the page.">
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-2.5">
+            <Toggle
+              checked={c.showPortal}
+              onChange={v => set('showPortal', v)}
+              label="Their trip"
+              hint="Itinerary, hotels, flights, driver and vouchers — the same page the portal link opens."
+            />
+            {c.showPortal ? (
+              <div className="grid grid-cols-1 gap-2 pl-12">
+                <Text label="Caption" value={c.portalCaption} onChange={v => set('portalCaption', v)} />
+                <Text label="Line under the code" value={c.portalBlurb} onChange={v => set('portalBlurb', v)} area />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 space-y-2.5">
+            <Toggle
+              checked={c.showFeedback}
+              onChange={v => set('showFeedback', v)}
+              label="The feedback form"
+              hint="The same form the post-departure WhatsApp asks for — filled in before they fly home."
+            />
+            {c.showFeedback ? (
+              <div className="grid grid-cols-1 gap-2 pl-12">
+                <Text label="Caption" value={c.feedbackCaption} onChange={v => set('feedbackCaption', v)} />
+                <Text label="Line under the code" value={c.feedbackBlurb} onChange={v => set('feedbackBlurb', v)} area />
+              </div>
+            ) : null}
+          </div>
+
+          <Toggle
+            checked={c.showUrls}
+            onChange={v => set('showUrls', v)}
+            label="Print the link under each code"
+            hint="For a phone that will not scan. The links are long, so they are off by default."
+          />
+        </div>
+      </Section>
+
+      <Section title="The links behind the codes" hint="Derived from the booking reference, not stored. No login, and they keep working.">
+        {links?.reason ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200 flex items-start gap-1.5 mb-2">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-px" /> {links.reason}
+          </div>
+        ) : null}
+        <div className="space-y-2">
+          {linkRow('Trip portal', links?.portal ?? null)}
+          {linkRow('Feedback form', links?.feedback ?? null)}
+        </div>
+      </Section>
+
+      <Section title="Look" hint="One colour, and the mark at the top. The codes themselves are always printed black on white.">
+        <div className="flex flex-wrap gap-2 mb-3">
+          {NAME_BOARD_ACCENTS.map(a => (
+            <button
+              key={a.value}
+              type="button"
+              onClick={() => set('accent', a.value)}
+              title={a.label}
+              className={cn(
+                'w-7 h-7 rounded-lg border-2 transition-transform',
+                c.accent.toLowerCase() === a.value.toLowerCase()
+                  ? 'border-white scale-110'
+                  : 'border-transparent hover:scale-105',
+              )}
+              style={{ background: a.value }}
+            />
+          ))}
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {logos.map(l => (
+            <button
+              key={l.url}
+              type="button"
+              onClick={() => set('logoUrl', l.url === DEFAULT_LOGO ? null : l.url)}
+              disabled={!canWrite}
+              className={cn(
+                'rounded-lg border p-1.5 bg-white/90 flex items-center justify-center h-12 transition-colors',
+                current === l.url ? 'border-yellow-500/60 ring-1 ring-yellow-500/30' : 'border-slate-800 hover:border-slate-600',
+              )}
+              title={l.label}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={l.url} alt={l.label} className="max-h-8 max-w-full object-contain" />
+            </button>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Note">
+        <Text label="Printed above the foot" value={c.note} onChange={v => set('note', v)} area />
+      </Section>
+    </div>
+  )
+}
+
+// ── Feedback form ─────────────────────────────────────────────────────────────
+
+/**
+ * The paper feedback sheet.
+ *
+ * The questions start as the digital form's, in the same order, so a sheet
+ * filled in with a pen and one filled in on a phone can be counted together.
+ * They are editable anyway: a tour that was all beach and no hotel wants a
+ * different line, and the desk is the one who knows that.
+ */
+function FeedbackFormEditor({ pack, patch }: { pack: SettlementDocPack; patch: Patch }) {
+  const f = pack.feedbackForm
+  const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) =>
+    patch(p => ({ ...p, feedbackForm: { ...p.feedbackForm, [k]: v } }))
+
+  const setSection = (id: string, changes: Partial<FeedbackSection>) =>
+    set('sections', f.sections.map(s => (s.id === id ? { ...s, ...changes } : s)))
+
+  /** A comma-separated list, edited as one line — these are column headings. */
+  const listField = (label: string, hint: string, value: string[], onChange: (v: string[]) => void) => (
+    <label className="block">
+      <span className={LABEL}>{label}</span>
+      <input
+        type="text"
+        value={value.join(', ')}
+        onChange={e => onChange(e.target.value.split(',').map(v => v.trim()).filter(Boolean))}
+        className={INPUT}
+      />
+      <span className="block text-[10px] text-slate-600 mt-1">{hint}</span>
+    </label>
+  )
+
+  return (
+    <div className="space-y-4">
+      <Section title="What the sheet says" hint="Handed over with a pen. It comes back with the signed settlement forms.">
+        <Text label="Opening line" value={f.intro} onChange={v => set('intro', v)} area />
+      </Section>
+
+      <Section title="What is on it">
+        <div className="space-y-3">
+          <Toggle
+            checked={f.showGuestBlock}
+            onChange={v => set('showGuestBlock', v)}
+            label="The guest's own details at the top"
+            hint="Name, country, email and contact number, beside the tour number and dates."
+          />
+          <Toggle
+            checked={f.askPurpose}
+            onChange={v => set('askPurpose', v)}
+            label="Ask the purpose of the visit"
+            hint="The same question the digital form asks, so the two count together."
+          />
+          <Toggle
+            checked={f.showQr}
+            onChange={v => set('showQr', v)}
+            label="A small code in the corner"
+            hint="For a guest who would rather fill it in on their phone after all."
+          />
+        </div>
+      </Section>
+
+      <Section title="The columns" hint="What the guest ticks. Four is what the digital form offers.">
+        <div className="space-y-3">
+          {listField('Ratings', 'Separated by commas, printed left to right.', f.ratings, v => set('ratings', v))}
+          {f.askPurpose
+            ? listField('Purpose options', 'Separated by commas.', f.purposeOptions, v => set('purposeOptions', v))
+            : null}
+        </div>
+      </Section>
+
+      {f.sections.map(sec => (
+        <Section key={sec.id} title={sec.title || 'Untitled section'}>
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={sec.title}
+              onChange={e => setSection(sec.id, { title: e.target.value })}
+              className={cn(INPUT, 'font-bold')}
+              placeholder="Section name"
+            />
+            {sec.items.map(item => (
+              <div key={item.id} className="grid grid-cols-[1fr_auto] gap-2">
+                <input
+                  type="text"
+                  value={item.label}
+                  onChange={e => setSection(sec.id, { items: sec.items.map(i => (i.id === item.id ? { ...i, label: e.target.value } : i)) })}
+                  placeholder="What is being rated"
+                  className={INPUT}
+                />
+                <button
+                  type="button"
+                  onClick={() => setSection(sec.id, { items: sec.items.filter(i => i.id !== item.id) })}
+                  className="p-1.5 text-slate-500 hover:text-rose-300 transition-colors"
+                  title="Remove this line"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 pt-1">
+              <RowButton onClick={() => setSection(sec.id, { items: [...sec.items, { id: rowId('fi'), label: '' }] })}>
+                <Plus className="w-3 h-3" /> Add a line
+              </RowButton>
+              <RowButton tone="rose" onClick={() => set('sections', f.sections.filter(s => s.id !== sec.id))}>
+                <Trash2 className="w-3 h-3" /> Remove section
+              </RowButton>
+            </div>
+          </div>
+        </Section>
+      ))}
+
+      <div className="flex items-center justify-between">
+        <RowButton onClick={() => set('sections', [...f.sections, { id: rowId('fs'), title: '', items: [{ id: rowId('fi'), label: '' }] }])}>
+          <Plus className="w-3 h-3" /> Add a section
+        </RowButton>
+      </div>
+
+      <Section title="Comments">
+        <Text label="Heading above the ruled space" value={f.commentsLabel} onChange={v => set('commentsLabel', v)} />
+      </Section>
+
+      <Section title="Note">
+        <Text label="Printed at the foot" value={f.note} onChange={v => set('note', v)} area />
+      </Section>
+    </div>
+  )
+}
+
 // ── The dialog ────────────────────────────────────────────────────────────────
 
 export function SettlementDocsDialog({
@@ -1628,7 +1956,7 @@ export function SettlementDocsDialog({
         throw new Error(json?.error ?? 'The download could not be generated')
       }
 
-      const what = kinds.length === 1 ? DOC_LABEL[kinds[0]] : 'All four documents'
+      const what = kinds.length === 1 ? DOC_LABEL[kinds[0]] : 'The whole pack'
 
       if (res.headers.get('X-Print-Fallback') === 'browser') {
         await printInBrowser(await res.text())
@@ -1644,7 +1972,7 @@ export function SettlementDocsDialog({
       a.download = kinds.length === 1 ? `${stem}-${kinds[0]}.pdf` : `${stem}-settlement-documents.pdf`
       document.body.appendChild(a); a.click(); a.remove()
       URL.revokeObjectURL(url)
-      toast.success(kinds.length === 1 ? `${what} downloaded` : 'All four documents downloaded')
+      toast.success(kinds.length === 1 ? `${what} downloaded` : 'The whole pack downloaded')
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -1810,12 +2138,15 @@ export function SettlementDocsDialog({
 
               {tab === 'name_board' ? (
                 <NameBoardEditor pack={pack} patch={patch} canWrite={canWrite} />
+              ) : tab === 'qr_card' ? (
+                <QrCardEditor pack={pack} patch={patch} links={state?.links ?? null} canWrite={canWrite} />
               ) : (
                 <>
                   <HeaderEditor pack={pack} patch={patch} />
                   {tab === 'transport'   ? <TransportEditor  pack={pack} patch={patch} /> : null}
                   {tab === 'local_visit' ? <LocalVisitEditor pack={pack} patch={patch} /> : null}
                   {tab === 'tour'        ? <TourEditor       pack={pack} patch={patch} canWrite={canWrite} /> : null}
+                  {tab === 'feedback_form' ? <FeedbackFormEditor pack={pack} patch={patch} /> : null}
                 </>
               )}
 

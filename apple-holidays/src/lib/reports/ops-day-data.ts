@@ -608,7 +608,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       bookingRef: true, agent: true, fileHandler: true, status: true,
       operationCountry: true, arrivalDate: true, departureDate: true,
       paxAdults: true, paxChildren: true, paxInfants: true,
-      tourDestination: true, qcPassedAt: true, hotelOnly: true,
+      tourDestination: true, qcPassedAt: true, hotelOnly: true, noTickets: true,
       // The cancellation-approval trail. Read on every row, not just the pending
       // ones, so a file cancelled during the window still explains itself.
       currency: true, cancelPrevStatus: true, cancelRequestedAt: true,
@@ -650,6 +650,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       status: b.status,
       qcPassedAt: b.qcPassedAt,
       hotelOnly: b.hotelOnly,
+      noTickets: b.noTickets,
       tourAgenda: b.tourAgenda,
       slDriverAllocation: b.slDriverAllocation,
       tickets: b.tickets,
