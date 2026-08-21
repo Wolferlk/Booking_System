@@ -1,5 +1,5 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3'
-import { readFile, mkdir, writeFile } from 'fs/promises'
+import { S3Client, PutObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3'
+import { readFile, mkdir, writeFile, readdir, stat } from 'fs/promises'
 import path from 'path'
 
 /**
@@ -137,4 +137,68 @@ export async function getUpload(
   } catch {
     return null
   }
+}
+
+
+/** One stored file, as a listing shows it. */
+export interface StoredFile {
+  /** Path under `uploads/` — what `getUpload` takes and the public URL carries. */
+  path: string
+  size: number
+  modifiedAt: string | null
+}
+
+/**
+ * Everything stored under one `uploads/` folder, newest first.
+ *
+ * Used where a folder *is* the collection — the settlement board's logo
+ * gallery, where whatever has been uploaded is what the desk may choose from,
+ * with no database table shadowing the bucket and going stale against it.
+ *
+ * S3 and the local-disk fallback are merged, because a file written before the
+ * bucket existed is still a file the gallery should show. A folder that is
+ * absent in both places is an empty list, not an error.
+ */
+export async function listUploads(prefix: string, limit = 200): Promise<StoredFile[]> {
+  const clean = prefix.replace(/^\/+|\/+$/g, '')
+  const found = new Map<string, StoredFile>()
+
+  if (s3Enabled) {
+    try {
+      const res = await client().send(new ListObjectsV2Command({
+        Bucket: BUCKET,
+        Prefix: `${KEY_PREFIX}/${clean}/`,
+        MaxKeys: Math.min(limit, 1000),
+      }))
+      for (const obj of res.Contents ?? []) {
+        const key = obj.Key ?? ''
+        const rel = key.slice(`${KEY_PREFIX}/`.length)
+        if (!rel || key.endsWith('/')) continue
+        found.set(rel, {
+          path: rel,
+          size: obj.Size ?? 0,
+          modifiedAt: obj.LastModified ? obj.LastModified.toISOString() : null,
+        })
+      }
+    } catch (err) {
+      console.error('[storage] S3 list failed, falling back to local disk:', err)
+    }
+  }
+
+  try {
+    const dir = localPath(clean)
+    for (const name of await readdir(dir)) {
+      const rel = `${clean}/${name}`
+      if (found.has(rel)) continue
+      try {
+        const st = await stat(path.join(dir, name))
+        if (!st.isFile()) continue
+        found.set(rel, { path: rel, size: st.size, modifiedAt: st.mtime.toISOString() })
+      } catch { /* a file that vanished mid-listing is simply not listed */ }
+    }
+  } catch { /* no local folder — normal once everything lives in the bucket */ }
+
+  return Array.from(found.values())
+    .sort((a, b) => (b.modifiedAt ?? '').localeCompare(a.modifiedAt ?? ''))
+    .slice(0, limit)
 }
