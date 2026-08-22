@@ -64,7 +64,7 @@ function toSettlement(r: SettlementRow): ProformaSettlement {
  * losing it must degrade the screen, not break it.
  */
 export async function settlementsFor(proformaIds: string[]): Promise<Map<string, ProformaSettlement>> {
-  const ids = [...new Set(proformaIds.filter(Boolean))]
+  const ids = Array.from(new Set(proformaIds.filter(Boolean)))
   if (ids.length === 0) return new Map()
 
   try {

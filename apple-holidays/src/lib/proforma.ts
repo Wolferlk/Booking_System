@@ -20,6 +20,7 @@
  *     answer, read back over `accounts-proforma-db.ts`. Nothing here writes a
  *     payment, and no status in this file means "paid".
  */
+import { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 import { putUpload } from './storage'
 
@@ -85,7 +86,7 @@ function toHit(b: {
   quotedTotal: unknown
   dealName: string | null
   tourDestination: string | null
-  passengers?: { fullName: string }[]
+  passengers?: { name: string }[]
 }): BookingHit {
   return {
     id: b.id,
@@ -100,19 +101,20 @@ function toHit(b: {
     paxChildren: b.paxChildren,
     currency: b.currency,
     quotedTotal: b.quotedTotal == null ? null : Number(b.quotedTotal),
-    leadGuest: b.passengers?.[0]?.fullName ?? null,
+    leadGuest: b.passengers?.[0]?.name ?? null,
     dealName: b.dealName,
     tourDestination: b.tourDestination,
   }
 }
 
-const HIT_SELECT = {
+const HIT_SELECT = Prisma.validator<Prisma.BookingSelect>()({
   id: true, bookingRef: true, isNumber: true, agent: true, status: true,
   operationCountry: true, arrivalDate: true, departureDate: true,
   paxAdults: true, paxChildren: true, currency: true, quotedTotal: true,
   dealName: true, tourDestination: true,
-  passengers: { select: { fullName: true }, orderBy: { id: 'asc' }, take: 1 },
-} as const
+  // The lead passenger is the guest a hotel invoice is made out to.
+  passengers: { select: { name: true }, orderBy: [{ isLead: 'desc' }, { id: 'asc' }], take: 1 },
+})
 
 /**
  * Find bookings by control number or IS number.

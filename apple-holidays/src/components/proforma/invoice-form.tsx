@@ -242,7 +242,7 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
           <div className="mt-3 grid gap-3 sm:grid-cols-4">
             <Field label="Currency">
               <select className={inputCls} value={form.currency} onChange={e => set('currency', e.target.value)}>
-                {[...new Set([form.currency, ...CURRENCIES])].filter(Boolean).map(c => (
+                {Array.from(new Set([form.currency, ...CURRENCIES])).filter(Boolean).map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
