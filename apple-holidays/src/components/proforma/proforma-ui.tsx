@@ -13,7 +13,7 @@
 
 import { cn } from '@/lib/utils'
 import {
-  BadgeCheck, CircleDashed, Clock3, FileWarning, HandCoins, ShieldCheck, XCircle,
+  BadgeCheck, Clock3, FileWarning, HandCoins, ShieldCheck, XCircle,
 } from 'lucide-react'
 
 export interface Settlement {
@@ -27,6 +27,8 @@ export interface Settlement {
   paidBy: string | null
   reference: string | null
   note: string | null
+  hasReceipt: boolean
+  receiptName: string | null
   updatedAt: string | null
 }
 
@@ -150,8 +152,19 @@ export function PaperChip({ status }: { status: string }) {
 export function SettlementChip({ settlement }: { settlement: Settlement | null }) {
   if (!settlement) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
-        <CircleDashed className="h-3 w-3" /> With Accounts
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-inset ring-amber-200">
+        <Clock3 className="h-3 w-3" /> Pending proforma settlement
+      </span>
+    )
+  }
+
+  // Accounts' receipt is the hand-off the Booking desk needs to see. This is
+  // intentionally checked before the payment status: a receipt may be uploaded
+  // while the ledger is still being completed.
+  if (settlement.hasReceipt) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-inset ring-emerald-300">
+        <BadgeCheck className="h-3 w-3" /> Approved
       </span>
     )
   }
@@ -185,8 +198,8 @@ export function SettlementChip({ settlement }: { settlement: Settlement | null }
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-inset ring-slate-200">
-      <Clock3 className="h-3 w-3" /> Awaiting payment
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-inset ring-amber-200">
+      <Clock3 className="h-3 w-3" /> Pending proforma settlement
     </span>
   )
 }

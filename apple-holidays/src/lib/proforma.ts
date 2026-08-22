@@ -234,6 +234,8 @@ export interface ProformaSettlement {
   paidBy: string | null
   reference: string | null
   note: string | null
+  hasReceipt: boolean
+  receiptName: string | null
   updatedAt: string | null
 }
 

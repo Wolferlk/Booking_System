@@ -14,10 +14,10 @@
  * property has been paid.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft, BedDouble, Building2, CalendarDays, FileText, Loader2, Paperclip,
-  Pencil, Plus, ReceiptText, Search, Trash2, Users,
+  ArrowLeft, BedDouble, Building2, CalendarDays, CheckCircle2, Clock3, FileText,
+  Loader2, Paperclip, Pencil, Plus, ReceiptText, Search, Trash2, Users,
 } from 'lucide-react'
 import Button from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -52,6 +52,8 @@ interface BookingView {
 
 export default function ProformaInvoicePage() {
   const [query, setQuery] = useState('')
+  const searchInput = useRef<HTMLInputElement>(null)
+  const [recent, setRecent] = useState<Invoice[]>([])
   const [hits, setHits] = useState<BookingHit[] | null>(null)
   const [searching, setSearching] = useState(false)
   const [view, setView] = useState<BookingView | null>(null)
@@ -59,6 +61,16 @@ export default function ProformaInvoicePage() {
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<InvoiceFormTarget | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+
+  // The landing board makes the Accounts hand-off visible before a booking is
+  // opened. It also gives the page a useful starting point when there is no
+  // search in progress.
+  useEffect(() => {
+    fetch('/api/proforma?take=30')
+      .then(res => res.json())
+      .then(json => { if (json.success) setRecent(json.data.invoices ?? []) })
+      .catch(() => { /* the booking lookup remains usable if Accounts is down */ })
+  }, [])
 
   const openBooking = useCallback(async (ref: string) => {
     setLoading(true)
@@ -158,6 +170,7 @@ export default function ProformaInvoicePage() {
             <div className="relative min-w-[280px] flex-1">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-indigo-200" />
               <input
+                ref={searchInput}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder="472160CNTL  ·  IS 48525"
@@ -167,6 +180,18 @@ export default function ProformaInvoicePage() {
             <Button type="submit" size="md" loading={searching} className="!bg-white !text-indigo-800 hover:!bg-indigo-100">
               Find booking
             </Button>
+            {!view && (
+              <Button
+                type="button"
+                size="md"
+                variant="ghost"
+                className="!border !border-white/30 !text-white hover:!bg-white/15"
+                icon={<Plus className="h-4 w-4" />}
+                onClick={() => searchInput.current?.focus()}
+              >
+                Add new proforma invoice
+              </Button>
+            )}
             {view && (
               <Button
                 type="button"
@@ -191,6 +216,10 @@ export default function ProformaInvoicePage() {
         <div className="flex items-center justify-center py-16 text-slate-400">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
+      )}
+
+      {!view && !hits && !loading && (
+        <RecentInvoices invoices={recent} onOpen={openBooking} onAdd={() => searchInput.current?.focus()} />
       )}
 
       {/* ── Several matches ───────────────────────────────────────────── */}
@@ -330,6 +359,69 @@ export default function ProformaInvoicePage() {
         />
       )}
     </div>
+  )
+}
+
+function RecentInvoices({
+  invoices, onOpen, onAdd,
+}: { invoices: Invoice[]; onOpen: (ref: string) => void; onAdd: () => void }) {
+  const live = invoices.filter(i => i.status !== 'VOID')
+  const pending = live.filter(i => !i.settlement?.hasReceipt).length
+  const approved = live.filter(i => i.settlement?.hasReceipt).length
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.15em] text-slate-400">Proforma work queue</p>
+          <h2 className="mt-1 text-lg font-extrabold text-slate-900">Accounts settlement status</h2>
+          <p className="mt-1 text-xs text-slate-500">Pending means Accounts is reviewing or settling it. Approved means Accounts uploaded the payment receipt.</p>
+        </div>
+        <button onClick={onAdd} className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-bold text-indigo-700 transition hover:bg-indigo-100">
+          <Plus className="h-3.5 w-3.5" /> Add new proforma invoice
+        </button>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <Clock3 className="h-5 w-5 text-amber-600" />
+          <div><div className="text-lg font-extrabold text-amber-900">{pending}</div><div className="text-[11px] font-semibold text-amber-700">Pending Proforma Invoice Settlement</div></div>
+        </div>
+        <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+          <div><div className="text-lg font-extrabold text-emerald-900">{approved}</div><div className="text-[11px] font-semibold text-emerald-700">Approved · receipt uploaded</div></div>
+        </div>
+      </div>
+
+      {live.length > 0 ? (
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">Recently filed</div>
+          <ul className="divide-y divide-slate-100">
+            {live.map(inv => (
+              <li key={inv.id}>
+                <button onClick={() => inv.bookingRef && onOpen(inv.bookingRef)} disabled={!inv.bookingRef} className="flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-indigo-50/50 disabled:cursor-default">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-slate-800">{inv.bookingRef ?? 'Unlinked booking'}</span>
+                      <span className="truncate text-xs font-semibold text-slate-700">{inv.hotelName ?? 'Hotel not named'}</span>
+                      <SettlementChip settlement={inv.settlement} />
+                    </div>
+                    <div className="mt-1 text-[11px] text-slate-500">{inv.invoiceNumber ?? 'No invoice number'} · {money(inv.totalAmount, inv.currency)} · filed {dayShort(inv.createdAt)}</div>
+                  </div>
+                  {inv.settlement?.hasReceipt && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-12 text-center">
+          <FileText className="mx-auto h-8 w-8 text-slate-300" />
+          <p className="mt-2 text-sm font-semibold text-slate-700">No proforma invoices filed yet</p>
+          <p className="mt-1 text-xs text-slate-500">Search for a booking above to add the first one.</p>
+        </div>
+      )}
+    </section>
   )
 }
 
