@@ -31,6 +31,12 @@ import {
 
 export * from './reservation-shared'
 
+/**
+ * Hotel "names" that are not a property: the guest's own booking, or a
+ * placeholder for one not yet chosen. Neither can be quoted or confirmed.
+ */
+const NOT_A_PROPERTY = /^\s*(own\s*arrangement|own|tba|tbc|n\/?a|to\s*be\s*(advised|confirmed)|-)\s*$/i
+
 /** How long a hotel may stay silent before the board chases it. */
 export const HOTEL_SILENCE_HOURS = 24
 /** How close an option release has to be before it becomes the top lane. */
@@ -167,6 +173,13 @@ export async function getRequestInbox(opts: InboxOptions): Promise<InboxStay[]> 
       const key = buildReservationKey(b.bookingRef, a.hotel, a.checkIn)
       if (taken.has(key)) continue
       if (isOwnArrangement(a as unknown as Record<string, unknown>)) continue
+      // Second guard, deliberately local to this queue. `isOwnArrangement`
+      // stops consulting its text heuristics once `accommodations.ownArrangement`
+      // is explicitly false, so a row the extractor flagged false while naming
+      // the hotel "Own Arrangement" still reaches here. Pre-checking tolerates
+      // that — an operator may still ring the property — but this desk cannot:
+      // there is no supplier to negotiate a rate with, so the row is noise.
+      if (NOT_A_PROPERTY.test(a.hotel ?? '')) continue
 
       const budget = matchBudgetLine(b.pnl?.lineItems ?? [], a.hotel)
       const days = daysBetween(new Date(), a.checkIn)
