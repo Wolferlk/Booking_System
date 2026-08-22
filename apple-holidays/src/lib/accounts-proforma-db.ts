@@ -30,13 +30,15 @@ interface SettlementRow extends RowDataPacket {
   paid_by: string | null
   payment_reference: string | null
   note: string | null
+  slip_path: string | null
+  slip_name: string | null
   updated_at: Date | null
 }
 
 const SELECT_COLS = [
   'proforma_id', 'hotel_name', 'currency', 'status', 'payable_status',
   'payable_record_id', 'paid_amount', 'paid_at', 'paid_by',
-  'payment_reference', 'note', 'updated_at',
+  'payment_reference', 'note', 'slip_path', 'slip_name', 'updated_at',
 ].join(', ')
 
 function toSettlement(r: SettlementRow): ProformaSettlement {
@@ -51,6 +53,8 @@ function toSettlement(r: SettlementRow): ProformaSettlement {
     paidBy: r.paid_by,
     reference: r.payment_reference,
     note: r.note,
+    hasReceipt: Boolean(r.slip_path),
+    receiptName: r.slip_name,
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
   }
 }
