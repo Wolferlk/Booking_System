@@ -9,6 +9,7 @@ export const ROLES = {
   GT_TE_USER:        'GT_TE_USER',
   AC_USER:           'AC_USER',
   CLIENT:            'CLIENT',
+  RS_USER:           'RS_USER',
   SUPER_ADMIN:       'SUPER_ADMIN',
   ULTRA_SUPER_ADMIN: 'ULTRA_SUPER_ADMIN',
 } as const
@@ -21,6 +22,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   TE_USER:           'Travel Experience',
   GT_TE_USER:        'Ground & Travel Experience',
   AC_USER:           'Accounts Team',
+  RS_USER:           'Reservation Team',
   CLIENT:            'Client / Agent',
   SUPER_ADMIN:       'Country Admin',
   ULTRA_SUPER_ADMIN: 'Ultra Super Admin',
@@ -33,6 +35,7 @@ export const ROLE_COLORS: Record<UserRole, string> = {
   TE_USER:           'purple',
   GT_TE_USER:        'teal',
   AC_USER:           'orange',
+  RS_USER:           'indigo',
   CLIENT:            'gray',
   SUPER_ADMIN:       'red',
   ULTRA_SUPER_ADMIN: 'gold',
@@ -46,6 +49,7 @@ export const ROLE_COUNTRY_SCOPE: Record<UserRole, OperationCountry[]> = {
   TE_USER:           ['VIETNAM'],
   GT_TE_USER:        ['SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA'],
   AC_USER:           ['ALL'],
+  RS_USER:           ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA', 'ALL'],
   CLIENT:            ['ALL'],
   SUPER_ADMIN:       ['VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA', 'ALL'],
   ULTRA_SUPER_ADMIN: ['ALL'],
@@ -81,6 +85,19 @@ export type Permission =
   | 'contact:create'
   | 'reminder:create'
   | 'recheck:confirm'
+  | 'reservation:read'
+  | 'reservation:create'
+  | 'reservation:edit'
+  | 'reservation:confirm'
+  | 'reservation:cancel'
+  | 'reservation:contact'
+  | 'contract:read'
+  | 'contract:edit'
+  | 'invoice:read'
+  | 'invoice:verify'
+  | 'invoice:forward'
+  | 'creditnote:read'
+  | 'creditnote:manage'
   | 'portal:read'
   | 'portal:request_update'
   | 'portal:contact_driver'
@@ -95,6 +112,9 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'booking:submit_ground', 'booking:resubmit',
     'agenda:create', 'agenda:read', 'agenda:edit',
     'pnl:create', 'pnl:read', 'pnl:edit',
+    // Read-only: the desk must know whether a hotel is actually secured before
+    // promising it to a client.
+    'reservation:read',
   ],
   GT_USER: [
     'booking:create', 'booking:read', 'booking:edit',
@@ -132,6 +152,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'contact:create',
     'reminder:create',
     'recheck:confirm',
+    // Read-along: pre-checking already puts these stays in front of them.
+    'reservation:read',
   ],
   // Combined Ground + Travel Experience (Sri Lanka, Singapore/Malaysia)
   GT_TE_USER: [
@@ -145,6 +167,30 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'contact:create',
     'reminder:create',
     'recheck:confirm',
+    // Read-along: pre-checking already puts these stays in front of them.
+    'reservation:read',
+  ],
+  // Reservation Team — owns the supplier side of every hotel stay.
+  //
+  // `pnl:edit`, `pnl:confirm_payment` and `payment:create` are deliberately NOT
+  // granted. Reservation *requests* payment by forwarding a verified proforma;
+  // Accounts *releases* it. Collapsing those two into one role would remove the
+  // only separation of duty on outgoing supplier money.
+  //
+  // `booking:edit` is likewise withheld — a reservation must never rewrite the
+  // accommodation line it is measured against, or the accuracy gate would be
+  // comparing a value to itself.
+  RS_USER: [
+    'booking:read',
+    'agenda:read',
+    'pnl:read',
+    'contact:create',
+    'reminder:create',
+    'reservation:read', 'reservation:create', 'reservation:edit',
+    'reservation:confirm', 'reservation:cancel', 'reservation:contact',
+    'contract:read', 'contract:edit',
+    'invoice:read', 'invoice:verify', 'invoice:forward',
+    'creditnote:read', 'creditnote:manage',
   ],
   AC_USER: [
     'booking:create', 'booking:read', 'booking:edit',
@@ -152,6 +198,10 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'ticket:read',
     'pnl:create', 'pnl:read', 'pnl:edit', 'pnl:confirm_payment', 'pnl:view_profit',
     'payment:read',
+    'reservation:read',
+    'invoice:read', 'invoice:verify',
+    'creditnote:read', 'creditnote:manage',
+    'contract:read',
   ],
   CLIENT: [
     'portal:read',
@@ -173,6 +223,11 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'reminder:create',
     'recheck:confirm',
     'portal:read', 'portal:request_update', 'portal:contact_driver',
+    'reservation:read', 'reservation:create', 'reservation:edit',
+    'reservation:confirm', 'reservation:cancel', 'reservation:contact',
+    'contract:read', 'contract:edit',
+    'invoice:read', 'invoice:verify', 'invoice:forward',
+    'creditnote:read', 'creditnote:manage',
     'user:manage',
     'audit:read',
     'admin:override',
@@ -191,6 +246,11 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'reminder:create',
     'recheck:confirm',
     'portal:read', 'portal:request_update', 'portal:contact_driver',
+    'reservation:read', 'reservation:create', 'reservation:edit',
+    'reservation:confirm', 'reservation:cancel', 'reservation:contact',
+    'contract:read', 'contract:edit',
+    'invoice:read', 'invoice:verify', 'invoice:forward',
+    'creditnote:read', 'creditnote:manage',
     'user:manage', 'user:manage_critical',
     'audit:read',
     'admin:override',
@@ -277,6 +337,13 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Credit Agents',  href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'Cancellations',  href: '/dashboard/accounts/cancellations', icon: 'XCircle' },
     { label: 'Reports',        href: '/dashboard/accounts/reports',   icon: 'Download' },
+  ],
+  RS_USER: [
+    { label: 'Deadline Board',  href: '/dashboard/reservations',              icon: 'Gauge' },
+    { label: 'Request Inbox',   href: '/dashboard/reservations/requests',     icon: 'Inbox' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'BedDouble' },
+    { label: 'Proforma',        href: '/dashboard/reservations/invoices',     icon: 'ReceiptText' },
+    { label: 'Credit Notes',    href: '/dashboard/reservations/credit-notes', icon: 'FileMinus2' },
   ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },

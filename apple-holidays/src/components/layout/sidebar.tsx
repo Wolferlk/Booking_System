@@ -13,6 +13,7 @@ import {
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
   ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet,
+  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -37,6 +38,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet,
+  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -52,6 +54,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Dashboard',      href: '/dashboard',                           icon: 'LayoutDashboard' },
     { label: 'All Bookings',   href: '/dashboard/bookings',                  icon: 'FileText' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'AS Bookings',    href: '/dashboard/as-bookings',               icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
@@ -73,6 +76,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',    href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'My Assignments', href: '/dashboard/ground/assignments',       icon: 'MapPin' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',           icon: 'Ticket' },
@@ -109,6 +113,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     // { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',               icon: 'Ticket' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                 icon: 'FileText' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',              icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
@@ -132,6 +137,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',     href: '/dashboard/bookings/new',             icon: 'PlusCircle' },
     { label: 'All Bookings',    href: '/dashboard/bookings',                 icon: 'FileText' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'AS Bookings',     href: '/dashboard/as-bookings',              icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
@@ -150,6 +156,22 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'OneDrive',        href: '/dashboard/admin/onedrive',           icon: 'HardDrive' },
     { label: 'Drive Bookings',  href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
   ],
+  // Reservation Team — the hotel-supplier desk. The Deadline Board is the home
+  // page rather than the generic dashboard: everything this team owns has a
+  // clock on it, and that is the screen that shows the clocks.
+  RS_USER: [
+    { label: 'Deadline Board',   href: '/dashboard/reservations',              icon: 'Gauge' },
+    { label: 'Request Inbox',    href: '/dashboard/reservations/requests',     icon: 'Inbox' },
+    { label: 'Reservations',     href: '/dashboard/reservations/list',         icon: 'BedDouble' },
+    { label: 'Hotel Partners',   href: '/dashboard/reservations/hotels',       icon: 'Building2' },
+    { label: 'Contracts & Rates',href: '/dashboard/reservations/contracts',    icon: 'FileSpreadsheet' },
+    { label: 'Proforma Invoices',href: '/dashboard/reservations/invoices',     icon: 'ReceiptText' },
+    { label: 'Credit Notes',     href: '/dashboard/reservations/credit-notes', icon: 'FileMinus2' },
+    { label: 'Pre-checking',     href: '/dashboard/precheck',                  icon: 'CalendarCheck2' },
+    { label: 'All Bookings',     href: '/dashboard/bookings',                  icon: 'FileText' },
+    { label: 'MC Report',        href: '/dashboard/mc-report',                 icon: 'Table2' },
+    { ...WHATSAPP_NAV_ITEM },
+  ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
   ],
@@ -159,6 +181,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
@@ -203,6 +226,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
@@ -236,6 +260,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Dashboard',          href: '/dashboard',                             icon: 'LayoutDashboard' },
     { label: 'All Bookings',       href: '/dashboard/bookings',                    icon: 'FileText' },
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
+    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'AS Bookings',        href: '/dashboard/as-bookings',                 icon: 'Cloud' },
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
