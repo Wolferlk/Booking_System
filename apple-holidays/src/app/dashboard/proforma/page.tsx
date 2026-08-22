@@ -536,7 +536,13 @@ function HotelCard({
                     {inv.fileUrl && (
                       <a href={inv.fileUrl} target="_blank" rel="noreferrer" title={inv.fileName ?? 'Open document'}
                         className="text-slate-400 transition hover:text-brand-600">
-                        <Paperclip className="h-3.5 w-3.5" />
+                        <Paperclip aria-label="Uploaded invoice" className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                    {inv.settlement?.receiptUrl && (
+                      <a href={inv.settlement.receiptUrl} target="_blank" rel="noreferrer" title={inv.settlement.receiptName ?? 'Open settlement receipt'}
+                        className="text-emerald-500 transition hover:text-emerald-700">
+                        <ReceiptText aria-label="Settlement receipt" className="h-3.5 w-3.5" />
                       </a>
                     )}
                     {canManage && inv.status !== 'VOID' && inv.settlement?.status !== 'paid' && (
