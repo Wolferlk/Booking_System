@@ -29,6 +29,7 @@ export interface Settlement {
   note: string | null
   hasReceipt: boolean
   receiptName: string | null
+  receiptUrl: string | null
   updatedAt: string | null
 }
 

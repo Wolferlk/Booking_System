@@ -42,6 +42,8 @@ const SELECT_COLS = [
 ].join(', ')
 
 function toSettlement(r: SettlementRow): ProformaSettlement {
+  const hasReceipt = Boolean(r.slip_path)
+  const accountsUrl = (process.env.ACCOUNTS_APP_URL ?? 'https://invoice-processor.aahaas.com').replace(/\/+$/, '')
   return {
     status: r.status,
     payableStatus: r.payable_status,
@@ -53,8 +55,11 @@ function toSettlement(r: SettlementRow): ProformaSettlement {
     paidBy: r.paid_by,
     reference: r.payment_reference,
     note: r.note,
-    hasReceipt: Boolean(r.slip_path),
+    hasReceipt,
     receiptName: r.slip_name,
+    receiptUrl: hasReceipt
+      ? `${accountsUrl}/proforma-invoices/${encodeURIComponent(r.proforma_id)}/slip`
+      : null,
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
   }
 }
