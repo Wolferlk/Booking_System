@@ -105,6 +105,29 @@ export function settlementDocsParams(pack: SettlementDocPack, kinds: SettlementD
   ]
 }
 
+/**
+ * Turn a Meta failure into something the desk can act on.
+ *
+ * Error 132001 ("template name does not exist in the translation") is the one
+ * failure an operator sees that is not about this booking at all: the template
+ * was never registered on the WhatsApp account, or is still awaiting Meta's
+ * review, so every send outside the 24h window fails identically. The raw Meta
+ * JSON says none of that, so it is spelled out here.
+ */
+function explainSendError(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : String(err ?? '')
+  if (!raw) return fallback
+  if (/132001|template name does not exist|does not exist in .*(translation|locale)/i.test(raw)) {
+    return (
+      `WhatsApp template "${TEMPLATE_SETTLEMENT_DOCS}" (${SETTLEMENT_DOCS_TEMPLATE_LANG}) is not approved on this ` +
+      'WhatsApp account yet — register it via POST /api/whatsapp/templates/bootstrap-driver and wait for Meta to ' +
+      'approve it, then retry. Until then the documents only reach a driver who has messaged us in the last 24 hours. ' +
+      `(${raw})`
+    )
+  }
+  return raw
+}
+
 // ── The booking details sheet ────────────────────────────────────────────────
 
 /**
@@ -254,7 +277,7 @@ async function sendBookingSheet(
 
     return { ok: true, filename: pdf.filename }
   } catch (err) {
-    return { ok: false, reason: err instanceof Error ? err.message : 'The booking sheet could not be sent.' }
+    return { ok: false, reason: explainSendError(err, 'The booking sheet could not be sent.') }
   }
 }
 
@@ -377,7 +400,7 @@ export async function sendSettlementDocs(
     return {
       ok: false,
       phone: phone.msisdn,
-      reason: err instanceof Error ? err.message : 'The documents could not be sent.',
+      reason: explainSendError(err, 'The documents could not be sent.'),
     }
   }
 }
