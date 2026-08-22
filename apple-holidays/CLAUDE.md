@@ -121,6 +121,20 @@ A booking is the central entity. It owns:
 
 `BookingVersion` snapshots the raw document on each amendment. `StatusEvent` is the append-only transition audit trail.
 
+### Reservation Team (hotel supplier side)
+
+A separate module owning the supplier half of every hotel stay: quoting, confirming, amending, proforma invoices and credit notes. Role `RS_USER`, workspace at `/dashboard/reservations/*`.
+
+The key distinction: `Accommodation` records what the customer was **sold** (extracted from the TC and never written by this module); `HotelReservation` records what we **owe the property**. They are joined softly by `reservationKey` (`bookingRef::normalised-hotel::check-in`, the same convention as `HotelReconfirmation.stayKey`) and re-resolved on every read — an amendment rewrites a booking's accommodation rows wholesale, and a confirmed supplier commitment must survive that. Where they disagree, the drawer surfaces the difference rather than overwriting either.
+
+- Lifecycle: [`src/lib/reservation-state.ts`](src/lib/reservation-state.ts) — same `{from, to, allowedRoles, label, guard}` shape as `state-machine.ts`, and independent of `BookingStatus`.
+- Accuracy gate: [`src/lib/reservation-gate.ts`](src/lib/reservation-gate.ts) — pure. Nothing reaches `CONFIRMED` without passing it; the verdict and every waived warning's reason are stored in `HotelReservation.gateSnapshot`.
+- Reads: [`src/lib/reservations.ts`](src/lib/reservations.ts). Writes: [`src/lib/reservations-write.ts`](src/lib/reservations-write.ts) — the only place status changes, and every mutation writes an append-only `ReservationEvent`.
+- The **Request Inbox is derived on read** from `accommodations`, never backfilled; rows materialise only when an operator claims a stay (same approach as the D-10 pre-checking queue).
+- Separation of duty: `RS_USER` deliberately lacks `pnl:edit`, `pnl:confirm_payment` and `payment:create`. Reservation verifies and forwards a proforma; Accounts releases the money, enforced in `api/reservations/invoices/[id]/route.ts`.
+
+Deployment procedure and safety properties: [`docs/reservation-team-deployment.md`](docs/reservation-team-deployment.md).
+
 
 Anydesk-osada
 oska@1023!@@*

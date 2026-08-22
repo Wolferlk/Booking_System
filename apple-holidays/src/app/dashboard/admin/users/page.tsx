@@ -46,7 +46,7 @@ type SortDir   = 'asc' | 'desc'
 
 const ROLE_COLORS: Record<UserRole, 'blue' | 'green' | 'purple' | 'orange' | 'gray' | 'red'> = {
   BT_USER: 'blue', GT_USER: 'green', GT_VN_USER: 'green', TE_USER: 'purple',
-  AC_USER: 'orange', CLIENT: 'gray', SUPER_ADMIN: 'red',
+  AC_USER: 'orange', RS_USER: 'purple', CLIENT: 'gray', SUPER_ADMIN: 'red',
   GT_TE_USER: 'green', ULTRA_SUPER_ADMIN: 'orange',
 }
 
@@ -56,6 +56,7 @@ const ROLE_BG: Record<UserRole, string> = {
   GT_VN_USER:        'bg-emerald-600',
   TE_USER:           'bg-purple-500',
   AC_USER:           'bg-orange-500',
+  RS_USER:           'bg-indigo-500',
   CLIENT:            'bg-slate-400',
   SUPER_ADMIN:       'bg-red-500',
   GT_TE_USER:        'bg-teal-500',

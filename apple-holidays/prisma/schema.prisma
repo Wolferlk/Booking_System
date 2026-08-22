@@ -1277,6 +1277,11 @@ enum UserRole {
   CLIENT
   SUPER_ADMIN
   ULTRA_SUPER_ADMIN
+  /// Reservation Team — owns the supplier side of every hotel stay: quoting,
+  /// confirming, amending, proforma invoices and credit notes. Appended last
+  /// so the live `users.role` ENUM can be widened without renumbering the
+  /// values already stored (see scripts/sql/reservation-team-02-user-role.sql).
+  RS_USER
 }
 
 enum OperationCountry {
@@ -2197,4 +2202,488 @@ model SlTourRate {
   updatedAt DateTime @updatedAt
 
   @@map("sl_tour_rates")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reservation Team
+//
+// The supplier side of a hotel stay. `Accommodation` records what the customer
+// was *sold* (extracted from the TC document and never written by this module);
+// a `HotelReservation` records what we *owe the property* — the negotiated
+// commitment, its money, its deadlines and its paper trail.
+//
+// The two are deliberately separate rows joined softly, because they disagree
+// often and a disagreement is a finding to surface, not a value to overwrite.
+//
+// Everything below is additive. No existing table is modified except the
+// `users.role` ENUM, which gains RS_USER at the end of the value list.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One negotiated hotel stay on one booking.
+model HotelReservation {
+  id               String            @id @default(cuid())
+  /// bookingRef :: normalised hotel :: check-in date. Same convention as
+  /// HotelReconfirmation.stayKey, so the two modules agree on stay identity.
+  reservationKey   String            @unique @db.VarChar(190)
+  bookingRef       String            @db.VarChar(64)
+  /// Soft pointer to accommodations.id — re-resolved on every read. Amendments
+  /// rewrite a booking's accommodation rows wholesale; a confirmed supplier
+  /// commitment must survive that.
+  accommodationId  String?
+  hotelProfileId   String?
+  hotelName        String
+  city             String?
+  operationCountry OperationCountry?
+
+  // ── Stay
+  checkIn       DateTime
+  checkOut      DateTime
+  nights        Int      @default(0)
+  roomType      String?
+  roomCategory  String?
+  roomCount     Int      @default(1)
+  mealPlan      MealPlan @default(BB)
+  adults        Int      @default(0)
+  children      Int      @default(0)
+  /// Child With Bed / Child No Bed — priced differently by most contracts.
+  cwb           Int      @default(0)
+  cnb           Int      @default(0)
+  infants       Int      @default(0)
+  leadGuestName String?
+
+  // ── Commercial. Hotels quote in their own currency; `base*` columns carry
+  // the USD equivalent at the rate captured when the figure was agreed, so
+  // reporting never has to re-derive a historical rate.
+  currency      String    @default("USD") @db.VarChar(3)
+  fxRate        Decimal?  @db.Decimal(18, 8)
+  fxRateAt      DateTime?
+  nettRate      Decimal?  @db.Decimal(12, 2)
+  totalCost     Decimal?  @db.Decimal(12, 2)
+  baseTotalCost Decimal?  @db.Decimal(12, 2)
+  taxesIncluded Boolean   @default(true)
+  /// pnl_line_items.id (category HOTEL) this stay is budgeted against.
+  budgetLineId  String?
+  budgetAmount  Decimal?  @db.Decimal(12, 2)
+
+  // ── Lifecycle
+  status             ReservationStatus @default(REQUESTED)
+  confirmationNumber String?
+  confirmedAt        DateTime?
+  confirmedBy        String?
+  /// Snapshot of the accuracy-gate result taken at the moment of confirmation:
+  /// which checks passed, and the reason given for any warning overridden.
+  /// Evidence that the gate ran — never recomputed after the fact.
+  gateSnapshot       Json?
+
+  // ── Option hold
+  optionHeldUntil  DateTime?
+  optionReleasedAt DateTime?
+
+  // ── Policy, denormalised from HotelContract when the stay is confirmed. A
+  // contract edited later must never rewrite terms already agreed.
+  freeCancelUntil DateTime?
+  penaltyTiers    Json?
+  policyText      String?   @db.Text
+  contractId      String?
+
+  // ── Deadlines
+  paymentDueAt  DateTime?
+  proformaDueAt DateTime?
+  paidAt        DateTime?
+
+  // ── Channel / ownership
+  lastChannel     String?             @db.VarChar(16)
+  lastContactedAt DateTime?
+  /// First reply from the property on this stay — the input to the partner
+  /// responsiveness score.
+  firstResponseAt DateTime?
+  attempts        Int                 @default(0)
+  assignedToEmail String?
+  priority        ReservationPriority @default(NORMAL)
+
+  /// Set when the stay was cancelled and a penalty actually fell due.
+  penaltyAmount Decimal? @db.Decimal(12, 2)
+  cancelReason  String?  @db.Text
+  /// Reservation this one replaces, when a cancel-and-rebook was used, so the
+  /// history of a moved stay reads as one story.
+  supersedesId  String?
+
+  notes     String?  @db.Text
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  options         ReservationOption[]
+  specialRequests ReservationSpecialRequest[]
+  events          ReservationEvent[]
+  invoices        ProformaInvoice[]
+  creditNotes     CreditNote[]
+
+  @@index([bookingRef])
+  @@index([status])
+  @@index([checkIn])
+  @@index([hotelProfileId])
+  @@index([optionHeldUntil])
+  @@index([paymentDueAt])
+  @@index([assignedToEmail])
+  @@index([operationCountry])
+  @@map("hotel_reservations")
+}
+
+/// One quote being compared for a reservation. Kept after selection — the
+/// options not taken are what make the choice auditable.
+model ReservationOption {
+  id              String             @id @default(cuid())
+  reservationId   String
+  hotelProfileId  String?
+  hotelName       String
+  starRating      Int?
+  roomType        String?
+  mealPlan        MealPlan           @default(BB)
+  roomCount       Int                @default(1)
+  currency        String             @default("USD") @db.VarChar(3)
+  fxRate          Decimal?           @db.Decimal(18, 8)
+  nettRate        Decimal?           @db.Decimal(12, 2)
+  totalCost       Decimal?           @db.Decimal(12, 2)
+  baseTotalCost   Decimal?           @db.Decimal(12, 2)
+  availability    OptionAvailability @default(UNKNOWN)
+  cancelPolicy    String?            @db.Text
+  freeCancelUntil DateTime?
+  distanceNote    String?
+  pros            String?            @db.Text
+  cons            String?            @db.Text
+  quotedAt        DateTime?
+  quoteValidUntil DateTime?
+  quoteDocUrl     String?            @db.Text
+  /// At most one selected option per reservation — enforced in the write layer,
+  /// which clears the flag on siblings inside the same transaction.
+  selected        Boolean            @default(false)
+  selectedReason  String?            @db.Text
+  sortOrder       Int                @default(0)
+  createdBy       String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  reservation HotelReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId])
+  @@index([hotelProfileId])
+  @@map("reservation_options")
+}
+
+/// A special request on a stay, tracked to an explicit hotel answer. "We asked"
+/// is not the same as "they agreed", and only the second one is a promise we
+/// may repeat to the guest.
+model ReservationSpecialRequest {
+  id            String               @id @default(cuid())
+  reservationId String
+  kind          SpecialRequestKind
+  detail        String?              @db.Text
+  chargeable    Boolean              @default(false)
+  cost          Decimal?             @db.Decimal(12, 2)
+  currency      String?              @db.VarChar(3)
+  status        SpecialRequestStatus @default(REQUESTED)
+  hotelResponse String?              @db.Text
+  requestedAt   DateTime             @default(now())
+  respondedAt   DateTime?
+  createdBy     String?
+  updatedAt     DateTime             @updatedAt
+
+  reservation HotelReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId])
+  @@index([status])
+  @@map("reservation_special_requests")
+}
+
+/// Append-only audit for a reservation. Never updated, never deleted — it is
+/// the evidence of who agreed what with which property, and when.
+model ReservationEvent {
+  id            String   @id @default(cuid())
+  reservationId String
+  /// created | status_change | edited | option_added | option_selected |
+  /// contacted | message_sent | gate_run | amended | cancelled |
+  /// invoice_linked | credit_note_raised | payment_requested
+  action        String   @db.VarChar(48)
+  fromStatus    String?  @db.VarChar(32)
+  toStatus      String?  @db.VarChar(32)
+  channel       String?  @db.VarChar(16)
+  note          String?  @db.Text
+  /// Structured before/after for an amendment, or the gate result for a
+  /// confirmation. Kept as JSON so the trail stays readable without joins.
+  payload       Json?
+  actorName     String?
+  actorEmail    String?
+  createdAt     DateTime @default(now())
+
+  reservation HotelReservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId])
+  @@index([createdAt])
+  @@index([action])
+  @@map("reservation_events")
+}
+
+/// A rate agreement with a property, valid over a date window.
+model HotelContract {
+  id             String         @id @default(cuid())
+  hotelProfileId String
+  contractCode   String?
+  validFrom      DateTime
+  validTo        DateTime
+  currency       String         @default("USD") @db.VarChar(3)
+  policyText     String?        @db.Text
+  /// [{ fromDaysBefore, pct? , amount?, note? }] — evaluated nearest-first.
+  penaltyTiers   Json?
+  freeCancelDays Int?
+  childPolicy    String?        @db.Text
+  paymentTerms   String?        @db.Text
+  /// Days before check-in that payment falls due, when the terms are that
+  /// simple. Drives the reservation's paymentDueAt default.
+  paymentDueDays Int?
+  commissionPct  Decimal?       @db.Decimal(5, 2)
+  contractDocUrl String?        @db.Text
+  status         ContractStatus @default(ACTIVE)
+  notes          String?        @db.Text
+  createdBy      String?
+  updatedBy      String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  rates HotelContractRate[]
+
+  @@index([hotelProfileId])
+  @@index([validFrom, validTo])
+  @@index([status])
+  @@map("hotel_contracts")
+}
+
+/// One priced room line inside a contract, for one season band.
+model HotelContractRate {
+  id           String    @id @default(cuid())
+  contractId   String
+  seasonName   String?
+  seasonFrom   DateTime?
+  seasonTo     DateTime?
+  roomType     String
+  mealPlan     MealPlan  @default(BB)
+  singleRate   Decimal?  @db.Decimal(12, 2)
+  doubleRate   Decimal?  @db.Decimal(12, 2)
+  tripleRate   Decimal?  @db.Decimal(12, 2)
+  extraBedRate Decimal?  @db.Decimal(12, 2)
+  cwbRate      Decimal?  @db.Decimal(12, 2)
+  cnbRate      Decimal?  @db.Decimal(12, 2)
+  minNights    Int?
+  sortOrder    Int       @default(0)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  contract HotelContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@map("hotel_contract_rates")
+}
+
+/// A proforma invoice received from a property, on its way to Accounts.
+model ProformaInvoice {
+  id              String        @id @default(cuid())
+  reservationId   String?
+  bookingRef      String?       @db.VarChar(64)
+  hotelProfileId  String?
+  hotelName       String?
+  invoiceNumber   String?
+  invoiceDate     DateTime?
+  dueDate         DateTime?
+  currency        String        @default("USD") @db.VarChar(3)
+  fxRate          Decimal?      @db.Decimal(18, 8)
+  amount          Decimal?      @db.Decimal(12, 2)
+  taxAmount       Decimal?      @db.Decimal(12, 2)
+  totalAmount     Decimal?      @db.Decimal(12, 2)
+  baseTotalAmount Decimal?      @db.Decimal(12, 2)
+  fileUrl         String?       @db.Text
+  fileName        String?
+  /// Raw payload of the AI extraction pass, kept for audit and re-review —
+  /// same pattern as HotelProfile.aiResearch.
+  aiExtract       Json?
+  aiExtractedAt   DateTime?
+  status          InvoiceStatus @default(RECEIVED)
+  /// Result of the three-way match: invoice vs reservation cost vs P&L budget.
+  matchResult     Json?
+  variance        Decimal?      @db.Decimal(12, 2)
+  variancePct     Decimal?      @db.Decimal(8, 4)
+  verifiedAt      DateTime?
+  verifiedBy      String?
+  forwardedAt     DateTime?
+  forwardedTo     String?
+  paidAt          DateTime?
+  rejectReason    String?       @db.Text
+  notes           String?       @db.Text
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  reservation HotelReservation? @relation(fields: [reservationId], references: [id])
+
+  @@index([reservationId])
+  @@index([bookingRef])
+  @@index([status])
+  @@index([dueDate])
+  @@index([hotelProfileId])
+  @@map("proforma_invoices")
+}
+
+/// Money a property owes back after a cancellation, amendment or overcharge.
+model CreditNote {
+  id                 String           @id @default(cuid())
+  reservationId      String?
+  bookingRef         String?          @db.VarChar(64)
+  hotelProfileId     String?
+  hotelName          String
+  reason             CreditNoteReason @default(CANCELLATION)
+  reasonNote         String?          @db.Text
+  currency           String           @default("USD") @db.VarChar(3)
+  fxRate             Decimal?         @db.Decimal(18, 8)
+  expectedAmount     Decimal?         @db.Decimal(12, 2)
+  receivedAmount     Decimal?         @db.Decimal(12, 2)
+  baseExpectedAmount Decimal?         @db.Decimal(12, 2)
+  creditNoteNo       String?
+  raisedAt           DateTime         @default(now())
+  expectedBy         DateTime?
+  receivedAt         DateTime?
+  appliedAt          DateTime?
+  appliedToInvoiceId String?
+  status             CreditNoteStatus @default(PENDING)
+  lastChasedAt       DateTime?
+  chaseCount         Int              @default(0)
+  fileUrl            String?          @db.Text
+  notes              String?          @db.Text
+  createdBy          String?
+  updatedBy          String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  reservation HotelReservation? @relation(fields: [reservationId], references: [id])
+
+  @@index([reservationId])
+  @@index([bookingRef])
+  @@index([status])
+  @@index([expectedBy])
+  @@index([hotelProfileId])
+  @@map("credit_notes")
+}
+
+enum ReservationStatus {
+  /// The stay is owed but nothing has been sent to a property yet.
+  REQUESTED
+  /// Options are being gathered and compared.
+  QUOTING
+  /// A property is holding the rooms; the release deadline is running.
+  OPTION_HELD
+  /// Sent to the property, awaiting their answer.
+  PENDING_HOTEL
+  /// Confirmed, with a confirmation number captured.
+  CONFIRMED
+  AMEND_REQUESTED
+  AMENDED
+  CANCEL_REQUESTED
+  CANCELLED
+  NO_SHOW
+  WAITLISTED
+  /// The property declined, or had no availability.
+  REJECTED
+}
+
+enum ReservationPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum MealPlan {
+  /// Room only
+  RO
+  /// Bed & breakfast
+  BB
+  /// Half board
+  HB
+  /// Full board
+  FB
+  /// All inclusive
+  AI
+}
+
+enum OptionAvailability {
+  AVAILABLE
+  ON_REQUEST
+  FULL
+  UNKNOWN
+}
+
+enum SpecialRequestKind {
+  EARLY_CHECK_IN
+  LATE_CHECK_OUT
+  EXTRA_BED
+  HONEYMOON
+  ANNIVERSARY
+  BIRTHDAY
+  CONNECTING_ROOMS
+  ADJOINING_ROOMS
+  HIGH_FLOOR
+  SEA_VIEW
+  QUIET_ROOM
+  ACCESSIBLE_ROOM
+  DIETARY
+  AIRPORT_TRANSFER
+  BABY_COT
+  FLOWERS_CAKE
+  OTHER
+}
+
+enum SpecialRequestStatus {
+  REQUESTED
+  ACKNOWLEDGED
+  CONFIRMED
+  DECLINED
+  NOT_APPLICABLE
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  EXPIRED
+  SUPERSEDED
+}
+
+enum InvoiceStatus {
+  RECEIVED
+  UNDER_REVIEW
+  DISCREPANCY
+  VERIFIED
+  FORWARDED
+  PAID
+  REJECTED
+  VOID
+}
+
+enum CreditNoteReason {
+  CANCELLATION
+  AMENDMENT
+  OVERCHARGE
+  NO_SHOW_WAIVER
+  SERVICE_FAILURE
+  DUPLICATE_PAYMENT
+  OTHER
+}
+
+enum CreditNoteStatus {
+  PENDING
+  REQUESTED
+  PROMISED
+  RECEIVED
+  APPLIED
+  WRITTEN_OFF
+  DISPUTED
 }
