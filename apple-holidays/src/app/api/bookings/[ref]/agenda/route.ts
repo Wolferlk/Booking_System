@@ -22,6 +22,31 @@ import type { UserRole, ServiceType } from '@prisma/client'
 export const dynamic = 'force-dynamic'
 
 /**
+ * Turn a movement's date into a Date the database will accept.
+ *
+ * A `<input type="date">` happily takes a six-digit year, so a stray keystroke
+ * turns 2026 into 82026 — which Prisma rejects with an opaque "Could not
+ * convert argument value" once the whole chart has already been deleted below.
+ * Validating up front means the save is refused with a message naming the row,
+ * and nothing is destroyed.
+ */
+function parseAgendaDate(value: unknown, index: number): Date {
+  // index < 0 means a single edited movement, where a row number means nothing.
+  const who = index < 0 ? 'This movement' : `Movement ${index + 1}`
+  const raw = typeof value === 'string' ? value.trim() : value
+  if (!raw) throw new Error(`${who} has no date`)
+  const d = new Date(raw as string)
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`${who} has an invalid date (${String(raw)})`)
+  }
+  const year = d.getUTCFullYear()
+  if (year < 1900 || year > 2200) {
+    throw new Error(`${who} has an out-of-range year (${year}) — check the date, it looks like a typo`)
+  }
+  return d
+}
+
+/**
  * Everyone running a movement: driver + vehicle, vehicle vendor, guide and
  * tour vendor. Shared by all three reads in this file so the movement chart
  * never receives a half-populated assignment depending on which one answered.
@@ -89,59 +114,81 @@ export async function POST(
 
   const { items = [] } = await req.json()
 
-  let agenda = booking.tourAgenda
-
-  if (agenda) {
-    // Clear and recreate items
-    await prisma.agendaItem.deleteMany({ where: { agendaId: agenda.id } })
-    agenda = await prisma.tourAgenda.update({
-      where: { id: agenda.id },
-      data: { updatedAt: new Date() },
-    })
-  } else {
-    agenda = await prisma.tourAgenda.create({
-      data: { bookingId: booking.id },
-    })
+  // Every date is validated before anything is deleted — the save below wipes
+  // the existing chart, so a bad row must fail here, while the old items are
+  // still on file, rather than half-way through the recreate.
+  let dates: Date[]
+  try {
+    dates = (items as Record<string, unknown>[]).map((item, index) => parseAgendaDate(item.date, index))
+  } catch (err: unknown) {
+    return buildApiError(err instanceof Error ? err.message : 'Invalid movement date', 400)
   }
 
+  let agenda = booking.tourAgenda
   let createdItems: { id: string }[]
+
   try {
-    createdItems = await Promise.all(
-      items.map((item: Record<string, unknown>, index: number) =>
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (prisma.agendaItem as any).create({
-          data: {
-            agendaId: agenda!.id,
-            date: new Date(item.date as string),
-            location: item.location as string,
-            fromPoint: item.fromPoint as string | undefined,
-            toPoint: item.toPoint as string | undefined,
-            details: item.details as string | undefined,
-            mealPlan: item.mealPlan as string | undefined,
-            meetingTime: item.meetingTime as string | undefined,
-            timeFrom: item.timeFrom as string | undefined,
-            timeTo: item.timeTo as string | undefined,
-            serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
-            isLeisure: typeof item.isLeisure === 'boolean' ? item.isLeisure : null,
-            isHotelOnly: typeof item.isHotelOnly === 'boolean' ? item.isHotelOnly : null,
-            sortOrder: index,
-          },
-        }),
-      ),
-    )
+    // Delete + recreate in one transaction: a failure part-way through rolls the
+    // whole thing back, so a rejected row can never leave the booking with an
+    // empty (or partially rebuilt) movement chart.
+    const result = await prisma.$transaction(async (tx) => {
+      let ag = agenda
+      if (ag) {
+        await tx.agendaItem.deleteMany({ where: { agendaId: ag.id } })
+        ag = await tx.tourAgenda.update({
+          where: { id: ag.id },
+          data: { updatedAt: new Date() },
+        })
+      } else {
+        ag = await tx.tourAgenda.create({ data: { bookingId: booking.id } })
+      }
+
+      const created: { id: string }[] = []
+      const list = items as Record<string, unknown>[]
+      for (let index = 0; index < list.length; index++) {
+        const item = list[index]
+        created.push(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (tx.agendaItem as any).create({
+            data: {
+              agendaId: ag.id,
+              date: dates[index],
+              location: item.location as string,
+              fromPoint: item.fromPoint as string | undefined,
+              toPoint: item.toPoint as string | undefined,
+              details: item.details as string | undefined,
+              mealPlan: item.mealPlan as string | undefined,
+              meetingTime: item.meetingTime as string | undefined,
+              timeFrom: item.timeFrom as string | undefined,
+              timeTo: item.timeTo as string | undefined,
+              serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
+              isLeisure: typeof item.isLeisure === 'boolean' ? item.isLeisure : null,
+              isHotelOnly: typeof item.isHotelOnly === 'boolean' ? item.isHotelOnly : null,
+              sortOrder: index,
+            },
+          }),
+        )
+      }
+      return { ag, created }
+    // A long chart inserts one row at a time, which can outrun Prisma's 5s
+    // default before the rollback guarantee is worth anything.
+    }, { maxWait: 10_000, timeout: 30_000 })
+    agenda = result.ag
+    createdItems = result.created
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[agenda POST] item create failed:', msg)
     // Surface a JSON error rather than throwing — an unhandled throw returns an
     // empty body, which the client's res.json() reports as "Unexpected end of
-    // JSON input" and hides the real cause.
+    // JSON input" and hides the real cause. Nothing was saved: the transaction
+    // above rolled back, so the previous chart is still intact.
     if (/too long|1406/i.test(msg)) {
       return buildApiError(
         'One of the movement fields is too long for the database. Run the pending agenda_items TEXT migration, then save again.',
         400,
       )
     }
-    return buildApiError(`Failed to save movements: ${msg}`, 500)
+    return buildApiError(`Failed to save movements — nothing was changed: ${msg}`, 500)
   }
 
   await Promise.all(
@@ -480,6 +527,17 @@ export async function PUT(
   // already allocated to it — a day we do not drive must never hold a vehicle
   // booking. The two are mutually exclusive: a movement carries one reason for
   // having no driver, so setting either clears the other.
+  // Same guard as the POST above: a six-digit year typed into the date field
+  // is rejected here with a readable message instead of reaching the database.
+  let editedDate: Date | undefined
+  if (body.date) {
+    try {
+      editedDate = parseAgendaDate(body.date, -1)
+    } catch (err: unknown) {
+      return buildApiError(err instanceof Error ? err.message : 'Invalid date', 400)
+    }
+  }
+
   const markedNoDriver = body.isLeisure === true || body.isHotelOnly === true
   if (markedNoDriver) {
     await prisma.assignment.deleteMany({ where: { agendaItemId: itemId } })
@@ -492,7 +550,7 @@ export async function PUT(
       ...(body.isHotelOnly !== undefined && { isHotelOnly: body.isHotelOnly }),
       ...(body.isLeisure   === true && { isHotelOnly: false }),
       ...(body.isHotelOnly === true && { isLeisure:   false }),
-      ...(body.date && { date: new Date(body.date) }),
+      ...(editedDate && { date: editedDate }),
       ...(body.location !== undefined && { location: body.location }),
       ...(body.fromPoint !== undefined && { fromPoint: body.fromPoint }),
       ...(body.toPoint !== undefined && { toPoint: body.toPoint }),
