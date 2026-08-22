@@ -96,6 +96,11 @@ export type Permission =
   | 'invoice:read'
   | 'invoice:verify'
   | 'invoice:forward'
+  // Proforma Invoice component — filing a supplier invoice against a booking's
+  // hotel. Separate from `invoice:*`, which guards the Reservation Team's
+  // deadline pipeline: the desks are different, and so is the audience.
+  | 'proforma:read'
+  | 'proforma:manage'
   | 'creditnote:read'
   | 'creditnote:manage'
   | 'portal:read'
@@ -115,6 +120,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     // Read-only: the desk must know whether a hotel is actually secured before
     // promising it to a client.
     'reservation:read',
+    // The Booking desk files hotel proformas against the booking it sold.
+    'proforma:read', 'proforma:manage',
   ],
   GT_USER: [
     'booking:create', 'booking:read', 'booking:edit',
@@ -190,6 +197,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'reservation:confirm', 'reservation:cancel', 'reservation:contact',
     'contract:read', 'contract:edit',
     'invoice:read', 'invoice:verify', 'invoice:forward',
+    'proforma:read', 'proforma:manage',
     'creditnote:read', 'creditnote:manage',
   ],
   AC_USER: [
@@ -200,6 +208,9 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'payment:read',
     'reservation:read',
     'invoice:read', 'invoice:verify',
+    // Read-only here: Accounts acts on a proforma in its own system, where the
+    // payment slip and the Payable 1.0 line are.
+    'proforma:read',
     'creditnote:read', 'creditnote:manage',
     'contract:read',
   ],
@@ -227,6 +238,9 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'reservation:confirm', 'reservation:cancel', 'reservation:contact',
     'contract:read', 'contract:edit',
     'invoice:read', 'invoice:verify', 'invoice:forward',
+    // Read-only on purpose: the Proforma Invoice component's write audience was
+    // specified as the Booking desk, the Reservation Team and Ultra Super Admin.
+    'proforma:read',
     'creditnote:read', 'creditnote:manage',
     'user:manage',
     'audit:read',
@@ -250,6 +264,7 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'reservation:confirm', 'reservation:cancel', 'reservation:contact',
     'contract:read', 'contract:edit',
     'invoice:read', 'invoice:verify', 'invoice:forward',
+    'proforma:read', 'proforma:manage',
     'creditnote:read', 'creditnote:manage',
     'user:manage', 'user:manage_critical',
     'audit:read',
@@ -291,6 +306,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Bookings',        href: '/dashboard/bookings',     icon: 'FileText' },
     { label: 'New Booking',     href: '/dashboard/bookings/new', icon: 'PlusCircle' },
     { label: 'Change Requests', href: '/dashboard/change-requests', icon: 'AlertCircle' },
+    { label: 'Proforma Invoice',href: '/dashboard/proforma',         icon: 'ReceiptText' },
   ],
   GT_USER: [
     { label: 'Dashboard',      href: '/dashboard',                  icon: 'LayoutDashboard' },
@@ -337,12 +353,14 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Credit Agents',  href: '/dashboard/accounts/credit-agents', icon: 'CreditCard' },
     { label: 'Cancellations',  href: '/dashboard/accounts/cancellations', icon: 'XCircle' },
     { label: 'Reports',        href: '/dashboard/accounts/reports',   icon: 'Download' },
+    { label: 'Proforma Invoice',href: '/dashboard/proforma',           icon: 'ReceiptText' },
   ],
   RS_USER: [
     { label: 'Deadline Board',  href: '/dashboard/reservations',              icon: 'Gauge' },
     { label: 'Request Inbox',   href: '/dashboard/reservations/requests',     icon: 'Inbox' },
     { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'BedDouble' },
     { label: 'Proforma',        href: '/dashboard/reservations/invoices',     icon: 'ReceiptText' },
+    { label: 'Proforma Invoice',href: '/dashboard/proforma',                  icon: 'ReceiptText' },
     { label: 'Credit Notes',    href: '/dashboard/reservations/credit-notes', icon: 'FileMinus2' },
   ],
   CLIENT: [
@@ -358,6 +376,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Drivers',    href: '/dashboard/ground/drivers',   icon: 'Car' },
     { label: 'Vehicles',   href: '/dashboard/ground/vehicles',  icon: 'Truck' },
     { label: 'Config',     href: '/dashboard/admin/config',     icon: 'Settings' },
+    { label: 'Proforma Invoice', href: '/dashboard/proforma',    icon: 'ReceiptText' },
   ],
   ULTRA_SUPER_ADMIN: [
     { label: 'Dashboard',    href: '/dashboard',                    icon: 'LayoutDashboard' },
@@ -369,5 +388,6 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Audit Log',    href: '/dashboard/admin/audit',        icon: 'Shield' },
     { label: 'Drivers',      href: '/dashboard/ground/drivers',     icon: 'Car' },
     { label: 'Config',       href: '/dashboard/admin/config',       icon: 'Settings' },
+    { label: 'Proforma Invoice', href: '/dashboard/proforma',      icon: 'ReceiptText' },
   ],
 }

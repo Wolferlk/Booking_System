@@ -2492,6 +2492,40 @@ model ProformaInvoice {
   bookingRef      String?       @db.VarChar(64)
   hotelProfileId  String?
   hotelName       String?
+
+  // ── Booking-centric identity (the Proforma Invoice component).
+  //
+  // The deadline board reaches an invoice through its reservation; the
+  // Proforma Invoice component reaches it through the *booking* — a desk that
+  // has a CNTL or an IS number in front of it and a stack of hotel invoices to
+  // file. Both write the same table, so a stay quoted through Reservations and
+  // an invoice filed against the booking are one list, never two.
+  //
+  // `bookingRef` above is the control (CNTL) number; `isNumber` is the Apple
+  // System reference. Accounts matches on either, so both are stored even
+  // though the booking carries them together — an invoice must stay findable
+  // after an amendment rewrites the booking's accommodation rows.
+  bookingId       String?
+  isNumber        String?       @db.VarChar(64)
+  /// Soft pointer to accommodations.id, re-resolved on read. Same reasoning as
+  /// HotelReservation.accommodationId: an amendment rewrites those rows
+  /// wholesale and a filed invoice must survive it.
+  accommodationId String?
+  city            String?
+  checkIn         DateTime?
+  checkOut        DateTime?
+  nights          Int?
+  roomType        String?
+  mealPlan        String?       @db.VarChar(8)
+  roomCount       Int?
+  /// RESERVATION — filed from the reservation pipeline. BOOKING — filed from
+  /// the Proforma Invoice component.
+  origin          String        @default("RESERVATION") @db.VarChar(16)
+  /// The hotel was not on the booking's accommodation list; a user added it.
+  hotelAdded      Boolean       @default(false)
+  /// S3 object key *under the uploads/ prefix* — what the Accounts app streams
+  /// the PDF from directly. `fileUrl` stays this app's own served path.
+  fileKey         String?       @db.Text
   invoiceNumber   String?
   invoiceDate     DateTime?
   dueDate         DateTime?
@@ -2531,6 +2565,8 @@ model ProformaInvoice {
   @@index([status])
   @@index([dueDate])
   @@index([hotelProfileId])
+  @@index([isNumber])
+  @@index([origin])
   @@map("proforma_invoices")
 }
 
