@@ -75,13 +75,16 @@ const COUNTRY_META: Record<OperationCountry, { label: string; color: string }> =
 }
 
 // Roles available per country (used to filter the role dropdown when adding/editing)
+// Which roles may be assigned once a country is picked. Kept in step with
+// ROLE_COUNTRY_SCOPE in rbac.ts — that map is the server-side guardrail, this
+// one is what the dropdown offers. A role missing here simply cannot be created.
 const COUNTRY_ROLES: Record<OperationCountry, UserRole[]> = {
-  VIETNAM:            ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'SUPER_ADMIN'],
-  SRILANKA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
-  SINGAPORE:          ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
-  MALAYSIA:           ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
-  SINGAPORE_MALAYSIA: ['BT_USER', 'GT_TE_USER', 'SUPER_ADMIN'],
-  ALL:                ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
+  VIETNAM:            ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'RS_USER', 'SUPER_ADMIN'],
+  SRILANKA:           ['BT_USER', 'GT_TE_USER', 'RS_USER', 'SUPER_ADMIN'],
+  SINGAPORE:          ['BT_USER', 'GT_TE_USER', 'RS_USER', 'SUPER_ADMIN'],
+  MALAYSIA:           ['BT_USER', 'GT_TE_USER', 'RS_USER', 'SUPER_ADMIN'],
+  SINGAPORE_MALAYSIA: ['BT_USER', 'GT_TE_USER', 'RS_USER', 'SUPER_ADMIN'],
+  ALL:                ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'RS_USER', 'CLIENT', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'],
 }
 
 const EMPTY_FORM = {
