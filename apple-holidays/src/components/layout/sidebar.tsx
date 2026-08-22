@@ -163,7 +163,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Deadline Board',   href: '/dashboard/reservations',              icon: 'Gauge' },
     { label: 'Request Inbox',    href: '/dashboard/reservations/requests',     icon: 'Inbox' },
     { label: 'Reservations',     href: '/dashboard/reservations/list',         icon: 'BedDouble' },
-    { label: 'Hotel Partners',   href: '/dashboard/reservations/hotels',       icon: 'Building2' },
+    { label: 'Hotels & Rates',   href: '/dashboard/reservations/hotels',       icon: 'Building2' },
     { label: 'Contracts & Rates',href: '/dashboard/reservations/contracts',    icon: 'FileSpreadsheet' },
     { label: 'Proforma Invoices',href: '/dashboard/reservations/invoices',     icon: 'ReceiptText' },
     { label: 'Credit Notes',     href: '/dashboard/reservations/credit-notes', icon: 'FileMinus2' },
