@@ -2,7 +2,7 @@
  * Aahaas B2C store DB client — production_live1 MySQL/MariaDB, STRICTLY READ-ONLY.
  *
  * This is the live customer-facing Aahaas database. Nothing in this file may ever
- * write to it: `q()` runs every statement through {@link assertReadOnly} first, so
+ * write to it: `b2cQuery()` runs every statement through {@link assertReadOnly} first, so
  * a stray INSERT/UPDATE/DELETE/DDL fails in our own process before it reaches the
  * wire. `multipleStatements` is left at its default (false) so a second statement
  * cannot be smuggled in through a parameter.
@@ -86,7 +86,12 @@ async function getConn(): Promise<mysql.Connection> {
   ])
 }
 
-async function q<T extends mysql.RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> {
+/**
+ * Run one read-only statement. Exported so other read-only B2C modules
+ * (e.g. `b2c-hotels.ts`) share this guard rather than opening their own,
+ * unguarded connection to the live store.
+ */
+export async function b2cQuery<T extends mysql.RowDataPacket>(sql: string, params: unknown[] = []): Promise<T[]> {
   assertReadOnly(sql)
   const conn = await getConn()
   try {
@@ -196,7 +201,7 @@ export async function fetchOrderHeaders(opts: {
   const { upcomingFrom, bookedFrom = null, limit = 500 } = opts
   // LIMIT is inlined (not bound) because this server rejects `LIMIT ?`.
   const lim = Math.max(1, Math.min(Number(limit) || 500, 5000))
-  return q<B2cOrderHeader>(
+  return b2cQuery<B2cOrderHeader>(
     `SELECT m.order_id                AS order_id,
             MIN(m.service_date)       AS arrival,
             MAX(m.service_date)       AS departure,
@@ -225,7 +230,7 @@ export async function fetchOrderHeaders(opts: {
 export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderProduct[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
-  return q<B2cOrderProduct>(
+  return b2cQuery<B2cOrderProduct>(
     `SELECT m.id, m.order_id, m.checkout_id, m.category_id, mc.maincat_type,
             m.product_id, m.product_name, m.vendor_name,
             m.service_date, m.time_slot, m.service_location, m.provider, m.sku,
@@ -254,7 +259,7 @@ export async function fetchOrderProducts(orderIds: number[]): Promise<B2cOrderPr
 export async function fetchOrderCustomers(orderIds: number[]): Promise<B2cOrderCustomer[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
-  return q<B2cOrderCustomer>(
+  return b2cQuery<B2cOrderCustomer>(
     `SELECT ci.id              AS order_id,
             ci.user_id,
             ci.total_amount, ci.paid_amount, ci.balance_amount,
@@ -284,7 +289,7 @@ export async function fetchOrderCustomers(orderIds: number[]): Promise<B2cOrderC
 export async function fetchFlightBookings(orderIds: number[]): Promise<B2cFlightBooking[]> {
   if (orderIds.length === 0) return []
   const ids = sanitizeIds(orderIds)
-  return q<B2cFlightBooking>(
+  return b2cQuery<B2cFlightBooking>(
     `SELECT f.order_id, f.pnr, f.flight_provider, f.requested_data, f.response_data
        FROM aahaas_flight_bookingsv2 f
       WHERE f.order_id IN (${ids})
