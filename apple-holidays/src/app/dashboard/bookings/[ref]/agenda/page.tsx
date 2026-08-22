@@ -611,6 +611,17 @@ export default function AgendaPage() {
   }
 
   async function persistItems(itemsToSave: AgendaItem[], silent = false) {
+    // Caught here as well as on the server: a date the database will reject
+    // should never leave the browser, since saving rewrites the whole chart.
+    const badDate = itemsToSave.findIndex(it => {
+      if (!it.date) return true
+      const y = Number(String(it.date).slice(0, 4))
+      return !Number.isFinite(y) || y < 1900 || y > 2200 || Number.isNaN(new Date(it.date).getTime())
+    })
+    if (badDate !== -1) {
+      throw new Error(`Movement ${badDate + 1} has a missing or invalid date (${itemsToSave[badDate].date || 'blank'}) — fix it and save again`)
+    }
+
     const res  = await fetch(`/api/bookings/${ref}/agenda`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: itemsToSave }),
@@ -1560,7 +1571,11 @@ export default function AgendaPage() {
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
                         <div>
                           <label className="form-label text-xs">Date</label>
+                          {/* min/max keep the year to four digits — the browser
+                              otherwise accepts a stray keystroke as year 82026,
+                              which the database cannot store. */}
                           <input type="date" className="form-input text-sm py-1.5" value={item.date}
+                            min="1900-01-01" max="2200-12-31"
                             onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, date: e.target.value } : x))} />
                         </div>
                         <div>
