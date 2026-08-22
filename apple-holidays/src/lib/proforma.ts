@@ -85,7 +85,7 @@ function toHit(b: {
   quotedTotal: unknown
   dealName: string | null
   tourDestination: string | null
-  passengers?: { fullName: string }[]
+  passengers?: { name: string }[]
 }): BookingHit {
   return {
     id: b.id,
@@ -100,7 +100,7 @@ function toHit(b: {
     paxChildren: b.paxChildren,
     currency: b.currency,
     quotedTotal: b.quotedTotal == null ? null : Number(b.quotedTotal),
-    leadGuest: b.passengers?.[0]?.fullName ?? null,
+    leadGuest: b.passengers?.[0]?.name ?? null,
     dealName: b.dealName,
     tourDestination: b.tourDestination,
   }
@@ -111,7 +111,7 @@ const HIT_SELECT = {
   operationCountry: true, arrivalDate: true, departureDate: true,
   paxAdults: true, paxChildren: true, currency: true, quotedTotal: true,
   dealName: true, tourDestination: true,
-  passengers: { select: { fullName: true }, orderBy: { id: 'asc' }, take: 1 },
+  passengers: { select: { name: true }, orderBy: [{ isLead: 'desc' }, { id: 'asc' }], take: 1 },
 } as const
 
 /**

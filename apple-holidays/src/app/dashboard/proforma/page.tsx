@@ -134,7 +134,7 @@ export default function ProformaInvoicePage() {
       paidCount: paid.length,
       hotels: view?.hotels.filter(h => !h.ownArrangement).length ?? 0,
       covered: view?.hotels.filter(h => !h.ownArrangement && h.invoices.some(i => i.status !== 'VOID')).length ?? 0,
-      byCurrency: [...byCurrency.entries()],
+      byCurrency: Array.from(byCurrency.entries()),
     }
   }, [view])
 

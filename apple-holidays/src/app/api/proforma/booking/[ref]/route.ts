@@ -32,7 +32,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
       status: true, operationCountry: true, arrivalDate: true, departureDate: true,
       paxAdults: true, paxChildren: true, currency: true, quotedTotal: true,
       dealName: true, tourDestination: true, fileHandler: true,
-      passengers: { select: { fullName: true }, orderBy: { id: 'asc' }, take: 1 },
+      passengers: { select: { name: true }, orderBy: [{ isLead: 'desc' }, { id: 'asc' }], take: 1 },
       accommodations: {
         select: {
           id: true, hotel: true, city: true, checkIn: true, checkOut: true,
@@ -81,7 +81,7 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
       paxChildren: booking.paxChildren,
       currency: booking.currency,
       quotedTotal: booking.quotedTotal == null ? null : Number(booking.quotedTotal),
-      leadGuest: booking.passengers[0]?.fullName ?? null,
+      leadGuest: booking.passengers[0]?.name ?? null,
       dealName: booking.dealName,
       tourDestination: booking.tourDestination,
       fileHandler: booking.fileHandler,
