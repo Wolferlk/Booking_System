@@ -139,7 +139,8 @@ async function handleSend(
         return buildApiSuccess({ sent: true, via: 'template', waMessageId: sent.waMessageId })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        return buildApiError(`WhatsApp send failed: ${msg}`, 502)
+        // 422, not 5xx — the proxy eats a 5xx body, and this message names the fix.
+        return buildApiError(`WhatsApp send failed: ${msg}`, 422)
       }
     }
 
