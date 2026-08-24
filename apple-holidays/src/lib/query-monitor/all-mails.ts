@@ -234,7 +234,7 @@ export function buildAllMailsRow(
 }
 
 /**
- * Every mail in the window, newest first, as rows.
+ * Every mail in the window, oldest first, as rows.
  *
  * Three reads, not one per row: the log for the window, the entries those rows
  * name, and the roots the merged ones point at. A join in SQL would be tidier
@@ -260,11 +260,14 @@ export async function getAllMailsReport(days?: number): Promise<AllMailsReport> 
   // column on the query sheet — so Usefull mail can never disagree with it.
   const rules = await listActiveSenderRules()
 
-  const mails = await prisma.queryMonitorMail.findMany({
+  // Newest-first in SQL so the row ceiling drops the *oldest* mail when the
+  // window holds more than the tab can carry, then reversed below: the tab
+  // reads oldest at the top, newest at the bottom, like a ledger.
+  const mails = (await prisma.queryMonitorMail.findMany({
     where:   { receivedAt: { gte: from } },
     orderBy: { receivedAt: 'desc' },
     take:    MAX_ALL_MAILS_ROWS,
-  })
+  })).reverse()
 
   const entries = await prisma.queryMonitorEntry.findMany({
     where:  { dedupKey: { in: mails.map(m => m.dedupKey) } },

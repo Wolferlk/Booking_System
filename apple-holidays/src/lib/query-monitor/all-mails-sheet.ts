@@ -187,7 +187,7 @@ function compose(report: AllMailsReport, timezone: string): { cells: Cell[][]; f
     + (report.truncated > 0
       ? ` — the oldest ${report.truncated} are not shown, the tab holds ${MAX_ALL_MAILS_ROWS} rows`
       : '')
-    + '. One row per mail, newest first — the same subject four times is four mails. '
+    + '. One row per mail, oldest first — the same subject four times is four mails. '
     + 'Rewritten in full after every sweep — do not edit this tab.',
   ])
   push([...ALL_MAILS_SHEET_COLUMNS])
