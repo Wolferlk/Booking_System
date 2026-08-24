@@ -161,19 +161,18 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
   // Reservation Team — the hotel-supplier desk. The Deadline Board is the home
   // page rather than the generic dashboard: everything this team owns has a
   // clock on it, and that is the screen that shows the clocks.
+  // Reservation Team. Deliberately short: the Deadline Board, the flat
+  // reservations list, Contracts & Rates, the reservation-side Proforma
+  // Invoices and Credit Notes, Pre-checking, the MC Report and the WhatsApp
+  // inbox were all removed from this desk — see RS_BLOCKED_PAGES in
+  // middleware.ts, which keeps the routes unreachable rather than merely
+  // unlisted. Other roles keep every one of those pages.
   RS_USER: [
-    { label: 'Deadline Board',   href: '/dashboard/reservations',              icon: 'Gauge' },
+    { label: 'Confirm Booking Hotels', href: '/dashboard/confirm-hotels',      icon: 'CalendarCheck2' },
     { label: 'Request Inbox',    href: '/dashboard/reservations/requests',     icon: 'Inbox' },
-    { label: 'Reservations',     href: '/dashboard/reservations/list',         icon: 'BedDouble' },
-    { label: 'Proforma Invoice', href: '/dashboard/proforma',                 icon: 'ReceiptText' },
     { label: 'Hotels & Rates',   href: '/dashboard/reservations/hotels',       icon: 'Building2' },
-    { label: 'Contracts & Rates',href: '/dashboard/reservations/contracts',    icon: 'FileSpreadsheet' },
-    { label: 'Proforma Invoices',href: '/dashboard/reservations/invoices',     icon: 'ReceiptText' },
-    { label: 'Credit Notes',     href: '/dashboard/reservations/credit-notes', icon: 'FileMinus2' },
-    { label: 'Pre-checking',     href: '/dashboard/precheck',                  icon: 'CalendarCheck2' },
+    { label: 'Proforma Invoice', href: '/dashboard/proforma',                  icon: 'ReceiptText' },
     { label: 'All Bookings',     href: '/dashboard/bookings',                  icon: 'FileText' },
-    { label: 'MC Report',        href: '/dashboard/mc-report',                 icon: 'Table2' },
-    { ...WHATSAPP_NAV_ITEM },
   ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
@@ -553,7 +552,7 @@ export default function Sidebar() {
     if (!role || role === 'CLIENT') return items
     return [...items, CHAT_NAV_ITEM]
   }, [role])
-  const { countryFilter, setCountryFilter, canFilter } = useCountryFilter()
+  const { countryFilter, setCountryFilter, canFilter, allowedCountries } = useCountryFilter()
   const { isCollapsed, isPinned, isMobileOpen, toggleCollapse, setHovered, closeMobile } = useSidebar()
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -819,7 +818,7 @@ export default function Sidebar() {
                 Country Filter
               </p>
               <div className="grid grid-cols-4 gap-1">
-                {COUNTRY_PILLS.map(pill => (
+                {COUNTRY_PILLS.filter(p => allowedCountries.includes(p.value)).map(pill => (
                   <button
                     key={pill.value}
                     onClick={() => setCountryFilter(pill.value)}
