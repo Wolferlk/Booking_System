@@ -187,7 +187,7 @@ export default function BookingDetailPage() {
   const [waMessage, setWaMessage] = useState('')
   const [waAttachPdf, setWaAttachPdf] = useState(true)
   const [waSending, setWaSending] = useState(false)
-  const [waOpenerSending, setWaOpenerSending] = useState(false)
+  const [waNote, setWaNote] = useState('')
   const [waPdfType, setWaPdfType] = useState<'confirmation' | 'full'>('confirmation')
   // Attachment file format — the same document rendered as PDF or Word (.docx).
   const [waFileFormat, setWaFileFormat] = useState<'pdf' | 'word'>('pdf')
@@ -1202,6 +1202,43 @@ Wishing you a wonderful trip! ✈️
     }
   }
 
+  /**
+   * What the customer will actually receive. The body is fixed by the approved
+   * `aahaas_booking_details` template — this mirrors it so the desk sees the real
+   * message rather than one it can no longer edit. Keep in step with
+   * lib/booking-details-template.ts.
+   */
+  function waTemplatePreview(): string {
+    const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
+    const d = (v: unknown) => v ? new Date(v as string).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+    const from = d(booking.arrivalDate), to = d(booking.departureDate)
+    const dates = from && to ? (from === to ? from : `${from} to ${to}`) : (from || to || '-')
+    const a = Number(booking.paxAdults ?? 0), c = Number(booking.paxChildren ?? 0), i = Number(booking.paxInfants ?? 0)
+    const pax = [
+      a ? `${a} Adult${a === 1 ? '' : 's'}` : '',
+      c ? `${c} Child${c === 1 ? '' : 'ren'}` : '',
+      i ? `${i} Infant${i === 1 ? '' : 's'}` : '',
+    ].filter(Boolean).join(', ') || '-'
+    const attached = waPdfType === 'full' ? 'Full Tour Details & Vouchers (PDF)' : 'Tour Confirmation (PDF)'
+    const note = waNote.trim() || 'Thank you for booking with AppleHolidays.'
+
+    return [
+      '*AppleHolidays - Booking Details*',
+      '',
+      `Hello ${lead?.name ?? 'Guest'}, please find the attached documents for your booking ${(booking.isNumber as string) || ref}.`,
+      '',
+      `Travel dates: ${dates}`,
+      `Passengers: ${pax}`,
+      `Attached: ${attached}`,
+      '',
+      note,
+      '',
+      'Please review the attachment and reply to this message if anything needs to be corrected.',
+      '',
+      'AppleHolidays Operations',
+    ].join('\n')
+  }
+
   function switchWaPdfType(type: 'confirmation' | 'full') {
     const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
     const firstName = (lead?.name ?? 'Guest').split(' ')[0]
@@ -1220,6 +1257,9 @@ Wishing you a wonderful trip! ✈️
         body: JSON.stringify({
           to:        waPhone.replace(/\D/g, ''),
           name:      lead?.name ?? 'Guest',
+          // The template body is fixed; only the note ({{6}}) is the desk's own
+          // words. `message` is read solely on the free-form fallback path.
+          note:      waNote.trim() || undefined,
           message:   waMessage,
           attachPdf:  waAttachPdf,
           pdfType:    waPdfType,
@@ -1228,40 +1268,12 @@ Wishing you a wonderful trip! ✈️
       })
       const json = await readApiResponse(res)
       if (!json.success) throw new Error(json.error)
-      const queued = json.data?.queued === true
-      toast.success(json.message || (queued ? 'Queued — will send when the customer replies.' : 'Sent!'))
+      toast.success(json.message || 'Sent!')
       await loadWaQueue()
-      // On a queued send keep the modal open so the queue indicator is visible;
-      // on an immediate delivery, close it.
-      if (!queued) setWaModal(false)
+      setWaModal(false)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Send failed')
     } finally { setWaSending(false) }
-  }
-
-  // Cold-customer opener: WhatsApp won't deliver the free-form confirmation + PDF
-  // unless the customer has messaged us in the last 24h. This sends the approved
-  // "please reply to us" template (delivers outside the window); once the customer
-  // replies, the 24h window opens and the Tour Confirmation can be sent normally.
-  async function sendWhatsAppOpener() {
-    if (!waPhone.trim()) { toast.error('Enter the client phone number'); return }
-    setWaOpenerSending(true)
-    try {
-      const lead = (booking.passengers ?? []).find((p: { isLead: boolean; name: string }) => p.isLead) ?? (booking.passengers ?? [])[0]
-      const res = await fetch(`/api/bookings/${ref}/whatsapp-opener`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to:   waPhone.replace(/\D/g, ''),
-          name: lead?.name ?? 'Guest',
-        }),
-      })
-      const json = await res.json()
-      if (!json.success) throw new Error(json.error)
-      toast.success('Reply request sent. Once the customer replies, send the confirmation.')
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Send failed')
-    } finally { setWaOpenerSending(false) }
   }
 
   // Tour Confirmations queued (waiting for the customer to reply) for this booking.
@@ -3900,37 +3912,62 @@ Wishing you a wonderful trip! ✈️
             />
           </div>
 
-          {/* Cold-customer handling. If the customer hasn't messaged in 24h,
-              "Send Tour Confirmation" now AUTO-sends a reply request and queues
-              the confirmation (it delivers the moment they reply). The button
-              below is an optional way to send just the reply request now. */}
-          <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 space-y-2">
-            <p className="text-xs text-blue-800 leading-relaxed">
-              <strong>Outside the 24h window?</strong> No problem — sending the confirmation will
-              automatically send the customer a reply request and <strong>queue</strong> your message;
-              it delivers the moment they reply. Or send just a reply request now:
-            </p>
-            <Button
-              variant="secondary"
-              loading={waOpenerSending}
-              icon={<Send className="w-4 h-4" />}
-              onClick={sendWhatsAppOpener}
-              className="border-blue-300 text-blue-700"
-            >
-              {waOpenerSending ? 'Sending…' : 'Send reply request'}
-            </Button>
+          {/* How this delivers. A template lands cold, so nothing waits on the
+              customer replying first — but Meta only carries a PDF in a template
+              header, so Word still needs the 24h window. */}
+          <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
+            {waAttachPdf && waFileFormat === 'pdf' ? (
+              <p className="text-xs text-green-800 leading-relaxed">
+                <strong>Sends immediately.</strong> This goes out on the approved WhatsApp Business
+                template <code className="font-mono">aahaas_booking_details</code> with the PDF attached, so it
+                reaches the customer whether or not they have messaged us in the last 24 hours.
+              </p>
+            ) : (
+              <p className="text-xs text-amber-800 leading-relaxed">
+                <strong>{waAttachPdf ? 'Word files' : 'Messages with no attachment'} can&apos;t use the template.</strong>{' '}
+                WhatsApp only carries a PDF in a template attachment, so this send only reaches a customer who has
+                messaged us in the last 24 hours. {waAttachPdf ? 'Switch the format to PDF' : 'Attach the PDF'} to
+                send it to anyone, any time.
+              </p>
+            )}
           </div>
 
-          {/* Message */}
-          <div>
-            <label className="form-label">Message</label>
-            <textarea
-              className="form-textarea font-mono text-xs"
-              rows={13}
-              value={waMessage}
-              onChange={e => setWaMessage(e.target.value)}
-            />
-          </div>
+          {/* Message. On the template path the body is fixed at approval time —
+              the desk writes one line ({{6}}) and previews the rest. */}
+          {waAttachPdf && waFileFormat === 'pdf' ? (
+            <div className="space-y-2">
+              <div>
+                <label className="form-label">Your note to the customer (optional)</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  maxLength={280}
+                  placeholder="e.g. Your airport pickup is confirmed — the driver will call you on arrival."
+                  value={waNote}
+                  onChange={e => setWaNote(e.target.value.replace(/[\r\n\t]+/g, ' '))}
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  One line, inside the approved template. Everything else is filled from the booking.
+                </p>
+              </div>
+              <div>
+                <label className="form-label">Message the customer receives</label>
+                <pre className="form-textarea font-mono text-xs whitespace-pre-wrap bg-slate-50 text-slate-600 max-h-64 overflow-y-auto">
+                  {waTemplatePreview()}
+                </pre>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <label className="form-label">Message</label>
+              <textarea
+                className="form-textarea font-mono text-xs"
+                rows={13}
+                value={waMessage}
+                onChange={e => setWaMessage(e.target.value)}
+              />
+            </div>
+          )}
 
           {/* Attachment toggle + file format */}
           <div className="flex items-center justify-between gap-3 flex-wrap">

@@ -1,16 +1,21 @@
 /**
- * Window-aware Tour Confirmation delivery.
+ * Free-form Tour Confirmation delivery, and the tail of the old queue.
  *
- * WhatsApp only delivers a free-form message + PDF inside the customer's 24h
- * service window (i.e. they messaged us in the last 24h). So a "Send Tour
- * Confirmation" click does one of two things:
+ * The live path for sending a customer their booking documents is now the
+ * approved `aahaas_booking_details` TEMPLATE — see `booking-details-template.ts`.
+ * A template delivers cold, so the 24h customer-service window no longer decides
+ * whether a confirmation reaches anybody.
  *
- *   • window OPEN  → deliver the confirmation (text + PDF) right now.
- *   • window CLOSED → send the approved opener template (which DOES deliver cold)
- *                     and QUEUE the confirmation as a `pending` row. When the
- *                     customer replies, the inbound webhook calls
- *                     flushPendingConfirmations() and the queued confirmation goes
- *                     out as normal free-form.
+ * What is still here, and why:
+ *
+ *   • buildBookingPdf() / deliverConfirmationNow() — the free-form send. It is
+ *     the only way to put a Word file or a bare message in front of a customer,
+ *     and both need the 24h window, which the callers check and say so.
+ *   • flushPendingConfirmations() — drains rows queued by the OLD opener-and-wait
+ *     flow. Nothing queues any more, but rows queued before the change must still
+ *     go out when their customer replies.
+ *   • sendOpenerAndQueue() — DEPRECATED, no longer called. Kept only so the queue
+ *     format above has one written definition.
  *
  * The queue reuses the existing whatsapp_messages table (no migration): a pending
  * outbound row stores the message in `body` and the attachment in `mediaType`
@@ -163,9 +168,13 @@ export async function deliverConfirmationNow(p: ConfirmationSend): Promise<void>
 }
 
 /**
+ * DEPRECATED — nothing calls this. Booking documents now go out on the
+ * `aahaas_booking_details` template, which delivers cold, so there is no reason
+ * to ask a customer to reply before they can be sent their own confirmation.
+ *
  * Window closed: send the approved opener template (delivers cold) and QUEUE the
- * confirmation as a `pending` row. It is flushed by flushPendingConfirmations()
- * the moment the customer replies.
+ * confirmation as a `pending` row, flushed by flushPendingConfirmations() the
+ * moment the customer replies.
  */
 export async function sendOpenerAndQueue(p: ConfirmationSend): Promise<void> {
   const phone     = normalisePhone(p.to)

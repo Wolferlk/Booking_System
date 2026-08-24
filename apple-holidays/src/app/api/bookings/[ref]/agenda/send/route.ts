@@ -3,7 +3,8 @@
  *
  * Generates the movement-chart agenda as a PDF or a Word (.docx) file and:
  *   mode = 'download' → returns the file as binary
- *   mode = 'whatsapp' → sends via WhatsApp (Meta API / proxy)
+ *   mode = 'whatsapp' → sends via the approved `aahaas_booking_details` WhatsApp
+ *                       template, so it delivers outside the 24h window
  *   mode = 'email'    → sends via Microsoft Graph email
  *
  * Body:
@@ -21,13 +22,11 @@ import { generateAgendaPdf } from '@/lib/generate-agenda-pdf'
 import { generateAgendaDocx } from '@/lib/generate-agenda-docx'
 import { AGENDA_INCLUDE, buildAgendaEmailHtml, buildAgendaFileName } from '@/lib/agenda-mailer'
 import { sendMailViaGraph } from '@/lib/send-mail'
-import { putUpload } from '@/lib/storage'
+import { sendBookingDocTemplate } from '@/lib/booking-details-template'
+import { isWithin24hWindow, sendViaMetaApi } from '@/lib/whatsapp'
 
 export const dynamic    = 'force-dynamic'
 export const maxDuration = 120
-
-const META_API_VERSION = process.env.WHATSAPP_API_VERSION?.trim() || 'v20.0'
-const WHATSAPP_PROXY   = 'https://travel-parser-live.aahaas.com/v1/notify/whatsapp'
 
 // ── Route handler ─────────────────────────────────────────────────────────────
 
@@ -77,7 +76,7 @@ async function handleSend(
   const agendaItems = (booking.tourAgenda as { items: unknown[] } | null)?.items ?? []
 
   // ── Generate the document (full-detail layout matching the manual downloads) ─
-  const driverTag   = showDrivers ? 'WithDrivers' : 'NoDrivers'
+  const senderName  = session.user.name ?? session.user.email ?? 'Staff'
   const filename    = buildAgendaFileName(booking as never, isWord ? 'docx' : 'pdf')
   const contentType = isWord
     ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -111,88 +110,62 @@ async function handleSend(
   }
 
   // ── WhatsApp ──────────────────────────────────────────────────────────────
+  // Through the approved `aahaas_booking_details` template, with the movement
+  // chart in its DOCUMENT header, so it delivers whether or not the customer
+  // has messaged us in the last 24 hours. Meta accepts only a PDF in a template
+  // header, so a Word send still needs the 24h window and says so.
   if (mode === 'whatsapp') {
     // Normalise to digits only — "+91 7715805191" → "917715805191".
     const normPhone = (to ?? '').replace(/\D/g, '')
     if (!normPhone) return buildApiError('WhatsApp number required', 400)
 
-    const accessToken   = process.env.WHATSAPP_ACCESS_TOKEN?.trim()
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim()
-    const waMessage     = message ?? `📋 Movement Chart — ${params.ref}\n\nPlease find the attached agenda ${isWord ? 'Word document' : 'PDF'} for your reference.`
+    const baseUrl = (
+      process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+      process.env.APP_URL?.trim() ||
+      req.nextUrl.origin
+    ).replace(/\/+$/, '')
 
-    // Try Meta API first. Wrapped so a Graph/network failure returns JSON, not an empty body.
-    if (accessToken && phoneNumberId) {
+    if (!isWord) {
       try {
-        const baseWaUrl = `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}`
-        const headers   = { Authorization: `Bearer ${accessToken}` }
-
-        // Send text
-        await fetch(`${baseWaUrl}/messages`, {
-          method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: normPhone,
-            type: 'text',
-            text: { body: waMessage },
-          }),
+        const sent = await sendBookingDocTemplate({
+          bookingRef:    params.ref,
+          to:            normPhone,
+          document:      { buffer: docBuffer, filename, mimeType: contentType },
+          attachedLabel: `Movement Chart${showDrivers ? ' with driver allocation' : ''} (PDF)`,
+          note:          message,
+          senderName,
+          baseUrl,
         })
-
-        // Upload PDF and send document
-        const mediaForm = new FormData()
-        mediaForm.append('messaging_product', 'whatsapp')
-        const docBlob = new Blob([new Uint8Array(docBuffer)], { type: contentType })
-        mediaForm.append('file', docBlob, filename)
-        const uploadRes  = await fetch(`${baseWaUrl}/media`, { method: 'POST', headers, body: mediaForm })
-        const uploadJson = await uploadRes.json() as { id?: string }
-
-        if (uploadJson.id) {
-          await fetch(`${baseWaUrl}/messages`, {
-            method: 'POST',
-            headers: { ...headers, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              messaging_product: 'whatsapp',
-              to: normPhone,
-              type: 'document',
-              document: { id: uploadJson.id, filename, caption: `Agenda — ${params.ref}` },
-            }),
-          })
-        }
-
-        return buildApiSuccess({ sent: true, via: 'meta' })
+        return buildApiSuccess({ sent: true, via: 'template', waMessageId: sent.waMessageId })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        return buildApiError(`WhatsApp send failed: ${msg}`, 500)
+        return buildApiError(`WhatsApp send failed: ${msg}`, 502)
       }
     }
 
-    // Fallback: proxy — needs a public file URL, so store the PDF first (S3 → local disk).
-    try {
-      const storedName = `${driverTag}-${filename}`
-      const storedPath = await putUpload(`whatsapp/${storedName}`, docBuffer, contentType)
-      const baseUrl = (
-        process.env.NEXT_PUBLIC_APP_URL?.trim() ||
-        process.env.APP_URL?.trim() ||
-        req.nextUrl.origin
-      ).replace(/\/+$/, '')
-      const fileUrl = `${baseUrl}${storedPath}`
+    // Word: no template can carry it, so it only reaches a customer whose 24h
+    // window is open. Say so rather than reporting a send Meta silently drops.
+    const waMessage = message ?? `📋 Movement Chart — ${params.ref}\n\nPlease find the attached agenda Word document for your reference.`
+    if (!(await isWithin24hWindow(normPhone))) {
+      return buildApiError(
+        'WhatsApp only accepts a PDF in a template attachment, and this number has not messaged us in the last ' +
+        '24 hours, so a Word file cannot be delivered. Switch the format to PDF to send it now.',
+        409,
+      )
+    }
 
-      const proxyRes = await fetch(WHATSAPP_PROXY, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to: normPhone, message: waMessage, fileUrl, filename }),
+    try {
+      const sent = await sendViaMetaApi({
+        to:      normPhone,
+        message: waMessage,
+        media:   { buffer: docBuffer, filename, kind: 'document', caption: `Agenda — ${params.ref}` },
       })
-      let proxyJson: { success?: boolean } = {}
-      try { proxyJson = await proxyRes.json() as { success?: boolean } } catch { /* non-JSON body */ }
-      if (!proxyJson.success && !proxyRes.ok) {
-        return buildApiError(`WhatsApp proxy failed (${proxyRes.status})`, 500)
-      }
+      if (!sent) return buildApiError('WhatsApp is not configured on this server.', 500)
+      return buildApiSuccess({ sent: true, via: 'freeform' })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return buildApiError(`WhatsApp send failed: ${msg}`, 500)
     }
-
-    return buildApiSuccess({ sent: true, via: 'proxy' })
   }
 
   // ── Email ─────────────────────────────────────────────────────────────────
