@@ -117,8 +117,12 @@ export async function POST(
     })
     return buildApiSuccess({ delivered: true, channel: 'freeform' }, `WhatsApp ${docLabel} sent to ${to}`)
   } catch (err) {
+    // 422, not 502: a send that Meta refused is this request's problem, not an
+    // upstream outage — and the proxy in front of us replaces a 5xx body with its
+    // own HTML error page, which strips the one sentence telling the desk what to
+    // fix (an unregistered template, a number not on WhatsApp).
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[WhatsApp] send failed:', msg)
-    return buildApiError(msg, 502)
+    return buildApiError(msg, 422)
   }
 }
