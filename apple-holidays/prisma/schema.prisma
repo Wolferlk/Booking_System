@@ -2184,6 +2184,75 @@ model SlSettlementDoc {
   @@map("sl_settlement_docs")
 }
 
+/// One WhatsApp delivery of driver paperwork — and every status Meta has
+/// reported about it since.
+///
+/// A send that returned 200 is not a send that arrived: Meta accepts the call
+/// and only afterwards decides that the number was never on WhatsApp, that the
+/// template is unapproved, that the 24-hour window had shut. So the answer to
+/// "did the driver actually get it" is the delivery receipt, and the receipt
+/// needs a send to attach itself to.
+///
+/// One row per WhatsApp message, because WhatsApp carries one document per
+/// message: the settlement pack and the booking sheet are two rows, and the
+/// standing ops copy is a third pointing back at the first via `copyOfId`.
+/// `whatsapp_messages` still logs the message itself — this is the operations
+/// record beside it, kept separate so the chat history stays a chat history.
+/// Deliberately no FK to `bookings`: keyed by ref, and the evidence that a
+/// driver was handed documents outlives the booking row.
+model DriverDocSend {
+  id         String @id @default(cuid())
+  bookingRef String
+
+  /// 'settlement' (the signed-back pack) or 'booking' (the booking details sheet).
+  kind String @db.VarChar(32)
+
+  /// 'driver' for the real recipient, 'copy' for the shadow send to the standing
+  /// ops number.
+  audience String @default("driver") @db.VarChar(16)
+
+  driverId   String?
+  driverName String?
+  phone      String  @db.VarChar(32)
+
+  /// 'template' outside the 24h window, 'freeform' inside it. A run of template
+  /// sends that never reach `delivered` is a template problem, not a driver one.
+  channel String? @db.VarChar(16)
+
+  docs     String? @db.VarChar(255)
+  filename String? @db.VarChar(255)
+  mediaUrl String? @db.Text
+  body     String? @db.Text
+
+  waMessageId String?
+
+  /// pending → sent → delivered → read, or failed at any point.
+  status        String  @default("pending") @db.VarChar(24)
+  failureReason String? @db.Text
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+
+  copyOfId  String?
+  copyLabel String?
+
+  sentById   String?
+  sentByName String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([bookingRef])
+  @@index([waMessageId])
+  @@index([phone, createdAt])
+  @@index([status])
+  @@index([createdAt])
+  @@index([copyOfId])
+  @@map("sl_driver_doc_sends")
+}
+
 /// The Sri Lankan entrance-ticket rate card — one row per attraction, the adult
 /// and child gate price the desk currently settles at. Shared across every
 /// booking: a Tour Settlement sheet starts from these figures so a handler is

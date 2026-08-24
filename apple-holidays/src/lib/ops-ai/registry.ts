@@ -143,7 +143,6 @@ export const NAVIGABLE_ROUTES: { path: string; label: string; hint: string }[] =
   { path: '/dashboard/te/reminders',          label: 'Reminders',        hint: 'Scheduled reminders' },
   { path: '/dashboard/te/payments',           label: 'Payments',         hint: 'Customer payment records' },
   // { path: '/dashboard/te/tickets',            label: 'Tickets & Vouchers',hint: 'Voucher tracking' },
-  { path: '/dashboard/driver-log',            label: 'Driver Logs',      hint: 'Driver trip logs' },
   { path: '/dashboard/mc-report',             label: 'MC Report',        hint: 'Movement control report' },
   { path: '/dashboard/srilanka/driver-allocation', label: 'SL Driver Allocation', hint: 'Sri Lanka driver allocation board' },
   { path: '/dashboard/srilanka/drive-log',    label: 'SL Drive Log',     hint: 'Sri Lanka transport cost, driver advance and settlement' },

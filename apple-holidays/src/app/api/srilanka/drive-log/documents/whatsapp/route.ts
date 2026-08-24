@@ -29,6 +29,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { normaliseSriLankanPhone } from '@/lib/sl-phone'
+import { readDriverDocCopy } from '@/lib/sl-driver-doc-copy'
 import { sendSettlementDocs } from '@/lib/sl-settlement-docs-notify'
 import { derivePack, packForPrint } from '@/lib/sl-settlement-docs-server'
 import { DOC_KINDS, parseDocKinds, parsePack } from '@/lib/sl-settlement-docs'
@@ -40,6 +41,16 @@ export const maxDuration = 60
 
 const canSend = (role: UserRole) =>
   hasPermission(role, 'assignment:edit') || hasPermission(role, 'pnl:view_profit')
+
+/**
+ * Who may repoint the standing copy.
+ *
+ * Narrower than who may send, and deliberately: the copy is the company's
+ * record of what left the building, and a desk that can move it is a desk that
+ * can quietly stop keeping one.
+ */
+const canEditCopy = (role: UserRole) =>
+  role === 'SUPER_ADMIN' || role === 'ULTRA_SUPER_ADMIN'
 
 function refOf(req: NextRequest): string | null {
   const ref = (req.nextUrl.searchParams.get('ref') ?? '').trim()
@@ -63,6 +74,11 @@ export async function GET(req: NextRequest) {
     const stored = pack.header.driverPhone
     const phone  = normaliseSriLankanPhone(stored)
 
+    // Where the second copy goes. Shown before the send, not after: a desk that
+    // learns about the audit copy from someone else's chat has been surprised
+    // by its own system.
+    const copy = await readDriverDocCopy()
+
     return buildApiSuccess({
       driverName: pack.header.driverName || null,
       vehicle:    [pack.header.vehicleType, pack.header.vehiclePlate].filter(Boolean).join(' · ') || null,
@@ -77,6 +93,17 @@ export async function GET(req: NextRequest) {
       },
       docs:    [...DOC_KINDS],
       canSend: canSend(role),
+      copyContact: {
+        enabled: copy.enabled,
+        active:  copy.active,
+        label:   copy.label,
+        /** As an admin typed it, so the editor opens on the stored text. */
+        phone:   copy.phone,
+        pretty:  copy.pretty,
+        msisdn:  copy.msisdn,
+        reason:  copy.reason,
+        canEdit: canEditCopy(role),
+      },
     })
   } catch (err) {
     console.error('[drive-log/documents/whatsapp GET]', err)
@@ -96,7 +123,11 @@ export async function POST(req: NextRequest) {
   const ref = refOf(req)
   if (!ref) return buildApiError('A booking reference is required.', 400)
 
-  let body: { pack?: unknown; docs?: string; phone?: string; includeBooking?: boolean }
+  let body: {
+    pack?: unknown; docs?: string; phone?: string; includeBooking?: boolean
+    /** The allocated driver, when the caller knows it — filed on the delivery receipt. */
+    driverId?: string
+  }
   try {
     body = await req.json()
   } catch {
@@ -117,6 +148,8 @@ export async function POST(req: NextRequest) {
       kinds,
       phoneOverride: typeof body.phone === 'string' ? body.phone : null,
       includeBooking: body.includeBooking === true,
+      driverId:      typeof body.driverId === 'string' && body.driverId ? body.driverId : null,
+      sentById:      session.user.id ?? null,
       sentBy:        session.user.name ?? session.user.email ?? null,
     })
 

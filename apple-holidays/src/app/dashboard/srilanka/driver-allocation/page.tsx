@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
+import Link from 'next/link'
 import { toast } from 'sonner'
 import {
   Car, Truck, Search, X, ChevronDown, CheckCircle2, AlertTriangle,
@@ -11,8 +12,10 @@ import {
   ArrowRight, ArrowUpDown, ArrowUp, ArrowDown, Filter, SlidersHorizontal,
   Eye, EyeOff, Palmtree,
   Wallet, Banknote, Calculator, PencilLine, History, ShieldCheck, MinusCircle,
+  MessagesSquare,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
+import { DriverChatDock, type DriverChatTarget } from '../drive-log/DriverChatDock'
 import { cn } from '@/lib/utils'
 import {
   HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver, resolveIsHotelOnly,
@@ -1252,6 +1255,19 @@ export default function SriLankaDriverAllocationPage() {
   const [sortBy, setSortBy]   = useState<SortField>('arrivalDate')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
+  /**
+   * The two Sri Lankan transport screens, joined up.
+   *
+   * The board allocates the driver; the Drive Log settles him. It is the same
+   * person doing both, minutes apart, about the same booking — so each row
+   * carries a link straight to its own line on the other screen, and the chat
+   * dock the Drive Log uses opens here too rather than being a thing you have
+   * to go somewhere else to do.
+   */
+  const [chatTarget, setChatTarget] = useState<DriverChatTarget | null>(null)
+  /** A booking arrived at by link — held so its row can announce itself. */
+  const [highlightRef, setHighlightRef] = useState<string | null>(null)
+
   // Modals
   const [detailBooking, setDetailBooking] = useState<SLBooking | null>(null)
   const [assignBooking, setAssignBooking] = useState<SLBooking | null>(null)
@@ -1291,6 +1307,23 @@ export default function SriLankaDriverAllocationPage() {
     } finally {
       setLoading(false); setRefreshing(false)
     }
+  }, [])
+
+  /**
+   * Arriving from the Drive Log on one booking.
+   *
+   * The reference goes into the search box — where the operator can see it and
+   * clear it — rather than being applied as a hidden filter, and the active-only
+   * switch comes off so a file that has already departed is still found. Read
+   * from `window.location` rather than `useSearchParams` so this page needs no
+   * Suspense boundary for one optional parameter.
+   */
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get('ref')?.trim()
+    if (!ref) return
+    setSearch(ref)
+    setActiveOnly(false)
+    setHighlightRef(ref)
   }, [])
 
   const fetchDriversAndVendors = useCallback(async () => {
@@ -1816,6 +1849,10 @@ export default function SriLankaDriverAllocationPage() {
                     return (
                       <tr key={b.id} className={cn('transition-colors group',
                         i % 2 === 0 ? 'bg-transparent' : 'bg-slate-900/30',
+                        // The row that was linked to, so a deep link lands on
+                        // something the eye finds without reading the table.
+                        (b.bookingRef === highlightRef || b.isNumber === highlightRef) &&
+                          'ring-1 ring-inset ring-teal-500/50 bg-teal-500/[0.06]',
                         status === 'emergency' && 'bg-red-500/3',
                         status === 'assigned'  && 'bg-emerald-500/2',
                         // Amber throughout for a booking-level Hotel Only file,
@@ -1844,6 +1881,34 @@ export default function SriLankaDriverAllocationPage() {
                               <Building2 className="w-2.5 h-2.5" /> Hotel Only Booking
                             </span>
                           )}
+
+                          {/* The other half of this booking's transport life.
+                              The Drive Log settles what this board allocates,
+                              and the driver is reachable from either. */}
+                          <div className="flex items-center gap-1 mt-1.5">
+                            <Link
+                              href={`/dashboard/srilanka/drive-log?ref=${encodeURIComponent(b.bookingRef)}`}
+                              title="Open this file on the Drive Log — cost, advance, balance and the settlement paperwork"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-700/60 bg-slate-800/50 text-[9px] font-bold text-slate-400 hover:text-yellow-300 hover:border-yellow-500/40 transition-colors"
+                            >
+                              <Wallet className="w-2.5 h-2.5" /> Drive Log
+                            </Link>
+                            {driver?.phone ? (
+                              <button
+                                onClick={() => setChatTarget({
+                                  bookingRef:  b.bookingRef,
+                                  title:       b.isNumber ?? b.bookingRef,
+                                  driverName:  driver.name,
+                                  driverPhone: driver.phone ?? null,
+                                  vehicle:     driver.plate ?? null,
+                                })}
+                                title={`Chat with ${driver.name} on the company WhatsApp number`}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-slate-700/60 bg-slate-800/50 text-[9px] font-bold text-slate-400 hover:text-teal-300 hover:border-teal-500/40 transition-colors"
+                              >
+                                <MessagesSquare className="w-2.5 h-2.5" /> Chat
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
 
                         {/* Client */}
@@ -1979,6 +2044,12 @@ export default function SriLankaDriverAllocationPage() {
       <BookingDetailPanel booking={detailBooking} onClose={() => setDetailBooking(null)} />
       <DriverAssignModal booking={assignBooking} drivers={drivers} vendors={vendors} onClose={() => setAssignBooking(null)} onSave={handleDriverSave} />
       <DriverAdvanceModal booking={advanceBooking} onClose={() => setAdvanceBooking(null)} />
+
+      {/* The same dock the Drive Log uses — one conversation surface for the
+          company, not one per screen. */}
+      {chatTarget ? (
+        <DriverChatDock target={chatTarget} onClose={() => setChatTarget(null)} />
+      ) : null}
     </div>
   )
 }
