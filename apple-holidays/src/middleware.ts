@@ -37,6 +37,39 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/ground/vendors',    // Vehicle vendor management
 ] as const
 
+/**
+ * Reservation Team (`RS_USER`) — pages removed from this desk.
+ *
+ * Deny-listed rather than allow-listed, so RS_USER keeps everything else it
+ * has always reached. These are the pages the desk asked to have taken away:
+ * the Deadline Board and the flat reservations list, Contracts & Rates, the
+ * reservation-side Proforma Invoices and Credit Notes, Pre-checking and the
+ * MC Report — the last two never worked for this role anyway, because neither
+ * `PRECHECK_ROLES` nor the MC Report API includes it.
+ *
+ * Only RS_USER is affected. Every other role keeps all of these pages.
+ * Keep in sync with the RS_USER nav lists in components/layout/sidebar.tsx
+ * and lib/rbac.ts.
+ */
+const RS_BLOCKED_PAGES = [
+  '/dashboard/reservations/list',
+  '/dashboard/reservations/contracts',
+  '/dashboard/reservations/invoices',
+  '/dashboard/reservations/credit-notes',
+  '/dashboard/precheck',
+  '/dashboard/mc-report',
+] as const
+
+/** Where a blocked RS_USER lands instead — the desk's new home page. */
+const RS_HOME = '/dashboard/confirm-hotels'
+
+function isRsPageBlocked(pathname: string): boolean {
+  // The Deadline Board is the /dashboard/reservations index itself. Matched
+  // exactly so the sub-pages that survive (requests, hotels) still resolve.
+  if (pathname === '/dashboard/reservations' || pathname === '/dashboard/reservations/') return true
+  return RS_BLOCKED_PAGES.some(p => pathname === p || pathname.startsWith(`${p}/`))
+}
+
 function isGtVnPageAllowed(pathname: string): boolean {
   if (pathname === '/dashboard') return true
   // Creating bookings is outside the limited scope. The per-booking P&L page is
@@ -70,6 +103,13 @@ export default withAuth(
     // the per-route role checks so the allowed pages can still load their data.
     if (role === 'GT_VN_USER' && pathname.startsWith('/dashboard') && !isGtVnPageAllowed(pathname)) {
       return NextResponse.redirect(new URL('/dashboard', req.url))
+    }
+
+    // Reservation Team — the pages taken off this desk. Page routes only: the
+    // API routes behind them are left alone so nothing another role relies on
+    // changes, and each already runs its own permission check.
+    if (role === 'RS_USER' && isRsPageBlocked(pathname)) {
+      return NextResponse.redirect(new URL(RS_HOME, req.url))
     }
 
     // Non-client users trying to access portal without admin privileges

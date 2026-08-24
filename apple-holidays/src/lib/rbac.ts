@@ -355,13 +355,14 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Reports',        href: '/dashboard/accounts/reports',   icon: 'Download' },
     { label: 'Proforma Invoice',href: '/dashboard/proforma',           icon: 'ReceiptText' },
   ],
+  // Kept in step with NAV_ITEMS.RS_USER in components/layout/sidebar.tsx and
+  // with RS_BLOCKED_PAGES in middleware.ts.
   RS_USER: [
-    { label: 'Deadline Board',  href: '/dashboard/reservations',              icon: 'Gauge' },
+    { label: 'Confirm Booking Hotels', href: '/dashboard/confirm-hotels',     icon: 'CalendarCheck2' },
     { label: 'Request Inbox',   href: '/dashboard/reservations/requests',     icon: 'Inbox' },
-    { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'BedDouble' },
-    { label: 'Proforma',        href: '/dashboard/reservations/invoices',     icon: 'ReceiptText' },
+    { label: 'Hotels & Rates',  href: '/dashboard/reservations/hotels',       icon: 'Building2' },
     { label: 'Proforma Invoice',href: '/dashboard/proforma',                  icon: 'ReceiptText' },
-    { label: 'Credit Notes',    href: '/dashboard/reservations/credit-notes', icon: 'FileMinus2' },
+    { label: 'All Bookings',    href: '/dashboard/bookings',                  icon: 'FileText' },
   ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
