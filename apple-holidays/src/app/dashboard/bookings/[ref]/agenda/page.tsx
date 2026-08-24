@@ -2487,20 +2487,50 @@ export default function AgendaPage() {
             </div>
           )}
 
+          {/* How a WhatsApp send delivers. The PDF goes out on the approved
+              `aahaas_booking_details` template, which lands cold — Word cannot,
+              because Meta only carries a PDF in a template attachment. */}
+          {sendMode === 'whatsapp' && (
+            <div className={`rounded-xl border px-3 py-2.5 ${sendFormat === 'word' ? 'border-amber-200 bg-amber-50' : 'border-green-200 bg-green-50'}`}>
+              {sendFormat === 'word' ? (
+                <p className="text-xs text-amber-800 leading-relaxed">
+                  <strong>Word can&apos;t use the template.</strong> WhatsApp only carries a PDF in a template
+                  attachment, so a Word send only reaches someone who has messaged us in the last 24 hours.
+                  Switch to PDF to send it to anyone, any time.
+                </p>
+              ) : (
+                <p className="text-xs text-green-800 leading-relaxed">
+                  <strong>Sends immediately.</strong> Goes out on the approved WhatsApp Business template{' '}
+                  <code className="font-mono">aahaas_booking_details</code> with the movement chart attached — no
+                  24-hour window and no waiting for a reply.
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Message */}
           <div>
             <label className="form-label text-xs">
-              {sendMode === 'email' ? 'Extra note (optional)' : 'Message (optional)'}
+              {sendMode === 'email' ? 'Extra note (optional)' : 'Your note to the customer (optional)'}
             </label>
             <textarea
               className="form-textarea resize-none text-sm"
-              rows={3}
+              rows={sendMode === 'email' ? 3 : 2}
+              maxLength={sendMode === 'email' ? undefined : 280}
               value={sendMessage}
-              onChange={e => setSendMessage(e.target.value)}
+              onChange={e => setSendMessage(
+                sendMode === 'email' ? e.target.value : e.target.value.replace(/[\r\n\t]+/g, ' '),
+              )}
               placeholder={sendMode === 'email'
                 ? 'Added on top of the standard tour confirmation message…'
-                : `Add a custom message to include with the agenda ${sendFormat === 'word' ? 'Word file' : 'PDF'}…`}
+                : 'e.g. Your driver details are on page 1 — please check the pickup times.'}
             />
+            {sendMode === 'whatsapp' && sendFormat !== 'word' && (
+              <p className="text-xs text-slate-400 mt-1">
+                One line, inside the approved template. Guest, reference, dates and party size are filled from
+                the booking.
+              </p>
+            )}
           </div>
 
           <div className="flex gap-2 pt-1">
