@@ -38,14 +38,15 @@ import { useSession } from 'next-auth/react'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, ArrowDown, ArrowUp, BadgeCheck, Banknote, CalendarDays, Car, Check, ChevronDown,
-  ChevronRight, Clock, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, Filter,
-  Gauge, Layers, Loader2, MessageCircle, Pencil, Phone, RefreshCw, Search, Send, Sparkles, TrendingDown,
-  TrendingUp, Undo2, User2, Users, Wallet, X, XCircle,
+  AlertTriangle, ArrowDown, ArrowUp, BadgeCheck, Banknote, CalendarDays, Car, Check, CheckCheck,
+  ChevronDown, ChevronRight, Clock, Copy, ExternalLink, FileDown, FileSpreadsheet, FileText, Filter,
+  Gauge, Layers, Loader2, MessageCircle, MessagesSquare, Pencil, Phone, RefreshCw, Search, Send,
+  Sparkles, TrendingDown, TrendingUp, Undo2, User2, Users, Wallet, X, XCircle,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { SettlementDocsDialog } from './SettlementDocsDialog'
 import { SendDocsWhatsAppDialog } from './SendDocsWhatsAppDialog'
+import { DriverChatDock, type DriverChatTarget } from './DriverChatDock'
 import { cn } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { freshness, CATEGORY_TONE } from '@/lib/driver-advance'
@@ -885,14 +886,89 @@ function ActualsDialog({
 
 // ── Row ───────────────────────────────────────────────────────────────────────
 
+/**
+ * What WhatsApp last said about one booking's driver documents.
+ *
+ * Only the driver-facing send decides the row's state — a copy that failed is
+ * a filing problem, not a driver standing at the airport without a name board —
+ * but the copy count travels with it so the desk can see one went at all.
+ */
+interface DeliverySummary {
+  status: string
+  at: string
+  kind: string
+  phone: string
+  driverName: string | null
+  failureReason: string | null
+  total: number
+  copies: number
+  failed: number
+}
+
+const DELIVERY_TONE: Record<string, string> = {
+  pending:   'text-slate-500',
+  sent:      'text-slate-400',
+  delivered: 'text-emerald-400',
+  read:      'text-sky-400',
+  failed:    'text-rose-400',
+}
+
+const DELIVERY_WORD: Record<string, string> = {
+  pending:   'handed to WhatsApp, nothing reported back yet',
+  sent:      'sent — WhatsApp has not confirmed it reached the phone',
+  delivered: 'delivered to the driver’s phone',
+  read:      'opened by the driver',
+  failed:    'never arrived',
+}
+
+/**
+ * The row's one-glance answer to "has he got his paperwork".
+ *
+ * Nothing at all when no documents were ever sent: an empty badge column would
+ * read as a failure, and most rows on most days have simply not reached the
+ * point of sending yet.
+ */
+function DeliveryBadge({ delivery }: { delivery: DeliverySummary | null }) {
+  if (!delivery || !delivery.total) return null
+
+  const when = new Date(delivery.at)
+  const stamp = Number.isNaN(when.getTime())
+    ? ''
+    : when.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+
+  const title = [
+    `Documents ${DELIVERY_WORD[delivery.status] ?? delivery.status}`,
+    stamp ? `Sent ${stamp}` : '',
+    delivery.copies ? `${delivery.copies} copy sent to the standing number` : 'No copy was kept',
+    delivery.failureReason ?? '',
+  ].filter(Boolean).join('\n')
+
+  return (
+    <span
+      title={title}
+      className={cn('flex items-center gap-0.5 flex-shrink-0', DELIVERY_TONE[delivery.status] ?? 'text-slate-500')}
+    >
+      {delivery.status === 'failed'
+        ? <AlertTriangle className="w-3 h-3" />
+        : delivery.status === 'sent' || delivery.status === 'pending'
+          ? <Check className="w-3 h-3" />
+          : <CheckCheck className="w-3 h-3" />}
+      {delivery.copies ? <Copy className="w-2.5 h-2.5 opacity-60" /> : null}
+    </span>
+  )
+}
+
 function Row({
-  row, onDriver, onEdit, onDocs, onSendDocs, canEdit,
+  row, onDriver, onEdit, onDocs, onSendDocs, onChat, delivery, canEdit,
 }: {
   row: DriveLogRow
   onDriver: (row: DriveLogRow) => void
   onEdit: (row: DriveLogRow) => void
   onDocs: (row: DriveLogRow) => void
   onSendDocs: (row: DriveLogRow) => void
+  onChat: (row: DriveLogRow) => void
+  /** What WhatsApp last said about this booking's documents, if anything. */
+  delivery: DeliverySummary | null
   canEdit: boolean
 }) {
   const [open, setOpen] = useState(false)
@@ -1071,6 +1147,8 @@ function Row({
             >
               <FileDown className="w-3.5 h-3.5" />
             </button>
+            {/* Whether the last send actually reached the driver's phone. */}
+            <DeliveryBadge delivery={delivery} />
             {/* The same paperwork, to the driver's phone instead of the printer. */}
             <button
               onClick={() => onSendDocs(row)}
@@ -1079,7 +1157,17 @@ function Row({
                 : 'Send the documents to a driver on WhatsApp'}
               className="p-1 rounded-md text-slate-500 hover:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
             >
-              <MessageCircle className="w-3.5 h-3.5" />
+              <FileText className="w-3.5 h-3.5" />
+            </button>
+            {/* And the conversation, on the company's number rather than someone's own. */}
+            <button
+              onClick={() => onChat(row)}
+              title={row.driver?.name
+                ? `Chat with ${row.driver.name} on WhatsApp`
+                : 'No driver is allocated to this file yet'}
+              className="p-1 rounded-md text-slate-500 hover:text-teal-300 hover:bg-teal-500/10 transition-colors"
+            >
+              <MessagesSquare className="w-3.5 h-3.5" />
             </button>
           </div>
         </td>
@@ -1106,8 +1194,11 @@ function Row({
                   >
                     <ExternalLink className="w-3 h-3" /> Open booking
                   </Link>
+                  {/* Straight to this file on the board, not to the board's
+                      own default week — the two screens are worked by the same
+                      person, minutes apart, about the same booking. */}
                   <Link
-                    href="/dashboard/srilanka/driver-allocation"
+                    href={`/dashboard/srilanka/driver-allocation?ref=${encodeURIComponent(row.bookingRef)}`}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/70 border border-slate-700 text-[11px] font-bold text-slate-200 hover:border-slate-600 transition-colors"
                   >
                     <Car className="w-3 h-3" /> Allocation board
@@ -1123,6 +1214,12 @@ function Row({
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 hover:bg-emerald-500/20 transition-colors"
                   >
                     <MessageCircle className="w-3 h-3" /> Send documents to driver
+                  </button>
+                  <button
+                    onClick={() => onChat(row)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-500/10 border border-teal-500/30 text-[11px] font-bold text-teal-300 hover:bg-teal-500/20 transition-colors"
+                  >
+                    <MessagesSquare className="w-3 h-3" /> Chat with driver
                   </button>
                 </div>
               </div>
@@ -1220,6 +1317,29 @@ export default function DriveLogPage() {
   })
 
   const [searchDraft, setSearchDraft] = useState('')
+
+  /**
+   * Arriving from the allocation board on one booking.
+   *
+   * `?ref=IS48634` widens the date window to the whole month around today and
+   * searches for that file, because the board is worked weeks ahead of the
+   * Drive Log's two-day default and a link that lands on an empty table is a
+   * link nobody clicks twice.
+   *
+   * Read off `window.location` rather than `useSearchParams` so this page needs
+   * no Suspense boundary for one optional query parameter.
+   */
+  useEffect(() => {
+    const ref = new URLSearchParams(window.location.search).get('ref')?.trim()
+    if (!ref) return
+    setSearchDraft(ref)
+    setQuery(q => ({
+      ...q,
+      search: ref,
+      from: shiftDay(dayKey(), -30),
+      to:   shiftDay(dayKey(), 60),
+    }))
+  }, [])
   const [data, setData]       = useState<DriveLogResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
@@ -1231,6 +1351,16 @@ export default function DriveLogPage() {
   const [docsRow, setDocsRow]     = useState<DriveLogRow | null>(null)
   /** The booking whose paperwork is being sent to a driver on WhatsApp. */
   const [sendRow, setSendRow]     = useState<DriveLogRow | null>(null)
+  /** The driver the chat dock is open on, if any. */
+  const [chatTarget, setChatTarget] = useState<DriverChatTarget | null>(null)
+  /**
+   * What WhatsApp last said about each booking's documents.
+   *
+   * Kept beside the rows rather than inside them: the Drive Log's rows are the
+   * accounts system's answer and are replaced wholesale on every reload, while
+   * a delivery receipt arrives minutes later on its own clock.
+   */
+  const [deliveries, setDeliveries] = useState<Record<string, DeliverySummary>>({})
 
   /**
    * Who may state that the accounts system's figure is wrong.
@@ -1279,6 +1409,40 @@ export default function DriveLogPage() {
   // the server sent would contradict the line above it.
   const totals = useMemo(() => driveLogTotals(rows), [rows])
   const groups = useMemo(() => groupDriveLogRows(rows, view), [rows, view])
+
+  /**
+   * Ask what became of the documents for the rows currently on screen.
+   *
+   * One request for the whole table rather than one per row, and re-run when
+   * the rows change rather than on a timer: a receipt that lands while nobody
+   * is looking will be there on the next load, and the send dialog does the
+   * live watching for the send that is actually being watched.
+   */
+  const refs = useMemo(() => rows.map(r => r.bookingRef).filter(Boolean), [rows])
+
+  const loadDeliveries = useCallback(async (list: string[]) => {
+    if (!list.length) { setDeliveries({}); return }
+    try {
+      const res  = await fetch(`/api/srilanka/drive-log/documents/deliveries?refs=${encodeURIComponent(list.join(','))}`)
+      const json = await res.json().catch(() => null)
+      if (!res.ok) return
+      setDeliveries((json.data?.summary ?? {}) as Record<string, DeliverySummary>)
+    } catch {
+      /* A missing receipt is not a missing row — the table stands without it. */
+    }
+  }, [])
+
+  useEffect(() => { void loadDeliveries(refs) }, [refs, loadDeliveries])
+
+  const openChat = useCallback((row: DriveLogRow) => {
+    setChatTarget({
+      bookingRef:  row.bookingRef,
+      title:       row.isNumber ?? row.bookingRef,
+      driverName:  row.driver?.name ?? null,
+      driverPhone: row.driver?.phone ?? null,
+      vehicle:     [row.driver?.vehicle?.type, row.driver?.vehicle?.plateNo].filter(Boolean).join(' · ') || null,
+    })
+  }, [])
 
   const set = (patch: Partial<DriveLogQuery>) => setQuery(q => ({ ...q, ...patch }))
 
@@ -1670,6 +1834,7 @@ export default function DriveLogPage() {
                     <GroupBlock
                       key={g.key} group={g} view={view}
                       onDriver={setPanelRow} onEdit={setEditRow} onDocs={setDocsRow} onSendDocs={setSendRow}
+                      onChat={openChat} deliveries={deliveries}
                       canEdit={canEditActuals}
                     />
                   ))
@@ -1735,7 +1900,22 @@ export default function DriveLogPage() {
         <SendDocsWhatsAppDialog
           bookingRef={sendRow.bookingRef}
           title={sendRow.isNumber ?? sendRow.bookingRef}
-          onClose={() => setSendRow(null)}
+          driverId={sendRow.driver?.id ?? null}
+          onClose={() => { setSendRow(null); void loadDeliveries(refs) }}
+          onOpenChat={() => openChat(sendRow)}
+        />
+      ) : null}
+
+      {/* Docked rather than modal: a conversation with a driver runs alongside
+          the work, and closing the table to have it would be the wrong trade. */}
+      {chatTarget ? (
+        <DriverChatDock
+          target={chatTarget}
+          onClose={() => setChatTarget(null)}
+          onOpenDocs={() => {
+            const row = rows.find(r => r.bookingRef === chatTarget.bookingRef)
+            if (row) setSendRow(row)
+          }}
         />
       ) : null}
 
@@ -1761,7 +1941,7 @@ export default function DriveLogPage() {
 
 /** One heading and its rows, with the subtotal that makes the group self-checking. */
 function GroupBlock({
-  group, view, onDriver, onEdit, onDocs, onSendDocs, canEdit,
+  group, view, onDriver, onEdit, onDocs, onSendDocs, onChat, deliveries, canEdit,
 }: {
   group: ReturnType<typeof groupDriveLogRows>[number]
   view: DriveLogView
@@ -1769,6 +1949,8 @@ function GroupBlock({
   onEdit: (row: DriveLogRow) => void
   onDocs: (row: DriveLogRow) => void
   onSendDocs: (row: DriveLogRow) => void
+  onChat: (row: DriveLogRow) => void
+  deliveries: Record<string, DeliverySummary>
   canEdit: boolean
 }) {
   const [open, setOpen] = useState(true)
@@ -1835,7 +2017,12 @@ function GroupBlock({
       </tr>
 
       {open ? group.rows.map(r => (
-        <Row key={r.bookingId} row={r} onDriver={onDriver} onEdit={onEdit} onDocs={onDocs} onSendDocs={onSendDocs} canEdit={canEdit} />
+        <Row
+          key={r.bookingId} row={r}
+          onDriver={onDriver} onEdit={onEdit} onDocs={onDocs} onSendDocs={onSendDocs} onChat={onChat}
+          delivery={deliveries[r.bookingRef] ?? null}
+          canEdit={canEdit}
+        />
       )) : null}
     </>
   )

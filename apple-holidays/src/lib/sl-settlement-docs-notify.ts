@@ -26,6 +26,22 @@
  * cost he signs for, his advances — are on the settlement sheets themselves,
  * which is where they have always been.
  *
+ * ---- Did it arrive? ----
+ *
+ * A 200 from Meta is not a delivery. The number may never have been on
+ * WhatsApp; the template may be unapproved; the window may have shut between
+ * the check and the send. Meta reports the truth minutes later as a delivery
+ * receipt against the message id, so every send writes a `DriverDocSend` row
+ * and the webhook moves it through sent → delivered → read, or to failed with
+ * Meta's own reason. That row is what the Drive Log shows the desk, and it is
+ * why "I sent it" and "he has it" are finally two different statements here.
+ *
+ * ---- The standing copy ----
+ *
+ * Every document a driver is sent is shadowed to one configured number — see
+ * `sl-driver-doc-copy.ts` for why, and for the notice that keeps a copy from
+ * reading as a document addressed to its reader.
+ *
  * ---- The PDF ----
  *
  * Rendered with PDFKit (`sl-settlement-docs-pdfkit.ts`), not Chromium: nobody is
@@ -41,6 +57,7 @@ import { normaliseSriLankanPhone, type NormalisedPhone } from '@/lib/sl-phone'
 import { generateSettlementDocsPdf } from '@/lib/sl-settlement-docs-pdfkit'
 import { generateFullDetailsPdf } from '@/lib/generate-booking-pdf'
 import { packForPrint } from '@/lib/sl-settlement-docs-server'
+import { copyNotice, readDriverDocCopy, type DriverDocCopyConfig } from '@/lib/sl-driver-doc-copy'
 import {
   DOC_KINDS, DOC_LABEL, docDate,
   type SettlementDocKind, type SettlementDocPack,
@@ -171,14 +188,181 @@ async function bookingDetailsPdf(bookingRef: string): Promise<{ buffer: Buffer; 
   return { buffer, filename: `${stem}-booking-details.pdf` }
 }
 
+// ── One delivery ─────────────────────────────────────────────────────────────
+
+/** What a document is: the pack the driver signs, or the file he is driving. */
+export type DocSendKind = 'settlement' | 'booking'
+
+/** Who it went to: the driver himself, or the standing copy number behind him. */
+export type DocSendAudience = 'driver' | 'copy'
+
+/** One WhatsApp message carrying one PDF, and what became of it. */
+export interface DeliveryResult {
+  ok: boolean
+  /** The `DriverDocSend` row — what the Drive Log polls for a delivery receipt. */
+  sendId: string | null
+  kind: DocSendKind
+  audience: DocSendAudience
+  phone: string
+  channel?: 'template' | 'freeform'
+  filename?: string
+  /** The message body as the recipient receives it. */
+  preview?: string
+  reason?: string
+}
+
+/**
+ * Send one PDF to one number and write down that it happened.
+ *
+ * Every driver-facing document in this file goes through here — the settlement
+ * pack, the booking sheet, and the copies of both — so there is exactly one
+ * place that decides template-versus-free-form, one place that writes the chat
+ * log, and one place that opens a delivery receipt. A route that skipped it
+ * would produce a send nobody could later prove.
+ *
+ * `mediaId` is Meta's handle for an already-uploaded document. It is passed in
+ * rather than uploaded here because the same PDF goes to two numbers and Meta
+ * happily reuses one handle — uploading twice would double the latency of every
+ * send for nothing.
+ *
+ * Never throws. A failure is a `DriverDocSend` row with `status: 'failed'` and
+ * Meta's reason on it: an undelivered document that left no trace is the exact
+ * problem this file exists to end.
+ */
+async function deliver(opts: {
+  bookingRef: string
+  kind: DocSendKind
+  audience: DocSendAudience
+  pdf: { buffer: Buffer; filename: string }
+  mediaId: string
+  mediaUrl: string | null
+  /** The six template parameters, already flattened for Meta. */
+  params: string[]
+  msisdn: string
+  windowOpen: boolean
+  docs: SettlementDocKind[]
+  driverId: string | null
+  driverName: string | null
+  copyOfId?: string | null
+  copyLabel?: string | null
+  sentById: string | null
+  sentBy: string | null
+}): Promise<DeliveryResult> {
+  const preview = renderBody(SETTLEMENT_DOCS_BODY, opts.params)
+  const base = {
+    bookingRef: opts.bookingRef,
+    kind:       opts.kind,
+    audience:   opts.audience,
+    driverId:   opts.driverId,
+    driverName: opts.driverName,
+    phone:      opts.msisdn,
+    docs:       opts.docs.join(',') || null,
+    filename:   opts.pdf.filename,
+    mediaUrl:   opts.mediaUrl,
+    body:       preview,
+    copyOfId:   opts.copyOfId ?? null,
+    copyLabel:  opts.copyLabel ?? null,
+    sentById:   opts.sentById,
+    sentByName: opts.sentBy,
+  }
+
+  try {
+    let result: unknown
+    let channel: 'template' | 'freeform'
+
+    if (opts.windowOpen) {
+      const sent = await sendViaMetaApi({
+        to: opts.msisdn,
+        message: preview,
+        media: { buffer: opts.pdf.buffer, filename: opts.pdf.filename, kind: 'document', caption: opts.pdf.filename },
+      })
+      if (!sent) throw new Error('WhatsApp is not configured on this server.')
+      result  = sent.media ?? sent.text
+      channel = 'freeform'
+    } else {
+      const sent = await sendViaMetaTemplate({
+        to:             opts.msisdn,
+        templateName:   TEMPLATE_SETTLEMENT_DOCS,
+        lang:           SETTLEMENT_DOCS_TEMPLATE_LANG,
+        bodyParams:     opts.params,
+        headerDocument: { id: opts.mediaId, filename: opts.pdf.filename },
+      })
+      if (!sent) throw new Error('WhatsApp is not configured on this server.')
+      result  = sent.template
+      channel = 'template'
+    }
+
+    const waMessageId =
+      (result as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
+
+    // The chat log, so the document appears in the thread the desk chats in.
+    await prisma.whatsAppMessage.create({
+      data: {
+        bookingRef:  opts.bookingRef,
+        phone:       opts.msisdn,
+        direction:   'outbound',
+        body:        preview,
+        waMessageId,
+        status:      'sent',
+        mediaUrl:    opts.mediaUrl,
+        mediaType:   opts.mediaUrl ? 'document' : null,
+        mediaMimeType: opts.mediaUrl ? 'application/pdf' : null,
+        senderName:  `${SETTLEMENT_TAG}${opts.audience === 'copy' ? ' Copy' : ''} ${
+          opts.driverName || 'Driver'}${opts.sentBy ? ` · ${opts.sentBy}` : ''}`,
+      },
+    }).catch(err => {
+      // The document has arrived; failing the call now would invite a resend.
+      console.warn('[SettlementDocs] message log failed:', err instanceof Error ? err.message : err)
+    })
+
+    const row = await openReceipt({ ...base, channel, waMessageId, status: 'sent', sentAt: new Date() })
+    return { ok: true, sendId: row, kind: opts.kind, audience: opts.audience, phone: opts.msisdn, channel, preview, filename: opts.pdf.filename }
+  } catch (err) {
+    const reason = explainSendError(err, 'The document could not be sent.')
+    const row = await openReceipt({ ...base, status: 'failed', failureReason: reason, failedAt: new Date() })
+    return { ok: false, sendId: row, kind: opts.kind, audience: opts.audience, phone: opts.msisdn, reason }
+  }
+}
+
+/**
+ * Write the receipt row, and never let its failure become the send's failure.
+ *
+ * The table is created by `prisma/sql/2026-08-24-sl-driver-doc-sends.sql`. On a
+ * host where that has not been applied yet the document still reaches the
+ * driver and the chat log still records it — only the delivery tracking is
+ * missing, which is a degraded screen rather than a lost document.
+ */
+async function openReceipt(
+  data: Parameters<typeof prisma.driverDocSend.create>[0]['data'],
+): Promise<string | null> {
+  try {
+    const row = await prisma.driverDocSend.create({ data, select: { id: true } })
+    return row.id
+  } catch (err) {
+    console.warn('[SettlementDocs] delivery receipt failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/** Archive the PDF. Never a delivery dependency — a failed archive must not stop a send. */
+async function archive(filename: string, buffer: Buffer): Promise<string | null> {
+  try {
+    return await putUpload(`settlement-docs/${filename}`, buffer, 'application/pdf')
+  } catch (err) {
+    console.warn('[SettlementDocs] archive copy failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+// ── Sending ──────────────────────────────────────────────────────────────────
+
 /** What happened to the second attachment, when one was asked for. */
 export interface BookingSheetResult {
   ok: boolean
   filename?: string
   reason?: string
+  sendId?: string | null
 }
-
-// ── Sending ──────────────────────────────────────────────────────────────────
 
 export interface SettlementSendResult {
   ok: boolean
@@ -193,6 +377,8 @@ export interface SettlementSendResult {
   /** The message body as the driver receives it. */
   preview?: string
   filename?: string
+  /** The receipt to poll for a delivery status. */
+  sendId?: string | null
   /**
    * What happened to the booking sheet, when it was ticked.
    *
@@ -202,82 +388,22 @@ export interface SettlementSendResult {
    * booking sheet would not render.
    */
   bookingSheet?: BookingSheetResult
-}
-
-/**
- * Send the booking sheet as a second message.
- *
- * A second message rather than a second attachment because WhatsApp carries one
- * document per message: a template's header holds exactly one, and even inside
- * the 24-hour window each document is its own send. `windowOpen` is the reading
- * already taken for the settlement pack, reused so the two attachments cannot
- * take different routes a second apart.
- */
-async function sendBookingSheet(
-  bookingRef: string,
-  pack: SettlementDocPack,
-  msisdn: string,
-  windowOpen: boolean,
-  sentBy: string | null,
-): Promise<BookingSheetResult> {
-  let pdf: { buffer: Buffer; filename: string } | null
-  try {
-    pdf = await bookingDetailsPdf(bookingRef)
-  } catch (err) {
-    return { ok: false, reason: `The booking sheet could not be rendered: ${err instanceof Error ? err.message : err}` }
-  }
-  if (!pdf) return { ok: false, reason: `Booking ${bookingRef} was not found, so no booking sheet was sent.` }
-
-  await putUpload(`settlement-docs/${pdf.filename}`, pdf.buffer, 'application/pdf').catch(err => {
-    console.warn('[SettlementDocs] booking sheet archive failed:', err instanceof Error ? err.message : err)
-  })
-
-  // The approved template says what is attached in its last parameter, so the
-  // driver is told this is the booking file and not a second copy of the pack.
-  const params  = settlementDocsParams(pack, [])
-  params[5]     = param('Booking details')
-  const preview = renderBody(SETTLEMENT_DOCS_BODY, params)
-
-  try {
-    let result: unknown
-    if (windowOpen) {
-      const sent = await sendViaMetaApi({
-        to: msisdn,
-        message: preview,
-        media: { buffer: pdf.buffer, filename: pdf.filename, kind: 'document', caption: pdf.filename },
-      })
-      if (!sent) return { ok: false, reason: 'WhatsApp is not configured on this server.' }
-      result = sent.media ?? sent.text
-    } else {
-      const mediaId = await uploadMetaMedia(pdf.buffer, pdf.filename)
-      const sent = await sendViaMetaTemplate({
-        to:           msisdn,
-        templateName: TEMPLATE_SETTLEMENT_DOCS,
-        lang:         SETTLEMENT_DOCS_TEMPLATE_LANG,
-        bodyParams:   params,
-        headerDocument: { id: mediaId, filename: pdf.filename },
-      })
-      if (!sent) return { ok: false, reason: 'WhatsApp is not configured on this server.' }
-      result = sent.template
-    }
-
-    await prisma.whatsAppMessage.create({
-      data: {
-        bookingRef,
-        phone:       msisdn,
-        direction:   'outbound',
-        body:        preview,
-        waMessageId: (result as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null,
-        status:      'sent',
-        senderName:  `${SETTLEMENT_TAG} Booking sheet${sentBy ? ` · ${sentBy}` : ''}`,
-      },
-    }).catch(err => {
-      console.warn('[SettlementDocs] booking sheet log failed:', err instanceof Error ? err.message : err)
-    })
-
-    return { ok: true, filename: pdf.filename }
-  } catch (err) {
-    return { ok: false, reason: explainSendError(err, 'The booking sheet could not be sent.') }
+  /**
+   * The shadow sends to the standing copy number, when one is configured.
+   *
+   * Also never fatal, and for the same reason in reverse: a copy that did not
+   * go is a filing problem, and refusing the driver his paperwork over it would
+   * be the more expensive mistake.
+   */
+  copies?: DeliveryResult[]
+  /** The configured copy contact, so the desk sees where copies went — or why none did. */
+  copyContact?: {
+    enabled: boolean
+    active: boolean
+    label: string
+    pretty: string
+    msisdn: string
+    reason: string | null
   }
 }
 
@@ -300,6 +426,16 @@ export async function sendSettlementDocs(
     phoneOverride?: string | null
     /** Send the booking sheet — guests, flights, hotels, agenda — as a second message. */
     includeBooking?: boolean
+    /** The allocated driver, when the caller knows it — for the delivery history. */
+    driverId?: string | null
+    /**
+     * Suppress the standing copy for this send only. There is no tick box for
+     * it on the send dialog: a desk that can turn the audit copy off per send
+     * is a desk with no audit copy. It exists for the automated paths that
+     * already copy elsewhere.
+     */
+    skipCopy?: boolean
+    sentById?: string | null
     sentBy?: string | null
   } = {},
 ): Promise<SettlementSendResult> {
@@ -323,13 +459,9 @@ export async function sendSettlementDocs(
     return { ok: false, phone: phone.msisdn, reason: `The documents could not be rendered: ${err instanceof Error ? err.message : err}` }
   }
 
-  // Archive copy — useful when a driver says he never got it. Never a delivery
-  // dependency: a failed archive must not stop the send.
-  await putUpload(`settlement-docs/${pdf.filename}`, pdf.buffer, 'application/pdf').catch(err => {
-    console.warn('[SettlementDocs] archive copy failed:', err instanceof Error ? err.message : err)
-  })
+  const mediaUrl = await archive(pdf.filename, pdf.buffer)
 
-  // 3. Upload once; the id serves both delivery paths.
+  // 3. Upload once; the handle serves both delivery paths and both recipients.
   let mediaId: string
   try {
     mediaId = await uploadMetaMedia(pdf.buffer, pdf.filename)
@@ -337,70 +469,215 @@ export async function sendSettlementDocs(
     return { ok: false, phone: phone.msisdn, reason: `WhatsApp media upload failed: ${err instanceof Error ? err.message : err}` }
   }
 
-  const params  = settlementDocsParams(pack, kinds)
-  const preview = renderBody(SETTLEMENT_DOCS_BODY, params)
+  const driverName = pack.header.driverName || null
+  const driverId   = opts.driverId ?? null
+  const sentBy     = opts.sentBy ?? null
+  const sentById   = opts.sentById ?? null
 
-  try {
-    const open = await isWithin24hWindow(phone.msisdn).catch(() => false)
+  // One window reading for the whole send, so two attachments a second apart
+  // cannot take different routes.
+  const open = await isWithin24hWindow(phone.msisdn).catch(() => false)
 
-    let result: unknown
-    let channel: 'template' | 'freeform'
+  const params = settlementDocsParams(pack, kinds)
 
-    if (open) {
-      const sent = await sendViaMetaApi({
-        to: phone.msisdn,
-        message: preview,
-        media: { buffer: pdf.buffer, filename: pdf.filename, kind: 'document', caption: pdf.filename },
-      })
-      if (!sent) return { ok: false, phone: phone.msisdn, reason: 'WhatsApp is not configured on this server.' }
-      result = sent.media ?? sent.text
-      channel = 'freeform'
-    } else {
-      const sent = await sendViaMetaTemplate({
-        to:           phone.msisdn,
-        templateName: TEMPLATE_SETTLEMENT_DOCS,
-        lang:         SETTLEMENT_DOCS_TEMPLATE_LANG,
-        bodyParams:   params,
-        headerDocument: { id: mediaId, filename: pdf.filename },
-      })
-      if (!sent) return { ok: false, phone: phone.msisdn, reason: 'WhatsApp is not configured on this server.' }
-      result = sent.template
-      channel = 'template'
-    }
+  const primary = await deliver({
+    bookingRef, kind: 'settlement', audience: 'driver',
+    pdf, mediaId, mediaUrl, params,
+    msisdn: phone.msisdn, windowOpen: open, docs: kinds,
+    driverId, driverName, sentById, sentBy,
+  })
 
-    await prisma.whatsAppMessage.create({
-      data: {
-        bookingRef,
-        phone:       phone.msisdn,
-        direction:   'outbound',
-        body:        preview,
-        waMessageId: (result as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null,
-        status:      'sent',
-        senderName:  `${SETTLEMENT_TAG} ${pack.header.driverName || 'Driver'}${opts.sentBy ? ` · ${opts.sentBy}` : ''}`,
-      },
-    }).catch(err => {
-      // The driver has the documents; failing the call now would invite a resend.
-      console.warn('[SettlementDocs] message log failed:', err instanceof Error ? err.message : err)
+  if (!primary.ok) {
+    return { ok: false, phone: phone.msisdn, shape: phone.shape, reason: primary.reason, sendId: primary.sendId }
+  }
+
+  const copyContact = await readDriverDocCopy()
+  const copies: DeliveryResult[] = []
+
+  // The copy of the settlement pack.
+  if (!opts.skipCopy) {
+    const copy = await sendCopy({
+      contact: copyContact, bookingRef, kind: 'settlement', pdf, mediaId, mediaUrl,
+      params, driverName, driverId, driverMsisdn: phone.msisdn, docs: kinds, sentById, sentBy,
+      copyOfId: primary.sendId,
     })
+    if (copy) copies.push(copy)
+  }
 
-    const bookingSheet = opts.includeBooking
-      ? await sendBookingSheet(bookingRef, pack, phone.msisdn, open, opts.sentBy ?? null)
-      : undefined
+  // The booking sheet, and its own copy.
+  let bookingSheet: BookingSheetResult | undefined
+  if (opts.includeBooking) {
+    const sheet = await sendBookingSheet({
+      bookingRef, pack, msisdn: phone.msisdn, windowOpen: open,
+      driverId, driverName, sentById, sentBy,
+      copyContact: opts.skipCopy ? null : copyContact,
+    })
+    bookingSheet = sheet.result
+    if (sheet.copy) copies.push(sheet.copy)
+  }
 
-    return {
-      ok: true,
-      phone: phone.msisdn,
-      shape: phone.shape,
-      channel,
-      preview,
-      filename: pdf.filename,
-      bookingSheet,
-    }
+  return {
+    ok: true,
+    phone:    phone.msisdn,
+    shape:    phone.shape,
+    channel:  primary.channel,
+    preview:  primary.preview,
+    filename: primary.filename,
+    sendId:   primary.sendId,
+    bookingSheet,
+    copies,
+    copyContact: {
+      enabled: copyContact.enabled,
+      active:  copyContact.active,
+      label:   copyContact.label,
+      pretty:  copyContact.pretty,
+      msisdn:  copyContact.msisdn,
+      reason:  copyContact.reason,
+    },
+  }
+}
+
+/**
+ * The shadow send.
+ *
+ * The copy is the same PDF under a message that opens by naming the driver and
+ * the number the original went to, because a copy nobody can attribute is worse
+ * than no copy at all. The notice replaces the greeting parameter rather than
+ * being written above it: outside the 24-hour window the body is Meta's
+ * approved template and there is nowhere else to put it.
+ *
+ * Returns `null` when no copy is configured, which is not a failure.
+ */
+async function sendCopy(opts: {
+  contact: DriverDocCopyConfig | null
+  bookingRef: string
+  kind: DocSendKind
+  pdf: { buffer: Buffer; filename: string }
+  mediaId: string
+  mediaUrl: string | null
+  params: string[]
+  driverName: string | null
+  driverId: string | null
+  driverMsisdn: string
+  docs: SettlementDocKind[]
+  sentById: string | null
+  sentBy: string | null
+  copyOfId: string | null
+}): Promise<DeliveryResult | null> {
+  const contact = opts.contact
+  if (!contact?.active) return null
+
+  // Never copy a document back to the driver it was addressed to.
+  if (contact.msisdn === opts.driverMsisdn) return null
+
+  const params = [...opts.params]
+  params[0] = param(copyNotice(opts.driverName, opts.driverMsisdn, opts.bookingRef))
+
+  // The copy number is an office line that has almost certainly not messaged us
+  // in the last 24 hours either, so it gets its own window reading rather than
+  // inheriting the driver's.
+  const open = await isWithin24hWindow(contact.msisdn).catch(() => false)
+
+  return deliver({
+    bookingRef: opts.bookingRef,
+    kind:       opts.kind,
+    audience:   'copy',
+    pdf:        opts.pdf,
+    mediaId:    opts.mediaId,
+    mediaUrl:   opts.mediaUrl,
+    params,
+    msisdn:     contact.msisdn,
+    windowOpen: open,
+    docs:       opts.docs,
+    driverId:   opts.driverId,
+    driverName: opts.driverName,
+    copyOfId:   opts.copyOfId,
+    copyLabel:  contact.label || null,
+    sentById:   opts.sentById,
+    sentBy:     opts.sentBy,
+  })
+}
+
+/**
+ * Send the booking sheet as a second message.
+ *
+ * A second message rather than a second attachment because WhatsApp carries one
+ * document per message: a template's header holds exactly one, and even inside
+ * the 24-hour window each document is its own send. `windowOpen` is the reading
+ * already taken for the settlement pack, reused so the two attachments cannot
+ * take different routes a second apart.
+ */
+async function sendBookingSheet(opts: {
+  bookingRef: string
+  pack: SettlementDocPack
+  msisdn: string
+  windowOpen: boolean
+  driverId: string | null
+  driverName: string | null
+  sentById: string | null
+  sentBy: string | null
+  copyContact: DriverDocCopyConfig | null
+}): Promise<{ result: BookingSheetResult; copy: DeliveryResult | null }> {
+  let pdf: { buffer: Buffer; filename: string } | null
+  try {
+    pdf = await bookingDetailsPdf(opts.bookingRef)
   } catch (err) {
     return {
-      ok: false,
-      phone: phone.msisdn,
-      reason: explainSendError(err, 'The documents could not be sent.'),
+      result: { ok: false, reason: `The booking sheet could not be rendered: ${err instanceof Error ? err.message : err}` },
+      copy: null,
     }
+  }
+  if (!pdf) {
+    return {
+      result: { ok: false, reason: `Booking ${opts.bookingRef} was not found, so no booking sheet was sent.` },
+      copy: null,
+    }
+  }
+
+  const mediaUrl = await archive(pdf.filename, pdf.buffer)
+
+  let mediaId: string
+  try {
+    mediaId = await uploadMetaMedia(pdf.buffer, pdf.filename)
+  } catch (err) {
+    return {
+      result: { ok: false, reason: `WhatsApp media upload failed: ${err instanceof Error ? err.message : err}` },
+      copy: null,
+    }
+  }
+
+  // The approved template says what is attached in its last parameter, so the
+  // driver is told this is the booking file and not a second copy of the pack.
+  const params = settlementDocsParams(opts.pack, [])
+  params[5] = param('Booking details')
+
+  const sent = await deliver({
+    bookingRef: opts.bookingRef,
+    kind:       'booking',
+    audience:   'driver',
+    pdf, mediaId, mediaUrl, params,
+    msisdn:     opts.msisdn,
+    windowOpen: opts.windowOpen,
+    docs:       [],
+    driverId:   opts.driverId,
+    driverName: opts.driverName,
+    sentById:   opts.sentById,
+    sentBy:     opts.sentBy,
+  })
+
+  const copy = sent.ok
+    ? await sendCopy({
+        contact: opts.copyContact, bookingRef: opts.bookingRef, kind: 'booking',
+        pdf, mediaId, mediaUrl, params,
+        driverName: opts.driverName, driverId: opts.driverId, driverMsisdn: opts.msisdn,
+        docs: [], sentById: opts.sentById, sentBy: opts.sentBy, copyOfId: sent.sendId,
+      })
+    : null
+
+  return {
+    result: sent.ok
+      ? { ok: true, filename: sent.filename, sendId: sent.sendId }
+      : { ok: false, reason: sent.reason, sendId: sent.sendId },
+    copy,
   }
 }
