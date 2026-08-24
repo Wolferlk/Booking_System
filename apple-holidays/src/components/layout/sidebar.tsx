@@ -7,7 +7,7 @@ import { useSession, signOut } from 'next-auth/react'
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
-  MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
+  MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, BarChart3, TrendingUp,
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
@@ -33,7 +33,7 @@ const COUNTRY_PILLS: { value: CountryFilter; short: string }[] = [
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   LayoutDashboard, FileText, PlusCircle, AlertCircle, ClipboardCheck,
-  MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, TrendingUp,
+  MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, BarChart3, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
@@ -83,6 +83,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Ticket Portals', href: '/dashboard/admin/portals',            icon: 'Store' },
     { label: 'Drivers',        href: '/dashboard/ground/drivers',           icon: 'Car' },
     { label: 'Vendors',        href: '/dashboard/ground/vendors',           icon: 'Truck' },
+    { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
     { label: 'Guides',         href: '/dashboard/ground/guides',            icon: 'Sparkles' },
     { label: 'Tour Vendors',   href: '/dashboard/ground/tour-vendors',      icon: 'Store' },
     { ...WHATSAPP_NAV_ITEM },
@@ -102,6 +103,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
     { label: 'Drivers',           href: '/dashboard/ground/drivers',   icon: 'Car' },
     { label: 'Vendors',           href: '/dashboard/ground/vendors',   icon: 'Truck' },
+    { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
   ],
   TE_USER: [
     { label: 'Dashboard',          href: '/dashboard',                          icon: 'LayoutDashboard' },
@@ -211,6 +213,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
     { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
     { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
@@ -240,6 +243,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     // { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
     { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
     { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',                 icon: 'Phone' },
@@ -291,6 +295,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Audit Log',          href: '/dashboard/admin/audit',                 icon: 'Shield' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
+    { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
     { label: 'Guides',             href: '/dashboard/ground/guides',               icon: 'Sparkles' },
     { label: 'Tour Vendors',       href: '/dashboard/ground/tour-vendors',         icon: 'Store' },
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },

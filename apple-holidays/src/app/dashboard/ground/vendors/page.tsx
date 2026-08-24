@@ -6,12 +6,13 @@ import { toast } from 'sonner'
 import {
   Plus, Loader2, Truck, Phone, Mail, MapPin, Edit2, Trash2, Car,
   ChevronDown, ChevronUp, Link2, CheckCircle2, Power, Globe, UserCheck, Clock,
-  Camera, Upload, User2,
+  Camera, Upload, User2, BarChart3,
 } from 'lucide-react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
+import PartnerPerformance from '@/components/ground/partner-performance'
 
 interface DriverInVendor {
   id: string
@@ -120,6 +121,9 @@ export default function VendorsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Performance is opened per vendor and left open, so comparing two vendors
+  // does not mean re-opening the panel each time the list re-renders.
+  const [perfOpen, setPerfOpen] = useState<Record<string, boolean>>({})
 
   const [vendorModal, setVendorModal] = useState<Vendor | 'new' | null>(null)
   const [vendorForm, setVendorForm] = useState(emptyVendorForm())
@@ -546,6 +550,33 @@ export default function VendorsPage() {
 
                 {expanded && (
                   <div className="border-t border-slate-100 bg-slate-50 p-4 space-y-5">
+                    <section className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setPerfOpen(prev => ({ ...prev, [vendor.id]: !prev[vendor.id] }))}
+                        className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+                      >
+                        <BarChart3 className="w-4 h-4 text-brand-500" />
+                        <span className="text-sm font-semibold text-slate-700">Performance &amp; guest feedback</span>
+                        <span className="text-[11px] text-slate-400">
+                          bookings worked, guest rating, praise and complaints
+                        </span>
+                        {perfOpen[vendor.id]
+                          ? <ChevronUp className="w-4 h-4 text-slate-400 ml-auto" />
+                          : <ChevronDown className="w-4 h-4 text-slate-400 ml-auto" />}
+                      </button>
+                      {perfOpen[vendor.id] && (
+                        <div className="border-t border-slate-100 bg-slate-50/50 p-4">
+                          <PartnerPerformance
+                            kind="vendor"
+                            id={vendor.id}
+                            showValue={isAdmin}
+                            onOpenBooking={ref => window.open(`/dashboard/bookings/${ref}`, '_blank')}
+                          />
+                        </div>
+                      )}
+                    </section>
+
                     <section>
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-sm font-semibold text-slate-700">Fleet Vehicles</p>

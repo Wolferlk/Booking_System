@@ -35,6 +35,7 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/mc-report',         // MC Report
   '/dashboard/ground/drivers',    // Driver management
   '/dashboard/ground/vendors',    // Vehicle vendor management
+  '/dashboard/ground/analytics',  // Partner performance (read-only analytics)
 ] as const
 
 /**
