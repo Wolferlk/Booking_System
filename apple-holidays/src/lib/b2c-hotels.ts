@@ -529,6 +529,97 @@ export interface AvailabilityQuery {
   asOf?: string
 }
 
+export interface AvailableHotelResult {
+  hotel: B2cHotelListRow
+  sellableRates: RateAvailability[]
+  lowestPrice: number | null
+  currency: string | null
+}
+
+/**
+ * Search the contracted portfolio in one availability check. The hotel
+ * directory, rate lines and daily inventory are loaded in batches so this is
+ * suitable for the reservation desk's "show me every available hotel" flow.
+ */
+export async function searchAvailableHotels(
+  query: AvailabilityQuery & { country?: string | null; city?: string | null },
+): Promise<AvailableHotelResult[]> {
+  const directory = await fetchHotelDirectory({
+    status: 'active',
+    withLiveRates: true,
+    country: query.country,
+    city: query.city,
+    limit: 200,
+    offset: 0,
+  })
+  if (directory.rows.length === 0) return []
+
+  const ids = directory.rows.map(h => Number(h.id)).filter(Number.isInteger)
+  const idList = ids.join(',')
+  const nights = nightsIn(query.checkIn, query.checkOut)
+  const [rates, daily] = await Promise.all([
+    b2cQuery<B2cRateRow>(
+      `SELECT r.id, r.hotel_id, r.card_id, r.market_nationality, r.currency,
+              r.adult_rate, r.child_with_bed_rate, r.child_without_bed_rate,
+              r.actual_adult_rate, r.actual_child_with_bed_rate, r.actual_child_without_bed_rate,
+              r.child_foc_age, r.child_with_no_bed_age, r.child_with_bed_age, r.adult_age,
+              r.book_by_days, r.meal_plan, r.room_category_id, r.room_type_id,
+              r.booking_start_date, r.booking_end_date, r.payment_type,
+              r.blackout_dates, r.blackout_days, r.min_adult_occupancy,
+              r.max_adult_occupancy, r.min_child_occupancy, r.max_child_occupancy,
+              r.total_occupancy, r.created_at, r.updated_at,
+              inv.allotment, inv.stop_sale_dates
+         FROM hotel_room_rates r
+         LEFT JOIN (
+           SELECT rate_id, MAX(allotment) AS allotment,
+                  GROUP_CONCAT(stop_sale_date SEPARATOR ',') AS stop_sale_dates
+             FROM hotel_room_inventories
+            WHERE deleted_at IS NULL
+            GROUP BY rate_id
+         ) inv ON inv.rate_id = r.id
+        WHERE r.hotel_id IN (${idList}) AND r.deleted_at IS NULL
+          AND r.booking_end_date >= CURDATE()
+        ORDER BY r.hotel_id, r.booking_start_date, r.room_category_id
+        LIMIT 20000`,
+    ),
+    b2cQuery<B2cDailyInventoryRow & { hotel_id: number }>(
+      `SELECT hotel_id, room_category_id, date, daily_allotment, used, balance
+         FROM hotel_room_daily_inventories
+        WHERE hotel_id IN (${idList}) AND deleted_at IS NULL
+          AND date >= ? AND date <= ?
+        ORDER BY hotel_id, date`,
+      [query.checkIn, nights[nights.length - 1]],
+    ),
+  ])
+
+  const ratesByHotel = new Map<number, B2cRateRow[]>()
+  for (const rate of rates) {
+    const list = ratesByHotel.get(Number(rate.hotel_id)) ?? []
+    list.push(rate)
+    ratesByHotel.set(Number(rate.hotel_id), list)
+  }
+  const dailyByHotel = new Map<number, B2cDailyInventoryRow[]>()
+  for (const row of daily) {
+    const list = dailyByHotel.get(Number(row.hotel_id)) ?? []
+    list.push(row)
+    dailyByHotel.set(Number(row.hotel_id), list)
+  }
+
+  return directory.rows.flatMap(hotel => {
+    const evaluated = evaluateAvailability(ratesByHotel.get(Number(hotel.id)) ?? [], dailyByHotel.get(Number(hotel.id)) ?? [], query)
+    const sellableRates = evaluated.filter(rate => rate.available)
+    if (sellableRates.length === 0) return []
+    const priced = sellableRates.filter(rate => rate.pricing.total !== null)
+    const best = priced.sort((a, b) => (a.pricing.total ?? Infinity) - (b.pricing.total ?? Infinity))[0]
+    return [{
+      hotel,
+      sellableRates,
+      lowestPrice: best?.pricing.total ?? null,
+      currency: best?.currency ?? sellableRates[0]?.currency ?? null,
+    }]
+  }).sort((a, b) => (a.lowestPrice ?? Infinity) - (b.lowestPrice ?? Infinity))
+}
+
 /**
  * Decide, night by night, whether each rate can actually be sold for a stay.
  *

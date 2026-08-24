@@ -10,7 +10,7 @@ import {
   CheckCircle2, Edit2, Trash2, DollarSign,
   Building2, ArrowUpCircle, ArrowDownCircle, Camera,
   MessageCircle, Send, Clock, Link2, Download,
-  Users, ShieldCheck, Layers,
+  Users, ShieldCheck, Layers, BarChart3, ClipboardList,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -18,6 +18,7 @@ import Modal from '@/components/ui/modal'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
+import PartnerPerformance from '@/components/ground/partner-performance'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -163,6 +164,9 @@ export default function DriversPage() {
   const [loadingD, setLoadingD]     = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [detailLoading, setDetailLoading] = useState<string | null>(null)
+  // Which half of an expanded driver row is showing. Kept per driver so opening
+  // a second row does not reset the first one back to Details.
+  const [detailTab, setDetailTab] = useState<Record<string, 'details' | 'performance'>>({})
   const [driverMessages, setDriverMessages] = useState<Record<string, { id: string; body: string; bookingRef: string; createdAt: string; status: string }[]>>({})
   const [sendingMsg, setSendingMsg]   = useState<string | null>(null)
   const [msgText, setMsgText]         = useState<Record<string, string>>({})
@@ -681,6 +685,35 @@ export default function DriversPage() {
                       {/* Expanded detail */}
                       {isExpanded && driver.driverPayments !== undefined && (
                         <div className="border-t border-slate-100 bg-slate-50/50 p-5 space-y-5">
+                          <div className="flex items-center gap-1 rounded-lg bg-slate-200/60 p-0.5 w-fit">
+                            {([
+                              ['details', 'Details', ClipboardList],
+                              ['performance', 'Performance', BarChart3],
+                            ] as const).map(([key, label, Icon]) => (
+                              <button
+                                key={key}
+                                onClick={() => setDetailTab(prev => ({ ...prev, [driver.id]: key }))}
+                                className={cn(
+                                  'px-3 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 transition-colors',
+                                  (detailTab[driver.id] ?? 'details') === key
+                                    ? 'bg-white text-slate-900 shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-700',
+                                )}
+                              >
+                                <Icon className="w-3.5 h-3.5" />{label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {(detailTab[driver.id] ?? 'details') === 'performance' ? (
+                            <PartnerPerformance
+                              kind="driver"
+                              id={driver.id}
+                              showValue={isAdmin}
+                              onOpenBooking={ref => window.open(`/dashboard/bookings/${ref}`, '_blank')}
+                            />
+                          ) : (
+                          <>
                           {(driver.photoUrl || driver.vehicle?.photoOutside || driver.vehicle?.photoInside) && (
                             <div className="flex flex-wrap gap-4">
                               {driver.photoUrl && (
@@ -782,6 +815,8 @@ export default function DriversPage() {
                               </div>
                             </div>
                           </div>
+                          </>
+                          )}
                         </div>
                       )}
                     </Card>

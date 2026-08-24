@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { findBookingByPhone, normalisePhone } from '@/lib/whatsapp'
 import { flushPendingConfirmations } from '@/lib/booking-whatsapp-delivery'
 import { putUpload } from '@/lib/storage'
+import { applyDeliveryStatuses, type MetaDeliveryStatus } from '@/lib/whatsapp-delivery-status'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,75 +68,15 @@ function extFor(filename: string | undefined, mime: string): string {
 }
 
 /**
- * Delivery receipts.
- *
- * Meta accepts a send and answers 200 long before it knows whether the message
- * can be delivered: the number may not be on WhatsApp, the template may be
- * unapproved, the 24-hour window may have shut between our check and the send.
- * The truth arrives here, minutes later, as a status against the wamid.
- *
- * Two things are moved by it — the chat message, so a thread shows its ticks,
- * and the driver-document receipt, so the Drive Log can tell the desk that the
- * settlement pack it "sent" this morning has never reached the driver's phone.
- *
- * Statuses arrive out of order and are re-sent, so the ladder only ever climbs:
- * a `sent` landing after a `read` must not walk the row backwards.
+ * Delivery receipts — see `whatsapp-delivery-status.ts` for what they are and
+ * why they arrive by two different doors on this deployment.
  */
-const STATUS_RANK: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: 4 }
-
-async function processStatuses(statuses: MetaStatus[]) {
-  for (const s of statuses) {
-    if (!s?.id || !s.status) continue
-
-    const status = s.status.toLowerCase()
-    const rank   = STATUS_RANK[status]
-    if (rank === undefined) continue
-
-    const at = s.timestamp ? new Date(Number(s.timestamp) * 1000) : new Date()
-    const reason = s.errors?.length
-      ? s.errors
-          .map(e => [e.title, e.message, e.error_data?.details].filter(Boolean).join(' — ') || `Meta error ${e.code ?? ''}`.trim())
-          .join('; ')
-      : null
-
-    // The chat log. `updateMany` because a wamid is unique in practice but not
-    // by constraint, and a receipt must not throw on a message we never stored.
-    await prisma.whatsAppMessage.updateMany({
-      where: { waMessageId: s.id },
-      data:  { status },
-    }).catch(err => console.warn('[WA Webhook] status log failed:', err instanceof Error ? err.message : err))
-
-    // The document receipt.
-    try {
-      const row = await prisma.driverDocSend.findFirst({
-        where:  { waMessageId: s.id },
-        select: { id: true, status: true },
-      })
-      if (!row) continue
-      if ((STATUS_RANK[row.status] ?? 0) >= rank && status !== 'failed') continue
-
-      await prisma.driverDocSend.update({
-        where: { id: row.id },
-        data: {
-          status,
-          ...(status === 'sent'      ? { sentAt: at }      : {}),
-          ...(status === 'delivered' ? { deliveredAt: at } : {}),
-          ...(status === 'read'      ? { readAt: at }      : {}),
-          ...(status === 'failed'    ? { failedAt: at, failureReason: reason ?? 'WhatsApp could not deliver this message.' } : {}),
-        },
-      })
-    } catch (err) {
-      console.warn('[WA Webhook] delivery receipt failed:', err instanceof Error ? err.message : err)
-    }
-  }
-}
-
 async function processIncoming(payload: MetaWebhookPayload) {
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value
 
-      if (value?.statuses?.length) await processStatuses(value.statuses)
+      if (value?.statuses?.length) await applyDeliveryStatuses(value.statuses)
 
       if (!value?.messages?.length) continue
 
@@ -235,21 +176,8 @@ interface MetaChangeValue {
   statuses?: MetaStatus[]
 }
 
-/**
- * A delivery receipt. Meta sends one of these per state change, minutes after
- * the send that returned 200 — which is the only reason we can ever say a
- * document *arrived* rather than that we handed it over.
- */
-interface MetaStatus {
-  /** The wamid of the outbound message this is about. */
-  id: string
-  /** sent | delivered | read | failed. */
-  status: string
-  /** Unix seconds. */
-  timestamp?: string
-  recipient_id?: string
-  errors?: Array<{ code?: number; title?: string; message?: string; error_data?: { details?: string } }>
-}
+/** A delivery receipt, as Meta sends it. */
+type MetaStatus = MetaDeliveryStatus
 
 interface MetaMediaField {
   id:         string
