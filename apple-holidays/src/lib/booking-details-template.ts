@@ -34,7 +34,6 @@
 import { prisma } from '@/lib/prisma'
 import { normalisePhone, sendViaMetaTemplate, uploadMetaMedia } from '@/lib/whatsapp'
 import { putUpload } from '@/lib/storage'
-import { ensurePdfkitDataFiles, loadPdfDocumentCtor } from '@/lib/pdfkit-boot'
 
 // ── Template ─────────────────────────────────────────────────────────────────
 
@@ -297,34 +296,60 @@ export async function sendBookingDocTemplate(
 
 // ── Registration sample ──────────────────────────────────────────────────────
 
+/** Escape the three characters a PDF string literal cannot carry raw. */
+function pdfString(text: string): string {
+  return text.replace(/([\\()])/g, '\\$1')
+}
+
 /**
  * The sample PDF Meta reviews the DOCUMENT header against. It is never sent to
  * anyone — it exists so the template can be registered from the API at all.
+ *
+ * Written out by hand rather than through PDFKit, deliberately. PDFKit needs its
+ * .afm font-metric files copied next to the emitted bundle at runtime, which
+ * means a writable working directory; this app runs where that directory is
+ * read-only, and a registration that fails because a font file could not be
+ * copied is a maddening thing to debug. Fourteen lines of PDF and one built-in
+ * Helvetica depend on nothing.
  */
 export async function sampleBookingDetailsPdf(): Promise<Buffer> {
-  await ensurePdfkitDataFiles()
-  const PDFDocument = await loadPdfDocumentCtor()
+  const lines = [
+    'Booking Details - sample',
+    '',
+    'Sample document for template registration.',
+    '',
+    'The live attachment carries one booking: the guests, the flights,',
+    'the hotels, the day-by-day itinerary and, where relevant, the',
+    'vouchers and the movement chart.',
+  ]
 
-  return new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = []
-    const doc = new (PDFDocument as unknown as new (o: unknown) => {
-      on: (e: string, cb: (c?: Buffer) => void) => void
-      fillColor: (c: string) => { font: (f: string) => { fontSize: (n: number) => { text: (t: string, x: number, y: number, o?: unknown) => void } } }
-      end: () => void
-    })({ size: 'A4', margin: 48 })
+  const content =
+    'BT\n/F1 13 Tf\n18 TL\n72 760 Td\n' +
+    lines.map(l => `(${pdfString(l)}) Tj T*`).join('\n') +
+    '\nET\n'
 
-    doc.on('data', (c?: Buffer) => { if (c) chunks.push(c) })
-    doc.on('end', () => resolve(Buffer.concat(chunks)))
-    doc.on('error', (e?: unknown) => reject(e))
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}endstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
 
-    doc.fillColor('#1e293b').font('Helvetica-Bold').fontSize(18)
-      .text('Booking Details - sample', 48, 90, { width: 499, align: 'center' })
-    doc.fillColor('#64748b').font('Helvetica').fontSize(11)
-      .text(
-        'Sample document. The live attachment carries one booking: the guests, the flights, the hotels, ' +
-        'the day-by-day itinerary and, where relevant, the vouchers and the movement chart.',
-        48, 128, { width: 499, align: 'center' },
-      )
-    doc.end()
+  // Body, recording where each object starts — the xref table is byte offsets.
+  let pdf = '%PDF-1.4\n'
+  const offsets: number[] = []
+  objects.forEach((body, i) => {
+    offsets.push(Buffer.byteLength(pdf, 'latin1'))
+    pdf += `${i + 1} 0 obj\n${body}\nendobj\n`
   })
+
+  // Cross-reference table. Every entry is exactly 20 bytes; readers rely on it.
+  const xrefStart = Buffer.byteLength(pdf, 'latin1')
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`
+
+  return Buffer.from(pdf, 'latin1')
 }

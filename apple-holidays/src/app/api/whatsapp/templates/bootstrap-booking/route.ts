@@ -78,6 +78,9 @@ export async function POST() {
       `Template "${created.name}" submitted to Meta for review (status ${created.status})`,
     )
   } catch (err) {
-    return buildApiError(err instanceof Error ? err.message : String(err), 502)
+    // 422, not 5xx — the proxy in front of this app replaces a 5xx body with its
+    // own HTML error page, so a 502 here reaches the browser as "not valid JSON"
+    // and the actual reason Meta refused the template is lost.
+    return buildApiError(err instanceof Error ? err.message : String(err), 422)
   }
 }
