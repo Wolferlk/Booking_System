@@ -3912,10 +3912,11 @@ Wishing you a wonderful trip! ✈️
             />
           </div>
 
-          {/* How this delivers. A template lands cold, so nothing waits on the
-              customer replying first — but Meta only carries a PDF in a template
-              header, so Word still needs the 24h window. */}
-          <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
+          {/* How this delivers. A PDF rides the approved template and lands cold.
+              Meta carries only a PDF in a template header, so Word (and a bare
+              message) needs the 24h window — when it is shut we send the approved
+              opener template and queue the file for the customer's reply. */}
+          <div className={`rounded-lg border px-3 py-2.5 ${waAttachPdf && waFileFormat === 'pdf' ? 'border-green-200 bg-green-50' : 'border-amber-200 bg-amber-50'}`}>
             {waAttachPdf && waFileFormat === 'pdf' ? (
               <p className="text-xs text-green-800 leading-relaxed">
                 <strong>Sends immediately.</strong> This goes out on the approved WhatsApp Business
@@ -3925,9 +3926,11 @@ Wishing you a wonderful trip! ✈️
             ) : (
               <p className="text-xs text-amber-800 leading-relaxed">
                 <strong>{waAttachPdf ? 'Word files' : 'Messages with no attachment'} can&apos;t use the template.</strong>{' '}
-                WhatsApp only carries a PDF in a template attachment, so this send only reaches a customer who has
-                messaged us in the last 24 hours. {waAttachPdf ? 'Switch the format to PDF' : 'Attach the PDF'} to
-                send it to anyone, any time.
+                WhatsApp only carries a PDF in a template attachment. If the customer has messaged us in the last
+                24 hours this sends right away; if not, we send them the approved reply-request template and hold
+                the {waAttachPdf ? 'Word file' : 'message'} in the queue — it goes out automatically the moment
+                they message back. {waAttachPdf ? 'Switch the format to PDF' : 'Attach the PDF'} to reach them
+                instantly instead.
               </p>
             )}
           </div>
