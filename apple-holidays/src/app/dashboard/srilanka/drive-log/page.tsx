@@ -1157,7 +1157,7 @@ function Row({
                 : 'Send the documents to a driver on WhatsApp'}
               className="p-1 rounded-md text-slate-500 hover:text-emerald-300 hover:bg-emerald-500/10 transition-colors"
             >
-              <FileText className="w-3.5 h-3.5" />
+              <Send className="w-3.5 h-3.5" />
             </button>
             {/* And the conversation, on the company's number rather than someone's own. */}
             <button
