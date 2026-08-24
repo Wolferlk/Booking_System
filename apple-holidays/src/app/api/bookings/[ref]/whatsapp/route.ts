@@ -10,7 +10,11 @@
  *   • a Word (.docx) attachment — Meta accepts only a PDF in a template header
  *   • a send with no attachment at all — a document header needs a document
  * Both fall back to free-form, which WhatsApp only delivers inside the 24h
- * window; outside it the caller is told plainly rather than being told "sent".
+ * window. When that window is shut we send the approved opener template (which
+ * does land cold) and QUEUE the send: a template we push never reopens the
+ * window — only the customer's own reply does — so the opener asks for one and
+ * the queued document goes out on that inbound. The caller is told it is
+ * queued, not sent.
  */
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
@@ -19,6 +23,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import {
   isWithin24hWindow,
   deliverConfirmationNow,
+  sendOpenerAndQueue,
   buildBookingPdf,
   type PdfType,
   type FileFormat,
@@ -100,13 +105,22 @@ export async function POST(
     if (!message) return buildApiError('A message is required for a free-form send')
 
     if (!(await isWithin24hWindow(to))) {
-      return buildApiError(
+      // Window shut. Send the approved opener template (it lands cold) and queue
+      // this send — Meta reopens the window only on the CUSTOMER's own message,
+      // so the opener asks them to reply and the queue flushes on that inbound.
+      await sendOpenerAndQueue({
+        ref: params.ref, to, name: name ?? 'Guest', message,
+        attachPdf: attach, pdfType: type as PdfType, fileFormat: format as FileFormat,
+        senderName, baseUrl,
+      })
+      return buildApiSuccess(
+        { delivered: false, queued: true, channel: 'opener-queued' },
         attach
-          ? 'WhatsApp only accepts a PDF in a template attachment, and this customer has not messaged us in the ' +
-            'last 24 hours, so a Word file cannot reach them. Switch the format to PDF to send it now.'
-          : 'A message with no attachment can only be delivered inside the 24h window, and this customer has not ' +
-            'messaged us in the last 24 hours. Attach the PDF to send it now.',
-        409,
+          ? `A ${format === 'word' ? 'Word file' : 'PDF'} can only be sent free-form, and this customer has not ` +
+            `messaged us in the last 24 hours. We sent them the approved reply request — the ${docLabel} ` +
+            `(${format === 'word' ? 'Word' : 'PDF'}) goes out automatically the moment they message back.`
+          : 'A message with no attachment can only be sent inside the 24h window. We sent the approved reply ' +
+            'request — this message goes out automatically the moment the customer messages back.',
       )
     }
 

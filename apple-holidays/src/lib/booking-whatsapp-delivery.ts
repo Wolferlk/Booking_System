@@ -11,11 +11,10 @@
  *   • buildBookingPdf() / deliverConfirmationNow() — the free-form send. It is
  *     the only way to put a Word file or a bare message in front of a customer,
  *     and both need the 24h window, which the callers check and say so.
- *   • flushPendingConfirmations() — drains rows queued by the OLD opener-and-wait
- *     flow. Nothing queues any more, but rows queued before the change must still
- *     go out when their customer replies.
- *   • sendOpenerAndQueue() — DEPRECATED, no longer called. Kept only so the queue
- *     format above has one written definition.
+ *   • flushPendingConfirmations() — drains queued rows when their customer
+ *     replies and reopens the window.
+ *   • sendOpenerAndQueue() — the Word / no-attachment path when the window is
+ *     shut: opener template out now, document queued for the customer's reply.
  *
  * The queue reuses the existing whatsapp_messages table (no migration): a pending
  * outbound row stores the message in `body` and the attachment in `mediaType`
@@ -168,13 +167,15 @@ export async function deliverConfirmationNow(p: ConfirmationSend): Promise<void>
 }
 
 /**
- * DEPRECATED — nothing calls this. Booking documents now go out on the
- * `aahaas_booking_details` template, which delivers cold, so there is no reason
- * to ask a customer to reply before they can be sent their own confirmation.
+ * Window closed on a send a template cannot carry (a Word file, or a bare
+ * message): send the approved opener template — which DOES deliver cold — and
+ * QUEUE the document as a `pending` row. Meta only reopens the 24h window when
+ * the CUSTOMER messages us, never because we sent them a template, so the
+ * opener asks them to reply; flushPendingConfirmations() delivers the queued
+ * row the moment they do.
  *
- * Window closed: send the approved opener template (delivers cold) and QUEUE the
- * confirmation as a `pending` row, flushed by flushPendingConfirmations() the
- * moment the customer replies.
+ * PDF sends never come here — they go out on `aahaas_booking_details`, which
+ * carries the document in its header and lands cold.
  */
 export async function sendOpenerAndQueue(p: ConfirmationSend): Promise<void> {
   const phone     = normalisePhone(p.to)
