@@ -201,9 +201,15 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
       const json = await res.json()
 
       if (!json.success) throw new Error(json.error ?? 'The invoice could not be read')
-      const x = json.extraction as Record<string, unknown> | null
 
-      if (!x) { setReadNote(json.reason ?? 'The invoice could not be read automatically.'); return }
+      // buildApiSuccess nests the payload under `data` — buildApiError does not
+      // nest `error`. Reading the wrong one here is silent: the extraction
+      // arrives, `x` comes back undefined, and the form reports that the
+      // document could not be read while the answer sits one level down.
+      const payload = (json.data ?? {}) as { extraction?: Record<string, unknown> | null; reason?: string | null }
+      const x = payload.extraction ?? null
+
+      if (!x) { setReadNote(payload.reason ?? 'The invoice could not be read automatically.'); return }
 
       setRawExtract(JSON.stringify(x).slice(0, 20_000))
       setConfidence(typeof x.confidence === 'number' ? x.confidence : null)

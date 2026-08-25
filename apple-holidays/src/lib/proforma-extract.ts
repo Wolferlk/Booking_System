@@ -124,6 +124,16 @@ BANK DETAILS — the most important part, and the part most often misread:
   return the one matching the invoice currency and add a warning naming the other.
 - If NO bank details are printed, return every bank field as null. Never invent one.
 
+LEGIBILITY — read this before you extract anything:
+- If the document is blurred, too low-resolution, cropped, blank, or otherwise not
+  clearly legible, return EVERY field as null and confidence 0. Say so in warnings.
+- NEVER invent a plausible value. Do not produce placeholder names ("John Doe"),
+  invented invoice numbers, round example figures, or a bank account you cannot
+  actually read. A null is always correct; an invented value is a wrong payment.
+- If you can read part of the document, extract only that part and null the rest.
+- Only extract a figure you can actually SEE on this document. If you find yourself
+  reasoning about what a hotel invoice usually contains, stop and return null.
+
 confidence: 0 to 1 — how legible and complete the document was. Below 0.6 means a
 person must check every figure.
 warnings: short plain-English notes about anything ambiguous, contradictory or
@@ -144,6 +154,84 @@ Schema:
   },
   "confidence": number|null, "warnings": string[]
 }`
+
+/**
+ * The smallest image we will attempt to read, on the long edge.
+ *
+ * Not a guess. A 612×792 render of a real proforma — legible to a person on
+ * screen — came back from the vision model with an invented guest name, an
+ * invented invoice number and an invented bank account number, at a
+ * self-reported confidence of 0.9 and with no warnings. The same page at
+ * 1700×2200 read perfectly. Reading it twice does not help: both passes
+ * converge on the *same* fabrication, because a blurred invoice pulls the
+ * model towards the average invoice it has seen rather than towards a random
+ * one. Self-reported confidence and cross-checking are therefore both useless
+ * here, and resolution is the one signal that actually separates the two
+ * cases.
+ *
+ * A4 at 150 dpi is 1240×1754, and any phone photograph is far larger, so this
+ * refuses almost nothing a clerk would realistically upload.
+ */
+const MIN_IMAGE_EDGE = 1000
+
+/**
+ * Pixel dimensions from the file header, or null if they cannot be read.
+ *
+ * Deliberately dependency-free — four container formats, each of which states
+ * its size in the first few dozen bytes. HEIC is not parsed: it is an ISO-BMFF
+ * box structure that is not worth hand-rolling, so those files fall through to
+ * `null` and are read without the gate, which is the pre-existing behaviour.
+ */
+export function imageSize(buf: Buffer): { width: number; height: number } | null {
+  // PNG — IHDR is always the first chunk, width/height at bytes 16..24.
+  if (buf.length > 24 && buf.toString('hex', 0, 8) === '89504e470d0a1a0a') {
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+  }
+
+  // GIF — little-endian, immediately after the 6-byte signature.
+  if (buf.length > 10 && (buf.toString('ascii', 0, 6) === 'GIF89a' || buf.toString('ascii', 0, 6) === 'GIF87a')) {
+    return { width: buf.readUInt16LE(6), height: buf.readUInt16LE(8) }
+  }
+
+  // WebP (lossy VP8 and lossless VP8L; the extended VP8X form carries it too).
+  if (buf.length > 30 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    const fourcc = buf.toString('ascii', 12, 16)
+    if (fourcc === 'VP8 ' && buf.length > 30) {
+      return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff }
+    }
+    if (fourcc === 'VP8L' && buf.length > 25) {
+      const bits = buf.readUInt32LE(21)
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 }
+    }
+    if (fourcc === 'VP8X' && buf.length > 30) {
+      return {
+        width: 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16)),
+        height: 1 + (buf[27] | (buf[28] << 8) | (buf[29] << 16)),
+      }
+    }
+    return null
+  }
+
+  // JPEG — walk the marker chain to the frame header, which is the only place
+  // the size is stated. Skipping by segment length rather than scanning for
+  // bytes avoids matching 0xFFCn inside entropy-coded data.
+  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i++; continue }
+      const marker = buf[i + 1]
+      // SOF0..SOF15, excluding the non-frame markers DHT/JPG/DAC.
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) }
+      }
+      if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd9)) { i += 2; continue }
+      i += 2 + buf.readUInt16BE(i + 2)
+    }
+    return null
+  }
+
+  return null
+}
 
 export class ProformaUnreadableError extends Error {}
 
@@ -169,6 +257,18 @@ export async function extractProformaInvoice(
   const messages: { role: 'user'; content: unknown }[] = []
 
   if (isImage) {
+    // Refused before the call, not after: a low-resolution invoice does not
+    // fail loudly, it fabricates convincingly, so there is nothing in the
+    // answer to detect it by. See MIN_IMAGE_EDGE.
+    const size = imageSize(buffer)
+    if (size && Math.max(size.width, size.height) < MIN_IMAGE_EDGE) {
+      throw new ProformaUnreadableError(
+        `That image is too small to read reliably (${size.width}×${size.height}). ` +
+        'A low-resolution invoice makes the reader invent figures rather than fail, so it is refused. ' +
+        'Upload the original PDF, or a larger photograph or screenshot of the invoice.',
+      )
+    }
+
     messages.push({
       role: 'user',
       content: [
@@ -214,17 +314,16 @@ export async function extractProformaInvoice(
     source: 'proforma',
   })
 
-  const raw = response.choices[0]?.message?.content
-  if (!raw) throw new ProformaUnreadableError('Nothing came back from the reader. Enter the figures by hand.')
+  return normalise(readJson(response.choices[0]?.message?.content))
+}
 
-  let parsed: Record<string, unknown>
+function readJson(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) throw new ProformaUnreadableError('Nothing came back from the reader. Enter the figures by hand.')
   try {
-    parsed = JSON.parse(raw) as Record<string, unknown>
+    return JSON.parse(raw) as Record<string, unknown>
   } catch {
     throw new ProformaUnreadableError('The reader returned something unreadable. Enter the figures by hand.')
   }
-
-  return normalise(parsed)
 }
 
 /* ── Shaping the answer ──────────────────────────────────────────────────
