@@ -21,14 +21,22 @@
  *
  * ---- How it reads ----
  *
- *   images   straight to the vision model.
- *   PDFs     text first (pdf-parse). A born-digital invoice — which is most of
- *            them — reads perfectly and costs a fraction of a vision call. When
- *            the text layer comes back empty or near-empty the PDF is a scan,
- *            and there is nothing to fall back to here: the clerk is told the
- *            document could not be read and types the figures, exactly as
- *            before. Better a clear "read this yourself" than a confident
- *            hallucination over a blank page.
+ *   PDFs     handed to the model whole, as a file. The model gets both the text
+ *            layer and a render of each page, which is what this document type
+ *            actually requires: a hotel's proforma routinely prints its bank
+ *            block as an *image* pasted into an otherwise text PDF, and a
+ *            text-only read returns the heading "Bank Details" followed by
+ *            nothing at all — observed on a real Hotel Topaz invoice, where the
+ *            account name, bank, branch, account number and SWIFT were all
+ *            invisible to pdf-parse. Reading the page instead of the text layer
+ *            is the only way those fields come back. It also means a scanned
+ *            PDF now reads, where before it was refused outright.
+ *
+ *            pdf-parse survives as a fallback for the case where the file
+ *            itself is rejected — too many pages, or a corrupt container.
+ *
+ *   images   straight to the vision model, but only above a resolution floor.
+ *            See MIN_IMAGE_EDGE: below it the model invents rather than fails.
  */
 import openai, { logAiUsage } from '@/lib/openai'
 import { extractTextFromPdf } from '@/lib/parsers/pdf-parser'
@@ -277,34 +285,54 @@ export async function extractProformaInvoice(
       ],
     })
   } else {
-    let text = ''
-    try {
-      text = await extractTextFromPdf(buffer)
-    } catch {
-      throw new ProformaUnreadableError('That PDF could not be opened. Enter the figures by hand.')
-    }
-
-    if (text.replace(/\s+/g, '').length < MIN_PDF_TEXT) {
-      throw new ProformaUnreadableError(
-        'That PDF has no readable text — it is most likely a scan. Enter the figures by hand, or upload a photograph of the invoice instead, which can be read as an image.',
-      )
-    }
-
+    // The whole file, not its text. See the header: the bank block on a hotel
+    // proforma is very often an image, and only a read of the rendered page
+    // recovers it.
     messages.push({
       role: 'user',
-      content: `${PROMPT}\n\nInvoice text (file: ${fileName}):\n\n${text.slice(0, MAX_TEXT_CHARS)}`,
+      content: [
+        {
+          type: 'file',
+          file: { filename: fileName, file_data: `data:application/pdf;base64,${buffer.toString('base64')}` },
+        },
+        { type: 'text', text: PROMPT },
+      ],
     })
   }
 
-  const response = await openai.chat.completions.create({
+  const ask = (msgs: unknown) => openai.chat.completions.create({
     model: MODEL,
-    messages: messages as never,
+    messages: msgs as never,
     response_format: { type: 'json_object' },
     // Low, not zero: this is a transcription task, and creativity in it is
     // strictly a defect.
     temperature: 0.1,
     max_tokens: 1600,
   })
+
+  let response
+  try {
+    response = await ask(messages)
+  } catch (err) {
+    // The file itself was refused — too many pages, an unsupported container.
+    // Fall back to the text layer, which is worse (it cannot see an image-only
+    // bank block) but is better than refusing the document outright.
+    if (isImage) throw err
+
+    const text = await extractTextFromPdf(buffer).catch(() => '')
+    if (text.replace(/\s+/g, '').length < MIN_PDF_TEXT) {
+      throw new ProformaUnreadableError(
+        'That PDF could not be read — it may be corrupt, or too long. Enter the figures by hand.',
+      )
+    }
+
+    response = await ask([{
+      role: 'user',
+      content: `${PROMPT}\n\nInvoice text (file: ${fileName}):\n\n${text.slice(0, MAX_TEXT_CHARS)}`
+        + '\n\nNOTE: only the text layer of this PDF was available. If the bank details are not in the'
+        + ' text above, return them as null and say so in warnings — do not guess them.',
+    }])
+  }
 
   await logAiUsage({
     callType: 'proforma-invoice-extract',
