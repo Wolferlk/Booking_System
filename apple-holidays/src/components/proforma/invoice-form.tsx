@@ -21,6 +21,11 @@
  * Nett + tax = total is computed as you type, but the total stays editable:
  * properties round, absorb, and bundle, and the number that must be paid is
  * the one printed on the paper, not the one arithmetic prefers.
+ *
+ * The document is the only field filing insists on. Every figure on it,
+ * the total included, can be left empty and typed in later — a proforma whose
+ * total nobody can read is still a proforma, and holding the paper out of the
+ * system until someone settles the arithmetic loses the paper.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -312,13 +317,15 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
   async function submit() {
     setError(null)
 
-    if (!form.hotelName.trim()) { setError('Which hotel sent this invoice?'); return }
-    const total = Number(form.totalAmount.replace(/,/g, ''))
-    if (!form.totalAmount.trim() || !Number.isFinite(total) || total <= 0) {
-      setError('Enter the invoice total'); return
-    }
+    // The document is the only thing filing insists on. A total nobody could read
+    // off the paper is filed empty and typed in later; the paper itself cannot be.
     if (!editing && !file) {
       setError('Attach the proforma document — a PDF or a photograph of it'); return
+    }
+    if (!form.hotelName.trim()) { setError('Which hotel sent this invoice?'); return }
+    const typedTotal = form.totalAmount.trim()
+    if (typedTotal !== '' && !(Number(typedTotal.replace(/,/g, '')) > 0)) {
+      setError('The total must be a positive number — or leave it empty'); return
     }
 
     const fd = new FormData()
@@ -555,13 +562,13 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
             <Field label={<>Tax / service{autoMark('taxAmount')}</>}>
               <input inputMode="decimal" className={cn(inputCls, 'text-right tabular-nums', auto.taxAmount && autoCls)} value={form.taxAmount} onChange={e => set('taxAmount', e.target.value)} placeholder="0.00" />
             </Field>
-            <Field label={<>Total{autoMark('totalAmount')}</>} required>
+            <Field label={<>Total{autoMark('totalAmount')}</>}>
               <input
                 inputMode="decimal"
                 className={cn(inputCls, 'text-right font-bold tabular-nums', auto.totalAmount && autoCls, totalDiffers && 'border-amber-400 bg-amber-50')}
                 value={form.totalAmount}
                 onChange={e => set('totalAmount', e.target.value)}
-                placeholder="0.00"
+                placeholder="leave empty if unclear"
               />
             </Field>
           </div>

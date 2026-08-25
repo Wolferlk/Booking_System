@@ -154,7 +154,10 @@ export async function POST(req: NextRequest) {
   if (amount === 'bad' || taxAmount === 'bad' || totalAmount === 'bad') {
     return buildApiError('Amounts must be positive numbers', 422)
   }
-  if (totalAmount == null) return buildApiError('The invoice total is required', 422)
+  // The total is NOT required. The document is the record; a figure nobody could
+  // read off it — a scan with no text layer, a total the property left off the
+  // proforma — must not stop the paper being filed. It stays null until someone
+  // types it, and the board shows an em dash where the money would be.
 
   const invoiceDate = date(form, 'invoiceDate')
   const dueDate = date(form, 'dueDate')
@@ -174,18 +177,20 @@ export async function POST(req: NextRequest) {
     return Number.isInteger(n) && n >= 0 ? n : fallback
   }
 
-  // The file, if one came with it.
+  // The document, and it is the one thing this route insists on: an invoice row
+  // with no paper behind it is a claim nobody in Accounts can check.
   let stored: { fileUrl: string; fileKey: string; fileName: string } | null = null
   const file = form.get('file')
-  if (file instanceof File && file.size > 0) {
-    if (!ACCEPTED_UPLOAD.test(file.name)) {
-      return buildApiError('Upload a PDF or an image of the invoice', 422)
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      return buildApiError(`That file is larger than ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`, 422)
-    }
-    stored = await storeProformaFile(booking.bookingRef, file)
+  if (!(file instanceof File) || file.size === 0) {
+    return buildApiError('Attach the proforma document — a PDF or a photograph of it', 422)
   }
+  if (!ACCEPTED_UPLOAD.test(file.name)) {
+    return buildApiError('Upload a PDF or an image of the invoice', 422)
+  }
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return buildApiError(`That file is larger than ${Math.round(MAX_UPLOAD_BYTES / 1024 / 1024)} MB`, 422)
+  }
+  stored = await storeProformaFile(booking.bookingRef, file)
 
   const created = await prisma.proformaInvoice.create({
     data: {
