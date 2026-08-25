@@ -95,6 +95,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     decimal('amount'); decimal('taxAmount'); decimal('totalAmount')
     when('invoiceDate'); when('dueDate'); when('checkIn'); when('checkOut')
     count('nights'); count('roomCount')
+    // The beneficiary account, correctable like every other field on the paper.
+    // Each is only written when the form actually sent it, so a client that
+    // does not know about these columns cannot blank them.
+    text('bankAccountName'); text('bankName'); text('bankBranch')
+    text('bankAccountNumber'); text('bankSwift'); text('bankIban'); text('bankAddress')
   } catch (e) {
     return buildApiError(e instanceof Error ? e.message : 'Invalid value', 422)
   }
@@ -102,6 +107,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const currency = read('currency')
   if (currency !== undefined && currency.trim() !== '') {
     data.currency = currency.trim().toUpperCase().slice(0, 3)
+  }
+
+  const bankCurrency = read('bankCurrency')
+  if (bankCurrency !== undefined) {
+    const up = bankCurrency.trim().toUpperCase().slice(0, 8)
+    data.bankCurrency = up === '' ? null : up
   }
 
   const meal = read('mealPlan')

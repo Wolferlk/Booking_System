@@ -29,6 +29,12 @@ interface SettlementRow extends RowDataPacket {
   paid_at: Date | null
   paid_by: string | null
   payment_reference: string | null
+  receipt_no: string | null
+  pay_currency: string | null
+  fx_rate: string | number | null
+  fx_rate_source: string | null
+  fx_rate_date: Date | null
+  actual_payable: string | number | null
   note: string | null
   slip_path: string | null
   slip_name: string | null
@@ -36,6 +42,24 @@ interface SettlementRow extends RowDataPacket {
 }
 
 const SELECT_COLS = [
+  'proforma_id', 'hotel_name', 'currency', 'status', 'payable_status',
+  'payable_record_id', 'paid_amount', 'paid_at', 'paid_by',
+  'payment_reference', 'note', 'slip_path', 'slip_name', 'updated_at',
+  // What actually left the account — added after the first release, so a
+  // deployment where the Accounts migration has not run yet must still work.
+  // See `selectCols` below.
+  'receipt_no', 'pay_currency', 'fx_rate', 'fx_rate_source', 'fx_rate_date',
+  'actual_payable',
+].join(', ')
+
+/**
+ * The columns above minus the ones added later, for the one case that matters:
+ * this app deploying before the Accounts app's migration has run. Selecting a
+ * column that does not exist fails the whole statement, and losing the paid
+ * badge on every booking screen because a rate column is missing would be a
+ * bad trade. The full list is tried first and this is the fallback.
+ */
+const SELECT_COLS_LEGACY = [
   'proforma_id', 'hotel_name', 'currency', 'status', 'payable_status',
   'payable_record_id', 'paid_amount', 'paid_at', 'paid_by',
   'payment_reference', 'note', 'slip_path', 'slip_name', 'updated_at',
@@ -54,6 +78,12 @@ function toSettlement(r: SettlementRow): ProformaSettlement {
     paidAt: r.paid_at ? new Date(r.paid_at).toISOString() : null,
     paidBy: r.paid_by,
     reference: r.payment_reference,
+    receiptNo: r.receipt_no ?? null,
+    payCurrency: r.pay_currency ?? null,
+    fxRate: r.fx_rate == null ? null : Number(r.fx_rate),
+    fxRateSource: r.fx_rate_source ?? null,
+    fxRateDate: r.fx_rate_date ? new Date(r.fx_rate_date).toISOString() : null,
+    actualPayable: r.actual_payable == null ? null : Number(r.actual_payable),
     note: r.note,
     hasReceipt,
     receiptName: r.slip_name,
@@ -76,12 +106,22 @@ export async function settlementsFor(proformaIds: string[]): Promise<Map<string,
   const ids = Array.from(new Set(proformaIds.filter(Boolean)))
   if (ids.length === 0) return new Map()
 
+  const placeholders = ids.map(() => '?').join(', ')
+  const read = (cols: string) => accountsQuery<SettlementRow>(
+    `SELECT ${cols} FROM proforma_settlements WHERE proforma_id IN (${placeholders})`,
+    ids,
+  )
+
   try {
-    const placeholders = ids.map(() => '?').join(', ')
-    const rows = await accountsQuery<SettlementRow>(
-      `SELECT ${SELECT_COLS} FROM proforma_settlements WHERE proforma_id IN (${placeholders})`,
-      ids,
-    )
+    let rows: SettlementRow[]
+    try {
+      rows = await read(SELECT_COLS)
+    } catch {
+      // Almost always "unknown column" on a database where the Accounts
+      // migration has not run yet. Retry without the newer columns; anything
+      // else fails again here and is caught below.
+      rows = await read(SELECT_COLS_LEGACY)
+    }
     return new Map(rows.map(r => [r.proforma_id, toSettlement(r)]))
   } catch (err) {
     console.error('[accounts-proforma] settlement lookup failed:', err)

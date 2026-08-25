@@ -218,8 +218,29 @@ export interface ProformaRow {
   createdBy: string | null
   createdAt: string
   updatedAt: string
+  /**
+   * The beneficiary account printed on the invoice, as the extraction pass read
+   * it. Null when nothing was found — an older invoice, a scan too poor to
+   * read, or a property that banks by arrangement. Quoted, never authoritative:
+   * Accounts shows it beside the payable line and a person copies it across.
+   */
+  bank: ProformaBank | null
+  /** When the document was last read by the model. Null if it never was. */
+  aiExtractedAt: string | null
   /** Accounts' answer, attached in the API layer. Null until they have one. */
   settlement: ProformaSettlement | null
+}
+
+/** The beneficiary account as printed on a property's invoice. */
+export interface ProformaBank {
+  accountName: string | null
+  bankName: string | null
+  branch: string | null
+  accountNumber: string | null
+  swift: string | null
+  iban: string | null
+  currency: string | null
+  address: string | null
 }
 
 /** What the Accounts app has done with an invoice. Read-only on this side. */
@@ -233,6 +254,24 @@ export interface ProformaSettlement {
   paidAt: string | null
   paidBy: string | null
   reference: string | null
+  /** The receipt id or cheque number, kept apart from the transfer reference. */
+  receiptNo: string | null
+  /**
+   * What actually left the account, and at what rate.
+   *
+   * `paidAmount` above is in the *invoice's* currency — what this invoice was
+   * answered for. These describe the transfer that answered it: the desk pays
+   * out of a rupee account, so a USD bill is normally settled in LKR at the
+   * day's CBSL buy rate. Null on every settlement paid before Accounts started
+   * recording it, which the screen shows as "not recorded", never as zero.
+   */
+  payCurrency: string | null
+  fxRate: number | null
+  /** 'cbsl' — the published rate; 'manual' — one a person typed; 'identity'. */
+  fxRateSource: string | null
+  fxRateDate: string | null
+  /** The settled figure, in `payCurrency`. */
+  actualPayable: number | null
   note: string | null
   hasReceipt: boolean
   receiptName: string | null
@@ -274,6 +313,22 @@ export function toProformaRow(r: any): ProformaRow {
     createdBy: r.createdBy ?? null,
     createdAt: iso(r.createdAt) ?? new Date().toISOString(),
     updatedAt: iso(r.updatedAt) ?? new Date().toISOString(),
+    // Collapsed to null when every field is empty: "nothing was read off the
+    // paper" and "a card full of dashes" are different things on screen.
+    bank: [r.bankAccountName, r.bankName, r.bankBranch, r.bankAccountNumber,
+           r.bankSwift, r.bankIban, r.bankAddress].some(Boolean)
+      ? {
+          accountName: r.bankAccountName ?? null,
+          bankName: r.bankName ?? null,
+          branch: r.bankBranch ?? null,
+          accountNumber: r.bankAccountNumber ?? null,
+          swift: r.bankSwift ?? null,
+          iban: r.bankIban ?? null,
+          currency: r.bankCurrency ?? null,
+          address: r.bankAddress ?? null,
+        }
+      : null,
+    aiExtractedAt: iso(r.aiExtractedAt),
     settlement: null,
   }
 }

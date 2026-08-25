@@ -576,12 +576,42 @@ function HotelCard({
                     {inv.roomType && <span>{inv.roomType}</span>}
                   </div>
 
-                  {inv.settlement?.status === 'paid' && (
-                    <p className="mt-1.5 rounded-md bg-teal-50 px-2 py-1 text-[11px] font-semibold text-teal-800">
-                      Paid {money(inv.settlement.paidAmount, inv.settlement.currency ?? inv.currency)} on {day(inv.settlement.paidAt)}
-                      {inv.settlement.reference && <span className="font-normal"> · ref {inv.settlement.reference}</span>}
-                      {inv.settlement.paidBy && <span className="font-normal"> · {inv.settlement.paidBy}</span>}
-                    </p>
+                  {(inv.settlement?.status === 'paid' || inv.settlement?.status === 'partially_paid') && (
+                    <div className={cn(
+                      'mt-1.5 rounded-md px-2 py-1.5 text-[11px]',
+                      inv.settlement.status === 'paid' ? 'bg-teal-50 text-teal-800' : 'bg-amber-50 text-amber-900',
+                    )}>
+                      <p className="font-semibold">
+                        {inv.settlement.status === 'paid' ? 'Paid' : 'Part paid'}{' '}
+                        {money(inv.settlement.paidAmount, inv.settlement.currency ?? inv.currency)} on {day(inv.settlement.paidAt)}
+                        {inv.settlement.reference && <span className="font-normal"> · ref {inv.settlement.reference}</span>}
+                        {inv.settlement.receiptNo && <span className="font-normal"> · receipt {inv.settlement.receiptNo}</span>}
+                        {inv.settlement.paidBy && <span className="font-normal"> · {inv.settlement.paidBy}</span>}
+                      </p>
+
+                      {/* What actually left the account. The desk pays out of a
+                          rupee account, so the figure Accounts settled at is
+                          rarely the figure on this invoice — and it is the one
+                          Operations is asked about. Shown only when Accounts
+                          recorded it; older payments simply do not have it. */}
+                      {inv.settlement.actualPayable != null && inv.settlement.payCurrency && (
+                        <p className="mt-0.5 font-normal">
+                          Settled at{' '}
+                          <b className="tabular-nums">
+                            {money(inv.settlement.actualPayable, inv.settlement.payCurrency)}
+                          </b>
+                          {inv.settlement.payCurrency !== (inv.settlement.currency ?? inv.currency) && inv.settlement.fxRate != null && (
+                            <span>
+                              {' '}at {inv.settlement.fxRate.toLocaleString('en-US', { maximumFractionDigits: 4 })}
+                              {' '}{inv.settlement.payCurrency}/{inv.settlement.currency ?? inv.currency}
+                              {inv.settlement.fxRateSource === 'cbsl'
+                                ? ` · CBSL${inv.settlement.fxRateDate ? ' ' + day(inv.settlement.fxRateDate) : ''}`
+                                : inv.settlement.fxRateSource === 'manual' ? ' · rate set by Accounts' : ''}
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </div>
                   )}
                   {inv.settlement?.status === 'rejected' && inv.settlement.note && (
                     <p className="mt-1.5 rounded-md bg-red-50 px-2 py-1 text-[11px] text-red-800">
