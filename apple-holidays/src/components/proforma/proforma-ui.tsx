@@ -27,6 +27,19 @@ export interface Settlement {
   paidBy: string | null
   reference: string | null
   note: string | null
+  /** The receipt id or cheque number, kept apart from the transfer reference. */
+  receiptNo: string | null
+  /**
+   * What actually left the account, and at what rate. `paidAmount` above is in
+   * the *invoice's* currency — what this invoice was answered for; these
+   * describe the transfer that answered it. Null on settlements paid before
+   * Accounts recorded this, which reads as "not recorded", never as zero.
+   */
+  payCurrency: string | null
+  fxRate: number | null
+  fxRateSource: string | null
+  fxRateDate: string | null
+  actualPayable: number | null
   hasReceipt: boolean
   receiptName: string | null
   receiptUrl: string | null
@@ -62,7 +75,27 @@ export interface Invoice {
   createdBy: string | null
   createdAt: string
   updatedAt: string
+  /**
+   * The beneficiary account printed on the invoice, as the reader took it off
+   * the document. Null when nothing was found. Quoted, never an instruction —
+   * Accounts shows it beside the payable line and a person copies it across.
+   */
+  bank: InvoiceBank | null
+  /** When the document was last read. Null if it never was. */
+  aiExtractedAt: string | null
   settlement: Settlement | null
+}
+
+/** The beneficiary account as printed on a property's invoice. */
+export interface InvoiceBank {
+  accountName: string | null
+  bankName: string | null
+  branch: string | null
+  accountNumber: string | null
+  swift: string | null
+  iban: string | null
+  currency: string | null
+  address: string | null
 }
 
 export interface HotelSlot {

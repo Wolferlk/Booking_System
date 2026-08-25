@@ -62,6 +62,52 @@ function date(form: FormData, field: string): Date | null | 'bad' {
   return Number.isNaN(d.getTime()) ? 'bad' : d
 }
 
+/**
+ * The bank block the form carries back from the extraction pass.
+ *
+ * Sent as flat form fields rather than JSON so a clerk's correction to any one
+ * of them travels the same way every other corrected field does — what is
+ * stored is what was on screen when they pressed File, not what the model
+ * originally said. The model's own answer is kept whole in `aiExtract`, so the
+ * two readings can always be compared.
+ */
+function bankFields(form: FormData) {
+  const s = (field: string, max: number) => {
+    const v = String(form.get(field) ?? '').trim()
+    return v ? v.slice(0, max) : null
+  }
+
+  return {
+    bankAccountName: s('bankAccountName', 255),
+    bankName: s('bankName', 255),
+    bankBranch: s('bankBranch', 255),
+    bankAccountNumber: s('bankAccountNumber', 128),
+    bankSwift: s('bankSwift', 32),
+    bankIban: s('bankIban', 64),
+    bankCurrency: s('bankCurrency', 8)?.toUpperCase() ?? null,
+    bankAddress: s('bankAddress', 500),
+  }
+}
+
+/**
+ * The raw extraction payload, if the form is carrying one.
+ *
+ * Parsed defensively and dropped on any doubt: this column is an audit trail,
+ * and a malformed one must not stop an invoice being filed.
+ */
+function aiExtract(form: FormData): { aiExtract: object; aiExtractedAt: Date } | null {
+  const raw = String(form.get('aiExtract') ?? '').trim()
+  if (!raw || raw.length > 20_000) return null
+
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return { aiExtract: parsed as object, aiExtractedAt: new Date() }
+  } catch {
+    return null
+  }
+}
+
 export async function POST(req: NextRequest) {
   const g = await guardReservation('proforma:manage')
   if (!g.ok) return g.response
@@ -172,6 +218,13 @@ export async function POST(req: NextRequest) {
       fileUrl: stored?.fileUrl ?? null,
       fileKey: stored?.fileKey ?? null,
       fileName: stored?.fileName ?? null,
+
+      // The beneficiary account printed on the invoice, as read off the
+      // document and confirmed by the clerk. Recorded so Accounts does not have
+      // to read the same PDF a second time by eye — the step that produces
+      // wrong-account transfers. Nothing pays from these columns.
+      ...bankFields(form),
+      ...(aiExtract(form) ?? {}),
 
       // RECEIVED, always. This component records what a property sent; whether
       // it is right is a separate act by a person, on the pipeline board.

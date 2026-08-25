@@ -3,9 +3,20 @@
 /**
  * File a proforma against one hotel — or correct one already filed.
  *
- * The form is deliberately one screen. A clerk holding a supplier's PDF has
- * every value on it in front of them; making them page through a wizard to
- * type six numbers is how invoices end up half-entered.
+ * ---- Upload first ----
+ *
+ * The document is the top of the form now, not the bottom, because it is the
+ * only thing a clerk should have to provide. Dropping the PDF reads it — the
+ * invoice number, the dates, the figures and the bank account at the foot of
+ * the page — and fills the form in. What used to be nine fields typed off a
+ * page held in the other hand is now a check and a press.
+ *
+ * The fields all stay editable, and every one the reader filled is marked as
+ * such. That is the whole safety model: the machine proposes, the clerk
+ * disposes, and what is filed is what was on screen when they pressed File. A
+ * misread figure costs a correction in an open form; nothing is stored until
+ * then. When a document cannot be read at all — a scan with no text layer —
+ * the form says so and behaves exactly as it did before.
  *
  * Nett + tax = total is computed as you type, but the total stays editable:
  * properties round, absorb, and bundle, and the number that must be paid is
@@ -13,7 +24,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FileText, Paperclip, Upload, X } from 'lucide-react'
+import { AlertTriangle, Building2, FileText, Paperclip, Sparkles, Upload, X } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
 import { cn } from '@/lib/utils'
@@ -56,7 +67,20 @@ interface FormState {
   mealPlan: string
   roomCount: string
   notes: string
+  // The beneficiary account printed on the invoice. Filed with it so Accounts
+  // does not read the same PDF a second time by eye before paying.
+  bankAccountName: string
+  bankName: string
+  bankBranch: string
+  bankAccountNumber: string
+  bankSwift: string
+  bankIban: string
+  bankCurrency: string
+  bankAddress: string
 }
+
+/** Which fields the reader filled, so the form can say so. */
+type AutoFilled = Partial<Record<keyof FormState, true>>
 
 function initial(target: InvoiceFormTarget, bookingCurrency: string): FormState {
   const { slot, invoice } = target
@@ -78,6 +102,14 @@ function initial(target: InvoiceFormTarget, bookingCurrency: string): FormState 
     mealPlan: (invoice?.mealPlan ?? slot?.mealType ?? '').toUpperCase(),
     roomCount: n(invoice?.roomCount),
     notes: invoice?.notes ?? '',
+    bankAccountName: invoice?.bank?.accountName ?? '',
+    bankName: invoice?.bank?.bankName ?? '',
+    bankBranch: invoice?.bank?.branch ?? '',
+    bankAccountNumber: invoice?.bank?.accountNumber ?? '',
+    bankSwift: invoice?.bank?.swift ?? '',
+    bankIban: invoice?.bank?.iban ?? '',
+    bankCurrency: invoice?.bank?.currency ?? '',
+    bankAddress: invoice?.bank?.address ?? '',
   }
 }
 
@@ -89,6 +121,19 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
   const [error, setError] = useState<string | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
+  // ── The reading pass ──────────────────────────────────────────────
+  // `reading` drives the dropzone's own state rather than a blocking
+  // overlay: the clerk can start on the hotel name while the model
+  // works, and anything they typed is kept — the merge below only
+  // fills fields that are still empty.
+  const [reading, setReading] = useState(false)
+  const [auto, setAuto] = useState<AutoFilled>({})
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [confidence, setConfidence] = useState<number | null>(null)
+  const [readNote, setReadNote] = useState<string | null>(null)
+  /** The model's whole answer, filed alongside the invoice for audit. */
+  const [rawExtract, setRawExtract] = useState<string | null>(null)
+
   const editing = target.invoice != null
   const addingHotel = target.slot == null && !editing
 
@@ -97,6 +142,7 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
       setForm(initial(target, bookingCurrency))
       setFile(null)
       setError(null)
+      setAuto({}); setWarnings([]); setConfidence(null); setReadNote(null); setRawExtract(null)
     }
     // `target` is a fresh object per open; keying on `open` is what makes the
     // form reset exactly once per opening rather than on every parent render.
@@ -131,7 +177,106 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
       return
     }
     setFile(f)
+    void read(f)
   }
+
+  /**
+   * Hand the document to the reader and merge what comes back.
+   *
+   * Two rules, and they are the whole contract with the clerk:
+   *
+   *   - a field they have already filled is never overwritten. They were
+   *     looking at the paper when they typed it.
+   *   - a failure is not an error. The note explains what happened and the
+   *     form stays exactly as usable as it was before this existed.
+   */
+  async function read(f: File) {
+    setReading(true)
+    setReadNote(null); setWarnings([]); setConfidence(null)
+
+    try {
+      const fd = new FormData()
+      fd.set('file', f)
+      const res = await fetch('/api/proforma/extract', { method: 'POST', body: fd })
+      const json = await res.json()
+
+      if (!json.success) throw new Error(json.error ?? 'The invoice could not be read')
+      const x = json.extraction as Record<string, unknown> | null
+
+      if (!x) { setReadNote(json.reason ?? 'The invoice could not be read automatically.'); return }
+
+      setRawExtract(JSON.stringify(x).slice(0, 20_000))
+      setConfidence(typeof x.confidence === 'number' ? x.confidence : null)
+      setWarnings(Array.isArray(x.warnings) ? (x.warnings as string[]) : [])
+
+      const bank = (x.bank ?? {}) as Record<string, unknown>
+      const str = (v: unknown) => (v == null ? '' : String(v))
+
+      // extraction field → form field. Kept explicit rather than clever: the
+      // two shapes are allowed to drift, and a silent mis-mapping here would
+      // put a tax figure in a total.
+      const mapped: Partial<FormState> = {
+        hotelName: str(x.hotelName),
+        city: str(x.city),
+        invoiceNumber: str(x.invoiceNumber),
+        invoiceDate: str(x.invoiceDate),
+        dueDate: str(x.dueDate),
+        currency: str(x.currency),
+        amount: str(x.amount),
+        taxAmount: str(x.taxAmount),
+        totalAmount: str(x.totalAmount),
+        checkIn: str(x.checkIn),
+        checkOut: str(x.checkOut),
+        nights: str(x.nights),
+        roomType: str(x.roomType),
+        mealPlan: str(x.mealPlan).toUpperCase(),
+        roomCount: str(x.roomCount),
+        bankAccountName: str(bank.accountName),
+        bankName: str(bank.bankName),
+        bankBranch: str(bank.branch),
+        bankAccountNumber: str(bank.accountNumber),
+        bankSwift: str(bank.swift),
+        bankIban: str(bank.iban),
+        bankCurrency: str(bank.currency),
+        bankAddress: str(bank.address),
+      }
+
+      const filled: AutoFilled = {}
+      setForm(prev => {
+        const next = { ...prev }
+        for (const [k, v] of Object.entries(mapped) as [keyof FormState, string][]) {
+          if (!v) continue
+          // `invoiceDate` and the stay dates are pre-seeded from today and from
+          // the booking, so "already filled" would block every one of them.
+          // The invoice's own reading wins for those; everything else defers
+          // to whatever the clerk has typed.
+          const seeded = k === 'invoiceDate' || k === 'checkIn' || k === 'checkOut'
+            || k === 'nights' || k === 'currency' || k === 'mealPlan' || k === 'roomType'
+            || k === 'hotelName' || k === 'city'
+          const empty = String(prev[k] ?? '').trim() === ''
+          const fromSeed = seeded && String(prev[k] ?? '') === String(initial(target, bookingCurrency)[k] ?? '')
+          if (!empty && !fromSeed) continue
+          if (k === 'hotelName' && !addingHotel && !editing) continue  // the stay names it
+          next[k] = v
+          filled[k] = true
+        }
+        return next
+      })
+      setAuto(filled)
+
+      if (Object.keys(filled).length === 0) {
+        setReadNote('The document was read, but everything on it was already filled in.')
+      }
+    } catch (e) {
+      setReadNote(e instanceof Error ? e.message : 'The invoice could not be read automatically.')
+    } finally {
+      setReading(false)
+    }
+  }
+
+  /** Small marker on a field the reader filled. */
+  const autoMark = (k: keyof FormState) =>
+    auto[k] ? <span className="ml-1 inline-flex items-center gap-0.5 text-[9px] font-bold text-brand-600" title="Read from the uploaded document"><Sparkles className="h-2.5 w-2.5" />auto</span> : null
 
   async function submit() {
     setError(null)
@@ -150,6 +295,8 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
     if (target.slot?.accommodationId) fd.set('accommodationId', target.slot.accommodationId)
     for (const [k, v] of Object.entries(form)) fd.set(k, v)
     if (file) fd.set('file', file)
+    // The model's own answer, filed for audit beside what the clerk confirmed.
+    if (rawExtract) fd.set('aiExtract', rawExtract)
 
     setSaving(true)
     try {
@@ -208,6 +355,130 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
           </div>
         )}
 
+        {/* ── The document, first ────────────────────────────────────────
+             It is the top of the form because it is the only thing the
+             clerk should have to provide: dropping it fills everything
+             below. See the file header. */}
+        <section>
+          <h3 className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <Sparkles className="h-3 w-3 text-brand-500" />
+            The invoice
+            {editing && <span className="font-medium normal-case tracking-normal text-slate-400">— optional; uploading replaces the current one and re-reads it</span>}
+          </h3>
+
+          <div
+            onDragOver={e => { e.preventDefault(); setDragging(true) }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={e => { e.preventDefault(); setDragging(false); pickFile(e.dataTransfer.files?.[0] ?? null) }}
+            onClick={() => { if (!reading) fileInput.current?.click() }}
+            className={cn(
+              'flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-7 text-center transition',
+              reading
+                ? 'cursor-wait border-brand-400 bg-brand-50/70'
+                : dragging
+                  ? 'cursor-pointer border-brand-400 bg-brand-50'
+                  : 'cursor-pointer border-slate-300 bg-slate-50 hover:border-brand-300 hover:bg-brand-50/40',
+            )}
+          >
+            {reading ? (
+              <>
+                <Sparkles className="h-6 w-6 animate-pulse text-brand-500" />
+                <p className="text-sm font-semibold text-brand-700">Reading the invoice&hellip;</p>
+                <p className="text-[11px] text-brand-600">{file?.name}</p>
+                {/* An indeterminate bar — the read takes a few seconds and a
+                    still dropzone reads as a hung one. */}
+                <div className="mt-1.5 h-1 w-40 overflow-hidden rounded-full bg-brand-100">
+                  <div className="h-full w-1/2 animate-pulse rounded-full bg-brand-500" />
+                </div>
+              </>
+            ) : file ? (
+              <>
+                <FileText className="h-6 w-6 text-brand-500" />
+                <p className="text-sm font-semibold text-slate-800">{file.name}</p>
+                <p className="text-[11px] text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                <div className="mt-1 flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-600 hover:underline"
+                    onClick={e => { e.stopPropagation(); void read(file) }}
+                  >
+                    <Sparkles className="h-3 w-3" /> read it again
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:underline"
+                    onClick={e => { e.stopPropagation(); setFile(null); setAuto({}); setWarnings([]); setConfidence(null); setReadNote(null); setRawExtract(null) }}
+                  >
+                    <X className="h-3 w-3" /> remove
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Upload className="h-6 w-6 text-slate-400" />
+                <p className="text-sm font-semibold text-slate-700">Drop the proforma here, or click to choose</p>
+                <p className="text-[11px] text-slate-500">
+                  PDF or image &middot; up to {MAX_MB} MB &middot; the figures and bank details below are filled in from it
+                </p>
+              </>
+            )}
+          </div>
+
+          {/* What the reading pass has to say for itself. */}
+          {!reading && confidence != null && (
+            <div className={cn(
+              'mt-2 flex items-center gap-2 rounded-lg border px-3 py-2 text-[11px]',
+              confidence >= 0.6
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                : 'border-amber-300 bg-amber-50 text-amber-800',
+            )}>
+              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                {confidence >= 0.6
+                  ? <>Read and filled in below. <b>Check every figure against the paper</b> before filing.</>
+                  : <>This document was hard to read ({Math.round(confidence * 100)}% confidence). <b>Check every field.</b></>}
+              </span>
+            </div>
+          )}
+
+          {!reading && readNote && (
+            <div className="mt-2 flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+              <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-slate-400" />
+              <span>{readNote}</span>
+            </div>
+          )}
+
+          {!reading && warnings.length > 0 && (
+            <ul className="mt-2 space-y-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              {warnings.map((w, i) => (
+                <li key={i} className="flex items-start gap-1.5">
+                  <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {editing && target.invoice?.fileUrl && !file && (
+            <a
+              href={target.invoice.fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-600 hover:underline"
+            >
+              <Paperclip className="h-3 w-3" /> {target.invoice.fileName ?? 'current document'}
+            </a>
+          )}
+
+          <input
+            ref={fileInput}
+            type="file"
+            className="hidden"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
+            onChange={e => pickFile(e.target.files?.[0] ?? null)}
+          />
+        </section>
+
         {/* ── Hotel ─────────────────────────────────────────────────────── */}
         <section className="grid gap-3 sm:grid-cols-2">
           <Field label="Hotel" required>
@@ -228,35 +499,35 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
         <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
           <h3 className="mb-2.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">Invoice</h3>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Invoice no.">
-              <input className={inputCls} value={form.invoiceNumber} onChange={e => set('invoiceNumber', e.target.value)} />
+            <Field label={<>Invoice no.{autoMark('invoiceNumber')}</>}>
+              <input className={cn(inputCls, auto.invoiceNumber && autoCls)} value={form.invoiceNumber} onChange={e => set('invoiceNumber', e.target.value)} />
             </Field>
-            <Field label="Invoice date">
-              <input type="date" className={inputCls} value={form.invoiceDate} onChange={e => set('invoiceDate', e.target.value)} />
+            <Field label={<>Invoice date{autoMark('invoiceDate')}</>}>
+              <input type="date" className={cn(inputCls, auto.invoiceDate && autoCls)} value={form.invoiceDate} onChange={e => set('invoiceDate', e.target.value)} />
             </Field>
-            <Field label="Payment due">
-              <input type="date" className={inputCls} value={form.dueDate} onChange={e => set('dueDate', e.target.value)} />
+            <Field label={<>Payment due{autoMark('dueDate')}</>}>
+              <input type="date" className={cn(inputCls, auto.dueDate && autoCls)} value={form.dueDate} onChange={e => set('dueDate', e.target.value)} />
             </Field>
           </div>
 
           <div className="mt-3 grid gap-3 sm:grid-cols-4">
-            <Field label="Currency">
-              <select className={inputCls} value={form.currency} onChange={e => set('currency', e.target.value)}>
+            <Field label={<>Currency{autoMark('currency')}</>}>
+              <select className={cn(inputCls, auto.currency && autoCls)} value={form.currency} onChange={e => set('currency', e.target.value)}>
                 {Array.from(new Set([form.currency, ...CURRENCIES])).filter(Boolean).map(c => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
             </Field>
-            <Field label="Nett">
-              <input inputMode="decimal" className={cn(inputCls, 'text-right tabular-nums')} value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
+            <Field label={<>Nett{autoMark('amount')}</>}>
+              <input inputMode="decimal" className={cn(inputCls, 'text-right tabular-nums', auto.amount && autoCls)} value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
             </Field>
-            <Field label="Tax / service">
-              <input inputMode="decimal" className={cn(inputCls, 'text-right tabular-nums')} value={form.taxAmount} onChange={e => set('taxAmount', e.target.value)} placeholder="0.00" />
+            <Field label={<>Tax / service{autoMark('taxAmount')}</>}>
+              <input inputMode="decimal" className={cn(inputCls, 'text-right tabular-nums', auto.taxAmount && autoCls)} value={form.taxAmount} onChange={e => set('taxAmount', e.target.value)} placeholder="0.00" />
             </Field>
-            <Field label="Total" required>
+            <Field label={<>Total{autoMark('totalAmount')}</>} required>
               <input
                 inputMode="decimal"
-                className={cn(inputCls, 'text-right font-bold tabular-nums', totalDiffers && 'border-amber-400 bg-amber-50')}
+                className={cn(inputCls, 'text-right font-bold tabular-nums', auto.totalAmount && autoCls, totalDiffers && 'border-amber-400 bg-amber-50')}
                 value={form.totalAmount}
                 onChange={e => set('totalAmount', e.target.value)}
                 placeholder="0.00"
@@ -296,62 +567,62 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
           <Field label="Rooms"><input inputMode="numeric" className={inputCls} value={form.roomCount} onChange={e => set('roomCount', e.target.value)} /></Field>
         </section>
 
-        {/* ── The document ──────────────────────────────────────────────── */}
-        <section>
-          <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            Document {editing && <span className="font-medium normal-case tracking-normal text-slate-400">— optional; uploading replaces the current one</span>}
+        {/* ── Where the property wants paying ───────────────────────────
+             Filed with the invoice so Accounts never has to read the same
+             PDF a second time by eye to find the account — the step that
+             produces wrong-account transfers. Shown, not hidden behind a
+             disclosure, because a clerk who cannot see it cannot check it. */}
+        <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+          <h3 className="mb-2.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            <Building2 className="h-3 w-3" /> Bank details on the invoice
+            <span className="ml-auto font-medium normal-case tracking-normal text-slate-400">
+              what Accounts will pay to &mdash; check it against the paper
+            </span>
           </h3>
 
-          <div
-            onDragOver={e => { e.preventDefault(); setDragging(true) }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={e => { e.preventDefault(); setDragging(false); pickFile(e.dataTransfer.files?.[0] ?? null) }}
-            onClick={() => fileInput.current?.click()}
-            className={cn(
-              'flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-6 text-center transition',
-              dragging ? 'border-brand-400 bg-brand-50' : 'border-slate-300 bg-slate-50 hover:border-brand-300 hover:bg-brand-50/40',
-            )}
-          >
-            {file ? (
-              <>
-                <FileText className="h-6 w-6 text-brand-500" />
-                <p className="text-sm font-semibold text-slate-800">{file.name}</p>
-                <p className="text-[11px] text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                <button
-                  type="button"
-                  className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 hover:underline"
-                  onClick={e => { e.stopPropagation(); setFile(null) }}
-                >
-                  <X className="h-3 w-3" /> remove
-                </button>
-              </>
-            ) : (
-              <>
-                <Upload className="h-6 w-6 text-slate-400" />
-                <p className="text-sm font-semibold text-slate-700">Drop the proforma here, or click to choose</p>
-                <p className="text-[11px] text-slate-500">PDF or image · up to {MAX_MB} MB</p>
-              </>
-            )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={<>Account name{autoMark('bankAccountName')}</>}>
+              <input className={cn(inputCls, auto.bankAccountName && autoCls)} value={form.bankAccountName} onChange={e => set('bankAccountName', e.target.value)} placeholder="Beneficiary as printed" />
+            </Field>
+            <Field label={<>Account number{autoMark('bankAccountNumber')}</>}>
+              <input className={cn(inputCls, 'font-mono tabular-nums', auto.bankAccountNumber && autoCls)} value={form.bankAccountNumber} onChange={e => set('bankAccountNumber', e.target.value)} placeholder="Exactly as printed" />
+            </Field>
+            <Field label={<>Bank{autoMark('bankName')}</>}>
+              <input className={cn(inputCls, auto.bankName && autoCls)} value={form.bankName} onChange={e => set('bankName', e.target.value)} />
+            </Field>
+            <Field label={<>Branch{autoMark('bankBranch')}</>}>
+              <input className={cn(inputCls, auto.bankBranch && autoCls)} value={form.bankBranch} onChange={e => set('bankBranch', e.target.value)} />
+            </Field>
           </div>
 
-          {editing && target.invoice?.fileUrl && !file && (
-            <a
-              href={target.invoice.fileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-brand-600 hover:underline"
-            >
-              <Paperclip className="h-3 w-3" /> {target.invoice.fileName ?? 'current document'}
-            </a>
-          )}
+          <div className="mt-3 grid gap-3 sm:grid-cols-3">
+            <Field label={<>SWIFT / BIC{autoMark('bankSwift')}</>}>
+              <input className={cn(inputCls, 'font-mono uppercase', auto.bankSwift && autoCls)} value={form.bankSwift} onChange={e => set('bankSwift', e.target.value.toUpperCase())} />
+            </Field>
+            <Field label={<>IBAN{autoMark('bankIban')}</>}>
+              <input className={cn(inputCls, 'font-mono uppercase', auto.bankIban && autoCls)} value={form.bankIban} onChange={e => set('bankIban', e.target.value.toUpperCase())} />
+            </Field>
+            <Field label={<>Account currency{autoMark('bankCurrency')}</>}>
+              <select className={cn(inputCls, auto.bankCurrency && autoCls)} value={form.bankCurrency} onChange={e => set('bankCurrency', e.target.value)}>
+                {Array.from(new Set(['', form.bankCurrency, ...CURRENCIES])).filter(c => c !== undefined).map(c => (
+                  <option key={c || 'none'} value={c}>{c || '—'}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
 
-          <input
-            ref={fileInput}
-            type="file"
-            className="hidden"
-            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
-            onChange={e => pickFile(e.target.files?.[0] ?? null)}
-          />
+          <div className="mt-3">
+            <Field label={<>Bank address{autoMark('bankAddress')}</>}>
+              <input className={cn(inputCls, auto.bankAddress && autoCls)} value={form.bankAddress} onChange={e => set('bankAddress', e.target.value)} />
+            </Field>
+          </div>
+
+          {form.bankCurrency && form.currency && form.bankCurrency !== form.currency && (
+            <p className="mt-2 text-[11px] text-amber-700">
+              The invoice is in {form.currency} but the account is held in {form.bankCurrency} —
+              Accounts will convert at the rate on the day.
+            </p>
+          )}
         </section>
 
         <Field label="Notes">
@@ -367,12 +638,15 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
   )
 }
 
+/** A field the reader filled: tinted until the clerk touches it. */
+const autoCls = 'border-brand-300 bg-brand-50/50'
+
 const inputCls =
   'w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 ' +
   'placeholder:text-slate-400 focus:border-brand-400 focus:outline-none focus:ring-2 focus:ring-brand-100 ' +
   'disabled:bg-slate-100 disabled:text-slate-500'
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+function Field({ label, required, children }: { label: React.ReactNode; required?: boolean; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-slate-500">

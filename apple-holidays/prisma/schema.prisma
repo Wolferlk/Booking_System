@@ -331,20 +331,20 @@ model AgendaItem {
 }
 
 model Assignment {
-  id           String         @id @default(cuid())
-  agendaItemId String         @unique
-  driverName   String?
-  driverPhone  String?
-  vehicleType  String?
-  vehiclePlate String?
-  notes        String?        @db.Text
-  assignedAt   DateTime       @default(now())
-  driverId     String?
-  vendorId     String?
-  vendorName   String?
-  driverRate   Decimal?       @db.Decimal(10, 2)
-  rateCurrency String?        @default("USD")
-  waSentAt     DateTime?
+  id              String         @id @default(cuid())
+  agendaItemId    String         @unique
+  driverName      String?
+  driverPhone     String?
+  vehicleType     String?
+  vehiclePlate    String?
+  notes           String?        @db.Text
+  assignedAt      DateTime       @default(now())
+  driverId        String?
+  vendorId        String?
+  vendorName      String?
+  driverRate      Decimal?       @db.Decimal(10, 2)
+  rateCurrency    String?        @default("USD")
+  waSentAt        DateTime?
   /// Tour guide on this movement. `guideId` points at a registered Guide;
   /// the denormalised name/phone also cover ad-hoc guides typed straight into
   /// the movement chart (those are still saved to `guides` on first use, so the
@@ -357,11 +357,11 @@ model Assignment {
   tourVendorId    String?
   tourVendorName  String?
   tourVendorPhone String?
-  agendaItem   AgendaItem     @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
-  driver       Driver?        @relation(fields: [driverId], references: [id])
-  vendor       VehicleVendor? @relation(fields: [vendorId], references: [id])
-  guide        Guide?         @relation(fields: [guideId], references: [id])
-  tourVendor   TourVendor?    @relation(fields: [tourVendorId], references: [id])
+  agendaItem      AgendaItem     @relation(fields: [agendaItemId], references: [id], onDelete: Cascade)
+  driver          Driver?        @relation(fields: [driverId], references: [id])
+  vendor          VehicleVendor? @relation(fields: [vendorId], references: [id])
+  guide           Guide?         @relation(fields: [guideId], references: [id])
+  tourVendor      TourVendor?    @relation(fields: [tourVendorId], references: [id])
 
   @@index([driverId], map: "assignments_driverId_fkey")
   @@index([vendorId], map: "assignments_vendorId_fkey")
@@ -371,32 +371,32 @@ model Assignment {
 }
 
 model Ticket {
-  id            String       @id @default(cuid())
-  bookingId     String
-  agendaItemId  String?
-  pnlLineId     String?
-  type          String
-  qty           Int          @default(1)
-  supplier      String?
-  costPerUnit   Decimal?     @db.Decimal(10, 2)
-  totalCost     Decimal?     @db.Decimal(10, 2)
-  currency      String       @default("USD")
-  status        TicketStatus @default(DRAFT)
-  purchasedAt   DateTime?
-  reference     String?
-  notes         String?      @db.Text
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  fileName      String?
-  fileType      String?
-  fileUrl       String?      @db.Text
-  activated     Boolean      @default(true)
-  category      String?
-  transferType  String?
-  vehicleType   String?
-  vehicleNumber String?
-  driverName    String?
-  driverPhone   String?
+  id                String       @id @default(cuid())
+  bookingId         String
+  agendaItemId      String?
+  pnlLineId         String?
+  type              String
+  qty               Int          @default(1)
+  supplier          String?
+  costPerUnit       Decimal?     @db.Decimal(10, 2)
+  totalCost         Decimal?     @db.Decimal(10, 2)
+  currency          String       @default("USD")
+  status            TicketStatus @default(DRAFT)
+  purchasedAt       DateTime?
+  reference         String?
+  notes             String?      @db.Text
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  fileName          String?
+  fileType          String?
+  fileUrl           String?      @db.Text
+  activated         Boolean      @default(true)
+  category          String?
+  transferType      String?
+  vehicleType       String?
+  vehicleNumber     String?
+  driverName        String?
+  driverPhone       String?
   // Where this ticket was bought. MY/SG/VN buy through resellers (Cebu, Global
   // Tix, Travel Vago, Be My Guest) or from an agent, and Accounts pays whoever
   // that was — Payable 1.0 reads these columns back onto its payable line.
@@ -405,12 +405,12 @@ model Ticket {
   // different server and so cannot be a relation. portalName is stored beside
   // it deliberately: a ticket has to keep saying where it was bought even if
   // the portal is later renamed or removed from the list.
-  portalId      Int?
-  portalName    String?
+  portalId          Int?
+  portalName        String?
   // The portal's own booking reference for this purchase, when it gives one.
-  portalRef     String?
-  portalBy      String?
-  portalAt      DateTime?
+  portalRef         String?
+  portalBy          String?
+  portalAt          DateTime?
   // The Accounts approval this ticket is waiting on, mirrored.
   //
   // MY/SG/VN tickets are submitted to Accounts *before* they are bought: the
@@ -433,9 +433,9 @@ model Ticket {
   approvalPaidAt    DateTime?
   approvalPaidRef   String?
   approvalSyncedAt  DateTime?
-  agendaItem    AgendaItem?  @relation(fields: [agendaItemId], references: [id])
-  booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  pnlLine       PNLLineItem? @relation(fields: [pnlLineId], references: [id])
+  agendaItem        AgendaItem?  @relation(fields: [agendaItemId], references: [id])
+  booking           Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  pnlLine           PNLLineItem? @relation(fields: [pnlLineId], references: [id])
 
   @@index([agendaItemId], map: "tickets_agendaItemId_fkey")
   @@index([bookingId], map: "tickets_bookingId_fkey")
@@ -1447,27 +1447,27 @@ enum FeedbackPurpose {
 /// written into the sheet's "File Handler" column (the team uses first names
 /// there, e.g. abdul.rahman@aahaas.com → "Abdul"), so it is editable per row.
 model QueryMonitorMailbox {
-  id            String              @id @default(cuid())
-  email         String              @unique
-  displayName   String
+  id             String              @id @default(cuid())
+  email          String              @unique
+  displayName    String
   /// USER  — a real or shared mailbox, read directly from Graph.
   /// ALIAS — a distribution group with no mailbox of its own (availcheck@).
   ///         Graph cannot open it, so its traffic is attributed from the TO/CC
   ///         headers of the mail collected out of the member inboxes instead.
-  mailboxKind   String              @default("USER")
+  mailboxKind    String              @default("USER")
   /// Further addresses that mean the same group, comma-separated — the same
   /// list is written to under two domains. VarChar with a default, not Text:
   /// see the note on `QueryMonitorEntry.toList`.
-  aliasAddresses String             @default("") @db.VarChar(500)
-  isActive      Boolean             @default(true)
-  sortOrder     Int                 @default(0)
-  lastCheckedAt DateTime?
-  lastMessageAt DateTime?
-  lastError     String?             @db.Text
-  totalSeen     Int                 @default(0)
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  matches       QueryMonitorMatch[]
+  aliasAddresses String              @default("") @db.VarChar(500)
+  isActive       Boolean             @default(true)
+  sortOrder      Int                 @default(0)
+  lastCheckedAt  DateTime?
+  lastMessageAt  DateTime?
+  lastError      String?             @db.Text
+  totalSeen      Int                 @default(0)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  matches        QueryMonitorMatch[]
 
   @@map("query_monitor_mailboxes")
 }
@@ -1500,28 +1500,28 @@ model QueryMonitorSenderRule {
 /// recorded as a QueryMonitorMatch, their names fill the TO List cell, and
 /// exactly one of them is chosen as the File Handler who owns the query.
 model QueryMonitorEntry {
-  id               String              @id @default(cuid())
-  dedupKey         String              @unique // internetMessageId, else conversationId+subject hash
-  conversationId   String?
+  id                 String                    @id @default(cuid())
+  dedupKey           String                    @unique // internetMessageId, else conversationId+subject hash
+  conversationId     String?
   /// Thread identity: Graph's `conversationId` when there is one, else
   /// `subjectKey`. Every later mail of the same thread folds into the first
   /// entry rather than taking a row of its own — one query, one sheet row.
-  threadKey        String?             @db.VarChar(190)
+  threadKey          String?                   @db.VarChar(190)
   /// Fallback thread identity, for mail Graph gives no conversationId for:
   /// `fromDomain|subject`, with the Re:/Fw: prefixes and spacing stripped.
   /// Only set when the subject carries a 4-digit-or-longer reference, so two
   /// unrelated "Urgent quote required" mails can never collapse into one row.
-  subjectKey       String?             @db.VarChar(190)
+  subjectKey         String?                   @db.VarChar(190)
   /// Set on a follow-up: the entry whose sheet row already stands for this
   /// thread. Such entries are kept (their dedupKey is what stops the mail being
   /// looked at again) but are never written — their sync state is MERGED.
-  mergedIntoId     String?
+  mergedIntoId       String?
   /// How many later mails of the thread folded into this row.
   ///
   /// Inbound only, and kept for exactly that reason: it is what the merge logic
   /// increments. What the sheet's "Mails in Thread" column now shows is
   /// `inboundCount + outboundCount` — the whole conversation, both ways.
-  followUpCount    Int                 @default(0)
+  followUpCount      Int                       @default(0)
   /// This entry re-opened a thread that had already been answered — the agent
   /// wrote back after `repliedAt`, so it is a new question with a clock of its
   /// own rather than a chaser on the old one, and it takes a row of its own.
@@ -1529,60 +1529,60 @@ model QueryMonitorEntry {
   /// The append guard reads it: an entry opening a round is matched only on the
   /// exact row identity (date + allocation time + subject), never on the looser
   /// same-day-same-subject one, which cannot tell two rounds of one thread apart.
-  newRound         Boolean             @default(false)
+  newRound           Boolean                   @default(false)
   /// Mails from the agent on this thread, the opening one included. Rolled up
   /// from `events` so a sheet write never has to aggregate them per row.
-  inboundCount     Int                 @default(1)
+  inboundCount       Int                       @default(1)
   /// Mails we sent on this thread — replies, forwards and internal notes alike.
-  outboundCount    Int                 @default(0)
+  outboundCount      Int                       @default(0)
   /// Who wrote the newest mail of the thread and which way it went, so
   /// "waiting on us" and "waiting on them" can be told apart at a glance.
-  lastActor        String?
-  lastDirection    String?             @db.VarChar(8)
+  lastActor          String?
+  lastDirection      String?                   @db.VarChar(8)
   /// When the newest mail of the thread arrived. `receivedAt` stays the first
   /// one: the SLA is measured from when the query was originally asked.
-  lastMessageAt    DateTime?
-  subject          String              @db.Text
-  fromAddress      String
-  fromName         String
-  fromDomain       String
+  lastMessageAt      DateTime?
+  subject            String                    @db.Text
+  fromAddress        String
+  fromName           String
+  fromDomain         String
   /// QUERY → the master query sheet. EXCLUDED → the "other mail" tab: vouchers,
   /// on-ground incidents, avail checks and the like, kept out of the SLA pivots.
-  mailKind         String              @default("QUERY")
+  mailKind           String                    @default("QUERY")
   /// The exclusion pattern that diverted it, written to the second tab's Reason column.
-  excludeReason    String?
-  receivedAt       DateTime // sheet column D — "Allocation time"
-  repliedAt        DateTime? // sheet column E — "Replied time"
+  excludeReason      String?
+  receivedAt         DateTime // sheet column D — "Allocation time"
+  repliedAt          DateTime? // sheet column E — "Replied time"
   /// Sheet column O — the handler whose Sent Items the reply was found in. Kept
   /// apart from `handlerNames`: the owner of a query and the person who happened
   /// to answer it are usually but not always the same, and the team wants both.
-  repliedBy        String?
+  repliedBy          String?
   /// The address the reply was actually sent from — the identity behind
   /// `repliedBy`, which is only the first name the sheet shows.
-  repliedByEmail   String?
+  repliedByEmail     String?
   /// Sheet column X — where the reply went. "Replied by Sajid" is half an
   /// answer; this is what shows it went back to the agent who asked rather than
   /// to a colleague.
-  repliedToAddress String?             @db.VarChar(500)
+  repliedToAddress   String?                   @db.VarChar(500)
   /// Sheet column Y — DIRECT (the agent was answered) | FORWARD (passed to a
   /// colleague, agent not yet answered) | INTERNAL (discussed among ourselves).
   /// Only DIRECT stops the SLA clock. Null while nothing has gone out at all.
-  replyType        String?             @db.VarChar(16)
+  replyType          String?                   @db.VarChar(16)
   /// Sheet column Z — "Sajid → Vishmika · Vishmika → Sudari", oldest hop first.
-  forwardChain     String?             @db.VarChar(500)
+  forwardChain       String?                   @db.VarChar(500)
   /// internetMessageId of the sent mail counted as the reply, so an attribution
   /// can be traced back to a real message in someone's Sent Items.
-  replyMessageId   String?
+  replyMessageId     String?
   /// How the reply was matched to this query:
   /// RECIPIENT — same thread *and* addressed back to whoever asked (strongest),
   /// CONVERSATION — same thread only (an internal forward looks like this),
   /// SUBJECT — no conversation id; same normalised subject, back to the asker.
-  replyMatch       String?
-  replyStatus      String              @default("PENDING") // REPLIED | PENDING | OVERDUE
+  replyMatch         String?
+  replyStatus        String                    @default("PENDING") // REPLIED | PENDING | OVERDUE
   /// Sheet column F — the ONE handler who owns this query. Empty until it can be
   /// known: filled straight away when the mail reached a single mailbox, on the
   /// first reply with whoever answered, or by hand from the TO-list dropdown.
-  handlerNames     String              @db.Text
+  handlerNames       String                    @db.Text
   /// Sheet column G — every mailbox the mail actually reached, comma-joined.
   /// `handlerNames` is always one of these names.
   ///
@@ -1590,68 +1590,68 @@ model QueryMonitorEntry {
   /// required column with no default cannot be added to a populated table —
   /// Prisma would demand a database reset. A handful of first names never
   /// approaches 500 characters.
-  toList           String              @default("") @db.VarChar(500)
-  salesPerson      String?
-  agent            String?
-  destination      String?
-  travelDate       DateTime?
-  travelDateText   String?
-  cntl             String?
-  amendment        String?
-  region           String?
-  isUrgent         Boolean             @default(false)
-  bodySnippet      String              @db.Text
-  extractionSource String              @default("RULE") // RULE | AI | MANUAL
-  aiConfidence     Float?
+  toList             String                    @default("") @db.VarChar(500)
+  salesPerson        String?
+  agent              String?
+  destination        String?
+  travelDate         DateTime?
+  travelDateText     String?
+  cntl               String?
+  amendment          String?
+  region             String?
+  isUrgent           Boolean                   @default(false)
+  bodySnippet        String                    @db.Text
+  extractionSource   String                    @default("RULE") // RULE | AI | MANUAL
+  aiConfidence       Float?
   /// Sheet column T — one sentence describing what the mail is asking for,
   /// written by gpt-4o-mini when the "AI reads every new mail" switch is on.
   /// Null means it was never summarised, which is the normal state with the
   /// switch off — it is not backfilled over history.
-  aiSummary        String?             @db.Text
-  aiSummaryAt      DateTime?
+  aiSummary          String?                   @db.Text
+  aiSummaryAt        DateTime?
   /// Sheet column AA — what happened across the *whole* thread, in one or two
   /// sentences. Distinct from `aiSummary`, which reads the opening mail only and
   /// never moves again: this one is rewritten every time the thread grows, which
   /// is the only way a row standing for eleven mails can say anything true.
-  replySummary     String?             @db.Text
-  replySummaryAt   DateTime?
+  replySummary       String?                   @db.Text
+  replySummaryAt     DateTime?
   /// How many ledger events the stored summary was written from. Regeneration
   /// happens when this falls behind `inboundCount + outboundCount` — that test
   /// is what stops a sweep paying for a summary of a thread that has not moved.
-  replySummaryEvents Int               @default(0)
+  replySummaryEvents Int                       @default(0)
   /// Sheet column AB — why this row is the one that survived when duplicates
   /// were folded into it: which rule matched, and what it absorbed. Blank on the
   /// overwhelming majority of rows, and that is the point — a filled cell is the
   /// sheet showing its working for a line that now stands for mail nobody can
   /// see written out any more.
-  duplicateReason  String?             @db.Text
+  duplicateReason    String?                   @db.Text
   /// Field names the user hand-edited — re-extraction and re-sync never clobber these.
-  manualOverrides  Json?
-  sheetRow         Int?
+  manualOverrides    Json?
+  sheetRow           Int?
   /// Which worksheet `sheetRow` refers to — the two tabs number their rows separately.
-  sheetTab         String?
+  sheetTab           String?
   /// PENDING | SYNCED | DIRTY | FAILED | SKIPPED | MERGED.
   /// MERGED is terminal: the mail belongs to a thread another row already
   /// carries, so it is deliberately never appended anywhere.
-  syncStatus       String              @default("PENDING")
-  syncError        String?             @db.Text
-  syncedAt         DateTime?
+  syncStatus         String                    @default("PENDING")
+  syncError          String?                   @db.Text
+  syncedAt           DateTime?
   /// The standby workbook numbers its rows independently of the primary, so it
   /// carries its own row pointer and its own sync state — a backup that fails to
   /// write must be retried without re-appending to the primary.
-  backupSheetRow   Int?
-  backupSyncStatus String              @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
-  backupSyncError  String?             @db.Text
+  backupSheetRow     Int?
+  backupSyncStatus   String                    @default("PENDING") // PENDING | SYNCED | DIRTY | FAILED | SKIPPED
+  backupSyncError    String?                   @db.Text
   /// The fill last painted onto this entry's row in each workbook — a replied
   /// query's row is turned green. A cache, not a source of truth: it exists so a
   /// sweep does not re-send the same formatting call for rows already coloured.
-  sheetHighlight   String?
-  backupHighlight  String?
-  firstRunId       String?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  matches          QueryMonitorMatch[]
-  events           QueryMonitorThreadEvent[]
+  sheetHighlight     String?
+  backupHighlight    String?
+  firstRunId         String?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  matches            QueryMonitorMatch[]
+  events             QueryMonitorThreadEvent[]
 
   @@index([receivedAt])
   @@index([syncStatus])
@@ -1704,31 +1704,31 @@ model QueryMonitorMatch {
 /// window of Sent Items on purpose, so the same reply is offered to the ledger
 /// again and again and must land exactly once.
 model QueryMonitorThreadEvent {
-  id           String   @id @default(cuid())
+  id           String            @id @default(cuid())
   /// The root entry whose sheet row stands for this thread. Follow-ups keep no
   /// ledger of their own — their mail is an event on the row they merged into.
   entryId      String
   /// `entryId|internetMessageId`, falling back to the Graph id when a message
   /// carries none.
-  eventKey     String   @unique @db.VarChar(190)
+  eventKey     String            @unique @db.VarChar(190)
   /// IN — from the agent to us · OUT — from one of the monitored mailboxes.
-  direction    String   @db.VarChar(8)
+  direction    String            @db.VarChar(8)
   /// QUERY (opened the thread) | FOLLOW_UP (a later mail from the agent) |
   /// REPLY (ours, back to whoever asked — the only kind that stops the SLA
   /// clock) | FORWARD (ours, to a colleague) | INTERNAL (ours, to neither).
-  kind         String   @db.VarChar(16)
+  kind         String            @db.VarChar(16)
   /// The handler's first name for OUT, the agent's display name for IN.
-  actorName    String   @default("")
-  actorAddress String   @default("")
+  actorName    String            @default("")
+  actorAddress String            @default("")
   /// Everyone it went to, already resolved to handler names where the address is
   /// one of ours. VarChar with a default for the same reason as `Entry.toList`.
-  toNames      String   @default("") @db.VarChar(500)
-  toAddresses  String   @default("") @db.VarChar(500)
+  toNames      String            @default("") @db.VarChar(500)
+  toAddresses  String            @default("") @db.VarChar(500)
   occurredAt   DateTime
-  subject      String   @default("") @db.VarChar(500)
-  snippet      String?  @db.Text
+  subject      String            @default("") @db.VarChar(500)
+  snippet      String?           @db.Text
   messageId    String?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime          @default(now())
   entry        QueryMonitorEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
 
   @@index([entryId, occurredAt])
@@ -1782,8 +1782,8 @@ model QueryMonitorRun {
 /// Where a hotel profile's details originally came from.
 enum HotelProfileSource {
   ACCOUNTS // matched against invoice_processor.hotel_details
-  MANUAL   // typed in by staff
-  AI       // researched via OpenAI web search, then saved
+  MANUAL // typed in by staff
+  AI // researched via OpenAI web search, then saved
 }
 
 /// Kind of contact channel held against a hotel.
@@ -1797,12 +1797,12 @@ enum HotelContactKind {
 
 /// Reconfirmation state of one hotel stay.
 enum HotelConfirmStatus {
-  PENDING     // nobody has spoken to the hotel yet
+  PENDING // nobody has spoken to the hotel yet
   IN_PROGRESS // contacted, waiting on the hotel's reply
-  CONFIRMED   // hotel confirmed the booking as stated
+  CONFIRMED // hotel confirmed the booking as stated
   DISCREPANCY // hotel confirmed but something differs (rooms, meal, dates)
-  ISSUE       // hotel cannot honour the booking
-  CANCELLED   // stay dropped
+  ISSUE // hotel cannot honour the booking
+  CANCELLED // stay dropped
   NOT_REQUIRED // own arrangement / guest booked it themselves
 }
 
@@ -1814,39 +1814,39 @@ enum HotelConfirmStatus {
 /// master list does not carry — WhatsApp, reservation desks, verification.
 /// Hotels the master list has never heard of live here alone.
 model HotelProfile {
-  id               String             @id @default(cuid())
-  name             String
+  id                String             @id @default(cuid())
+  name              String
   /// Lowercased, punctuation- and noise-word-stripped name. Unique join key.
-  normalizedName   String             @unique
-  countryCode      String             @default("LK") @db.VarChar(2)
-  city             String?
+  normalizedName    String             @unique
+  countryCode       String             @default("LK") @db.VarChar(2)
+  city              String?
   /// invoice_processor.hotel_details.id when this profile is matched to the
   /// Accounts master list. Null for booking-system-only hotels.
-  accountsHotelId  Int?
+  accountsHotelId   Int?
   accountsHotelName String?
-  address          String?            @db.Text
-  website          String?
+  address           String?            @db.Text
+  website           String?
   /// Primary numbers, denormalised from `channels` for fast list rendering.
-  phone            String?
-  email            String?
-  whatsapp         String?
+  phone             String?
+  email             String?
+  whatsapp          String?
   /// True once a human has confirmed the WhatsApp number actually reaches the
   /// hotel. AI-derived and prefix-guessed numbers start false.
-  whatsappVerified Boolean            @default(false)
-  googleMapsUrl    String?            @db.Text
-  source           HotelProfileSource @default(MANUAL)
-  notes            String?            @db.Text
+  whatsappVerified  Boolean            @default(false)
+  googleMapsUrl     String?            @db.Text
+  source            HotelProfileSource @default(MANUAL)
+  notes             String?            @db.Text
   /// Raw payload of the last AI research run, kept for audit and re-review.
-  aiResearch       Json?
-  aiResearchedAt   DateTime?
-  verifiedAt       DateTime?
-  verifiedBy       String?
-  createdBy        String?
-  updatedBy        String?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  aiResearch        Json?
+  aiResearchedAt    DateTime?
+  verifiedAt        DateTime?
+  verifiedBy        String?
+  createdBy         String?
+  updatedBy         String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  channels         HotelContactChannel[]
+  channels HotelContactChannel[]
 
   @@index([name])
   @@index([countryCode])
@@ -1878,7 +1878,7 @@ model HotelContactChannel {
   createdAt  DateTime         @default(now())
   updatedAt  DateTime         @updatedAt
 
-  hotel      HotelProfile     @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  hotel HotelProfile @relation(fields: [hotelId], references: [id], onDelete: Cascade)
 
   @@index([hotelId])
   @@index([e164])
@@ -1891,53 +1891,53 @@ model HotelContactChannel {
 /// on read, and a row only materialises the first time somebody records
 /// something about the stay.
 model HotelReconfirmation {
-  id                  String             @id @default(cuid())
+  id              String  @id @default(cuid())
   /// bookingRef + normalised hotel + check-in date. Stable across amendments.
-  stayKey             String             @unique
-  bookingRef          String
+  stayKey         String  @unique
+  bookingRef      String
   /// Soft pointer to accommodations.id — re-resolved on every read.
-  accommodationId     String?
-  hotelProfileId      String?
+  accommodationId String?
+  hotelProfileId  String?
   /// Hotel name as it appeared on the booking when the row was created.
-  hotelName           String
-  city                String?
+  hotelName       String
+  city            String?
 
   // ── Stay detail. Defaults are seeded from the booking/accommodation, then
   // become staff-editable because the TC document is frequently incomplete.
-  checkIn             DateTime
-  checkOut            DateTime
-  nights              Int                @default(0)
-  roomType            String?
-  roomCategory        String?
-  roomCount           Int?
-  mealType            String?
-  adults              Int?
-  children            Int?
+  checkIn      DateTime
+  checkOut     DateTime
+  nights       Int      @default(0)
+  roomType     String?
+  roomCategory String?
+  roomCount    Int?
+  mealType     String?
+  adults       Int?
+  children     Int?
   /// Child With Bed / Child No Bed.
-  cwb                 Int?
-  cnb                 Int?
-  infants             Int?
+  cwb          Int?
+  cnb          Int?
+  infants      Int?
 
   // ── Reconfirmation outcome
-  status              HotelConfirmStatus @default(PENDING)
-  confirmationNumber  String?
+  status             HotelConfirmStatus @default(PENDING)
+  confirmationNumber String?
   /// Which channel the hotel was reached on last: WHATSAPP | CALL | EMAIL | PORTAL.
-  lastChannel         String?
-  attempts            Int                @default(0)
-  lastCheckedAt       DateTime?
-  lastCheckedBy       String?
+  lastChannel        String?
+  attempts           Int                @default(0)
+  lastCheckedAt      DateTime?
+  lastCheckedBy      String?
   /// Manual override of the automatic D-10 due date.
-  dueAtOverride       DateTime?
-  followUpAt          DateTime?
-  discrepancyNote     String?            @db.Text
-  notes               String?            @db.Text
+  dueAtOverride      DateTime?
+  followUpAt         DateTime?
+  discrepancyNote    String?            @db.Text
+  notes              String?            @db.Text
 
-  createdBy           String?
-  updatedBy           String?
-  createdAt           DateTime           @default(now())
-  updatedAt           DateTime           @updatedAt
+  createdBy String?
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  events              HotelReconfirmationEvent[]
+  events HotelReconfirmationEvent[]
 
   @@index([bookingRef])
   @@index([checkIn])
@@ -1949,19 +1949,19 @@ model HotelReconfirmation {
 /// Append-only audit trail for a stay's reconfirmation. Never updated, never
 /// deleted — it is the evidence of who spoke to which hotel and when.
 model HotelReconfirmationEvent {
-  id           String              @id @default(cuid())
-  reconfirmId  String
+  id          String   @id @default(cuid())
+  reconfirmId String
   /// created | status_change | checked | contacted | edited | linked | unlinked | ai_research
-  action       String
-  fromStatus   String?
-  toStatus     String?
-  channel      String?
-  note         String?             @db.Text
-  actorName    String?
-  actorEmail   String?
-  createdAt    DateTime            @default(now())
+  action      String
+  fromStatus  String?
+  toStatus    String?
+  channel     String?
+  note        String?  @db.Text
+  actorName   String?
+  actorEmail  String?
+  createdAt   DateTime @default(now())
 
-  reconfirm    HotelReconfirmation @relation(fields: [reconfirmId], references: [id], onDelete: Cascade)
+  reconfirm HotelReconfirmation @relation(fields: [reconfirmId], references: [id], onDelete: Cascade)
 
   @@index([reconfirmId])
   @@index([createdAt])
@@ -2022,21 +2022,21 @@ model BookingReconfirmDelay {
 /// away by a cascade. The rules that decide when a row is owed at all live in
 /// `src/lib/last-minute-shared.ts`.
 model BookingLastMinuteAck {
-  id             String   @id @default(cuid())
-  bookingRef     String   @unique
+  id                  String   @id @default(cuid())
+  bookingRef          String   @unique
   /// Arrival this acknowledgement was made against — see the note above.
-  arrivalDate    DateTime
+  arrivalDate         DateTime
   /// Whole days from creation to arrival at the time of acknowledgement, kept so
   /// a report can count how late the team's late files actually were without
   /// recomputing against a booking that may since have been amended.
-  leadDays       Int
-  acknowledgedBy String?
+  leadDays            Int
+  acknowledgedBy      String?
   acknowledgedByEmail String?
-  acknowledgedAt DateTime @default(now())
+  acknowledgedAt      DateTime @default(now())
   /// Optional free text — what the desk did about it.
-  note           String?  @db.Text
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  note                String?  @db.Text
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@index([acknowledgedAt])
   @@map("booking_last_minute_acks")
@@ -2050,8 +2050,8 @@ model BookingLastMinuteAck {
 /// `bookingRef` string (the same way the tbl_te_* tables do) so this table can
 /// be created on the live database without adding a foreign key to `bookings`.
 model TeExperienceReport {
-  id            String @id @default(cuid())
-  bookingRef    String
+  id         String @id @default(cuid())
+  bookingRef String
 
   /// pending → draft → (held | queued) → sent | failed | cancelled
   /// `pending` = the trip finished with no on-ground call and no feedback form,
@@ -2061,10 +2061,10 @@ model TeExperienceReport {
   triggerSource String @default("manual") @db.VarChar(16)
 
   /// The bad-experience gate. `riskSignals` is a JSON array of what tripped it.
-  riskLevel     String @default("none") @db.VarChar(16)
-  riskScore     Int    @default(0)
-  riskSignals   Json?
-  holdReason    String? @db.Text
+  riskLevel   String  @default("none") @db.VarChar(16)
+  riskScore   Int     @default(0)
+  riskSignals Json?
+  holdReason  String? @db.Text
 
   /// Trip facts copied at build time, so history reads right even after the
   /// booking is amended.
@@ -2074,20 +2074,20 @@ model TeExperienceReport {
   departureDate DateTime? @db.Date
 
   /// Which feedback channels fed this report: calls / form / manual.
-  sources       Json?
+  sources   Json?
   /// Full evidence snapshot — itinerary, per-call feedback, transcripts, guest
   /// form. Transcripts live here and ONLY here; they are kept out of `bodyHtml`
   /// on purpose and are read back by the on-screen viewer.
-  dossier       Json?
-  narrative     Json?
+  dossier   Json?
+  narrative Json?
 
   /// Exactly what was (or would be) mailed to the agent.
-  subject       String? @db.VarChar(512)
-  bodyHtml      String? @db.MediumText
-  toEmail       String? @db.VarChar(255)
-  ccEmails      String? @db.Text
-  sentAt        DateTime?
-  sentBy        String?   @db.VarChar(255)
+  subject  String?   @db.VarChar(512)
+  bodyHtml String?   @db.MediumText
+  toEmail  String?   @db.VarChar(255)
+  ccEmails String?   @db.Text
+  sentAt   DateTime?
+  sentBy   String?   @db.VarChar(255)
 
   /// The hold escalation that goes to the escalation inbox instead of the agent.
   escalationTo   String?   @db.VarChar(255)
@@ -2100,11 +2100,11 @@ model TeExperienceReport {
   lastError      String?   @db.Text
 
   /// Append-only audit trail: [{ at, actor, action, detail }]
-  events         Json?
+  events Json?
 
-  createdBy      String?  @db.VarChar(255)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdBy String?  @db.VarChar(255)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([bookingRef])
   @@index([status, createdAt])
@@ -2556,11 +2556,11 @@ model HotelContractRate {
 
 /// A proforma invoice received from a property, on its way to Accounts.
 model ProformaInvoice {
-  id              String        @id @default(cuid())
-  reservationId   String?
-  bookingRef      String?       @db.VarChar(64)
-  hotelProfileId  String?
-  hotelName       String?
+  id             String  @id @default(cuid())
+  reservationId  String?
+  bookingRef     String? @db.VarChar(64)
+  hotelProfileId String?
+  hotelName      String?
 
   // ── Booking-centric identity (the Proforma Invoice component).
   //
@@ -2574,58 +2574,77 @@ model ProformaInvoice {
   // System reference. Accounts matches on either, so both are stored even
   // though the booking carries them together — an invoice must stay findable
   // after an amendment rewrites the booking's accommodation rows.
-  bookingId       String?
-  isNumber        String?       @db.VarChar(64)
+  bookingId         String?
+  isNumber          String?   @db.VarChar(64)
   /// Soft pointer to accommodations.id, re-resolved on read. Same reasoning as
   /// HotelReservation.accommodationId: an amendment rewrites those rows
   /// wholesale and a filed invoice must survive it.
-  accommodationId String?
-  city            String?
-  checkIn         DateTime?
-  checkOut        DateTime?
-  nights          Int?
-  roomType        String?
-  mealPlan        String?       @db.VarChar(8)
-  roomCount       Int?
+  accommodationId   String?
+  city              String?
+  checkIn           DateTime?
+  checkOut          DateTime?
+  nights            Int?
+  roomType          String?
+  mealPlan          String?   @db.VarChar(8)
+  roomCount         Int?
   /// RESERVATION — filed from the reservation pipeline. BOOKING — filed from
   /// the Proforma Invoice component.
-  origin          String        @default("RESERVATION") @db.VarChar(16)
+  origin            String    @default("RESERVATION") @db.VarChar(16)
   /// The hotel was not on the booking's accommodation list; a user added it.
-  hotelAdded      Boolean       @default(false)
+  hotelAdded        Boolean   @default(false)
   /// S3 object key *under the uploads/ prefix* — what the Accounts app streams
   /// the PDF from directly. `fileUrl` stays this app's own served path.
-  fileKey         String?       @db.Text
-  invoiceNumber   String?
-  invoiceDate     DateTime?
-  dueDate         DateTime?
-  currency        String        @default("USD") @db.VarChar(3)
-  fxRate          Decimal?      @db.Decimal(18, 8)
-  amount          Decimal?      @db.Decimal(12, 2)
-  taxAmount       Decimal?      @db.Decimal(12, 2)
-  totalAmount     Decimal?      @db.Decimal(12, 2)
-  baseTotalAmount Decimal?      @db.Decimal(12, 2)
-  fileUrl         String?       @db.Text
-  fileName        String?
+  fileKey           String?   @db.Text
+  invoiceNumber     String?
+  invoiceDate       DateTime?
+  dueDate           DateTime?
+  currency          String    @default("USD") @db.VarChar(3)
+  fxRate            Decimal?  @db.Decimal(18, 8)
+  amount            Decimal?  @db.Decimal(12, 2)
+  taxAmount         Decimal?  @db.Decimal(12, 2)
+  totalAmount       Decimal?  @db.Decimal(12, 2)
+  baseTotalAmount   Decimal?  @db.Decimal(12, 2)
+  fileUrl           String?   @db.Text
+  fileName          String?
+  // ── The beneficiary account printed on the invoice ─────────────────────
+  //
+  // Read off the uploaded document by the extraction pass, so the account the
+  // property wants paying into travels with the paper instead of being read a
+  // second time by eye in Accounts. A *quotation of the invoice*, never an
+  // instruction: the Accounts app shows these beside the Payable 1.0 line and
+  // a person presses a button to copy them across. Nothing pays from them.
+  bankAccountName   String?   @db.VarChar(255)
+  bankName          String?   @db.VarChar(255)
+  bankBranch        String?   @db.VarChar(255)
+  /// Text, never a number — leading zeros, spaces and dashes are all part of it.
+  bankAccountNumber String?   @db.VarChar(128)
+  bankSwift         String?   @db.VarChar(32)
+  bankIban          String?   @db.VarChar(64)
+  /// The currency the *account* is held in, which is not always the currency
+  /// the invoice is written in.
+  bankCurrency      String?   @db.VarChar(8)
+  bankAddress       String?   @db.Text
+
   /// Raw payload of the AI extraction pass, kept for audit and re-review —
   /// same pattern as HotelProfile.aiResearch.
-  aiExtract       Json?
-  aiExtractedAt   DateTime?
-  status          InvoiceStatus @default(RECEIVED)
+  aiExtract     Json?
+  aiExtractedAt DateTime?
+  status        InvoiceStatus @default(RECEIVED)
   /// Result of the three-way match: invoice vs reservation cost vs P&L budget.
-  matchResult     Json?
-  variance        Decimal?      @db.Decimal(12, 2)
-  variancePct     Decimal?      @db.Decimal(8, 4)
-  verifiedAt      DateTime?
-  verifiedBy      String?
-  forwardedAt     DateTime?
-  forwardedTo     String?
-  paidAt          DateTime?
-  rejectReason    String?       @db.Text
-  notes           String?       @db.Text
-  createdBy       String?
-  updatedBy       String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  matchResult   Json?
+  variance      Decimal?      @db.Decimal(12, 2)
+  variancePct   Decimal?      @db.Decimal(8, 4)
+  verifiedAt    DateTime?
+  verifiedBy    String?
+  forwardedAt   DateTime?
+  forwardedTo   String?
+  paidAt        DateTime?
+  rejectReason  String?       @db.Text
+  notes         String?       @db.Text
+  createdBy     String?
+  updatedBy     String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   reservation HotelReservation? @relation(fields: [reservationId], references: [id])
 
