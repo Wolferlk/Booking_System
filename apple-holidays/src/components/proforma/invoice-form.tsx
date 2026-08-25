@@ -149,6 +149,11 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
+  // The live form, for the merge in `read()` — which is awaited, and so cannot
+  // trust the `form` it closed over when the file was dropped.
+  const formRef = useRef(form)
+  formRef.current = form
+
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm(f => ({ ...f, [key]: value }))
 
@@ -247,31 +252,51 @@ export default function InvoiceForm({ open, onClose, bookingId, bookingCurrency,
         bankAddress: str(bank.address),
       }
 
+      // ── The merge is computed here, not inside a setState updater ────
+      //
+      // It used to run inside `setForm(prev => …)` and record which fields it
+      // had filled by mutating an object declared outside it. That is a side
+      // effect in a place React is explicitly allowed to call twice, and it
+      // misbehaved in exactly the way that guarantees: the code below ran
+      // before the updater did, so the "nothing was filled" check always saw
+      // an empty object and reported that the form was already complete, while
+      // the marker set and the actual values could disagree — a field showing
+      // "auto" with nothing in it. Computing both from one known base, then
+      // setting each piece of state once, removes the whole class of problem.
+      //
+      // `formRef` rather than `form`: the read is awaited, and the clerk may
+      // have typed something while it was in flight. Their keystrokes win.
+      const base = formRef.current
+      const seed = initial(target, bookingCurrency)
+      const next = { ...base }
       const filled: AutoFilled = {}
-      setForm(prev => {
-        const next = { ...prev }
-        for (const [k, v] of Object.entries(mapped) as [keyof FormState, string][]) {
-          if (!v) continue
-          // `invoiceDate` and the stay dates are pre-seeded from today and from
-          // the booking, so "already filled" would block every one of them.
-          // The invoice's own reading wins for those; everything else defers
-          // to whatever the clerk has typed.
-          const seeded = k === 'invoiceDate' || k === 'checkIn' || k === 'checkOut'
-            || k === 'nights' || k === 'currency' || k === 'mealPlan' || k === 'roomType'
-            || k === 'hotelName' || k === 'city'
-          const empty = String(prev[k] ?? '').trim() === ''
-          const fromSeed = seeded && String(prev[k] ?? '') === String(initial(target, bookingCurrency)[k] ?? '')
-          if (!empty && !fromSeed) continue
-          if (k === 'hotelName' && !addingHotel && !editing) continue  // the stay names it
-          next[k] = v
-          filled[k] = true
-        }
-        return next
-      })
+
+      for (const [k, v] of Object.entries(mapped) as [keyof FormState, string][]) {
+        if (!v) continue
+
+        // The stay dates, the currency and the meal plan are pre-seeded from
+        // the booking, and `invoiceDate` from today — so "already filled"
+        // would block every one of them. The invoice's own reading wins where
+        // the field still holds exactly what it was seeded with; anywhere the
+        // clerk has typed, they win.
+        const seeded = k === 'invoiceDate' || k === 'checkIn' || k === 'checkOut'
+          || k === 'nights' || k === 'currency' || k === 'mealPlan' || k === 'roomType'
+          || k === 'hotelName' || k === 'city'
+        const empty = String(base[k] ?? '').trim() === ''
+        const untouched = seeded && String(base[k] ?? '') === String(seed[k] ?? '')
+
+        if (!empty && !untouched) continue
+        if (k === 'hotelName' && !addingHotel && !editing) continue  // the stay names it
+
+        next[k] = v
+        filled[k] = true
+      }
+
+      setForm(next)
       setAuto(filled)
 
       if (Object.keys(filled).length === 0) {
-        setReadNote('The document was read, but everything on it was already filled in.')
+        setReadNote('The document was read, but nothing on it was missing from the form.')
       }
     } catch (e) {
       setReadNote(e instanceof Error ? e.message : 'The invoice could not be read automatically.')
