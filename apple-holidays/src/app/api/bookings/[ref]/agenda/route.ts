@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { normalisePhone } from '@/lib/whatsapp'
+import { parse12h } from '@/lib/clock-time'
 import {
   syncSlAllocationFromAgenda, syncSlAllocationFromAgendaByRef,
   syncHotelOnlyFromAgenda, syncHotelOnlyFromAgendaByRef,
@@ -20,6 +21,22 @@ import { upsertManualPartner } from '@/lib/partner-directory-server'
 import type { UserRole, ServiceType } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
+
+/**
+ * Canonicalise a clock time to the stored 24-hour `"HH:MM"`.
+ *
+ * The movement editor now accepts 12-hour input ("3:45 pm", "1545", "9am") and
+ * the agenda generator is an AI, so this is the one choke point where every
+ * write lands. A value that is not a time at all is passed through untouched
+ * rather than dropped — the column has always been free text, and an operator's
+ * "on arrival" note must survive a save.
+ */
+function normaliseClock(raw: unknown): string | undefined {
+  if (raw === null || raw === undefined) return undefined
+  const text = String(raw).trim()
+  if (!text) return undefined
+  return parse12h(text) ?? text
+}
 
 /**
  * Turn a movement's date into a Date the database will accept.
@@ -158,9 +175,9 @@ export async function POST(
               toPoint: item.toPoint as string | undefined,
               details: item.details as string | undefined,
               mealPlan: item.mealPlan as string | undefined,
-              meetingTime: item.meetingTime as string | undefined,
-              timeFrom: item.timeFrom as string | undefined,
-              timeTo: item.timeTo as string | undefined,
+              meetingTime: normaliseClock(item.meetingTime),
+              timeFrom: normaliseClock(item.timeFrom),
+              timeTo: normaliseClock(item.timeTo),
               serviceType: (item.serviceType as ServiceType) || 'OWN_ARRANGEMENT',
               isLeisure: typeof item.isLeisure === 'boolean' ? item.isLeisure : null,
               isHotelOnly: typeof item.isHotelOnly === 'boolean' ? item.isHotelOnly : null,
@@ -556,7 +573,7 @@ export async function PUT(
       ...(body.toPoint !== undefined && { toPoint: body.toPoint }),
       ...(body.details !== undefined && { details: body.details }),
       ...(body.mealPlan !== undefined && { mealPlan: body.mealPlan }),
-      ...(body.meetingTime !== undefined && { meetingTime: body.meetingTime }),
+      ...(body.meetingTime !== undefined && { meetingTime: normaliseClock(body.meetingTime) ?? null }),
       ...(body.serviceType && { serviceType: body.serviceType }),
     },
     include: { assignment: { include: ASSIGNMENT_INCLUDE } },

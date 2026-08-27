@@ -842,6 +842,10 @@ export default function AgendaPage() {
     const item = items[idx]
     setDescribingIdx(idx)
     try {
+      // Hand the model the real flight rather than letting it infer one. It was
+      // otherwise inventing plausible-looking departure times for airport days,
+      // which is the one number on the page a guest acts on.
+      const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
       const res  = await fetch(`/api/bookings/${ref}/agenda/describe`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -853,6 +857,13 @@ export default function AgendaPage() {
           serviceType:     item.serviceType,
           mealPlan:        item.mealPlan,
           existingDetails: item.details,
+          flight: link ? {
+            role:            link.role,
+            line:            flightLine(link.flight),
+            suggestedPickup: link.suggestedPickup,
+            bufferHours:     link.bufferHours,
+            international:   link.international,
+          } : null,
         }),
       })
       const json = await res.json()

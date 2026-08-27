@@ -15,6 +15,7 @@
  */
 
 import { to12h } from './clock-time'
+import { airport } from './ops-geo'
 
 export interface LinkableFlight {
   id?: string
@@ -57,18 +58,21 @@ export interface FlightLink {
   suggestedPickup: string | null
   /** Hours of check-in buffer used for `suggestedPickup`. */
   bufferHours: number
+  /** The sector crosses a border — drives the check-in and immigration wording. */
+  international: boolean
 }
 
-/** International hubs get a longer check-in buffer than a domestic hop. */
+/**
+ * Check-in buffer. A sector that crosses a border needs the full three hours;
+ * a domestic hop between two airports in the same country needs two.
+ *
+ * Whether it crosses a border is decided from the gazetteer in ops-geo, not
+ * from a list of "international" airports — DAD and PQC are both international
+ * fields, but Da Nang to Phu Quoc is a domestic flight, and sending a guest to
+ * the terminal an hour early for it wastes an hour of their holiday.
+ */
 const INTERNATIONAL_BUFFER_H = 3
 const DOMESTIC_BUFFER_H = 2
-
-/** Airports we treat as international departures for the check-in buffer. */
-const INTERNATIONAL_CODES = new Set([
-  'SGN', 'HAN', 'DAD', 'CXR', 'PQC', 'HPH', 'VDO', 'HUE',
-  'CMB', 'SIN', 'KUL', 'BKK', 'DEL', 'BOM', 'MAA', 'BLR', 'HYD', 'CCU', 'COK',
-  'DXB', 'DOH', 'HKG', 'ICN', 'NRT', 'KIX', 'PVG', 'PEK', 'CAN', 'TPE', 'MEL', 'SYD',
-])
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}/
 
@@ -127,9 +131,14 @@ function minusHours(time: string | null | undefined, hours: number): string | nu
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
 }
 
-function bufferFor(flight: LinkableFlight): number {
-  const codes = [...codesIn(flight.fromApt), ...codesIn(flight.toApt)]
-  return codes.some(c => INTERNATIONAL_CODES.has(c)) ? INTERNATIONAL_BUFFER_H : DOMESTIC_BUFFER_H
+function isInternational(flight: LinkableFlight): boolean {
+  const from = codesIn(flight.fromApt).map(airport).find(Boolean)
+  const to = codesIn(flight.toApt).map(airport).find(Boolean)
+  // An airport the gazetteer does not know is treated as international: being
+  // early for a domestic hop costs an hour, being late for an international
+  // one costs the flight.
+  if (!from || !to) return true
+  return from.country !== to.country
 }
 
 /**
@@ -157,12 +166,14 @@ export function linkFlight(item: LinkableAgendaItem, flights: LinkableFlight[]):
   const text = `${from} ${to} ${item.details ?? ''}`
 
   const build = (flight: LinkableFlight, role: FlightRole): FlightLink => {
-    const bufferHours = bufferFor(flight)
+    const international = isInternational(flight)
+    const bufferHours = international ? INTERNATIONAL_BUFFER_H : DOMESTIC_BUFFER_H
     return {
       flight,
       role,
       suggestedPickup: role === 'departure' ? minusHours(flight.depTime, bufferHours) : null,
       bufferHours,
+      international,
     }
   }
 
@@ -232,7 +243,7 @@ export function flightLinePlain(flight: LinkableFlight): string {
  * the flight line alone says everything there.
  */
 export function transferDescription(link: FlightLink): string {
-  const { flight, role, suggestedPickup, bufferHours } = link
+  const { flight, role, suggestedPickup, bufferHours, international } = link
 
   if (role === 'departure') {
     const bits: string[] = []
@@ -248,7 +259,9 @@ export function transferDescription(link: FlightLink): string {
       `Air-conditioned private vehicle to ${flight.fromApt} Airport, departure terminal, `
       + `with luggage assistance at the kerb.`,
     )
-    bits.push('Passports and e-tickets should be ready for check-in.')
+    bits.push(international
+      ? 'Passports and e-tickets should be ready for check-in.'
+      : 'Photo ID and e-tickets should be ready for check-in.')
     return bits.join(' ')
   }
 
@@ -258,7 +271,9 @@ export function transferDescription(link: FlightLink): string {
       + (flight.arrTime ? ` at ${to12h(flight.arrTime)}` : '')
       + ` into ${flight.toApt} Airport.`,
       'Our representative waits in the arrivals hall with an Apple Holidays name board.',
-      'Please allow time for immigration and baggage claim before meeting the driver.',
+      international
+        ? 'Please allow time for immigration and baggage claim before meeting the driver.'
+        : 'Please allow time for baggage claim before meeting the driver.',
     ]
     return bits.join(' ')
   }

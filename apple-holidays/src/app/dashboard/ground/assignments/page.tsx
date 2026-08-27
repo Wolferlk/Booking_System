@@ -14,6 +14,7 @@ import { formatDate } from '@/lib/utils'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import LogoSpinner from '@/components/shared/logo-spinner'
 import { SERVICE_TYPE_SHORT_LABELS } from '@/lib/service-types'
+import { to12h } from '@/lib/clock-time'
 
 interface Slot {
   agendaItemId:  string
@@ -200,7 +201,7 @@ export default function AssignmentsPage() {
                                   </span>
                                   {slot.meetingTime && (
                                     <span className="text-xs text-slate-500 flex items-center gap-1">
-                                      <Calendar className="w-3 h-3" /> {slot.meetingTime}
+                                      <Calendar className="w-3 h-3" /> {to12h(slot.meetingTime)}
                                     </span>
                                   )}
                                 </div>

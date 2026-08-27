@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import openai from '@/lib/openai'
+import { to12h } from '@/lib/clock-time'
 
 export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest) {
@@ -18,9 +19,22 @@ export async function POST(req: NextRequest) {
     serviceType?: string
     mealPlan?: string
     existingDetails?: string
+    /**
+     * The booking's real flight for this movement, resolved on the client by
+     * lib/agenda-flight-link.ts. Present only for airport rows. Without it the
+     * model invents a plausible departure time, which is the one number on the
+     * page a guest actually acts on.
+     */
+    flight?: {
+      role: 'departure' | 'arrival' | 'sector'
+      line: string
+      suggestedPickup: string | null
+      bufferHours: number
+      international: boolean
+    } | null
   }
 
-  const { date, location, fromPoint, toPoint, meetingTime, serviceType, mealPlan, existingDetails } = body
+  const { date, location, fromPoint, toPoint, meetingTime, serviceType, mealPlan, existingDetails, flight } = body
 
   const svcLabel: Record<string, string> = {
     PVT_TRANSFER:    'Private Transfer (air-conditioned private car/van)',
@@ -33,7 +47,27 @@ export async function POST(req: NextRequest) {
   const isArrival = /airport|terminal/i.test(fromPoint ?? '') || /arrival/i.test(existingDetails ?? '')
 
   let contextHint = ''
-  if (isArrival && isAirport) {
+  if (flight?.role === 'departure') {
+    contextHint = `This is an AIRPORT DEPARTURE transfer for a confirmed flight.`
+      + ` The flight is: ${flight.line}.`
+      + (flight.suggestedPickup
+        ? ` Pickup is ${to12h(flight.suggestedPickup)} — ${flight.bufferHours} hours before departure. State that exact pickup time.`
+        : ` Pickup is ${flight.bufferHours} hours before departure.`)
+      + ` Mention luggage assistance and a check-in reminder.`
+      + (flight.international ? ' Remind them to have passports ready.' : ' Remind them to have photo ID ready.')
+      + ` Do NOT invent any time that is not given above.`
+  } else if (flight?.role === 'arrival') {
+    contextHint = `This is an AIRPORT ARRIVAL transfer for a confirmed flight.`
+      + ` The flight is: ${flight.line}.`
+      + ` The driver waits in the arrivals hall holding an Apple Holidays name board.`
+      + (flight.international
+        ? ' Allow for immigration and baggage claim after landing.'
+        : ' Allow for baggage claim after landing.')
+      + ` Do NOT invent any time that is not given above.`
+  } else if (flight?.role === 'sector') {
+    contextHint = `This movement IS the flight itself: ${flight.line}.`
+      + ` Describe the sector and what the guests do at the airport. Do NOT invent any time that is not given above.`
+  } else if (isArrival && isAirport) {
     contextHint = `This is an AIRPORT ARRIVAL transfer. The driver waits at the arrivals hall holding a name board. Mention buffer wait time after landing (international: 45 min, domestic: 30 min). Include approx. road journey time to the hotel.`
   } else if (isDeparture && isAirport) {
     contextHint = `This is an AIRPORT DEPARTURE transfer. Pickup is from the hotel. Mention the 3-hour-before-flight rule, luggage assistance, and check-in reminder.`
@@ -53,9 +87,10 @@ Movement item:
 - City / Location: ${location ?? '—'}
 - Pickup From: ${fromPoint ?? '—'}
 - Drop-off / Activity: ${toPoint ?? '—'}
-- Meeting Time: ${meetingTime ?? '—'}
+- Meeting Time: ${to12h(meetingTime) || '—'}
 - Service Type: ${svcLabel[serviceType ?? ''] ?? serviceType ?? '—'}
 - Meal Plan: ${mealPlan || 'None included'}
+${flight ? `- Confirmed flight: ${flight.line}` : ''}
 ${existingDetails ? `- Existing notes: ${existingDetails}` : ''}
 
 Context: ${contextHint}
@@ -68,6 +103,7 @@ WRITE a single operational paragraph (2-4 sentences, 50-90 words) that includes:
 5. Drop-off point with any relevant notes
 
 TONE: Professional, clear, operational. No fluff. Write as if briefing a tour leader.
+TIMES: Write every clock time in 12-hour form with AM or PM (e.g. "3:45 PM"), never 24-hour.
 Output only the description text — no labels, bullet points, or headings.`
 
   const completion = await openai.chat.completions.create({
