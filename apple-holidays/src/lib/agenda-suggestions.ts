@@ -12,7 +12,12 @@
  * one list that applies to every country.
  */
 
-/** Meal plan codes — used for every operation country. */
+/**
+ * Meal plan codes — used for every operation country.
+ *
+ * The list is a shortcut, not a constraint: the field stays free text, so a
+ * meal arrangement nobody anticipated is still typed in and saved verbatim.
+ */
 export const MEAL_PLAN_OPTIONS: { value: string; label: string }[] = [
   { value: 'B',   label: 'B — Breakfast' },
   { value: 'L',   label: 'L — Lunch' },
@@ -25,6 +30,19 @@ export const MEAL_PLAN_OPTIONS: { value: string; label: string }[] = [
   { value: 'FB',  label: 'FB — Full Board' },
   { value: 'AI',  label: 'AI — All Inclusive' },
   { value: 'RO',  label: 'RO — Room Only / No Meals' },
+  // Cuisine-specific meals. Stored as the readable phrase rather than a code:
+  // `mealPlan` is a free-text column and every renderer passes an unrecognised
+  // value straight through, so the phrase reaches the PDF, the Word file and
+  // the guest portal exactly as it reads here. A short code would have needed a
+  // map entry in four separate normalisers to avoid printing as gibberish.
+  { value: 'Local Lunch',           label: 'Local Lunch' },
+  { value: 'Local Dinner',          label: 'Local Dinner' },
+  { value: 'Local Lunch + Dinner',  label: 'Local Lunch + Dinner' },
+  { value: 'Indian Lunch',          label: 'Indian Lunch' },
+  { value: 'Indian Dinner',         label: 'Indian Dinner' },
+  { value: 'Indian Lunch + Dinner', label: 'Indian Lunch + Dinner' },
+  { value: 'Breakfast + Local Lunch',  label: 'Breakfast + Local Lunch' },
+  { value: 'Breakfast + Indian Lunch', label: 'Breakfast + Indian Lunch' },
 ]
 
 /** Cities / regions a Vietnam movement is centred on. */

@@ -7,6 +7,8 @@ import { countryLabel } from '@/lib/country-detection'
 import Image from 'next/image'
 import { TicketStub, type StubTicket } from '@/components/tickets/ticket-stub'
 import { isPurchasedTicket, ticketFileKind } from '@/lib/ticket-notes'
+import { range12h, to12h } from '@/lib/clock-time'
+import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,8 @@ interface Accommodation {
   nights: number
   roomType?: string | null
   mealType?: string | null
+  address?: string | null
+  contact?: string | null
 }
 
 interface EmergencyContact {
@@ -511,9 +515,9 @@ export default function PrintAgendaPage() {
                   <td style={{ ...S.td, fontFamily: 'monospace', fontWeight: 700, color: '#1d4ed8' }}>{f.flightNo}</td>
                   <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{formatDate(f.date)}</td>
                   <td style={{ ...S.td, fontWeight: 700 }}>{f.fromApt}</td>
-                  <td style={{ ...S.td, fontWeight: 700, color: '#059669' }}>{f.depTime ?? '—'}</td>
+                  <td style={{ ...S.td, fontWeight: 700, color: '#059669' }}>{to12h(f.depTime) || '—'}</td>
                   <td style={{ ...S.td, fontWeight: 700 }}>{f.toApt}</td>
-                  <td style={{ ...S.td, fontWeight: 700, color: '#dc2626' }}>{f.arrTime ?? '—'}</td>
+                  <td style={{ ...S.td, fontWeight: 700, color: '#dc2626' }}>{to12h(f.arrTime) || '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -530,7 +534,7 @@ export default function PrintAgendaPage() {
           <table>
             <thead>
               <tr>
-                {['Hotel', 'City', 'Check-in', 'Check-out', 'Nights', 'Room Type', 'Meal Plan'].map(h => (
+                {['Hotel', 'City', 'Check-in', 'Check-out', 'Nights', 'Room Type', 'Meal Plan', 'Address & Contact'].map(h => (
                   <th key={h} style={S.th}>{h}</th>
                 ))}
               </tr>
@@ -545,6 +549,11 @@ export default function PrintAgendaPage() {
                   <td style={{ ...S.td, fontWeight: 700, textAlign: 'center' }}>{a.nights}</td>
                   <td style={S.td}>{a.roomType ?? '—'}</td>
                   <td style={S.td}>{a.mealType ?? '—'}</td>
+                  {/* Guests show this to a taxi driver — the hotel name alone is not an address. */}
+                  <td style={S.td}>
+                    {[a.address?.trim(), a.contact?.trim() ? `Tel: ${a.contact.trim()}` : null]
+                      .filter(Boolean).join(' · ') || '—'}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -615,12 +624,17 @@ export default function PrintAgendaPage() {
                   const displayVehicleType  = a?.vehicleType  ?? a?.driver?.vehicle?.type    ?? null
                   const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
+                  // 12-hour with AM/PM — see lib/clock-time.ts for why.
                   let meetDisplay = '—'
                   if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
-                    meetDisplay = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ')
+                    meetDisplay = range12h(item.timeFrom, item.timeTo)
                   } else if (item.meetingTime) {
-                    meetDisplay = item.meetingTime
+                    meetDisplay = to12h(item.meetingTime)
                   }
+
+                  // Flight the row serves, matched live off booking.flights.
+                  const link = linkFlight(item, (booking.flights ?? []) as LinkableFlight[])
+                  const transfer = link ? transferDescription(link) : ''
 
                   const hasDetails = item.details && item.details.trim()
 
@@ -762,6 +776,24 @@ export default function PrintAgendaPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* Flight block — the sector, and the pickup rule that
+                          follows from its departure time for a transfer row. */}
+                      {link && (
+                        <div style={{
+                          borderTop: '1px dashed #e2e8f0',
+                          background: '#eef2ff',
+                          padding: '5px 10px 6px 10px',
+                          display: 'flex',
+                          gap: 6,
+                        }}>
+                          <div style={{ flexShrink: 0, width: 2, background: '#6366f1', borderRadius: 2 }} />
+                          <p style={{ fontSize: 8, color: '#3730a3', lineHeight: 1.6 }}>
+                            <span style={{ fontWeight: 700 }}>{flightLine(link.flight)}</span>
+                            {transfer && <span style={{ color: '#4f46e5' }}>{`  ${transfer}`}</span>}
+                          </p>
+                        </div>
+                      )}
 
                       {/* Description Block — full width, clearly separated */}
                       {hasDetails && (

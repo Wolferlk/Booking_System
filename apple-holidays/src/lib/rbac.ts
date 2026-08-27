@@ -322,6 +322,7 @@ export const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: st
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
     { label: 'Drivers',           href: '/dashboard/ground/drivers',   icon: 'Car' },
     { label: 'Vendors',           href: '/dashboard/ground/vendors',   icon: 'Building2' },
+    { label: 'WhatsApp',          href: '/dashboard/whatsapp',         icon: 'MessageCircle' },
   ],
   TE_USER: [
     { label: 'Dashboard',  href: '/dashboard',              icon: 'LayoutDashboard' },

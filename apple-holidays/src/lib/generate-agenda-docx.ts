@@ -23,6 +23,8 @@ import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
 import { withoutRetiredContacts } from '@/lib/emergency-contacts'
 import { SERVICE_TYPE_LABELS } from '@/lib/service-types'
+import { range12h, to12h } from '@/lib/clock-time'
+import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B': 'Breakfast', 'L': 'Lunch', 'D': 'Dinner',
@@ -317,9 +319,9 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             dCell(f.flightNo,          { bold: true, color: CLR.blue,  shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(formatDate(f.date),  { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(f.fromApt,           { bold: true, shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
-            dCell(f.depTime ?? '—',    { color: CLR.green, shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
+            dCell(to12h(f.depTime) || '—', { color: CLR.green, shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(f.toApt,             { bold: true, shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
-            dCell(f.arrTime ?? '—',    { color: CLR.red,   shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
+            dCell(to12h(f.arrTime) || '—', { color: CLR.red,   shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
           ],
         })),
       ],
@@ -335,7 +337,15 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
       layout: TableLayoutType.FIXED,
       rows: [
         new TableRow({
-          children: ['Hotel', 'City', 'Check-in', 'Check-out', 'Nights', 'Room', 'Meal Plan'].map(h => hCell(h)),
+          // Address and hotel phone are their own column: guests show this row
+          // to a taxi driver, and a hotel name alone is not an address.
+          // Explicit widths (twips, summing to the A4 content width of 10106):
+          // eight even columns would have starved the address, which is the one
+          // column that carries a full line of text.
+          children: ([
+            ['Hotel', 1700], ['City', 950], ['Check-in', 950], ['Check-out', 950],
+            ['Nights', 550], ['Room', 1100], ['Meal Plan', 950], ['Address & Contact', 2956],
+          ] as [string, number][]).map(([h, w]) => hCell(h, w)),
         }),
         ...booking.accommodations.map((a, i) => new TableRow({
           children: [
@@ -346,6 +356,11 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             dCell(String(a.nights),         { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(a.roomType ?? '—',        { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
             dCell(a.mealType ?? '—',        { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt }),
+            dCell(
+              [a.address?.trim(), a.contact?.trim() ? `Tel: ${a.contact.trim()}` : null]
+                .filter(Boolean).join(' · ') || '—',
+              { shade: i % 2 === 0 ? CLR.white : CLR.rowAlt },
+            ),
           ],
         })),
       ],
@@ -411,12 +426,20 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             const displayVehicleType  = a?.vehicleType  ?? a?.driver?.vehicle?.type    ?? null
             const displayVehiclePlate = a?.vehiclePlate ?? a?.driver?.vehicle?.plateNo ?? null
 
+            // 12-hour with AM/PM — the stored value is 24-hour, but a guest
+            // reading "3:45" on a departure row cannot tell morning from
+            // afternoon. See lib/clock-time.ts.
             let meetDisplay = '—'
             if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
-              meetDisplay = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ')
+              meetDisplay = range12h(item.timeFrom, item.timeTo)
             } else if (item.meetingTime) {
-              meetDisplay = item.meetingTime
+              meetDisplay = to12h(item.meetingTime)
             }
+
+            // The flight this row serves, matched live off booking.flights —
+            // nothing is stored on the item, so an airline reschedule reaches
+            // this document as soon as the flight row is corrected.
+            const link = linkFlight(item, booking.flights as LinkableFlight[])
 
             // Leisure and hotel-only days carry no driver by design — say so
             // rather than printing "Not assigned", which reads as an operational gap.
@@ -459,6 +482,32 @@ export async function generateAgendaDocx(ref: string, showDrivers = true): Promi
             }
 
             const rowCells = [new TableRow({ children: rows })]
+
+            // Flight sub-row — the sector and, for a transfer, the pickup rule
+            // that follows from its departure time.
+            if (link) {
+              const transfer = transferDescription(link)
+              rowCells.push(new TableRow({
+                children: [new TableCell({
+                  columnSpan: showDrivers ? 6 : 5,
+                  children: [new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: flightLine(link.flight),
+                        size: 15, color: CLR.blue, font: 'Arial', bold: true,
+                      }),
+                      ...(transfer ? [new TextRun({
+                        text: `  ${transfer}`,
+                        size: 15, color: CLR.mid, font: 'Arial',
+                      })] : []),
+                    ],
+                    spacing: { before: 40, after: 40 },
+                  })],
+                  shading: { type: ShadingType.CLEAR, color: 'auto', fill: 'EEF2FF' },
+                  margins: { top: 60, bottom: 60, left: 120, right: 80 },
+                })],
+              }))
+            }
 
             // Details sub-row
             if (item.details?.trim()) {

@@ -22,9 +22,17 @@ export function normalisePhone(raw: string): string {
   return raw.replace(/\s+/g, '').replace(/^\+/, '').replace(/[^0-9]/g, '')
 }
 
-/** Every staff role allowed to read/send WhatsApp — used by the global inbox routes. */
+/**
+ * Every staff role allowed to read/send WhatsApp — used by the global inbox routes.
+ *
+ * `GT_VN_USER` is on the list: the Vietnam ground desk already sends the
+ * booking WhatsApp messages and the daily trip details from the booking page,
+ * so it was answering guests through a window it could not read. The inbox is
+ * the same one every other desk sees — country scoping is applied per
+ * conversation, not by withholding the page.
+ */
 export const WHATSAPP_STAFF_ROLES = [
-  'BT_USER', 'GT_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
+  'BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN',
 ] as const
 
 /**

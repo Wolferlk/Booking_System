@@ -2460,6 +2460,21 @@ Wishing you a wonderful trip! ✈️
                   {a.roomType && <p className="text-xs text-brand-600 font-medium">{a.roomType as string}</p>}
                   <p className="text-xs text-slate-400">{formatDate(a.checkIn as string)} → {formatDate(a.checkOut as string)}</p>
                   {a.contact && <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Phone className="w-3 h-3" />{a.contact as string}</p>}
+                  {/* The address is what a guest hands to a taxi driver, so it is
+                      shown on the card rather than hidden behind the edit modal,
+                      and links straight out to Maps. */}
+                  {(a.address as string)?.trim() && (
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.hotel ?? ''} ${a.address}`.trim())}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-slate-500 hover:text-brand-600 flex items-start gap-1 mt-0.5 group"
+                      title="Open in Google Maps"
+                    >
+                      <MapPin className="w-3 h-3 mt-0.5 flex-shrink-0 text-slate-400 group-hover:text-brand-600" />
+                      <span className="break-words underline decoration-dotted underline-offset-2">{a.address as string}</span>
+                    </a>
+                  )}
                 </div>
                 )
               })}
@@ -3150,8 +3165,30 @@ Wishing you a wonderful trip! ✈️
                     onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], contact: e.target.value } }))} />
                 </div>
                 <div className="col-span-2">
-                  <label className="form-label">Address</label>
-                  <input className="form-input"
+                  <div className="flex items-baseline justify-between mb-1">
+                    <label className="form-label mb-0">Hotel Address</label>
+                    {(() => {
+                      const addr = String(accomEdits[a.id as string]?.address ?? a.address ?? '').trim()
+                      if (!addr) return null
+                      return (
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${a.hotel ?? ''} ${addr}`.trim())}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] font-medium text-brand-600 hover:text-brand-700 inline-flex items-center gap-1"
+                        >
+                          <MapPin className="w-3 h-3" /> Check on Maps
+                        </a>
+                      )
+                    })()}
+                  </div>
+                  {/* A textarea, not a single-line box: a Vietnamese street
+                      address runs past the width of the field and the desk was
+                      typing into a box it could not read back. */}
+                  <textarea
+                    className="form-textarea resize-none text-sm"
+                    rows={2}
+                    placeholder="Street, ward / district, city — as the hotel writes it"
                     value={(accomEdits[a.id as string]?.address ?? a.address ?? '') as string}
                     onChange={e => setAccomEdits(prev => ({ ...prev, [a.id as string]: { ...prev[a.id as string], address: e.target.value } }))} />
                 </div>
@@ -3220,9 +3257,12 @@ Wishing you a wonderful trip! ✈️
                     value={newA.contact}
                     onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, contact: e.target.value } : a))} />
                 </div>
-                <div>
-                  <label className="form-label">Address</label>
-                  <input className="form-input"
+                <div className="col-span-2">
+                  <label className="form-label">Hotel Address</label>
+                  <textarea
+                    className="form-textarea resize-none text-sm"
+                    rows={2}
+                    placeholder="Street, ward / district, city — as the hotel writes it"
                     value={newA.address}
                     onChange={e => setNewAccoms(prev => prev.map((a, i) => i === idx ? { ...a, address: e.target.value } : a))} />
                 </div>
