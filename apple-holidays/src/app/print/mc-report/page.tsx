@@ -7,6 +7,7 @@ import {
   SERVICE_TYPE_SHORT_LABELS, isPrivateTransferType, isSicType,
   type ServiceTypeValue,
 } from '@/lib/service-types'
+import { to12h } from '@/lib/clock-time'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -344,7 +345,7 @@ function PrintContent() {
                   </td>
 
                   <td style={{ ...td, whiteSpace: 'nowrap', fontWeight: 600 }}>
-                    {row.meetingTime ?? <span style={{ color: '#cbd5e1' }}>—</span>}
+                    {to12h(row.meetingTime) || <span style={{ color: '#cbd5e1' }}>—</span>}
                   </td>
 
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>

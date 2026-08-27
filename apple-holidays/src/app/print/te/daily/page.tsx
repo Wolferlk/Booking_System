@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import type { ServiceTypeValue } from '@/lib/service-types'
+import { to12h } from '@/lib/clock-time'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ function BookingCard({ b }: { b: DailyBooking }) {
             {b.agendaItems.map(item => (
               <div key={item.id} style={S.agendaRow}>
                 <span style={{ fontFamily: 'monospace', fontWeight: 'bold', color: '#d97706', width: 40, flexShrink: 0 }}>
-                  {item.meetingTime ?? '—'}
+                  {to12h(item.meetingTime) || '—'}
                 </span>
                 <span style={{
                   ...S.chip, width: 30,

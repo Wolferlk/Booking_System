@@ -32,34 +32,41 @@ export type ServiceTypeValue = (typeof SERVICE_TYPE_VALUES)[number]
 /** Full labels — the agenda dropdown, exports and guest-facing documents. */
 export const SERVICE_TYPE_LABELS: Record<string, string> = {
   SIC_TOUR:              'SIC Tour',
-  PVT_TOUR:              'PVT Tour',
-  PVT_TRANSFER:          'PVT Transfer',
-  PVT_TRANSFER_TICKET:   'PVT Transfer + Ticket',
-  PVT_TRANSFER_SPA:      'PVT Transfer + Spa',
+  PVT_TOUR:              'Private Tour',
+  PVT_TRANSFER:          'Private Transfer',
+  PVT_TRANSFER_TICKET:   'Private Transfer + Ticket',
+  PVT_TRANSFER_SPA:      'Private Transfer + Spa',
   INTERNAL_TOUR:         'Ticket Only',
   ACCOMMODATION:         'Hotel Only',
   MEAL_COUPON:           'Meal Coupon',
-  PVT_TRANSFER_SIC_TOUR: 'PVT Transfer + SIC Tour',
+  PVT_TRANSFER_SIC_TOUR: 'Private Transfer + SIC Tour',
   OWN_ARRANGEMENT:       'Own Arrangement or Booked with another vendor',
   SIC_TRANSFER:          'SIC Transfer',
-  PVT_TRANSFER_MEAL:     'PVT Transfer + Meal',
+  PVT_TRANSFER_MEAL:     'Private Transfer + Meal',
   FLIGHT:                'Flight',
 }
 
-/** Short labels for dense views — report tables, board chips, PDF columns. */
+/**
+ * Short labels for dense views — report tables, board chips, PDF columns.
+ *
+ * "PVT" was expanded to "Private Transfer" everywhere by request: the movement
+ * chart is read by guests and drivers, not only by the desk that wrote it, and
+ * the abbreviation meant nothing to either. The stored `ServiceType` values are
+ * untouched — this is a label change only.
+ */
 export const SERVICE_TYPE_SHORT_LABELS: Record<string, string> = {
   SIC_TOUR:              'SIC Tour',
-  PVT_TOUR:              'PVT Tour',
-  PVT_TRANSFER:          'PVT',
-  PVT_TRANSFER_TICKET:   'PVT + Ticket',
-  PVT_TRANSFER_SPA:      'PVT + Spa',
+  PVT_TOUR:              'Private Tour',
+  PVT_TRANSFER:          'Private Transfer',
+  PVT_TRANSFER_TICKET:   'Private Transfer + Ticket',
+  PVT_TRANSFER_SPA:      'Private Transfer + Spa',
   INTERNAL_TOUR:         'Ticket',
   ACCOMMODATION:         'Hotel',
   MEAL_COUPON:           'Meal',
-  PVT_TRANSFER_SIC_TOUR: 'PVT + SIC Tour',
+  PVT_TRANSFER_SIC_TOUR: 'Private Transfer + SIC Tour',
   OWN_ARRANGEMENT:       'Own Arr.',
-  SIC_TRANSFER:          'SIC',
-  PVT_TRANSFER_MEAL:     'PVT + Meal',
+  SIC_TRANSFER:          'SIC Transfer',
+  PVT_TRANSFER_MEAL:     'Private Transfer + Meal',
   FLIGHT:                'Flight',
 }
 

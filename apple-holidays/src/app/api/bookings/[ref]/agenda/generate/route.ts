@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
+import { to12h } from '@/lib/clock-time'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { extractTextFromDocx } from '@/lib/parsers/docx-parser'
 import openai from '@/lib/openai'
@@ -24,7 +25,9 @@ function formatFlight(f: {
   fromApt: string; depTime: string; toApt: string; arrTime: string
 }): string {
   const airline = f.airline ? ` (${f.airline})` : ''
-  return `✈ Flight ${f.flightNo}${airline} | ${f.fromApt} → ${f.toApt} | Dep: ${f.depTime} | Arr: ${f.arrTime}`
+  // 12-hour throughout: the generated text lands straight in the guest-facing
+  // movement chart, where "15:45" reads as ambiguous. See lib/clock-time.ts.
+  return `✈ Flight ${f.flightNo}${airline} | ${f.fromApt} → ${f.toApt} | Dep: ${to12h(f.depTime)} | Arr: ${to12h(f.arrTime)}`
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   SERVICE_TYPE_VALUES, SERVICE_TYPE_LABELS, SERVICE_TYPE_SHORT_LABELS,
   isPrivateTransferType, isSicType, type ServiceTypeValue,
 } from '@/lib/service-types'
+import { to12h } from '@/lib/clock-time'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -257,7 +258,7 @@ function getMatchedFields(row: MCRow, q: string): MatchedField[] {
     { label: 'To',        value: row.toPoint },
     { label: 'Details',   value: row.details },
     { label: 'Meal',      value: row.mealPlan },
-    { label: 'Meet Time', value: row.meetingTime },
+    { label: 'Meet Time', value: to12h(row.meetingTime) },
     { label: 'Vendor',    value: row.vendor },
     { label: 'Driver',    value: row.driverName },
     { label: 'Guide',       value: row.guideName },
@@ -1532,7 +1533,7 @@ export default function MCReportPage() {
                               {row.meetingTime ? (
                                 <div className="flex items-center gap-1 whitespace-nowrap text-slate-700 font-medium">
                                   <Clock className="w-3 h-3 text-slate-400" />
-                                  {row.meetingTime}
+                                  {to12h(row.meetingTime)}
                                 </div>
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>

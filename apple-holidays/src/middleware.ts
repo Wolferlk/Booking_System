@@ -36,6 +36,7 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/ground/drivers',    // Driver management
   '/dashboard/ground/vendors',    // Vehicle vendor management
   '/dashboard/ground/analytics',  // Partner performance (read-only analytics)
+  '/dashboard/whatsapp',          // WhatsApp inbox — the desk answers guests here
 ] as const
 
 /**

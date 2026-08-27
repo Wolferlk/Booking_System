@@ -13,6 +13,7 @@ import { StatusBadge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import { SERVICE_TYPE_LABELS, SERVICE_TYPE_SHORT_LABELS, type ServiceTypeValue } from '@/lib/service-types'
+import { to12h } from '@/lib/clock-time'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -166,7 +167,7 @@ function arrivalInfo(b: DailyBooking): { location: string; details: string; serv
   if (ag) {
     const location = ag.toPoint || ag.location || ''
     const route    = [ag.fromPoint, ag.toPoint].filter(Boolean).join(' → ')
-    const details  = [ag.meetingTime ? `@${ag.meetingTime}` : '', route, ag.details ?? '']
+    const details  = [ag.meetingTime ? `@${to12h(ag.meetingTime)}` : '', route, ag.details ?? '']
       .filter(Boolean).join(' — ')
     return { location, details, serviceType: SERVICE_LABELS_FULL[ag.serviceType] ?? ag.serviceType }
   }
@@ -236,7 +237,7 @@ function AgendaRow({ item }: { item: AgendaItem }) {
     <div className="flex items-start gap-3 py-2.5 border-b border-slate-100 last:border-0">
       <div className="w-12 flex-shrink-0 text-right">
         {item.meetingTime ? (
-          <span className="text-xs font-bold text-brand-600 font-mono">{item.meetingTime}</span>
+          <span className="text-xs font-bold text-brand-600 font-mono">{to12h(item.meetingTime)}</span>
         ) : (
           <span className="text-[10px] text-slate-300 font-mono">—</span>
         )}

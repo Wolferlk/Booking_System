@@ -10,6 +10,8 @@ import { ensurePdfkitDataFiles, loadPdfDocumentCtor, loadLogo } from './pdfkit-b
 import { readUploadAsBuffer, imageDimensions, fitImage } from './local-upload'
 import { withoutRetiredContacts } from './emergency-contacts'
 import { SERVICE_TYPE_SHORT_LABELS } from './service-types'
+import { range12h, to12h } from './clock-time'
+import { flightLinePlain, linkFlight, transferDescription, type LinkableFlight } from './agenda-flight-link'
 import {
   parseTicketNotes, ticketFacts, ticketCode, ticketFileKind,
   categoryLabel, paxLabel, isPurchasedTicket,
@@ -128,8 +130,8 @@ export interface AgendaPdfBooking {
   importantNotes?: string | null; policyNotes?: string | null
   otherNote?: string | null; clientRequest?: string | null; amendmentNote?: string | null
   passengers?: { name: string; isLead?: boolean; type?: string | null; mealPreference?: string | null; contact?: string | null }[]
-  flights?: { flightNo: string; date: string | Date; fromApt: string; depTime?: string | null; toApt: string; arrTime?: string | null }[]
-  accommodations?: { hotel: string; city: string; checkIn: string | Date; checkOut: string | Date; nights: number; roomType?: string | null; mealType?: string | null }[]
+  flights?: { flightNo: string; airline?: string | null; date: string | Date; fromApt: string; depTime?: string | null; toApt: string; arrTime?: string | null }[]
+  accommodations?: { hotel: string; city: string; checkIn: string | Date; checkOut: string | Date; nights: number; roomType?: string | null; mealType?: string | null; address?: string | null; contact?: string | null }[]
   emergencyContacts?: { name: string; phone?: string | null; role?: string | null }[]
   tickets?: AgendaPdfTicket[]
 }
@@ -420,9 +422,9 @@ export async function generateAgendaPdf(
           { header: 'Flight No.', width: 80,  bold: true, color: BLUE,  value: r => txt(r.flightNo) },
           { header: 'Date',       width: 95,  value: r => fmtDate(r.date as string) },
           { header: 'From',       width: 90,  bold: true, value: r => txt(r.fromApt) },
-          { header: 'Dep.',       width: 60,  bold: true, color: GREEN, value: r => txt(r.depTime) },
+          { header: 'Dep.',       width: 60,  bold: true, color: GREEN, value: r => txt(to12h(r.depTime as string)) },
           { header: 'To',         width: 90,  bold: true, value: r => txt(r.toApt) },
-          { header: 'Arr.',       width: CONTENT_W - 415, bold: true, color: RED, value: r => txt(r.arrTime) },
+          { header: 'Arr.',       width: CONTENT_W - 415, bold: true, color: RED, value: r => txt(to12h(r.arrTime as string)) },
         ],
         flights as unknown as Record<string, unknown>[],
       )
@@ -444,6 +446,33 @@ export async function generateAgendaPdf(
         ],
         accommodations as unknown as Record<string, unknown>[],
       )
+
+      // Addresses and hotel phone numbers, listed under the table rather than
+      // squeezed into it: a Vietnamese street address needs three wrapped lines
+      // in a 130pt column and would have doubled the height of every row.
+      // Guests show this to a taxi driver, so it earns the space.
+      const withAddress = accommodations.filter(a => a.address?.trim() || a.contact?.trim())
+      if (withAddress.length > 0) {
+        ensureSpace(24 + withAddress.length * 22)
+        doc.moveDown(0.2)
+        doc.fillColor(MUTED).font('Helvetica-Bold').fontSize(7)
+          .text('HOTEL ADDRESSES & CONTACT', MARGIN, doc.y, { width: CONTENT_W })
+        doc.moveDown(0.3)
+        withAddress.forEach(a => {
+          const line = [a.address?.trim(), a.contact?.trim() ? `Tel: ${a.contact.trim()}` : null]
+            .filter(Boolean).join('  ·  ')
+          const h = doc.font('Helvetica').fontSize(8).heightOfString(sanitizeText(line), { width: CONTENT_W - 14 }) + 12
+          ensureSpace(h)
+          const ay = doc.y
+          doc.rect(MARGIN, ay, 2, h - 4).fill(BRAND)
+          doc.fillColor(DARK).font('Helvetica-Bold').fontSize(8)
+            .text(sanitizeText(a.hotel), MARGIN + 8, ay, { width: CONTENT_W - 14 })
+          doc.fillColor(MUTED).font('Helvetica').fontSize(8)
+            .text(sanitizeText(line), MARGIN + 8, doc.y, { width: CONTENT_W - 14 })
+          doc.y = ay + h
+        })
+        doc.moveDown(0.4)
+      }
     }
 
     // ── Movement chart ─────────────────────────────────────────────────────
@@ -488,10 +517,20 @@ export async function generateAgendaPdf(
           const meal = normalizeMealPlan(item.mealPlan)
           let meet = '—'
           if (svc === 'SIC_TRANSFER' && (item.timeFrom || item.timeTo)) {
-            meet = [item.timeFrom, item.timeTo].filter(Boolean).join(' – ')
+            meet = range12h(item.timeFrom, item.timeTo)
           } else if (item.meetingTime) {
-            meet = String(item.meetingTime)
+            // 12-hour with AM/PM: a guest reading "3:45" on a departure row has
+            // no way to tell a morning pickup from an afternoon one.
+            meet = to12h(item.meetingTime)
           }
+
+          // Flight the row belongs to, matched live off the booking's flight
+          // table — never stored, so a reschedule shows up as soon as the
+          // flight row is corrected. See lib/agenda-flight-link.ts.
+          const link = linkFlight(item, (booking.flights ?? []) as LinkableFlight[])
+          const flightNote = link
+            ? sanitizeText([flightLinePlain(link.flight), transferDescription(link)].filter(Boolean).join('  '))
+            : ''
 
           // Driver / vendor allocation, flattened to one short line
           let driverLine = ''
@@ -523,7 +562,10 @@ export async function generateAgendaPdf(
           const driverH = driverLine
             ? doc.font('Helvetica').fontSize(7.5).heightOfString(driverLine, { width: CONTENT_W - 62 }) + 4
             : 0
-          const rowH = 14 + fromToH + detailsH + driverH
+          const flightH = flightNote
+            ? doc.font('Helvetica').fontSize(7.5).heightOfString(flightNote, { width: CONTENT_W - 30, lineGap: 1.5 }) + 8
+            : 0
+          const rowH = 14 + fromToH + detailsH + driverH + flightH
 
           ensureSpace(rowH + 4)
           const ry = doc.y
@@ -566,6 +608,14 @@ export async function generateAgendaPdf(
               .font(driverLine === 'Not assigned' ? 'Helvetica-Oblique' : 'Helvetica-Bold').fontSize(7.5)
               .text(driverLine, MARGIN + 54, cursor, { width: CONTENT_W - 62 })
             cursor += driverH
+          }
+
+          if (flightH > 0) {
+            const fy = cursor + 2
+            doc.rect(MARGIN + 8, fy - 1, 1.5, flightH - 6).fill('#6366F1')
+            doc.fillColor('#4338CA').font('Helvetica').fontSize(7.5)
+              .text(flightNote, MARGIN + 16, fy, { width: CONTENT_W - 30, lineGap: 1.5 })
+            cursor += flightH
           }
 
           if (detailsH > 0) {

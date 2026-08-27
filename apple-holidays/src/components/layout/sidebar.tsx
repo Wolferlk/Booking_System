@@ -92,10 +92,10 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drive Bookings', href: '/dashboard/admin/onedrive/bookings',  icon: 'FolderOpen' },
   ],
   // Vietnam Ground Team — Limited. A short, deliberate list: the Vietnam
-  // dashboard, the bookings list, the Ops Board, the MC Report and the driver
-  // and vehicle-vendor registries they maintain themselves. Middleware blocks
-  // everything else, so nothing extra should be added here without widening
-  // that allowlist.
+  // dashboard, the bookings list, the Ops Board, the MC Report, the driver and
+  // vehicle-vendor registries they maintain themselves, and the WhatsApp inbox
+  // they answer guests in. Middleware blocks everything else, so nothing extra
+  // should be added here without widening that allowlist.
   GT_VN_USER: [
     { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
@@ -104,6 +104,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Drivers',           href: '/dashboard/ground/drivers',   icon: 'Car' },
     { label: 'Vendors',           href: '/dashboard/ground/vendors',   icon: 'Truck' },
     { label: 'Partner Analytics', href: '/dashboard/ground/analytics', icon: 'BarChart3' },
+    { ...WHATSAPP_NAV_ITEM },
   ],
   TE_USER: [
     { label: 'Dashboard',          href: '/dashboard',                          icon: 'LayoutDashboard' },

@@ -30,7 +30,10 @@ import type { UserRole } from '@prisma/client'
 import LogoSpinner from '@/components/shared/logo-spinner'
 import JourneyMap from '@/components/bookings/journey-map'
 import { ComboInput } from '@/components/ui/combo-input'
+import { TimeInput } from '@/components/ui/time-input'
 import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions } from '@/lib/agenda-suggestions'
+import { range12h, to12h } from '@/lib/clock-time'
+import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B':   'Breakfast',
@@ -839,6 +842,10 @@ export default function AgendaPage() {
     const item = items[idx]
     setDescribingIdx(idx)
     try {
+      // Hand the model the real flight rather than letting it infer one. It was
+      // otherwise inventing plausible-looking departure times for airport days,
+      // which is the one number on the page a guest acts on.
+      const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
       const res  = await fetch(`/api/bookings/${ref}/agenda/describe`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -850,6 +857,13 @@ export default function AgendaPage() {
           serviceType:     item.serviceType,
           mealPlan:        item.mealPlan,
           existingDetails: item.details,
+          flight: link ? {
+            role:            link.role,
+            line:            flightLine(link.flight),
+            suggestedPickup: link.suggestedPickup,
+            bufferHours:     link.bufferHours,
+            international:   link.international,
+          } : null,
         }),
       })
       const json = await res.json()
@@ -1580,8 +1594,14 @@ export default function AgendaPage() {
                         </div>
                         <div>
                           <label className="form-label text-xs">Meeting Time</label>
-                          <input type="time" className="form-input text-sm py-1.5" value={item.meetingTime}
-                            onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, meetingTime: e.target.value } : x))} />
+                          {/* Explicit AM/PM rather than <input type="time">, which
+                              renders on the browser's locale — the same pickup
+                              read as "15:45" on one desk and "3:45 PM" on another. */}
+                          <TimeInput
+                            className="form-input text-sm py-1.5 w-full"
+                            value={item.meetingTime}
+                            onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, meetingTime: v } : x))}
+                          />
                         </div>
                         <div>
                           <label className="form-label text-xs">Service Type</label>
@@ -1594,13 +1614,19 @@ export default function AgendaPage() {
                           <>
                             <div>
                               <label className="form-label text-xs">Time From</label>
-                              <input type="time" className="form-input text-sm py-1.5" value={item.timeFrom}
-                                onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, timeFrom: e.target.value } : x))} />
+                              <TimeInput
+                                className="form-input text-sm py-1.5 w-full"
+                                value={item.timeFrom}
+                                onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, timeFrom: v } : x))}
+                              />
                             </div>
                             <div>
                               <label className="form-label text-xs">Time To</label>
-                              <input type="time" className="form-input text-sm py-1.5" value={item.timeTo}
-                                onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, timeTo: e.target.value } : x))} />
+                              <TimeInput
+                                className="form-input text-sm py-1.5 w-full"
+                                value={item.timeTo}
+                                onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, timeTo: v } : x))}
+                              />
                             </div>
                           </>
                         )}
@@ -1672,6 +1698,64 @@ export default function AgendaPage() {
                             onChange={e => setItems(is => is.map((x, j) => j === i ? { ...x, details: e.target.value } : x))}
                             placeholder="Describe pickup time, drop-off location, transfer details…"
                           />
+
+                          {/* Linked flight — matched live from the booking's flight
+                              table by date and airport, never stored on the item, so
+                              an airline reschedule is reflected the moment the flight
+                              row is corrected. See lib/agenda-flight-link.ts. */}
+                          {(() => {
+                            const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
+                            if (!link) return null
+                            const transfer = transferDescription(link)
+                            const already = item.details.includes(link.flight.flightNo.trim())
+                            return (
+                              <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-indigo-500">
+                                      <Plane className="w-3 h-3" />
+                                      {link.role === 'departure' ? 'Departure flight'
+                                        : link.role === 'arrival' ? 'Arrival flight'
+                                        : 'Flight sector'}
+                                    </p>
+                                    <p className="text-xs font-medium text-indigo-900 mt-0.5 break-words">
+                                      {flightLine(link.flight)}
+                                    </p>
+                                    {link.suggestedPickup && (
+                                      <p className="text-[11px] text-indigo-700 mt-0.5">
+                                        Suggested pickup {to12h(link.suggestedPickup)} · {link.bufferHours} hrs before departure
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                    {transfer && (
+                                      <button
+                                        type="button"
+                                        disabled={already}
+                                        onClick={() => setItems(is => is.map((x, j) => j === i
+                                          ? { ...x, details: [x.details.trim(), transfer].filter(Boolean).join(' ') }
+                                          : x))}
+                                        className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40 disabled:hover:text-indigo-600 whitespace-nowrap"
+                                      >
+                                        {already ? 'Already in details' : 'Add to details'}
+                                      </button>
+                                    )}
+                                    {link.suggestedPickup && item.meetingTime !== link.suggestedPickup && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setItems(is => is.map((x, j) => j === i
+                                          ? { ...x, meetingTime: link.suggestedPickup as string }
+                                          : x))}
+                                        className="text-[11px] font-medium text-indigo-600 hover:text-indigo-800 whitespace-nowrap"
+                                      >
+                                        Use as meeting time
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )
+                          })()}
                         </div>
 
                         <div className="flex items-start gap-2 justify-end col-span-full mt-1">
@@ -1795,12 +1879,10 @@ export default function AgendaPage() {
                             <Badge color="amber">{normalizeMealPlan(item.mealPlan)}</Badge>
                           )}
                           {item.meetingTime && (
-                            <span className="text-xs text-slate-500">Meet: {item.meetingTime}</span>
+                            <span className="text-xs text-slate-500">Meet: {to12h(item.meetingTime)}</span>
                           )}
                           {isSicType(item.serviceType) && (item.timeFrom || item.timeTo) && (
-                            <span className="text-xs text-slate-500">
-                              {item.timeFrom && `From: ${item.timeFrom}`}{item.timeFrom && item.timeTo && ' · '}{item.timeTo && `To: ${item.timeTo}`}
-                            </span>
+                            <span className="text-xs text-slate-500">{range12h(item.timeFrom, item.timeTo)}</span>
                           )}
                         </div>
 
@@ -1810,6 +1892,21 @@ export default function AgendaPage() {
                             {item.toPoint}
                           </p>
                         )}
+
+                        {/* Same derived flight link the editor shows, read-only. */}
+                        {(() => {
+                          const link = linkFlight(item, (booking?.flights ?? []) as LinkableFlight[])
+                          if (!link) return null
+                          return (
+                            <p className="mt-1 flex items-start gap-1.5 text-xs text-indigo-700">
+                              <Plane className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                              <span className="break-words">
+                                {flightLine(link.flight)}
+                                {link.suggestedPickup && ` · pickup ${to12h(link.suggestedPickup)}`}
+                              </span>
+                            </p>
+                          )
+                        })()}
 
                         {/* Expandable Details & Timings section */}
                         {item.details && item.details.trim() !== '' && (
