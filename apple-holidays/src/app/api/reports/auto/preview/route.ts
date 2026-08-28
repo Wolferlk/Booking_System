@@ -18,6 +18,10 @@ import {
 import { DEFAULT_REPORT_TZ, REPORT_PERIODS, dateInTz, isValidDate, type ReportPeriod } from '@/lib/reports/report-window'
 
 export const dynamic = 'force-dynamic'
+// A preview is a live read of four systems, the slowest of which (the Apple
+// System) routinely takes ~15s on its own. The platform default cuts that off
+// mid-flight and returns a gateway page instead of JSON.
+export const maxDuration = 60
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
 
@@ -31,9 +35,16 @@ const ADMIN_ROLES = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
  * would rather show the section as unavailable — every collector already
  * degrades that way — than show nothing at all, so it caps the upstream at a
  * slice of its own deadline. The scheduled send keeps the patient defaults.
+ *
+ * The cap has to be a slice the Apple System can actually answer inside, which
+ * the original 8s was not: a day's quotation list takes ~15s even paged
+ * concurrently, so every preview reported the upstream as unreachable while it
+ * was merely slow. One attempt of 25s is the budget now — long enough for a
+ * normal (slow) answer, short enough to leave the rest of the report room
+ * inside {@link maxDuration} when the upstream really is down.
  */
-const PREVIEW_AS_BUDGET_MS = Number(process.env.REPORT_PREVIEW_AS_BUDGET_MS || 20_000)
-const PREVIEW_AS_TIMEOUT_MS = Number(process.env.REPORT_PREVIEW_AS_TIMEOUT_MS || 8_000)
+const PREVIEW_AS_BUDGET_MS = Number(process.env.REPORT_PREVIEW_AS_BUDGET_MS || 30_000)
+const PREVIEW_AS_TIMEOUT_MS = Number(process.env.REPORT_PREVIEW_AS_TIMEOUT_MS || 25_000)
 
 /**
  * Resolve the report shape to preview: an existing schedule by id, or an
