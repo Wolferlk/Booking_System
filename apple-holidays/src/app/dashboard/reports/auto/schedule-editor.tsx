@@ -13,8 +13,9 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
-  COUNTRY_OPTIONS, PERIOD_OPTIONS, SECTION_OPTIONS, TIMEZONE_OPTIONS, WEEKDAYS,
-  emptySchedule, type ReportPeriod, type Schedule, type ScheduleSections,
+  ALL_SECTIONS_ON, COUNTRY_OPTIONS, PERIOD_OPTIONS, REPORT_TYPE_OPTIONS,
+  TIMEZONE_OPTIONS, WEEKDAYS, emptySchedule, sectionOptionsFor,
+  type ReportPeriod, type ReportType, type Schedule, type ScheduleSections,
 } from './types'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -191,9 +192,27 @@ export default function ScheduleEditor({
     setDraft(d => ({ ...d, sections: { ...(d.sections as ScheduleSections), [key]: value } }))
   }, [])
 
-  const sections = (draft.sections ?? { created: true, onGround: true, complaints: true, upcoming: true }) as ScheduleSections
-  const anySection = Object.values(sections).some(Boolean)
+  const reportType = (draft.reportType ?? 'OPS') as ReportType
+  const sections = { ...ALL_SECTIONS_ON, ...(draft.sections ?? {}) } as ScheduleSections
+  const sectionOptions = sectionOptionsFor(reportType)
+  // Only the sections this report type renders count towards "pick at least
+  // one" — the other type's flags are carried along but never sent.
+  const anySection = sectionOptions.some(o => sections[o.key])
   const canSave = (draft.to?.length ?? 0) > 0 && anySection && !saving
+
+  /**
+   * Switching report type also moves the send time, but only while the form is
+   * still on the previous type's default — an operator who has already chosen
+   * 06:30 keeps it.
+   */
+  const setReportType = useCallback((next: ReportType) => {
+    setDraft(d => {
+      const prevDefault = REPORT_TYPE_OPTIONS.find(t => t.value === (d.reportType ?? 'OPS'))?.defaultHour
+      const nextDefault = REPORT_TYPE_OPTIONS.find(t => t.value === next)?.defaultHour ?? 8
+      const untouched = d.hour === prevDefault && (d.minute ?? 0) === 0
+      return { ...d, reportType: next, ...(untouched ? { hour: nextDefault } : {}) }
+    })
+  }, [])
 
   const totalRecipients = (draft.to?.length ?? 0) + (draft.cc?.length ?? 0) + (draft.bcc?.length ?? 0)
 
@@ -262,6 +281,27 @@ export default function ScheduleEditor({
                 placeholder="Morning ops brief"
                 className={inputCls}
               />
+            </Field>
+
+            <Field label="What this schedule sends">
+              <div className="grid sm:grid-cols-2 gap-2">
+                {REPORT_TYPE_OPTIONS.map(t => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    onClick={() => setReportType(t.value)}
+                    className={cn(
+                      'px-3 py-2.5 rounded-lg border text-left transition-all',
+                      reportType === t.value
+                        ? 'border-teal-500 bg-teal-50 ring-2 ring-teal-100'
+                        : 'border-slate-200 bg-white hover:border-slate-300',
+                    )}
+                  >
+                    <div className="text-sm font-semibold text-slate-800">{t.label}</div>
+                    <div className="text-[11px] text-slate-500 leading-tight mt-0.5">{t.hint}</div>
+                  </button>
+                ))}
+              </div>
             </Field>
 
             <Field label="Report period">
@@ -430,7 +470,7 @@ export default function ScheduleEditor({
             </div>
 
             <div className="grid sm:grid-cols-2 gap-2">
-              {SECTION_OPTIONS.map(s => (
+              {sectionOptions.map(s => (
                 <Toggle
                   key={s.key}
                   checked={sections[s.key]}
@@ -444,6 +484,12 @@ export default function ScheduleEditor({
               <p className="text-xs text-red-600">Pick at least one section — an empty report has nothing to say.</p>
             )}
 
+            {reportType === 'RECONCILIATION' ? (
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                The reconciliation is never scoped by country — a per-country view would hide a gap in
+                whichever market the reader was not looking at.
+              </p>
+            ) : (
             <Field label="Countries" hint={draft.countries?.length ? `${draft.countries.length} selected` : 'All countries'}>
               <div className="flex flex-wrap gap-1.5">
                 <button
@@ -481,6 +527,7 @@ export default function ScheduleEditor({
                 })}
               </div>
             </Field>
+            )}
 
             <div className="grid sm:grid-cols-2 gap-2">
               <Toggle
@@ -494,14 +541,18 @@ export default function ScheduleEditor({
                 checked={draft.aiSummary ?? false}
                 onChange={v => set('aiSummary', v)}
                 label="AI written summary"
-                hint="Three sentences of context above the numbers"
+                hint={reportType === 'RECONCILIATION'
+                  ? 'Explains a mismatch in plain English — only asked for when the counts disagree'
+                  : 'Three sentences of context above the numbers'}
                 icon={<Bot className="w-3.5 h-3.5 text-slate-400" />}
               />
               <Toggle
                 checked={draft.skipIfEmpty ?? false}
                 onChange={v => set('skipIfEmpty', v)}
                 label="Skip when nothing happened"
-                hint="No bookings, tours or complaints — send nothing"
+                hint={reportType === 'RECONCILIATION'
+                  ? 'Nothing raised anywhere and everything balanced — send nothing'
+                  : 'No bookings, tours or complaints — send nothing'}
               />
               <Field label="Detail rows per table" hint="Over ~40, Gmail may clip">
                 <input

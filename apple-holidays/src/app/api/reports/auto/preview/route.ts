@@ -11,7 +11,9 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { buildReport } from '@/lib/reports/report-runner'
-import { getSchedule, normalizeSchedule, ScheduleValidationError } from '@/lib/reports/report-schedules'
+import {
+  getSchedule, normalizeSchedule, REPORT_TYPES, ScheduleValidationError, type ReportType,
+} from '@/lib/reports/report-schedules'
 import { DEFAULT_REPORT_TZ, REPORT_PERIODS, dateInTz, isValidDate, type ReportPeriod } from '@/lib/reports/report-window'
 
 export const dynamic = 'force-dynamic'
@@ -34,11 +36,15 @@ async function resolveShape(params: URLSearchParams) {
   const period = (params.get('period') ?? 'DAILY').toUpperCase() as ReportPeriod
   if (!REPORT_PERIODS.includes(period)) throw new ScheduleValidationError('Unknown report period.')
 
+  const reportType = (params.get('reportType') ?? 'OPS').toUpperCase() as ReportType
+  if (!REPORT_TYPES.includes(reportType)) throw new ScheduleValidationError('Unknown report type.')
+
   const countries = (params.get('countries') ?? '').split(',').map(c => c.trim()).filter(Boolean)
 
   // `to` is required by the validator but irrelevant to a preview.
   return normalizeSchedule({
     name: 'Preview',
+    reportType,
     period,
     timezone: params.get('timezone') || DEFAULT_REPORT_TZ,
     countries,
@@ -75,17 +81,20 @@ export async function GET(req: NextRequest) {
     }
 
     if (format === 'csv') {
-      const { fromDate, toDate } = built.data.window
+      const { fromDate, toDate } = built.window
       return new Response(built.csv, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': `attachment; filename="ops-report-${fromDate}-to-${toDate}.csv"`,
+          'Content-Disposition': `attachment; filename="${built.csvName}-${fromDate}-to-${toDate}.csv"`,
           'Cache-Control': 'no-store',
         },
       })
     }
 
-    return buildApiSuccess({ subject: built.subject, data: built.data })
+    // `reportType` is echoed back because the two report shapes share this
+    // endpoint: the drawer needs to know which one it is holding before it
+    // reads a single field off `data`.
+    return buildApiSuccess({ reportType: shape.reportType, subject: built.subject, data: built.data })
   } catch (err) {
     if (err instanceof ScheduleValidationError) return buildApiError(err.message)
     const msg = err instanceof Error ? err.message : String(err)

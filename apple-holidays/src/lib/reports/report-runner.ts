@@ -10,6 +10,10 @@ import { randomUUID } from 'crypto'
 import openai, { logAiUsage } from '@/lib/openai'
 import { collectReportData, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
+import { collectReconcileData, type ReconcileReportData } from './reconcile-report-data'
+import {
+  renderReconcileCsv, renderReconcileEmail, renderReconcileSubject,
+} from './reconcile-report-html'
 import { sendReportMail } from './report-mailer'
 import {
   appendRun, claimRunSlot, isAutoReportEnabled, listSchedules, recordScheduleRun,
@@ -192,18 +196,132 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
   }
 }
 
+/**
+ * Why the systems disagree, in plain English.
+ *
+ * The model is given *only* the counts and the causes `deriveFindings()` already
+ * proved from the rows — never the raw data — and is asked to explain, not to
+ * investigate. That boundary is the point: an explanation that invents a cause
+ * is worse than no explanation, because somebody will act on it. The findings
+ * themselves are rendered whether or not this succeeds, so a failure here costs
+ * the prose and nothing else.
+ */
+async function buildReconcileNarrative(d: ReconcileReportData): Promise<string | null> {
+  if (!process.env.OPENAI_API_KEY) return null
+
+  const facts = {
+    period: PERIOD_LABEL[d.window.period],
+    range: `${d.window.fromDate} to ${d.window.toDate}`,
+    balanced: d.balanced,
+    b2b: {
+      appleSystem: {
+        confirmed: d.b2b.as.confirmed,
+        notConfirmed: d.b2b.as.unconfirmed,
+        otherStatuses: d.b2b.as.other,
+        confirmationsWithNoIsNumber: d.b2b.as.unnumbered,
+        reachable: d.b2b.as.available,
+      },
+      bookingSystem: {
+        createdInWindow: d.b2b.ops.created,
+        holdsConfirmations: d.b2b.ops.held,
+        missingConfirmations: d.b2b.ops.missing.length,
+        cancelledInWindow: d.b2b.ops.cancelled,
+      },
+      accounts: {
+        reachable: d.b2b.accounts.available,
+        confirmationsWithPnl: d.b2b.accounts.withPnl,
+        confirmationsWithInvoice: d.b2b.accounts.withInvoice,
+        producedInWindow: {
+          pnlBookingsByOrigin: d.b2b.accounts.output.pnls.bookingsByOrigin,
+          invoiceBookingsByOrigin: d.b2b.accounts.output.invoices.bookingsByOrigin,
+        },
+      },
+      verdict: d.b2b.check.verdict,
+    },
+    b2c: d.b2c.available
+      ? {
+          orders: d.b2c.orders,
+          filedInOps: d.b2c.opsHeld,
+          withPnl: d.b2c.withPnl,
+          invoiced: d.b2c.withInvoice,
+          verdict: d.b2c.check.verdict,
+        }
+      : { unavailable: d.b2c.error },
+    provenCauses: d.findings.map(f => ({ severity: f.severity, cause: f.title, explanation: f.detail })),
+  }
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.1,
+      max_tokens: 320,
+      messages: [
+        {
+          role: 'system',
+          content: 'You explain a daily reconciliation between four systems — the Apple System (upstream '
+            + 'confirmations), the booking system, the accounts system (P&Ls and invoices) and the Aahaas B2C '
+            + 'storefront — to senior managers. Three to five sentences, plain English, no markdown, no bullet '
+            + 'points, no greeting. If everything balances, say so in one sentence and stop. Otherwise: state '
+            + 'which count is short and by how much, then explain why using ONLY the causes listed in '
+            + '"provenCauses", then say what should be done first. Never invent a cause, a number or a booking '
+            + 'reference that is not in the data you are given. If the data does not explain the gap, say '
+            + 'plainly that the cause is not evident from the counts and that the named bookings need checking '
+            + 'by hand.',
+        },
+        { role: 'user', content: JSON.stringify(facts) },
+      ],
+    })
+
+    await logAiUsage({ callType: 'reconcile_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
+    return res.choices[0]?.message?.content?.trim() || null
+  } catch (err) {
+    console.warn('[Reports] reconciliation explanation failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 // ─── Building ─────────────────────────────────────────────────────────────────
 
+/**
+ * A rendered report, in the three forms the send path needs, plus the two
+ * verdicts about it the runner acts on.
+ *
+ * `counts`, `isEmpty` and `window` are computed here rather than in
+ * `runSchedule()` on purpose: they are the only things the send path needs to
+ * know about a report's *content*, and putting them on the result is what lets
+ * one send path serve two entirely different report shapes.
+ */
 export interface BuiltReport {
-  data: ReportData
+  data: ReportData | ReconcileReportData
   subject: string
   html: string
   csv: string
+  /** Local date range the report covers — names the CSV and the run log. */
+  window: { fromDate: string; toDate: string }
+  counts: ReportRunLog['counts']
+  /** True when the window holds nothing worth anyone's inbox. */
+  isEmpty: boolean
+  /** Basename for the CSV attachment, without the extension. */
+  csvName: string
 }
 
+type BuildShape = Pick<
+  ReportSchedule,
+  'name' | 'reportType' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'
+>
+
 export async function buildReport(
-  s: Pick<ReportSchedule, 'name' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'>,
+  s: BuildShape,
   opts: { now?: Date; testSend?: boolean; anchorDate?: string | null } = {},
+): Promise<BuiltReport> {
+  return s.reportType === 'RECONCILIATION'
+    ? buildReconciliation(s, opts)
+    : buildOpsReport(s, opts)
+}
+
+async function buildOpsReport(
+  s: BuildShape,
+  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null },
 ): Promise<BuiltReport> {
   const data = await collectReportData({
     period: s.period,
@@ -227,11 +345,63 @@ export async function buildReport(
       testSend: opts.testSend,
     }),
     csv: renderReportCsv(data),
+    window: { fromDate: data.window.fromDate, toDate: data.window.toDate },
+    counts: {
+      created: data.created.total,
+      onGround: data.onGround.total,
+      complaints: data.complaints.total,
+      upcoming: data.upcoming.total,
+    },
+    isEmpty: isEmptyOpsReport(data),
+    csvName: 'ops-report',
+  }
+}
+
+async function buildReconciliation(
+  s: BuildShape,
+  opts: { now?: Date; testSend?: boolean; anchorDate?: string | null },
+): Promise<BuiltReport> {
+  const data = await collectReconcileData({
+    period: s.period,
+    timezone: s.timezone,
+    now: opts.now,
+    anchorDate: opts.anchorDate,
+    maxRows: s.maxRows,
+  })
+
+  // Asked for only when there is something to explain — a balanced day needs no
+  // paragraph, and paying for one on every quiet morning is waste.
+  if (s.aiSummary && !data.balanced) {
+    data.narrative = await buildReconcileNarrative(data)
+  }
+
+  return {
+    data,
+    subject: renderReconcileSubject(data, { prefix: s.subjectPrefix ?? undefined, testSend: opts.testSend }),
+    html: renderReconcileEmail(data, {
+      sections: s.sections,
+      dashboardUrl: DASHBOARD_URL,
+      scheduleName: s.name,
+      testSend: opts.testSend,
+    }, s.maxRows),
+    csv: renderReconcileCsv(data),
+    window: { fromDate: data.window.fromDate, toDate: data.window.toDate },
+    // Mapped onto the shared run-log shape: `created` carries the upstream
+    // confirmation count and `complaints` the number of proven causes, which is
+    // what makes a run row readable at a glance in the history list.
+    counts: {
+      created: data.b2b.as.confirmed,
+      onGround: data.b2c.orders,
+      complaints: data.findings.length,
+      upcoming: data.b2b.check.pnlShort + data.b2b.check.invoiceShort + data.b2b.check.opsShort,
+    },
+    isEmpty: isEmptyReconciliation(data),
+    csvName: 'reconciliation',
   }
 }
 
 /** True when the window holds nothing worth anyone's inbox. */
-function isEmptyReport(d: ReportData): boolean {
+function isEmptyOpsReport(d: ReportData): boolean {
   // A parity gap is never "empty". On a genuinely quiet day the AppleSystem
   // integration losing a confirmation is the *only* thing that happened, and
   // suppressing the mail would hide precisely the failure it was added to catch.
@@ -242,6 +412,21 @@ function isEmptyReport(d: ReportData): boolean {
   // driver for a tour landing tomorrow is exactly the mail nobody should miss.
   return d.created.total === 0 && d.complaints.total === 0
     && d.onGround.total === 0 && d.readiness.total === 0
+}
+
+/**
+ * A reconciliation is empty only when there was genuinely nothing to reconcile
+ * *and* the check could be completed.
+ *
+ * An unbalanced day is never empty — that is the mail. Neither is a day a
+ * system could not be read on: "we could not check" has to reach somebody,
+ * because the alternative is silence that looks exactly like success.
+ */
+function isEmptyReconciliation(d: ReconcileReportData): boolean {
+  if (!d.balanced) return false
+  if (d.b2b.check.unchecked || d.b2c.check.unchecked) return false
+  if (d.findings.length > 0) return false
+  return d.b2b.as.total === 0 && d.b2c.orders === 0 && d.b2b.ops.created === 0
 }
 
 // ─── Running ──────────────────────────────────────────────────────────────────
@@ -287,6 +472,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
       id: randomUUID(),
       scheduleId: s.id,
       scheduleName: s.name,
+      reportType: s.reportType,
       period: s.period,
       trigger: opts.trigger,
       triggeredBy: opts.triggeredBy ?? null,
@@ -313,16 +499,11 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
 
   try {
     const built = await buildReport(s, { now, testSend: opts.testSend })
-    covered = { from: built.data.window.fromDate, to: built.data.window.toDate }
+    covered = { from: built.window.fromDate, to: built.window.toDate }
 
-    const counts = {
-      created: built.data.created.total,
-      onGround: built.data.onGround.total,
-      complaints: built.data.complaints.total,
-      upcoming: built.data.upcoming.total,
-    }
+    const counts = built.counts
 
-    if (s.skipIfEmpty && !opts.force && isEmptyReport(built.data)) {
+    if (s.skipIfEmpty && !opts.force && built.isEmpty) {
       await recordScheduleRun(s.id, {
         lastRunKey: runKey,
         lastRunAt: new Date().toISOString(),
@@ -342,7 +523,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
       html: built.html,
       attachments: s.attachCsv
         ? [{
-            name: `ops-report-${built.data.window.fromDate}-to-${built.data.window.toDate}.csv`,
+            name: `${built.csvName}-${built.window.fromDate}-to-${built.window.toDate}.csv`,
             contentType: 'text/csv',
             content: built.csv,
           }]
@@ -357,7 +538,7 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
       lastRecipients: sent.recipients,
     })
 
-    console.log(`[Reports] "${s.name}" (${s.period}) sent to ${sent.recipients} recipient(s) — ${counts.created} created, ${counts.complaints} complaints`)
+    console.log(`[Reports] "${s.name}" (${s.reportType} ${s.period}) sent to ${sent.recipients} recipient(s) — ${JSON.stringify(counts)}`)
     return finish('ok', { recipients: sent.recipients, subject: built.subject, counts })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
