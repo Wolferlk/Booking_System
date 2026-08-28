@@ -28,6 +28,9 @@ import {
   RECONFIRM_DUE_DAYS, REASON_META, classifyReconfirm, loadReconfirmDelays,
   type ReconfirmDelay,
 } from '@/lib/reconfirm-delay'
+import { listByCreateDate } from '@/lib/applesystem'
+import { normalizeIsNumber } from '@/lib/as-booking-map'
+import { getReconcileDays, type ReconcileDay } from '@/lib/as-reconcile'
 import { groupByAgent } from './agent-names'
 import { dedupeComplaints, type ComplaintOccurrence } from './complaint-dedupe'
 import {
@@ -289,11 +292,75 @@ export interface ReconfirmSection {
   bookings: ReconfirmLine[]
 }
 
+/** One AppleSystem confirmation the reconciler could not get into the system. */
+export interface ParityGap {
+  ref: string
+  /** `yyyy-mm-dd` the quotation was confirmed on, upstream. */
+  date: string
+}
+
+/** One booking withdrawn upstream and cancelled here by the reconciler. */
+export interface ParityCancellation {
+  ref: string
+  at: string
+  /** The workflow status the booking held before it was cancelled. */
+  prevStatus: string
+  /** The AppleSystem status it moved to, which is why it was cancelled. */
+  upstreamStatus: string
+}
+
+/**
+ * **AppleSystem parity** — the two numbers that must be equal, and what the
+ * automation did to make them so.
+ *
+ * The whole point of the section is the pair `upstreamConfirmed` /
+ * `systemHeld`. Every other figure exists to explain a gap between them or to
+ * evidence that there was none.
+ *
+ * `source` says where the pair came from. `live` means the report asked
+ * AppleSystem itself while it was being written, which is the authoritative
+ * answer; `ledger` means AppleSystem could not be reached and the numbers are
+ * the last ones the 15-minute reconciler recorded. The difference matters to
+ * anyone reading a mismatch, so it is stated in the mail rather than hidden.
+ */
+export interface ParitySection {
+  /** False when the reconciler has never run for this window and upstream was unreachable. */
+  available: boolean
+  source: 'live' | 'ledger' | 'none'
+  /** Confirmations AppleSystem created in the window. */
+  upstreamConfirmed: number
+  /** How many of those this system holds. Equal to the above, or something is wrong. */
+  systemHeld: number
+  /** `upstreamConfirmed - systemHeld`. Zero on a healthy day. */
+  missing: number
+  /** True when the two counts agree. The headline of the section. */
+  inParity: boolean
+  gaps: ParityGap[]
+
+  /** What the reconciler did over the window. */
+  createdByAutomation: number
+  refreshed: number
+  cancelled: number
+  /** Withdrawn upstream but deliberately left for a person (tour already running). */
+  flagged: number
+  errors: number
+  runs: number
+  /** ISO instant of the most recent reconciliation covering the window. */
+  lastRunAt: string | null
+  cancellations: ParityCancellation[]
+  /** Per-day pairs, so a multi-day report shows which day broke parity. */
+  byDate: { date: string; upstreamConfirmed: number; systemHeld: number; missing: number }[]
+  /** Set when the live check failed — explains why `source` fell back to the ledger. */
+  note: string | null
+}
+
 export interface ReportData {
   window: ReportWindow
   generatedAt: string
   countries: string[]
   created: CreatedSection
+  /** AppleSystem ↔ this system confirmation parity. Never scoped by country. */
+  parity: ParitySection
   onGround: OnGroundSection
   readiness: ReadinessSection
   reconfirm: ReconfirmSection
@@ -1064,6 +1131,159 @@ async function collectUpcoming(w: ReportWindow, countries: string[], maxRows: nu
   }
 }
 
+// ─── AppleSystem parity ───────────────────────────────────────────────────────
+
+/**
+ * Ask both systems the same question and put the answers next to each other.
+ *
+ * Two passes, in order of authority:
+ *
+ *  1. **Live.** List AppleSystem's status-2 quotations created in the window and
+ *     check each predicted `bookingRef` against our own table in one query. This
+ *     is the honest answer *at send time* — it cannot be stale, and it does not
+ *     depend on the reconciler having run.
+ *  2. **Ledger.** If AppleSystem cannot be reached, fall back to the per-date
+ *     rows the 15-minute reconciler writes, and say so in `note`. A number from
+ *     twenty minutes ago beats no number at all, but the reader is told which
+ *     one they are looking at.
+ *
+ * The counters describing what the automation *did* (created, refreshed,
+ * cancelled) always come from the ledger — only the reconciler knows those, and
+ * no live query can reconstruct them.
+ *
+ * Never throws: a report that cannot render because an upstream API blipped is
+ * worse than a report with one section marked unavailable.
+ */
+async function collectParity(window: ReportWindow): Promise<ParitySection> {
+  const empty: ParitySection = {
+    available: false, source: 'none',
+    upstreamConfirmed: 0, systemHeld: 0, missing: 0, inParity: true, gaps: [],
+    createdByAutomation: 0, refreshed: 0, cancelled: 0, flagged: 0, errors: 0, runs: 0,
+    lastRunAt: null, cancellations: [], byDate: [], note: null,
+  }
+
+  // ── Ledger: what the reconciler recorded ──────────────────────────────────
+  let days: ReconcileDay[] = []
+  try {
+    days = await getReconcileDays(window.fromDate, window.toDate)
+  } catch (err) {
+    console.error('[report] parity ledger read failed:', err instanceof Error ? err.message : err)
+  }
+
+  const ledgerTotals = days.reduce(
+    (acc, d) => ({
+      upstreamConfirmed: acc.upstreamConfirmed + d.upstreamConfirmed,
+      systemHeld:        acc.systemHeld        + d.systemHeld,
+      created:           acc.created           + d.createdTotal,
+      refreshed:         acc.refreshed         + d.refreshedTotal,
+      cancelled:         acc.cancelled         + d.cancelledTotal,
+      flagged:           acc.flagged           + d.flaggedTotal,
+      errors:            acc.errors            + d.errorsTotal,
+      runs:              acc.runs              + d.runs,
+    }),
+    { upstreamConfirmed: 0, systemHeld: 0, created: 0, refreshed: 0, cancelled: 0, flagged: 0, errors: 0, runs: 0 },
+  )
+
+  const lastRunAt = days.map(d => d.lastRunAt).filter(Boolean).sort().pop() ?? null
+  const cancellations = days
+    .flatMap(d => d.cancelled ?? [])
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, 25)
+
+  const base: ParitySection = {
+    ...empty,
+    createdByAutomation: ledgerTotals.created,
+    refreshed: ledgerTotals.refreshed,
+    cancelled: ledgerTotals.cancelled,
+    flagged: ledgerTotals.flagged,
+    errors: ledgerTotals.errors,
+    runs: ledgerTotals.runs,
+    lastRunAt,
+    cancellations,
+  }
+
+  // ── Live: ask AppleSystem now ─────────────────────────────────────────────
+  try {
+    const { items } = await listByCreateDate({
+      fromCreateDate: window.fromDate,
+      toCreateDate: window.toDate,
+      statuses: ['2'],
+    })
+
+    const perDate = new Map<string, { upstreamConfirmed: number; systemHeld: number; missing: number }>()
+    const rows = items.map(it => {
+      const raw = normalizeIsNumber(String(it.is_number ?? ''))
+      const ref = !raw || raw === 'NA' ? null : raw
+      const created = (typeof it.created_at === 'string' ? it.created_at : it.created_at?.date)?.slice(0, 10)
+      return {
+        ref,
+        label: ref ?? `Quotation ${it.quotation_no}`,
+        date: created && /^\d{4}-\d{2}-\d{2}$/.test(created) ? created : window.toDate,
+      }
+    })
+
+    const refs = Array.from(new Set(rows.map(r => r.ref).filter((r): r is string => r !== null)))
+    const held = new Set(
+      (await prisma.booking.findMany({ where: { bookingRef: { in: refs } }, select: { bookingRef: true } }))
+        .map(b => b.bookingRef),
+    )
+
+    const gaps: ParityGap[] = []
+    for (const r of rows) {
+      const bucket = perDate.get(r.date) ?? { upstreamConfirmed: 0, systemHeld: 0, missing: 0 }
+      bucket.upstreamConfirmed++
+      // A row upstream has not given an IS number to cannot be matched by ref;
+      // it is counted as a gap rather than assumed present, because "we cannot
+      // tell" and "it is here" are not the same answer.
+      if (r.ref && held.has(r.ref)) bucket.systemHeld++
+      else { bucket.missing++; if (gaps.length < 40) gaps.push({ ref: r.label, date: r.date }) }
+      perDate.set(r.date, bucket)
+    }
+
+    const upstreamConfirmed = rows.length
+    const systemHeld = Array.from(perDate.values()).reduce((n, b) => n + b.systemHeld, 0)
+
+    return {
+      ...base,
+      available: true,
+      source: 'live',
+      upstreamConfirmed,
+      systemHeld,
+      missing: upstreamConfirmed - systemHeld,
+      inParity: upstreamConfirmed === systemHeld,
+      gaps,
+      byDate: Array.from(perDate.entries())
+        .map(([date, b]) => ({ date, ...b }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('[report] live parity check failed:', message)
+
+    if (!days.length) {
+      return { ...base, note: `AppleSystem could not be reached (${message}) and the reconciler has no record for this period.` }
+    }
+
+    return {
+      ...base,
+      available: true,
+      source: 'ledger',
+      upstreamConfirmed: ledgerTotals.upstreamConfirmed,
+      systemHeld: ledgerTotals.systemHeld,
+      missing: Math.max(0, ledgerTotals.upstreamConfirmed - ledgerTotals.systemHeld),
+      inParity: ledgerTotals.upstreamConfirmed === ledgerTotals.systemHeld,
+      gaps: days.flatMap(d => (d.missingRefs ?? []).map(ref => ({ ref, date: d.date }))).slice(0, 40),
+      byDate: days.map(d => ({
+        date: d.date,
+        upstreamConfirmed: d.upstreamConfirmed,
+        systemHeld: d.systemHeld,
+        missing: d.missing,
+      })),
+      note: `AppleSystem could not be reached while the report was written (${message}) — these figures are from the last reconciliation${lastRunAt ? ` at ${lastRunAt.slice(11, 16)} UTC` : ''}.`,
+    }
+  }
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 export async function collectReportData(opts: CollectOptions): Promise<ReportData> {
@@ -1072,8 +1292,12 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
   const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
 
-  const [created, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
+  const [created, parity, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
     collectCreated(window, countries, maxRows),
+    // Deliberately unscoped by country: parity is a question about the integration
+    // as a whole, and a per-country view of it would hide a gap in whichever
+    // market the reader was not looking at.
+    collectParity(window),
     collectOnGround(window, countries, maxRows),
     collectReadiness(window, countries, maxRows),
     collectReconfirm(window, countries, maxRows),
@@ -1086,6 +1310,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     generatedAt: now.toISOString(),
     countries,
     created,
+    parity,
     onGround,
     readiness,
     reconfirm,
