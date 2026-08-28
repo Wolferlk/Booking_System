@@ -18,7 +18,8 @@
     "sldocs:render": "tsx scripts/settlement-docs-render-check.mts",
     "rs:preflight": "tsx scripts/rs-preflight.mts",
     "rs:verify": "tsx scripts/rs-verify.mts",
-    "rs:role": "tsx scripts/rs-apply-role.mts"
+    "rs:role": "tsx scripts/rs-apply-role.mts",
+    "reports:dedupe": "tsx scripts/complaint-dedupe-check.mts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

@@ -80,6 +80,7 @@ table{border-collapse:collapse;}
 .cmp-d{font-size:12px;line-height:1.65;color:${C.body};padding-top:8px;}
 .cmp-q{font-style:italic;font-size:12px;line-height:1.6;color:${C.muted};padding:8px 0 0 10px;border-left:2px solid ${C.line};margin-top:8px;}
 .cmp-r{margin-top:8px;padding:8px 10px;border-radius:6px;font-size:12px;line-height:1.6;}
+.cmp-rep{margin-top:8px;padding:7px 10px;border-radius:6px;font-size:11px;line-height:1.6;background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;}
 .bar{border-radius:999px;height:6px;}
 .foot{font-size:11px;line-height:1.7;color:${C.faint};padding-top:16px;}
 `.replace(/\n+/g, '\n').trim()
@@ -103,6 +104,12 @@ function money(n: number, currency: string): string {
 function shortDate(iso: string): string {
   if (!iso) return '—'
   return formatReportDate(iso.slice(0, 10))
+}
+
+/** Date + UTC time, for the recurrence trail where the time of day matters. */
+function stamp(iso: string): string {
+  if (!iso) return '—'
+  return `${formatReportDate(iso.slice(0, 10))} ${iso.slice(11, 16)} UTC`
 }
 
 function statusWord(s: string): string {
@@ -654,16 +661,34 @@ function reconfirmSection(d: ReportData): string {
   )
 }
 
+/**
+ * One card per *issue*, not per alert row.
+ *
+ * The TE agent writes a row every time a complaint comes up on a call, so the
+ * same problem used to print two or three times in a row and the section read
+ * like a stutter. `complaint-dedupe` merges them upstream; what is left to do
+ * here is show that the merge happened — a repeated complaint is a worse
+ * complaint, and hiding the repetition would trade one distortion for another.
+ */
 function complaintCard(c: ComplaintLine): string {
   const resolved = c.status === 'resolved'
+  const repeated = c.occurrences > 1
   const edge = resolved ? C.good : c.severity === 'high' ? C.bad : C.warn
   const meta = [
     c.bookingRef ? `Ref ${esc(c.bookingRef)}` : null,
     c.customerName ? esc(c.customerName) : null,
     esc(c.countryLabel),
-    esc(c.category),
+    esc(c.categories.length > 1 ? c.categories.join(' / ') : c.category),
     new Date(c.createdAt).toISOString().slice(11, 16) + ' UTC',
   ].filter(Boolean).join(' &nbsp;·&nbsp; ')
+
+  // The recurrence trail, in place of the repeated cards this used to print.
+  const recurrence = repeated
+    ? `<div class="cmp-rep">
+         <strong>Raised ${num(c.occurrences)} times</strong> on separate calls — first ${esc(stamp(c.createdAt))}, last ${esc(stamp(c.lastRaisedAt))}.
+         ${resolved ? '' : ' The guest has brought this up again after it was logged.'}
+       </div>`
+    : ''
 
   const resolution = resolved
     ? `<div class="cmp-r" style="background:#ecfdf5;color:#065f46;">
@@ -678,11 +703,12 @@ function complaintCard(c: ComplaintLine): string {
     <tr><td style="padding:12px 14px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
         <td class="cmp-t">${truncate(c.title ?? c.category, 90)}</td>
-        <td align="right" style="white-space:nowrap;">${SEVERITY_PILL[c.severity] ?? SEVERITY_PILL.medium} ${resolved ? pill('RESOLVED', '#ffffff', C.good) : pill('OPEN', '#ffffff', C.bad)}</td>
+        <td align="right" style="white-space:nowrap;">${repeated ? pill(`${c.occurrences}\u00d7`, '#ffffff', '#ea580c') + ' ' : ''}${SEVERITY_PILL[c.severity] ?? SEVERITY_PILL.medium} ${resolved ? pill('RESOLVED', '#ffffff', C.good) : pill('OPEN', '#ffffff', C.bad)}</td>
       </tr></table>
       <div class="cmp-m">${meta}</div>
       ${c.details ? `<div class="cmp-d">${truncate(c.details, 420)}</div>` : ''}
       ${c.customerQuote ? `<div class="cmp-q">“${truncate(c.customerQuote, 220)}”</div>` : ''}
+      ${recurrence}
       ${resolution}
     </td></tr>
   </table>`
@@ -696,17 +722,34 @@ function complaintsSection(d: ReportData): string {
       emptyNote('Complaint tracking is not available on this environment.'))
   }
 
+  // "Raised" counts distinct issues. The agent logs one row per call, so
+  // counting rows would inflate the number every time a guest repeats himself
+  // — one angry guest on four calls is one complaint, not four.
   const kpis = kpiRow([
-    { label: 'Raised', value: num(x.total) },
+    { label: 'Issues raised', value: num(x.total) },
     { label: 'Resolved', value: num(x.resolved), color: C.good },
     { label: 'Unresolved', value: num(x.open), color: x.open ? C.bad : C.ink },
     { label: 'Avg. fix time', value: x.avgResolutionHours !== null ? `${x.avgResolutionHours}h` : '—' },
   ])
 
-  const banner = x.highSeverityOpen
+  const alerts: string[] = []
+  if (x.highSeverityOpen) {
+    alerts.push(`${num(x.highSeverityOpen)} high-severity complaint${x.highSeverityOpen === 1 ? '' : 's'} still open — escalate today.`)
+  }
+  if (x.recurringOpen) {
+    alerts.push(`${num(x.recurringOpen)} unresolved issue${x.recurringOpen === 1 ? ' has' : 's have'} now been raised on more than one call — the guest is repeating themselves because nothing changed.`)
+  }
+
+  const banner = alerts.length
     ? `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:11px 14px;margin-bottom:14px;font:700 13px/1.5 ${FONT};color:#991b1b;">
-         ${num(x.highSeverityOpen)} high-severity complaint${x.highSeverityOpen === 1 ? '' : 's'} still open — escalate today.
+         ${alerts.map(a => `<div style="padding:2px 0;">${a}</div>`).join('')}
        </div>`
+    : ''
+
+  // Reconciles the KPI against the raw row count, so nobody reading both the
+  // mail and the alerts table thinks the report lost something.
+  const mergeNote = x.duplicatesMerged
+    ? `<div class="more">${num(x.rawTotal)} alert${x.rawTotal === 1 ? ' was' : 's were'} logged across calls; ${num(x.duplicatesMerged)} of them repeated an issue already listed and ${x.duplicatesMerged === 1 ? 'has been folded into it' : 'have been folded into theirs'}. Nothing is dropped — each card shows how many times its issue came up.</div>`
     : ''
 
   const breakdown = x.byCategory.length
@@ -724,7 +767,7 @@ function complaintsSection(d: ReportData): string {
     : ''
 
   const detail = x.items.length
-    ? `<div style="padding-top:18px;"><div class="h3">Every complaint, in full</div>${x.items.map(complaintCard).join('')}${moreNote(x.items.length, x.total, 'complaints')}</div>`
+    ? `<div style="padding-top:18px;"><div class="h3">Every issue, in full — most urgent first</div>${x.items.map(complaintCard).join('')}${moreNote(x.items.length, x.total, 'issues')}${mergeNote}</div>`
     : emptyNote('No complaints were raised in this period. 🎉')
 
   const carried = x.carriedOpen.length
@@ -733,7 +776,7 @@ function complaintsSection(d: ReportData): string {
 
   return section(
     'Complaints',
-    `${d.window.label} · resolved and unresolved, with detail`,
+    `${d.window.label} · one card per issue, repeats merged`,
     C.bad,
     banner + kpis + breakdown + countries + detail + carried,
   )
@@ -1024,8 +1067,16 @@ export function renderReportCsv(d: ReportData): string {
       ].map(String)))
   }
 
-  block('Complaints', ['Raised at', 'Ref', 'Customer', 'Country', 'Category', 'Severity', 'Status', 'Title', 'Details', 'Resolution', 'Resolved at', 'Hours to resolve'],
-    [...d.complaints.items, ...d.complaints.carriedOpen].map(c => [c.createdAt, c.bookingRef ?? '', c.customerName ?? '', c.countryLabel, c.category, c.severity, c.status, c.title ?? '', c.details ?? '', c.resolutionNote ?? '', c.resolvedAt ?? '', c.resolutionHours ?? ''].map(String)))
+  // One row per issue, matching the mail. `Times raised` and `Raised on` keep
+  // the underlying alert rows recoverable from the export.
+  block('Complaints',
+    ['First raised at', 'Last raised at', 'Times raised', 'Raised on', 'Ref', 'Customer', 'Country', 'Category', 'Severity', 'Status', 'Title', 'Details', 'Resolution', 'Resolved at', 'Hours to resolve'],
+    [...d.complaints.items, ...d.complaints.carriedOpen].map(c => [
+      c.createdAt, c.lastRaisedAt, c.occurrences, c.trail.map(t => t.createdAt).join(' | '),
+      c.bookingRef ?? '', c.customerName ?? '', c.countryLabel, c.categories.join(' | '),
+      c.severity, c.status, c.title ?? '', c.details ?? '', c.resolutionNote ?? '',
+      c.resolvedAt ?? '', c.resolutionHours ?? '',
+    ].map(String)))
 
   block('Upcoming arrivals', ['Ref', 'Source', 'Country', 'Arrival', 'Departure', 'Pax', 'Status'],
     d.upcoming.imminent.map(b => [b.bookingRef, b.source, b.countryLabel, b.arrivalDate, b.departureDate, b.pax, b.status].map(String)))
