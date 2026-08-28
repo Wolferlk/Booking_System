@@ -63,6 +63,35 @@ export function previewRequestFor(draft: Partial<Schedule>): PreviewRequest {
   }
 }
 
+interface PreviewEnvelope { success?: boolean; error?: string; data?: unknown }
+
+/**
+ * Read the endpoint's JSON, tolerating a body that is not JSON at all.
+ *
+ * Building a report is the longest request in the dashboard, and when the
+ * platform cuts it off it answers with its own HTML error page. Calling
+ * `res.json()` on that reports the parser's complaint ("Unexpected token '<'")
+ * as if it were the report's, which tells the reader nothing about what went
+ * wrong. Returning null instead hands the caller back to {@link httpFailure}.
+ */
+async function readJson(res: Response): Promise<PreviewEnvelope | null> {
+  try {
+    return (await res.json()) as PreviewEnvelope
+  } catch {
+    return null
+  }
+}
+
+/** What to say when the response carried no error message of its own. */
+function httpFailure(res: Response): string {
+  if (res.status === 504 || res.status === 502 || res.status === 503) {
+    return 'The report took too long to build and the server gave up. Try a narrower window, '
+      + 'or a lower row limit — and check whether the Apple System is responding.'
+  }
+  if (res.status === 401 || res.status === 403) return 'Your session has expired — sign in again.'
+  return `The server returned an unexpected response (HTTP ${res.status}).`
+}
+
 /** The window block both report shapes carry — everything the drawer chrome needs. */
 interface PreviewWindow { label: string; fromDate: string; toDate: string; timezone: string }
 
@@ -172,8 +201,8 @@ export default function PreviewDrawer({
     setError(null)
     fetch(`/api/reports/auto/preview?${query}`)
       .then(async res => {
-        const json = await res.json()
-        if (!res.ok || !json.success) throw new Error(json.error || 'Preview failed')
+        const json = await readJson(res)
+        if (!res.ok || !json?.success) throw new Error(json?.error || httpFailure(res))
         if (!cancelled) setSummary(json.data as Summary)
       })
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Preview failed') })

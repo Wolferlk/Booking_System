@@ -9,6 +9,7 @@
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import { withAsDeadline } from '@/lib/applesystem'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { buildReport } from '@/lib/reports/report-runner'
 import {
@@ -19,6 +20,20 @@ import { DEFAULT_REPORT_TZ, REPORT_PERIODS, dateInTz, isValidDate, type ReportPe
 export const dynamic = 'force-dynamic'
 
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN']
+
+/**
+ * How long a preview may spend on the Apple System before giving up on it.
+ *
+ * Both report shapes open with an upstream read, and the client is a browser
+ * behind a serverless response limit: when the Apple System stalls, the default
+ * retry ladder spends over a minute on it, the platform cuts the response off
+ * and the drawer gets a gateway HTML page where it expected JSON. A preview
+ * would rather show the section as unavailable — every collector already
+ * degrades that way — than show nothing at all, so it caps the upstream at a
+ * slice of its own deadline. The scheduled send keeps the patient defaults.
+ */
+const PREVIEW_AS_BUDGET_MS = Number(process.env.REPORT_PREVIEW_AS_BUDGET_MS || 20_000)
+const PREVIEW_AS_TIMEOUT_MS = Number(process.env.REPORT_PREVIEW_AS_TIMEOUT_MS || 8_000)
 
 /**
  * Resolve the report shape to preview: an existing schedule by id, or an
@@ -71,7 +86,10 @@ export async function GET(req: NextRequest) {
       throw new ScheduleValidationError('Report date cannot be in the future.')
     }
 
-    const built = await buildReport(shape, { testSend: true, anchorDate: date })
+    const built = await withAsDeadline(
+      { budgetMs: PREVIEW_AS_BUDGET_MS, timeoutMs: PREVIEW_AS_TIMEOUT_MS },
+      () => buildReport(shape, { testSend: true, anchorDate: date }),
+    )
     const format = req.nextUrl.searchParams.get('format')
 
     if (format === 'html') {
