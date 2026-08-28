@@ -67,18 +67,55 @@ const AS_RETRY_BUDGET_MS = Number(process.env.AS_RETRY_BUDGET_MS || 90_000)
 /** Budget the background importer uses — long enough for all five rungs. */
 export const AS_IMPORT_RETRY_BUDGET_MS = Number(process.env.AS_IMPORT_RETRY_BUDGET_MS || 300_000)
 
-const budgetStore = new AsyncLocalStorage<number>()
+interface AsCallLimits {
+  /** Wall-clock ceiling across every attempt of one call. */
+  budgetMs: number
+  /** Per-attempt ladder; absent means the default {@link AS_TIMEOUT_LADDER_MS}. */
+  ladder?: number[]
+}
+
+const budgetStore = new AsyncLocalStorage<AsCallLimits>()
 
 /**
  * Run `fn` with a non-default total retry budget. Applies to every AppleSystem
  * call made inside it, however deeply nested.
  */
 export function withAsRetryBudget<T>(budgetMs: number, fn: () => Promise<T>): Promise<T> {
-  return budgetStore.run(budgetMs, fn)
+  return budgetStore.run({ budgetMs }, fn)
 }
 
-function currentBudgetMs(): number {
-  return budgetStore.getStore() ?? AS_RETRY_BUDGET_MS
+/**
+ * Run `fn` with a shorter *first* attempt as well as a shorter total budget.
+ *
+ * {@link withAsRetryBudget} alone cannot make a call fail fast: the budget is
+ * only consulted before a *retry*, so the first rung always runs to its full
+ * 25s. That is the right trade for background work, and the wrong one behind a
+ * request the platform will cut off — a serverless response budget spent
+ * waiting on a stalled upstream returns a gateway HTML page instead of the
+ * JSON the caller is parsing. Callers with a hard deadline pass the whole
+ * deadline as `budgetMs` and the slice of it one attempt may take as
+ * `timeoutMs`; the upstream is then reported unreachable in time for the
+ * handler to answer properly.
+ */
+export function withAsDeadline<T>(
+  limits: { budgetMs: number; timeoutMs: number },
+  fn: () => Promise<T>,
+): Promise<T> {
+  const ladder = LADDER_FACTORS
+    .map(f => Math.round(limits.timeoutMs * f))
+    .filter(ms => ms <= limits.budgetMs)
+  return budgetStore.run(
+    { budgetMs: limits.budgetMs, ladder: ladder.length > 0 ? ladder : [limits.timeoutMs] },
+    fn,
+  )
+}
+
+function currentLimits(): Required<Pick<AsCallLimits, 'budgetMs'>> & { ladder: number[] } {
+  const store = budgetStore.getStore()
+  return {
+    budgetMs: store?.budgetMs ?? AS_RETRY_BUDGET_MS,
+    ladder: store?.ladder ?? AS_TIMEOUT_LADDER_MS,
+  }
 }
 
 /** Backoff before retry `i` (1-based): 1s, 2s, 3s… capped at 5s. */
@@ -167,10 +204,17 @@ async function doLogin(): Promise<string> {
   // Several attempts on an escalating timeout: a login is the one call we cannot
   // afford to lose to a blip, and a slow upstream deserves a longer wait, not a
   // repeat of the same too-short one.
+  // The ambient budget covers the sign-in too: a caller that must answer in 20s
+  // cannot spend a minute failing to log in first.
+  const { budgetMs } = currentLimits()
+  const startedAt = Date.now()
+
   let lastErr: unknown = null
   for (let attempt = 0; attempt < AS_LOGIN_LADDER_MS.length; attempt++) {
     if (attempt > 0) await sleep(750 * attempt)
-    const { signal, done } = withTimeout(AS_LOGIN_LADDER_MS[attempt])
+    const timeoutMs = Math.min(AS_LOGIN_LADDER_MS[attempt], budgetMs - (Date.now() - startedAt))
+    if (timeoutMs <= 0) break
+    const { signal, done } = withTimeout(timeoutMs)
     try {
       const res = await fetch(`${AS_BASE}/api/auth/login`, {
         method: 'POST',
@@ -337,13 +381,15 @@ async function attemptFetch(
  */
 async function asFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const startedAt = Date.now()
-  const ladder = AS_TIMEOUT_LADDER_MS
-  const budgetMs = currentBudgetMs()
+  const { budgetMs, ladder } = currentLimits()
   let attempts = 0
   let sawTimeout = false
 
   for (let i = 0; i < ladder.length; i++) {
-    const timeoutMs = ladder[i]
+    // Never let a single rung outlive the budget: a caller with a deadline
+    // needs the failure back before its own time is up.
+    const timeoutMs = Math.min(ladder[i], budgetMs - (Date.now() - startedAt))
+    if (timeoutMs <= 0) break
 
     if (i > 0) {
       const wait = backoffMs(i)
