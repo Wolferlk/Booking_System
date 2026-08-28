@@ -15,10 +15,11 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { dateInTz, shiftDate } from '@/lib/reports/report-window'
-import type { Schedule } from './types'
+import type { ReportType, Schedule } from './types'
 
 export interface PreviewRequest {
   scheduleId?: string
+  reportType?: ReportType
   period?: string
   timezone?: string
   countries?: string[]
@@ -34,6 +35,7 @@ export function previewQuery(req: PreviewRequest): string {
   const p = new URLSearchParams()
   if (req.scheduleId) p.set('scheduleId', req.scheduleId)
   else {
+    p.set('reportType', req.reportType ?? 'OPS')
     p.set('period', req.period ?? 'DAILY')
     if (req.timezone) p.set('timezone', req.timezone)
     if (req.countries?.length) p.set('countries', req.countries.join(','))
@@ -51,6 +53,7 @@ export function previewRequestFor(draft: Partial<Schedule>): PreviewRequest {
     // A saved schedule previews by id so the exact stored config is used;
     // an unsaved draft previews its in-flight values instead.
     scheduleId: draft.id,
+    reportType: draft.reportType,
     period: draft.period,
     timezone: draft.timezone,
     countries: draft.countries,
@@ -60,17 +63,85 @@ export function previewRequestFor(draft: Partial<Schedule>): PreviewRequest {
   }
 }
 
-interface Summary {
-  subject: string
-  data: {
-    window: { label: string; fromDate: string; toDate: string; timezone: string }
-    created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
-    onGround: { total: number; pax: number }
-    readiness: { total: number; notReady: number; tomorrow: number; hotelOnly: number }
-    reconfirm: { total: number; breached: number; explained: number; unexplained: number }
-    complaints: { total: number; open: number; available: boolean }
-    upcoming: { total: number; next7: number }
+/** The window block both report shapes carry — everything the drawer chrome needs. */
+interface PreviewWindow { label: string; fromDate: string; toDate: string; timezone: string }
+
+interface OpsPreviewData {
+  window: PreviewWindow
+  created: { total: number; channel: { b2b: number; b2c: number }; pax: number }
+  onGround: { total: number; pax: number }
+  readiness: { total: number; notReady: number; tomorrow: number; hotelOnly: number }
+  reconfirm: { total: number; breached: number; explained: number; unexplained: number }
+  complaints: { total: number; open: number; available: boolean }
+  upcoming: { total: number; next7: number }
+}
+
+interface ReconcilePreviewData {
+  window: PreviewWindow
+  balanced: boolean
+  findings: { severity: string }[]
+  b2b: {
+    as: { confirmed: number; unconfirmed: number; other: number; total: number }
+    ops: { created: number; cancelled: number; held: number }
+    check: { expected: number; ops: number; pnls: number; invoices: number; opsShort: number; pnlShort: number; invoiceShort: number }
   }
+  b2c: { available: boolean; orders: number; withPnl: number; withInvoice: number }
+}
+
+interface Summary {
+  reportType: ReportType
+  subject: string
+  data: OpsPreviewData | ReconcilePreviewData
+}
+
+interface StatTile { label: string; value: number; sub: string }
+
+function opsStats(d: OpsPreviewData): StatTile[] {
+  return [
+    { label: 'Created', value: d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
+    { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
+    {
+      label: 'Next 3 days',
+      value: d.readiness.total,
+      // Hotel Only arrivals are counted as ready, so the tile names them: "0 not
+      // ready" on a morning of room-only files is true but easy to misread.
+      sub: [
+        `${d.readiness.notReady} not ready`,
+        d.readiness.hotelOnly ? `${d.readiness.hotelOnly} hotel only` : null,
+      ].filter(Boolean).join(' · '),
+    },
+    {
+      label: 'D-10 late',
+      value: d.reconfirm.breached,
+      // The split matters more than the total: a late booking with a reason on
+      // file is a known problem, an unexplained one is not yet anybody's.
+      sub: d.reconfirm.breached
+        ? `${d.reconfirm.unexplained} unexplained · ${d.reconfirm.explained} with reason`
+        : 'all reconfirmed on time',
+    },
+    { label: 'Complaints', value: d.complaints.total, sub: d.complaints.available ? `${d.complaints.open} open` : 'unavailable' },
+    { label: 'Upcoming', value: d.upcoming.total, sub: `${d.upcoming.next7} in 7 days` },
+  ]
+}
+
+function reconcileStats(d: ReconcilePreviewData): StatTile[] {
+  const short = (n: number) => (n > 0 ? `${n} missing` : 'complete')
+  return [
+    { label: 'AS confirmed', value: d.b2b.as.confirmed, sub: `${d.b2b.as.unconfirmed} unconfirmed · ${d.b2b.as.other} other` },
+    { label: 'OPS bookings', value: d.b2b.check.ops, sub: short(d.b2b.check.opsShort) },
+    { label: 'P&Ls', value: d.b2b.check.pnls, sub: short(d.b2b.check.pnlShort) },
+    { label: 'Invoices', value: d.b2b.check.invoices, sub: short(d.b2b.check.invoiceShort) },
+    {
+      label: 'B2C orders',
+      value: d.b2c.available ? d.b2c.orders : 0,
+      sub: d.b2c.available ? `${d.b2c.withInvoice} invoiced` : 'unavailable',
+    },
+    {
+      label: 'Findings',
+      value: d.findings.length,
+      sub: d.balanced ? 'balanced' : 'NOT balanced',
+    },
+  ]
 }
 
 export default function PreviewDrawer({
@@ -136,31 +207,13 @@ export default function PreviewDrawer({
     setDate(dir === -1 ? shiftDate(d.window.fromDate, -1) : shiftDate(d.window.toDate, 1))
   }
 
-  const stats = d ? [
-    { label: 'Created', value: d.created.total, sub: `${d.created.channel.b2b} B2B · ${d.created.channel.b2c} B2C` },
-    { label: 'On ground', value: d.onGround.total, sub: `${d.onGround.pax} guests` },
-    {
-      label: 'Next 3 days',
-      value: d.readiness.total,
-      // Hotel Only arrivals are counted as ready, so the tile names them: "0 not
-      // ready" on a morning of room-only files is true but easy to misread.
-      sub: [
-        `${d.readiness.notReady} not ready`,
-        d.readiness.hotelOnly ? `${d.readiness.hotelOnly} hotel only` : null,
-      ].filter(Boolean).join(' · '),
-    },
-    {
-      label: 'D-10 late',
-      value: d.reconfirm.breached,
-      // The split matters more than the total: a late booking with a reason on
-      // file is a known problem, an unexplained one is not yet anybody's.
-      sub: d.reconfirm.breached
-        ? `${d.reconfirm.unexplained} unexplained · ${d.reconfirm.explained} with reason`
-        : 'all reconfirmed on time',
-    },
-    { label: 'Complaints', value: d.complaints.total, sub: d.complaints.available ? `${d.complaints.open} open` : 'unavailable' },
-    { label: 'Upcoming', value: d.upcoming.total, sub: `${d.upcoming.next7} in 7 days` },
-  ] : []
+  // The two report shapes share this drawer but not a single field beyond
+  // `window`, so the strip is built from whichever shape the server said it is.
+  const stats = !d
+    ? []
+    : summary?.reportType === 'RECONCILIATION'
+      ? reconcileStats(d as ReconcilePreviewData)
+      : opsStats(d as OpsPreviewData)
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-slate-900/60 backdrop-blur-sm animate-fade-in">

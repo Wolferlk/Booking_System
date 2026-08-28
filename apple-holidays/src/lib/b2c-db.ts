@@ -112,6 +112,14 @@ export interface B2cOrderHeader extends mysql.RowDataPacket {
   bookedDate: string | null
 }
 
+/** One storefront order, reduced to what the reconciliation report needs. */
+export interface B2cBookedOrder extends mysql.RowDataPacket {
+  order_id: number
+  bookedDate: string | null
+  serviceDate: string | null
+  productLines: number
+}
+
 export interface B2cOrderProduct extends mysql.RowDataPacket {
   id: number
   order_id: number
@@ -217,6 +225,41 @@ export async function fetchOrderHeaders(opts: {
       ORDER BY arrival ASC
       LIMIT ${lim}`,
     bookedFrom ? [bookedFrom, upcomingFrom] : [upcomingFrom],
+  )
+}
+
+/**
+ * Orders **placed** inside a date range, one row per order.
+ *
+ * `fetchOrderHeaders()` answers a different question — it is the importer's
+ * "what is still coming?" query and floors on `service_date`, which would drop
+ * an order booked yesterday for a trip that has already happened. The daily
+ * reconciliation has to see every order the storefront took on the day,
+ * whenever it travels, so this filters on `booked_date` alone.
+ *
+ * `booked_date` is a DATE column, so the range is inclusive at both ends and
+ * needs no timezone arithmetic — a calendar day is a calendar day.
+ */
+export async function fetchOrdersBookedBetween(opts: {
+  from: string            // 'YYYY-MM-DD' inclusive
+  to: string              // 'YYYY-MM-DD' inclusive
+  limit?: number
+}): Promise<B2cBookedOrder[]> {
+  const lim = Math.max(1, Math.min(Number(opts.limit) || 2000, 10000))
+  return b2cQuery<B2cBookedOrder>(
+    `SELECT m.order_id          AS order_id,
+            MIN(m.booked_date)  AS bookedDate,
+            MIN(m.service_date) AS serviceDate,
+            COUNT(*)            AS productLines
+       FROM checkouts_more_data m
+      WHERE m.order_id IS NOT NULL
+        AND m.booked_date IS NOT NULL
+        AND m.category_id IN (${CATEGORY_LIST})
+        AND m.booked_date >= ? AND m.booked_date <= ?
+      GROUP BY m.order_id
+      ORDER BY m.order_id ASC
+      LIMIT ${lim}`,
+    [opts.from, opts.to],
   )
 }
 

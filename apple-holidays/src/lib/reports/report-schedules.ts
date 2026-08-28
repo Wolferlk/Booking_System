@@ -21,7 +21,35 @@ export const MASTER_SWITCH_KEY = 'auto_report_enabled'
 const MAX_RUN_LOG = 60
 const MAX_SCHEDULES = 40
 
+/**
+ * Which report a schedule sends.
+ *
+ * `OPS` is the operations brief the feature shipped with. `RECONCILIATION` is
+ * the cross-system count check — Apple System, this system, accounts and the
+ * B2C storefront asked the same question about the same day. They share the
+ * scheduler, the recipient model, the run log and the send path; only the data
+ * collector and the renderer differ, which is the whole reason the type lives
+ * on the schedule rather than in a second copy of this feature.
+ */
+export const REPORT_TYPES = ['OPS', 'RECONCILIATION'] as const
+export type ReportType = (typeof REPORT_TYPES)[number]
+
+export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
+  OPS: 'Operations report',
+  RECONCILIATION: 'System reconciliation',
+}
+
+/**
+ * Section flags for both report types in one object.
+ *
+ * A single bag rather than one per type: schedules are stored as a JSON
+ * document that predates the second report type, and adding keys to it is
+ * additive in a way a nested reshape would not be. The keys a type does not use
+ * are simply never read — `sectionKeysFor()` is the one place that knows which
+ * belong to which.
+ */
 export interface ReportSections {
+  // ── OPS report ──
   created: boolean
   onGround: boolean
   /** Arrivals over the next three days with their operational checklist. */
@@ -33,12 +61,35 @@ export interface ReportSections {
   reconfirm: boolean
   complaints: boolean
   upcoming: boolean
+
+  // ── Reconciliation report ──
+  /** Apple System intake by status: confirmed, not confirmed, everything else. */
+  asStatus: boolean
+  /** What OPS created and cancelled in the window. */
+  opsIntake: boolean
+  /** P&Ls and invoices accounts produced, split by origin. */
+  accountsOutput: boolean
+  /** The four counts that must match, and the verdict. */
+  countCheck: boolean
+  /** One row per confirmation, ticked through each system. */
+  detail: boolean
+  /** The Aahaas B2C storefront channel. */
+  b2c: boolean
+}
+
+/** Which section flags a report type actually reads. */
+export function sectionKeysFor(type: ReportType): (keyof ReportSections)[] {
+  return type === 'RECONCILIATION'
+    ? ['countCheck', 'detail', 'asStatus', 'opsIntake', 'accountsOutput', 'b2c']
+    : ['created', 'onGround', 'readiness', 'reconfirm', 'complaints', 'upcoming']
 }
 
 export interface ReportSchedule {
   id: string
   name: string
   enabled: boolean
+  /** Which report this schedule sends. Absent on rows saved before the second type existed. */
+  reportType: ReportType
   period: ReportPeriod
   /** Local send time in `timezone`. */
   hour: number
@@ -78,6 +129,7 @@ export interface ReportRunLog {
   id: string
   scheduleId: string | null
   scheduleName: string
+  reportType: ReportType
   period: ReportPeriod
   trigger: 'schedule' | 'manual' | 'cron-http' | 'test'
   triggeredBy: string | null
@@ -139,6 +191,10 @@ export function normalizeSchedule(
     ? (input.period as ReportPeriod)
     : existing?.period ?? 'DAILY'
 
+  const reportType = REPORT_TYPES.includes(input.reportType as ReportType)
+    ? (input.reportType as ReportType)
+    : existing?.reportType ?? 'OPS'
+
   const to = input.to !== undefined ? normalizeEmails(input.to) : existing?.to ?? []
   if (!to.length) throw new ScheduleValidationError('At least one "To" recipient is required.')
 
@@ -159,6 +215,15 @@ export function normalizeSchedule(
   const sections: ReportSections = {
     created: bool(sectionsIn.created, prevSections?.created ?? true),
     onGround: bool(sectionsIn.onGround, prevSections?.onGround ?? true),
+    // Reconciliation sections default on for the same reason the OPS ones do:
+    // a check that silently omits one of the four systems is the check nobody
+    // notices is incomplete.
+    asStatus: bool(sectionsIn.asStatus, prevSections?.asStatus ?? true),
+    opsIntake: bool(sectionsIn.opsIntake, prevSections?.opsIntake ?? true),
+    accountsOutput: bool(sectionsIn.accountsOutput, prevSections?.accountsOutput ?? true),
+    countCheck: bool(sectionsIn.countCheck, prevSections?.countCheck ?? true),
+    detail: bool(sectionsIn.detail, prevSections?.detail ?? true),
+    b2c: bool(sectionsIn.b2c, prevSections?.b2c ?? true),
     // Schedules saved before this section existed carry no flag for it; they get
     // it switched on, because a report about today's operations that omits what
     // lands tomorrow is the weaker default.
@@ -170,7 +235,9 @@ export function normalizeSchedule(
     complaints: bool(sectionsIn.complaints, prevSections?.complaints ?? true),
     upcoming: bool(sectionsIn.upcoming, prevSections?.upcoming ?? true),
   }
-  if (!Object.values(sections).some(Boolean)) {
+  // Only the sections this report type actually renders count: an OPS schedule
+  // with every reconciliation flag on and none of its own still sends nothing.
+  if (!sectionKeysFor(reportType).some(k => sections[k])) {
     throw new ScheduleValidationError('Select at least one report section.')
   }
 
@@ -180,6 +247,7 @@ export function normalizeSchedule(
     id: existing?.id ?? randomUUID(),
     name: name.slice(0, 80),
     enabled: bool(input.enabled, existing?.enabled ?? true),
+    reportType,
     period,
     hour: clamp(input.hour ?? existing?.hour, 0, 23, 8),
     minute: clamp(input.minute ?? existing?.minute, 0, 59, 0),
@@ -243,6 +311,9 @@ function withSectionDefaults(s: ReportSchedule): ReportSchedule {
   const sections = (s.sections ?? {}) as Partial<ReportSections>
   return {
     ...s,
+    // Every schedule saved before the second report type existed is an
+    // operations report — that is what it was configured to send.
+    reportType: REPORT_TYPES.includes(s.reportType) ? s.reportType : 'OPS',
     sections: {
       created: sections.created ?? true,
       onGround: sections.onGround ?? true,
@@ -250,6 +321,12 @@ function withSectionDefaults(s: ReportSchedule): ReportSchedule {
       reconfirm: sections.reconfirm ?? true,
       complaints: sections.complaints ?? true,
       upcoming: sections.upcoming ?? true,
+      asStatus: sections.asStatus ?? true,
+      opsIntake: sections.opsIntake ?? true,
+      accountsOutput: sections.accountsOutput ?? true,
+      countCheck: sections.countCheck ?? true,
+      detail: sections.detail ?? true,
+      b2c: sections.b2c ?? true,
     },
   }
 }
