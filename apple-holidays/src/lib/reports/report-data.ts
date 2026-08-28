@@ -29,6 +29,7 @@ import {
   type ReconfirmDelay,
 } from '@/lib/reconfirm-delay'
 import { groupByAgent } from './agent-names'
+import { dedupeComplaints, type ComplaintOccurrence } from './complaint-dedupe'
 import {
   buildReportWindow, previousWindow, zonedDayStart, shiftDate, dateInTz, formatReportDate,
   type ReportPeriod, type ReportWindow,
@@ -100,6 +101,19 @@ export interface ComplaintLine {
   createdAt: string
   /** Hours between the complaint being raised and resolved; null while open. */
   resolutionHours: number | null
+  /**
+   * How many raw alert rows this line stands for. The TE agent files one row
+   * per call, so a guest repeating the same problem produces several; they are
+   * merged into one line by `complaint-dedupe` and counted here rather than
+   * printed again. `1` means it was raised once.
+   */
+  occurrences: number
+  /** Most recent time this same issue came up again; equals `createdAt` at 1. */
+  lastRaisedAt: string
+  /** Every raw alert behind this line, oldest first. */
+  trail: ComplaintOccurrence[]
+  /** Categories the agent filed it under, when successive calls disagreed. */
+  categories: string[]
 }
 
 export interface CreatedSection {
@@ -128,10 +142,17 @@ export interface OnGroundSection {
 
 export interface ComplaintsSection {
   available: boolean
+  /** Distinct issues in the window — repeats of one issue count once. */
   total: number
+  /** Raw alert rows before merging; `total` plus `duplicatesMerged`. */
+  rawTotal: number
+  /** Repeat rows folded into an existing issue, so the numbers reconcile. */
+  duplicatesMerged: number
   resolved: number
   open: number
   highSeverityOpen: number
+  /** Still open *and* raised more than once — the ones that keep coming back. */
+  recurringOpen: number
   avgResolutionHours: number | null
   byCategory: { category: string; total: number; open: number }[]
   bySeverity: { severity: string; total: number; open: number }[]
@@ -851,7 +872,8 @@ async function collectReconfirm(w: ReportWindow, countries: string[], maxRows: n
  */
 async function collectComplaints(w: ReportWindow, countries: string[], maxRows: number): Promise<ComplaintsSection> {
   const empty: ComplaintsSection = {
-    available: false, total: 0, resolved: 0, open: 0, highSeverityOpen: 0,
+    available: false, total: 0, rawTotal: 0, duplicatesMerged: 0, resolved: 0, open: 0,
+    highSeverityOpen: 0, recurringOpen: 0,
     avgResolutionHours: null, byCategory: [], bySeverity: [], byCountry: [],
     items: [], carriedOpen: [],
   }
@@ -909,12 +931,34 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
       resolutionHours: resolvedAt
         ? Math.max(0, Math.round(((resolvedAt.getTime() - r.created_at.getTime()) / 3_600_000) * 10) / 10)
         : null,
+      // Seeded as a single occurrence; `dedupeComplaints` rewrites these on any
+      // line it merges into.
+      occurrences: 1,
+      lastRaisedAt: r.created_at.toISOString(),
+      trail: [{
+        id: String(r.id),
+        createdAt: r.created_at.toISOString(),
+        status: (r.status ?? 'open').toLowerCase(),
+        severity,
+        category: r.category?.trim() || 'general',
+      }],
+      categories: [r.category?.trim() || 'general'],
     }
   }
 
   const inScope = (c: ComplaintLine) => inSelectedCountries(c.country, countries)
-  const items = raw.map(map).filter(inScope)
-  const carriedOpen = carriedRaw.map(map).filter(inScope)
+  const scoped = raw.concat(carriedRaw).map(map).filter(inScope)
+
+  // Window rows and carried-over rows are merged in one pass rather than
+  // separately: a complaint opened last week and raised again today is one
+  // issue, and de-duplicating the two lists in isolation would still print it
+  // twice — once as carried debt, once as new. After merging, a cluster belongs
+  // to the window if any of its occurrences landed inside it.
+  const windowIds = new Set(raw.map(r => String(r.id)))
+  const merged = dedupeComplaints(scoped)
+  const raisedInWindow = (c: ComplaintLine) => c.trail.some(t => windowIds.has(t.id))
+  const items = merged.filter(raisedInWindow)
+  const carriedOpen = merged.filter(c => !raisedInWindow(c))
 
   const resolvedItems = items.filter(c => c.status === 'resolved')
   const openItems = items.filter(c => c.status !== 'resolved')
@@ -933,12 +977,18 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
 
   const withHours = resolvedItems.filter(c => c.resolutionHours !== null)
 
+  const rawInWindow = raw.map(map).filter(inScope).length
+
   return {
     available: true,
     total: items.length,
+    rawTotal: rawInWindow,
+    duplicatesMerged: Math.max(0, scoped.length - merged.length),
     resolved: resolvedItems.length,
     open: openItems.length,
     highSeverityOpen: openItems.filter(c => c.severity === 'high').length,
+    recurringOpen: items.concat(carriedOpen)
+      .filter(c => c.status !== 'resolved' && c.occurrences > 1).length,
     avgResolutionHours: withHours.length
       ? Math.round((withHours.reduce((s, c) => s + (c.resolutionHours ?? 0), 0) / withHours.length) * 10) / 10
       : null,
@@ -949,14 +999,19 @@ async function collectComplaints(w: ReportWindow, countries: string[], maxRows: 
       .map(([severity, v]) => ({ severity, ...v }))
       .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)),
     byCountry: rollUpByCountry(items.map(c => ({ country: c.country, pax: 0, source: 'B2B' as BookingSource }))),
-    // Unresolved first, then most severe, then newest — the action list, in order.
+    // The action list, in the order someone should work it: unresolved first,
+    // then most severe, then whatever has been raised most times — an issue the
+    // guest brought up on three calls outranks a one-off of equal severity —
+    // and finally the most recently active.
     items: items.slice()
       .sort((a, b) =>
         Number(a.status === 'resolved') - Number(b.status === 'resolved') ||
         (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9) ||
-        b.createdAt.localeCompare(a.createdAt))
+        b.occurrences - a.occurrences ||
+        b.lastRaisedAt.localeCompare(a.lastRaisedAt))
       .slice(0, maxRows),
-    carriedOpen,
+    // Oldest-first: carried debt is ranked by how long it has been ignored.
+    carriedOpen: carriedOpen.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   }
 }
 
