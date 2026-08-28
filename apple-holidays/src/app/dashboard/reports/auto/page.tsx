@@ -22,8 +22,8 @@ import { cn, readApiResponse } from '@/lib/utils'
 import ScheduleEditor from './schedule-editor'
 import PreviewDrawer, { previewRequestFor, type PreviewRequest } from './preview-drawer'
 import {
-  COUNTRY_OPTIONS, SECTION_OPTIONS,
-  type AutoReportPayload, type RunLog, type Schedule,
+  COUNTRY_OPTIONS, REPORT_TYPE_OPTIONS, sectionOptionsFor,
+  type AutoReportPayload, type ReportType, type RunLog, type Schedule,
 } from './types'
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -59,6 +59,12 @@ const STATUS_META: Record<string, { cls: string; icon: typeof CheckCircle2; labe
   ok: { cls: 'text-emerald-600 bg-emerald-50 border-emerald-200', icon: CheckCircle2, label: 'Delivered' },
   error: { cls: 'text-red-600 bg-red-50 border-red-200', icon: XCircle, label: 'Failed' },
   skipped: { cls: 'text-slate-500 bg-slate-50 border-slate-200', icon: Pause, label: 'Skipped' },
+}
+
+/** What the shared run-log figures mean, per report type. */
+const FIGURE_LABELS: Record<'OPS' | 'RECONCILIATION', { created: string; onGround: string; complaints: string }> = {
+  OPS: { created: 'created', onGround: 'on ground', complaints: 'complaints' },
+  RECONCILIATION: { created: 'confirmed', onGround: 'B2C orders', complaints: 'findings' },
 }
 
 const PERIOD_TINT: Record<string, string> = {
@@ -126,7 +132,7 @@ function ScheduleCard({
   const StatusIcon = status?.icon
   const isBusy = busy === s.id
 
-  const sections = SECTION_OPTIONS.filter(o => s.sections[o.key])
+  const sections = sectionOptionsFor(s.reportType).filter(o => s.sections[o.key])
   const countryLabel = s.countries.length
     ? s.countries.map(c => COUNTRY_OPTIONS.find(o => o.value === c)?.label ?? c).join(', ')
     : 'All countries'
@@ -147,6 +153,11 @@ function ScheduleCard({
               <span className={cn('px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide border', PERIOD_TINT[s.period])}>
                 {s.period}
               </span>
+              {s.reportType === 'RECONCILIATION' && (
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide border bg-violet-50 text-violet-700 border-violet-200">
+                  Reconciliation
+                </span>
+              )}
               {!s.enabled && <Chip>Paused</Chip>}
             </div>
             <p className="text-xs text-slate-500 mt-1 flex items-center gap-1.5">
@@ -210,7 +221,11 @@ function ScheduleCard({
           <Chip><Users className="w-3 h-3" />{s.to.length} to</Chip>
           {s.cc.length > 0 && <Chip>{s.cc.length} cc</Chip>}
           {s.bcc.length > 0 && <Chip>{s.bcc.length} bcc</Chip>}
-          <Chip><Globe2 className="w-3 h-3" />{countryLabel}</Chip>
+          {/* Country scope is an operations-report idea; the reconciliation is
+              deliberately never scoped by country. */}
+          {s.reportType === 'RECONCILIATION'
+            ? <Chip><Globe2 className="w-3 h-3" />All channels</Chip>
+            : <Chip><Globe2 className="w-3 h-3" />{countryLabel}</Chip>}
           {s.attachCsv && <Chip><FileSpreadsheet className="w-3 h-3" />CSV</Chip>}
           {s.aiSummary && <Chip tone="bg-cyan-50 text-cyan-700 border-cyan-200"><Bot className="w-3 h-3" />AI summary</Chip>}
         </div>
@@ -496,19 +511,29 @@ export default function AutoReportsPage() {
             <Zap className="w-4 h-4 text-amber-500" /> Quick preview
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            See exactly what each period produces from live data — nothing is sent.
+            See exactly what each report produces from live data — nothing is sent.
           </p>
-          <div className="flex flex-wrap gap-2 mt-3">
-            {(['DAILY', 'WEEKLY', 'MONTHLY'] as const).map(p => (
-              <button
-                key={p}
-                onClick={() => setPreview({ period: p, timezone: payload?.defaultTimezone, title: `${p} preview` })}
-                className="px-3.5 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
-              >
-                {p.charAt(0) + p.slice(1).toLowerCase()} report
-              </button>
-            ))}
-          </div>
+          {REPORT_TYPE_OPTIONS.map(t => (
+            <div key={t.value} className="mt-3">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{t.label}</div>
+              <div className="flex flex-wrap gap-2 mt-1.5">
+                {(['DAILY', 'WEEKLY', 'MONTHLY'] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setPreview({
+                      reportType: t.value as ReportType,
+                      period: p,
+                      timezone: payload?.defaultTimezone,
+                      title: `${t.label} · ${p.toLowerCase()} preview`,
+                    })}
+                    className="px-3.5 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+                  >
+                    {p.charAt(0) + p.slice(1).toLowerCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* History */}
@@ -529,9 +554,7 @@ export default function AutoReportsPage() {
                     <th className="text-left font-bold px-4 py-2">Schedule</th>
                     <th className="text-left font-bold px-4 py-2">Trigger</th>
                     <th className="text-right font-bold px-4 py-2">Sent to</th>
-                    <th className="text-right font-bold px-4 py-2">Created</th>
-                    <th className="text-right font-bold px-4 py-2">On ground</th>
-                    <th className="text-right font-bold px-4 py-2">Complaints</th>
+                    <th className="text-right font-bold px-4 py-2" colSpan={3}>Figures</th>
                     <th className="text-left font-bold px-4 py-2">Result</th>
                   </tr>
                 </thead>
@@ -539,15 +562,28 @@ export default function AutoReportsPage() {
                   {runs.map((r: RunLog) => {
                     const meta = STATUS_META[r.status] ?? STATUS_META.skipped
                     const Icon = meta.icon
+                    // The three numeric columns are shared by both report types
+                    // and count different things in each, so each cell says what
+                    // it is rather than relying on a header that can only be
+                    // right for one of them.
+                    const figures = FIGURE_LABELS[r.reportType === 'RECONCILIATION' ? 'RECONCILIATION' : 'OPS']
                     return (
                       <tr key={r.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60">
                         <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{timeAgo(r.finishedAt)}</td>
-                        <td className="px-4 py-2.5 font-semibold text-slate-800">{r.scheduleName}</td>
+                        <td className="px-4 py-2.5 font-semibold text-slate-800">
+                          {r.scheduleName}
+                          {r.reportType === 'RECONCILIATION' && (
+                            <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-violet-600">recon</span>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-slate-500 capitalize">{r.trigger}</td>
                         <td className="px-4 py-2.5 text-right text-slate-700">{r.recipients || '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-slate-700">{r.counts.created}</td>
-                        <td className="px-4 py-2.5 text-right text-slate-700">{r.counts.onGround}</td>
-                        <td className="px-4 py-2.5 text-right text-slate-700">{r.counts.complaints}</td>
+                        {(['created', 'onGround', 'complaints'] as const).map(key => (
+                          <td key={key} className="px-4 py-2.5 text-right text-slate-700 whitespace-nowrap">
+                            {r.counts[key]}
+                            <span className="ml-1 text-[10px] text-slate-400">{figures[key]}</span>
+                          </td>
+                        ))}
                         <td className="px-4 py-2.5">
                           <span className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold border', meta.cls)}>
                             <Icon className="w-3 h-3" />
