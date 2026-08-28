@@ -275,6 +275,19 @@ async function startAsWatchLiveScheduler() {
   }
 }
 
+async function startAsReconcileParityScheduler() {
+  try {
+    // AppleSystem parity reconciliation: every 15 min it re-lists the rolling
+    // create-date window, imports any confirmation this system is missing,
+    // refreshes any whose upstream row has been amended, and cancels any the
+    // Apple System has withdrawn. The importers create; this one *verifies*.
+    const { startAsReconcileScheduler } = await import('./as-reconcile-scheduler')
+    await startAsReconcileScheduler()
+  } catch (err) {
+    console.error('[Scheduler] as-reconcile scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startB2cImportCreateScheduler() {
   try {
     // node-cron scheduler: fires once daily just after midnight (default 00:30
@@ -384,6 +397,13 @@ export function startCronJobs() {
   // min, off until switched on in New Booking - AppleSystem > Live Watch) that
   // creates bookings within minutes of a confirmation rather than next morning.
   void startAsWatchLiveScheduler()
+
+  // AppleSystem parity reconciliation: every 15 min, re-check the rolling
+  // create-date window against AppleSystem and repair every way the two can
+  // disagree — missing bookings imported, amended ones refreshed, withdrawn
+  // ones cancelled. This is the job that guarantees no confirmation is missed;
+  // the watch above is the fast path, this is the one that checks its work.
+  void startAsReconcileParityScheduler()
 
   // Aahaas B2C order auto-import: node-cron daily job just after midnight
   // (timezone-aware, boot catch-up). Imports today's orders with upcoming travel.

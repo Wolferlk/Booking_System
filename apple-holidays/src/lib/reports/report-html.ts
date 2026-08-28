@@ -301,6 +301,118 @@ function createdSection(d: ReportData): string {
   )
 }
 
+/**
+ * AppleSystem parity — the integrity gate.
+ *
+ * Deliberately the shortest section in the mail and deliberately the loudest
+ * when it fails. On a healthy day it is two matching numbers and a green line
+ * saying so, which is the entire point: someone scanning the report at 6 AM
+ * should be able to satisfy themselves in one glance that nothing was dropped
+ * between the two systems overnight. On an unhealthy day it names the
+ * confirmations that are missing, because a count nobody can act on is not a
+ * finding.
+ */
+function paritySection(d: ReportData): string {
+  const p = d.parity
+
+  if (!p.available) {
+    return section(
+      'AppleSystem parity',
+      'Confirmed upstream vs held here',
+      C.faint,
+      emptyNote(p.note ?? 'No reconciliation data is available for this period.'),
+    )
+  }
+
+  const accent = p.inParity ? C.good : C.bad
+  const verdict = p.inParity
+    ? `<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+         <div style="font:800 14px/1.4 ${FONT};color:#065f46;">In parity — every confirmation is in the system</div>
+         <div style="font:400 12px/1.6 ${FONT};color:#047857;padding-top:4px;">
+           AppleSystem confirmed ${num(p.upstreamConfirmed)} booking${p.upstreamConfirmed === 1 ? '' : 's'} in this period and the booking system holds all ${num(p.systemHeld)}.
+         </div>
+       </div>`
+    : `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+         <div style="font:800 14px/1.4 ${FONT};color:#991b1b;">${num(p.missing)} confirmation${p.missing === 1 ? '' : 's'} missing from the booking system</div>
+         <div style="font:400 12px/1.6 ${FONT};color:#b91c1c;padding-top:4px;">
+           AppleSystem confirmed ${num(p.upstreamConfirmed)}; this system holds ${num(p.systemHeld)}. The reconciler retries every 15 minutes — if the same reference is still listed tomorrow, the quotation needs looking at by hand.
+         </div>
+       </div>`
+
+  const kpis = kpiRow([
+    { label: 'AppleSystem confirmed', value: num(p.upstreamConfirmed), note: 'status 2, by create date' },
+    { label: 'Created in system', value: num(p.systemHeld), note: p.inParity ? 'complete' : `${num(p.missing)} short`, color: accent },
+    { label: 'Imported by automation', value: num(p.createdByAutomation), note: 'of the above' },
+    { label: 'Refreshed', value: num(p.refreshed), note: 'amended upstream' },
+    { label: 'Auto-cancelled', value: num(p.cancelled), note: 'withdrawn upstream', color: p.cancelled ? C.warn : C.ink },
+  ])
+
+  const gapList = p.gaps.length
+    ? `<div style="padding-top:14px;"><div class="h3">Not in the booking system</div>` +
+      tableOpen([{ text: 'Reference' }, { text: 'Confirmed on', align: 'right', width: '120' }]) +
+      p.gaps.slice(0, 25).map(g => `<tr>
+        ${td(`<strong style="color:${C.bad};">${esc(g.ref)}</strong>`, { nowrap: true })}
+        ${td(shortDate(g.date), { align: 'right', nowrap: true })}
+      </tr>`).join('') + TABLE_CLOSE +
+      moreNote(Math.min(25, p.gaps.length), p.gaps.length, 'gaps') + '</div>'
+    : ''
+
+  const cancelList = p.cancellations.length
+    ? `<div style="padding-top:18px;"><div class="h3">Cancelled — no longer confirmed in AppleSystem</div>` +
+      tableOpen([
+        { text: 'Ref' }, { text: 'Was', width: '150' },
+        { text: 'Upstream status', align: 'right', width: '110' }, { text: 'At', align: 'right', width: '110' },
+      ]) +
+      p.cancellations.map(c => `<tr>
+        ${td(`<strong style="color:${C.ink};">${esc(c.ref)}</strong>`, { nowrap: true })}
+        ${td(statusWord(c.prevStatus))}
+        ${td(esc(c.upstreamStatus), { align: 'right' })}
+        ${td(stamp(c.at), { align: 'right', nowrap: true })}
+      </tr>`).join('') + TABLE_CLOSE +
+      `<div class="more">Nothing was deleted — each booking keeps the status it held, so a cancellation made in error is one field away from being undone.</div></div>`
+    : ''
+
+  const flagged = p.flagged
+    ? `<div style="padding-top:14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;margin-top:14px;">
+         <div style="font:700 12px/1.5 ${FONT};color:#92400e;">${num(p.flagged)} withdrawn upstream but left for a person</div>
+         <div style="font:400 12px/1.6 ${FONT};color:#b45309;padding-top:3px;">
+           These tours have already started, so they were not cancelled automatically. They need a decision.
+         </div>
+       </div>`
+    : ''
+
+  const errors = p.errors
+    ? `<div class="more" style="color:${C.warn};">${num(p.errors)} import or refresh error${p.errors === 1 ? '' : 's'} were retried during the period.</div>`
+    : ''
+
+  const byDate = p.byDate.length > 1
+    ? `<div style="padding-top:18px;"><div class="h3">Day by day</div>` +
+      tableOpen([
+        { text: 'Date' }, { text: 'AppleSystem', align: 'right', width: '95' },
+        { text: 'In system', align: 'right', width: '85' }, { text: 'Missing', align: 'right', width: '75' },
+      ]) +
+      p.byDate.map(b => `<tr>
+        ${td(shortDate(b.date), { nowrap: true })}
+        ${td(num(b.upstreamConfirmed), { align: 'right' })}
+        ${td(num(b.systemHeld), { align: 'right', bold: true, color: C.ink })}
+        ${td(b.missing ? num(b.missing) : '—', { align: 'right', bold: b.missing > 0, color: b.missing ? C.bad : C.faint })}
+      </tr>`).join('') + TABLE_CLOSE + '</div>'
+    : ''
+
+  const provenance = [
+    p.source === 'ledger' ? (p.note ?? 'Figures taken from the last reconciliation, not a live check.') : '',
+    p.lastRunAt ? `Last reconciled ${stamp(p.lastRunAt)} · ${num(p.runs)} run${p.runs === 1 ? '' : 's'} covered this period.` : '',
+  ].filter(Boolean).join(' ')
+
+  return section(
+    'AppleSystem parity',
+    'Confirmed upstream vs held here — these two numbers must match',
+    accent,
+    verdict + kpis + gapList + cancelList + flagged + errors + byDate +
+      (provenance ? `<div class="more">${esc(provenance)}</div>` : ''),
+  )
+}
+
 function onGroundSection(d: ReportData): string {
   const g = d.onGround
 
@@ -834,7 +946,7 @@ function upcomingSection(d: ReportData): string {
 
 export interface RenderOptions {
   /** Which sections to include, in the order they appear. */
-  sections?: { created?: boolean; onGround?: boolean; readiness?: boolean; reconfirm?: boolean; complaints?: boolean; upcoming?: boolean }
+  sections?: { created?: boolean; parity?: boolean; onGround?: boolean; readiness?: boolean; reconfirm?: boolean; complaints?: boolean; upcoming?: boolean }
   /** Optional AI-written paragraph placed above the sections. */
   narrative?: string | null
   /** Absolute dashboard URL for the footer link. */
@@ -872,6 +984,9 @@ function headerBlock(w: ReportWindow, opts: RenderOptions): string {
 function summaryStrip(d: ReportData): string {
   const cells = [
     { label: 'Created', value: num(d.created.total), sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C` },
+    // The parity pair earns a place in the strip because it is the one figure
+    // that says whether every other figure in the mail is complete.
+    { label: 'AS parity', value: `${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}`, sub: d.parity.available ? (d.parity.inParity ? 'all imported' : `${num(d.parity.missing)} missing`) : 'not checked' },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
     { label: 'Next 3 days', value: num(d.readiness.total), sub: `${num(d.readiness.notReady)} not ready` },
     { label: `D-${RECONFIRM_DUE_DAYS} late`, value: num(d.reconfirm.breached), sub: `${num(d.reconfirm.unexplained)} unexplained` },
@@ -904,6 +1019,7 @@ function compact(html: string): string {
 export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): string {
   const want = {
     created: opts.sections?.created !== false,
+    parity: opts.sections?.parity !== false,
     onGround: opts.sections?.onGround !== false,
     readiness: opts.sections?.readiness !== false,
     reconfirm: opts.sections?.reconfirm !== false,
@@ -928,6 +1044,9 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 
   const body = [
     want.created ? createdSection(d) : '',
+    // Immediately after intake, because it qualifies it: the created count above
+    // is only trustworthy if the two systems agree on what was confirmed.
+    want.parity ? paritySection(d) : '',
     want.onGround ? onGroundSection(d) : '',
     want.readiness ? readinessSection(d) : '',
     // Placed after readiness and before complaints: readiness is the next three
@@ -951,7 +1070,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -983,6 +1102,9 @@ export function renderReportSubject(d: ReportData, opts: { prefix?: string; test
     `${d.created.total} new`,
     `${d.onGround.total} on ground`,
   ]
+  // A parity gap outranks everything else in the subject: it means the mail's
+  // own numbers are incomplete, so it has to be visible without opening it.
+  if (d.parity.available && !d.parity.inParity) parts.push(`${d.parity.missing} AS booking${d.parity.missing === 1 ? '' : 's'} MISSING`)
   if (d.readiness.notReady > 0) parts.push(`${d.readiness.notReady} not ready in 3d`)
   // Only the unexplained breaches earn a place in the subject. A late booking
   // somebody has accounted for is inside-the-mail detail; a late booking nobody
@@ -1018,6 +1140,23 @@ export function renderReportCsv(d: ReportData): string {
 
   block('Bookings created', ['Ref', 'Source', 'Country', 'Agent', 'Status', 'Arrival', 'Departure', 'Adults', 'Children', 'Infants', 'Currency', 'Quoted total', 'Created at'],
     d.created.bookings.map(b => [b.bookingRef, b.source, b.countryLabel, b.agent ?? '', b.status, b.arrivalDate, b.departureDate, b.paxAdults, b.paxChildren, b.paxInfants, b.currency, b.quotedTotal ?? '', b.createdAt].map(String)))
+
+  // Parity is a two-row-per-day answer, but it goes in the CSV because "prove to
+  // me nothing was lost last month" is a question someone eventually pivots.
+  if (d.parity.available) {
+    block('AppleSystem parity by create date', ['Create date', 'Confirmed in AppleSystem', 'Created in system', 'Missing'],
+      d.parity.byDate.map(b => [b.date, b.upstreamConfirmed, b.systemHeld, b.missing].map(String)))
+
+    if (d.parity.gaps.length) {
+      block('AppleSystem confirmations missing from the booking system', ['Reference', 'Confirmed on'],
+        d.parity.gaps.map(g => [g.ref, g.date]))
+    }
+
+    if (d.parity.cancellations.length) {
+      block('Cancelled — withdrawn in AppleSystem', ['Ref', 'Previous status', 'Upstream status', 'Cancelled at'],
+        d.parity.cancellations.map(c => [c.ref, c.prevStatus, c.upstreamStatus, c.at]))
+    }
+  }
 
   block(`On ground ${d.onGround.date}`, ['Ref', 'Booking type', 'Source', 'Country', 'Lead guest', 'Day', 'Total days', 'Pax', 'Status'],
     d.onGround.tours.map(t => [t.bookingRef, t.hotelOnly ? 'Hotel Only' : 'Full tour', t.source, t.countryLabel, t.leadPassenger ?? '', t.dayNo, t.totalDays, t.pax, t.status].map(String)))

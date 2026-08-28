@@ -128,6 +128,17 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
     range: `${d.window.fromDate} to ${d.window.toDate}`,
     created: { total: d.created.total, previous: d.created.previousTotal, b2b: d.created.channel.b2b, b2c: d.created.channel.b2c, byCountry: d.created.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
     onGround: { total: d.onGround.total, pax: d.onGround.pax, byCountry: d.onGround.byCountry.map(c => ({ c: c.label, n: c.bookings })) },
+    // The integration's own health. Given to the model because a day where the
+    // two systems disagree is the day the narrative should lead with it.
+    appleSystemParity: {
+      confirmedUpstream: d.parity.upstreamConfirmed,
+      createdInSystem: d.parity.systemHeld,
+      missing: d.parity.missing,
+      autoImported: d.parity.createdByAutomation,
+      autoRefreshed: d.parity.refreshed,
+      autoCancelled: d.parity.cancelled,
+      flaggedForReview: d.parity.flagged,
+    },
     arrivingNext3Days: {
       total: d.readiness.total,
       tomorrow: d.readiness.tomorrow,
@@ -221,6 +232,12 @@ export async function buildReport(
 
 /** True when the window holds nothing worth anyone's inbox. */
 function isEmptyReport(d: ReportData): boolean {
+  // A parity gap is never "empty". On a genuinely quiet day the AppleSystem
+  // integration losing a confirmation is the *only* thing that happened, and
+  // suppressing the mail would hide precisely the failure it was added to catch.
+  if (d.parity.available && !d.parity.inParity) return false
+  if (d.parity.cancelled > 0 || d.parity.flagged > 0) return false
+
   // Imminent arrivals count as content even on a dead day — an unallocated
   // driver for a tour landing tomorrow is exactly the mail nobody should miss.
   return d.created.total === 0 && d.complaints.total === 0
