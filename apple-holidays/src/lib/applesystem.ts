@@ -466,37 +466,95 @@ interface ASListEnvelope {
   pagination?: { current_page?: number; per_page?: number; total?: number; last_page?: number }
 }
 
-/** Page size we ask upstream for (it honours `per_page`; 16 is its default). */
-const AS_PAGE_SIZE = Number(process.env.AS_PAGE_SIZE || 100)
+/**
+ * Page size we ask upstream for (it honours `per_page`; 16 is its default).
+ *
+ * Deliberately small. Upstream spends roughly a third of a second per row it
+ * serialises, so one wide page is its own bottleneck: a 62-row day answers in
+ * ~25s as a single `per_page=100` request but in ~15s as three smaller pages
+ * fetched together. Splitting the same rows across pages we can ask for
+ * concurrently is what keeps a report inside a request's deadline.
+ */
+const AS_PAGE_SIZE = Number(process.env.AS_PAGE_SIZE || 25)
+/**
+ * How many pages are requested at once.
+ *
+ * Pages are asked for *speculatively* — waiting for page 1 to learn `last_page`
+ * before starting page 2 would serialise the very calls we are trying to
+ * overlap, and cost more than the wasted empty pages do. Four is where the
+ * upstream stops rewarding extra concurrency.
+ */
+const AS_PAGE_CONCURRENCY = Math.max(1, Number(process.env.AS_PAGE_CONCURRENCY || 4))
 /** Hard stop so a runaway `last_page` can never loop forever. */
 const AS_MAX_PAGES = 50
 
+/** One page of a `/api/quotation/list` query, with what it says about the rest. */
+async function fetchListPage(
+  qs: URLSearchParams,
+  label: string,
+  page: number,
+): Promise<{ rows: ASBookingListItem[]; total: number | null; lastPage: number | null }> {
+  const q = new URLSearchParams(qs)
+  q.set('per_page', String(AS_PAGE_SIZE))
+  q.set('page', String(page))
+
+  const res = await asFetch(`/api/quotation/list?${q.toString()}`)
+  if (!res.ok) throw new Error(`AppleSystem ${label} failed (${res.status})`)
+  const json = (await res.json()) as ASListEnvelope
+
+  return {
+    rows: Array.isArray(json.data) ? json.data : [],
+    total: json.pagination?.total ?? json.total ?? null,
+    lastPage: json.pagination?.last_page ?? null,
+  }
+}
+
 /**
  * Fetch **every** page of a `/api/quotation/list` query and return the combined
- * rows. Callers get the complete result set, not just the first 16 rows.
+ * rows. Callers get the complete result set, not just the first page.
+ *
+ * Pages go out in concurrent batches (see {@link AS_PAGE_CONCURRENCY}) because
+ * upstream latency tracks the number of rows in a response, not the number of
+ * requests: the same day costs about half the wall-clock time when its rows are
+ * split across pages fetched together. Rows are keyed by id on the way in, so a
+ * quotation created *while* we page — which shifts every row one place down the
+ * id-descending list — can shuffle across a page boundary without being counted
+ * twice. (It can still slip out of the tail unseen, exactly as it could when
+ * the pages were fetched one after another.)
  */
 async function listAllPages(qs: URLSearchParams, label: string): Promise<ASListResult> {
-  const items: ASBookingListItem[] = []
+  const byId = new Map<string, ASBookingListItem>()
   let upstreamTotal = 0
-  let lastPage = 1
+  let lastPage = AS_MAX_PAGES
 
-  for (let page = 1; page <= AS_MAX_PAGES; page++) {
-    const q = new URLSearchParams(qs)
-    q.set('per_page', String(AS_PAGE_SIZE))
-    q.set('page', String(page))
+  for (let next = 1; next <= Math.min(lastPage, AS_MAX_PAGES); ) {
+    const batch: number[] = []
+    for (
+      let page = next;
+      page < next + AS_PAGE_CONCURRENCY && page <= Math.min(lastPage, AS_MAX_PAGES);
+      page++
+    ) {
+      batch.push(page)
+    }
 
-    const res = await asFetch(`/api/quotation/list?${q.toString()}`)
-    if (!res.ok) throw new Error(`AppleSystem ${label} failed (${res.status})`)
-    const json = (await res.json()) as ASListEnvelope
+    const results = await Promise.all(batch.map((page) => fetchListPage(qs, label, page)))
 
-    const rows = Array.isArray(json.data) ? json.data : []
-    items.push(...rows)
+    let sawEmptyPage = false
+    for (const result of results) {
+      for (const row of result.rows) {
+        byId.set(String(row.id ?? row.quotation_no), row)
+      }
+      if (result.rows.length === 0) sawEmptyPage = true
+      if (result.total != null) upstreamTotal = Math.max(upstreamTotal, result.total)
+      if (result.lastPage != null) lastPage = result.lastPage
+    }
 
-    upstreamTotal = json.pagination?.total ?? json.total ?? items.length
-    lastPage = json.pagination?.last_page ?? 1
-    if (rows.length === 0 || page >= lastPage) break
+    // An empty page means we have run past the end — whatever `last_page` said.
+    if (sawEmptyPage) break
+    next += batch.length
   }
 
+  const items = Array.from(byId.values())
   return { items, total: Math.max(upstreamTotal, items.length) }
 }
 
