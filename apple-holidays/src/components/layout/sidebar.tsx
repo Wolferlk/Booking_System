@@ -13,7 +13,7 @@ import {
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
   ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet,
-  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2,
+  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -38,7 +38,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet,
-  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2,
+  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -61,6 +61,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                 icon: 'Table2' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'New Booking',    href: '/dashboard/bookings/new',              icon: 'PlusCircle' },
     { label: 'Change Requests',href: '/dashboard/change-requests',           icon: 'AlertCircle' },
@@ -78,6 +79,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Pre-checking',    href: '/dashboard/precheck',                  icon: 'BedDouble' },
     { label: 'Reservations',    href: '/dashboard/reservations/list',         icon: 'CalendarCheck2' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',           icon: 'Ticket' },
     { label: 'Ticket Portals', href: '/dashboard/admin/portals',            icon: 'Store' },
@@ -126,6 +128,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',       icon: 'BarChart2' },
     { label: 'Experience Reports', href: '/dashboard/te/experience-reports',   icon: 'MailCheck' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',             icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',              icon: 'CreditCard' },
     { ...WHATSAPP_NAV_ITEM },
@@ -145,6 +148,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
     { label: 'MC Report',       href: '/dashboard/mc-report',                icon: 'Table2' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
@@ -200,6 +204,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Experience Reports', href: '/dashboard/te/experience-reports',      icon: 'MailCheck' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
     { label: 'Cancellations',      href: '/dashboard/accounts/cancellations',      icon: 'XCircle' },
@@ -251,6 +256,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Experience Reports', href: '/dashboard/te/experience-reports',      icon: 'MailCheck' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Reminders',          href: '/dashboard/te/reminders',                icon: 'Bell' },
     { label: 'Payments',           href: '/dashboard/te/payments',                 icon: 'CreditCard' },
     { ...WHATSAPP_NAV_ITEM },
@@ -282,6 +288,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Experience Reports', href: '/dashboard/te/experience-reports',      icon: 'MailCheck' },
+    { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Credit Agents',      href: '/dashboard/accounts/credit-agents',      icon: 'CreditCard' },
     { label: 'P&L Management',     href: '/dashboard/accounts/pnl',               icon: 'BarChart2' },
     { label: 'Cancellations',      href: '/dashboard/accounts/cancellations',      icon: 'XCircle' },
