@@ -60,6 +60,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
+    { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'MC Report',      href: '/dashboard/mc-report',                 icon: 'Table2' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
@@ -122,6 +123,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
+    { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
@@ -147,6 +149,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
+    { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'MC Report',       href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
@@ -192,6 +195,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
+    { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
@@ -238,6 +242,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
+    { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
     { label: 'Live Overview',      href: '/dashboard/te/live',                     icon: 'Radio' },
@@ -274,6 +279,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'AS Bookings V2', href: '/dashboard/as-bookings-v2',            icon: 'FileCheck2' },
     { label: 'New AS Booking', href: '/dashboard/new-as-booking',            icon: 'PackagePlus' },
     { label: 'B2C — Aahaas',    href: '/dashboard/b2c',                       icon: 'ShoppingBag' },
+    { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'New Booking',        href: '/dashboard/bookings/new',                icon: 'PlusCircle' },
     { label: 'SL Driver Alloc',    href: '/dashboard/srilanka/driver-allocation',  icon: 'Navigation2' },
     { label: 'SL Drive Log',       href: '/dashboard/srilanka/drive-log',          icon: 'Wallet' },
@@ -384,6 +390,7 @@ function classifyNavItem(item: NavItem): NavGroupId {
   if (h.startsWith('/dashboard/as-bookings')) return 'bookings'
   if (h.startsWith('/dashboard/new-as-booking')) return 'bookings'
   if (h.startsWith('/dashboard/b2c')) return 'bookings'
+  if (h.startsWith('/dashboard/b2b-flights')) return 'bookings'
   if (h.startsWith('/dashboard/change-requests')) return 'bookings'
   if (h.startsWith('/dashboard/ground')) return 'ops'
   if (h.startsWith('/dashboard/srilanka')) return 'ops'
