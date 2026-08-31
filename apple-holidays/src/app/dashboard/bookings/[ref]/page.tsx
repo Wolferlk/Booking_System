@@ -11,7 +11,7 @@ import {
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical, Globe, Sparkles, PlaneLanding,
-  History, ChevronDown, RotateCcw, Wand2, ShieldCheck,
+  History, ChevronDown, RotateCcw, Wand2, ShieldCheck, Headphones,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -53,6 +53,7 @@ import {
 } from '@/components/bookings/hotel-only-control'
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 import JourneyMap from '@/components/bookings/journey-map'
+import DriverBriefModal from '@/components/bookings/driver-brief-modal'
 
 /**
  * Who holds the hotel reservation — the guest/agent, or us.
@@ -233,6 +234,9 @@ export default function BookingDetailPage() {
 
   // AI Calls & Feedback modal
   const [aiCallsModal, setAiCallsModal] = useState(false)
+
+  // Driver Brief — the slide deck an officer reads to the allocated driver
+  const [driverBriefOpen, setDriverBriefOpen] = useState(false)
 
   // Customer feedback modal (triggered on Complete Trip)
   const [feedbackModal, setFeedbackModal] = useState(false)
@@ -1773,6 +1777,17 @@ Wishing you a wonderful trip! ✈️
                       <Clock className="w-3 h-3" /> {waQueue.length}
                     </span>
                   )}
+                </button>
+              )}
+              {/* Driver Brief — reads the file to the driver one screen at a time.
+                  Hidden on a Hotel Only file: there is no driver to brief. */}
+              {!hoWaives('drivers') && ['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
+                <button
+                  onClick={() => setDriverBriefOpen(true)}
+                  className="btn btn-sm bg-teal-600 text-white border border-teal-700 hover:bg-teal-700 flex items-center gap-1.5"
+                  title="Open the driver brief — the whole file, slide by slide, with the driver's number to dial"
+                >
+                  <Headphones className="w-3.5 h-3.5" /> Driver Brief
                 </button>
               )}
               {['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
@@ -4124,6 +4139,14 @@ Wishing you a wonderful trip! ✈️
       {['TE_USER', 'BT_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
         <WhatsAppMiniChat bookingRef={ref} booking={booking} />
       )}
+
+      {/* ── Driver Brief deck ─────────────────────────────────────────── */}
+      <DriverBriefModal
+        bookingRef={ref}
+        open={driverBriefOpen}
+        onClose={() => setDriverBriefOpen(false)}
+        onCompleted={load}
+      />
 
       {/* ── AI Calls & Feedback modal ──────────────────────────────────── */}
       {aiCallsModal && (
