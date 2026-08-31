@@ -2811,3 +2811,42 @@ enum CreditNoteStatus {
   WRITTEN_OFF
   DISPUTED
 }
+
+/// Driver Brief — the record that a human walked a driver through a file.
+///
+/// The movement chart says who is driving; `whatsapp_messages` says what was
+/// sent. Neither answers the question asked when day two goes wrong: *was this
+/// driver briefed, by whom, and what came out of it*. A sent message is not a
+/// briefing — a briefing is somebody reading the file to the driver page by
+/// page and writing down what he asked. This is that event.
+///
+/// Keyed by `bookingRef`, and with the driver denormalised onto the row, so the
+/// brief survives both an amendment's child-row rewrite and a re-allocation:
+/// the moment the driver is swapped is exactly when somebody needs to know the
+/// previous one had already been briefed. Deliberately no FK to `bookings`,
+/// matching `sl_settlement_docs`.
+model DriverBrief {
+  bookingRef    String    @id
+  driverId      String?
+  driverName    String?
+  driverPhone   String?
+  /// 'pending' | 'in_progress' | 'completed'
+  status        String    @default("pending")
+  notes         String?   @db.Text
+  /// { "driver": true, "overview": true, … } — one key per slide actually read.
+  slidesSeen    Json?
+  /// Cached AI talking points, so reopening the deck spends no model call.
+  aiBrief       Json?
+  aiBriefAt     DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  briefedById   String?
+  briefedByName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status])
+  @@index([driverId])
+  @@index([completedAt])
+  @@map("driver_briefs")
+}

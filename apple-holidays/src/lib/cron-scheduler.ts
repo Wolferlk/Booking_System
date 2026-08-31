@@ -338,6 +338,19 @@ async function startDriverLogAutoSendScheduler() {
   }
 }
 
+async function startDriverBriefReportSchedulerTask() {
+  try {
+    // node-cron scheduler: mails the D-3 → D-1 driver brief readiness report at
+    // DRIVER_BRIEF_REPORT_HOUR (default 07:00) in DRIVER_BRIEF_REPORT_TZ
+    // (Asia/Colombo). The once-a-day guard lives inside the run function, so
+    // this and /api/cron/driver-brief-report can both be on.
+    const { startDriverBriefReportScheduler } = await import('./driver-brief-report-scheduler')
+    await startDriverBriefReportScheduler()
+  } catch (err) {
+    console.error('[Scheduler] driver-brief report scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startFileHandlerResolveSweepScheduler() {
   try {
     // Interval sweep: replaces the "30sundays Aahaas" placeholder file handler
@@ -432,6 +445,7 @@ export function startCronJobs() {
   // Driver Log auto-send: node-cron daily job at 6pm Sri Lanka (day before tour),
   // timezone-aware with boot catch-up. Backend-only, gated by a global switch.
   void startDriverLogAutoSendScheduler()
+  void startDriverBriefReportSchedulerTask()
 
   // 30 Sundays placeholder file handler → the real handler from apple_quote_ai.
   // Interval sweep every 5 min over bookings created at least 10 min ago; the
