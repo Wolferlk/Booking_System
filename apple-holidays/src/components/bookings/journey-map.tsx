@@ -9,7 +9,7 @@
  * reading a file for the first time. This panel answers those.
  *
  * Mapping stack is deliberately dependency-light and free: Leaflet against
- * OpenStreetMap-derived raster tiles (CARTO / OpenTopoMap), no API key, no
+ * OpenStreetMap and OpenTopoMap raster tiles, no API key, no
  * account, no per-view billing. Leaflet is loaded on demand inside the effect
  * so it never enters the server bundle or the initial page payload.
  */
@@ -274,25 +274,46 @@ function glyphSvg(kind: StopKind, size = 15, color = '#fff') {
 
 // ─── Basemaps (all free, no key) ─────────────────────────────────────────
 
-const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
+/**
+ * Every layer here is a keyless OSM endpoint.
+ *
+ * CARTO's basemap CDN started stamping "API KEY REQUIRED" across anonymous
+ * traffic, which is why the tiles came up watermarked. Dark is the plain OSM
+ * raster inverted in CSS rather than a hosted dark style, so no layer on this
+ * map can grow a key requirement later.
+ */
 const BASEMAPS = [
   {
-    id: 'voyager', label: 'Voyager', dark: false,
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    attr: `${OSM_ATTR} &copy; <a href="https://carto.com/attributions">CARTO</a>`,
+    id: 'voyager', label: 'Streets', dark: false,
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subs: 'abc', maxZoom: 19,
+    filter: 'saturate(.85) brightness(1.02)',
+    attr: OSM_ATTR,
   },
   {
     id: 'terrain', label: 'Terrain', dark: false,
+    // OpenTopoMap only serves a, b and c — 'd' 404s on every tile.
     url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    subs: 'abc', maxZoom: 17,
+    filter: '',
     attr: `${OSM_ATTR} &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)`,
   },
   {
     id: 'midnight', label: 'Midnight', dark: true,
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attr: `${OSM_ATTR} &copy; <a href="https://carto.com/attributions">CARTO</a>`,
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    subs: 'abc', maxZoom: 19,
+    filter: 'invert(1) hue-rotate(180deg) brightness(.92) contrast(1.06) saturate(.65)',
+    attr: OSM_ATTR,
   },
 ] as const
+
+/** The dark basemap is a CSS inversion, so the filter rides on the tile pane. */
+function paintTiles(map: LeafletMap, filter: string) {
+  const pane = map.getPane('tilePane')
+  if (pane) pane.style.filter = filter
+}
 
 type BasemapId = typeof BASEMAPS[number]['id']
 
@@ -1270,7 +1291,8 @@ export default function JourneyMap({
       mapRef.current = map
 
       const bm = BASEMAPS.find(b => b.id === basemap) ?? BASEMAPS[0]
-      tileRef.current = L.tileLayer(bm.url, { attribution: bm.attr, maxZoom: 18, subdomains: 'abcd' }).addTo(map)
+      tileRef.current = L.tileLayer(bm.url, { attribution: bm.attr, maxZoom: bm.maxZoom, subdomains: bm.subs }).addTo(map)
+      paintTiles(map, bm.filter)
 
       map.fitBounds(L.latLngBounds(places.map(p => [p.lat, p.lng] as LatLng)), { padding: [56, 56], maxZoom: 11 })
       setTimeout(() => map.invalidateSize(), 120)
@@ -1296,8 +1318,9 @@ export default function JourneyMap({
     if (!L || !map) return
     const bm = BASEMAPS.find(b => b.id === basemap) ?? BASEMAPS[0]
     if (tileRef.current) map.removeLayer(tileRef.current)
-    tileRef.current = L.tileLayer(bm.url, { attribution: bm.attr, maxZoom: 18, subdomains: 'abcd' }).addTo(map)
+    tileRef.current = L.tileLayer(bm.url, { attribution: bm.attr, maxZoom: bm.maxZoom, subdomains: bm.subs }).addTo(map)
     tileRef.current.bringToBack()
+    paintTiles(map, bm.filter)
   }, [basemap, mapReady])
 
   // ── Route + markers ────────────────────────────────────────────────────
