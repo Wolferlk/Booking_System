@@ -239,7 +239,7 @@ export async function buildDriverBrief(bookingRef: string): Promise<DriverBriefP
       contactPhone: true, contactEmail: true, importantNotes: true, hotelOnly: true,
       passengers: {
         orderBy: [{ isLead: 'desc' }, { name: 'asc' }],
-        select: { name: true, type: true, isLead: true, contact: true, passportNo: true, nationality: true },
+        select: { name: true, type: true, isLead: true, contact: true, passport: true, nationality: true },
       },
       flights: {
         orderBy: [{ date: 'asc' }],
@@ -409,7 +409,7 @@ export async function buildDriverBrief(bookingRef: string): Promise<DriverBriefP
     if (day && !entry.dates.includes(day)) entry.dates.push(day)
   }
 
-  const driverList = [...drivers.values()].sort((a, b) =>
+  const driverList = Array.from(drivers.values()).sort((a, b) =>
     a.role === b.role ? b.movementCount - a.movementCount : a.role === 'primary' ? -1 : 1,
   )
   // With no allocation row, the driver covering the most movements is the one
@@ -450,7 +450,7 @@ export async function buildDriverBrief(bookingRef: string): Promise<DriverBriefP
     hotelOnly: booking.hotelOnly,
     passengers: booking.passengers.map(p => ({
       name: p.name, type: String(p.type), isLead: p.isLead,
-      contact: p.contact, passportNo: p.passportNo, nationality: p.nationality,
+      contact: p.contact, passportNo: p.passport, nationality: p.nationality,
     })),
     leadName: booking.passengers.find(p => p.isLead)?.name ?? booking.passengers[0]?.name ?? null,
     drivers: driverList,

@@ -67,6 +67,10 @@
     {
       "path": "/api/cron/file-handler-resolve",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/driver-brief-report",
+      "schedule": "30 1 * * *"
     }
   ]
 }

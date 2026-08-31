@@ -25,8 +25,8 @@ import { toast } from 'sonner'
 import {
   X, ChevronLeft, ChevronRight, Phone, Copy, Check, CarFront, User, Users,
   Plane, PlaneTakeoff, PlaneLanding, BedDouble, MapPin, Ticket, StickyNote,
-  Sparkles, Loader2, AlertTriangle, CalendarDays, Clock, Utensils, Building2,
-  BadgeCheck, ShieldQuestion, RefreshCw, IdCard, Route, MessageSquareQuote,
+  Sparkles, Loader2, AlertTriangle, CalendarDays, Clock, Utensils,
+  BadgeCheck, ShieldQuestion, RefreshCw, Route, MessageSquareQuote,
   CircleCheck, CircleDashed, Coffee, Baby, ArrowRight,
 } from 'lucide-react'
 import JourneyMap from '@/components/bookings/journey-map'
@@ -754,7 +754,7 @@ function MovementsSlide({ p, meta, ai, aiLoading }: {
       list.push(m)
       map.set(m.date, list)
     }
-    return [...map.entries()]
+    return Array.from(map.entries())
   }, [p.movements])
 
   return (
@@ -889,7 +889,7 @@ function TicketsSlide({ p, meta, ai, aiLoading }: {
       list.push(t)
       map.set(key, list)
     }
-    return [...map.entries()].sort((a, b) => (a[0] === 'unscheduled' ? 1 : b[0] === 'unscheduled' ? -1 : a[0].localeCompare(b[0])))
+    return Array.from(map.entries()).sort((a, b) => (a[0] === 'unscheduled' ? 1 : b[0] === 'unscheduled' ? -1 : a[0].localeCompare(b[0])))
   }, [p.tickets])
 
   const inactive = p.tickets.filter(t => !t.activated).length
@@ -1296,12 +1296,13 @@ export default function DriverBriefModal({ bookingRef, open, onClose, onComplete
         className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-sm flex flex-col"
         role="dialog" aria-modal="true" aria-label={`Driver brief for ${bookingRef}`}
       >
-        {/* Scoped so the deck's own scrollbars stay dark without touching the app. */}
-        <style jsx global>{`
+        {/* Plain <style> rather than styled-jsx: nothing else in this app uses
+            styled-jsx, and the deck should not be the reason it has to work. */}
+        <style dangerouslySetInnerHTML={{ __html: `
           .brief-scroll::-webkit-scrollbar { width: 8px; }
           .brief-scroll::-webkit-scrollbar-thumb { background: rgba(100,116,139,.4); border-radius: 8px; }
           .brief-scroll::-webkit-scrollbar-track { background: transparent; }
-        `}</style>
+        ` }} />
 
         {/* ── Top bar ──────────────────────────────────────────────── */}
         <div className="flex-shrink-0 border-b border-slate-800/80 bg-slate-950/80">

@@ -12,10 +12,12 @@ import {
   ArrowRight, ArrowUpDown, ArrowUp, ArrowDown, Filter, SlidersHorizontal,
   Eye, EyeOff, Palmtree,
   Wallet, Banknote, Calculator, PencilLine, History, ShieldCheck, MinusCircle,
-  MessagesSquare,
+  MessagesSquare, Headphones,
 } from 'lucide-react'
 import { CountryFlag } from '@/components/ui/country-flag'
 import { DriverChatDock, type DriverChatTarget } from '../drive-log/DriverChatDock'
+import DriverBriefModal from '@/components/bookings/driver-brief-modal'
+import DriverBriefReadiness from '@/components/ground/driver-brief-readiness'
 import { cn } from '@/lib/utils'
 import {
   HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver, resolveIsHotelOnly,
@@ -1265,6 +1267,11 @@ export default function SriLankaDriverAllocationPage() {
    * to go somewhere else to do.
    */
   const [chatTarget, setChatTarget] = useState<DriverChatTarget | null>(null)
+
+  // Driver Brief — one deck serves both the readiness panel and the table,
+  // so a file briefed from either place refreshes both.
+  const [briefRef, setBriefRef] = useState<string | null>(null)
+  const [briefRefreshKey, setBriefRefreshKey] = useState(0)
   /** A booking arrived at by link — held so its row can announce itself. */
   const [highlightRef, setHighlightRef] = useState<string | null>(null)
 
@@ -1656,6 +1663,16 @@ export default function SriLankaDriverAllocationPage() {
           <StatCard label="Emergency"       value={stats.emergency} color="border-red-500/30 text-red-400"         icon={AlertTriangle} onClick={() => setStatusFilter('emergency')} active={statusFilter === 'emergency'} />
         </div>
 
+        {/* ── D-3 → D-1 brief readiness ──
+            Sits above the filters deliberately: it is the only part of this
+            board with a deadline attached, and it must be read before the
+            reader starts filtering the full list. */}
+        <DriverBriefReadiness
+          onBrief={setBriefRef}
+          refreshKey={briefRefreshKey}
+          canSend={['GT_USER', 'GT_VN_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(String(session?.user?.role ?? ''))}
+        />
+
         {/* ── Filter Panel ── */}
         <div className="bg-slate-900/60 border border-slate-800/60 rounded-2xl p-4 space-y-3">
 
@@ -1951,6 +1968,7 @@ export default function SriLankaDriverAllocationPage() {
                         {/* Driver / Vendor */}
                         <td className="px-4 py-3.5">
                           {driver ? (
+                            <>
                             <button onClick={() => setAssignBooking(b)} className="group/d flex items-start gap-2 text-left">
                               <div className={cn('w-7 h-7 rounded-full border flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-black',
                                 driver.kind === 'driver'
@@ -1970,6 +1988,17 @@ export default function SriLankaDriverAllocationPage() {
                               </div>
                               <Edit2 className="w-3 h-3 text-slate-600 group-hover/d:text-slate-400 mt-1 opacity-0 group-hover/d:opacity-100 transition-all" />
                             </button>
+                            {/* The file has somebody to brief, so offer the deck
+                                from every row — not only from the D-3 panel
+                                above, which shows the next three days only. */}
+                            <button
+                              onClick={() => setBriefRef(b.bookingRef)}
+                              className="mt-1.5 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-teal-500/30 bg-teal-500/5 text-teal-400 hover:bg-teal-500/15 hover:text-teal-300 transition-all text-[10px] font-bold"
+                              title="Open the driver brief — the whole file, slide by slide, with the number to dial"
+                            >
+                              <Headphones className="w-3 h-3" />Driver Brief
+                            </button>
+                            </>
                           ) : b.hotelOnly ? (
                             // Sold as accommodation only. Says so in full rather
                             // than just "no driver needed": the reader's next
@@ -2044,6 +2073,14 @@ export default function SriLankaDriverAllocationPage() {
       <BookingDetailPanel booking={detailBooking} onClose={() => setDetailBooking(null)} />
       <DriverAssignModal booking={assignBooking} drivers={drivers} vendors={vendors} onClose={() => setAssignBooking(null)} onSave={handleDriverSave} />
       <DriverAdvanceModal booking={advanceBooking} onClose={() => setAdvanceBooking(null)} />
+
+      {/* Driver Brief deck — opened from a row or from the readiness panel. */}
+      <DriverBriefModal
+        bookingRef={briefRef ?? ''}
+        open={!!briefRef}
+        onClose={() => setBriefRef(null)}
+        onCompleted={() => { setBriefRefreshKey(k => k + 1); void fetchBookings(true) }}
+      />
 
       {/* The same dock the Drive Log uses — one conversation surface for the
           company, not one per screen. */}
