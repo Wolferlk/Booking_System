@@ -198,21 +198,36 @@ const MAP_CSS = `
 .lom-wrap .leaflet-tooltip::before{display:none}
 `
 
+/**
+ * Keyless OSM tiles only.
+ *
+ * CARTO's basemap CDN now watermarks anonymous traffic with "API KEY
+ * REQUIRED", so Night is the plain OSM raster inverted in CSS instead of a
+ * hosted dark style.
+ */
 const BASEMAPS = [
   {
     id: 'night',
     label: 'Night',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    filter: 'invert(1) hue-rotate(180deg) brightness(.9) contrast(1.06) saturate(.6)',
   },
   {
     id: 'terrain',
     label: 'Terrain',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    filter: 'saturate(.85) brightness(1.02)',
   },
 ] as const
 
 const OSM_ATTR =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+
+/** Night is a CSS inversion, so the filter rides on the tile pane. */
+function paintTiles(map: LeafletMap, filter: string) {
+  const pane = map.getPane('tilePane')
+  if (pane) pane.style.filter = filter
+}
 
 export default function LiveOpsMap({
   country, onGround, flights, nowMinutes, loading, className,
@@ -277,8 +292,9 @@ export default function LiveOpsMap({
 
       L.control.zoom({ position: 'bottomright' }).addTo(map)
       tileRef.current = L.tileLayer(BASEMAPS[0].url, {
-        attribution: OSM_ATTR, maxZoom: 18, subdomains: 'abcd',
+        attribution: OSM_ATTR, maxZoom: 19, subdomains: 'abc',
       }).addTo(map)
+      paintTiles(map, BASEMAPS[0].filter)
 
       LRef.current = L
       mapRef.current = map
@@ -302,8 +318,9 @@ export default function LiveOpsMap({
     const bm = BASEMAPS.find(b => b.id === basemap) ?? BASEMAPS[0]
     if (tileRef.current) map.removeLayer(tileRef.current)
     tileRef.current = L.tileLayer(bm.url, {
-      attribution: OSM_ATTR, maxZoom: 18, subdomains: 'abcd',
+      attribution: OSM_ATTR, maxZoom: 19, subdomains: 'abc',
     }).addTo(map)
+    paintTiles(map, bm.filter)
   }, [basemap, ready])
 
   // ── Frame the selected country ─────────────────────────────────────────
