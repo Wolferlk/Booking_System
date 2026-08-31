@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation'
 import AiUsageMonitor from '@/components/settings/ai-usage-monitor'
 import LastMinuteAlertSettings from '@/components/settings/last-minute-alert-settings'
 import JourneyMapCard from '@/components/settings/journey-map-card'
+import FileHandlerResolveSettings from '@/components/settings/file-handler-resolve-settings'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
@@ -930,6 +931,9 @@ export default function ConfigPage() {
             <AiUsageMonitor />
           </CardBody>
         </Card>
+
+        {/* 30 Sundays placeholder file handler → real handler */}
+        <FileHandlerResolveSettings />
 
         {/* Accounts PNL Sync */}
         <Card>

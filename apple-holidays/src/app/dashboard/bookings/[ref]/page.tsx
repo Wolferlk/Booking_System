@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
+import { isPlaceholderFileHandler } from '@/lib/file-handler-placeholder'
 import {
   Users, Plane, Hotel, MapPin, FileText, CreditCard,
   AlertCircle, Clock, Loader2, Save,
@@ -211,6 +212,9 @@ export default function BookingDetailPage() {
   const [origin, setOrigin] = useState<CustomerOrigin | null>(null)
   const [originLoading, setOriginLoading] = useState(false)
 
+  // "Find real handler" button next to File Handler (30 Sundays placeholder).
+  const [resolvingHandler, setResolvingHandler] = useState(false)
+
   // Whether an Accounts (external) PNL record is linked to this booking.
   // Drives the "P&L Added" step in the Operation Checklist — it goes green as
   // soon as the Accounts PNL is connected, not only when an internal P&L exists.
@@ -401,6 +405,31 @@ export default function BookingDetailPage() {
       if (!auto) toast.error(err instanceof Error ? err.message : 'Origin detection failed')
     } finally {
       setOriginLoading(false)
+    }
+  }
+
+  // Bookings from the 30 Sundays feed land with the placeholder file handler
+  // "30sundays Aahaas"; the quotation tool records the real name against the
+  // same IS number. This runs automatically 10 min after creation — the button
+  // is for when someone does not want to wait.
+  async function resolveFileHandler() {
+    setResolvingHandler(true)
+    try {
+      const res  = await fetch(`/api/bookings/${ref}/resolve-file-handler`, { method: 'POST' })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error || 'Resolve failed')
+      if (json.data.status === 'replaced') {
+        toast.success(`File handler updated — ${json.data.to}`)
+        await load()
+      } else if (json.data.status === 'no-match') {
+        toast.info('No real file handler recorded for this IS number yet')
+      } else {
+        toast.info('File handler is already a real name')
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Resolve failed')
+    } finally {
+      setResolvingHandler(false)
     }
   }
 
@@ -1960,9 +1989,23 @@ Wishing you a wonderful trip! ✈️
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">File Handler</p>
-              {booking.fileHandler
-                ? <p className="text-sm text-slate-700">{booking.fileHandler as string}</p>
-                : <p className="text-sm text-slate-300">—</p>}
+              <div className="flex items-center gap-2 flex-wrap">
+                {booking.fileHandler
+                  ? <p className="text-sm text-slate-700">{booking.fileHandler as string}</p>
+                  : <p className="text-sm text-slate-300">—</p>}
+                {isPlaceholderFileHandler(booking.fileHandler as string | null) && (
+                  <button
+                    onClick={resolveFileHandler}
+                    disabled={resolvingHandler}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 disabled:opacity-60 px-2 py-0.5 rounded-md transition-colors"
+                    title="Look up the real file handler for this IS number in the quote system"
+                  >
+                    {resolvingHandler
+                      ? <><Loader2 className="w-3 h-3 animate-spin" /> Finding…</>
+                      : <><UserCheck className="w-3 h-3" /> Find real handler</>}
+                  </button>
+                )}
+              </div>
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-0.5">Booking Confirmed By</p>

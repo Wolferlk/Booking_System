@@ -338,6 +338,18 @@ async function startDriverLogAutoSendScheduler() {
   }
 }
 
+async function startFileHandlerResolveSweepScheduler() {
+  try {
+    // Interval sweep: replaces the "30sundays Aahaas" placeholder file handler
+    // with the real name from apple_quote_ai, for bookings created at least 10
+    // minutes ago. Read-only against the quote DB; writes only fileHandler.
+    const { startFileHandlerResolveScheduler } = await import('./file-handler-resolve-scheduler')
+    startFileHandlerResolveScheduler()
+  } catch (err) {
+    console.error('[Scheduler] file-handler resolve scheduler error:', err instanceof Error ? err.message : err)
+  }
+}
+
 async function startAgendaAutoEmailScheduler() {
   try {
     // node-cron scheduler: emails the tour confirmation (agenda PDF) to customers
@@ -420,6 +432,11 @@ export function startCronJobs() {
   // Driver Log auto-send: node-cron daily job at 6pm Sri Lanka (day before tour),
   // timezone-aware with boot catch-up. Backend-only, gated by a global switch.
   void startDriverLogAutoSendScheduler()
+
+  // 30 Sundays placeholder file handler → the real handler from apple_quote_ai.
+  // Interval sweep every 5 min over bookings created at least 10 min ago; the
+  // quote row is written shortly after the booking lands, so it needs the delay.
+  void startFileHandlerResolveSweepScheduler()
 
   // Tour-confirmation auto-email: node-cron daily job, sends the agenda PDF to
   // customers arriving in 3 days. Timezone-aware with boot catch-up.
