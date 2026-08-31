@@ -953,7 +953,7 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <nav className="flex-1 py-4 overflow-y-auto scrollbar-hide">
+        <nav className="flex-1 min-h-0 py-4 overflow-y-auto scrollbar-hide">
           {/* Searching flattens every category into one keyboard-driven list. */}
           {query ? (
             <>
@@ -1104,7 +1104,7 @@ export default function Sidebar() {
           onClick={toggleCollapse}
           title={isPinned ? 'Unpin — collapse to icons and expand on hover' : 'Keep the sidebar open'}
           className={cn(
-            'hidden lg:flex items-center gap-2 border-t border-slate-800',
+            'hidden lg:flex flex-shrink-0 items-center gap-2 border-t border-slate-800',
             'py-2.5 text-slate-500 hover:text-slate-200 hover:bg-slate-800/50 transition-colors',
             isCollapsed ? 'justify-center px-2' : 'px-4',
           )}
@@ -1128,7 +1128,7 @@ export default function Sidebar() {
         </button>
 
         {session?.user && (
-          <div className={cn('border-t border-slate-800 px-4 py-4', isCollapsed && 'lg:px-2 lg:py-3')}>
+          <div className={cn('flex-shrink-0 border-t border-slate-800 px-4 py-4', isCollapsed && 'lg:px-2 lg:py-3')}>
             {/* The way in to /dashboard/profile, where the photo below is set.
                 Falls back to initials whenever there is no photo or it fails to
                 load, so this corner is never a broken image. */}
