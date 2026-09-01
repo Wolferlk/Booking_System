@@ -18,13 +18,18 @@
  *      explanation older than a few days is badged as needing a refresh rather
  *      than being quietly accepted — "agent not responding" is a fact about last
  *      week, not a permanent excuse.
- *   3. **The form to record or change it**, offered only while a reason is
- *      genuinely owed.
+ *   3. **The form to record or change it**, offered on every booking — a file
+ *      still inside its window, one already reconfirmed and a Hotel Only file
+ *      included. The desk usually knows what is holding a file up days before
+ *      D-10, and the old panel had no way to hear it until the deadline was
+ *      already blown.
  *
- * A reconfirmed booking, a Hotel Only file, or one still inside its window
- * renders as a settled strip and nothing more — the panel is deliberately quiet
- * unless it has something to ask for. Whatever is saved here appears verbatim on
- * the ops board and in the daily report.
+ * What the panel *demands* is still narrower than what it accepts: only a
+ * genuine breach with nothing on file is put in red, because that is the state
+ * the ops board is chasing. Everywhere else the form is simply available, and a
+ * reason recorded there sits on the file until — and unless — the deadline
+ * passes unreconfirmed, at which point it is what the board and the daily report
+ * show.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -37,7 +42,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import Button from '@/components/ui/button'
 import { cn, readApiResponse } from '@/lib/utils'
 import {
-  RECONFIRM_DUE_DAYS, RECONFIRM_REASONS, REASON_META,
+  RECONFIRM_DUE_DAYS, RECONFIRM_REASONS, REASON_META, canRecordReason,
   type ReconfirmDelay, type ReconfirmDelayReason, type ReconfirmStanding,
 } from '@/lib/reconfirm-delay-shared'
 
@@ -137,6 +142,10 @@ export default function ReconfirmDelayPanel({
 
   const s = view?.standing
   const owed = !!s?.needsReason
+  // Recording is open on every file; `owed` only decides how loudly it is asked
+  // for. Keeping the two apart is the whole change — the form used to appear
+  // exactly when it was already too late to be useful.
+  const canRecord = !!s && canRecordReason(s)
   const delay = view?.delay ?? null
   // The badge in the header answers the whole panel at a glance: unexplained
   // breaches are the state the board is chasing, so they shout; an explained one
@@ -266,7 +275,7 @@ export default function ReconfirmDelayPanel({
                 <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
                   {s.state === 'DUE'
                     ? `D-${RECONFIRM_DUE_DAYS} is today — reconfirm the guest before the deadline passes.`
-                    : `Still inside the window. A reason can only be recorded once D-${RECONFIRM_DUE_DAYS} has passed with the guest still unreconfirmed.`}
+                    : `Still inside the window — nothing is late yet. If you already know what is holding this file up, record it now and it stands ready for D-${RECONFIRM_DUE_DAYS}.`}
                 </p>
               )}
 
@@ -297,7 +306,7 @@ export default function ReconfirmDelayPanel({
                     {delay.recordedBy ? ` by ${delay.recordedBy}` : ''}
                     {' · shown on the ops board and in the daily report'}
                   </p>
-                  {canEdit && owed && (
+                  {canEdit && canRecord && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
                         {delay.stale ? 'Update the reason' : 'Change reason'}
@@ -335,8 +344,25 @@ export default function ReconfirmDelayPanel({
                 </div>
               )}
 
+              {/* Nothing owed, nothing on file — the form is still offered, just
+                  quietly. A desk that already knows why a file will be late, or
+                  why a reconfirmed one nearly was not, has somewhere to say so. */}
+              {canEdit && canRecord && !owed && !delay && !editing && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs text-slate-500">
+                    No reason recorded. One is not required for this booking
+                    {s.state === 'DONE' ? ' — it is reconfirmed' : ''}
+                    {s.state === 'NA' ? ' — the deadline does not apply' : ''}
+                    , but you can record one if something here needs explaining.
+                  </p>
+                  <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
+                    Record a reason
+                  </Button>
+                </div>
+              )}
+
               {/* ── The form ──────────────────────────────────────────────── */}
-              {canEdit && owed && editing && (
+              {canEdit && canRecord && editing && (
                 <div className="space-y-3 rounded-lg border border-slate-300 bg-slate-50 p-3">
                   <div className="space-y-1.5">
                     {RECONFIRM_REASONS.map(r => (
@@ -406,13 +432,15 @@ export default function ReconfirmDelayPanel({
                 </div>
               )}
 
-              {/* A historical explanation on a booking that has since been
-                  reconfirmed is left visible but read-only: it is the record of
-                  what held the file up, and deleting it would erase the answer
-                  to "why was this one late?" a week later. */}
-              {delay && !owed && (
+              {/* An explanation on a booking nothing is being chased for — one
+                  recorded ahead of the deadline, or left behind by a file that
+                  has since been reconfirmed — says so plainly, so nobody reads a
+                  quiet reason as a live alarm or as a printed one. */}
+              {delay && !owed && !editing && (
                 <p className="text-[10px] text-slate-400">
-                  This reason was recorded while the booking was overdue and is kept as history.
+                  {s.state === 'BREACHED' || s.state === 'PAST'
+                    ? 'Kept as the record of what held this file up.'
+                    : `This booking is not overdue, so nothing is printed from this reason yet — it stands on the file in case D-${RECONFIRM_DUE_DAYS} passes with the guest still unreconfirmed.`}
                 </p>
               )}
             </>

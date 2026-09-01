@@ -70,6 +70,7 @@ export function reconfirmDueDate(arrivalDate: string): string {
 
 export type ReconfirmDelayReason =
   | 'AGENT_UNRESPONSIVE'
+  | 'AWAITING_CLIENT_CONFIRMATION'
   | 'GUEST_UNREACHABLE'
   | 'AWAITING_PAYMENT'
   | 'AMENDMENT_IN_PROGRESS'
@@ -108,6 +109,13 @@ export const RECONFIRM_REASONS: ReconfirmReasonMeta[] = [
     label: 'Agent not responding',
     short: 'Agent',
     hint: 'Reconfirmation was sent to the agent and they have not come back to us',
+    owner: 'Booking team',
+  },
+  {
+    key: 'AWAITING_CLIENT_CONFIRMATION',
+    label: 'Waiting for client confirmation',
+    short: 'Client',
+    hint: 'The reconfirmation has reached the client and we are waiting on their answer',
     owner: 'Booking team',
   },
   {
@@ -285,6 +293,24 @@ export function classifyReconfirm(input: ReconfirmStandingInput): ReconfirmStand
     breached: false,
     needsReason: false,
   }
+}
+
+/**
+ * Whether the desk may record an explanation on this booking right now.
+ *
+ * Deliberately open on every file, whatever its standing. `needsReason` answers
+ * a different question — "is the board chasing this one?" — and using it to gate
+ * the form as well meant the only moment a reason could be written was the
+ * moment it was already too late: a file that is going to miss D-10 for a reason
+ * the desk knows today could not say so until the deadline had passed, and one
+ * explained in time went unrecordable again the moment it was reconfirmed.
+ *
+ * A reason recorded early or late still only *reports* as a breach through
+ * `delaySummary`, so opening the form does not put explanations for met
+ * deadlines onto the ops board or into the morning mail.
+ */
+export function canRecordReason(_standing: ReconfirmStanding): boolean {
+  return true
 }
 
 /**
