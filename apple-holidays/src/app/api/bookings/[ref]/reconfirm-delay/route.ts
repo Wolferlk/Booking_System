@@ -10,11 +10,14 @@
  * (a reconfirmed booking simply stops being asked, and its last explanation is
  * left in place as the record of what held it up).
  *
- * Two guards beyond the usual auth and country scoping:
+ * A reason may be recorded on **any** booking, at any point in its life — before
+ * D-10, after it, on a reconfirmed file and on a Hotel Only one. What the board
+ * and the morning mail print is still decided by `delaySummary`, which speaks
+ * only for a breach, so an explanation written early stays a note on the file
+ * until the deadline it is about actually passes.
  *
- *   • **Only a breached booking may carry a reason.** Accepting one before D-10
- *     would let the desk pre-excuse work it has not missed yet, and the board
- *     would fill with explanations for deadlines that were met.
+ * One guard beyond the usual auth and country scoping:
+ *
  *   • **`OTHER` must be written out.** A bare "Other" tells the morning report
  *     nothing, which is the one outcome this whole feature exists to prevent.
  *
@@ -121,18 +124,6 @@ export async function PUT(req: NextRequest, { params }: { params: { ref: string 
   const view = await loadBookingReconfirm(params.ref)
   if (!view) return buildApiError('Booking not found', 404)
 
-  // Refuse to record a reason for a deadline that was not missed. The message
-  // says which of the three ways it was not missed, so an operator who expected
-  // the field to be there learns why it is not rather than retrying.
-  if (!view.standing.needsReason) {
-    const why =
-      view.standing.state === 'NA'   ? 'this is a Hotel Only booking — there is no tour to reconfirm with the guest'
-      : view.standing.state === 'DONE' ? 'this booking is already reconfirmed'
-      : view.standing.state === 'PAST' ? 'the guest has already travelled — the deadline is closed'
-      : `D-${RECONFIRM_DUE_DAYS} has not passed yet — it falls on ${view.standing.dueAt}`
-    return buildApiError(`No reason is needed: ${why}`, 409)
-  }
-
   const delay = await saveReconfirmDelay({
     bookingRef: params.ref,
     reason: body.reason,
@@ -141,16 +132,26 @@ export async function PUT(req: NextRequest, { params }: { params: { ref: string 
     actor: g.actor,
   })
 
+  // The trail says where the file stood when the reason was written, because
+  // "agent not responding, three days before the deadline" and the same words
+  // three days after it are different claims about the same booking.
+  const days = view.standing.daysToDue
+  const standingNote =
+    days < 0 ? `${Math.abs(days)} day(s) past D-${RECONFIRM_DUE_DAYS}`
+    : days === 0 ? `D-${RECONFIRM_DUE_DAYS} is today`
+    : `${days} day(s) before D-${RECONFIRM_DUE_DAYS}`
+
   await audit(
     g.bookingId, g.status, g.actorId,
-    `Reconfirmation delay reason: ${delay.reasonLabel}`
-      + ` (${Math.abs(view.standing.daysToDue)} day(s) past D-${RECONFIRM_DUE_DAYS})`
+    `Reconfirmation delay reason: ${delay.reasonLabel} (${standingNote})`
       + (note ? ` — ${note}` : ''),
   )
 
   return buildApiSuccess(
     { ...view, delay },
-    `Reason recorded — it will show on the ops board and the daily report`,
+    view.standing.breached
+      ? 'Reason recorded — it will show on the ops board and the daily report'
+      : `Reason recorded — it will show on the ops board and the daily report if D-${RECONFIRM_DUE_DAYS} passes unreconfirmed`,
   )
 }
 
