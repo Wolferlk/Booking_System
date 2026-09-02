@@ -31,6 +31,7 @@ import {
 import { listByCreateDate } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { getReconcileDays, type ReconcileDay } from '@/lib/as-reconcile'
+import { collectCountCheck, type CountCheckSection } from './count-check'
 import { groupByAgent } from './agent-names'
 import { dedupeComplaints, type ComplaintOccurrence } from './complaint-dedupe'
 import {
@@ -361,6 +362,13 @@ export interface ReportData {
   created: CreatedSection
   /** AppleSystem ↔ this system confirmation parity. Never scoped by country. */
   parity: ParitySection
+  /**
+   * The four-way count check both daily mails lead with — upstream, OPS, P&L,
+   * invoice — read from the accounts Sync Ledger so this report and the accounts
+   * report can never quote different figures for the same day. Never scoped by
+   * country, for the same reason parity is not.
+   */
+  countCheck: CountCheckSection
   onGround: OnGroundSection
   readiness: ReadinessSection
   reconfirm: ReconfirmSection
@@ -1292,12 +1300,16 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
   const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
 
-  const [created, parity, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
+  const [created, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
     collectCreated(window, countries, maxRows),
     // Deliberately unscoped by country: parity is a question about the integration
     // as a whole, and a per-country view of it would hide a gap in whichever
     // market the reader was not looking at.
     collectParity(window),
+    // Same reasoning, one system further down: the count check asks whether the
+    // day is whole across all four systems, and a per-country slice of it would
+    // hide a shortfall in whichever market the reader was not looking at.
+    collectCountCheck(window),
     collectOnGround(window, countries, maxRows),
     collectReadiness(window, countries, maxRows),
     collectReconfirm(window, countries, maxRows),
@@ -1311,6 +1323,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     countries,
     created,
     parity,
+    countCheck,
     onGround,
     readiness,
     reconfirm,

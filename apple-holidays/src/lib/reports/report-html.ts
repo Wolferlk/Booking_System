@@ -26,6 +26,7 @@ import {
 import type {
   BookingLine, ComplaintLine, CountryRow, ReadinessLine, ReconfirmLine, ReportData, TourLine,
 } from './report-data'
+import type { CountCheckSection, CountCheckTally } from './count-check'
 import type { ReadinessCheck } from '@/lib/booking-readiness'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
 
@@ -130,6 +131,166 @@ function createdSection(d: ReportData): string {
       `<div class="h3">Country-wise</div>${countryTable(c.byCountry)}` +
       `<div style="padding-top:18px;"><div class="h3">Booking detail</div>${list}</div>` +
       agents,
+  )
+}
+
+/**
+ * The count check — the block both daily mails lead with.
+ *
+ * The accounts system prints this same paragraph, from these same
+ * `sync_ledger_entries` rows, under the same rule: one booking counts once, a
+ * booking cancelled upstream is not owed an invoice, and a window nobody swept
+ * reads "not checked" rather than "balanced". Printing it here too is the whole
+ * point — the two mails land in one inbox minutes apart, and until now the
+ * reader had no way to reconcile "42 new bookings" with "41 bookings · 41 P&Ls
+ * · 41 invoices".
+ *
+ * Three things are stated that the accounts mail leaves out, because on this
+ * side they are this system's job:
+ *
+ *  1. **the OPS column in full** — accounts folds a missing OPS booking into its
+ *     "short" total; here it is the finding;
+ *  2. **why the intake count differs** — every booking on either side of the
+ *     difference is accounted for, so nobody has to reconstruct it;
+ *  3. **what accounts issued** — the larger headline figure (invoices raised
+ *     today, most of them amendments to older bookings) with the sentence
+ *     saying why it is *supposed* to be larger than the day's confirmations.
+ */
+export function renderCountCheckBlock(cc: CountCheckSection): string {
+  return countCheckSection({ countCheck: cc } as ReportData)
+}
+
+function countCheckSection(d: ReportData): string {
+  const cc: CountCheckSection = d.countCheck
+
+  if (!cc.available) {
+    return section(
+      'Count check',
+      'Apple System · OPS · P&L · invoice — the same four numbers accounts reports',
+      C.faint,
+      emptyNote(cc.error ?? 'The accounts Sync Ledger could not be read for this period.'),
+    )
+  }
+
+  const unswept = cc.sweptAt === null
+  const accent = unswept ? C.faint : cc.balanced ? C.good : C.bad
+
+  // "Nothing was checked" and "everything balanced" produce identical counts, so
+  // the sweep stamp — not the arithmetic — decides which of the two this is.
+  const verdict = unswept
+    ? `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+         <div style="font:800 14px/1.4 ${FONT};color:${C.body};">Not checked — the Sync Ledger has not swept this period</div>
+         <div style="font:400 12px/1.6 ${FONT};color:${C.muted};padding-top:4px;">
+           Nothing below has been compared against the Apple System or the storefront. Start the sync check on the accounts system under Settings → Fetching.
+         </div>
+       </div>`
+    : cc.balanced
+      ? `<div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+           <div style="font:800 14px/1.4 ${FONT};color:#065f46;">${esc(cc.headline)}</div>
+           <div style="font:400 12px/1.6 ${FONT};color:#047857;padding-top:4px;">
+             Every confirmation raised upstream in this period is a booking here, a P&amp;L and an invoice in accounts. The accounts report for this day carries the identical figures.
+           </div>
+         </div>`
+      : `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+           <div style="font:800 14px/1.4 ${FONT};color:#991b1b;">${esc(cc.headline)}</div>
+           <div style="font:400 12px/1.6 ${FONT};color:#b91c1c;padding-top:4px;">
+             The figures in this report are therefore incomplete — the missing rows exist upstream with nothing raised against them yet. The Sync Ledger on the accounts system lists each one by reference and can raise what is missing.
+           </div>
+         </div>`
+
+  const row = (t: CountCheckTally): string => {
+    const short = t.pnlShort + t.invoiceShort + t.bookingShort
+    const aside: string[] = []
+    if (t.cancelled > 0) aside.push(`${num(t.cancelled)} cancelled`)
+    if (t.notBillable > 0) aside.push(`${num(t.notBillable)} settle to zero`)
+
+    const label = `<strong style="color:${C.ink};">${esc(t.label)}</strong>` +
+      (aside.length ? `<div class="more" style="padding-top:2px;">${esc(aside.join(' · '))} — not owed an invoice</div>` : '')
+
+    if (t.status === 'unchecked') {
+      return `<tr>${td(label)}<td align="right" colspan="5" class="c" style="color:${C.warn};">not checked in this window</td></tr>`
+    }
+
+    return `<tr>
+      ${td(label)}
+      ${td(num(t.upstream), { align: 'right', bold: true, color: C.ink })}
+      ${td(t.channel === 'b2c' ? '—' : num(t.bookings), { align: 'right', color: t.bookingShort > 0 ? C.bad : C.body })}
+      ${td(num(t.pnls), { align: 'right', color: t.pnlShort > 0 ? C.bad : C.body })}
+      ${td(num(t.invoices), { align: 'right', color: t.invoiceShort > 0 ? C.bad : C.body })}
+      ${td(short > 0 ? num(short) : '—', { align: 'right', bold: true, color: short > 0 ? C.bad : C.good })}
+    </tr>`
+  }
+
+  const b2cUpstream = cc.channels.find(c => c.channel === 'b2c')?.upstream ?? 0
+
+  const table = tableOpen([
+    { text: 'Business' },
+    { text: 'Upstream', align: 'right', width: '78' },
+    { text: 'OPS', align: 'right', width: '62' },
+    { text: 'P&Ls', align: 'right', width: '62' },
+    { text: 'Invoices', align: 'right', width: '72' },
+    { text: 'Short', align: 'right', width: '62' },
+  ]) + cc.channels.map(row).join('') +
+    (cc.channels.length > 1 ? row({ ...cc.overall, label: 'Both businesses' }) : '') +
+    TABLE_CLOSE +
+    // Without this the aggregate row reads as a shortfall it is not: the
+    // storefront files its own order, so its confirmations count upstream and
+    // are never owed a booking on this side. The Short column already knows.
+    (b2cUpstream > 0
+      ? `<div class="more">The OPS column has no Aahaas B2C row — the storefront files its own order, so those ${num(b2cUpstream)} confirmation${b2cUpstream === 1 ? ' is' : 's are'} never owed a booking in this system. They are still owed a P&amp;L and an invoice, and are counted as such.</div>`
+      : '')
+
+  // ── This report's own intake, lined up against the confirmations ──────────
+  const i = cc.intake
+  const intake = i
+    ? `<div style="padding-top:18px;">
+         <div class="h3">This report says ${num(i.opsCreated)} new B2B booking${i.opsCreated === 1 ? '' : 's'} — here is how that meets ${num(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0)} confirmation${(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0) === 1 ? '' : 's'}</div>` +
+       tableOpen([{ text: 'Where the difference is' }, { text: 'Bookings', align: 'right', width: '80' }, { text: 'Action', width: '210' }]) +
+       [
+         ['Created here, confirmed upstream in this period', i.matched, 'Nothing to do — these are the same bookings, counted on both sides.', C.good],
+         ['Created here against an earlier confirmation', i.earlierConfirmations, 'Correct. This is why intake can exceed the day’s confirmations.', C.body],
+         ['Confirmed in this period, filed here after midnight', i.enteredLater, 'Correct. Present here, created on a later clock day.', C.body],
+         ['Confirmed upstream, nothing here', i.missing, 'The reconciler retries every 15 minutes; still listed tomorrow means it needs a person.', C.bad],
+       ].map(([label, value, action, color]) => `<tr>
+         ${td(esc(String(label)))}
+         ${td(num(Number(value)), { align: 'right', bold: true, color: Number(value) > 0 ? String(color) : C.faint })}
+         ${td(`<span style="color:${C.muted};">${esc(String(action))}</span>`)}
+       </tr>`).join('') + TABLE_CLOSE +
+       (i.missingRefs.length
+         ? `<div class="more" style="color:${C.bad};">Missing: ${esc(i.missingRefs.slice(0, 12).join(', '))}${i.missingRefs.length > 12 ? ` and ${num(i.missingRefs.length - 12)} more` : ''}.</div>`
+         : '') +
+       '</div>'
+    : ''
+
+  // ── What accounts issued, which is a different question on purpose ────────
+  const a = cc.activity
+  const activity = a
+    ? `<div style="padding-top:18px;">
+         <div class="h3">What accounts issued in this period</div>` +
+       kpiRow([
+         // AHDS leads, because that is the book the accounts invoice mail
+         // reports on its own — this tile is the figure a reader is holding
+         // that mail up against.
+         { label: 'AHDS invoices', value: num(a.ahds.invoiceBookings), note: `${num(a.ahds.invoicesNew)} new · ${num(a.ahds.invoicesAmended)} amended`, color: C.b2b },
+         { label: 'All invoices', value: num(a.invoiceBookings), note: `${num(a.invoiceBookings - a.ahds.invoiceBookings)} Aahaas B2C` },
+         { label: 'New', value: num(a.invoicesNew), note: 'first bill for the booking', color: C.good },
+         { label: 'Amended', value: num(a.invoicesAmended), note: 're-issued', color: C.warn },
+         { label: 'Cancelled', value: num(a.invoicesCancelled), note: 'fee billed', color: a.invoicesCancelled ? C.bad : C.ink },
+         { label: 'P&Ls written', value: num(a.pnlBookings), note: `${num(a.pnlDocuments)} row${a.pnlDocuments === 1 ? '' : 's'}` },
+       ]) +
+       `<div class="more">One booking counted once, on the invoice’s own creation date — ${num(a.invoiceDocuments)} document${a.invoiceDocuments === 1 ? '' : 's'} were written for them once revisions are included. This is <strong>not</strong> the count check above and is not meant to equal it: an invoice raised today for a booking confirmed last week is correct, not a discrepancy. That is the whole of the difference between “${num(a.ahds.invoiceBookings)} invoices” in the accounts mail and “${num(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0)} confirmations” in the check above — most of today’s billing is amendments to bookings raised on earlier days.</div>
+       </div>`
+    : ''
+
+  const provenance = unswept
+    ? ''
+    : `<div class="more">Last checked ${stamp(cc.sweptAt as string)} · one booking is counted once on every side; invoice revisions are not counted again. Source: the accounts Sync Ledger — the same rows the accounts report for this day was built from.</div>`
+
+  return section(
+    'Count check',
+    'Apple System · OPS · P&L · invoice — the same four numbers accounts reports',
+    accent,
+    verdict + table + intake + activity + provenance,
   )
 }
 
@@ -819,6 +980,21 @@ function summaryStrip(d: ReportData): string {
     // The parity pair earns a place in the strip because it is the one figure
     // that says whether every other figure in the mail is complete.
     { label: 'AS parity', value: `${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}`, sub: d.parity.available ? (d.parity.inParity ? 'all imported' : `${num(d.parity.missing)} missing`) : 'not checked' },
+    // The count check tile is the accounts mail's headline, carried here so the
+    // two can be compared from the preview pane without opening either.
+    {
+      label: 'Count check',
+      value: d.countCheck.available && d.countCheck.sweptAt
+        ? `${num(d.countCheck.overall.upstream)}/${num(d.countCheck.overall.pnls)}/${num(d.countCheck.overall.invoices)}`
+        : '—',
+      sub: !d.countCheck.available
+        ? 'accounts unreachable'
+        : d.countCheck.sweptAt === null
+          ? 'not swept'
+          : d.countCheck.balanced
+            ? 'AS / P&L / invoice'
+            : `${num(d.countCheck.overall.pnlShort + d.countCheck.overall.invoiceShort + d.countCheck.overall.bookingShort)} short`,
+    },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
     { label: 'Next 3 days', value: num(d.readiness.total), sub: `${num(d.readiness.notReady)} not ready` },
     { label: `D-${RECONFIRM_DUE_DAYS} late`, value: num(d.reconfirm.breached), sub: `${num(d.reconfirm.unexplained)} unexplained` },
@@ -864,6 +1040,11 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     : ''
 
   const body = [
+    // First, above intake: it is the sentence that says whether every other
+    // number in this mail — and in the accounts mail sitting beside it in the
+    // same inbox — describes a whole day. Gated with parity because the two are
+    // one integrity block; a schedule that wants a lean mail drops both.
+    want.parity ? countCheckSection(d) : '',
     want.created ? createdSection(d) : '',
     // Immediately after intake, because it qualifies it: the created count above
     // is only trustworthy if the two systems agree on what was confirmed.
@@ -891,7 +1072,7 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 <style type="text/css">${STYLE_BLOCK}</style>
 </head>
 <body style="margin:0;padding:0;background:#eef2f6;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}.</div>
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(d.window.label)} — ${num(d.created.total)} new bookings, ${num(d.onGround.total)} tours on ground, ${num(d.readiness.notReady)} arrivals not ready, ${num(d.reconfirm.unexplained)} unexplained D-${RECONFIRM_DUE_DAYS} breaches, ${num(d.complaints.open)} open complaints, AppleSystem parity ${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}${d.countCheck.available && d.countCheck.sweptAt ? `, count check ${d.countCheck.balanced ? 'balanced' : 'SHORT'} (${num(d.countCheck.overall.upstream)} upstream / ${num(d.countCheck.overall.pnls)} P&amp;Ls / ${num(d.countCheck.overall.invoices)} invoices)` : ''}.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f6;padding:22px 12px;">
   <tr><td align="center">
     <table role="presentation" width="680" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:680px;border-collapse:collapse;">
@@ -926,6 +1107,12 @@ export function renderReportSubject(d: ReportData, opts: { prefix?: string; test
   // A parity gap outranks everything else in the subject: it means the mail's
   // own numbers are incomplete, so it has to be visible without opening it.
   if (d.parity.available && !d.parity.inParity) parts.push(`${d.parity.missing} AS booking${d.parity.missing === 1 ? '' : 's'} MISSING`)
+  // The count check outranks everything except a parity gap, and for the same
+  // reason: it is the line the accounts mail will be read against.
+  if (d.countCheck.available && d.countCheck.sweptAt && !d.countCheck.balanced) {
+    const short = d.countCheck.overall.pnlShort + d.countCheck.overall.invoiceShort + d.countCheck.overall.bookingShort
+    parts.push(`count check SHORT by ${short}`)
+  }
   if (d.readiness.notReady > 0) parts.push(`${d.readiness.notReady} not ready in 3d`)
   // Only the unexplained breaches earn a place in the subject. A late booking
   // somebody has accounted for is inside-the-mail detail; a late booking nobody
@@ -952,6 +1139,49 @@ export function renderReportCsv(d: ReportData): string {
 
   block('Bookings created', ['Ref', 'Source', 'Country', 'Agent', 'Status', 'Arrival', 'Departure', 'Adults', 'Children', 'Infants', 'Currency', 'Quoted total', 'Created at'],
     d.created.bookings.map(b => [b.bookingRef, b.source, b.countryLabel, b.agent ?? '', b.status, b.arrivalDate, b.departureDate, b.paxAdults, b.paxChildren, b.paxInfants, b.currency, b.quotedTotal ?? '', b.createdAt].map(String)))
+
+  // The count check leads the CSV for the same reason it leads the mail: it is
+  // the block someone will line up against the accounts export.
+  if (d.countCheck.available) {
+    block('Count check — upstream vs OPS vs P&L vs invoice',
+      ['Business', 'Upstream', 'Cancelled upstream', 'Settle to zero', 'OPS bookings', 'P&Ls', 'Invoices', 'P&L short', 'Invoice short', 'OPS short', 'Status', 'Last checked'],
+      [...d.countCheck.channels, { ...d.countCheck.overall, label: 'Both businesses' }].map(t => [
+        t.label, t.upstream, t.cancelled, t.notBillable, t.bookings, t.pnls, t.invoices,
+        t.pnlShort, t.invoiceShort, t.bookingShort, t.status, t.checkedAt ?? 'never',
+      ].map(String)))
+
+    if (d.countCheck.intake) {
+      const i = d.countCheck.intake
+      block('Count check — how this report\u2019s intake meets the confirmations',
+        ['Where the difference is', 'Bookings'],
+        [
+          ['Created here, confirmed upstream in this period', i.matched],
+          ['Created here against an earlier confirmation', i.earlierConfirmations],
+          ['Confirmed in this period, filed here after midnight', i.enteredLater],
+          ['Confirmed upstream, nothing here', i.missing],
+          ['New B2B bookings this report counted', i.opsCreated],
+        ].map(r => r.map(String)))
+
+      if (i.missingRefs.length) {
+        block('Count check — confirmed upstream, missing from this system', ['Reference'],
+          i.missingRefs.map(r => [r]))
+      }
+    }
+
+    if (d.countCheck.activity) {
+      const a = d.countCheck.activity
+      block('Count check — what accounts issued in this period',
+        ['Measure', 'Bookings', 'Documents'],
+        [
+          ['Invoices raised', a.invoiceBookings, a.invoiceDocuments],
+          ['— new', a.invoicesNew, ''],
+          ['— amended', a.invoicesAmended, ''],
+          ['— cancelled', a.invoicesCancelled, ''],
+          ['— of which AHDS', a.ahds.invoiceBookings, ''],
+          ['P&Ls written', a.pnlBookings, a.pnlDocuments],
+        ].map(r => r.map(String)))
+    }
+  }
 
   // Parity is a two-row-per-day answer, but it goes in the CSV because "prove to
   // me nothing was lost last month" is a question someone eventually pivots.
