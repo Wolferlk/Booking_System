@@ -16,6 +16,7 @@
     "drivelog:guard": "tsx scripts/drive-log-write-guard-check.mts",
     "drivelog:render": "tsx scripts/drive-log-render-check.mts",
     "sldocs:render": "tsx scripts/settlement-docs-render-check.mts",
+    "report:cohort": "tsx scripts/cohort-report-check.mts",
     "rs:preflight": "tsx scripts/rs-preflight.mts",
     "rs:verify": "tsx scripts/rs-verify.mts",
     "rs:role": "tsx scripts/rs-apply-role.mts",
