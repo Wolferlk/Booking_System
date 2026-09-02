@@ -32,6 +32,7 @@ import { listByCreateDate } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { getReconcileDays, type ReconcileDay } from '@/lib/as-reconcile'
 import { collectCountCheck, type CountCheckSection } from './count-check'
+import { collectAppleCohort, cohortKey, type AppleCohort } from './apple-cohort'
 import { groupByAgent } from './agent-names'
 import { dedupeComplaints, type ComplaintOccurrence } from './complaint-dedupe'
 import {
@@ -120,6 +121,22 @@ export interface ComplaintLine {
   categories: string[]
 }
 
+/**
+ * What the report counts as "created", and everything it deliberately does not.
+ *
+ * `total` and every figure beside it describe the bookings **AppleSystem
+ * confirmed** in the window (see `apple-cohort.ts`) — not the bookings this
+ * system happened to file that day. The two differ by a booking confirmed at
+ * 23:50 and entered here after midnight, and by a booking entered here today
+ * against a confirmation raised last week; counting the second as today's
+ * intake is why this mail said 42 while the accounts mail's count check said
+ * 38 for the same day.
+ *
+ * Nothing is hidden by the change: `outside` carries what this system filed in
+ * the window against an earlier confirmation, `missingRefs` names the
+ * confirmations it has not filed at all, and both are printed — uncounted — in
+ * the mail and the CSV.
+ */
 export interface CreatedSection {
   total: number
   pax: number
@@ -130,6 +147,22 @@ export interface CreatedSection {
   bookings: BookingLine[]
   /** Same metric over the immediately preceding window, for the trend arrow. */
   previousTotal: number
+
+  /** How the population was decided. `ops` = the accounts ledger was unreadable. */
+  basis: 'apple' | 'ops'
+  /** Confirmations AppleSystem raised in the window, cancellations included. */
+  upstream: number
+  /** Of those, how many were withdrawn upstream. */
+  cancelledUpstream: number
+  /** Confirmed in the window, nothing filed here. The number to act on. */
+  missingRefs: string[]
+  /**
+   * Filed here inside the window against a confirmation raised on an earlier
+   * day. Real work, not this day's business — shown, never counted.
+   */
+  outside: BookingLine[]
+  /** ISO instant the accounts ledger last swept these dates; null = never. */
+  sweptAt: string | null
 }
 
 export interface OnGroundSection {
@@ -575,16 +608,38 @@ function toLine(b: RawBooking): BookingLine {
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 
-async function collectCreated(w: ReportWindow, countries: string[], maxRows: number): Promise<CreatedSection> {
+async function collectCreated(
+  w: ReportWindow,
+  countries: string[],
+  maxRows: number,
+  cohort: AppleCohort,
+): Promise<CreatedSection> {
   const scope = countryWhere(countries)
   const prev = previousWindow(w)
 
-  const [rows, prevRows] = await Promise.all([
+  // Everything the window could possibly be about: bookings filed here inside
+  // it, plus the bookings AppleSystem confirmed inside it however late they
+  // were filed. One query for both — a confirmation entered here the next
+  // morning is not missing, and a report that called it missing sent somebody
+  // looking for a booking that was already on the board.
+  const refs = cohort.available ? Array.from(cohort.keys) : []
+
+  const [rows, cohortRows, prevRows] = await Promise.all([
     prisma.booking.findMany({
       where: { createdAt: { gte: w.start, lt: w.end }, ...(scope ?? {}) },
       select: BOOKING_SELECT,
       orderBy: { createdAt: 'desc' },
     }),
+    refs.length
+      ? prisma.booking.findMany({
+          // The ledger's key has no spacing; this system stores the reference
+          // as it was written, so both spellings are asked for and the match
+          // itself is made on the normalised key below.
+          where: { OR: [{ bookingRef: { in: refs } }, { bookingRef: { in: refs.map(spacedRef) } }] },
+          select: BOOKING_SELECT,
+          orderBy: { createdAt: 'desc' },
+        })
+      : Promise.resolve([]),
     // Counted, not aggregated — but still resolved country-by-country so the
     // trend arrow compares like with like once legacy SG/MY rows are split.
     prisma.booking.findMany({
@@ -592,10 +647,47 @@ async function collectCreated(w: ReportWindow, countries: string[], maxRows: num
       select: { operationCountry: true, bookingRef: true, tourDestination: true },
     }),
   ])
-  const previousTotal = prevRows.filter(r =>
-    inSelectedCountries(resolveCountry(r.operationCountry, r.bookingRef, r.tourDestination), countries)).length
 
-  const lines = rows.map(toLine).filter(l => inSelectedCountries(l.country, countries))
+  // The previous window on the same basis as this one, or the arrow compares a
+  // confirmation count against an intake count and invents a trend.
+  const previousTotal = cohort.available
+    ? await previousCohortTotal(prev, countries)
+    : prevRows.filter(r =>
+        inSelectedCountries(resolveCountry(r.operationCountry, r.bookingRef, r.tourDestination), countries)).length
+
+  const filed = rows.map(toLine).filter(l => inSelectedCountries(l.country, countries))
+
+  // ---- Cut to the day's confirmations ----
+  // Without a readable ledger there is no cohort to cut to, and the section
+  // falls back to this system's own intake exactly as it behaved before.
+  let lines = filed
+  let outside: BookingLine[] = []
+  let missingRefs: string[] = []
+
+  if (cohort.available) {
+    const held = new Map<string, BookingLine>()
+
+    for (const line of [...filed, ...cohortRows.map(toLine)]) {
+      const key = cohortKey(line.bookingRef)
+      if (key && cohort.keys.has(key) && !held.has(key)) held.set(key, line)
+    }
+
+    // A country filter is a filter on this report, not on the ledger: a
+    // confirmation for a country nobody asked about is neither counted nor
+    // reported missing.
+    lines = Array.from(held.values())
+      .filter(l => inSelectedCountries(l.country, countries))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+
+    outside = filed.filter(l => {
+      const key = cohortKey(l.bookingRef)
+      return !key || !cohort.keys.has(key)
+    })
+
+    missingRefs = cohort.entries
+      .filter(e => !e.cancelled && !held.has(e.key))
+      .map(e => e.ref)
+  }
 
   const currencyMap = new Map<string, number>()
   for (const l of lines) {
@@ -617,7 +709,36 @@ async function collectCreated(w: ReportWindow, countries: string[], maxRows: num
     byAgent: byAgent.slice(0, 10),
     bookings: lines.slice(0, maxRows),
     previousTotal,
+    basis: cohort.available ? 'apple' : 'ops',
+    upstream: cohort.total,
+    cancelledUpstream: cohort.cancelled,
+    missingRefs: missingRefs.slice(0, 40),
+    outside: outside.slice(0, maxRows),
+    sweptAt: cohort.sweptAt,
   }
+}
+
+/** "VN41054" as this system usually stores it — "VN 41054". */
+function spacedRef(key: string): string {
+  const m = /^([A-Z]+)(\d.*)$/.exec(key)
+  return m ? `${m[1]} ${m[2]}` : key
+}
+
+/**
+ * The previous window's confirmation count, for the trend arrow only.
+ *
+ * Read straight off the ledger rather than by re-running the whole section: the
+ * arrow needs one number, and the cheapest honest way to get it is to count the
+ * same rows the cohort is built from. Country scoping is deliberately not
+ * applied — the ledger holds no country, and an arrow is a direction, not a
+ * figure anybody reconciles.
+ */
+async function previousCohortTotal(
+  prev: { fromDate: string; toDate: string },
+  _countries: string[],
+): Promise<number> {
+  const cohort = await collectAppleCohort(prev)
+  return cohort.available ? cohort.total : 0
 }
 
 /**
@@ -1300,8 +1421,13 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
   const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
 
+  // Read first, because the "bookings created" section is now a cut of it: the
+  // report counts the confirmations AppleSystem raised in the window, not this
+  // system's own intake. See apple-cohort.ts.
+  const cohort = await collectAppleCohort(window)
+
   const [created, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
-    collectCreated(window, countries, maxRows),
+    collectCreated(window, countries, maxRows, cohort),
     // Deliberately unscoped by country: parity is a question about the integration
     // as a whole, and a per-country view of it would hide a gap in whichever
     // market the reader was not looking at.

@@ -114,7 +114,7 @@ function createdSection(d: ReportData): string {
         ${td(num(b.pax), { align: 'right' })}
         ${td(b.quotedTotal !== null ? money(b.quotedTotal, b.currency) : '—', { align: 'right', nowrap: true })}
       </tr>`).join('') + TABLE_CLOSE + moreNote(c.bookings.length, c.total, 'bookings')
-    : emptyNote('No bookings were created in this period.')
+    : emptyNote('AppleSystem confirmed no bookings in this period.')
 
   const agents = c.byAgent.length > 1
     ? `<div style="padding-top:18px;"><div class="h3">Top sources</div>` +
@@ -123,13 +123,66 @@ function createdSection(d: ReportData): string {
       TABLE_CLOSE + '</div>'
     : ''
 
+  // What the section is counting, said once, at the top.
+  //
+  // The number is no longer "bookings this system filed yesterday" but "the
+  // confirmations AppleSystem raised yesterday" — the same population the two
+  // accounts mails now report, which is what lets the three figures be
+  // compared at all. Stated explicitly, because a headline that changed
+  // meaning without saying so is worse than the disagreement it fixes.
+  const basisNote = c.basis === 'apple'
+    ? `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
+         <strong style="color:${C.ink};">Counted: the ${num(c.total)} booking${c.total === 1 ? '' : 's'} AppleSystem confirmed in this period.</strong>
+         ${c.cancelledUpstream ? `${num(c.cancelledUpstream)} further confirmation${c.cancelledUpstream === 1 ? ' was' : 's were'} withdrawn upstream. ` : ''}
+         The same population the accounts invoice and P&amp;L mails report, so the three figures line up.
+         Bookings filed here in this period against an earlier confirmation are listed below, uncounted.
+       </div>`
+    : `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
+         <strong style="color:${C.ink};">Counted: bookings filed in this system.</strong>
+         The accounts Sync Ledger could not be read, so this period could not be cut to AppleSystem's own
+         confirmations and this figure may not match the accounts mails.
+       </div>`
+
+  // Confirmed upstream, nothing here. The one finding in this section somebody
+  // has to act on, so it is printed where the count is, not in a footnote.
+  const missing = c.missingRefs.length
+    ? `<div style="padding-top:18px;"><div class="h3">Confirmed upstream, not filed here — ${num(c.missingRefs.length)}</div>
+         <div style="background:#fff5f5;border:1px solid ${C.bad};border-radius:10px;padding:11px 13px;font:400 12px/1.7 ${FONT};color:${C.ink};">
+           ${c.missingRefs.map(r => `<strong>${esc(r)}</strong>`).join(' &nbsp;·&nbsp; ')}
+         </div>
+       </div>`
+    : ''
+
+  // Filed here against an earlier confirmation. Real work, another day's
+  // business — shown so the intake is never invisible, never added in.
+  const alsoFiled = c.outside.length
+    ? `<div style="padding-top:18px;"><div class="h3">Also filed here — not counted (${num(c.outside.length)})</div>
+         <div style="font:400 12px/1.6 ${FONT};color:${C.muted};padding-bottom:8px;">
+           Entered in this period against a confirmation AppleSystem raised on an earlier day.
+         </div>` +
+      tableOpen([
+        { text: 'Ref' }, { text: 'Src', width: '46' }, { text: 'Country' },
+        { text: 'Agent' }, { text: 'Travel dates' }, { text: 'Pax', align: 'right', width: '45' },
+        { text: 'Value', align: 'right' },
+      ]) + c.outside.map(b => `<tr>
+        ${td(`<strong style="color:${C.ink};">${esc(b.bookingRef)}</strong>`, { nowrap: true })}
+        ${td(sourcePill(b.source), { nowrap: true })}
+        ${td(esc(b.countryLabel), { nowrap: true })}
+        ${td(truncate(b.agent, 26))}
+        ${td(`${shortDate(b.arrivalDate)} → ${shortDate(b.departureDate)}`, { nowrap: true })}
+        ${td(num(b.pax), { align: 'right' })}
+        ${td(b.quotedTotal !== null ? money(b.quotedTotal, b.currency) : '—', { align: 'right', nowrap: true })}
+      </tr>`).join('') + TABLE_CLOSE + '</div>'
+    : ''
+
   return section(
     'Bookings created',
-    `${d.window.label} · B2B and B2C shown separately`,
+    `${d.window.label} · confirmed by AppleSystem in this period`,
     C.brand,
-    kpis + value +
+    basisNote + kpis + value +
       `<div class="h3">Country-wise</div>${countryTable(c.byCountry)}` +
       `<div style="padding-top:18px;"><div class="h3">Booking detail</div>${list}</div>` +
+      missing + alsoFiled +
       agents,
   )
 }
@@ -244,12 +297,12 @@ function countCheckSection(d: ReportData): string {
   const i = cc.intake
   const intake = i
     ? `<div style="padding-top:18px;">
-         <div class="h3">This report says ${num(i.opsCreated)} new B2B booking${i.opsCreated === 1 ? '' : 's'} — here is how that meets ${num(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0)} confirmation${(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0) === 1 ? '' : 's'}</div>` +
+         <div class="h3">This system filed ${num(i.opsCreated)} B2B booking${i.opsCreated === 1 ? '' : 's'} in this period — here is how that meets the ${num(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0)} confirmation${(cc.channels.find(c => c.channel === 'as')?.upstream ?? 0) === 1 ? '' : 's'} the report counts</div>` +
        tableOpen([{ text: 'Where the difference is' }, { text: 'Bookings', align: 'right', width: '80' }, { text: 'Action', width: '210' }]) +
        [
          ['Created here, confirmed upstream in this period', i.matched, 'Nothing to do — these are the same bookings, counted on both sides.', C.good],
-         ['Created here against an earlier confirmation', i.earlierConfirmations, 'Correct. This is why intake can exceed the day’s confirmations.', C.body],
-         ['Confirmed in this period, filed here after midnight', i.enteredLater, 'Correct. Present here, created on a later clock day.', C.body],
+         ['Created here against an earlier confirmation', i.earlierConfirmations, 'Correct. Listed above as “also filed here”, and not counted — it is another day’s business.', C.body],
+         ['Confirmed in this period, filed here after midnight', i.enteredLater, 'Correct, and counted above: the confirmation is this period’s, the filing clock is not.', C.body],
          ['Confirmed upstream, nothing here', i.missing, 'The reconciler retries every 15 minutes; still listed tomorrow means it needs a person.', C.bad],
        ].map(([label, value, action, color]) => `<tr>
          ${td(esc(String(label)))}
@@ -1137,8 +1190,25 @@ export function renderReportCsv(d: ReportData): string {
   const block = (title: string, header: string[], lines: string[][]) =>
     csvBlock(rows, title, header, lines)
 
-  block('Bookings created', ['Ref', 'Source', 'Country', 'Agent', 'Status', 'Arrival', 'Departure', 'Adults', 'Children', 'Infants', 'Currency', 'Quoted total', 'Created at'],
-    d.created.bookings.map(b => [b.bookingRef, b.source, b.countryLabel, b.agent ?? '', b.status, b.arrivalDate, b.departureDate, b.paxAdults, b.paxChildren, b.paxInfants, b.currency, b.quotedTotal ?? '', b.createdAt].map(String)))
+  const bookingHeader = ['Ref', 'Source', 'Country', 'Agent', 'Status', 'Arrival', 'Departure', 'Adults', 'Children', 'Infants', 'Currency', 'Quoted total', 'Created at']
+  const bookingLine = (b: BookingLine) => [b.bookingRef, b.source, b.countryLabel, b.agent ?? '', b.status, b.arrivalDate, b.departureDate, b.paxAdults, b.paxChildren, b.paxInfants, b.currency, b.quotedTotal ?? '', b.createdAt].map(String)
+
+  // The attachment carries exactly what the mail counts: the confirmations
+  // AppleSystem raised in this period. Everything else the period touched
+  // follows in its own block, headed as not counted, so a reader summing a
+  // column cannot accidentally sum two populations.
+  block('Bookings created — confirmed by AppleSystem in this period', bookingHeader,
+    d.created.bookings.map(bookingLine))
+
+  if (d.created.missingRefs.length) {
+    block('Confirmed upstream, not filed in this system', ['Reference'],
+      d.created.missingRefs.map(r => [r]))
+  }
+
+  if (d.created.outside.length) {
+    block('Also filed here — NOT COUNTED (earlier confirmations)', bookingHeader,
+      d.created.outside.map(bookingLine))
+  }
 
   // The count check leads the CSV for the same reason it leads the mail: it is
   // the block someone will line up against the accounts export.
@@ -1159,7 +1229,7 @@ export function renderReportCsv(d: ReportData): string {
           ['Created here against an earlier confirmation', i.earlierConfirmations],
           ['Confirmed in this period, filed here after midnight', i.enteredLater],
           ['Confirmed upstream, nothing here', i.missing],
-          ['New B2B bookings this report counted', i.opsCreated],
+          ['B2B bookings this system filed in this period', i.opsCreated],
         ].map(r => r.map(String)))
 
       if (i.missingRefs.length) {
