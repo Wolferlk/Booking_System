@@ -177,7 +177,13 @@ export function SegmentBar({
   segments,
   total,
 }: {
-  segments: { state: ReadinessState; value: number }[]
+  /**
+   * `label` overrides the hover text for one band. The readiness gauges use it
+   * to call the amber band "Done", because there a partially-covered file is
+   * counted as handled — while the row chips and drill-down, which read the same
+   * `STATE_STYLE`, must keep saying "Partial".
+   */
+  segments: { state: ReadinessState; value: number; label?: string }[]
   total: number
 }) {
   const reduce = useReducedMotion()
@@ -190,7 +196,7 @@ export function SegmentBar({
           initial={{ width: 0 }}
           animate={{ width: `${total > 0 ? (s.value / total) * 100 : 0}%` }}
           transition={reduce ? { duration: 0 } : { duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-          title={`${STATE_STYLE[s.state].label}: ${s.value}`}
+          title={`${s.label ?? STATE_STYLE[s.state].label}: ${s.value}`}
         />
       ))}
     </div>

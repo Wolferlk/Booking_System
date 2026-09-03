@@ -11,12 +11,13 @@ import {
   Users, Shield, Settings, Globe, LogOut, ChevronRight, ChevronLeft,
   Truck, Home, Download, Mail, ShieldAlert, Table2, Lock, Radio,
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
-  PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, Inbox,
+  PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, MailPlus, Inbox,
   ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
+import { canManageMailbox } from '@/lib/mailbox/access'
 import { useCountryFilter, type CountryFilter } from '@/hooks/use-country-filter'
 import { useSidebar } from '@/hooks/use-sidebar'
 import type { UserRole } from '@prisma/client'
@@ -36,7 +37,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   MapPin, Ticket, Car, Phone, Bell, CreditCard, BarChart2, BarChart3, TrendingUp,
   Users, Shield, Settings, Globe, Truck, Home, Download, Mail,
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
-  XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, Inbox,
+  XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, MailPlus, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp,
 }
@@ -48,6 +49,9 @@ const WHATSAPP_NAV_ITEM = { label: 'WhatsApp', href: '/dashboard/whatsapp', icon
 // Internal chat, shared with the Accounts system. Appended to every staff role's
 // nav in the component rather than repeated across a dozen arrays.
 const CHAT_NAV_ITEM = { label: 'Chat', href: '/dashboard/chat', icon: 'MessagesSquare' }
+
+// Mail Box settings — templates, the agent directory and the internal CC list.
+const MAILBOX_NAV_ITEM = { label: 'Mail Box', href: '/dashboard/admin/mail-box', icon: 'MailPlus' }
 
 const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; badge?: string; danger?: boolean; external?: boolean }[]> = {
   BT_USER: [
@@ -563,7 +567,13 @@ export default function Sidebar() {
     // A role that cannot be messaged is a role nobody can ask a question of.
     // CLIENT is the one exception — external users get the portal, not staff chat.
     if (!role || role === 'CLIENT') return items
-    return [...items, CHAT_NAV_ITEM]
+    // Mail Box settings, likewise appended rather than repeated across the role
+    // arrays — the desks that maintain templates and the agent directory are
+    // defined once in `lib/mailbox/access.ts`, and editing ten arrays to add a
+    // link is ten chances to widen the wrong role by accident.
+    return canManageMailbox(role)
+      ? [...items, MAILBOX_NAV_ITEM, CHAT_NAV_ITEM]
+      : [...items, CHAT_NAV_ITEM]
   }, [role])
   const { countryFilter, setCountryFilter, canFilter, allowedCountries } = useCountryFilter()
   const { isCollapsed, isPinned, isMobileOpen, toggleCollapse, setHovered, closeMobile } = useSidebar()

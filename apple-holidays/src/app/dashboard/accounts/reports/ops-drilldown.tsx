@@ -227,11 +227,17 @@ export default function OpsDrilldown({
     // N/A never counts against a check — a tour with no tickets to buy should
     // not drag the gauge down.
     const scope = c.DONE + c.PARTIAL + c.PENDING
-    const pct = scope > 0 ? ((c.DONE + c.PARTIAL * 0.5) / scope) * 100 : 0
+    // Counts a partially-covered file as done, matching the card this modal
+    // opens from. The two rings show the same check over the same rows, so any
+    // difference between them would read as one of the numbers being wrong. The
+    // per-row chips below still distinguish Done from Partial — that detail is
+    // what the drill-down exists to show.
+    const covered = c.DONE + c.PARTIAL
+    const pct = scope > 0 ? (covered / scope) * 100 : 0
     const state: ReadinessState = scope === 0 ? 'NA'
-      : c.DONE === scope ? 'DONE'
-        : c.DONE + c.PARTIAL > 0 ? 'PARTIAL' : 'PENDING'
-    return { ...c, scope, pct, state, total: preState.length, pax: preState.reduce((s, r) => s + r.pax, 0) }
+      : covered === scope ? 'DONE'
+        : covered > 0 ? 'PARTIAL' : 'PENDING'
+    return { ...c, scope, covered, pct, state, total: preState.length, pax: preState.reduce((s, r) => s + r.pax, 0) }
   }, [preState, focus])
 
   /**
@@ -368,7 +374,7 @@ export default function OpsDrilldown({
             <div className="relative flex items-center gap-5">
               <ProgressRing pct={counts.pct} color={STATE_STYLE[counts.state].ring} size={84} stroke={8}>
                 <span className="text-base font-extrabold leading-none text-white">
-                  <CountUp value={counts.DONE} />
+                  <CountUp value={counts.covered} />
                 </span>
                 <span className="text-[10px] text-white/60 font-semibold">of {counts.scope}</span>
               </ProgressRing>
@@ -386,7 +392,7 @@ export default function OpsDrilldown({
                   <span className="text-white/80">
                     <CountUp value={counts.pax} className="font-bold" /> pax
                   </span>
-                  {counts.PARTIAL > 0 && <span className="text-amber-300 font-semibold">{counts.PARTIAL} partial</span>}
+                  {counts.PARTIAL > 0 && <span className="text-amber-300 font-semibold">{counts.PARTIAL} Done</span>}
                   {counts.PENDING > 0 && <span className="text-rose-300 font-semibold">{counts.PENDING} pending</span>}
                   {counts.NA > 0 && <span className="text-white/40">{counts.NA} n/a</span>}
                   <span className="text-white/40">·</span>

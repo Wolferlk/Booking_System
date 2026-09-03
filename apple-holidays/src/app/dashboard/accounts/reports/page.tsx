@@ -345,11 +345,27 @@ export default function OperationsBoardPage() {
       // N/A rows are excluded from the denominator: a tour with no tickets to
       // buy should not drag the "tickets issued" gauge down.
       const scope = counts.DONE + counts.PARTIAL + counts.PENDING
-      const pct = scope > 0 ? ((counts.DONE + counts.PARTIAL * 0.5) / scope) * 100 : 0
+      // A partially-covered file counts as *done* on these gauges.
+      //
+      // The desk reads a card to answer one question: how much of today still
+      // needs somebody to act? A file where the guest has been reconfirmed by
+      // one of the two accepted routes, or where some transfers already have a
+      // driver, is not work waiting to start — it is work in hand. Scoring it as
+      // half a file (the old `PARTIAL * 0.5`) put the ring between the two
+      // readings and matched neither, and showing only `DONE` in the numerator
+      // made a day that was 99/109 handled look like 18/109.
+      //
+      // So `covered` is the numerator and `PENDING` is the outstanding work. The
+      // amber band keeps its own figure in the legend, under the label "Done" —
+      // still visible as a distinct number, but on the finished side of the
+      // line. Row chips and the drill-down still say "Partial", because there
+      // the distinction between the two is the entire point of the view.
+      const covered = counts.DONE + counts.PARTIAL
+      const pct = scope > 0 ? (covered / scope) * 100 : 0
       const state: ReadinessState = scope === 0 ? 'NA'
-        : counts.DONE === scope ? 'DONE'
-          : counts.DONE + counts.PARTIAL > 0 ? 'PARTIAL' : 'PENDING'
-      return { counts, scope, pct, state }
+        : covered === scope ? 'DONE'
+          : covered > 0 ? 'PARTIAL' : 'PENDING'
+      return { counts, scope, covered, pct, state }
     }
 
     // Labels and icons come from FOCUS_META so the card and the drill-down it
@@ -926,7 +942,7 @@ export default function OperationsBoardPage() {
               <div className="flex items-center gap-4">
                 <ProgressRing pct={g.pct} color={STATE_STYLE[g.state].ring}>
                   <span className="text-sm font-extrabold text-slate-900 leading-none">
-                    <CountUp value={g.counts.DONE} />
+                    <CountUp value={g.covered} />
                     <span className="text-slate-400 font-semibold">/{g.scope}</span>
                   </span>
                 </ProgressRing>
@@ -941,16 +957,16 @@ export default function OperationsBoardPage() {
                       total={visible.length}
                       segments={[
                         { state: 'DONE', value: g.counts.DONE },
-                        { state: 'PARTIAL', value: g.counts.PARTIAL },
+                        { state: 'PARTIAL', value: g.counts.PARTIAL, label: 'Done' },
                         { state: 'PENDING', value: g.counts.PENDING },
                         { state: 'NA', value: g.counts.NA },
                       ]}
                     />
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-500">
-                      {g.counts.PARTIAL > 0 && <span className="text-amber-600 font-semibold">{g.counts.PARTIAL} partial</span>}
+                      {g.counts.PARTIAL > 0 && <span className="text-amber-600 font-semibold">{g.counts.PARTIAL} Done</span>}
                       {g.counts.PENDING > 0 && <span className="text-rose-600 font-semibold">{g.counts.PENDING} pending</span>}
                       {g.counts.NA > 0 && <span>{g.counts.NA} n/a</span>}
-                      {g.counts.PARTIAL + g.counts.PENDING === 0 && g.scope > 0 && (
+                      {g.counts.PENDING === 0 && g.scope > 0 && (
                         <span className="text-emerald-600 font-semibold">All clear</span>
                       )}
                     </div>

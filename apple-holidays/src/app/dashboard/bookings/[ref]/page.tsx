@@ -54,6 +54,8 @@ import {
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 import JourneyMap from '@/components/bookings/journey-map'
 import DriverBriefModal from '@/components/bookings/driver-brief-modal'
+import MailBoxModal from '@/components/bookings/mail-box-modal'
+import { canManageMailbox, canUseMailbox } from '@/lib/mailbox/access'
 
 /**
  * Who holds the hotel reservation — the guest/agent, or us.
@@ -237,6 +239,7 @@ export default function BookingDetailPage() {
 
   // Driver Brief — the slide deck an officer reads to the allocated driver
   const [driverBriefOpen, setDriverBriefOpen] = useState(false)
+  const [mailBoxOpen, setMailBoxOpen] = useState(false)
 
   // Customer feedback modal (triggered on Complete Trip)
   const [feedbackModal, setFeedbackModal] = useState(false)
@@ -1788,6 +1791,17 @@ Wishing you a wonderful trip! ✈️
                   title="Open the driver brief — the whole file, slide by slide, with the driver's number to dial"
                 >
                   <Headphones className="w-3.5 h-3.5" /> Driver Brief
+                </button>
+              )}
+              {/* Mail Box — write to this booking's agent from a template, with
+                  the internal team copied and the replies kept on the thread. */}
+              {canUseMailbox(role) && (
+                <button
+                  onClick={() => setMailBoxOpen(true)}
+                  className="btn btn-sm bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 flex items-center gap-1.5"
+                  title="Open Mail Box — send a templated mail to the agent and read their replies"
+                >
+                  <Mail className="w-3.5 h-3.5" /> Mail Box
                 </button>
               )}
               {['TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && (
@@ -4147,6 +4161,16 @@ Wishing you a wonderful trip! ✈️
         onClose={() => setDriverBriefOpen(false)}
         onCompleted={load}
       />
+
+      {/* ── Mail Box ──────────────────────────────────────────────────── */}
+      {mailBoxOpen && (
+        <MailBoxModal
+          open={mailBoxOpen}
+          onClose={() => setMailBoxOpen(false)}
+          bookingRef={ref}
+          canManage={canManageMailbox(role)}
+        />
+      )}
 
       {/* ── AI Calls & Feedback modal ──────────────────────────────────── */}
       {aiCallsModal && (

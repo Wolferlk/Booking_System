@@ -2850,3 +2850,190 @@ model DriverBrief {
   @@index([completedAt])
   @@map("driver_briefs")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mail Box — templated, tracked, threaded outbound mail for a booking.
+//
+// The system already sends plenty of mail (agent confirmation, operations
+// ready, cancellation, reports), but every one of those is a hardcoded body
+// fired by a status change. Nothing lets a desk write to the agent *about a
+// particular file* on its own terms, and nothing keeps the reply.
+//
+// These five tables are that missing half, and they are deliberately additive:
+// no existing table gains a column, no existing sender changes behaviour.
+//
+//   mail_templates            what to say
+//   mail_agents               who to say it to (the agent directory)
+//   mail_internal_recipients  who always gets a copy (the Aahaas team)
+//   mail_threads              one conversation, keyed to Graph's conversationId
+//   mail_thread_messages      every message in it, ours and theirs
+//
+// The thread is keyed on `conversationId` because that is the only handle
+// Microsoft Graph gives that survives a reply. Getting one back requires
+// creating the message as a draft and sending *that* (see `lib/mailbox/send.ts`)
+// rather than the fire-and-forget `/sendMail` the older senders use — which is
+// exactly why this module has its own sender instead of reusing `send-mail.ts`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A reusable message. `bodyHtml` and `subject` carry `{{token}}` placeholders
+/// resolved against the booking at send time by `lib/mailbox/render.ts`; a
+/// template with no tokens is still perfectly valid.
+model MailTemplate {
+  id          String   @id @default(cuid())
+  /// Stable machine key (`agent-itinerary-update`). Used by callers that want a
+  /// specific template without depending on its display name.
+  code        String   @unique @db.VarChar(120)
+  name        String   @db.VarChar(190)
+  description String?  @db.Text
+  /// Free-text grouping for the picker rail — "Agent", "Operations", "Accounts".
+  category    String   @default("General") @db.VarChar(60)
+  /// Who this is written for. Drives which recipients the compose window
+  /// pre-fills, nothing more.
+  audience    String   @default("AGENT") @db.VarChar(30)
+  subject     String   @db.Text
+  bodyHtml    String   @db.LongText
+  /// Extra CC addresses baked into the template itself, as a JSON string array.
+  ccEmails    Json?
+  /// Attach the booking confirmation PDF when this template is used.
+  attachPdf   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdBy   String?  @db.VarChar(190)
+  updatedBy   String?  @db.VarChar(190)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  threads MailThread[]
+
+  @@index([isActive, sortOrder])
+  @@index([category])
+  @@map("mail_templates")
+}
+
+/// The agent directory. A booking stores its agent as a bare string
+/// (`Booking.agent`) and, sometimes, a single `agentEmail` — which is fine for
+/// one automated confirmation and useless for a desk that needs to reach three
+/// people at the same operator. This table is the address book that string
+/// resolves into.
+model MailAgent {
+  id           String   @id @default(cuid())
+  name         String   @db.VarChar(190)
+  company      String?  @db.VarChar(190)
+  primaryEmail String   @db.VarChar(320)
+  /// Everyone else at the operator who should be copied, as a JSON string array.
+  ccEmails     Json?
+  /// Aliases matched case-insensitively against `Booking.agent` to auto-detect
+  /// this agent from a booking, as a JSON string array. The agent name itself is
+  /// always matched too, so this is only needed for spelling variants.
+  matchKeys    Json?
+  country      String?  @db.VarChar(60)
+  phone        String?  @db.VarChar(60)
+  notes        String?  @db.Text
+  isActive     Boolean  @default(true)
+  createdBy    String?  @db.VarChar(190)
+  updatedBy    String?  @db.VarChar(190)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  threads MailThread[]
+
+  @@index([isActive])
+  @@index([primaryEmail])
+  @@map("mail_agents")
+}
+
+/// The Aahaas internal team. Rows flagged `alwaysCc` are added to the CC line of
+/// every Mail Box send, and the compose window shows them as locked chips so the
+/// sender can see the copy going out but cannot quietly drop it.
+model MailInternalRecipient {
+  id        String   @id @default(cuid())
+  name      String   @db.VarChar(190)
+  email     String   @unique @db.VarChar(320)
+  team      String?  @db.VarChar(90)
+  /// Copied on every send. When false the address is merely suggested.
+  alwaysCc  Boolean  @default(true)
+  isActive  Boolean  @default(true)
+  notes     String?  @db.Text
+  createdBy String?  @db.VarChar(190)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, alwaysCc])
+  @@map("mail_internal_recipients")
+}
+
+/// One conversation. Created when the desk sends; `conversationId` is what later
+/// binds an agent's reply back to it.
+///
+/// Deliberately no FK to `bookings`: keyed by ref like `sl_settlement_docs` and
+/// `driver_briefs`, so the correspondence survives an amendment's child-row
+/// rewrite — and so a thread can exist with no booking at all.
+model MailThread {
+  id                String    @id @default(cuid())
+  bookingRef        String?   @db.VarChar(60)
+  agentId           String?
+  templateId        String?
+  subject           String    @db.Text
+  /// Comma-joined recipient lines, stored as sent rather than recomputed.
+  toAddresses       String    @db.Text
+  ccAddresses       String    @db.Text
+  /// Graph's thread handle. Null only when the send failed before Graph
+  /// accepted the draft.
+  conversationId    String?   @db.VarChar(190)
+  internetMessageId String?   @db.VarChar(190)
+  graphMessageId    String?   @db.VarChar(255)
+  mailboxUser       String    @default("") @db.VarChar(320)
+  /// 'SENT' | 'FAILED' | 'REPLIED'
+  status            String    @default("SENT") @db.VarChar(20)
+  error             String?   @db.Text
+  replyCount        Int       @default(0)
+  unreadReplies     Int       @default(0)
+  lastMessageAt     DateTime  @default(now())
+  lastSyncedAt      DateTime?
+  sentByName        String?   @db.VarChar(190)
+  sentByEmail       String?   @db.VarChar(320)
+  operationCountry  OperationCountry?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  agent    MailAgent?         @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  template MailTemplate?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  messages MailThreadMessage[]
+
+  @@index([bookingRef])
+  @@index([conversationId])
+  @@index([lastMessageAt])
+  @@index([status])
+  @@index([agentId])
+  @@index([templateId])
+  @@map("mail_threads")
+}
+
+/// Every message in a thread — the one we sent (`direction = 'OUT'`) and each
+/// reply pulled back from Graph (`'IN'`). Replies are matched on `graphId`, so
+/// re-syncing a thread is idempotent.
+model MailThreadMessage {
+  id                String   @id @default(cuid())
+  threadId          String
+  /// 'OUT' | 'IN'
+  direction         String   @db.VarChar(4)
+  graphId           String?  @unique @db.VarChar(255)
+  internetMessageId String?  @db.VarChar(190)
+  fromAddress       String   @default("") @db.VarChar(320)
+  fromName          String   @default("") @db.VarChar(190)
+  toAddresses       String   @db.Text
+  ccAddresses       String   @db.Text
+  subject           String   @db.Text
+  bodyHtml          String   @db.LongText
+  bodyText          String   @db.LongText
+  hasAttachments    Boolean  @default(false)
+  isRead            Boolean  @default(false)
+  sentAt            DateTime
+  createdAt         DateTime @default(now())
+
+  thread MailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, sentAt])
+  @@index([direction])
+  @@map("mail_thread_messages")
+}
