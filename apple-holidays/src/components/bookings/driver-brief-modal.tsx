@@ -424,6 +424,46 @@ function DriverSlide({ p, meta, kicker, ai, aiLoading }: {
                   : 'Whole file'
               } />
             </motion.div>
+
+            {/* ── The vehicle, if we hold photographs of it ─────────────
+                The guest is told to look for a car, not a name: these are the
+                pictures the office sends ahead, so the officer should be able
+                to see on this screen whether there are any to send. Shown only
+                when the vehicle record actually carries them. */}
+            {(driver.vehicle?.photoOutside || driver.vehicle?.photoInside) && (
+              <motion.div variants={ITEM} className="w-full mt-6 pt-6 border-t border-slate-700/50">
+                <p className="text-[10px] font-bold tracking-wider uppercase text-slate-500 text-left mb-2.5">
+                  The vehicle{plate ? ` · ${plate}` : ''}
+                </p>
+                <div className={cn(
+                  'grid gap-2.5',
+                  driver.vehicle.photoOutside && driver.vehicle.photoInside ? 'grid-cols-2' : 'grid-cols-1',
+                )}>
+                  {([
+                    { url: driver.vehicle.photoOutside, label: 'Outside' },
+                    { url: driver.vehicle.photoInside,  label: 'Inside'  },
+                  ] as const).filter(v => v.url).map(v => (
+                    <a
+                      key={v.label}
+                      href={v.url!} target="_blank" rel="noreferrer"
+                      className="group relative block rounded-2xl overflow-hidden border border-slate-700/60 hover:border-emerald-500/50 transition-colors"
+                      title={`Open the ${v.label.toLowerCase()} photo full size`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={v.url!}
+                        alt={`${vehicleLine ?? 'Vehicle'} — ${v.label.toLowerCase()}`}
+                        loading="lazy"
+                        className="w-full h-28 md:h-32 object-cover bg-slate-800 group-hover:scale-[1.04] transition-transform duration-300"
+                      />
+                      <span className="absolute bottom-1.5 left-1.5 px-2 py-0.5 rounded-md bg-slate-950/75 backdrop-blur text-[10px] font-black tracking-wider uppercase text-slate-200">
+                        {v.label}
+                      </span>
+                    </a>
+                  ))}
+                </div>
+              </motion.div>
+            )}
           </div>
         </motion.div>
 
