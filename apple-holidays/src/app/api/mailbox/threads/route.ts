@@ -3,7 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { buildApiSuccess } from '@/lib/utils'
 import { requireMailbox } from '@/lib/mailbox/guard'
 import { syncRecentThreads } from '@/lib/mailbox/sync'
-import type { Prisma } from '@prisma/client'
+import { canSeeAllCountries } from '@/lib/rbac'
+import type { OperationCountry, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -20,7 +21,17 @@ export async function GET(req: NextRequest) {
   const take = Math.min(Number(sp.get('limit') ?? 50) || 50, 200)
   const skip = Math.max(Number(sp.get('offset') ?? 0) || 0, 0)
 
+  // Country scoping on the outbox. A thread with no `operationCountry` is one
+  // sent without a booking attached, so it stays visible to everyone — hiding
+  // it from every scoped desk would make it unreachable rather than protected.
+  const country = gate.actor.country
+  const scoped = country && country !== 'ALL' && !canSeeAllCountries(gate.actor.role, country as OperationCountry)
+  const countryClause: Prisma.MailThreadWhereInput = scoped
+    ? { OR: [{ operationCountry: null }, { operationCountry: country as OperationCountry }] }
+    : {}
+
   const where: Prisma.MailThreadWhereInput = {
+    ...countryClause,
     ...(ref ? { bookingRef: ref } : {}),
     ...(status && status !== 'ALL'
       ? status === 'UNREAD' ? { unreadReplies: { gt: 0 } } : { status }

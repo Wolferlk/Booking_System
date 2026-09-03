@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { requireMailbox } from '@/lib/mailbox/guard'
+import { requireMailbox, bookingOutOfScope } from '@/lib/mailbox/guard'
 import { buildTokens, renderTemplate, TOKEN_CATALOGUE } from '@/lib/mailbox/tokens'
 import {
   matchAgentForBooking, agentAddresses, internalRecipients, getMailTestMode,
@@ -36,9 +36,19 @@ export async function GET(req: NextRequest) {
     },
   })
   if (!booking) return buildApiError('Booking not found', 404)
+  if (bookingOutOfScope(gate.actor, booking.operationCountry)) return buildApiError('Forbidden', 403)
 
-  const [match, templates, internal, testMode, threads] = await Promise.all([
+  const [match, allAgents, templates, internal, testMode, threads] = await Promise.all([
     matchAgentForBooking(booking),
+    // The whole directory, so the compose window can always offer a manual
+    // pick. Detection returns candidates only when it found something to be
+    // unsure about — on a clean miss it returns nothing, and without this the
+    // operator would have no way to choose an agent at all.
+    prisma.mailAgent.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, company: true, primaryEmail: true, ccEmails: true },
+    }),
     prisma.mailTemplate.findMany({
       where: { isActive: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
@@ -94,6 +104,7 @@ export async function GET(req: NextRequest) {
       /// booking's own field — the compose window says which, out loud.
       fromDirectory: fromDirectory.to.length > 0,
     },
+    agents: allAgents,
     suggestedTo,
     suggestedCc,
     internal,

@@ -88,6 +88,7 @@ interface ComposePayload {
     candidates: ComposeAgent[]
     fromDirectory: boolean
   }
+  agents: ComposeAgent[]
   suggestedTo: string[]
   suggestedCc: string[]
   internal: { id: string; name: string; email: string; team: string | null; alwaysCc: boolean }[]
@@ -349,7 +350,11 @@ export default function MailBoxModal({
       setData(payload)
       setThreads(payload.threads)
       setTo(payload.suggestedTo)
-      setCc(payload.suggestedCc)
+      // Locked addresses are rendered separately as fixed chips, so a suggestion
+      // that is already on the internal list would otherwise appear twice.
+      setCc(payload.suggestedCc.filter(
+        e => !payload.lockedCc.some(l => l.toLowerCase() === e.toLowerCase()),
+      ))
       setAgentOverride(payload.detection.agent?.id ?? null)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not open Mail Box')
@@ -368,8 +373,8 @@ export default function MailBoxModal({
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = '' }
   }, [open, onClose])
 
-  const templates = data?.templates ?? []
-  const lockedCc = data?.lockedCc ?? []
+  const templates = useMemo(() => data?.templates ?? [], [data])
+  const lockedCc = useMemo(() => data?.lockedCc ?? [], [data])
 
   const grouped = useMemo(() => {
     const q = templateQuery.trim().toLowerCase()
@@ -417,8 +422,8 @@ export default function MailBoxModal({
   function applyAgent(agentId: string | null) {
     setAgentOverride(agentId)
     if (!data) return
-    const all = [data.detection.agent, ...data.detection.candidates].filter(Boolean) as ComposeAgent[]
-    const agent = all.find(a => a.id === agentId)
+    const agent = data.agents.find(a => a.id === agentId)
+      ?? [data.detection.agent, ...data.detection.candidates].find(a => a?.id === agentId)
     if (!agent) return
     const extra = Array.isArray(agent.ccEmails) ? (agent.ccEmails as unknown[]).map(String) : []
     setTo([agent.primaryEmail])
@@ -505,7 +510,7 @@ export default function MailBoxModal({
         <div className="relative shrink-0 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-5 py-3.5">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
-              <Mail className="h-4.5 w-4.5 text-brand-400" />
+              <Mail className="h-4 w-4 text-brand-400" />
             </div>
             <div className="min-w-0">
               <h2 className="text-base font-extrabold tracking-tight text-white leading-none">Mail Box</h2>
@@ -641,7 +646,7 @@ export default function MailBoxModal({
                             {t.attachPdf && <Paperclip className="ml-auto h-3 w-3 shrink-0 text-slate-400" />}
                           </div>
                           {t.description && (
-                            <p className="mt-0.5 line-clamp-2 pl-4.5 text-[10px] leading-snug text-slate-400">{t.description}</p>
+                            <p className="mt-0.5 line-clamp-2 pl-[18px] text-[10px] leading-snug text-slate-400">{t.description}</p>
                           )}
                         </button>
                       ))}
@@ -780,6 +785,33 @@ export default function MailBoxModal({
                           : <ChevronRight className="h-3 w-3 shrink-0 text-slate-300" />}
                       </button>
                     ))}
+                  </div>
+                )}
+
+                {/* Always available, not only when detection is unsure: the
+                    booking's agent string is whatever the confirmation document
+                    happened to say, and the operator on the file knows better
+                    than the matcher does. */}
+                {(data?.agents.length ?? 0) > 0 && (
+                  <div className="mt-2.5 border-t border-black/5 pt-2">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      Choose the agent
+                    </label>
+                    <select
+                      value={agentOverride ?? ''}
+                      onChange={e => applyAgent(e.target.value || null)}
+                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+                    >
+                      <option value="">— none / manual addresses —</option>
+                      {data!.agents.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}{a.company ? ` · ${a.company}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] leading-snug text-slate-400">
+                      Picking one replaces the To line and adds its saved copies.
+                    </p>
                   </div>
                 )}
 

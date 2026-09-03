@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { requireMailbox, toStringArray } from '@/lib/mailbox/guard'
+import { requireMailbox, toStringArray, bookingOutOfScope } from '@/lib/mailbox/guard'
 import { buildTokens, renderTemplate } from '@/lib/mailbox/tokens'
 import { sendTrackedMail, normaliseAddresses, mailboxSenderAddress } from '@/lib/mailbox/send'
 import { alwaysCcAddresses, getMailTestMode, matchAgentForBooking } from '@/lib/mailbox/resolve'
@@ -42,6 +42,9 @@ export async function POST(req: NextRequest) {
       })
     : null
   if (ref && !booking) return buildApiError('Booking not found', 404)
+  if (booking && bookingOutOfScope(gate.actor, booking.operationCountry)) {
+    return buildApiError('Forbidden', 403)
+  }
 
   const template = body.templateId
     ? await prisma.mailTemplate.findUnique({ where: { id: body.templateId } })

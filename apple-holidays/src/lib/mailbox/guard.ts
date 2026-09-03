@@ -1,13 +1,16 @@
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError } from '@/lib/utils'
-import type { UserRole } from '@prisma/client'
+import { canSeeAllCountries } from '@/lib/rbac'
+import { isInCountryScope } from '@/lib/country-detection'
+import type { OperationCountry, UserRole } from '@prisma/client'
 import { canManageMailbox, canUseMailbox } from './access'
 
 export interface MailboxActor {
   name: string
   email: string
   role: UserRole
+  country?: string
 }
 
 /**
@@ -29,11 +32,29 @@ export async function requireMailbox(
 
   return {
     actor: {
-      name:  session.user.name  ?? 'Apple Holidays',
-      email: session.user.email ?? '',
+      name:    session.user.name  ?? 'Apple Holidays',
+      email:   session.user.email ?? '',
       role,
+      country: session.user.country as string | undefined,
     },
   }
+}
+
+/**
+ * Country scoping, the same rule every booking read applies: a desk assigned to
+ * one country cannot reach another country's file. Mail Box has to enforce it
+ * itself — the compose and send endpoints take a booking reference directly, so
+ * the page's own scoping is not in the path.
+ */
+export function bookingOutOfScope(
+  actor: MailboxActor,
+  operationCountry: OperationCountry | null,
+): boolean {
+  const country = actor.country
+  if (!country || country === 'ALL') return false
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (canSeeAllCountries(actor.role, country as any)) return false
+  return !isInCountryScope(operationCountry, country)
 }
 
 /** JSON array of trimmed, non-empty strings — the shape `ccEmails` / `matchKeys` store. */
