@@ -6,7 +6,7 @@ Create a completely new module inside the existing Operations System named:
 
 New path:
 
-**https://www.ops.aahaas.com/tm**
+
 
 This must be developed as a **fully isolated module**.
 

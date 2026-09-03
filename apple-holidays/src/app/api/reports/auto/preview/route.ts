@@ -123,7 +123,16 @@ export async function GET(req: NextRequest) {
     // `reportType` is echoed back because the two report shapes share this
     // endpoint: the drawer needs to know which one it is holding before it
     // reads a single field off `data`.
-    return buildApiSuccess({ reportType: shape.reportType, subject: built.subject, data: built.data })
+    // The uncapped booking lists exist for the CSV attachment only; sending
+    // them to the drawer as well would double a month's payload for rows the
+    // page never renders.
+    const data = 'created' in built.data
+      ? (() => {
+          const { allBookings: _all, allOutside: _outside, ...created } = built.data.created
+          return { ...built.data, created }
+        })()
+      : built.data
+    return buildApiSuccess({ reportType: shape.reportType, subject: built.subject, data })
   } catch (err) {
     if (err instanceof ScheduleValidationError) return buildApiError(err.message)
     const msg = err instanceof Error ? err.message : String(err)

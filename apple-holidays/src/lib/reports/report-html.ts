@@ -1197,8 +1197,11 @@ export function renderReportCsv(d: ReportData): string {
   // AppleSystem raised in this period. Everything else the period touched
   // follows in its own block, headed as not counted, so a reader summing a
   // column cannot accidentally sum two populations.
+  // Uncapped on purpose: the mail's table stops at maxRows, the attachment
+  // carries every counted booking so a reader summing the column gets the same
+  // total the mail headlines.
   block('Bookings created — confirmed by AppleSystem in this period', bookingHeader,
-    d.created.bookings.map(bookingLine))
+    (d.created.allBookings ?? d.created.bookings).map(bookingLine))
 
   if (d.created.missingRefs.length) {
     block('Confirmed upstream, not filed in this system', ['Reference'],
@@ -1207,7 +1210,7 @@ export function renderReportCsv(d: ReportData): string {
 
   if (d.created.outside.length) {
     block('Also filed here — NOT COUNTED (earlier confirmations)', bookingHeader,
-      d.created.outside.map(bookingLine))
+      (d.created.allOutside ?? d.created.outside).map(bookingLine))
   }
 
   // The count check leads the CSV for the same reason it leads the mail: it is

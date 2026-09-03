@@ -145,6 +145,15 @@ export interface CreatedSection {
   byCurrency: MoneyByCurrency[]
   byAgent: { agent: string; bookings: number; pax: number }[]
   bookings: BookingLine[]
+  /**
+   * Every counted booking, uncapped — what the CSV attachment writes.
+   *
+   * `bookings` is cut to `maxRows` because a mail nobody scrolls is worse than
+   * a short one, but the attachment exists precisely so finance can pivot the
+   * whole population: a day with 50 confirmations that exported 30 rows read as
+   * a report contradicting itself.
+   */
+  allBookings: BookingLine[]
   /** Same metric over the immediately preceding window, for the trend arrow. */
   previousTotal: number
 
@@ -161,6 +170,8 @@ export interface CreatedSection {
    * day. Real work, not this day's business — shown, never counted.
    */
   outside: BookingLine[]
+  /** The same not-counted population, uncapped, for the CSV attachment. */
+  allOutside: BookingLine[]
   /** ISO instant the accounts ledger last swept these dates; null = never. */
   sweptAt: string | null
 }
@@ -708,12 +719,14 @@ async function collectCreated(
       .sort((a, b) => b.total - a.total),
     byAgent: byAgent.slice(0, 10),
     bookings: lines.slice(0, maxRows),
+    allBookings: lines,
     previousTotal,
     basis: cohort.available ? 'apple' : 'ops',
     upstream: cohort.total,
     cancelledUpstream: cohort.cancelled,
     missingRefs: missingRefs.slice(0, 40),
     outside: outside.slice(0, maxRows),
+    allOutside: outside,
     sweptAt: cohort.sweptAt,
   }
 }
