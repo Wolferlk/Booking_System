@@ -265,8 +265,8 @@ function b2cSection(d: ReconcileReportData, maxRows: number): string {
   const rows = shown.map(l => `<tr>
     ${td(esc(`#${l.orderId}`), { bold: true, nowrap: true })}
     ${td(l.bookedDate ? esc(formatReportDate(l.bookedDate)) : DASH, { nowrap: true })}
-    ${td(l.serviceDate ? esc(formatReportDate(l.serviceDate)) : DASH, { nowrap: true })}
-    ${td(mark(l.inOps), { align: 'center' })}
+    ${td(l.serviceDate ? esc(formatReportDate(l.serviceDate)) : (l.flightOnly ? '<span class="na">flight</span>' : DASH), { nowrap: true })}
+    ${td(mark(l.inOps, l.importable !== false), { align: 'center' })}
     ${td(mark(l.hasPnl), { align: 'center' })}
     ${td(mark(l.hasInvoice), { align: 'center' })}
   </tr>`).join('')
@@ -275,7 +275,17 @@ function b2cSection(d: ReconcileReportData, maxRows: number): string {
     + checkTiles(b.check, 'OPS bookings', false)
     + kpiRow([
       { label: 'Orders booked', value: num(b.orders), note: 'in the storefront', color: C.b2c },
-      { label: 'Filed in OPS', value: num(b.opsHeld), note: `${num(b.opsCreated)} created here in the window`, color: C.muted },
+      {
+        label: 'Filed in OPS',
+        value: `${num(b.opsHeld)} / ${num(b.orders - (b.notImportable?.length ?? 0))}`,
+        // The denominator is the orders OPS could file, not every order taken:
+        // a flight sale with no service date is outside the importer by
+        // construction, and counting it here read as a shortfall every day.
+        note: b.notImportable?.length
+          ? `${num(b.notImportable.length)} flight order${b.notImportable.length === 1 ? '' : 's'} outside the importer`
+          : `${num(b.opsCreated)} created here in the window`,
+        color: C.muted,
+      },
       { label: 'With a P&L', value: num(b.withPnl), note: b.missingPnl.length ? `${num(b.missingPnl.length)} missing` : 'complete', color: b.missingPnl.length ? C.bad : C.good },
       { label: 'Invoiced', value: num(b.withInvoice), note: b.missingInvoice.length ? `${num(b.missingInvoice.length)} missing` : 'complete', color: b.missingInvoice.length ? C.bad : C.good },
     ])
@@ -290,7 +300,7 @@ function b2cSection(d: ReconcileReportData, maxRows: number): string {
             ? `<div class="more">Showing ${num(shown.length)} of ${num(b.lines.length)} orders — the attached CSV carries every row.</div>`
             : '')
       : emptyNote('The storefront took no travel orders in this window.'))
-    + `<div class="more">The storefront stores neither a P&amp;L nor an invoice — the rows in accounts are the only durable record these orders will ever have. OPS files only orders whose service date is still ahead, so its column is reported but never counted against the verdict.</div>`
+    + `<div class="more">The storefront stores neither a P&amp;L nor an invoice — the rows in accounts are the only durable record these orders will ever have. OPS files only orders whose service date is still ahead, so its column is reported but never counted against the verdict. An order marked <span class="na">flight</span> carries no service date at all — the importer cannot see it, so its OPS column reads &mdash; rather than a cross.</div>`
 
   return section(
     'Aahaas B2C',
@@ -504,8 +514,12 @@ export function renderReconcileCsv(d: ReconcileReportData): string {
   csvBlock(rows, 'OPS cancellations', ['Booking', 'Cancelled at', 'Reason'],
     d.b2b.ops.cancellations.map(c => [c.ref, c.at, c.reason ?? '']))
 
-  csvBlock(rows, 'Aahaas B2C orders', ['Order', 'Booked', 'Service date', 'In OPS', 'Has P&L', 'Has invoice'],
-    d.b2c.lines.map(l => [l.orderId, l.bookedDate ?? '', l.serviceDate ?? '', l.inOps ? 'yes' : 'no', l.hasPnl ? 'yes' : 'no', l.hasInvoice ? 'yes' : 'no']))
+  csvBlock(rows, 'Aahaas B2C orders', ['Order', 'Booked', 'Service date', 'Flight only', 'In OPS', 'Has P&L', 'Has invoice'],
+    d.b2c.lines.map(l => [
+      l.orderId, l.bookedDate ?? '', l.serviceDate ?? '', l.flightOnly ? 'yes' : 'no',
+      l.importable === false ? 'n/a' : l.inOps ? 'yes' : 'no',
+      l.hasPnl ? 'yes' : 'no', l.hasInvoice ? 'yes' : 'no',
+    ]))
 
   csvBlock(rows, 'Findings', ['Severity', 'Title', 'Detail', 'References'],
     d.findings.map(f => [f.severity, f.title, f.detail, f.refs.join(' ')]))

@@ -24,6 +24,11 @@ const CONN_TIMEOUT_MS = 15_000
  *  1 Essential / 2 Non Essential are physical retail goods and are never bookings. */
 export const TRAVEL_CATEGORY_IDS = [3, 4, 5, 6] as const
 
+/** Flights. Sold worldwide, and — unlike every other category — routinely stored
+ *  with no `service_date` at all, which is what puts such an order beyond the
+ *  importer's reach (see {@link fetchOrderHeaders}). */
+export const FLIGHT_CATEGORY_ID = 6
+
 /** Statements this client is willing to send. Anything else is a bug, not a query. */
 const READ_ONLY_RE = /^\s*(SELECT|SHOW|DESCRIBE|DESC|EXPLAIN)\b/i
 
@@ -118,6 +123,10 @@ export interface B2cBookedOrder extends mysql.RowDataPacket {
   bookedDate: string | null
   serviceDate: string | null
   productLines: number
+  /** Lines that carry a service date. Zero = the importer can never see this order. */
+  datedLines: number
+  /** Lines sold out of the Flights category (6). */
+  flightLines: number
 }
 
 export interface B2cOrderProduct extends mysql.RowDataPacket {
@@ -250,7 +259,9 @@ export async function fetchOrdersBookedBetween(opts: {
     `SELECT m.order_id          AS order_id,
             MIN(m.booked_date)  AS bookedDate,
             MIN(m.service_date) AS serviceDate,
-            COUNT(*)            AS productLines
+            COUNT(*)            AS productLines,
+            SUM(m.service_date IS NOT NULL) AS datedLines,
+            SUM(m.category_id = ${FLIGHT_CATEGORY_ID}) AS flightLines
        FROM checkouts_more_data m
       WHERE m.order_id IS NOT NULL
         AND m.booked_date IS NOT NULL

@@ -163,6 +163,18 @@ export interface B2cOrderReconLine {
   hasPnl: boolean
   hasInvoice: boolean
   whole: boolean
+  /**
+   * Whether OPS could ever hold this order at all.
+   *
+   * The importer selects on `service_date` (not null, still ahead), so an order
+   * that carries no service date on any line is outside its reach by
+   * construction. Reporting such a row as "missing from OPS" sent people
+   * looking for a booking that was never going to exist — it is reported as
+   * not applicable instead.
+   */
+  importable: boolean
+  /** Every travel line on the order came out of the Flights category. */
+  flightOnly: boolean
 }
 
 export interface B2cSection {
@@ -174,7 +186,16 @@ export interface B2cSection {
   opsHeld: number
   /** B2C bookings OPS created in the window, by its own clock. */
   opsCreated: number
+  /** Importable orders the storefront took that OPS does not hold. Actionable. */
   missingInOps: number[]
+  /**
+   * Orders with no service date on any line — flights, almost always. OPS
+   * cannot file them, so they are listed apart from {@link missingInOps} and
+   * never counted against the verdict.
+   */
+  notImportable: number[]
+  /** Of those, the ones that are pure Aahaas flight sales. */
+  flightOnly: number[]
   withPnl: number
   withInvoice: number
   missingPnl: number[]
@@ -387,7 +408,8 @@ async function collectAccounts(window: ReportWindow, refs: string[]): Promise<Ac
 async function collectB2c(window: ReportWindow): Promise<B2cSection> {
   const blank = (error: string | null): B2cSection => ({
     available: false, error, orders: 0, opsHeld: 0, opsCreated: 0,
-    missingInOps: [], withPnl: 0, withInvoice: 0, missingPnl: [], missingInvoice: [],
+    missingInOps: [], notImportable: [], flightOnly: [],
+    withPnl: 0, withInvoice: 0, missingPnl: [], missingInvoice: [],
     lines: [],
     check: {
       label: 'Aahaas B2C', expected: 0, ops: 0, pnls: 0, invoices: 0,
@@ -423,6 +445,14 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
       const id = Number(o.order_id)
       const hasPnl = coverage.withPnl.has(id)
       const hasInvoice = coverage.withInvoice.has(id)
+      // The importer selects on `service_date`; an order with none on any line
+      // is invisible to it however the day goes, so its OPS column is "not
+      // applicable" rather than "missing". Aahaas flight sales are the whole of
+      // this population in practice — the storefront stores a flight's travel
+      // date inside the itinerary blob, not in `service_date`.
+      const datedLines = Number(o.datedLines ?? 0)
+      const flightLines = Number(o.flightLines ?? 0)
+      const productLines = Number(o.productLines ?? 0)
       return {
         orderId: id,
         bookedDate: o.bookedDate,
@@ -431,6 +461,8 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
         hasPnl,
         hasInvoice,
         whole: hasPnl && hasInvoice,
+        importable: datedLines > 0,
+        flightOnly: flightLines > 0 && flightLines === productLines,
       }
     })
 
@@ -443,7 +475,12 @@ async function collectB2c(window: ReportWindow): Promise<B2cSection> {
       orders: ids.length,
       opsHeld: inOps.size,
       opsCreated,
-      missingInOps: ids.filter(id => !inOps.has(id)),
+      // Only orders OPS could actually have filed. A flight order with no
+      // service date is listed under `notImportable` instead, where nobody
+      // reads it as work outstanding.
+      missingInOps: lines.filter(l => l.importable && !l.inOps).map(l => l.orderId),
+      notImportable: lines.filter(l => !l.importable).map(l => l.orderId),
+      flightOnly: lines.filter(l => l.flightOnly).map(l => l.orderId),
       withPnl,
       withInvoice,
       missingPnl: lines.filter(l => !l.hasPnl).map(l => l.orderId),
@@ -635,6 +672,16 @@ function deriveFindings(b2b: B2bSection, b2c: B2cSection): Finding[] {
       title: `${b2c.missingInOps.length} storefront order${b2c.missingInOps.length === 1 ? '' : 's'} not in the booking system`,
       detail: 'The B2C importer only files orders whose service date is still ahead, so an order booked for a past or same-day service is expected to be absent here. This is reported for completeness and does not count against the B2C verdict.',
       refs: cap(b2c.missingInOps.map(String)),
+    })
+  }
+
+  if (b2c.available && b2c.notImportable.length) {
+    const flights = b2c.notImportable.filter(id => b2c.flightOnly.includes(id)).length
+    out.push({
+      severity: 'info',
+      title: `${b2c.notImportable.length} storefront order${b2c.notImportable.length === 1 ? '' : 's'} the importer cannot see`,
+      detail: `${flights === b2c.notImportable.length ? 'All of them are Aahaas flight sales' : `${flights} of them are Aahaas flight sales`}. A flight order carries its travel date inside the itinerary, not in the store's service_date column, and the importer selects on that column — so these orders are never filed in OPS and are not outstanding work. They are still expected to carry a P&L and an invoice, which is what the columns below check.`,
+      refs: cap(b2c.notImportable.map(String)),
     })
   }
 
