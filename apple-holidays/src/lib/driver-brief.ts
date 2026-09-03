@@ -30,7 +30,8 @@ const MODEL = () => process.env.OPENAI_DRIVER_BRIEF_MODEL || process.env.OPENAI_
 
 /** The deck's fixed running order. The UI never reorders these. */
 export const BRIEF_SLIDES = [
-  'driver', 'overview', 'flights', 'hotels', 'movements', 'tickets', 'notes',
+  'driver', 'overview', 'flights', 'hotels', 'movements', 'itinerary', 'tickets',
+  'package', 'notes',
 ] as const
 export type BriefSlideId = (typeof BRIEF_SLIDES)[number]
 
@@ -147,6 +148,43 @@ export interface BriefPassenger {
   nationality: string | null
 }
 
+/**
+ * A day of the sold itinerary — the story the guest was sold, which is not the
+ * same document as the movement chart the driver is dispatched from. The driver
+ * is the person the guest quotes it back to ("the brochure said Galle Fort"), so
+ * he is briefed on both and told plainly which one he is paid to follow.
+ */
+export interface BriefItineraryDay {
+  id: string
+  dayNo: number
+  date: string
+  title: string
+  description: string | null
+  inclusions: string[]
+  exclusions: string[]
+}
+
+/**
+ * The package small print, already split into lines.
+ *
+ * These columns are free text typed one item per line, so the splitting happens
+ * here rather than in the deck: the brief renders each line as something the
+ * driver either provides or refuses, and that is a list, never a paragraph.
+ */
+export interface BriefPackage {
+  valueAdded: string[]
+  includes: string[]
+  excludes: string[]
+  terms: string[]
+  exclusions: string[]
+  policyNotes: string[]
+  tips: string[]
+  otherNote: string[]
+  clientRequest: string[]
+  /** False when the booking carries none of it — the slide is then hidden. */
+  hasAny: boolean
+}
+
 export interface BriefRecord {
   status: 'pending' | 'in_progress' | 'completed'
   notes: string
@@ -184,6 +222,8 @@ export interface DriverBriefPayload {
   flights: BriefFlight[]
   hotels: BriefHotel[]
   movements: BriefMovement[]
+  itinerary: BriefItineraryDay[]
+  package: BriefPackage
   tickets: BriefTicket[]
   /** Movements that still have nobody on them — read out as a warning. */
   unassignedDates: string[]
@@ -216,6 +256,43 @@ function dayDiff(from: Date, to: Date): number {
   return Math.round((b - a) / 86_400_000)
 }
 
+/**
+ * Free text typed as a list → the lines of that list.
+ *
+ * Bullet characters and numbering the desk pasted in are stripped, because the
+ * deck draws its own marks and a line reading "• • Whale watching" is noise on
+ * a screen somebody is reading out loud.
+ */
+function lines(v: string | null | undefined): string[] {
+  if (!v) return []
+  return v
+    .split(/\r?\n/)
+    .map(l => l.replace(/^\s*(?:[-•*·–—]|\d+[.)])\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 40)
+}
+
+/** The package small print of one booking, as lists. */
+function buildPackage(b: {
+  valueAddedServices: string | null; packageIncludes: string | null
+  packageExcludes: string | null; terms: string | null; exclusions: string | null
+  policyNotes: string | null; tips: string | null; otherNote: string | null
+  clientRequest: string | null
+}): BriefPackage {
+  const pkg: Omit<BriefPackage, 'hasAny'> = {
+    valueAdded:    lines(b.valueAddedServices),
+    includes:      lines(b.packageIncludes),
+    excludes:      lines(b.packageExcludes),
+    terms:         lines(b.terms),
+    exclusions:    lines(b.exclusions),
+    policyNotes:   lines(b.policyNotes),
+    tips:          lines(b.tips),
+    otherNote:     lines(b.otherNote),
+    clientRequest: lines(b.clientRequest),
+  }
+  return { ...pkg, hasAny: Object.values(pkg).some(v => v.length > 0) }
+}
+
 /** Today at UTC midnight — every date in this module is a calendar date. */
 export function todayUtc(): Date {
   const n = new Date()
@@ -237,6 +314,16 @@ export async function buildDriverBrief(bookingRef: string): Promise<DriverBriefP
       fileHandler: true, status: true, operationCountry: true, tourDestination: true,
       arrivalDate: true, departureDate: true, paxAdults: true, paxChildren: true,
       contactPhone: true, contactEmail: true, importantNotes: true, hotelOnly: true,
+      valueAddedServices: true, packageIncludes: true, packageExcludes: true,
+      terms: true, exclusions: true, policyNotes: true, tips: true,
+      otherNote: true, clientRequest: true,
+      itineraryItems: {
+        orderBy: [{ dayNo: 'asc' }, { date: 'asc' }],
+        select: {
+          id: true, dayNo: true, date: true, title: true, description: true,
+          inclusions: true, exclusions: true,
+        },
+      },
       passengers: {
         orderBy: [{ isLead: 'desc' }, { name: 'asc' }],
         select: { name: true, type: true, isLead: true, contact: true, passport: true, nationality: true },
@@ -462,6 +549,16 @@ export async function buildDriverBrief(bookingRef: string): Promise<DriverBriefP
       address: h.address, contact: h.contact, ownArrangement: h.ownArrangement,
     })),
     movements,
+    itinerary: booking.itineraryItems.map(it => ({
+      id: it.id,
+      dayNo: it.dayNo,
+      date: iso(it.date),
+      title: it.title,
+      description: it.description,
+      inclusions: lines(it.inclusions),
+      exclusions: lines(it.exclusions),
+    })),
+    package: buildPackage(booking),
     tickets: booking.tickets.map(t => ({
       id: t.id, type: t.type, category: t.category, qty: t.qty, status: String(t.status),
       activated: t.activated, supplier: t.supplier, reference: t.reference, notes: t.notes,
@@ -501,6 +598,10 @@ Rules:
 - Use real names, real times, real places from the JSON. Never invent a fact that is not there.
 - If a section has nothing worth saying beyond the obvious, return fewer points, not filler.
 - NEVER mention money, rates, costs, commission, advances or margins. The driver must not hear them.
+- For "itinerary": this is the day plan the GUEST was sold and will quote back. Say where it differs
+  from the movement chart, and say the chart is what he drives.
+- For "package": say what he must provide without being asked (water, child seat, the included
+  entrances) and what he must politely refuse or charge the guest for. Never say a price.
 - Times are local. Dates as "Mon 31 Aug".
 
 Return STRICT JSON, no prose around it:
@@ -512,7 +613,9 @@ Return STRICT JSON, no prose around it:
     { "slide": "flights",   "points": ["..."] },
     { "slide": "hotels",    "points": ["..."] },
     { "slide": "movements", "points": ["..."] },
-    { "slide": "tickets",   "points": ["..."] }
+    { "slide": "itinerary", "points": ["..."] },
+    { "slide": "tickets",   "points": ["..."] },
+    { "slide": "package",   "points": ["..."] }
   ],
   "watchOuts": ["the things that go wrong on THIS file, 2-5 items"],
   "questions": ["questions to ask the driver back so you know he understood, 2-4 items"]
@@ -570,6 +673,16 @@ export async function generateBriefAi(payload: DriverBriefPayload): Promise<Brie
       type: t.type, qty: t.qty, date: t.date, location: t.location,
       status: t.status, activated: t.activated, supplier: t.supplier,
     })),
+    itinerary: payload.itinerary.map(i => ({
+      day: i.dayNo, date: i.date, title: i.title, description: i.description,
+    })),
+    packageIncludes: payload.package.includes,
+    packageExcludes: payload.package.excludes,
+    valueAddedServices: payload.package.valueAdded,
+    packageNotes: [
+      ...payload.package.policyNotes, ...payload.package.tips,
+      ...payload.package.otherNote, ...payload.package.clientRequest,
+    ],
     unassignedDates: payload.unassignedDates,
   }
 

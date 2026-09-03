@@ -28,13 +28,16 @@ import {
   Sparkles, Loader2, AlertTriangle, CalendarDays, Clock, Utensils,
   BadgeCheck, ShieldQuestion, RefreshCw, Route, MessageSquareQuote,
   CircleCheck, CircleDashed, Coffee, Baby, ArrowRight,
+  BookOpen, Gift, Ban, ScrollText, Compass,
 } from 'lucide-react'
 import JourneyMap from '@/components/bookings/journey-map'
 import { cn, formatDate, readApiResponse } from '@/lib/utils'
 
 // ─── Types (mirror src/lib/driver-brief.ts) ──────────────────────────────
 
-type SlideId = 'driver' | 'overview' | 'flights' | 'hotels' | 'movements' | 'tickets' | 'notes'
+type SlideId =
+  | 'driver' | 'overview' | 'flights' | 'hotels' | 'movements' | 'itinerary'
+  | 'tickets' | 'package' | 'notes'
 
 interface BriefVehicle {
   type: string; plateNo: string; brand: string | null; model: string | null
@@ -71,6 +74,16 @@ interface BriefTicket {
   activated: boolean; supplier: string | null; reference: string | null
   notes: string | null; date: string | null; location: string | null
 }
+interface BriefItineraryDay {
+  id: string; dayNo: number; date: string; title: string
+  description: string | null; inclusions: string[]; exclusions: string[]
+}
+interface BriefPackage {
+  valueAdded: string[]; includes: string[]; excludes: string[]
+  terms: string[]; exclusions: string[]; policyNotes: string[]
+  tips: string[]; otherNote: string[]; clientRequest: string[]
+  hasAny: boolean
+}
 interface BriefPassenger {
   name: string; type: string; isLead: boolean; contact: string | null
   passportNo: string | null; nationality: string | null
@@ -102,7 +115,8 @@ export interface DriverBriefPayload {
   passengers: BriefPassenger[]; leadName: string | null
   drivers: BriefDriver[]; primaryDriver: BriefDriver | null
   flights: BriefFlight[]; hotels: BriefHotel[]
-  movements: BriefMovement[]; tickets: BriefTicket[]
+  movements: BriefMovement[]; itinerary: BriefItineraryDay[]
+  package: BriefPackage; tickets: BriefTicket[]
   unassignedDates: string[]
   brief: BriefRecord
   ai: BriefAi | null
@@ -126,7 +140,9 @@ const SLIDES: SlideMeta[] = [
   { id: 'flights',   label: 'Flights',       icon: Plane,     hex: '#8b5cf6', applies: p => p.flights.length > 0 },
   { id: 'hotels',    label: 'Hotels',        icon: BedDouble, hex: '#f97316', applies: p => p.hotels.length > 0 },
   { id: 'movements', label: 'The Route',     icon: Route,     hex: '#06b6d4', applies: p => p.movements.length > 0 },
+  { id: 'itinerary', label: 'The Itinerary',  icon: BookOpen,  hex: '#ec4899', applies: p => p.itinerary.length > 0 },
   { id: 'tickets',   label: 'Tickets',       icon: Ticket,    hex: '#eab308', applies: p => p.tickets.length > 0 },
+  { id: 'package',   label: "What's Included", icon: Gift,    hex: '#14b8a6', applies: p => p.package.hasAny },
   { id: 'notes',     label: 'Sign Off',      icon: StickyNote, hex: '#22c55e', applies: () => true },
 ]
 
@@ -278,8 +294,8 @@ function Chip({ children, hex }: { children: React.ReactNode; hex: string }) {
  * step. The photo is large for the same reason a photo is on a driver's licence:
  * the desk is about to talk about a person, and half of them have similar names.
  */
-function DriverSlide({ p, meta, ai, aiLoading }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: string[]; aiLoading: boolean
+function DriverSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
 }) {
   const [copied, setCopied] = useState(false)
   const driver = p.primaryDriver
@@ -296,7 +312,7 @@ function DriverSlide({ p, meta, ai, aiLoading }: {
 
   if (!driver) {
     return (
-      <SlideShell meta={meta} kicker="Step 1 of the brief" title="No driver allocated yet">
+      <SlideShell meta={meta} kicker={kicker} title="No driver allocated yet">
         <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-center">
           <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto mb-3" />
           <p className="text-amber-200 font-bold">This file has nobody to brief.</p>
@@ -318,7 +334,7 @@ function DriverSlide({ p, meta, ai, aiLoading }: {
   return (
     <SlideShell
       meta={meta}
-      kicker="Step 1 of the brief"
+      kicker={kicker}
       title="Your driver on this file"
       subtitle={<>Confirm you have the right person before you say anything else.</>}
     >
@@ -515,14 +531,14 @@ function DriverSlide({ p, meta, ai, aiLoading }: {
 
 // ─── Slide 2 · The guests ────────────────────────────────────────────────
 
-function OverviewSlide({ p, meta, ai, aiLoading }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: string[]; aiLoading: boolean
+function OverviewSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
 }) {
   const pax = p.paxAdults + p.paxChildren
   return (
     <SlideShell
       meta={meta}
-      kicker="Step 2 of the brief"
+      kicker={kicker}
       title={p.leadName ? `${p.leadName} + party` : 'The guest party'}
       subtitle={<>{p.bookingRef}{p.isNumber ? ` · IS ${p.isNumber}` : ''}{p.agent ? ` · ${p.agent}` : ''}</>}
     >
@@ -605,8 +621,8 @@ function OverviewSlide({ p, meta, ai, aiLoading }: {
  * type on the card and an animated aircraft travelling the line so the
  * direction is unmistakable at a glance.
  */
-function FlightsSlide({ p, meta, ai, aiLoading }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: string[]; aiLoading: boolean
+function FlightsSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
 }) {
   const reduce = useReducedMotion()
   const KIND: Record<BriefFlight['kind'], { label: string; hex: string; icon: React.FC<{ className?: string }> }> = {
@@ -617,7 +633,7 @@ function FlightsSlide({ p, meta, ai, aiLoading }: {
 
   return (
     <SlideShell
-      meta={meta} kicker="Step 3 of the brief" title="Flights"
+      meta={meta} kicker={kicker} title="Flights"
       subtitle={`${p.flights.length} sector${p.flights.length === 1 ? '' : 's'} on this file`}
     >
       <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-6 items-start">
@@ -680,12 +696,12 @@ function FlightsSlide({ p, meta, ai, aiLoading }: {
 
 // ─── Slide 4 · Hotels ────────────────────────────────────────────────────
 
-function HotelsSlide({ p, meta, ai, aiLoading }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: string[]; aiLoading: boolean
+function HotelsSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
 }) {
   return (
     <SlideShell
-      meta={meta} kicker="Step 4 of the brief" title="Where they sleep"
+      meta={meta} kicker={kicker} title="Where they sleep"
       subtitle={`${p.hotels.length} stay${p.hotels.length === 1 ? '' : 's'} · ${p.nights} night${p.nights === 1 ? '' : 's'}`}
     >
       <div className="grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-6 items-start">
@@ -738,8 +754,8 @@ function HotelsSlide({ p, meta, ai, aiLoading }: {
  * trusts — reused here rather than redrawn, so a brief can never disagree with
  * the movement chart.
  */
-function MovementsSlide({ p, meta, ai, aiLoading }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: string[]; aiLoading: boolean
+function MovementsSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
 }) {
   const [active, setActive] = useState<string | null>(p.movements[0]?.id ?? null)
   const current = p.movements.find(m => m.id === active) ?? p.movements[0] ?? null
@@ -759,7 +775,7 @@ function MovementsSlide({ p, meta, ai, aiLoading }: {
 
   return (
     <SlideShell
-      meta={meta} kicker="Step 5 of the brief" title="The route, day by day"
+      meta={meta} kicker={kicker} title="The route, day by day"
       subtitle={
         p.unassignedDates.length > 0
           ? <span className="text-amber-400 font-semibold">{p.unassignedDates.length} movement(s) still have no driver</span>
@@ -875,10 +891,156 @@ function MovementsSlide({ p, meta, ai, aiLoading }: {
   )
 }
 
-// ─── Slide 6 · Tickets ───────────────────────────────────────────────────
+// ─── Slide · The sold itinerary ──────────────────────────────────────────
 
-function TicketsSlide({ p, meta, ai, aiLoading }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: string[]; aiLoading: boolean
+/**
+ * The trip as the guest was sold it.
+ *
+ * Deliberately separate from the route slide, and read after it: the movement
+ * chart is what the driver is dispatched on, the itinerary is what the guest
+ * has in their hand and will quote back to him on day three. He needs both, and
+ * he needs to know which one wins — so the day cards read like the brochure
+ * (a title, a date, the paragraph the guest read) and the panel beside them says
+ * plainly that the chart is what he drives.
+ */
+function ItinerarySlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
+}) {
+  const reduce = useReducedMotion()
+  const [open, setOpen] = useState<string | null>(p.itinerary[0]?.id ?? null)
+  const days = p.itinerary
+
+  return (
+    <SlideShell
+      meta={meta} kicker={kicker} title="The trip they were sold"
+      subtitle={`${days.length} day${days.length === 1 ? '' : 's'} · ${d(p.arrivalDate)} → ${d(p.departureDate)}`}
+    >
+      <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-6 items-start">
+        {/* ── The brochure, as a spine of days ─────────────────────── */}
+        <motion.div variants={LIST} initial="hidden" animate="show" className="relative pl-7">
+          {/* The spine itself — one continuous line so eight days read as one
+              journey rather than eight unrelated cards. */}
+          <span
+            aria-hidden
+            className="absolute left-[13px] top-2 bottom-2 w-px"
+            style={{ background: `linear-gradient(180deg, ${meta.hex}00, ${meta.hex}88 12%, ${meta.hex}88 88%, ${meta.hex}00)` }}
+          />
+          <div className="space-y-2.5">
+            {days.map((it, i) => {
+              const isOpen = it.id === open
+              const last = i === days.length - 1
+              return (
+                <motion.div key={it.id} variants={ITEM} className="relative">
+                  <span
+                    aria-hidden
+                    className="absolute -left-7 top-4 w-[27px] h-[27px] rounded-full grid place-items-center text-[10px] font-black border-2"
+                    style={{
+                      background: isOpen ? meta.hex : '#0f172a',
+                      borderColor: `${meta.hex}${isOpen ? 'ff' : '66'}`,
+                      color: isOpen ? '#0f172a' : meta.hex,
+                    }}
+                  >
+                    {last ? <Compass className="w-3.5 h-3.5" /> : it.dayNo}
+                  </span>
+                  {!reduce && isOpen && (
+                    <motion.span
+                      aria-hidden
+                      className="absolute -left-7 top-4 w-[27px] h-[27px] rounded-full border-2"
+                      style={{ borderColor: `${meta.hex}88` }}
+                      animate={{ scale: [1, 1.5], opacity: [0.7, 0] }}
+                      transition={{ duration: 2.2, repeat: Infinity, ease: 'easeOut' }}
+                    />
+                  )}
+
+                  <button
+                    onClick={() => setOpen(isOpen ? null : it.id)}
+                    className={cn(
+                      'w-full text-left rounded-2xl border p-4 md:p-5 transition-all',
+                      isOpen ? 'shadow-[0_0_0_1px_rgba(236,72,153,0.25)]' : 'hover:bg-slate-800/40',
+                    )}
+                    style={{
+                      background: isOpen ? `${meta.hex}12` : 'rgba(15,23,42,0.5)',
+                      borderColor: isOpen ? `${meta.hex}55` : 'rgba(51,65,85,0.5)',
+                    }}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-black tracking-[0.16em] uppercase" style={{ color: meta.hex }}>
+                          Day {it.dayNo}
+                        </p>
+                        <p className="text-base md:text-lg font-black text-white leading-snug mt-0.5">{it.title}</p>
+                      </div>
+                      <span className="flex-shrink-0 text-[11px] font-bold text-slate-400 whitespace-nowrap mt-1">
+                        {dLong(it.date)}
+                      </span>
+                    </div>
+
+                    <AnimatePresence initial={false}>
+                      {isOpen && (it.description || it.inclusions.length > 0 || it.exclusions.length > 0) && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={{ duration: 0.25 }}
+                          className="overflow-hidden"
+                        >
+                          {it.description && (
+                            <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap mt-3">
+                              {it.description}
+                            </p>
+                          )}
+                          {(it.inclusions.length > 0 || it.exclusions.length > 0) && (
+                            <div className="flex flex-wrap gap-1.5 mt-3">
+                              {it.inclusions.map((x, n) => (
+                                <Chip key={`i${n}`} hex="#22c55e"><Check className="w-3 h-3" />{x}</Chip>
+                              ))}
+                              {it.exclusions.map((x, n) => (
+                                <Chip key={`e${n}`} hex="#f87171"><Ban className="w-3 h-3" />{x}</Chip>
+                              ))}
+                            </div>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+
+                    {!isOpen && it.description && (
+                      <p className="text-xs text-slate-500 leading-relaxed mt-2 line-clamp-2">{it.description}</p>
+                    )}
+                  </button>
+                </motion.div>
+              )
+            })}
+          </div>
+        </motion.div>
+
+        <div className="space-y-4 lg:sticky lg:top-0">
+          <SayThis points={ai} hex={meta.hex} loading={aiLoading} />
+
+          {/* The one thing a driver must not get wrong about this screen. */}
+          <motion.div
+            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+            className="rounded-2xl border border-cyan-500/30 bg-cyan-500/[0.07] p-5"
+          >
+            <p className="flex items-center gap-1.5 text-[10px] font-black tracking-[0.16em] uppercase text-cyan-300 mb-2">
+              <Route className="w-3.5 h-3.5" /> Which document wins
+            </p>
+            <p className="text-sm text-cyan-100/90 leading-relaxed">
+              This is the itinerary the guest bought and will read back to you. You drive the movement
+              chart — {p.movements.length} movement{p.movements.length === 1 ? '' : 's'} over{' '}
+              {p.nights} night{p.nights === 1 ? '' : 's'}. If the guest asks for something written here
+              that is not on your chart, call the office. Do not agree to it on the road.
+            </p>
+          </motion.div>
+        </div>
+      </div>
+    </SlideShell>
+  )
+}
+
+// ─── Slide · Tickets ─────────────────────────────────────────────────────
+
+function TicketsSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
 }) {
   // Grouped by day because that is when the driver needs them in his hand.
   const grouped = useMemo(() => {
@@ -896,7 +1058,7 @@ function TicketsSlide({ p, meta, ai, aiLoading }: {
 
   return (
     <SlideShell
-      meta={meta} kicker="Step 6 of the brief" title="What is already paid for"
+      meta={meta} kicker={kicker} title="What is already paid for"
       subtitle={
         inactive > 0
           ? <span className="text-amber-400 font-semibold">{inactive} ticket(s) not activated yet — do not send him to the gate on these</span>
@@ -943,7 +1105,139 @@ function TicketsSlide({ p, meta, ai, aiLoading }: {
   )
 }
 
-// ─── Slide 7 · Sign off ──────────────────────────────────────────────────
+// ─── Slide · What is included ────────────────────────────────────────────
+
+/** One column of package small print, drawn as a list of things, not prose. */
+function PackageList({
+  title, items, hex, icon: Icon, muted,
+}: {
+  title: string; items: string[]; hex: string
+  icon: React.FC<{ className?: string }>; muted?: boolean
+}) {
+  if (!items.length) return null
+  return (
+    <motion.div
+      variants={ITEM}
+      className="rounded-2xl border p-5"
+      style={{ background: muted ? 'rgba(15,23,42,0.5)' : `${hex}0d`, borderColor: muted ? 'rgba(51,65,85,0.5)' : `${hex}33` }}
+    >
+      <p className="flex items-center gap-1.5 text-[10px] font-black tracking-[0.16em] uppercase mb-3" style={{ color: hex }}>
+        <Icon className="w-3.5 h-3.5" /> {title}
+        <span className="text-slate-500 font-bold">· {items.length}</span>
+      </p>
+      <ul className="grid sm:grid-cols-2 gap-x-5 gap-y-2">
+        {items.map((x, i) => (
+          <li key={i} className="flex gap-2.5 text-sm text-slate-200 leading-relaxed">
+            <span className="mt-[7px] w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: hex }} />
+            <span>{x}</span>
+          </li>
+        ))}
+      </ul>
+    </motion.div>
+  )
+}
+
+/**
+ * What the file has already bought, and what it has not.
+ *
+ * This is the screen that stops the two arguments that actually happen on the
+ * road: a guest asking for something the package never covered, and a driver
+ * failing to hand over something it did. So it is split by what the driver does
+ * rather than by which database column the text came from — provide this,
+ * included already, refuse this — and the small print sits underneath, where it
+ * can be read out if the guest pushes.
+ */
+function PackageSlide({ p, meta, kicker, ai, aiLoading }: {
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: string[]; aiLoading: boolean
+}) {
+  const pk = p.package
+  const counted = pk.includes.length + pk.excludes.length + pk.valueAdded.length
+
+  return (
+    <SlideShell
+      meta={meta} kicker={kicker} title="What is included, what is not"
+      subtitle={`${counted} line${counted === 1 ? '' : 's'} of package terms on this file`}
+    >
+      <div className="grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-6 items-start">
+        <motion.div variants={LIST} initial="hidden" animate="show" className="space-y-3">
+          {/* Value added first: the only part of this screen that is an action
+              for the driver on day one, not a rule for later. */}
+          {pk.valueAdded.length > 0 && (
+            <motion.div
+              variants={ITEM}
+              className="rounded-2xl border p-5"
+              style={{ background: `${meta.hex}12`, borderColor: `${meta.hex}44` }}
+            >
+              <p className="flex items-center gap-1.5 text-[10px] font-black tracking-[0.16em] uppercase mb-3" style={{ color: meta.hex }}>
+                <Sparkles className="w-3.5 h-3.5" /> You give them this, without being asked
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {pk.valueAdded.map((x, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold border text-white"
+                    style={{ background: `${meta.hex}1a`, borderColor: `${meta.hex}44` }}
+                  >
+                    <Gift className="w-3.5 h-3.5 flex-shrink-0" style={{ color: meta.hex }} />
+                    {x}
+                  </span>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          <PackageList title="Already paid for — it is in the package" items={pk.includes} hex="#22c55e" icon={CircleCheck} />
+          <PackageList title="Not included — do not promise it" items={pk.excludes} hex="#f87171" icon={Ban} />
+          <PackageList title="Further exclusions" items={pk.exclusions} hex="#fb923c" icon={Ban} />
+          <PackageList title="Policy notes" items={pk.policyNotes} hex="#94a3b8" icon={ScrollText} muted />
+          <PackageList title="Terms & conditions" items={pk.terms} hex="#94a3b8" icon={ScrollText} muted />
+          <PackageList title="Tips" items={pk.tips} hex="#94a3b8" icon={StickyNote} muted />
+          <PackageList title="Other notes" items={pk.otherNote} hex="#94a3b8" icon={StickyNote} muted />
+        </motion.div>
+
+        <div className="space-y-4 lg:sticky lg:top-0">
+          <SayThis points={ai} hex={meta.hex} loading={aiLoading} />
+
+          {pk.clientRequest.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}
+              className="rounded-2xl border border-violet-500/30 bg-violet-500/[0.08] p-5"
+            >
+              <p className="flex items-center gap-1.5 text-[10px] font-black tracking-[0.16em] uppercase text-violet-300 mb-3">
+                <MessageSquareQuote className="w-3.5 h-3.5" /> What the guest specially asked for
+              </p>
+              <ul className="space-y-2.5">
+                {pk.clientRequest.map((x, i) => (
+                  <li key={i} className="flex gap-2.5 text-sm text-violet-100/90 leading-relaxed">
+                    <span className="mt-[7px] w-1.5 h-1.5 rounded-full bg-violet-400 flex-shrink-0" />{x}
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          )}
+
+          {pk.excludes.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.24 }}
+              className="rounded-2xl border border-amber-500/30 bg-amber-500/[0.08] p-5"
+            >
+              <p className="flex items-center gap-1.5 text-[10px] font-black tracking-[0.16em] uppercase text-amber-300 mb-2">
+                <AlertTriangle className="w-3.5 h-3.5" /> If they ask for an excluded item
+              </p>
+              <p className="text-sm text-amber-100/90 leading-relaxed">
+                Do not agree to it and do not settle it yourself. Call{' '}
+                {p.fileHandler ? <span className="font-bold">{p.fileHandler}</span> : 'the file handler'} first —
+                anything outside the package has to be arranged by the office.
+              </p>
+            </motion.div>
+          )}
+        </div>
+      </div>
+    </SlideShell>
+  )
+}
+
+// ─── Slide · Sign off ────────────────────────────────────────────────────
 
 /**
  * The only slide that writes anything.
@@ -955,9 +1249,9 @@ function TicketsSlide({ p, meta, ai, aiLoading }: {
  * record exists to say a human did this.
  */
 function NotesSlide({
-  p, meta, ai, aiLoading, notes, setNotes, seen, onComplete, onReopen, saving,
+  p, meta, kicker, ai, aiLoading, notes, setNotes, seen, onComplete, onReopen, saving,
 }: {
-  p: DriverBriefPayload; meta: SlideMeta; ai: BriefAi | null; aiLoading: boolean
+  p: DriverBriefPayload; meta: SlideMeta; kicker: string; ai: BriefAi | null; aiLoading: boolean
   notes: string; setNotes: (v: string) => void
   seen: Record<string, boolean>
   onComplete: () => void; onReopen: () => void; saving: boolean
@@ -968,7 +1262,7 @@ function NotesSlide({
 
   return (
     <SlideShell
-      meta={meta} kicker="Last step" title="Anything to note, then sign it off"
+      meta={meta} kicker={kicker} title="Anything to note, then sign it off"
       subtitle={`${read} of ${applicable.length} screens read${p.primaryDriver ? ` · ${p.primaryDriver.name}` : ''}`}
     >
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 items-start">
@@ -1122,6 +1416,13 @@ export default function DriverBriefModal({ bookingRef, open, onClose, onComplete
     [payload],
   )
   const meta = slides[index] ?? SLIDES[0]
+
+  // Step numbering follows the deck that was actually built for this booking —
+  // a file with no flights has no "step 3", and saying so out loud would be a
+  // lie the officer has to correct mid-sentence.
+  const kicker = index === slides.length - 1
+    ? 'Last step'
+    : `Step ${index + 1} of ${slides.length}`
 
   const aiFor = useCallback(
     (id: SlideId) => payload?.ai?.sections.find(s => s.slide === id)?.points ?? [],
@@ -1410,15 +1711,17 @@ export default function DriverBriefModal({ bookingRef, open, onClose, onComplete
                 transition={{ type: 'spring', stiffness: 300, damping: 32, opacity: { duration: 0.18 } }}
                 className="absolute inset-0"
               >
-                {meta.id === 'driver'    && <DriverSlide    p={payload} meta={meta} ai={aiFor('driver')}    aiLoading={aiLoading} />}
-                {meta.id === 'overview'  && <OverviewSlide  p={payload} meta={meta} ai={aiFor('overview')}  aiLoading={aiLoading} />}
-                {meta.id === 'flights'   && <FlightsSlide   p={payload} meta={meta} ai={aiFor('flights')}   aiLoading={aiLoading} />}
-                {meta.id === 'hotels'    && <HotelsSlide    p={payload} meta={meta} ai={aiFor('hotels')}    aiLoading={aiLoading} />}
-                {meta.id === 'movements' && <MovementsSlide p={payload} meta={meta} ai={aiFor('movements')} aiLoading={aiLoading} />}
-                {meta.id === 'tickets'   && <TicketsSlide   p={payload} meta={meta} ai={aiFor('tickets')}   aiLoading={aiLoading} />}
+                {meta.id === 'driver'    && <DriverSlide    p={payload} meta={meta} kicker={kicker} ai={aiFor('driver')}    aiLoading={aiLoading} />}
+                {meta.id === 'overview'  && <OverviewSlide  p={payload} meta={meta} kicker={kicker} ai={aiFor('overview')}  aiLoading={aiLoading} />}
+                {meta.id === 'flights'   && <FlightsSlide   p={payload} meta={meta} kicker={kicker} ai={aiFor('flights')}   aiLoading={aiLoading} />}
+                {meta.id === 'hotels'    && <HotelsSlide    p={payload} meta={meta} kicker={kicker} ai={aiFor('hotels')}    aiLoading={aiLoading} />}
+                {meta.id === 'movements' && <MovementsSlide p={payload} meta={meta} kicker={kicker} ai={aiFor('movements')} aiLoading={aiLoading} />}
+                {meta.id === 'itinerary' && <ItinerarySlide p={payload} meta={meta} kicker={kicker} ai={aiFor('itinerary')} aiLoading={aiLoading} />}
+                {meta.id === 'tickets'   && <TicketsSlide   p={payload} meta={meta} kicker={kicker} ai={aiFor('tickets')}   aiLoading={aiLoading} />}
+                {meta.id === 'package'   && <PackageSlide   p={payload} meta={meta} kicker={kicker} ai={aiFor('package')}   aiLoading={aiLoading} />}
                 {meta.id === 'notes'     && (
                   <NotesSlide
-                    p={payload} meta={meta} ai={payload.ai} aiLoading={aiLoading}
+                    p={payload} meta={meta} kicker={kicker} ai={payload.ai} aiLoading={aiLoading}
                     notes={notes}
                     setNotes={v => { setNotes(v); queueSave({ notes: v }) }}
                     seen={seen} onComplete={complete} onReopen={reopen} saving={saving}
