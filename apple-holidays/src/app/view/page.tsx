@@ -29,6 +29,11 @@ const CSS = `
 @keyframes vSiren   { 0%,100%{opacity:.35} 50%{opacity:1} }
 @keyframes vShake   { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-8px)} 40%{transform:translateX(8px)} 60%{transform:translateX(-5px)} 80%{transform:translateX(5px)} }
 @keyframes vMarquee { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+@keyframes vBarIn   { from{transform:scaleY(0)} to{transform:scaleY(1)} }
+@keyframes vBarLive { 0%,100%{opacity:.55;filter:saturate(1)} 50%{opacity:1;filter:saturate(1.6)} }
+@keyframes vBurst   { 0%{opacity:.9;transform:scale(.6)} 100%{opacity:0;transform:scale(2.1)} }
+@keyframes vTick    { 0%{transform:translateY(0) scale(1)} 30%{transform:translateY(-12px) scale(1.12)} 100%{transform:translateY(0) scale(1)} }
+@keyframes vSweep   { 0%{left:-30%} 100%{left:130%} }
 .v-float{animation:vFloat 7s ease-in-out infinite}
 .v-drift{animation:vDrift 22s ease-in-out infinite alternate}
 .v-pop{animation:vPop .6s cubic-bezier(.34,1.56,.64,1) both}
@@ -38,6 +43,11 @@ const CSS = `
 .v-shine{background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.14) 45%,transparent 70%);background-size:200% 100%;animation:vShine 4.5s linear infinite}
 .v-alarm{animation:vAlarm 1.1s ease-in-out infinite}
 .v-shake{animation:vShake .5s ease-in-out}
+.v-bar{transform-origin:bottom;animation:vBarIn .7s cubic-bezier(.34,1.56,.64,1) both}
+.v-bar-live{animation:vBarIn .7s cubic-bezier(.34,1.56,.64,1) both,vBarLive 1.8s ease-in-out infinite 0.7s}
+.v-burst{animation:vBurst 1.1s ease-out forwards}
+.v-tick{animation:vTick .8s cubic-bezier(.34,1.56,.64,1)}
+.v-sweep{animation:vSweep 3.6s ease-in-out infinite}
 `
 
 // ── Country meta ─────────────────────────────────────────────────────────────
@@ -87,8 +97,18 @@ const KIND_LABEL: Record<string, string> = { check_in: 'On-tour check-in', recon
 const CATEGORY_LABEL: Record<string, string> = { complaint: 'Complaint', change_request: 'Change request', safety: 'Safety', low_rating: 'Low rating' }
 interface ViewData {
   generatedAt: string
-  totals: { totalBookings: number; ongoingToday: number; upcoming: number; paxOnTour: number; arrivalFlightsToday: number; flightsToday: number }
-  byCountry: { ongoing: Record<string, number>; upcoming: Record<string, number>; lifetime: Record<string, number> }
+  totals: {
+    totalBookings: number; ongoingToday: number; upcoming: number; paxOnTour: number
+    arrivalFlightsToday: number; flightsToday: number
+    createdToday: number; createdTodayPax: number; createdYesterdayToNow: number
+  }
+  byCountry: {
+    ongoing: Record<string, number>; upcoming: Record<string, number>
+    lifetime: Record<string, number>; createdToday: Record<string, number>
+  }
+  /** 24 buckets, midnight → 23:00, of what was booked today. Drives the sparkline. */
+  createdTodayByHour: number[]
+  lastCreatedAt: string | null
   recentBookings: Booking[]
 }
 interface FHEvent {
@@ -432,6 +452,129 @@ function HeadStat({ label, value, icon, tone, big }: { label: string; value: num
       </div>
       <div className="flex items-center gap-2 mb-1" style={{ color: tone }}>{icon}<span className="text-[11px] uppercase tracking-[.28em] text-slate-400">{label}</span></div>
       <p className={`${big ? 'text-7xl' : 'text-5xl'} font-black text-white tabular-nums`} style={{ textShadow: `0 0 30px ${tone}55` }}><Counter target={value} /></p>
+    </div>
+  )
+}
+
+// ── Today's intake ───────────────────────────────────────────────────────────
+/**
+ * What the office has booked since midnight, as a shape rather than a number:
+ * an hour-by-hour skyline the room can read from across the office, the live
+ * hour pulsing, and a burst on the count the moment a new booking lands.
+ *
+ * The comparison is against yesterday *to this same time* — the API is careful
+ * about that, because a running day measured against a finished one would show
+ * every morning as a collapse and nobody would look at the tile twice.
+ */
+function BookedToday({ data }: { data: ViewData }) {
+  const total  = data.totals.createdToday ?? 0
+  const hours  = data.createdTodayByHour ?? []
+  const prevTotal = useRef(total)
+  const [burst, setBurst] = useState(0)
+
+  // A burst is fired on the *rise*, not on every refresh: the poll returns the
+  // same total most of the time and a tile that flashed regardless would stop
+  // meaning "something just came in".
+  useEffect(() => {
+    if (total > prevTotal.current) setBurst(b => b + 1)
+    prevTotal.current = total
+  }, [total])
+
+  const nowHour = new Date().getHours()
+  const peak    = Math.max(1, ...hours)
+  const delta   = total - (data.totals.createdYesterdayToNow ?? 0)
+  const best    = hours.indexOf(peak)
+  const countries = Object.entries(data.byCountry?.createdToday ?? {})
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+
+  return (
+    <div className="relative flex-1 min-h-0 rounded-3xl border border-violet-500/25 overflow-hidden bg-gradient-to-br from-violet-600/15 via-fuchsia-600/5 to-transparent px-6 py-5 flex flex-col">
+      {/* a slow light sweep, so the tile never looks frozen on a wall screen */}
+      <div className="absolute inset-y-0 w-1/3 pointer-events-none v-sweep"
+           style={{ background: 'linear-gradient(90deg,transparent,rgba(167,139,250,.10),transparent)' }} />
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2 text-violet-300">
+          <Sparkles className="w-5 h-5 v-wiggle" />
+          <span className="text-[11px] uppercase tracking-[.28em] text-slate-400">Booked Today</span>
+        </div>
+        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-bold tabular-nums ${
+          delta > 0 ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+          : delta < 0 ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+          : 'border-white/15 bg-white/5 text-slate-400'}`}>
+          {delta > 0 ? '▲' : delta < 0 ? '▼' : '='} {Math.abs(delta)} vs yesterday
+        </span>
+      </div>
+
+      <div className="flex items-end gap-4 mt-1">
+        <div className="relative">
+          {/* one ring per arrival, keyed so a fresh one always replays */}
+          {burst > 0 && (
+            <span key={burst}
+                  className="absolute inset-0 -m-3 rounded-full border-2 border-violet-400/70 v-burst pointer-events-none" />
+          )}
+          <p key={`n${burst}`}
+             className="text-7xl font-black text-white tabular-nums v-tick"
+             style={{ textShadow: '0 0 34px rgba(167,139,250,.55)' }}>
+            <Counter target={total} />
+          </p>
+        </div>
+        <div className="pb-3 min-w-0">
+          <p className="text-sm font-bold text-slate-300 tabular-nums">
+            <Counter target={data.totals.createdTodayPax ?? 0} /> pax
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {total ? `busiest at ${String(best).padStart(2, '0')}:00` : 'nothing booked yet today'}
+          </p>
+        </div>
+      </div>
+
+      {/* the day so far, hour by hour — future hours stay dim rather than absent,
+          so the skyline keeps its shape instead of growing sideways all day */}
+      <div className="flex-1 min-h-[54px] flex items-end gap-[3px] mt-3">
+        {hours.map((n, h) => {
+          const future = h > nowHour
+          const live   = h === nowHour
+          return (
+            <div key={h} className="flex-1 h-full flex flex-col justify-end">
+              <div
+                className={future ? '' : live ? 'v-bar-live' : 'v-bar'}
+                style={{
+                  // An empty hour still draws a stub: the skyline should span
+                  // the whole day at every hour of it, so the eye reads "quiet
+                  // morning" rather than "the chart stops here".
+                  height: `${Math.max(n ? 12 : 7, (n / peak) * 100)}%`,
+                  animationDelay: future ? undefined : `${h * 26}ms`,
+                  borderRadius: 3,
+                  background: future
+                    ? 'rgba(255,255,255,.08)'
+                    : live
+                      ? 'linear-gradient(180deg,#f0abfc,#a855f7)'
+                      : n
+                        ? 'linear-gradient(180deg,rgba(167,139,250,.95),rgba(139,92,246,.35))'
+                        : 'rgba(255,255,255,.12)',
+                  boxShadow: live && n ? '0 0 14px rgba(232,121,249,.75)' : undefined,
+                }}
+                title={`${String(h).padStart(2, '0')}:00 — ${n}`}
+              />
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="flex items-center justify-between gap-3 mt-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {countries.length ? countries.map(([c, n]) => (
+            <span key={c} className="inline-flex items-center gap-1.5 rounded-lg bg-white/[.05] border border-white/10 px-2 py-1">
+              <CountryFlag country={c} className="w-4 h-3 rounded-[2px]" />
+              <span className="text-[11px] font-bold text-slate-300 tabular-nums">{n}</span>
+            </span>
+          )) : <span className="text-[11px] text-slate-600">—</span>}
+        </div>
+        <span className="text-[10px] uppercase tracking-[.25em] text-slate-600 shrink-0">00:00 → 23:00</span>
+      </div>
     </div>
   )
 }
@@ -784,6 +927,8 @@ function ViewDashboard() {
                   <HeadStat label="Arrival Flights" value={data.totals.arrivalFlightsToday} tone="#38bdf8" icon={<Plane className="w-6 h-6" />} />
                 </div>
               </div>
+              {/* Bottom: the day's own intake, filling what was dead space */}
+              <BookedToday data={data} />
             </div>
 
             {/* MIDDLE — rotating country spotlight */}
