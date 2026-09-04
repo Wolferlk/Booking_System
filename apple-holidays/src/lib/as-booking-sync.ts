@@ -209,7 +209,9 @@ export async function syncBookingFromAs(
       bookingRef: true,
       isNumber: true,
       cntlNumber: true,
+      agentBookingId: true,
       agent: true,
+      agentEmail: true,
       fileHandler: true,
       arrivalDate: true,
       departureDate: true,
@@ -295,6 +297,22 @@ export async function syncBookingFromAs(
     fields.push({ field, from: nonEmpty(current), to: next })
   }
 
+  /**
+   * Fill a field from upstream only while ours is still empty.
+   *
+   * Used for the agent reference and agent email: both are routinely typed in
+   * by ops on the booking page, and AppleSystem is not authoritative for them.
+   * A plain `setText` here would silently overwrite a hand-entered agent ref on
+   * the next sync, so upstream may seed these fields but never replace them.
+   */
+  function fillText(field: string, current: string | null, incoming: string | null) {
+    if (nonEmpty(current) !== null) return          // ours wins once set
+    const next = nonEmpty(incoming)
+    if (next === null) return
+    data[field] = next
+    fields.push({ field, from: null, to: next })
+  }
+
   function setDate(field: string, current: Date, incoming: string) {
     const next = dateOnly(incoming)
     if (!next) return
@@ -316,6 +334,8 @@ export async function syncBookingFromAs(
   setText('isNumber', booking.isNumber, mapped.isNumber)
   setText('cntlNumber', booking.cntlNumber, mapped.cntlNumber)
   setText('agent', booking.agent, mapped.agent)
+  fillText('agentBookingId', booking.agentBookingId, mapped.agentBookingId)
+  fillText('agentEmail', booking.agentEmail, mapped.agentEmail)
   setText('fileHandler', booking.fileHandler, mapped.fileHandler)
   setDate('arrivalDate', booking.arrivalDate, mapped.arrivalDate)
   setDate('departureDate', booking.departureDate, mapped.departureDate)

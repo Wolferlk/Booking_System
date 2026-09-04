@@ -53,6 +53,7 @@ export async function importMappedBooking(
       cntlNumber: mapped.cntlNumber,
       agentBookingId: mapped.agentBookingId,
       agent: mapped.agent,
+      agentEmail: mapped.agentEmail,
       fileHandler: mapped.fileHandler,
       arrivalDate: new Date(mapped.arrivalDate),
       departureDate: new Date(mapped.departureDate),

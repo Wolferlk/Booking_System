@@ -8,7 +8,7 @@ import {
   Sparkles, TrendingUp, TrendingDown, Eye, EyeOff, FileDown, ListChecks, XCircle,
   ScrollText, PlusCircle, Bed, Bus, Gauge, Coins, Copy, Download, Code2, ChevronDown,
   ArrowRightLeft, Landmark, Utensils, Droplet, Percent, Ticket, Check, Gift,
-  CircleDollarSign, Scissors, Timer, PackagePlus, ExternalLink,
+  CircleDollarSign, Scissors, Timer, PackagePlus, ExternalLink, Mail,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -23,7 +23,13 @@ interface Quote {
   reference_id: number | string
   revision?: number
   reference_numbers?: { quotation_no?: string; formatted?: string; control?: string; temp_po?: string }
-  relevant_parties?: { agent?: string; sales_person?: string }
+  relevant_parties?: {
+    agent?: string
+    sales_person?: string
+    agent_email?: string
+    agent_id?: string
+    agent_ref?: string
+  }
   accommodation?: Accommodation[]
   value_added_services?: unknown[]
   package_includes?: string[]
@@ -466,6 +472,16 @@ function ASBookingV2DetailInner() {
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-slate-100 text-slate-600 border border-slate-200">
                     <User className="w-3 h-3" /> {parties.agent}
                   </span>
+                )}
+                {parties.agent_ref && parties.agent_ref !== 'NA' && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono bg-slate-100 text-slate-600 border border-slate-200" title="Agent's own booking reference">
+                    Agent Ref · {parties.agent_ref}
+                  </span>
+                )}
+                {parties.agent_email && (
+                  <a href={`mailto:${parties.agent_email}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-slate-100 text-slate-500 border border-slate-200 hover:text-brand-600">
+                    <Mail className="w-3 h-3" /> {parties.agent_email}
+                  </a>
                 )}
                 {parties.sales_person && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-slate-100 text-slate-500 border border-slate-200">Sales · {parties.sales_person}</span>

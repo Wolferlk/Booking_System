@@ -14,6 +14,8 @@
  *   cntlNumber        ← quotation_no
  *   operationCountry  ← detected from the is_number prefix (VN/IS/SG/MY)
  *   agent             ← pnl.quotation_info.agent_name  (or relevant_parties.agent)
+ *   agentBookingId    ← relevant_parties.agent_ref     (the operator's own ref)
+ *   agentEmail        ← relevant_parties.agent_email
  *   fileHandler       ← confirmation_voucher.file_handler_name
  *   arrival/departure ← first / last itinerary date
  *   pax               ← pnl.quotation_info.pax.{adult,child}
@@ -169,6 +171,7 @@ export interface MappedBookingInput {
   agentBookingId: string | null
   operationCountry: OperationCountry | null
   agent: string | null
+  agentEmail: string | null
   fileHandler: string | null
   arrivalDate: string
   departureDate: string
@@ -286,6 +289,19 @@ export function mapQuoteToBooking(
     ? [{ name: 'Emergency', phone: emergency, role: '24/7 Emergency' }]
     : []
 
+  // ── Agent / relevant parties ───────────────────────────────────────────────
+  // AppleSystem carries the whole agent block under `relevant_parties`:
+  //   agent       → tour operator name           ("Make My Trip")
+  //   agent_ref   → the operator's OWN booking reference ("143") → agentBookingId
+  //   agent_email → the operator's contact mailbox
+  //   agent_id    → AppleSystem's internal party id, not an agent-facing ref
+  // Only the name was being read before, which is why "Agent Ref. No." stayed
+  // empty on every imported file. `agent_id` is deliberately NOT used as the
+  // agent ref — it is an internal id and mirrors the guest id.
+  const agentName = str(info.agent_name).trim() || str(parties.agent).trim()
+  const agentRef = str(parties.agent_ref).trim()
+  const agentEmail = str(parties.agent_email).trim()
+
   const quotedTotal =
     numOrNull(get(quote, 'pnl', 'cost', 'total')) ??
     numOrNull(get(quote, 'pnl', 'cost'))
@@ -293,10 +309,15 @@ export function mapQuoteToBooking(
   return {
     bookingRef,
     isNumber: bookingRef,
-    cntlNumber: str(quote.quotation_no).trim() || null,
-    agentBookingId: null,
+    cntlNumber:
+      str(quote.quotation_no).trim() ||
+      str(get(quote, 'reference_numbers', 'quotation_no')).trim() ||
+      str(get(quote, 'reference_numbers', 'formatted')).trim() ||
+      null,
+    agentBookingId: usable(agentRef) ? agentRef : null,
     operationCountry: detectCountryFromRef(bookingRef),
-    agent: str(info.agent_name).trim() || str(parties.agent).trim() || null,
+    agent: usable(agentName) ? agentName : null,
+    agentEmail: usable(agentEmail) ? agentEmail : null,
     fileHandler: str(voucher.file_handler_name).trim() || null,
     arrivalDate,
     departureDate,
