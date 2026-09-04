@@ -29,6 +29,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { accountsQuery, accountsWrite } from './accounts-db'
 import { prisma } from './prisma'
 import { portalCountriesFor, PORTAL_REQUIRED_COUNTRIES } from './portals'
+import { directIssueEnabled } from './ticket-direct-issue'
 import type { OperationCountry } from '@prisma/client'
 
 /* ─── States ───────────────────────────────────────────────────────────────── */
@@ -392,6 +393,17 @@ export async function submitForApproval(
   actor: string,
   input: SubmitInput = {},
 ): Promise<TicketApproval> {
+  // Direct issuing is on, so Accounts is not watching this queue and has no
+  // reason to answer. Refused on the server as well as hidden in the UI: a tab
+  // left open from before the switch was flipped is exactly how a request ends
+  // up sitting unanswered in somebody's board forever.
+  if (await directIssueEnabled()) {
+    throw new Error(
+      'Direct ticket issuing is switched on — tickets are bought without Accounts approval, '
+      + 'so there is nothing to submit. Buy it straight from the Purchase button.',
+    )
+  }
+
   const blocker = submitBlocker(ticket, input)
   if (blocker) throw new Error(blocker)
 
@@ -537,6 +549,11 @@ export async function purchaseBlocker(
   if (!approvalRequiredFor(country) || !approvalRequiredForCategory(ticket.category)) {
     return null
   }
+
+  // The switch that takes Accounts out of the loop. Read live, like the rest of
+  // this gate, so that turning it back off shuts the gate on the very next
+  // click rather than on the next deploy.
+  if (await directIssueEnabled()) return null
 
   let approval: TicketApproval | null
 

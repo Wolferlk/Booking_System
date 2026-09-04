@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { portalPurchaseBlocker, resolvePortalSelection } from '@/lib/portals'
 import { markApprovalPurchased, purchaseBlocker } from '@/lib/ticket-approvals'
+import { directIssueEnabled } from '@/lib/ticket-direct-issue'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -31,8 +32,13 @@ export async function POST(
 
   if (!ticket) return buildApiError('Ticket not found', 404)
 
+  // Both money gates below ask Accounts a question. This switch is the answer
+  // "we are not asking" — read once here and honoured by G2 and G4 alike, so
+  // the two can never end up disagreeing about whether Accounts is in the loop.
+  const directIssue = await directIssueEnabled()
+
   // G2 GUARD: Cannot purchase unless the linked P&L line payment is confirmed
-  if (ticket.pnlLine && ticket.pnlLine.paymentStatus !== 'CONFIRMED') {
+  if (!directIssue && ticket.pnlLine && ticket.pnlLine.paymentStatus !== 'CONFIRMED') {
     return buildApiError(
       'Cannot purchase ticket: P&L payment not yet confirmed by Accounts Team (Rule G2)',
       403,
@@ -67,11 +73,15 @@ export async function POST(
   // it reads the shared approval row live rather than the mirrored column, and
   // an Accounts database it cannot reach blocks the purchase rather than
   // waving it through. Sri Lanka and non-ticket categories are exempt: their
-  // driver buys out of an advance he already holds.
-  const approvalBlocker = await purchaseBlocker(ticket.booking.operationCountry, {
-    id: ticket.id,
-    category: ticket.category,
-  })
+  // driver buys out of an advance he already holds. Direct issuing stands the
+  // gate down entirely — and skips the cross-database round trip with it,
+  // rather than making one only to ignore the answer.
+  const approvalBlocker = directIssue
+    ? null
+    : await purchaseBlocker(ticket.booking.operationCountry, {
+        id: ticket.id,
+        category: ticket.category,
+      })
   if (approvalBlocker) return buildApiError(approvalBlocker, 422)
 
   const updated = await prisma.ticket.update({

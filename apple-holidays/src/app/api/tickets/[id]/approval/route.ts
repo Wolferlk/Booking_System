@@ -11,6 +11,7 @@ import {
   submitForApproval,
   withdrawApproval,
 } from '@/lib/ticket-approvals'
+import { directIssueEnabled } from '@/lib/ticket-direct-issue'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -42,13 +43,21 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   })
   if (!ticket) return buildApiError('Ticket not found', 404)
 
+  // With direct issuing on, nothing is required of Accounts. Any request that
+  // was already raised is still returned, so a ticket mid-flight when the
+  // switch was flipped shows its history rather than pretending it never
+  // happened — it is simply no longer something anyone is waiting on.
+  const directIssue = await directIssueEnabled()
+
   try {
     const approval = await approvalForTicket(id)
 
     return buildApiSuccess({
       approval,
-      required: approvalRequiredFor(ticket.booking.operationCountry)
+      required: !directIssue
+        && approvalRequiredFor(ticket.booking.operationCountry)
         && approvalRequiredForCategory(ticket.category),
+      directIssue,
       portalName: ticket.portalName,
     })
   } catch (err) {

@@ -15,6 +15,9 @@ const PROTECTED_KEYS = new Set([
   'ai_pnl_auto_extract',
   'ai_pnl_auto_classify',
   'onedrive_new_files_only',
+  // Stands down both Accounts gates on ticket purchasing (G2 and G4). It
+  // releases money, so it takes the critical services password like the rest.
+  'ticket_direct_issue',
 ])
 
 export async function GET() {

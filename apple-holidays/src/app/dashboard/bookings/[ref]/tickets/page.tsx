@@ -10,7 +10,7 @@ import {
   Eye, CreditCard, X, Zap, Sparkles, Hotel, Ticket as TicketIcon,
   Anchor, Activity, MapPin, Plane, Printer, Pencil, Trash2,
   Car, Users, Utensils, Phone, Coffee, Moon, Sun, Sparkle, HardDrive,
-  Database, Store, Ban, Undo2,
+  Database, Store, Ban, Undo2, Power,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
@@ -327,6 +327,30 @@ export default function TicketsPage() {
   const [portals,       setPortals]       = useState<Portal[]>([])
   const [portalsLoaded, setPortalsLoaded] = useState(false)
 
+  /**
+   * Direct ticket issuing — Accounts out of the loop entirely.
+   *
+   * When this is on, neither the P&L payment gate (G2) nor the ticket approval
+   * gate (G4) stands between a ticket and its Purchase button. Starts false and
+   * only ever relaxes once the answer is back, so a slow or failed read leaves
+   * the page exactly as strict as it has always been rather than briefly
+   * offering a button the server would refuse.
+   */
+  const [directIssue, setDirectIssue] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetch('/api/settings/ticket-direct-issue')
+      .then(r => r.json())
+      .then(json => { if (!cancelled && json.success) setDirectIssue(Boolean(json.data?.directIssue)) })
+      // Unreachable means "assume the gates are up" — the purchase route reads
+      // the same switch itself, so nothing is lost but a disabled button.
+      .catch(() => { /* silent — the strict default already holds */ })
+
+    return () => { cancelled = true }
+  }, [])
+
   useEffect(() => {
     if (!ref) return
     let cancelled = false
@@ -373,8 +397,22 @@ export default function TicketsPage() {
    * server actually enforces. This copy only decides what the card offers.
    */
   function approvalRequired(t: Ticket | null | undefined): boolean {
-    if (!t || !portalsInUse) return false
+    if (!t || !portalsInUse || directIssue) return false
     return ['TICKETS', 'ATTRACTION', 'OTHER'].includes(effectiveCat(t).toUpperCase())
+  }
+
+  /**
+   * Is the P&L payment gate (G2) satisfied for this ticket?
+   *
+   * A ticket costed against a P&L line waits for Accounts to confirm that
+   * line's payment; one with no line to wait on never did. Direct issuing
+   * releases both, which is the whole point of the switch.
+   *
+   * Written once and used everywhere the gate is drawn, so the three ticket
+   * sections of this page cannot end up applying different rules.
+   */
+  function paymentOk(t: Ticket): boolean {
+    return directIssue || !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
   }
 
   /**
@@ -1154,7 +1192,7 @@ export default function TicketsPage() {
               {inactive.map(t => {
                 const cat   = effectiveCat(t)
                 const meta  = CAT_META[cat] ?? CAT_META.OTHER
-                const payOk = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
+                const payOk = paymentOk(t)
                 const MealIc = mealIcon(t.type)
 
                 return (
@@ -1260,18 +1298,36 @@ export default function TicketsPage() {
 
         {/* ── Info cards ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl">
-            <AlertCircle className="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
-            <div className="text-sm">
-              <p className="font-semibold text-blue-800">Rule G2 — Payment Gate</p>
-              <p className="text-blue-600 mt-0.5">Tickets can only be purchased after the linked P&L payment is confirmed by Accounts with a ref number.</p>
+          {/* The two gates, or the notice that they are down. Whichever mode
+              the system is in, the page says so plainly — a Purchase button
+              that opens for a reason nobody on the floor can see is how the
+              rule gets forgotten while it is still switched off. */}
+          {directIssue ? (
+            <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+              <Power className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
+              <div className="text-sm">
+                <p className="font-semibold text-amber-800">Direct Issuing — Accounts approval is OFF</p>
+                <p className="text-amber-700 mt-0.5">Tickets can be purchased without waiting for the P&L payment (G2) or an Accounts approval (G4). Upload the receipt as usual — it is the only record Accounts will have.</p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-start gap-3 p-4 bg-blue-50 border border-blue-100 rounded-xl">
+              <AlertCircle className="w-5 h-5 text-blue-500 mt-0.5 flex-shrink-0" />
+              <div className="text-sm">
+                <p className="font-semibold text-blue-800">Rule G2 — Payment Gate</p>
+                <p className="text-blue-600 mt-0.5">Tickets can only be purchased after the linked P&L payment is confirmed by Accounts with a ref number.</p>
+              </div>
+            </div>
+          )}
           <div className="flex items-start gap-3 p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
             <CreditCard className="w-5 h-5 text-emerald-500 mt-0.5 flex-shrink-0" />
             <div className="text-sm">
               <p className="font-semibold text-emerald-800">Flow</p>
-              <p className="text-emerald-600 mt-0.5">AC uploads P&L → GT presses “Generate Tickets from P&L” → GT activates (with optional ticket scan) → AC confirms payment → GT purchases & uploads receipt.</p>
+              <p className="text-emerald-600 mt-0.5">
+                {directIssue
+                  ? 'AC uploads P&L → GT presses “Generate Tickets from P&L” → GT activates (with optional ticket scan) → GT purchases & uploads receipt.'
+                  : 'AC uploads P&L → GT presses “Generate Tickets from P&L” → GT activates (with optional ticket scan) → AC confirms payment → GT purchases & uploads receipt.'}
+              </p>
             </div>
           </div>
         </div>
@@ -1285,7 +1341,7 @@ export default function TicketsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {mealTickets.map(t => {
                 const MealIc = mealIcon(t.type) ?? Utensils
-                const payOk  = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
+                const payOk  = paymentOk(t)
                 return (
                   <Card key={t.id} className="p-4">
                     <div className="flex items-start gap-3">
@@ -1346,7 +1402,7 @@ export default function TicketsPage() {
             <div className="space-y-3">
               {otherActive.map(t => {
                 const cat    = effectiveCat(t)
-                const payOk  = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
+                const payOk  = paymentOk(t)
                 const MealIc = mealIcon(t.type)
                 return (
                   <Card key={t.id} className={`p-5 transition-colors ${selectedIds.has(t.id) ? 'ring-2 ring-brand-300 bg-brand-50' : ''}`}>
@@ -1467,10 +1523,16 @@ export default function TicketsPage() {
                             {/* Ask Accounts before buying. They approve paying
                                 the portal above and send the money; the
                                 Purchase button opens only after that. */}
+                            {/* Under direct issuing this panel is gone — there
+                                is nothing to ask. A ticket that was already
+                                mid-request when the switch was flipped keeps
+                                it on screen, read-only, so Accounts' answer
+                                stays visible instead of silently vanishing
+                                from a request they may already have paid. */}
                             <TicketApprovalPanel
                               ticket={t}
-                              required={approvalRequired(t)}
-                              canSubmit={canPurchase}
+                              required={approvalRequired(t) || Boolean(t.approvalStatus)}
+                              canSubmit={canPurchase && !directIssue}
                               onChanged={load}
                             />
                           </div>

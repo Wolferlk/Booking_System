@@ -124,6 +124,28 @@ export default function TETicketsPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  /**
+   * Direct ticket issuing — the same switch the booking's own tickets page
+   * reads. Both Accounts gates (the P&L payment and the approval queue) stand
+   * down while it is on, and this screen has to agree with that one or the
+   * Purchase button means different things depending on where you clicked it.
+   *
+   * Starts false and only relaxes once the answer is back, so a slow read
+   * leaves the page as strict as it has always been.
+   */
+  const [directIssue, setDirectIssue] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    fetch('/api/settings/ticket-direct-issue')
+      .then(r => r.json())
+      .then(json => { if (!cancelled && json.success) setDirectIssue(Boolean(json.data?.directIssue)) })
+      .catch(() => { /* silent — the strict default already holds, and the server re-checks */ })
+
+    return () => { cancelled = true }
+  }, [])
+
   const load = useCallback(async () => {
     try {
       const params = new URLSearchParams()
@@ -382,7 +404,7 @@ export default function TETicketsPage() {
           <div className="space-y-3">
             {filtered.map(t => {
               const cat   = t.pnlLine?.category ?? 'OTHER'
-              const payOk = !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
+              const payOk = directIssue || !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
               const isActive   = t.activated
               const isPurchased = t.status === 'PURCHASED' || t.status === 'PAID'
 
@@ -529,7 +551,12 @@ export default function TETicketsPage() {
                         // never went through the queue (Sri Lanka, and any
                         // category that is not bought through a portal) are
                         // unaffected — they have no approval status at all.
-                        const waiting = t.approvalStatus !== null && t.approvalStatus !== 'paid'
+                        // Under direct issuing there is no queue to wait on,
+                        // including for a request raised before the switch was
+                        // flipped — the purchase route stopped checking it, so
+                        // leaving the button greyed out here would block a
+                        // ticket the server would happily let through.
+                        const waiting = !directIssue && t.approvalStatus !== null && t.approvalStatus !== 'paid'
                         const ok = payOk && !waiting
 
                         return (

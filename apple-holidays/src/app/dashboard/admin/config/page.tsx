@@ -34,6 +34,10 @@ interface Settings {
   ai_pnl_auto_classify?: string
   onedrive_new_files_only?: string
   ext_pnl_edit_enabled?: string
+  // Ticket issuing without Accounts — stands down the G2 payment gate and the
+  // G4 approval queue. Shared with the Accounts system, which reads this same
+  // row to know its ticket queue has gone quiet.
+  ticket_direct_issue?: string
   // Driver Log (Sri Lanka) advance sheet
   driver_log_tour_advance_pct?: string
   driver_log_fuel_advance_pct?: string
@@ -347,6 +351,9 @@ export default function ConfigPage() {
   const onedriveNewOnly     = settings.onedrive_new_files_only === 'true'
   // Accounts PNL editing — default OFF (view-only) unless explicitly enabled
   const extPnlEditEnabled   = settings.ext_pnl_edit_enabled === 'true'
+  // Direct ticket issuing — default OFF, so both Accounts gates stand unless
+  // somebody with the critical password has deliberately taken them down.
+  const ticketDirectIssue   = settings.ticket_direct_issue === 'true'
   // Driver Log (Sri Lanka) advance sheet — percentages default 100%, auto-send OFF
   const driverLogTourPct    = settings.driver_log_tour_advance_pct ?? '100'
   const driverLogFuelPct    = settings.driver_log_fuel_advance_pct ?? '100'
@@ -526,6 +533,92 @@ export default function ConfigPage() {
             <div className="flex items-start gap-2 text-xs text-slate-400">
               <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
               <p>This only affects the live Accounts PNL panel on each booking&apos;s P&amp;L page. Editing is still additionally restricted to Accounts, Booking Team, and Admin roles.</p>
+            </div>
+          </CardBody>
+        </Card>
+
+        {/* ── Direct Ticket Issuing — Accounts out of the loop ── */}
+        <Card>
+          <CardHeader>
+            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <Ticket className="w-4 h-4 text-slate-400" /> Ticket Issuing &amp; Accounts Approval
+            </h3>
+          </CardHeader>
+          <CardBody className="p-5 space-y-4">
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Normally a ticket waits on two answers from Accounts before it can be bought: the
+              P&amp;L line it costs against has to be paid (<span className="font-semibold">G2</span>),
+              and on Malaysia, Singapore and Vietnam the ticket itself has to be submitted, approved
+              and the portal paid (<span className="font-semibold">G4</span>). Switch this on and
+              both stand down — the ground team purchases straight away, and the Accounts ticket
+              approval queue stops expecting anything from OPS.
+            </p>
+
+            <div className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${ticketDirectIssue ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-200'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${ticketDirectIssue ? 'bg-amber-100' : 'bg-slate-100'}`}>
+                  <Ticket className={`w-4 h-4 ${ticketDirectIssue ? 'text-amber-600' : 'text-slate-400'}`} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Issue Tickets Without Accounts Approval</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {ticketDirectIssue
+                      ? 'ON — Purchase is open with no P&L payment confirmation and no approval request. Receipts are the only record Accounts will get.'
+                      : 'OFF (default) — tickets wait for the P&L payment (G2) and, on MY/SG/VN, for Accounts to approve and pay the portal (G4).'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className={`text-xs font-semibold ${ticketDirectIssue ? 'text-amber-600' : 'text-slate-400'}`}>
+                  {ticketDirectIssue ? 'ON' : 'OFF'}
+                </span>
+                <button
+                  disabled={saving === 'ticket_direct_issue' || !criticalPassword.trim()}
+                  onClick={() => saveProtectedSetting('ticket_direct_issue', ticketDirectIssue ? 'false' : 'true')}
+                  className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed ${ticketDirectIssue ? 'bg-amber-500' : 'bg-slate-300'}`}
+                >
+                  {saving === 'ticket_direct_issue' && (
+                    <Loader2 className="absolute inset-0 m-auto w-4 h-4 text-white animate-spin" />
+                  )}
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${ticketDirectIssue ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* This switch releases money, so it is locked behind the same
+                password as the other critical services. The field is repeated
+                here rather than only under Automation below, so turning the
+                gates off is never a single stray click on a scrolled page. */}
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5" />
+                Critical Services Password
+              </p>
+              <div className="relative">
+                <input
+                  type={showCriticalPassword ? 'text' : 'password'}
+                  value={criticalPassword}
+                  onChange={e => setCriticalPassword(e.target.value)}
+                  placeholder="Enter password to change this switch"
+                  className="w-full pr-10 px-3 py-2.5 text-sm rounded-lg border border-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-300 focus:border-amber-400 transition-colors bg-white"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCriticalPassword(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  {showCriticalPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 text-xs text-slate-400">
+              <Power className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <p>
+                Requests already sitting with Accounts are left exactly as they are — nothing is
+                cancelled or rewritten, and switching back off puts the queue back where it was.
+              </p>
             </div>
           </CardBody>
         </Card>
