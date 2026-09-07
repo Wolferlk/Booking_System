@@ -47,22 +47,102 @@ export async function getGraphToken(): Promise<string> {
 
 // ── Generic Graph fetch ───────────────────────────────────────────────────────
 
-export async function graphFetch<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
-  const token = await getGraphToken()
-  const url   = path.startsWith('http') ? path : `${GRAPH_BASE}${path}`
-  const res   = await fetch(url, {
-    ...opts,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-      ...(opts.headers ?? {}),
-    },
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Graph API ${res.status} at ${url}: ${text}`)
+/**
+ * Statuses that mean "we did not do this — come back later", and nothing else.
+ *
+ *   429 — throttled. Graph always sends `Retry-After` with it.
+ *   503 — the service behind the request is overloaded. Against a workbook this
+ *         arrives as `FileOpenHostServiceUnavailable`, which is SharePoint's
+ *         file-open host declining to open a busy file. It is transient: the
+ *         same call succeeds seconds later.
+ *   509 — bandwidth ceiling, same contract.
+ *
+ * Deliberately NOT 500, 502 or 504. Those can be returned *after* the work was
+ * done, and this client is used to append and delete rows in a live workbook —
+ * a retried delete takes a second row out, and nothing puts it back.
+ */
+const RETRYABLE = new Set([429, 503, 509])
+
+/** How long Graph asked us to wait, in ms. `Retry-After` is seconds or a date. */
+function retryAfterMs(res: Response, attempt: number): number {
+  const header = res.headers.get('retry-after')
+
+  if (header) {
+    const seconds = Number(header)
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, MAX_BACKOFF_MS)
+    const at = Date.parse(header)
+    if (!Number.isNaN(at)) return Math.min(Math.max(at - Date.now(), 0), MAX_BACKOFF_MS)
   }
-  return res.json() as Promise<T>
+
+  // No header: exponential, with jitter so a burst of parallel calls that were
+  // all throttled together does not come back all together.
+  const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS)
+  return base / 2 + Math.random() * (base / 2)
+}
+
+const MAX_BACKOFF_MS = 20_000
+const MAX_ATTEMPTS   = 4
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+/**
+ * A request that must never be replayed, however Graph answers it.
+ *
+ * `POST …/range/delete` shifts every row below the target up by one. Sent twice
+ * it removes two rows, and the second one is a line of the team's that nothing
+ * in this system knows was ever there. One 429 is not worth that risk, so these
+ * fail on the first refusal and let the caller decide.
+ */
+const isDestructive = (url: string) => /\/(delete|clear)(\?|$)/i.test(url)
+
+/**
+ * Call Graph, retrying only the answers that explicitly mean "not done, try
+ * again".
+ *
+ * Before this, a single transient 503 from SharePoint was a hard failure
+ * everywhere it happened: rows marked FAILED and left for a human to retry, a
+ * sweep downgraded to PARTIAL, and "Prepare workbook" answering 502 because the
+ * very first call it makes — listing the worksheets — happened to land while the
+ * file-open host was busy.
+ */
+export async function graphFetch<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
+  const url = path.startsWith('http') ? path : `${GRAPH_BASE}${path}`
+
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    // Fetched inside the loop: a retry after a long backoff may be reaching for
+    // a token that has since expired.
+    const token = await getGraphToken()
+
+    const res = await fetch(url, {
+      ...opts,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        ...(opts.headers ?? {}),
+      },
+    })
+
+    if (res.ok) return res.json() as Promise<T>
+
+    const text = await res.text()
+    lastError  = new Error(`Graph API ${res.status} at ${url}: ${text}`)
+
+    const mayRetry = RETRYABLE.has(res.status)
+      && !isDestructive(url)
+      && attempt < MAX_ATTEMPTS - 1
+    if (!mayRetry) throw lastError
+
+    const wait = retryAfterMs(res, attempt)
+    console.warn(
+      `[Graph] ${res.status} on ${url.replace(GRAPH_BASE, '')} — retrying in ${Math.round(wait)}ms `
+      + `(attempt ${attempt + 1}/${MAX_ATTEMPTS})`,
+    )
+    await sleep(wait)
+  }
+
+  throw lastError ?? new Error(`Graph API request failed at ${url}`)
 }
 
 // ── Drive helpers ─────────────────────────────────────────────────────────────
