@@ -143,21 +143,31 @@ export default function QueryMonitorPage() {
   }
 
   /**
-   * Start a sweep and watch it, rather than sitting on the request until it
-   * answers.
+   * Start a sweep, confirm it started, then let go of the request.
    *
-   * A sweep reads nine mailboxes and runs for well over two minutes. The
-   * gateway in front of this app gives up long before that and returns a 504,
-   * so waiting for the response could only ever produce one of two things: a
-   * timeout dressed up as a failure, or — for the rare fast sweep — a result.
-   * The work itself was never the problem; it completes and writes its rows
-   * either way.
+   * A sweep reads nine mailboxes and runs for well over two minutes. The gateway
+   * in front of this app gives up around the first minute and answers 504, so
+   * holding the request open could only ever end one of two ways: a timeout
+   * dressed up as a failure, or — for the rare fast sweep — a result. The work
+   * itself was never in question. It completes and writes its rows regardless of
+   * what the browser is told, which is exactly what the Run Log shows: sweeps
+   * finishing SUCCESS at the same minutes the console logged 504s.
    *
-   * So the request is fired and deliberately not waited on. The screen switches
-   * to watching the run lock, which is what the sweep actually holds, and the
-   * outcome is read from the run record when that clears. The only answers worth
-   * catching here are the immediate ones: a refusal, or a sweep short enough to
-   * have already finished.
+   * So the connection is dropped on purpose, from this end, as soon as the sweep
+   * is known to be under way — and "under way" is not a guess. The sweep takes a
+   * run lock the moment it starts, and the settings endpoint reports whether
+   * that lock is held. Once it is, the request has served its whole purpose and
+   * is aborted: the sweep carries on server-side, the browser is not waiting on
+   * anything, and the gateway never gets the chance to time a request out that
+   * nobody wanted an answer to.
+   *
+   * That is what takes the 504 out of the console rather than merely out of the
+   * toast. If the lock never appears the request is left alone — an unconfirmed
+   * sweep is one we must not abandon quietly — and the old timeout handling
+   * covers it.
+   *
+   * The outcome comes from the run record when the lock clears. See the watcher
+   * effect above.
    */
   function runNow() {
     watchingSweep.current = true
@@ -165,18 +175,25 @@ export default function QueryMonitorPage() {
     setRunning(true)
     toast.info('Sweep started — this takes a couple of minutes. Watching it…')
 
+    const controller = new AbortController()
+    let released = false
+
     void (async () => {
       try {
         const res = await fetch('/api/query-monitor/run', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    '{}',
+          signal:  controller.signal,
         })
         const d = await readJson(res)
 
-        // Timed out at the gateway: expected, and says nothing about the sweep.
-        // The watcher above reports it properly when the lock clears.
+        // Timed out at the gateway anyway — the lock was never confirmed in
+        // time to let go cleanly. Says nothing about the sweep; the watcher
+        // reports it properly when the lock clears.
         if (d.timedOut) return
 
-        // Refused outright — no lock was taken, so nothing will ever clear one.
+        // Refused outright: no lock was taken, so nothing will ever clear one.
         if (!d.success) {
           watchingSweep.current = false
           toast.error(d.error)
@@ -184,8 +201,9 @@ export default function QueryMonitorPage() {
           return
         }
 
-        // Fast enough to answer. Let the watcher speak if it saw the lock;
-        // otherwise the sweep was over before the first poll, so report it here.
+        // Fast enough to answer before we let go. If the watcher saw the lock it
+        // will do the reporting; otherwise the sweep was over almost at once and
+        // there is nothing left to watch.
         if (!sawSweepStart.current) {
           watchingSweep.current = false
           setRunning(false)
@@ -195,14 +213,37 @@ export default function QueryMonitorPage() {
         }
         await loadSettings()
       } catch {
-        // A dropped connection is the same story as a 504 — the sweep is on the
-        // server and the watcher is the thing that knows how it ended.
+        // Aborted by us once the sweep was confirmed, or the connection dropped.
+        // Either way the sweep is on the server and the watcher owns the outcome.
       }
     })()
 
-    // Confirm the lock is held sooner than the 5-second poll would, so a sweep
-    // that is refused or never starts does not leave the header claiming one is.
-    setTimeout(() => { void loadSettings() }, 2000)
+    /**
+     * Watch for the run lock, and hang up as soon as it is there.
+     *
+     * Given up on after `CONFIRM_TRIES` — a sweep that has not taken a lock in
+     * that time either has not started or has already finished, and in neither
+     * case may the request be thrown away on an assumption.
+     */
+    const CONFIRM_EVERY = 1500
+    const CONFIRM_TRIES = 12
+
+    let tries = 0
+    const confirm = setInterval(() => {
+      tries += 1
+
+      if (sawSweepStart.current && !released) {
+        released = true
+        controller.abort()
+        clearInterval(confirm)
+        return
+      }
+      if (tries >= CONFIRM_TRIES || !watchingSweep.current) {
+        clearInterval(confirm)
+        return
+      }
+      void loadSettings()
+    }, CONFIRM_EVERY)
   }
 
   async function syncNow() {
