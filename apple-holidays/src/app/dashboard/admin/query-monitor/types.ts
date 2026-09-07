@@ -199,6 +199,9 @@ export interface QmConfig {
   /** Keep an append-only, hand-editable copy of the query tab beside it. */
   manualMirrorEnabled: boolean
   manualSheetName:     string
+  /** The same, for the all-mail ledger. */
+  allMailsMirrorEnabled:   boolean
+  allMailsManualSheetName: string
   /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
   startDate:         string
   backupEnabled:     boolean

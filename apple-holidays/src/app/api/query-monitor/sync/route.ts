@@ -53,11 +53,18 @@ export async function POST() {
         + (mirror.locked > 0 ? `, ${mirror.locked} row(s) you have coloured left alone` : '')
       : ''
 
+  const ledger = result.allMails
+  const ledgerNote = !ledger ? ''
+    : ledger.error ? ` — "${ledger.tab}" not updated: ${ledger.error}`
+    : ledger.appended > 0 ? ` — "${ledger.tab}": ${ledger.appended} copied`
+    : ''
+
   return buildApiSuccess(
     result,
     `${result.appended} row(s) appended, ${result.updated} updated`
     + (result.failed ? `, ${result.failed} failed` : '')
     + backupNote
-    + mirrorNote,
+    + mirrorNote
+    + ledgerNote,
   )
 }

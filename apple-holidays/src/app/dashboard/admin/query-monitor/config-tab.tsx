@@ -150,6 +150,12 @@ function ScheduleCard({
           description={`Copies every query into "${draft.manualSheetName}" once and then leaves it alone — type in it, add your own lines, recolour a row and none of it is written over. Only rows that are new to that tab are ever added.`}
         />
         <Toggle
+          checked={draft.allMailsMirrorEnabled}
+          onChange={v => save({ allMailsMirrorEnabled: v })}
+          label="Keep a hand-editable copy of the all-mail tab"
+          description={`Copies every mail into "${draft.allMailsManualSheetName}" once and then leaves it alone. The all-mail tab itself is rewritten whole each sweep, so this is the one to type in — and a line you delete here stays deleted.`}
+        />
+        <Toggle
           checked={draft.dailyStatsAutoWrite}
           onChange={v => save({ dailyStatsAutoWrite: v })}
           label="Rewrite the daily mail counts each sweep"
@@ -224,6 +230,19 @@ function ScheduleCard({
               onBlur={() => draft.manualSheetName.trim()
                 && draft.manualSheetName !== config?.manualSheetName
                 && save({ manualSheetName: draft.manualSheetName })}
+            />
+          </Field>
+          <Field
+            label="Hand-editable all-mail copy"
+            hint="Append-only. Rows are never rewritten, hand-added lines are never removed, and a line you delete is never put back."
+          >
+            <input
+              className={inputCls}
+              value={draft.allMailsManualSheetName}
+              onChange={e => setDraft({ ...draft, allMailsManualSheetName: e.target.value })}
+              onBlur={() => draft.allMailsManualSheetName.trim()
+                && draft.allMailsManualSheetName !== config?.allMailsManualSheetName
+                && save({ allMailsManualSheetName: draft.allMailsManualSheetName })}
             />
           </Field>
           <Field label="All-mail tab" hint="One row per mail, unfiltered. Rewritten in full each time — nothing on it is hand-edited.">

@@ -242,6 +242,54 @@ export function buildAllMailsRow(
  * two tables have drifted apart — they are deliberately not related by a foreign
  * key, because the log has to be able to hold mail no entry will ever exist for.
  */
+/**
+ * Build rows for a named set of log entries, with the same joins the report does.
+ *
+ * The report answers "what does the whole window look like right now" and is
+ * rebuilt from scratch each time, which is right for a tab that is cleared and
+ * rewritten. The hand-editable mirror asks the opposite question — "what has
+ * this handful of mails never been written as" — and must not pay for, or be
+ * limited by, a window it does not use.
+ *
+ * The joins are the ones that matter and are kept identical on purpose: a mail
+ * reads the entry it became, and a chaser reads the thread's root, so the two
+ * tabs can never describe the same message differently.
+ */
+export async function buildRowsForMails(
+  mails: QueryMonitorMail[],
+): Promise<{ mail: QueryMonitorMail; row: AllMailsRowValues }[]> {
+  if (mails.length === 0) return []
+
+  const cfg   = await getConfig()
+  const rules = await listActiveSenderRules()
+
+  const entries = await prisma.queryMonitorEntry.findMany({
+    where:  { dedupKey: { in: mails.map(m => m.dedupKey) } },
+    select: SOURCE_SELECT,
+  })
+  const byDedupKey = new Map(entries.map(e => [e.dedupKey, e as SourceEntry]))
+
+  // The threads the chasers belong to — fetched even when the root is outside
+  // this batch, which for an append-only mirror is the normal case rather than
+  // the edge one: a chaser is written days after the mail that opened its thread.
+  const rootIds = Array.from(new Set(
+    entries.map(e => e.mergedIntoId).filter((id): id is string => !!id),
+  ))
+  const roots = rootIds.length > 0
+    ? await prisma.queryMonitorEntry.findMany({ where: { id: { in: rootIds } }, select: SOURCE_SELECT })
+    : []
+  const byId = new Map<string, SourceEntry>([
+    ...entries.map(e => [e.id, e as SourceEntry] as const),
+    ...roots.map(e => [e.id, e as SourceEntry] as const),
+  ])
+
+  return mails.map(mail => {
+    const entry = byDedupKey.get(mail.dedupKey)
+    const root  = entry?.mergedIntoId ? byId.get(entry.mergedIntoId) : undefined
+    return { mail, row: buildAllMailsRow(mail, entry, root, cfg.slaHours, rules) }
+  })
+}
+
 export async function getAllMailsReport(days?: number): Promise<AllMailsReport> {
   const cfg    = await getConfig()
   const window = Math.min(90, Math.max(1, days ?? cfg.allMailsDays))

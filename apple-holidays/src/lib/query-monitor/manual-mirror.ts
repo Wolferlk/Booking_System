@@ -36,11 +36,12 @@ import { prisma } from '@/lib/prisma'
 import type { QueryMonitorEntry } from '@prisma/client'
 import { getConfig, startDateBoundary } from './config'
 import {
-  QUERY_LAYOUT, appendRows, closeSession, ensureWorksheet, findLastDataRow,
-  layoutFor, normalizeFill, openSession, readRowFill, readValuesRange,
-  resolveSheetRef, setRowFill,
+  ALL_MAILS_LAYOUT, QUERY_LAYOUT, appendCellRows, appendRows, closeSession,
+  ensureWorksheet, findLastDataRow, layoutFor, normalizeFill, openSession,
+  readRowFill, readValuesRange, resolveSheetRef, setRowFill,
   type SheetLayout, type SheetRef, type SheetRowValues,
 } from './sheet'
+import { allMailsRowToCells, buildRowsForMails } from './all-mails'
 
 /** What run.ts lends the mirror so it reads a query the same way the sheet does. */
 export interface MirrorDeps {
@@ -71,6 +72,17 @@ export interface MirrorResult {
 }
 
 const EMPTY = (tab: string): MirrorResult => ({ tab, appended: 0, painted: 0, locked: 0, failed: 0 })
+
+/**
+ * The query sheet's columns, marked as a tab that is only ever appended to.
+ *
+ * The same layout the live sheet uses — it is the same sheet — with one flag
+ * added, and it must be added here rather than on the shared constant: the live
+ * tab is rewritten in place and its bottom is found by scanning our own key
+ * column, which is right for a tab nobody types in. This one is typed in. See
+ * `appendOnly` on SheetLayout for what that changes and why.
+ */
+const MIRROR_LAYOUT: SheetLayout = { ...QUERY_LAYOUT, appendOnly: true }
 
 /**
  * Bring the mirror up to date: append what is missing, recolour what is ours.
@@ -104,7 +116,7 @@ export async function syncManualMirror(
 
   const sessionId = await openSession(ref)
   try {
-    const { created, headerMismatch } = await ensureWorksheet(ref, tab, QUERY_LAYOUT, sessionId)
+    const { created, headerMismatch } = await ensureWorksheet(ref, tab, MIRROR_LAYOUT, sessionId)
     if (created) note('info', `Created the hand-editable "${tab}" tab`)
     if (headerMismatch) {
       return {
@@ -116,7 +128,7 @@ export async function syncManualMirror(
       }
     }
 
-    const layout = await layoutFor(ref, tab, QUERY_LAYOUT)
+    const layout = await layoutFor(ref, tab, MIRROR_LAYOUT)
 
     const result = EMPTY(tab)
     await appendMissingRows(ref, tab, layout, sessionId, cfg, deps, limit, result)
@@ -439,3 +451,145 @@ async function locateRows(
 }
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
+// ── The all-mail mirror ──────────────────────────────────────────────────────
+
+export interface AllMailsMirrorResult {
+  tab:      string
+  appended: number
+  failed:   number
+  skipped?: string
+  error?:   string
+}
+
+/**
+ * The same promise as the query mirror, over the all-mail ledger.
+ *
+ * The app's own "All Mails" tab cannot be the one the team writes in: it is
+ * cleared and laid out again from scratch on every sweep, because a row's
+ * Status, SLA and thread summary all move as replies land. Anything typed into
+ * it is gone within the hour. This tab is the copy that is safe to edit.
+ *
+ * **What makes a deleted line stay deleted.** What gets appended is decided
+ * entirely from `mirrorRow` in the database — never from what is on the tab. A
+ * message that has a row number is one we have written, and it is never a
+ * candidate again: not if the line was edited past recognition, not if it was
+ * deleted this morning, not if the whole tab were cleared. The query mirror can
+ * afford to read its tail back and claim rows it finds there, because a query
+ * row is one per thread and re-finding one is useful. Doing that here would be
+ * the exact mechanism that puts every hand-deleted line back, so it is not done
+ * at all — the tail is read once per pass for one purpose only, to find where
+ * the end of the tab is.
+ *
+ * Beyond that the rules are the query mirror's, for the same reasons: a row is
+ * written once and never rewritten, nothing is ever deleted, and a failure here
+ * can never fail the sweep that called it.
+ */
+export async function syncAllMailsMirror(
+  note: (level: 'info' | 'success' | 'warn' | 'error', msg: string) => void = () => {},
+  limit = 400,
+): Promise<AllMailsMirrorResult> {
+  const cfg = await getConfig()
+  const tab = cfg.allMailsManualSheetName
+
+  if (!cfg.allMailsMirrorEnabled) {
+    return { tab, appended: 0, failed: 0, skipped: 'The all-mail mirror is switched off' }
+  }
+
+  // Writing it onto the ledger the app rewrites would clear the team's edits on
+  // the next sweep — the one outcome this tab exists to prevent.
+  if (tab.trim().toLowerCase() === cfg.allMailsSheetName.trim().toLowerCase()) {
+    return {
+      tab, appended: 0, failed: 0,
+      error: `The mirror and the all-mail ledger are both "${tab}" — set a different name in Configuration`,
+    }
+  }
+
+  let ref: SheetRef
+  try {
+    ref = await resolveSheetRef()
+  } catch (err) {
+    return { tab, appended: 0, failed: 0, error: message(err) }
+  }
+
+  const sessionId = await openSession(ref)
+  try {
+    const { created, headerMismatch } = await ensureWorksheet(ref, tab, ALL_MAILS_LAYOUT, sessionId)
+    if (created) note('info', `Created the hand-editable "${tab}" tab`)
+    if (headerMismatch) {
+      return {
+        tab, appended: 0, failed: 0,
+        error:
+          `"${tab}" holds data under a header that is not the ${ALL_MAILS_LAYOUT.header.length}-column `
+          + 'all-mail layout. Nothing was written — a row appended under a different header would put '
+          + 'every value in the wrong column.',
+      }
+    }
+
+    const layout = await layoutFor(ref, tab, ALL_MAILS_LAYOUT)
+    return await appendMissingMails(ref, tab, layout, sessionId, cfg, note, limit)
+  } catch (err) {
+    return { tab, appended: 0, failed: 0, error: message(err) }
+  } finally {
+    await closeSession(ref, sessionId)
+  }
+}
+
+/**
+ * Copy across every message the mirror has never been given a row for.
+ *
+ * Oldest first, so the tab reads as a ledger: the order mail arrived in, top to
+ * bottom, the same way the app's own all-mail tab is laid out. A batch limit
+ * keeps one sweep's write bounded; the rest go on the next pass, and the
+ * ordering means the backlog drains in the order it was received rather than in
+ * whatever order the database happened to return it.
+ */
+async function appendMissingMails(
+  ref: SheetRef, tab: string, layout: SheetLayout, sessionId: string | null,
+  cfg: Awaited<ReturnType<typeof getConfig>>,
+  note: (level: 'info' | 'success' | 'warn' | 'error', msg: string) => void,
+  limit: number,
+): Promise<AllMailsMirrorResult> {
+  const cutoff = startDateBoundary(cfg.startDate)
+
+  const pending = await prisma.queryMonitorMail.findMany({
+    where: {
+      // The pointer, and only the pointer. See the note on this function's
+      // caller: a message that has a row is never written again.
+      mirrorRow:    null,
+      mirrorStatus: { in: ['PENDING', 'FAILED'] },
+      // The mirror starts where the workbook starts, like every other tab —
+      // mail older than the cut-off is deliberately absent from all of them.
+      ...(cutoff ? { receivedAt: { gte: cutoff } } : {}),
+    },
+    orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
+    take:    limit,
+  })
+  if (pending.length === 0) return { tab, appended: 0, failed: 0 }
+
+  try {
+    const built = await buildRowsForMails(pending)
+    const cells = built.map(({ row }) => allMailsRowToCells(row))
+
+    const result = await appendCellRows(cells, layout, { sessionId, ref, sheetName: tab })
+
+    // Recorded one by one against the message each row was built from, so a row
+    // number always means the line that message is actually on.
+    await Promise.all(built.map(({ mail }, i) =>
+      prisma.queryMonitorMail.update({
+        where: { id: mail.id },
+        data:  { mirrorRow: result.firstRow + i, mirrorStatus: 'SYNCED', mirrorError: null },
+      }),
+    ))
+
+    note('success', `Copied ${result.rows} mail(s) into "${tab}" at rows ${result.firstRow}–${result.lastRow}`)
+    return { tab, appended: result.rows, failed: 0 }
+  } catch (err) {
+    await prisma.queryMonitorMail.updateMany({
+      where: { id: { in: pending.map(m => m.id) } },
+      data:  { mirrorStatus: 'FAILED', mirrorError: message(err).slice(0, 500) },
+    })
+    note('error', `Could not copy ${pending.length} mail(s) into "${tab}": ${message(err)}`)
+    return { tab, appended: 0, failed: pending.length, error: message(err) }
+  }
+}

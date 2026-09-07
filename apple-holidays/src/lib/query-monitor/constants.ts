@@ -86,6 +86,14 @@ export const SETTINGS = {
   manualMirrorEnabled: 'query_monitor_manual_mirror_enabled',
   /** Worksheet tab that hand-editable mirror is written to. */
   manualSheetName:    'query_monitor_manual_sheet_name',
+  /**
+   * The same idea for the all-mail ledger: an append-only copy of it the team
+   * may edit. The app's own All Mails tab is rewritten whole every sweep, so it
+   * can never be the one they type into.
+   */
+  allMailsMirrorEnabled: 'query_monitor_all_mails_mirror_enabled',
+  /** Worksheet tab that all-mail mirror is written to. */
+  allMailsManualSheetName: 'query_monitor_all_mails_manual_sheet_name',
   /** `YYYY-MM-DD` — mail received before this never reaches either workbook. */
   startDate:          'query_monitor_start_date',
   /** Mirror every append and rewrite into a second, standby workbook. */
@@ -179,6 +187,8 @@ export const DEFAULTS = {
   highlightReplied:    'true',
   manualMirrorEnabled: 'true',
   manualSheetName:     'Query Entry Sheet-Manual(Edit)',
+  allMailsMirrorEnabled:   'true',
+  allMailsManualSheetName: 'All Mails-Manual(Edit)',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
   backupSheetUrl:    BACKUP_SHEET_URL,

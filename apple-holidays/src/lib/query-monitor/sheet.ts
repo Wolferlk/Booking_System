@@ -20,6 +20,8 @@
  */
 import { graphFetch, getGraphToken } from '@/lib/graph-client'
 import {
+  ALL_MAILS_FIRST_COLUMN, ALL_MAILS_LAST_COLUMN, ALL_MAILS_NUMBER_FORMATS,
+  ALL_MAILS_SHEET_COLUMNS,
   EXCLUDED_SHEET_COLUMNS, EXCLUDED_SHEET_FIRST_COLUMN, EXCLUDED_SHEET_LAST_COLUMN,
   EXCLUDED_SHEET_NUMBER_FORMATS,
   FROM_COLUMN_INDEX, LEGACY_SHEET_COLUMNS, PREVIOUS_FROM_COLUMN_INDEX,
@@ -164,7 +166,13 @@ export function excludedRowToCells(row: ExcludedRowValues): (string | number)[] 
 /** Where a set of rows is written: which tab, and over which columns. */
 export interface SheetLayout {
   /** Which of the two tabs this describes — the layouts are told apart by it. */
-  kind:          'query' | 'excluded'
+  /**
+   * Which of the tabs this describes. Layouts are told apart by it, and two
+   * behaviours hang off it: only `'query'` is ever realigned (that move belongs
+   * to one specific historical layout), and only `'query'`/`'excluded'` have a
+   * timestamp column the duplicate guards key on.
+   */
+  kind:          'query' | 'excluded' | 'all-mails'
   firstColumn:   string
   lastColumn:    string
   /** Column scanned bottom-up to find the append point — must always be filled. */
@@ -179,6 +187,22 @@ export interface SheetLayout {
    * a field the header has no column for. Absent means "by position, A onwards".
    */
   map?:          readonly number[]
+  /**
+   * This tab is appended to and never rewritten, and the team edits it.
+   *
+   * It changes one thing: how the bottom of the tab is found. Normally that is a
+   * scan of the key column, which is ours and is never blank on a row we wrote.
+   * On a tab the team types in, it can be — somebody clears a date, or pastes a
+   * note into a line — and a key-column scan then reports a bottom *above* their
+   * work, so the next append lands on top of it. That is the one way this system
+   * could destroy something a person typed, and it would look like a row that
+   * simply changed by itself.
+   *
+   * So on these tabs the used range is taken as a floor. Over-reporting the
+   * bottom costs a blank line; under-reporting costs somebody's work, and the
+   * two are not worth trading against each other.
+   */
+  appendOnly?:   boolean
 }
 
 export const QUERY_LAYOUT: SheetLayout = {
@@ -189,6 +213,30 @@ export const QUERY_LAYOUT: SheetLayout = {
   keyIndex:      2,
   header:        SHEET_COLUMNS,
   numberFormats: SHEET_NUMBER_FORMATS,
+}
+
+/**
+ * The all-mail ledger's columns, for the hand-editable mirror of that tab.
+ *
+ * The app's own "All Mails" tab does not use this: it is cleared and rewritten
+ * whole on every sweep by all-mails-sheet.ts, which owns its own Graph calls and
+ * its four header rows. The mirror is appended to instead, one message at a
+ * time and never rewritten, so it wants the ordinary single-header layout every
+ * other appended tab uses.
+ *
+ * Column A (Date) is the key column rather than the subject: every mail has a
+ * date, and on this tab a subject genuinely can be blank — an automated
+ * notification with no subject line is still a row.
+ */
+export const ALL_MAILS_LAYOUT: SheetLayout = {
+  kind:          'all-mails',
+  appendOnly:    true,
+  firstColumn:   ALL_MAILS_FIRST_COLUMN,
+  lastColumn:    ALL_MAILS_LAST_COLUMN,
+  keyColumn:     'A',
+  keyIndex:      0,
+  header:        ALL_MAILS_SHEET_COLUMNS,
+  numberFormats: ALL_MAILS_NUMBER_FORMATS,
 }
 
 export const EXCLUDED_LAYOUT: SheetLayout = {
@@ -620,7 +668,20 @@ export async function findLastDataRow(
   column.values.forEach((cell, i) => {
     if (String(cell?.[0] ?? '').trim() !== '') last = i + 1
   })
+
+  // On a tab the team edits, never report a bottom above anything that is
+  // actually there — see `appendOnly`. The used range knows about every column,
+  // including the ones they filled in themselves.
+  if (layout.appendOnly) return Math.max(last, lastRowOfAddress(used.address))
+
   return last
+}
+
+/** The bottom row of a range address such as `'Query Entry'!A1:AB2057` — 0 if unreadable. */
+function lastRowOfAddress(address: string | undefined): number {
+  const end = String(address ?? '').split('!').pop()?.split(':').pop() ?? ''
+  const row = Number(end.replace(/[^0-9]/g, ''))
+  return Number.isFinite(row) ? row : 0
 }
 
 export async function getSheetInfo(force = false, target: WorkbookTarget = 'primary'): Promise<SheetInfo> {
@@ -726,6 +787,22 @@ export async function appendExcludedRows(
   const sheetName = opts.sheetName ?? cfg.excludedSheetName
   const layout    = opts.layout ?? await layoutFor(ref, sheetName, EXCLUDED_LAYOUT)
   return appendCells(rows.map(excludedRowToCells), layout, { ...opts, ref, sheetName })
+}
+
+/**
+ * Append rows given as raw, layout-ordered cells.
+ *
+ * The two builders above turn a typed row into cells and hand them here. This is
+ * the same thing for a caller that already has cells — the all-mail mirror,
+ * whose rows come from the ledger's own builder rather than from `SheetRowValues`
+ * — so a third tab does not need a fourth copy of the append mechanics.
+ */
+export async function appendCellRows(
+  rows: (string | number)[][],
+  layout: SheetLayout,
+  opts: { sessionId?: string | null; ref?: SheetRef; sheetName: string },
+): Promise<AppendResult> {
+  return appendCells(rows, layout, opts)
 }
 
 /** The shared mechanics: find the append point, PATCH one contiguous block. */
@@ -965,6 +1042,9 @@ export async function prepareWorkbook(
       [cfg.excludedSheetName, EXCLUDED_LAYOUT],
       ...(target === 'primary' && cfg.manualMirrorEnabled
         ? [[cfg.manualSheetName, QUERY_LAYOUT] as const]
+        : []),
+      ...(target === 'primary' && cfg.allMailsMirrorEnabled
+        ? [[cfg.allMailsManualSheetName, ALL_MAILS_LAYOUT] as const]
         : []),
     ] as const
 

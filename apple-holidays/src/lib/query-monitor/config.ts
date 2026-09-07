@@ -54,6 +54,10 @@ export interface QueryMonitorConfig {
   manualMirrorEnabled: boolean
   /** Tab that mirror lives on, in the primary workbook. */
   manualSheetName:     string
+  /** Keep the same kind of append-only, hand-editable copy of the all-mail tab. */
+  allMailsMirrorEnabled:   boolean
+  /** Tab that copy lives on, in the primary workbook. */
+  allMailsManualSheetName: string
   /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
   startDate:         string
   backupEnabled:     boolean
@@ -135,6 +139,9 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     manualMirrorEnabled: bool(SETTINGS.manualMirrorEnabled, DEFAULTS.manualMirrorEnabled),
     manualSheetName:     str(SETTINGS.manualSheetName, DEFAULTS.manualSheetName)
                          || DEFAULTS.manualSheetName,
+    allMailsMirrorEnabled:   bool(SETTINGS.allMailsMirrorEnabled, DEFAULTS.allMailsMirrorEnabled),
+    allMailsManualSheetName: str(SETTINGS.allMailsManualSheetName, DEFAULTS.allMailsManualSheetName)
+                             || DEFAULTS.allMailsManualSheetName,
     startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
     backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
     backupSheetUrl:    str(SETTINGS.backupSheetUrl, DEFAULTS.backupSheetUrl),
@@ -189,6 +196,23 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.allMailsAutoWrite !== undefined) put(SETTINGS.allMailsAutoWrite, !!patch.allMailsAutoWrite)
   if (patch.highlightReplied    !== undefined) put(SETTINGS.highlightReplied,    !!patch.highlightReplied)
   if (patch.manualMirrorEnabled !== undefined) put(SETTINGS.manualMirrorEnabled, !!patch.manualMirrorEnabled)
+  if (patch.allMailsMirrorEnabled !== undefined) put(SETTINGS.allMailsMirrorEnabled, !!patch.allMailsMirrorEnabled)
+  if (patch.allMailsManualSheetName !== undefined) {
+    const tab = String(patch.allMailsManualSheetName).trim()
+    if (tab) {
+      const problem = worksheetNameError(tab)
+      if (problem) throw new Error(`The all-mail mirror tab ${problem}: "${tab}"`)
+
+      // Never the tab the app rewrites whole: the mirror would be cleared on
+      // every sweep, taking the team's edits with it.
+      const live = str_(patch.allMailsSheetName)
+        || (await getSetting(SETTINGS.allMailsSheetName)) || DEFAULTS.allMailsSheetName
+      if (tab.toLowerCase() === live.trim().toLowerCase()) {
+        throw new Error('The all-mail mirror must be a different tab from the all-mail ledger')
+      }
+      put(SETTINGS.allMailsManualSheetName, tab)
+    }
+  }
   if (patch.manualSheetName !== undefined) {
     const tab = String(patch.manualSheetName).trim()
     // Never the query tab itself: the mirror is append-only and would stop the

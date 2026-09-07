@@ -2177,12 +2177,28 @@ model QueryMonitorMail {
   /// daemons, tenant notifications). Such mail exists *only* here.
   skipReason        String?  @db.VarChar(32)
   firstRunId        String?
+  /// ── The hand-editable all-mail mirror ────────────────────────────────────
+  /// Which row of that tab this message was written to, or null for one that
+  /// has never been written. It is set once and never cleared.
+  ///
+  /// That is the whole mechanism behind "a line I deleted stays deleted". The
+  /// mirror decides what to append from this column, not from what is on the
+  /// tab: a message that has a row number is one we have already written, so it
+  /// is never a candidate again — whether the line is still there, has been
+  /// edited beyond recognition, or was deleted by hand this morning. Reading the
+  /// sheet to decide would put every deleted line straight back.
+  mirrorRow         Int?
+  /// PENDING | SYNCED | FAILED | SKIPPED. No DIRTY: a mirror row is never
+  /// rewritten, whatever later happens to the mail or the query behind it.
+  mirrorStatus      String   @default("PENDING")
+  mirrorError       String?  @db.Text
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([receivedAt])
   @@index([skipReason])
   @@index([conversationId])
+  @@index([mirrorStatus])
   @@map("query_monitor_mails")
 }
 

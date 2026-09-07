@@ -47,7 +47,10 @@ import {
   REPLY_TYPE_SHEET_LABEL, responseHours, slaOutcome, threadMailCount,
 } from './row-fields'
 import { recordMailLog, type LoggedMail } from './mail-log'
-import { syncManualMirror, type MirrorResult } from './manual-mirror'
+import {
+  syncAllMailsMirror, syncManualMirror,
+  type AllMailsMirrorResult, type MirrorResult,
+} from './manual-mirror'
 import { exportDailyStatsToSheet } from './daily-stats-sheet'
 import { exportAllMailsToSheet } from './all-mails-sheet'
 import {
@@ -1629,6 +1632,8 @@ export interface SyncResult {
   workbooks: WorkbookSyncResult[]
   /** The hand-editable mirror tab's own pass — see manual-mirror.ts. */
   manual?:   MirrorResult
+  /** The same for the all-mail ledger's hand-editable copy. */
+  allMails?: AllMailsMirrorResult
   /** Nothing was attempted: another write held the lock. Not a failure. */
   skipped?:  boolean
 }
@@ -1725,13 +1730,15 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
     // Last, and on its own terms. The mirror copies rows the live sheet has
     // already accepted, so it has to run after the primary pass; and it must
     // never be able to fail that pass, so it reports rather than throws.
-    const manual = await mirrorPass(log, limit)
+    const manual   = await mirrorPass(log, limit)
+    const allMails = await allMailsMirrorPass(log)
 
     const primary = workbooks[0]
     return {
       appended: primary.appended, updated: primary.updated, failed: primary.failed,
       workbooks,
       ...(manual ? { manual } : {}),
+      ...(allMails ? { allMails } : {}),
     }
   } finally {
     await releaseLock(SETTINGS.syncLock).catch(() => {})
@@ -1775,6 +1782,30 @@ async function mirrorPass(log?: RunLog, limit = 200): Promise<MirrorResult | und
     return result
   } catch (err) {
     log?.add('warn', `Hand-editable mirror skipped: ${err instanceof Error ? err.message : String(err)}`)
+    return undefined
+  }
+}
+
+/**
+ * The all-mail ledger's hand-editable copy, on the same terms as the query one:
+ * it runs last, it reports rather than throws, and it can never fail the write
+ * of the sheets the team actually depends on.
+ *
+ * It needs nothing injected. A query row is assembled from rules that live in
+ * this module, but an all-mail row is built by the ledger itself — one message,
+ * one row — so the mirror reads that builder directly and there is no second
+ * definition to keep in step.
+ */
+async function allMailsMirrorPass(log?: RunLog): Promise<AllMailsMirrorResult | undefined> {
+  const config = await getConfig()
+  if (!config.allMailsMirrorEnabled) return undefined
+
+  try {
+    const result = await syncAllMailsMirror((level, msg) => log?.add(level, msg))
+    if (result.error) log?.add('warn', `All-mail mirror: ${result.error}`)
+    return result
+  } catch (err) {
+    log?.add('warn', `All-mail mirror skipped: ${err instanceof Error ? err.message : String(err)}`)
     return undefined
   }
 }
