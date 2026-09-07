@@ -21,8 +21,12 @@
  *    code; a single blended number would be quietly wrong.
  */
 import { prisma } from '@/lib/prisma'
-import { countryLabel, detectCountryFromRef, detectCountryFromText } from '@/lib/country-detection'
-import { bookingSourceOf, type BookingSource } from '@/lib/booking-source'
+import type { BookingSource } from '@/lib/booking-source'
+import {
+  BOOKING_SELECT, DEAD_STATUSES, UNASSIGNED, channelSplit, countryWhere, daysBetween,
+  inSelectedCountries, isoDate, labelFor, resolveCountry, rollUpByCountry, sumByCurrency, toLine,
+  type BookingLine, type ChannelSplit, type CountryRow, type MoneyByCurrency,
+} from './booking-lines'
 import { computeReadiness, type BookingReadiness } from '@/lib/booking-readiness'
 import {
   RECONFIRM_DUE_DAYS, REASON_META, classifyReconfirm, loadReconfirmDelays,
@@ -39,47 +43,10 @@ import {
   buildReportWindow, previousWindow, zonedDayStart, shiftDate, dateInTz, formatReportDate,
   type ReportPeriod, type ReportWindow,
 } from './report-window'
+import { collectPeriodInsights, finaliseInsights, type PeriodInsights } from './period-insights'
 import type { Prisma } from '@prisma/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-export interface MoneyByCurrency { currency: string; total: number }
-
-export interface ChannelSplit { b2b: number; b2c: number }
-
-export interface CountryRow {
-  country: string
-  label: string
-  bookings: number
-  pax: number
-  b2b: number
-  b2c: number
-}
-
-export interface BookingLine {
-  bookingRef: string
-  agent: string | null
-  source: BookingSource
-  country: string
-  countryLabel: string
-  status: string
-  arrivalDate: string
-  departureDate: string
-  pax: number
-  paxAdults: number
-  paxChildren: number
-  paxInfants: number
-  currency: string
-  quotedTotal: number | null
-  destination: string | null
-  createdAt: string
-  /**
-   * Accommodation-only booking — see `src/lib/hotel-only.ts`. Carried on every
-   * line so the readiness table can explain an all-N/A row, and so a reader
-   * scanning the mail can tell a room-only sale from a tour at a glance.
-   */
-  hotelOnly: boolean
-}
 
 export interface TourLine extends BookingLine {
   /** 1-based day of the tour that the report date falls on. */
@@ -418,6 +385,15 @@ export interface ReportData {
   reconfirm: ReconfirmSection
   complaints: ComplaintsSection
   upcoming: UpcomingSection
+  /**
+   * Period analytics — trends, movers, delivery, attrition and the derived
+   * action list the weekly and monthly mails are built from.
+   *
+   * Null on a daily report. A day is not a trend: the daily mail is a work list
+   * for the morning it lands, and computing week-shaped analytics for it would
+   * cost four extra queries every night to render nothing.
+   */
+  insights: PeriodInsights | null
 }
 
 export interface CollectOptions {
@@ -437,18 +413,12 @@ export interface CollectOptions {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const UNASSIGNED = 'UNASSIGNED'
-/** Legacy combined value on old rows; reports always split it into SG / MY. */
-const LEGACY_SG_MY = 'SINGAPORE_MALAYSIA'
 /**
  * Cap on rows per detail table. Kept modest so a busy day's email stays under
- * Gmail's ~102 KB clipping threshold — the CSV attachment and the dashboard
- * carry every row, the email carries the readable summary.
+ * Gmail's ~102 KB clipping threshold — the attachment and the dashboard carry
+ * every row, the email carries the readable summary.
  */
 const DEFAULT_MAX_ROWS = 30
-
-/** Statuses that mean "this booking is not happening" — excluded from operational counts. */
-const DEAD_STATUSES = ['CANCELLED'] as const
 
 /**
  * How far ahead the readiness section looks: tomorrow plus the two days after
@@ -458,164 +428,6 @@ const DEAD_STATUSES = ['CANCELLED'] as const
 const READINESS_DAYS = 3
 
 const SEVERITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 }
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function labelFor(country: string): string {
-  // "Others" rather than "Unassigned": reports are read by people who want the
-  // rest-of-the-world bucket, not a data-quality label.
-  if (country === UNASSIGNED || country === LEGACY_SG_MY) return 'Others'
-  return countryLabel(country as never)
-}
-
-/**
- * Country a report row is counted under.
- *
- * Singapore and Malaysia are stored separately today, but older rows carry the
- * combined `SINGAPORE_MALAYSIA` value. Reports must never show that combined
- * bucket, so it is resolved to one of the two by booking-ref prefix (SG / MY,
- * the authoritative signal) and, failing that, by the destination text. Anything
- * still unresolved falls into Others rather than being guessed at.
- */
-function resolveCountry(
-  operationCountry: string | null | undefined,
-  bookingRef: string | null | undefined,
-  destination: string | null | undefined,
-): string {
-  const stored = operationCountry ?? UNASSIGNED
-  if (stored !== LEGACY_SG_MY) return stored
-
-  const fromRef = detectCountryFromRef(bookingRef ?? '')
-  if (fromRef === 'SINGAPORE' || fromRef === 'MALAYSIA') return fromRef
-
-  const fromText = detectCountryFromText('', destination ?? '')
-  if (fromText === 'SINGAPORE' || fromText === 'MALAYSIA') return fromText
-
-  return UNASSIGNED
-}
-
-/**
- * The stored values to query for, given the selected report countries.
- * Selecting Singapore or Malaysia must also pull the legacy combined rows in;
- * `resolveCountry` then decides which of the two each one actually belongs to,
- * and `inSelectedCountries` drops the ones that resolved elsewhere.
- */
-function storedCountriesFor(countries: string[]): string[] {
-  const out = new Set(countries)
-  if (countries.some(c => c === 'SINGAPORE' || c === 'MALAYSIA' || c === LEGACY_SG_MY || c === UNASSIGNED)) {
-    out.add(LEGACY_SG_MY)
-  }
-  // A saved schedule may still name the legacy value on its own — treat it as both.
-  if (countries.includes(LEGACY_SG_MY)) { out.add('SINGAPORE'); out.add('MALAYSIA'); out.add(UNASSIGNED) }
-  return Array.from(out)
-}
-
-/** Post-query check against the resolved (split) country. */
-function inSelectedCountries(country: string, countries: string[]): boolean {
-  if (!countries.length) return true
-  if (countries.includes(country)) return true
-  // Legacy-only selection means "the SG/MY desk", whichever side a row resolved to.
-  return countries.includes(LEGACY_SG_MY) && (country === 'SINGAPORE' || country === 'MALAYSIA')
-}
-
-function toNumber(v: Prisma.Decimal | number | null | undefined): number | null {
-  if (v === null || v === undefined) return null
-  return typeof v === 'number' ? v : Number(v)
-}
-
-function isoDate(d: Date | null | undefined): string {
-  return d ? d.toISOString().slice(0, 10) : ''
-}
-
-/** Whole days between two local dates, `to - from`. */
-function daysBetween(from: string, to: string): number {
-  const a = Date.parse(`${from}T00:00:00Z`)
-  const b = Date.parse(`${to}T00:00:00Z`)
-  if (isNaN(a) || isNaN(b)) return 0
-  return Math.round((b - a) / 86_400_000)
-}
-
-/**
- * Roll a set of bookings up by country, keeping the channel split per row.
- * Sorted by booking count so the busiest market leads the table.
- */
-function rollUpByCountry(rows: { country: string; pax: number; source: BookingSource }[]): CountryRow[] {
-  const map = new Map<string, CountryRow>()
-  for (const r of rows) {
-    let entry = map.get(r.country)
-    if (!entry) {
-      entry = { country: r.country, label: labelFor(r.country), bookings: 0, pax: 0, b2b: 0, b2c: 0 }
-      map.set(r.country, entry)
-    }
-    entry.bookings += 1
-    entry.pax += r.pax
-    if (r.source === 'B2C') entry.b2c += 1
-    else entry.b2b += 1
-  }
-  return Array.from(map.values()).sort((a, b) => b.bookings - a.bookings || a.label.localeCompare(b.label))
-}
-
-function channelSplit(rows: { source: BookingSource }[]): ChannelSplit {
-  return {
-    b2b: rows.filter(r => r.source === 'B2B').length,
-    b2c: rows.filter(r => r.source === 'B2C').length,
-  }
-}
-
-/** Prisma `where` fragment restricting to the selected ops countries. */
-function countryWhere(countries: string[]): Prisma.BookingWhereInput | null {
-  if (!countries.length) return null
-  const stored = storedCountriesFor(countries)
-  const named = stored.filter(c => c !== UNASSIGNED) as never[]
-  const clauses: Prisma.BookingWhereInput[] = []
-  if (named.length) clauses.push({ operationCountry: { in: named } })
-  if (stored.includes(UNASSIGNED)) clauses.push({ operationCountry: null })
-  if (!clauses.length) return null
-  return clauses.length === 1 ? clauses[0] : { OR: clauses }
-}
-
-const BOOKING_SELECT = {
-  bookingRef: true,
-  agent: true,
-  status: true,
-  operationCountry: true,
-  arrivalDate: true,
-  departureDate: true,
-  paxAdults: true,
-  paxChildren: true,
-  paxInfants: true,
-  currency: true,
-  quotedTotal: true,
-  tourDestination: true,
-  createdAt: true,
-  hotelOnly: true,
-  noTickets: true,
-} satisfies Prisma.BookingSelect
-
-type RawBooking = Prisma.BookingGetPayload<{ select: typeof BOOKING_SELECT }>
-
-function toLine(b: RawBooking): BookingLine {
-  const country = resolveCountry(b.operationCountry, b.bookingRef, b.tourDestination)
-  return {
-    bookingRef: b.bookingRef,
-    agent: b.agent,
-    source: bookingSourceOf(b.agent),
-    country,
-    countryLabel: labelFor(country),
-    status: b.status,
-    arrivalDate: isoDate(b.arrivalDate),
-    departureDate: isoDate(b.departureDate),
-    pax: b.paxAdults + b.paxChildren + b.paxInfants,
-    paxAdults: b.paxAdults,
-    paxChildren: b.paxChildren,
-    paxInfants: b.paxInfants,
-    currency: b.currency,
-    quotedTotal: toNumber(b.quotedTotal),
-    destination: b.tourDestination,
-    createdAt: b.createdAt.toISOString(),
-    hotelOnly: b.hotelOnly,
-  }
-}
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 
@@ -700,12 +512,6 @@ async function collectCreated(
       .map(e => e.ref)
   }
 
-  const currencyMap = new Map<string, number>()
-  for (const l of lines) {
-    if (l.quotedTotal === null) continue
-    currencyMap.set(l.currency, (currencyMap.get(l.currency) ?? 0) + l.quotedTotal)
-  }
-
   // Spelling variants of one partner ("MMT" / "Make My Trip") are merged here.
   const byAgent = groupByAgent(lines, l => l.agent, l => l.pax)
 
@@ -714,9 +520,7 @@ async function collectCreated(
     pax: lines.reduce((s, l) => s + l.pax, 0),
     channel: channelSplit(lines),
     byCountry: rollUpByCountry(lines),
-    byCurrency: Array.from(currencyMap.entries())
-      .map(([currency, total]) => ({ currency, total }))
-      .sort((a, b) => b.total - a.total),
+    byCurrency: sumByCurrency(lines),
     byAgent: byAgent.slice(0, 10),
     bookings: lines.slice(0, maxRows),
     allBookings: lines,
@@ -1456,6 +1260,27 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     collectUpcoming(window, countries, maxRows),
   ])
 
+  // Only the periodic mails carry analytics, and only they pay for the extra
+  // reads. Never allowed to sink a report: an insight is a nice-to-have, the
+  // sections above are the deliverable.
+  const insights = window.period === 'DAILY'
+    ? null
+    : await collectPeriodInsights({
+        window,
+        countries,
+        counted: created.allBookings,
+        basis: created.basis,
+        complaints,
+      })
+        // The figures parity, the count check, readiness and D-10 already hold
+        // are handed over rather than re-queried, and the action list is derived
+        // from the complete picture.
+        .then(base => finaliseInsights(base, { window, parity, countCheck, readiness, reconfirm }))
+        .catch(err => {
+          console.warn('[Reports] period insights failed:', err instanceof Error ? err.message : err)
+          return null
+        })
+
   return {
     window,
     generatedAt: now.toISOString(),
@@ -1468,7 +1293,11 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     reconfirm,
     complaints,
     upcoming,
+    insights,
   }
 }
 
 export { UNASSIGNED as UNASSIGNED_COUNTRY, labelFor as reportCountryLabel, dateInTz }
+// Re-exported from `booking-lines` so every consumer keeps importing the report
+// vocabulary from one place, wherever the definitions happen to live.
+export type { BookingLine, ChannelSplit, CountryRow, MoneyByCurrency } from './booking-lines'

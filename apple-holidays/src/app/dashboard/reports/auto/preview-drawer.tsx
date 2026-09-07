@@ -93,7 +93,7 @@ function httpFailure(res: Response): string {
 }
 
 /** The window block both report shapes carry — everything the drawer chrome needs. */
-interface PreviewWindow { label: string; fromDate: string; toDate: string; timezone: string }
+interface PreviewWindow { label: string; fromDate: string; toDate: string; timezone: string; period?: string }
 
 interface OpsPreviewData {
   window: PreviewWindow
@@ -225,6 +225,10 @@ export default function PreviewDrawer({
   if (!request) return null
 
   const d = summary?.data
+  // Which attachment this shape would actually send: a daily report carries the
+  // CSV it always has, a weekly or monthly one carries the workbook its mail
+  // moved every booking row into.
+  const period = d?.window.period ?? request.period ?? 'DAILY'
   // Stepping moves a whole period at a time, taken from the range the server
   // actually returned — so one click back on a weekly report is a whole week,
   // with no period arithmetic duplicated on the client.
@@ -314,11 +318,13 @@ export default function PreviewDrawer({
             ))}
           </div>
 
+          {/* Weekly and monthly reviews attach a multi-sheet workbook instead of
+              a CSV — the mail prints no booking rows, so this is where they are. */}
           <a
-            href={`/api/reports/auto/preview?${query}&format=csv`}
+            href={`/api/reports/auto/preview?${query}&format=${period === 'DAILY' ? 'csv' : 'xlsx'}`}
             className="hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
           >
-            <Download className="w-3.5 h-3.5" /> CSV
+            <Download className="w-3.5 h-3.5" /> {period === 'DAILY' ? 'CSV' : 'Excel'}
           </a>
 
           <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors">

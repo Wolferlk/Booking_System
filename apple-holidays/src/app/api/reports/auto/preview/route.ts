@@ -2,7 +2,8 @@
  * Preview a report without sending it.
  *
  * `?format=html` returns the exact email body for the in-page iframe;
- * `?format=csv` returns the attachment; the default returns the structured data
+ * `?format=csv` / `?format=xlsx` return the attachment the send would carry;
+ * the default returns the structured data
  * so the dashboard can render its own summary. All three come from one
  * `buildReport()` call, so the preview cannot drift from what gets mailed.
  */
@@ -109,7 +110,21 @@ export async function GET(req: NextRequest) {
       })
     }
 
-    if (format === 'csv') {
+    // The weekly and monthly reviews attach a workbook rather than a CSV, so
+    // the drawer's download button asks for this instead. Falls through to the
+    // CSV when a report shape has no workbook — a daily one never does.
+    if (format === 'xlsx' && built.workbook) {
+      const { fromDate, toDate } = built.window
+      return new Response(new Uint8Array(built.workbook.buffer), {
+        headers: {
+          'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'Content-Disposition': `attachment; filename="${built.csvName}-${fromDate}-to-${toDate}.xlsx"`,
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
+
+    if (format === 'csv' || format === 'xlsx') {
       const { fromDate, toDate } = built.window
       return new Response(built.csv, {
         headers: {
@@ -129,7 +144,18 @@ export async function GET(req: NextRequest) {
     const data = 'created' in built.data
       ? (() => {
           const { allBookings: _all, allOutside: _outside, ...created } = built.data.created
-          return { ...built.data, created }
+          // The periodic analytics carry their own uncapped row lists for the
+          // workbook — a month's cancellations and every tour that operated.
+          // The drawer renders none of them, so they are dropped here for the
+          // same reason the booking lists are.
+          const insights = built.data.insights
+            ? {
+                ...built.data.insights,
+                cancellations: { ...built.data.insights.cancellations, lines: [] },
+                delivery: { ...built.data.insights.delivery, lines: [] },
+              }
+            : null
+          return { ...built.data, created, insights }
         })()
       : built.data
     return buildApiSuccess({ reportType: shape.reportType, subject: built.subject, data })

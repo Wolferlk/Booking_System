@@ -530,11 +530,16 @@ export default function ScheduleEditor({
             )}
 
             <div className="grid sm:grid-cols-2 gap-2">
+              {/* Weekly and monthly reports print no booking rows at all — the
+                  mail analyses the period and the workbook carries every row on
+                  its own sheet — so the toggle has to say which file it means. */}
               <Toggle
                 checked={draft.attachCsv ?? false}
                 onChange={v => set('attachCsv', v)}
-                label="Attach CSV export"
-                hint="Every row in the report as a spreadsheet"
+                label={draft.period === 'DAILY' ? 'Attach CSV export' : 'Attach Excel workbook'}
+                hint={draft.period === 'DAILY'
+                  ? 'Every row in the report as a spreadsheet'
+                  : 'Every booking, cancellation and complaint on its own explained sheet — this mail prints none of them'}
                 icon={<FileSpreadsheet className="w-3.5 h-3.5 text-slate-400" />}
               />
               <Toggle

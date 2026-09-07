@@ -22,7 +22,8 @@
     "rs:role": "tsx scripts/rs-apply-role.mts",
     "reports:dedupe": "tsx scripts/complaint-dedupe-check.mts",
     "feedbacks:render": "tsx scripts/fb-render-check.mts",
-    "countcheck:render": "tsx scripts/count-check-render.mts"
+    "countcheck:render": "tsx scripts/count-check-render.mts",
+    "period:render": "tsx scripts/period-report-render.mts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

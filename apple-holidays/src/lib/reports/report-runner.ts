@@ -10,6 +10,8 @@ import { randomUUID } from 'crypto'
 import openai, { logAiUsage } from '@/lib/openai'
 import { collectReportData, type ReportData } from './report-data'
 import { renderReportCsv, renderReportEmail, renderReportSubject } from './report-html'
+import { renderPeriodEmail, renderPeriodSubject } from './period-html'
+import { renderReportWorkbook, reportWorkbookSheets } from './report-workbook'
 import { collectReconcileData, type ReconcileReportData } from './reconcile-report-data'
 import {
   renderReconcileCsv, renderReconcileEmail, renderReconcileSubject,
@@ -197,6 +199,134 @@ async function buildNarrative(d: ReportData): Promise<string | null> {
 }
 
 /**
+ * The paragraph at the top of a weekly or monthly review.
+ *
+ * A different job from the daily narrative, and a different prompt. The daily
+ * one says what happened this morning; this one says what *changed* and what it
+ * implies — so it is given the deltas, the movers and the derived action list
+ * rather than the raw section counts, and it is told to lead with direction.
+ *
+ * The model never decides what to do: `deriveActions()` does that from the
+ * figures, reproducibly, and the paragraph is asked to explain the period the
+ * actions sit in. An AI that invented next week's priority would be read as
+ * management having set one.
+ */
+async function buildPeriodNarrative(d: ReportData): Promise<string | null> {
+  const i = d.insights
+  if (!process.env.OPENAI_API_KEY || !i) return null
+
+  const periodWord = d.window.period === 'MONTHLY' ? 'month' : 'week'
+  const facts = {
+    period: PERIOD_LABEL[d.window.period],
+    range: `${d.window.fromDate} to ${d.window.toDate}`,
+    comparedWith: i.comparable ? i.previousLabel : 'not comparable — no baseline on the same basis',
+    intake: {
+      confirmed: i.totals.bookings,
+      previousConfirmed: i.comparable ? i.totals.previousBookings : null,
+      guests: i.totals.pax,
+      b2b: i.totals.channel.b2b,
+      b2c: i.totals.channel.b2c,
+      bookingsPerDay: i.runRate.current,
+      previousBookingsPerDay: i.runRate.previous,
+      busiest: i.busiest ? { when: i.busiest.label, bookings: i.busiest.bookings } : null,
+      quietest: i.quietest ? { when: i.quietest.label, bookings: i.quietest.bookings } : null,
+      avgLeadTimeDays: i.leadTime.avgDays,
+      previousAvgLeadTimeDays: i.leadTime.previousAvgDays,
+      avgPartySize: i.totals.avgPartySize,
+      valueByCurrency: i.totals.byCurrency,
+    },
+    markets: i.countryMovers.slice(0, 6).map(m => ({ market: m.label, now: m.current, before: m.previous, changePct: m.pct })),
+    partners: {
+      top: i.agentMovers.filter(a => a.current > 0).slice(0, 5).map(a => ({ partner: a.label, now: a.current, before: a.previous, changePct: a.pct })),
+      newThisPeriod: i.newAgents,
+      wentQuiet: i.lapsedAgents,
+      topThreeSharePct: i.agentConcentrationPct,
+    },
+    delivered: i.delivery.available
+      ? {
+          toursOperated: i.delivery.toursOperated,
+          guestsCarried: i.delivery.pax,
+          guestDays: i.delivery.guestDays,
+          toursStarted: i.delivery.arrivals,
+          previousToursStarted: i.delivery.previousArrivals,
+        }
+      : null,
+    attrition: i.cancellations.available
+      ? {
+          cancelled: i.cancellations.total,
+          previousCancelled: i.cancellations.previousTotal,
+          ratePct: i.cancellations.ratePct,
+          shortNotice: i.cancellations.shortNotice,
+          topReasons: i.cancellations.topReasons.slice(0, 3),
+        }
+      : null,
+    serviceQuality: {
+      complaints: i.quality.complaints,
+      previousComplaints: i.quality.previousComplaints,
+      per100Tours: i.quality.per100Tours,
+      resolvedPct: i.quality.resolvedPct,
+      recurringOpen: i.quality.recurringOpen,
+      reconfirmCompliancePct: i.quality.reconfirmCompliancePct,
+      unexplainedBreaches: i.quality.unexplainedBreaches,
+    },
+    integrity: {
+      appleSystemConfirmationsMissing: i.integrity.parityMissing,
+      countCheckShortfall: i.integrity.countCheckShort,
+      accountsLedgerNeverSwept: i.integrity.unswept,
+    },
+    forwardBook: { total: d.upcoming.total, next7: d.upcoming.next7, next30: d.upcoming.next30 },
+    actionsAlreadyListedInTheReport: i.actions.map(a => a.title),
+  }
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.25,
+      max_tokens: 330,
+      messages: [
+        {
+          role: 'system',
+          content: `You write the opening paragraph of a ${periodWord}ly business review for the senior management of a `
+            + 'travel operator. Four to five sentences, plain English, no markdown, no bullet points, no greeting, no sign-off. '
+            + `Sentence 1: what the ${periodWord} did on intake and which way it moved against the comparison period — always give both numbers. `
+            + `Sentence 2: where that movement came from — name the market or the partner that drove it, up or down. `
+            + `Sentence 3: what operations actually delivered, and how service quality and attrition read against the volume. `
+            + `Sentence 4: the single most important thing to fix, taken from the actions already listed in the report — restate it in your own words, never invent a new one. `
+            + 'Optionally one more sentence on the forward book. '
+            + 'Only use the numbers given. Never invent a figure, a partner, a market or a cause. '
+            + 'If a comparison is marked not comparable, say the period cannot be compared rather than describing a trend. '
+            + 'Write for someone deciding where to spend attention, not for someone auditing a spreadsheet.',
+        },
+        { role: 'user', content: JSON.stringify(facts) },
+      ],
+    })
+
+    await logAiUsage({ callType: 'report_period_narrative', model: 'gpt-4o-mini', usage: res.usage, source: 'report' })
+    return res.choices[0]?.message?.content?.trim() || null
+  } catch (err) {
+    console.warn('[Reports] period narrative failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
+ * The workbook, or null.
+ *
+ * Never allowed to sink a send: the review is the deliverable and the rows are
+ * the appendix, so a workbook that cannot be written costs the attachment and
+ * the footer chip that advertises it — `renderPeriodEmail` is told it is not
+ * there and says so, rather than promising a file nobody received.
+ */
+function buildWorkbook(data: ReportData): { buffer: Buffer; sheets: string[] } | null {
+  try {
+    return { buffer: renderReportWorkbook(data), sheets: reportWorkbookSheets(data) }
+  } catch (err) {
+    console.warn('[Reports] workbook build failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
  * Why the systems disagree, in plain English.
  *
  * The model is given *only* the counts and the causes `deriveFindings()` already
@@ -301,14 +431,24 @@ export interface BuiltReport {
   counts: ReportRunLog['counts']
   /** True when the window holds nothing worth anyone's inbox. */
   isEmpty: boolean
-  /** Basename for the CSV attachment, without the extension. */
+  /** Basename for the attachment, without the extension. */
   csvName: string
+  /**
+   * The multi-sheet Excel workbook, on the reports that carry one.
+   *
+   * Weekly and monthly reports print no individual bookings — the analysis is
+   * the mail, the rows are this file. A daily report has no workbook: its rows
+   * *are* the mail, and the CSV it has always attached is the right shape for a
+   * single day. Null therefore means "this report is not that kind of report",
+   * not "the workbook failed".
+   */
+  workbook?: { buffer: Buffer; sheets: string[] } | null
 }
 
 type BuildShape = Pick<
   ReportSchedule,
   'name' | 'reportType' | 'period' | 'timezone' | 'countries' | 'sections' | 'subjectPrefix' | 'aiSummary' | 'maxRows'
->
+> & Partial<Pick<ReportSchedule, 'attachCsv'>>
 
 export async function buildReport(
   s: BuildShape,
@@ -332,19 +472,45 @@ async function buildOpsReport(
     maxRows: s.maxRows,
   })
 
-  const narrative = s.aiSummary ? await buildNarrative(data) : null
+  // A week or a month is a business review, not a longer morning: it gets the
+  // analytical layout and the workbook, and prints no individual bookings. The
+  // daily report is untouched. `insights` is the switch rather than the period
+  // alone, because a periodic run whose analytics failed has nothing to review
+  // and is better served by the layout that still works.
+  const periodic = data.window.period !== 'DAILY' && data.insights !== null
+
+  const narrative = s.aiSummary
+    ? periodic ? await buildPeriodNarrative(data) : await buildNarrative(data)
+    : null
+
+  // Built once, here: the mail lists the sheet names it is promising, so a
+  // workbook that could not be written must not be advertised in the footer.
+  const workbook = periodic ? buildWorkbook(data) : null
 
   return {
     data,
-    subject: renderReportSubject(data, { prefix: s.subjectPrefix ?? undefined, testSend: opts.testSend }),
-    html: renderReportEmail(data, {
-      sections: s.sections,
-      narrative,
-      dashboardUrl: DASHBOARD_URL,
-      scheduleName: s.name,
-      testSend: opts.testSend,
-    }),
+    subject: periodic
+      ? renderPeriodSubject(data, { prefix: s.subjectPrefix ?? undefined, testSend: opts.testSend })
+      : renderReportSubject(data, { prefix: s.subjectPrefix ?? undefined, testSend: opts.testSend }),
+    html: periodic
+      ? renderPeriodEmail(data, {
+          sections: s.sections,
+          narrative,
+          dashboardUrl: DASHBOARD_URL,
+          scheduleName: s.name,
+          testSend: opts.testSend,
+          workbookAttached: !!workbook && s.attachCsv !== false,
+          workbookSheets: workbook?.sheets ?? [],
+        })
+      : renderReportEmail(data, {
+          sections: s.sections,
+          narrative,
+          dashboardUrl: DASHBOARD_URL,
+          scheduleName: s.name,
+          testSend: opts.testSend,
+        }),
     csv: renderReportCsv(data),
+    workbook,
     window: { fromDate: data.window.fromDate, toDate: data.window.toDate },
     counts: {
       created: data.created.total,
@@ -353,7 +519,9 @@ async function buildOpsReport(
       upcoming: data.upcoming.total,
     },
     isEmpty: isEmptyOpsReport(data),
-    csvName: 'ops-report',
+    csvName: periodic
+      ? `${data.window.period === 'MONTHLY' ? 'monthly' : 'weekly'}-business-review`
+      : 'ops-report',
   }
 }
 
@@ -521,12 +689,21 @@ export async function runSchedule(s: ReportSchedule, opts: RunScheduleOptions): 
       replyTo: s.replyTo,
       subject: built.subject,
       html: built.html,
+      // A workbook supersedes the CSV rather than joining it: two attachments
+      // holding the same rows in two shapes is how a reader ends up quoting the
+      // wrong one. The toggle still decides *whether* rows are attached.
       attachments: s.attachCsv
-        ? [{
-            name: `${built.csvName}-${built.window.fromDate}-to-${built.window.toDate}.csv`,
-            contentType: 'text/csv',
-            content: built.csv,
-          }]
+        ? [built.workbook
+            ? {
+                name: `${built.csvName}-${built.window.fromDate}-to-${built.window.toDate}.xlsx`,
+                contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                content: built.workbook.buffer,
+              }
+            : {
+                name: `${built.csvName}-${built.window.fromDate}-to-${built.window.toDate}.csv`,
+                contentType: 'text/csv',
+                content: built.csv,
+              }]
         : [],
     })
 

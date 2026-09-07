@@ -226,7 +226,9 @@ function ScheduleCard({
           {s.reportType === 'RECONCILIATION'
             ? <Chip><Globe2 className="w-3 h-3" />All channels</Chip>
             : <Chip><Globe2 className="w-3 h-3" />{countryLabel}</Chip>}
-          {s.attachCsv && <Chip><FileSpreadsheet className="w-3 h-3" />CSV</Chip>}
+          {s.attachCsv && (
+            <Chip><FileSpreadsheet className="w-3 h-3" />{s.period === 'DAILY' ? 'CSV' : 'Excel workbook'}</Chip>
+          )}
           {s.aiSummary && <Chip tone="bg-cyan-50 text-cyan-700 border-cyan-200"><Bot className="w-3 h-3" />AI summary</Chip>}
         </div>
 
