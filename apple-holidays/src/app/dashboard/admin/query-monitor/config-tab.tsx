@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDateTime } from '@/lib/utils'
-import { Field, Toggle, inputCls } from './ui'
+import { Field, Toggle, inputCls, readJson } from './ui'
 import type { QmBackupInfo, QmConfig, QmMailbox, QmRule, QmSheetInfo } from './types'
 
 export default function ConfigTab({
@@ -76,7 +76,7 @@ function ScheduleCard({
       const res = await fetch('/api/query-monitor/settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       onConfigChange(d.data.config)
       setDraft(d.data.config)
@@ -289,7 +289,7 @@ function SheetCard({
     setChecking(true); setError(null)
     try {
       const res = await fetch(`/api/query-monitor/sheet?tail=6${refresh ? '&refresh=1' : ''}`)
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { setError(d.error); setInfo(null); setBackupInfo(null); onSheetChange(null); return }
       setInfo(d.data.info)
       setBackupInfo(d.data.backup ?? null)
@@ -308,7 +308,7 @@ function SheetCard({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sheetUrl: url, sheetName: name, backupSheetUrl: backupUrl, startDate }),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     onConfigChange(d.data.config)
     toast.success('Workbook target saved')
@@ -324,7 +324,7 @@ function SheetCard({
     setPreparing(true)
     try {
       const res = await fetch('/api/query-monitor/prepare', { method: 'POST' })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Workbook ready')
       await check(true)
@@ -352,7 +352,7 @@ function SheetCard({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'adopt' }),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Writing under your header')
       await check(true)
@@ -379,7 +379,7 @@ function SheetCard({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'restore' }),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Layout restored', { duration: 10000 })
       await check(true)
@@ -401,7 +401,7 @@ function SheetCard({
     setMoving(true)
     try {
       const res = await fetch('/api/query-monitor/rebase', { method: 'POST' })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Queued for the new workbook')
       await check(true)
@@ -670,7 +670,7 @@ function DuplicatesCard({
       const res = await fetch('/api/query-monitor/settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       onConfigChange(d.data.config)
       toast.success('Saved')
@@ -689,7 +689,7 @@ function DuplicatesCard({
     setMerging(true)
     try {
       const res = await fetch('/api/query-monitor/dedupe', { method: 'POST' })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Duplicates merged')
     } finally { setMerging(false) }
@@ -782,7 +782,7 @@ function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
     setWriting(true)
     try {
       const res = await fetch('/api/query-monitor/daily-stats', { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Daily counts written', { duration: 8000 })
     } catch (err) {
@@ -794,7 +794,7 @@ function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
     setWritingAll(true)
     try {
       const res = await fetch('/api/query-monitor/all-mails', { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'All-mail tab written', { duration: 10000 })
     } catch (err) {
@@ -806,7 +806,7 @@ function WorkbookExtrasCard({ config }: { config: QmConfig | null }) {
     setPainting(true)
     try {
       const res = await fetch('/api/query-monitor/highlight?target=both', { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Rows recoloured', { duration: 8000 })
     } catch (err) {
@@ -916,7 +916,7 @@ function ExclusionCard({
       const res = await fetch('/api/query-monitor/settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       onConfigChange(d.data.config)
       toast.success('Saved')
@@ -928,7 +928,7 @@ function ExclusionCard({
     setApplying(true)
     try {
       const res = await fetch('/api/query-monitor/reclassify', { method: 'POST' })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Re-checked')
     } finally { setApplying(false) }
@@ -937,7 +937,7 @@ function ExclusionCard({
   async function test() {
     if (!probe.trim()) return
     const res = await fetch(`/api/query-monitor/reclassify?subject=${encodeURIComponent(probe)}`)
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     setVerdict({ kind: d.data.kind, reason: d.data.reason })
   }
@@ -1043,7 +1043,7 @@ function MailboxesCard() {
     setLoading(true)
     try {
       const res = await fetch('/api/query-monitor/mailboxes')
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       setMailboxes(d.data.mailboxes)
     } finally { setLoading(false) }
@@ -1057,7 +1057,7 @@ function MailboxesCard() {
       const res = await fetch(`/api/query-monitor/mailboxes/${id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); await load(); return }
       toast.success(d.message ?? 'Updated')
       await load()
@@ -1069,7 +1069,7 @@ function MailboxesCard() {
     setBusy(mailbox.id)
     try {
       const res = await fetch(`/api/query-monitor/mailboxes/${mailbox.id}`, { method: 'DELETE' })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Removed')
       await load()
@@ -1080,7 +1080,7 @@ function MailboxesCard() {
     const res = await fetch('/api/query-monitor/mailboxes', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     toast.success('Mailbox added — press Test to verify Graph can reach it')
     setAdding(false); setForm({ email: '', displayName: '' })
@@ -1219,7 +1219,7 @@ function SenderRulesCard() {
     setLoading(true)
     try {
       const res = await fetch('/api/query-monitor/rules')
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       setRules(d.data.rules)
       setUnmatched(d.data.unmatchedDomains)
@@ -1232,7 +1232,7 @@ function SenderRulesCard() {
     const res = await fetch(`/api/query-monitor/rules/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); await load(); return }
     await load()
   }
@@ -1240,7 +1240,7 @@ function SenderRulesCard() {
   async function remove(rule: QmRule) {
     if (!confirm(`Delete the rule for ${rule.pattern}?`)) return
     const res = await fetch(`/api/query-monitor/rules/${rule.id}`, { method: 'DELETE' })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     toast.success(d.message ?? 'Deleted')
     await load()
@@ -1251,7 +1251,7 @@ function SenderRulesCard() {
     const res = await fetch('/api/query-monitor/rules', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     toast.success('Rule added')
     setAdding(false)

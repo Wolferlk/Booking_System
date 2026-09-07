@@ -17,7 +17,7 @@ import {
   RefreshCw, Table2, TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { EmptyState, Stat } from './ui'
+import { EmptyState, Stat, readJson } from './ui'
 
 type Scope = 'qm' | 'all'
 type Grain = 'hourly' | 'daily' | 'weekly' | 'monthly'
@@ -115,7 +115,7 @@ export default function AiUsageTab({ refreshKey }: { refreshKey: number }) {
     setLoading(true)
     try {
       const res = await fetch(`/api/query-monitor/ai-usage?scope=${scope}`)
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); setStats(null); return }
       setStats(d.data)
     } catch (err) {
@@ -129,7 +129,7 @@ export default function AiUsageTab({ refreshKey }: { refreshKey: number }) {
     setExporting(true)
     try {
       const res = await fetch(`/api/query-monitor/ai-usage?scope=${scope}`, { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Usage tab rewritten')
     } catch (err) {

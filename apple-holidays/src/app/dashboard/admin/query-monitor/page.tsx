@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { cn, formatDateTime } from '@/lib/utils'
-import { Stat } from './ui'
+import { Stat, readJson } from './ui'
 import QueriesTab from './queries-tab'
 import ConfigTab from './config-tab'
 import LogsTab from './logs-tab'
@@ -48,7 +48,7 @@ export default function QueryMonitorPage() {
 
   const loadSettings = useCallback(async () => {
     const res = await fetch('/api/query-monitor/settings')
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     setConfig(d.data.config)
     setNextRun(d.data.nextRunAt)
@@ -58,7 +58,7 @@ export default function QueryMonitorPage() {
   const loadSheet = useCallback(async () => {
     setSheetError(null)
     const res = await fetch('/api/query-monitor/sheet?tail=0')
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { setSheetError(d.error); setSheet(null); return }
     setSheet(d.data.info)
   }, [])
@@ -79,7 +79,7 @@ export default function QueryMonitorPage() {
       const res = await fetch('/api/query-monitor/settings', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
       })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       setConfig(d.data.config)
       toast.success(okMsg)
@@ -93,7 +93,19 @@ export default function QueryMonitorPage() {
       const res = await fetch('/api/query-monitor/run', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       })
-      const d = await res.json()
+      const d = await readJson(res)
+
+      // The gateway hung up; the sweep did not. Reporting an error here is
+      // simply wrong — the run appears in the Run Log a minute later, finished.
+      // So the screen switches to watching it instead, which is what the polling
+      // effect below already does whenever a sweep is in flight.
+      if (d.timedOut) {
+        setRunning(true)
+        toast.info(d.error, { duration: 10000 })
+        await loadSettings()
+        return
+      }
+
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Sweep finished')
       bump(k => k + 1)
@@ -108,7 +120,7 @@ export default function QueryMonitorPage() {
     setBusy('sync')
     try {
       const res = await fetch('/api/query-monitor/sync', { method: 'POST' })
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Sheet updated')
       bump(k => k + 1)
@@ -128,7 +140,7 @@ export default function QueryMonitorPage() {
     setBusy('retry')
     try {
       const res = await fetch('/api/query-monitor/retry', { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Failed rows retried', { duration: 8000 })
       bump(k => k + 1)
@@ -147,7 +159,7 @@ export default function QueryMonitorPage() {
   async function removeDuplicates() {
     setBusy('dedupe')
     try {
-      const preview = await fetch('/api/query-monitor/sheet-dedupe').then(r => r.json())
+      const preview = await fetch('/api/query-monitor/sheet-dedupe').then(readJson)
       if (!preview.success) { toast.error(preview.error); return }
 
       const count = preview.data.removed as number
@@ -162,7 +174,7 @@ export default function QueryMonitorPage() {
       if (!ok) return
 
       const res = await fetch('/api/query-monitor/sheet-dedupe', { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Duplicate rows removed')
       bump(k => k + 1)

@@ -12,7 +12,7 @@ import {
   Info, Loader2, ScrollText, Sparkles, XCircle,
 } from 'lucide-react'
 import { cn, formatDateTime } from '@/lib/utils'
-import { EmptyState, Stat } from './ui'
+import { EmptyState, Stat, readJson } from './ui'
 import type { QmRun, QmRunStep } from './types'
 
 interface WeekTotals {
@@ -44,7 +44,7 @@ export default function LogsTab({ refreshKey }: { refreshKey: number }) {
     setLoading(true)
     try {
       const res = await fetch('/api/query-monitor/runs?limit=60')
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       setRuns(d.data.runs)
       setWeek(d.data.week)
@@ -99,7 +99,7 @@ function RunRow({ run, open, onToggle }: { run: QmRun; open: boolean; onToggle: 
     if (!open || steps) return
     setLoading(true)
     fetch(`/api/query-monitor/runs/${run.id}`)
-      .then(r => r.json())
+      .then(readJson)
       .then(d => { if (d.success) setSteps(d.data.steps) })
       .finally(() => setLoading(false))
   }, [open, steps, run.id])

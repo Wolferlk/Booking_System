@@ -20,7 +20,7 @@ import {
   CheckCircle2, Clock, Inbox, Loader2, Mails, RefreshCw, Table2, Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { EmptyState, Stat } from './ui'
+import { EmptyState, Stat, readJson } from './ui'
 import type { QmDailyStats } from './types'
 
 /** Two series, one job each: mail that was a query, and mail that was not.
@@ -67,7 +67,7 @@ export default function DailyMailTab({ refreshKey }: { refreshKey: number }) {
     setLoading(true)
     try {
       const res = await fetch(`/api/query-monitor/daily-stats?days=${days}`)
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); setStats(null); return }
       setStats(d.data)
     } catch (err) {
@@ -81,7 +81,7 @@ export default function DailyMailTab({ refreshKey }: { refreshKey: number }) {
     setExporting(true)
     try {
       const res = await fetch(`/api/query-monitor/daily-stats?days=${days}`, { method: 'POST' })
-      const d   = await res.json()
+      const d   = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       toast.success(d.message ?? 'Daily counts written', { duration: 8000 })
     } catch (err) {

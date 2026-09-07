@@ -7,6 +7,91 @@ import {
   CheckCircle2, Clock, AlertTriangle, CloudUpload, CloudOff, Layers, RefreshCw, XCircle, Sparkles, Hand, Filter,
 } from 'lucide-react'
 
+// ── Reading an API answer ────────────────────────────────────────────────────
+
+/**
+ * The envelope every /api/query-monitor route replies with.
+ *
+ * `data` and `error` are deliberately loose. Every tab on this screen reads
+ * `d.data.<whatever the route sends>` straight into its own typed state, and the
+ * route is the thing that decides that shape — tightening it here would only
+ * move forty call sites' worth of casts around without checking anything real.
+ */
+export interface QmReply {
+  success: boolean
+  data:    any // eslint-disable-line
+  error:   string
+  message?: string
+  /**
+   * The gateway gave up waiting, not the job. Set only for a 504/524, where the
+   * work is still going on the server — the caller is expected to say so and
+   * start watching, rather than report a failure that did not happen.
+   */
+  timedOut?: boolean
+}
+
+/**
+ * Read a response as our JSON envelope, whatever actually came back.
+ *
+ * `res.json()` on its own is a trap on this deployment. A sweep runs for two
+ * minutes and the Amplify gateway hangs up at its own limit long before the
+ * function does, answering with an **HTML** error page. Parsing that throws
+ * `Unexpected token '<', "<!DOCTYPE"… is not valid JSON`, which is what the
+ * screen has been showing instead of anything a person could act on — and worse,
+ * it reads as "the sweep failed" when the sweep is running perfectly well and
+ * will finish and write its rows a minute later.
+ *
+ * So the body is taken as text and parsed defensively. A real envelope is
+ * returned untouched. Anything else is turned into one, carrying a message that
+ * says what actually happened.
+ */
+export async function readJson(res: Response): Promise<QmReply> {
+  const body = await res.text().catch(() => '')
+
+  try {
+    const parsed = JSON.parse(body) as QmReply
+    // A route that answered properly, success or failure, is authoritative.
+    if (parsed && typeof parsed === 'object' && 'success' in parsed) return parsed
+  } catch {
+    // Not JSON — fall through and describe the response instead.
+  }
+
+  return { success: false, data: null, ...describeNonJson(res) }
+}
+
+/** What to tell someone looking at a response that is not one of ours. */
+function describeNonJson(res: Response): { error: string; timedOut?: boolean } {
+  // 504 Gateway Timeout / 524 (Cloudflare). The function is still executing:
+  // the runs that produce this appear in the Run Log a minute later, finished
+  // and successful. Saying "failed" here would be untrue.
+  if (res.status === 504 || res.status === 524) {
+    return {
+      timedOut: true,
+      error:
+        'The page stopped waiting after the gateway timed out — the job itself is still '
+        + 'running on the server and has not been lost. Give it a minute and check the Run Log.',
+    }
+  }
+
+  if (res.status === 502 || res.status === 503) {
+    return {
+      error:
+        `The server did not answer (${res.status}). The job may still have started — check the `
+        + 'Run Log before pressing this again, so nothing is written twice.',
+    }
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    return { error: 'Your session has expired. Reload the page and sign in again.' }
+  }
+
+  if (res.status === 413) return { error: 'That request was too large for the server to accept.' }
+
+  return res.ok
+    ? { error: 'The server answered with something that is not JSON. Reload the page and try again.' }
+    : { error: `The server answered ${res.status}${res.statusText ? ` ${res.statusText}` : ''}.` }
+}
+
 // ── Stat tile ────────────────────────────────────────────────────────────────
 
 export function Stat({

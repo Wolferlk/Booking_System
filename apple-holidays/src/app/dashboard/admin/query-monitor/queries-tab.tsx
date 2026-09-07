@@ -13,7 +13,7 @@ import {
 } from 'lucide-react'
 import Modal from '@/components/ui/modal'
 import { cn, formatDate, formatDateTime } from '@/lib/utils'
-import { EmptyState, Field, ReplyStatusBadge, SourceBadge, SyncStatusBadge, inputCls } from './ui'
+import { EmptyState, Field, ReplyStatusBadge, SourceBadge, SyncStatusBadge, inputCls, readJson } from './ui'
 import type { QmEntry, QmStats, QmThread, QmThreadEvent } from './types'
 
 /**
@@ -220,7 +220,7 @@ export default function QueriesTab({
     ;(async () => {
       try {
         const res  = await fetch(`/api/query-monitor/entries/${viewing.id}/thread`)
-        const json = await res.json()
+        const json = await readJson(res)
         if (!cancelled && json.success) setThread(json.data as QmThread)
       } catch {
         // A timeline that will not load must not take the detail panel with it —
@@ -243,7 +243,7 @@ export default function QueriesTab({
       if (assigned) params.set('assigned', assigned)
 
       const res = await fetch(`/api/query-monitor/entries?${params}`)
-      const d = await res.json()
+      const d = await readJson(res)
       if (!d.success) { toast.error(d.error); return }
       setEntries(d.data.entries)
       setTotal(d.data.total)
@@ -293,7 +293,7 @@ export default function QueriesTab({
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ handlerNames: name }),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) {
       toast.error(d.error)
       setEntries(list => list.map(e => (e.id === entry.id ? { ...e, handlerNames: entry.handlerNames } : e)))
@@ -308,7 +308,7 @@ export default function QueriesTab({
     const res = await fetch(`/api/query-monitor/entries/${editing.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     toast.success(d.message ?? 'Saved')
     setEditing(null)
@@ -322,7 +322,7 @@ export default function QueriesTab({
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mailKind: next, excludeReason: 'Moved by hand' }),
     })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     toast.success(next === 'EXCLUDED'
       ? 'Moved to the other-mail tab — it will not reach the query sheet'
@@ -333,7 +333,7 @@ export default function QueriesTab({
   async function remove(entry: QmEntry) {
     if (!confirm(`Delete "${entry.subject.slice(0, 60)}"? It will be picked up again if the mail is still in the lookback window.`)) return
     const res = await fetch(`/api/query-monitor/entries/${entry.id}`, { method: 'DELETE' })
-    const d = await res.json()
+    const d = await readJson(res)
     if (!d.success) { toast.error(d.error); return }
     toast.success('Deleted')
     void load()
