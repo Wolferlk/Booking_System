@@ -47,6 +47,7 @@ import {
   REPLY_TYPE_SHEET_LABEL, responseHours, slaOutcome, threadMailCount,
 } from './row-fields'
 import { recordMailLog, type LoggedMail } from './mail-log'
+import { syncManualMirror, type MirrorResult } from './manual-mirror'
 import { exportDailyStatsToSheet } from './daily-stats-sheet'
 import { exportAllMailsToSheet } from './all-mails-sheet'
 import {
@@ -1626,6 +1627,8 @@ export interface SyncResult {
   failed:    number
   /** Per-workbook detail, live first, standby second when it is switched on. */
   workbooks: WorkbookSyncResult[]
+  /** The hand-editable mirror tab's own pass — see manual-mirror.ts. */
+  manual?:   MirrorResult
   /** Nothing was attempted: another write held the lock. Not a failure. */
   skipped?:  boolean
 }
@@ -1719,13 +1722,60 @@ export async function syncEntriesToSheet(log?: RunLog, limit = 200): Promise<Syn
       workbooks.push(await syncOneWorkbook(BACKUP_PLAN, log, limit))
     }
 
+    // Last, and on its own terms. The mirror copies rows the live sheet has
+    // already accepted, so it has to run after the primary pass; and it must
+    // never be able to fail that pass, so it reports rather than throws.
+    const manual = await mirrorPass(log, limit)
+
     const primary = workbooks[0]
     return {
       appended: primary.appended, updated: primary.updated, failed: primary.failed,
       workbooks,
+      ...(manual ? { manual } : {}),
     }
   } finally {
     await releaseLock(SETTINGS.syncLock).catch(() => {})
+  }
+}
+
+/**
+ * Hand the mirror tab the same three rules the live query sheet is written by,
+ * so the two can never drift: how a query becomes a row, which identities that
+ * row answers to, and what colour it should be wearing.
+ *
+ * Injected rather than imported the other way round, for two reasons. The mirror
+ * must not be able to import this module — it is called from inside it — and,
+ * more to the point, a mirror that built its own rows would be a second
+ * definition of what a query looks like, quietly diverging from the sheet it is
+ * supposed to be a copy of.
+ *
+ * Never throws, whatever happens inside. A tab the team keeps as a convenience
+ * beside the real sheet is not allowed to fail the write of the real sheet.
+ */
+async function mirrorPass(log?: RunLog, limit = 200): Promise<MirrorResult | undefined> {
+  const config = await getConfig()
+  if (!config.manualMirrorEnabled) return undefined
+
+  try {
+    const result = await syncManualMirror({
+      rowFor:  entry => buildSheetRow(entry, config.writeStatusColumn, config.slaHours),
+      keysFor: entry => {
+        const row   = buildSheetRow(entry, config.writeStatusColumn, config.slaHours)
+        const exact = writtenRowKey(row.date, row.allocationTime, row.subject)
+        return entry.newRound
+          ? [exact]
+          : [exact, ...sameQueryKeys(row.date, row.subject, entry.fromAddress)]
+      },
+      rowKeys: sheetRowKeys,
+      fillFor: entry => rowFillFor(entry, config.highlightReplied),
+      note:    (level, msg) => log?.add(level, msg),
+    }, limit)
+
+    if (result.error) log?.add('warn', `Hand-editable mirror: ${result.error}`)
+    return result
+  } catch (err) {
+    log?.add('warn', `Hand-editable mirror skipped: ${err instanceof Error ? err.message : String(err)}`)
+    return undefined
   }
 }
 

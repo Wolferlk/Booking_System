@@ -144,6 +144,12 @@ function ScheduleCard({
           description="A query's row is filled green once a reply is found. Only the columns this app owns are coloured; switching it off clears them again on the next write."
         />
         <Toggle
+          checked={draft.manualMirrorEnabled}
+          onChange={v => save({ manualMirrorEnabled: v })}
+          label="Keep a hand-editable copy of the query sheet"
+          description={`Copies every query into "${draft.manualSheetName}" once and then leaves it alone — type in it, add your own lines, recolour a row and none of it is written over. Only rows that are new to that tab are ever added.`}
+        />
+        <Toggle
           checked={draft.dailyStatsAutoWrite}
           onChange={v => save({ dailyStatsAutoWrite: v })}
           label="Rewrite the daily mail counts each sweep"
@@ -205,6 +211,19 @@ function ScheduleCard({
               value={draft.dailyStatsDays}
               onChange={e => setDraft({ ...draft, dailyStatsDays: Number(e.target.value) })}
               onBlur={() => save({ dailyStatsDays: draft.dailyStatsDays })}
+            />
+          </Field>
+          <Field
+            label="Hand-editable copy tab"
+            hint="Append-only. Existing rows are never rewritten, hand-added lines are never removed, and a row you have coloured yourself keeps your colour."
+          >
+            <input
+              className={inputCls}
+              value={draft.manualSheetName}
+              onChange={e => setDraft({ ...draft, manualSheetName: e.target.value })}
+              onBlur={() => draft.manualSheetName.trim()
+                && draft.manualSheetName !== config?.manualSheetName
+                && save({ manualSheetName: draft.manualSheetName })}
             />
           </Field>
           <Field label="All-mail tab" hint="One row per mail, unfiltered. Rewritten in full each time — nothing on it is hand-edited.">

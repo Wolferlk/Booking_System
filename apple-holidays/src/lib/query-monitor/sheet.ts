@@ -955,10 +955,20 @@ export async function prepareWorkbook(
 
   try {
     const tabs = []
-    for (const [name, layout] of [
+    // The hand-editable mirror is laid out here too, and only on the live
+    // workbook: it is the team's working copy of the query sheet, and a second
+    // one in the standby file would be a copy nobody looks at that still has to
+    // be kept in step. It carries the query layout because it *is* the query
+    // sheet — the difference is entirely in who may write to it afterwards.
+    const layouts = [
       [cfg.sheetName,         QUERY_LAYOUT],
       [cfg.excludedSheetName, EXCLUDED_LAYOUT],
-    ] as const) {
+      ...(target === 'primary' && cfg.manualMirrorEnabled
+        ? [[cfg.manualSheetName, QUERY_LAYOUT] as const]
+        : []),
+    ] as const
+
+    for (const [name, layout] of layouts) {
       const result = await ensureWorksheet(ref, name, layout, sessionId)
       tabs.push({ name, ...result })
     }
@@ -1357,6 +1367,46 @@ export async function setRowFill(
         : { method: 'POST',  body: '{}' },
     )
   }
+}
+
+/**
+ * What colour a row is actually wearing right now, as the workbook has it.
+ *
+ * `setRowFill` is a blind write; this is what lets a caller ask first. The
+ * hand-editable mirror uses it to tell "still the colour we painted" from "the
+ * team has coloured this line themselves", and only ever repaints the first.
+ *
+ * One GET over the layout's own span. Excel answers with a colour only when the
+ * whole span agrees on one — a row with no fill and a row somebody coloured in
+ * patches both come back null, so a null is read as "nothing of ours to
+ * recognise" rather than as proof the row is untouched. `#FFFFFF` is folded into
+ * null too: an explicit white and no fill at all are the same thing to look at,
+ * and telling them apart would lock rows nobody has touched.
+ */
+export async function readRowFill(
+  ref: SheetRef, sheetName: string, rowNumber: number, layout: SheetLayout,
+  sessionId: string | null = null,
+): Promise<string | null> {
+  const [first, last] = layout.map
+    ? (() => {
+        const runs = columnRuns(layout.map)
+        return [columnLetter(runs[0].first), columnLetter(runs[runs.length - 1].last)] as const
+      })()
+    : [layout.firstColumn, layout.lastColumn] as const
+
+  const address = `${first}${rowNumber}:${last}${rowNumber}`
+  const fill = await workbookFetch<{ color?: string | null }>(
+    `${worksheetPath(ref, sheetName)}/range(address='${encodeURIComponent(address)}')/format/fill`,
+    sessionId,
+  )
+  return normalizeFill(fill?.color ?? null)
+}
+
+/** `#c6efce` and `#C6EFCE` are one colour; blank and white are no colour. */
+export function normalizeFill(color: string | null | undefined): string | null {
+  const hex = String(color ?? '').trim().toUpperCase()
+  if (!hex || hex === '#FFFFFF' || hex === 'FFFFFF') return null
+  return hex.startsWith('#') ? hex : `#${hex}`
 }
 
 /**

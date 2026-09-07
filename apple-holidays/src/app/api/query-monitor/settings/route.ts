@@ -58,15 +58,17 @@ export async function POST(req: NextRequest) {
     return buildApiError('Interval must be at least 5 minutes — Graph throttles tighter loops')
   }
 
-  // The five tabs must stay distinct. Two of them are appended to and three are
-  // cleared and rewritten whole, so a collision is not a cosmetic problem: it
-  // would either lay a nine-column row into the query sheet or wipe it.
+  // The six tabs must stay distinct. Two are appended to, three are cleared and
+  // rewritten whole, and one is append-only and hand-edited — so a collision is
+  // not a cosmetic problem: it would lay a nine-column row into the query sheet,
+  // wipe it, or freeze it against every later correction.
   const TAB_FIELDS = [
     ['sheetName',           'the query sheet'],
     ['excludedSheetName',   'the other-mail tab'],
     ['aiUsageSheetName',    'the AI usage tab'],
     ['dailyStatsSheetName', 'the daily mail counts tab'],
     ['allMailsSheetName',   'the all-mail tab'],
+    ['manualSheetName',     'the hand-editable mirror'],
   ] as const
 
   if (TAB_FIELDS.some(([field]) => body[field] !== undefined)) {

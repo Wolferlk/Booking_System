@@ -196,6 +196,9 @@ export interface QmConfig {
   allMailsAutoWrite:   boolean
   /** Turn an answered query's row green in the workbook. */
   highlightReplied:    boolean
+  /** Keep an append-only, hand-editable copy of the query tab beside it. */
+  manualMirrorEnabled: boolean
+  manualSheetName:     string
   /** `YYYY-MM-DD` — mail older than this never reaches either workbook. */
   startDate:         string
   backupEnabled:     boolean

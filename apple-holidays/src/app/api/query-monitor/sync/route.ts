@@ -41,10 +41,23 @@ export async function POST() {
     ? ` — backup lagging: ${backup.error ?? `${backup.failed} row(s) failed`}`
     : ''
 
+  // The hand-editable copy, on the same principle: its appends are worth
+  // reporting because they are the rows the team will find waiting for them,
+  // and a mirror that could not be written is worth reporting because nothing
+  // else on this screen would ever say so.
+  const mirror = result.manual
+  const mirrorNote = !mirror ? ''
+    : mirror.error ? ` — "${mirror.tab}" not updated: ${mirror.error}`
+    : mirror.appended > 0 || mirror.locked > 0
+      ? ` — "${mirror.tab}": ${mirror.appended} copied`
+        + (mirror.locked > 0 ? `, ${mirror.locked} row(s) you have coloured left alone` : '')
+      : ''
+
   return buildApiSuccess(
     result,
     `${result.appended} row(s) appended, ${result.updated} updated`
     + (result.failed ? `, ${result.failed} failed` : '')
-    + backupNote,
+    + backupNote
+    + mirrorNote,
   )
 }

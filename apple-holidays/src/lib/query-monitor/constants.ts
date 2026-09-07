@@ -78,6 +78,14 @@ export const SETTINGS = {
   dailyStatsAutoWrite: 'query_monitor_daily_stats_auto_write',
   /** Paint a query's row green once it has been answered. */
   highlightReplied:   'query_monitor_highlight_replied',
+  /**
+   * Mirror the query tab onto a second, hand-editable tab in the same workbook.
+   * See manual-mirror.ts — the mirror is append-only, so the team can type into
+   * it without a sweep ever taking their work back out.
+   */
+  manualMirrorEnabled: 'query_monitor_manual_mirror_enabled',
+  /** Worksheet tab that hand-editable mirror is written to. */
+  manualSheetName:    'query_monitor_manual_sheet_name',
   /** `YYYY-MM-DD` — mail received before this never reaches either workbook. */
   startDate:          'query_monitor_start_date',
   /** Mirror every append and rewrite into a second, standby workbook. */
@@ -169,6 +177,8 @@ export const DEFAULTS = {
   allMailsDays:        '30',
   allMailsAutoWrite:   'true',
   highlightReplied:    'true',
+  manualMirrorEnabled: 'true',
+  manualSheetName:     'Query Entry Sheet - Manual (Edit)',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
   backupSheetUrl:    BACKUP_SHEET_URL,

@@ -1647,6 +1647,26 @@ model QueryMonitorEntry {
   /// sweep does not re-send the same formatting call for rows already coloured.
   sheetHighlight     String?
   backupHighlight    String?
+  /// ── The hand-editable mirror tab ──────────────────────────────────────────
+  /// A second tab in the primary workbook carrying the same rows, written once
+  /// and then left alone so the team can type into it. It therefore needs its
+  /// own pointer and its own state: the mirror is appended to long after the
+  /// live sheet has stopped moving, and a mirror write that fails must never
+  /// make the live sheet look unwritten. See manual-mirror.ts.
+  manualSheetRow     Int?
+  /// PENDING | SYNCED | FAILED | SKIPPED. There is deliberately no DIRTY: a row
+  /// on the mirror is never rewritten, whatever changes about the query.
+  manualSyncStatus   String                    @default("PENDING")
+  manualSyncError    String?                   @db.Text
+  /// The fill we last painted onto the mirror row — the same cache as
+  /// `sheetHighlight`, and the reference the manual-colour guard compares
+  /// against.
+  manualHighlight    String?
+  /// Set the first time the mirror row is found wearing a colour we did not
+  /// paint: somebody has marked that line by hand, and we never touch its fill
+  /// again. Terminal on purpose — a lock that expires is a lock that loses
+  /// somebody's work on the next sweep.
+  manualColorLocked  Boolean                   @default(false)
   firstRunId         String?
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
@@ -1663,6 +1683,7 @@ model QueryMonitorEntry {
   @@index([fromDomain])
   @@index([mailKind])
   @@index([backupSyncStatus])
+  @@index([manualSyncStatus])
   @@map("query_monitor_entries")
 }
 

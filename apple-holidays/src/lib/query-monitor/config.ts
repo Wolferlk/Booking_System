@@ -45,6 +45,13 @@ export interface QueryMonitorConfig {
   allMailsAutoWrite:   boolean
   /** Paint a query's row green in the workbook once it has been answered. */
   highlightReplied:    boolean
+  /**
+   * Keep a hand-editable mirror of the query tab beside it: every row is copied
+   * once and then left alone, so the team can type into it freely.
+   */
+  manualMirrorEnabled: boolean
+  /** Tab that mirror lives on, in the primary workbook. */
+  manualSheetName:     string
   /** `YYYY-MM-DD`. Mail older than this is collected but never written. */
   startDate:         string
   backupEnabled:     boolean
@@ -123,6 +130,9 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
     allMailsDays:        Math.min(90, Math.max(1, num(SETTINGS.allMailsDays, DEFAULTS.allMailsDays))),
     allMailsAutoWrite:   bool(SETTINGS.allMailsAutoWrite, DEFAULTS.allMailsAutoWrite),
     highlightReplied:    bool(SETTINGS.highlightReplied,    DEFAULTS.highlightReplied),
+    manualMirrorEnabled: bool(SETTINGS.manualMirrorEnabled, DEFAULTS.manualMirrorEnabled),
+    manualSheetName:     str(SETTINGS.manualSheetName, DEFAULTS.manualSheetName)
+                         || DEFAULTS.manualSheetName,
     startDate:         str(SETTINGS.startDate,      DEFAULTS.startDate),
     backupEnabled:     bool(SETTINGS.backupEnabled, DEFAULTS.backupEnabled),
     backupSheetUrl:    str(SETTINGS.backupSheetUrl, DEFAULTS.backupSheetUrl),
@@ -136,6 +146,7 @@ export async function getConfig(): Promise<QueryMonitorConfig> {
  */
 export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig, string | number | boolean>>): Promise<void> {
   const entries: [string, string][] = []
+  const str_ = (v: unknown) => (v === undefined ? '' : String(v).trim())
   const put = (key: string, value: unknown) => entries.push([key, String(value)])
 
   if (patch.enabled           !== undefined) put(SETTINGS.enabled,           !!patch.enabled)
@@ -175,6 +186,19 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
   if (patch.allMailsDays      !== undefined) put(SETTINGS.allMailsDays, Math.min(90, Math.max(1, Number(patch.allMailsDays) || 30)))
   if (patch.allMailsAutoWrite !== undefined) put(SETTINGS.allMailsAutoWrite, !!patch.allMailsAutoWrite)
   if (patch.highlightReplied    !== undefined) put(SETTINGS.highlightReplied,    !!patch.highlightReplied)
+  if (patch.manualMirrorEnabled !== undefined) put(SETTINGS.manualMirrorEnabled, !!patch.manualMirrorEnabled)
+  if (patch.manualSheetName !== undefined) {
+    const tab = String(patch.manualSheetName).trim()
+    // Never the query tab itself: the mirror is append-only and would stop the
+    // sheet the team's pivots read from ever being brought up to date again.
+    if (tab) {
+      const live = str_(patch.sheetName) || (await getSetting(SETTINGS.sheetName)) || DEFAULTS.sheetName
+      if (tab.toLowerCase() === live.trim().toLowerCase()) {
+        throw new Error('The manual mirror must be a different tab from the live query sheet')
+      }
+      put(SETTINGS.manualSheetName, tab)
+    }
+  }
 
   if (patch.backupEnabled !== undefined) put(SETTINGS.backupEnabled, !!patch.backupEnabled)
   if (patch.startDate     !== undefined) {
