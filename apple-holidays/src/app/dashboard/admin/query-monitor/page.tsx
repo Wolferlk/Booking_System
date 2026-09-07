@@ -7,7 +7,7 @@
  * handlers' mailboxes, what it wrote into the SharePoint query sheet, what it is
  * configured to do, and a full trace of every run.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   Activity, AlertTriangle, CheckCircle2, Clock, CloudUpload, ExternalLink,
@@ -43,8 +43,20 @@ export default function QueryMonitorPage() {
   const [sheet, setSheet]       = useState<QmSheetInfo | null>(null)
   const [sheetError, setSheetError] = useState<string | null>(null)
 
-  const [busy, setBusy]       = useState<null | 'run' | 'sync' | 'toggle' | 'dedupe' | 'retry'>(null)
+  const [busy, setBusy]       = useState<null | 'sync' | 'toggle' | 'dedupe' | 'retry'>(null)
   const [refreshKey, bump]    = useState(0)
+
+  /**
+   * A sweep we are waiting on, and whether the server has confirmed it started.
+   *
+   * `isRunning` is set optimistically the moment the button is pressed, so it
+   * cannot on its own tell "not started yet" from "already finished" — and
+   * reporting an outcome off the first would announce a sweep that never ran.
+   * The outcome is only read once a poll has actually seen the run lock held.
+   */
+  const watchingSweep = useRef(false)
+  const sawSweepStart = useRef(false)
+  const wasRunning    = useRef(false)
 
   const loadSettings = useCallback(async () => {
     const res = await fetch('/api/query-monitor/settings')
@@ -53,6 +65,7 @@ export default function QueryMonitorPage() {
     setConfig(d.data.config)
     setNextRun(d.data.nextRunAt)
     setRunning(d.data.isRunning)
+    if (d.data.isRunning) sawSweepStart.current = true
   }, [])
 
   const loadSheet = useCallback(async () => {
@@ -69,9 +82,52 @@ export default function QueryMonitorPage() {
   // claiming "running" a minute after it finished.
   useEffect(() => {
     if (!isRunning) return
-    const id = setInterval(() => { void loadSettings() }, 10_000)
+    const id = setInterval(() => { void loadSettings() }, 5_000)
     return () => clearInterval(id)
   }, [isRunning, loadSettings])
+
+  /**
+   * Report a sweep once the run lock clears, from the record it left behind.
+   *
+   * This is where the outcome of "Run now" actually comes from. It cannot come
+   * from the button's own request: a sweep takes two minutes and the gateway in
+   * front of this app hangs up long before that, so the response is a 504 — or
+   * an HTML page — while the sweep itself carries on and finishes normally. The
+   * run row is the only account of it that survives, and it is complete.
+   */
+  useEffect(() => {
+    const ended = wasRunning.current && !isRunning
+    wasRunning.current = isRunning
+    if (!ended || !watchingSweep.current || !sawSweepStart.current) return
+
+    watchingSweep.current = false
+    sawSweepStart.current = false
+
+    void (async () => {
+      const res = await fetch('/api/query-monitor/runs?limit=1')
+      const d   = await readJson(res)
+      const run = d.success ? d.data.runs?.[0] : null
+
+      if (!run) { toast.success('Sweep finished'); bump(k => k + 1); await loadSheet(); return }
+
+      const detail = [
+        `${run.entriesCreated} new`,
+        `${run.rowsAppended} appended`,
+        run.rowsUpdated ? `${run.rowsUpdated} rewritten` : null,
+        run.errors ? `${run.errors} error${run.errors === 1 ? '' : 's'}` : null,
+      ].filter(Boolean).join(' · ')
+
+      const seconds = run.durationMs ? ` in ${Math.round(run.durationMs / 1000)}s` : ''
+      const line    = `Sweep ${String(run.status).toLowerCase()}${seconds} — ${detail}`
+
+      if (run.status === 'FAILED')       toast.error(line, { duration: 10000 })
+      else if (run.status === 'PARTIAL') toast.warning(line, { duration: 10000 })
+      else                               toast.success(line, { duration: 8000 })
+
+      bump(k => k + 1)
+      await loadSheet()
+    })()
+  }, [isRunning, loadSheet])
 
   async function patchConfig(patch: Partial<QmConfig>, okMsg: string) {
     setBusy('toggle')
@@ -86,34 +142,67 @@ export default function QueryMonitorPage() {
     } finally { setBusy(null) }
   }
 
-  async function runNow() {
-    setBusy('run')
-    toast.info('Sweeping the file-handler mailboxes…')
-    try {
-      const res = await fetch('/api/query-monitor/run', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-      })
-      const d = await readJson(res)
+  /**
+   * Start a sweep and watch it, rather than sitting on the request until it
+   * answers.
+   *
+   * A sweep reads nine mailboxes and runs for well over two minutes. The
+   * gateway in front of this app gives up long before that and returns a 504,
+   * so waiting for the response could only ever produce one of two things: a
+   * timeout dressed up as a failure, or — for the rare fast sweep — a result.
+   * The work itself was never the problem; it completes and writes its rows
+   * either way.
+   *
+   * So the request is fired and deliberately not waited on. The screen switches
+   * to watching the run lock, which is what the sweep actually holds, and the
+   * outcome is read from the run record when that clears. The only answers worth
+   * catching here are the immediate ones: a refusal, or a sweep short enough to
+   * have already finished.
+   */
+  function runNow() {
+    watchingSweep.current = true
+    sawSweepStart.current = false
+    setRunning(true)
+    toast.info('Sweep started — this takes a couple of minutes. Watching it…')
 
-      // The gateway hung up; the sweep did not. Reporting an error here is
-      // simply wrong — the run appears in the Run Log a minute later, finished.
-      // So the screen switches to watching it instead, which is what the polling
-      // effect below already does whenever a sweep is in flight.
-      if (d.timedOut) {
-        setRunning(true)
-        toast.info(d.error, { duration: 10000 })
+    void (async () => {
+      try {
+        const res = await fetch('/api/query-monitor/run', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        })
+        const d = await readJson(res)
+
+        // Timed out at the gateway: expected, and says nothing about the sweep.
+        // The watcher above reports it properly when the lock clears.
+        if (d.timedOut) return
+
+        // Refused outright — no lock was taken, so nothing will ever clear one.
+        if (!d.success) {
+          watchingSweep.current = false
+          toast.error(d.error)
+          await loadSettings()
+          return
+        }
+
+        // Fast enough to answer. Let the watcher speak if it saw the lock;
+        // otherwise the sweep was over before the first poll, so report it here.
+        if (!sawSweepStart.current) {
+          watchingSweep.current = false
+          setRunning(false)
+          toast.success(d.message ?? 'Sweep finished')
+          bump(k => k + 1)
+          await loadSheet()
+        }
         await loadSettings()
-        return
+      } catch {
+        // A dropped connection is the same story as a 504 — the sweep is on the
+        // server and the watcher is the thing that knows how it ended.
       }
+    })()
 
-      if (!d.success) { toast.error(d.error); return }
-      toast.success(d.message ?? 'Sweep finished')
-      bump(k => k + 1)
-      await loadSettings()
-      await loadSheet()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Sweep failed')
-    } finally { setBusy(null) }
+    // Confirm the lock is held sooner than the 5-second poll would, so a sweep
+    // that is refused or never starts does not leave the header claiming one is.
+    setTimeout(() => { void loadSettings() }, 2000)
   }
 
   async function syncNow() {
@@ -217,11 +306,12 @@ export default function QueryMonitorPage() {
               Sync to sheet{awaiting > 0 ? ` (${awaiting})` : ''}
             </button>
             <button
-              onClick={runNow} disabled={busy !== null}
+              onClick={runNow} disabled={busy !== null || isRunning}
+              title={isRunning ? 'A sweep is running — this button comes back when it finishes' : undefined}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {busy === 'run' ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-              Run now
+              {isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+              {isRunning ? 'Sweeping…' : 'Run now'}
             </button>
           </div>
         }
