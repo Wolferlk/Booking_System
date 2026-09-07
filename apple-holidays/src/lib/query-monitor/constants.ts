@@ -178,11 +178,46 @@ export const DEFAULTS = {
   allMailsAutoWrite:   'true',
   highlightReplied:    'true',
   manualMirrorEnabled: 'true',
-  manualSheetName:     'Query Entry Sheet - Manual (Edit)',
+  manualSheetName:     'Query Entry Sheet-Manual(Edit)',
   startDate:         DEFAULT_START_DATE,
   backupEnabled:     'true',
   backupSheetUrl:    BACKUP_SHEET_URL,
 } as const
+
+// ── What Excel will accept as a tab name ─────────────────────────────────────
+
+/**
+ * Excel's own limits on a worksheet name. Breaking any of them makes
+ * `worksheets/add` answer `400 InvalidArgument` and nothing else — no hint as to
+ * which rule was broken, which is exactly how a 33-character default name spent
+ * a day looking like a broken workbook, a Graph outage and a failed deployment
+ * in turn.
+ *
+ * Checked before a name is ever saved, so the error arrives where it can be
+ * fixed — under the box the name was typed into.
+ */
+export const WORKSHEET_NAME_MAX = 31
+
+/** Characters Excel reserves for range syntax and cannot have in a tab name. */
+const WORKSHEET_NAME_BANNED = /[:\\/?*[\]]/
+
+/** Why Excel would refuse this tab name, or null when it would accept it. */
+export function worksheetNameError(name: string): string | null {
+  const tab = name.trim()
+
+  if (!tab) return 'needs a name'
+  if (tab.length > WORKSHEET_NAME_MAX) {
+    return `is ${tab.length} characters — Excel allows at most ${WORKSHEET_NAME_MAX}`
+  }
+  if (WORKSHEET_NAME_BANNED.test(tab)) {
+    return 'cannot contain : \\ / ? * [ or ] — Excel reserves those'
+  }
+  if (tab.startsWith("'") || tab.endsWith("'")) return 'cannot start or end with an apostrophe'
+  // Excel keeps this name for the change-tracking sheet of a shared workbook.
+  if (tab.toLowerCase() === 'history') return 'is a name Excel reserves for itself'
+
+  return null
+}
 
 // ── Sheet layout ─────────────────────────────────────────────────────────────
 

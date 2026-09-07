@@ -5,7 +5,9 @@
  * except the Graph credentials, which live in graph-client.ts.
  */
 import { prisma } from '@/lib/prisma'
-import { DEFAULTS, SEED_MAILBOXES, SEED_SENDER_RULES, SETTINGS } from './constants'
+import {
+  DEFAULTS, SEED_MAILBOXES, SEED_SENDER_RULES, SETTINGS, worksheetNameError,
+} from './constants'
 import { startOfDayInTz } from './dates'
 
 export interface QueryMonitorConfig {
@@ -192,6 +194,9 @@ export async function saveConfig(patch: Partial<Record<keyof QueryMonitorConfig,
     // Never the query tab itself: the mirror is append-only and would stop the
     // sheet the team's pivots read from ever being brought up to date again.
     if (tab) {
+      const problem = worksheetNameError(tab)
+      if (problem) throw new Error(`The hand-editable mirror tab ${problem}: "${tab}"`)
+
       const live = str_(patch.sheetName) || (await getSetting(SETTINGS.sheetName)) || DEFAULTS.sheetName
       if (tab.toLowerCase() === live.trim().toLowerCase()) {
         throw new Error('The manual mirror must be a different tab from the live query sheet')

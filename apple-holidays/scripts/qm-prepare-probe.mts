@@ -65,6 +65,11 @@ async function main() {
     for (const [tab, layout] of [
       [cfg.sheetName,         QUERY_LAYOUT],
       [cfg.excludedSheetName, EXCLUDED_LAYOUT],
+      // The mirror carries the query layout — it is the same sheet, differing
+      // only in who is allowed to write to it afterwards.
+      ...(target === 'primary' && cfg.manualMirrorEnabled
+        ? [[cfg.manualSheetName, QUERY_LAYOUT]] as [string, SheetLayout][]
+        : []),
     ] as [string, SheetLayout][]) {
       line(`  · "${tab}"`)
       try {

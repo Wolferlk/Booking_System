@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { requireAdmin } from '@/lib/query-monitor/auth'
 import { getConfig, saveConfig } from '@/lib/query-monitor/config'
-import { SETTINGS } from '@/lib/query-monitor/constants'
+import { SETTINGS, worksheetNameError } from '@/lib/query-monitor/constants'
 import { SHEET_TZ } from '@/lib/query-monitor/dates'
 
 export const dynamic = 'force-dynamic'
@@ -76,7 +76,18 @@ export async function POST(req: NextRequest) {
     const seen = new Map<string, string>()
     for (const [field, label] of TAB_FIELDS) {
       const name = String(body[field] ?? current[field]).trim()
-      if (!name) return buildApiError(`${label[0].toUpperCase()}${label.slice(1)} needs a name`)
+
+      // Excel's own rules, checked here rather than discovered later as a bare
+      // `400 InvalidArgument` from worksheets/add — an answer that names neither
+      // the tab nor the rule, and reaches the screen as "could not prepare the
+      // workbook", which sends everybody looking at the workbook instead.
+      const problem = worksheetNameError(name)
+      if (problem) {
+        return buildApiError(
+          `${label[0].toUpperCase()}${label.slice(1)} ${problem}${name ? `: "${name}"` : ''}`,
+        )
+      }
+
       const key = name.toLowerCase()
       const clash = seen.get(key)
       if (clash) return buildApiError(`${label} must be a different tab from ${clash}`)
