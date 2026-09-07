@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useCountryFilter } from '@/hooks/use-country-filter'
 import { toast } from 'sonner'
@@ -9,13 +9,18 @@ import {
   Plus, Loader2, Search, Ticket as TicketIcon, Hotel, Anchor, Activity,
   MapPin, Plane, ShoppingCart, CheckCircle2, AlertCircle, Zap, Upload,
   Eye, ExternalLink, FileText, Image as ImageIcon, Pencil, X, Printer,
-  Filter,
+  BarChart3, RefreshCw, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card } from '@/components/ui/card'
 import Modal from '@/components/ui/modal'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { normalizeUploadUrl } from '@/lib/upload-path'
+import TicketFilterBar, {
+  EMPTY_FILTERS, filtersToParams, countActiveFilters,
+  type TicketFilterState, type TicketTab,
+} from '@/components/tickets/ticket-filter-bar'
+import TicketReportModal from '@/components/tickets/ticket-report-modal'
 import type { UserRole } from '@prisma/client'
 
 // ─── types ───────────────────────────────────────────────────────────────────
@@ -30,6 +35,7 @@ interface Ticket {
   currency: string
   status: string
   activated: boolean
+  category: string | null
   purchasedAt: string | null
   reference: string | null
   notes: string | null
@@ -45,7 +51,13 @@ interface Ticket {
   approvalStatus: string | null
   approvalUrgency: string | null
   approvalNote: string | null
-  booking: { bookingRef: string; arrivalDate: string; agent: string | null } | null
+  booking: {
+    bookingRef: string
+    arrivalDate: string
+    agent: string | null
+    createdAt: string
+    operationCountry: string | null
+  } | null
   pnlLine: {
     activity: string
     paymentStatus: string
@@ -82,7 +94,25 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 const ALL_CATEGORIES = ['HOTEL','TICKETS','CRUISE','WATER','GUIDES','FLIGHT_TICKETS','TRANSPORT','MEALS','OTHER']
 
-type TabFilter = 'all' | 'pending_activation' | 'active' | 'purchased'
+/**
+ * How many rows one request brings back. The list is filtered and paged in SQL
+ * now — this page used to read every ticket in the country (tens of thousands,
+ * each with its booking and P&L line) into the browser on every visit.
+ */
+const PAGE_SIZE = 50
+
+/** Server-side counts for the tabs, measured against every other filter. */
+interface TicketStats {
+  all: number
+  pendingActivation: number
+  active: number
+  purchased: number
+  issued: number
+  notIssued: number
+  awaitingApproval: number
+  totalCost: number
+  totalQty: number
+}
 
 function CategoryIcon({ cat, className = 'w-4 h-4' }: { cat: string; className?: string }) {
   const Icon = CATEGORY_ICON[cat] ?? TicketIcon
@@ -102,9 +132,19 @@ export default function TETicketsPage() {
 
   const [tickets, setTickets]         = useState<Ticket[]>([])
   const [loading, setLoading]         = useState(true)
-  const [search, setSearch]           = useState('')
-  const [tab, setTab]                 = useState<TabFilter>('all')
-  const [catFilter, setCatFilter]     = useState('')
+  const [filters, setFilters]         = useState<TicketFilterState>(EMPTY_FILTERS)
+  const [page, setPage]               = useState(1)
+  const [total, setTotal]             = useState(0)
+  const [pageCount, setPageCount]     = useState(1)
+  const [stats, setStats]             = useState<TicketStats | null>(null)
+  const [reportOpen, setReportOpen]   = useState(false)
+
+  /**
+   * The search box types a character at a time and every keystroke would
+   * otherwise be a query against the whole ticket table. The box stays
+   * responsive and the request waits for a pause.
+   */
+  const [debouncedQ, setDebouncedQ]   = useState('')
 
   // modals
   const [newModal, setNewModal]       = useState(false)
@@ -146,44 +186,100 @@ export default function TETicketsPage() {
     return () => { cancelled = true }
   }, [])
 
+  // The filter the server is actually asked for: everything on screen, with the
+  // search box held back until typing stops.
+  const effectiveFilters = useMemo<TicketFilterState>(
+    () => ({ ...filters, q: debouncedQ }),
+    [filters, debouncedQ],
+  )
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(filters.q.trim()), 350)
+    return () => clearTimeout(id)
+  }, [filters.q])
+
+  const queryParams = useMemo(
+    () => filtersToParams(effectiveFilters, countryFilter),
+    [effectiveFilters, countryFilter],
+  )
+
+  // Changing what is being asked for always returns to the first page —
+  // staying on page 7 of a list that now has two pages shows nothing.
+  const filterKey = queryParams.toString()
+  useEffect(() => { setPage(1) }, [filterKey])
+
   const load = useCallback(async () => {
+    setLoading(true)
     try {
-      const params = new URLSearchParams()
-      if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      const params = new URLSearchParams(filterKey)
+      params.set('page', String(page))
+      params.set('pageSize', String(PAGE_SIZE))
+      params.set('stats', '1')
+
       const res  = await fetch(`/api/tickets?${params}`)
       const json = await res.json()
-      if (json.success) setTickets(json.data)
+      if (json.success) {
+        setTickets(json.data)
+        setTotal(json.meta?.total ?? json.data.length)
+        setPageCount(json.meta?.pageCount ?? 1)
+        if (json.meta?.stats) setStats(json.meta.stats)
+      } else {
+        toast.error(json.error ?? 'Could not load tickets')
+      }
+    } catch {
+      toast.error('Could not reach the server')
     } finally { setLoading(false) }
-  }, [countryFilter])
+  }, [filterKey, page])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { setPreviewError(false) }, [viewFile])
 
-  // ── derived filtered list ─────────────────────────────────────────────────
+  // ── tabs ──────────────────────────────────────────────────────────────────
+  // Counts come from the server so they describe every matching ticket, not the
+  // fifty on screen. They stay blank until the first answer arrives.
 
-  const filtered = tickets.filter(t => {
-    const q = search.toLowerCase()
-    const matchSearch = !q || [
-      t.type, t.supplier, t.booking?.bookingRef, t.booking?.agent, t.reference,
-    ].some(v => v?.toLowerCase().includes(q))
+  const TAB_LABEL: Record<string, string> = {
+    all: 'All', pending_activation: 'Pending Activation', active: 'Active',
+    purchased: 'Purchased', issued: 'Issued', not_issued: 'Awaiting Issue',
+    awaiting_approval: 'With Accounts',
+  }
 
-    const matchTab =
-      tab === 'all'               ? true :
-      tab === 'pending_activation'? !t.activated :
-      tab === 'active'            ? t.activated && t.status === 'DRAFT' :
-      tab === 'purchased'         ? t.status === 'PURCHASED' || t.status === 'PAID' : true
+  const TABS: TicketTab[] = [
+    { value: 'all',                label: 'All',                count: stats?.all },
+    { value: 'pending_activation', label: 'Pending Activation', count: stats?.pendingActivation },
+    { value: 'active',             label: 'Active',             count: stats?.active },
+    { value: 'purchased',          label: 'Purchased',          count: stats?.purchased },
+    { value: 'issued',             label: 'Issued',             count: stats?.issued },
+    { value: 'not_issued',         label: 'Awaiting Issue',     count: stats?.notIssued,
+      tone: stats?.notIssued ? 'alert' : undefined },
+    { value: 'awaiting_approval',  label: 'With Accounts',      count: stats?.awaitingApproval },
+  ]
 
-    const cat = t.pnlLine?.category ?? 'OTHER'
-    const matchCat = !catFilter || cat === catFilter
-
-    return matchSearch && matchTab && matchCat
-  })
-
-  // stats
-  const totalAll     = tickets.length
-  const totalPending = tickets.filter(t => !t.activated).length
-  const totalActive  = tickets.filter(t => t.activated && t.status === 'DRAFT').length
-  const totalPurchased = tickets.filter(t => t.status === 'PURCHASED' || t.status === 'PAID').length
+  /** The current filter in words — printed at the top of the report. */
+  const filterSummary = useMemo(() => {
+    const parts: string[] = []
+    if (effectiveFilters.status !== 'all') parts.push(TAB_LABEL[effectiveFilters.status])
+    if (effectiveFilters.q) parts.push(`matching “${effectiveFilters.q}”`)
+    if (effectiveFilters.categories.length) parts.push(`categories: ${effectiveFilters.categories.join(', ')}`)
+    const range = (label: string, from: string, to: string) => {
+      if (from || to) parts.push(`${label} ${from || 'any'} → ${to || 'any'}`)
+    }
+    range('arriving', effectiveFilters.arrivalFrom, effectiveFilters.arrivalTo)
+    range('booking created', effectiveFilters.bookingCreatedFrom, effectiveFilters.bookingCreatedTo)
+    range('ticket added', effectiveFilters.ticketCreatedFrom, effectiveFilters.ticketCreatedTo)
+    range('purchased', effectiveFilters.purchasedFrom, effectiveFilters.purchasedTo)
+    if (effectiveFilters.bookingRef) parts.push(`booking ${effectiveFilters.bookingRef}`)
+    if (effectiveFilters.agent) parts.push(`agent ${effectiveFilters.agent}`)
+    if (effectiveFilters.supplier) parts.push(`supplier ${effectiveFilters.supplier}`)
+    if (effectiveFilters.portal) parts.push(`portal ${effectiveFilters.portal}`)
+    if (effectiveFilters.approval) parts.push(`approval ${effectiveFilters.approval}`)
+    if (effectiveFilters.hasFile !== 'any') {
+      parts.push(effectiveFilters.hasFile === 'yes' ? 'with a ticket file' : 'without a ticket file')
+    }
+    if (countryFilter && countryFilter !== 'ALL') parts.push(countryFilter)
+    return parts.length ? parts.join(' · ') : 'All tickets'
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- TAB_LABEL is a constant map
+  }, [effectiveFilters, countryFilter])
 
   // ── actions ───────────────────────────────────────────────────────────────
 
@@ -302,24 +398,32 @@ export default function TETicketsPage() {
 
   // ─── render ───────────────────────────────────────────────────────────────
 
-  const TABS: { value: TabFilter; label: string; count: number }[] = [
-    { value: 'all',               label: 'All',               count: totalAll },
-    { value: 'pending_activation',label: 'Pending Activation', count: totalPending },
-    { value: 'active',            label: 'Active',             count: totalActive },
-    { value: 'purchased',         label: 'Purchased',          count: totalPurchased },
-  ]
-
   return (
     <div>
       <Header
         title="Tickets & Vouchers"
-        subtitle={`${totalAll} total · ${totalPurchased} purchased · ${totalPending} pending activation`}
+        subtitle={
+          stats
+            ? `${stats.all.toLocaleString()} matching · ${stats.purchased.toLocaleString()} purchased · ` +
+              `${stats.pendingActivation.toLocaleString()} pending activation · ` +
+              `${stats.notIssued.toLocaleString()} awaiting issue · ${formatCurrency(stats.totalCost)} cost`
+            : 'Loading…'
+        }
         actions={
-          canCreate ? (
-            <button onClick={() => setNewModal(true)} className="btn btn-primary">
-              <Plus className="w-4 h-4" /> Add Ticket
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setReportOpen(true)}
+              className="btn btn-secondary"
+              title="Summarise and export the tickets currently filtered"
+            >
+              <BarChart3 className="w-4 h-4" /> Report
             </button>
-          ) : undefined
+            {canCreate && (
+              <button onClick={() => setNewModal(true)} className="btn btn-primary">
+                <Plus className="w-4 h-4" /> Add Ticket
+              </button>
+            )}
+          </div>
         }
       />
 
@@ -339,71 +443,47 @@ export default function TETicketsPage() {
 
       <div className="p-8 space-y-5">
 
-        {/* Filter bar */}
-        <Card className="p-4 space-y-3">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search by type, supplier, booking ref, agent…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="form-input pl-9"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Filter className="w-4 h-4 text-slate-400 shrink-0" />
-              <select
-                value={catFilter}
-                onChange={e => setCatFilter(e.target.value)}
-                className="form-select w-full sm:w-48"
-              >
-                <option value="">All categories</option>
-                {ALL_CATEGORIES.map(c => (
-                  <option key={c} value={c}>{CATEGORY_LABEL[c] ?? c}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Status tabs */}
-          <div className="flex items-center gap-1 flex-wrap">
-            {TABS.map(t => (
-              <button
-                key={t.value}
-                onClick={() => setTab(t.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                  tab === t.value
-                    ? 'bg-brand-600 text-white border-brand-600'
-                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                {t.label}
-                <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                  tab === t.value ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {t.count}
-                </span>
-              </button>
-            ))}
-          </div>
-        </Card>
+        <TicketFilterBar
+          filters={filters}
+          onChange={setFilters}
+          tabs={TABS}
+          resultCount={loading ? null : total}
+        >
+          <button
+            onClick={load}
+            disabled={loading}
+            className="btn btn-secondary btn-sm"
+            title="Reload"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </TicketFilterBar>
 
         {/* Tickets list */}
         {loading ? (
           <div className="flex justify-center h-48 items-center">
             <Loader2 className="w-6 h-6 text-brand-500 animate-spin" />
           </div>
-        ) : filtered.length === 0 ? (
+        ) : tickets.length === 0 ? (
           <Card className="p-12 text-center">
             <TicketIcon className="w-10 h-10 text-slate-200 mx-auto mb-3" />
             <p className="text-slate-400 text-sm">No tickets match your filters</p>
+            {countActiveFilters(effectiveFilters) > 0 && (
+              <button
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="btn btn-secondary btn-sm mt-3 mx-auto"
+              >
+                Clear filters
+              </button>
+            )}
           </Card>
         ) : (
           <div className="space-y-3">
-            {filtered.map(t => {
-              const cat   = t.pnlLine?.category ?? 'OTHER'
+            {tickets.map(t => {
+              // The ticket's own category wins; a row generated from a costing
+              // sheet carries it on the P&L line instead. Same order the filter
+              // uses, so a category filter and the badge always agree.
+              const cat   = t.category ?? t.pnlLine?.category ?? 'OTHER'
               const payOk = directIssue || !t.pnlLine || t.pnlLine.paymentStatus === 'CONFIRMED'
               const isActive   = t.activated
               const isPurchased = t.status === 'PURCHASED' || t.status === 'PAID'
@@ -619,7 +699,67 @@ export default function TETicketsPage() {
             })}
           </div>
         )}
+
+        {/* Pagination — the list is a window onto the filtered set, so the
+            page controls carry the totals the window is cut from. */}
+        {!loading && total > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+            <p className="text-xs text-slate-500">
+              Showing{' '}
+              <span className="font-semibold text-slate-700">
+                {((page - 1) * PAGE_SIZE + 1).toLocaleString()}–
+                {Math.min(page * PAGE_SIZE, total).toLocaleString()}
+              </span>{' '}
+              of <span className="font-semibold text-slate-700">{total.toLocaleString()}</span> tickets
+              {stats && stats.totalCost > 0 && (
+                <> · <span className="font-semibold text-slate-700">{formatCurrency(stats.totalCost)}</span> total cost</>
+              )}
+            </p>
+
+            {pageCount > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page <= 1}
+                  className="btn btn-secondary btn-sm disabled:opacity-40"
+                >
+                  <ChevronLeft className="w-4 h-4" /> Prev
+                </button>
+                <span className="text-xs text-slate-500 px-2">
+                  Page{' '}
+                  <input
+                    type="number"
+                    min={1}
+                    max={pageCount}
+                    value={page}
+                    onChange={e => {
+                      const next = Number(e.target.value)
+                      if (next >= 1 && next <= pageCount) setPage(next)
+                    }}
+                    className="form-input w-14 text-center text-xs py-1 inline-block"
+                  />{' '}
+                  of {pageCount.toLocaleString()}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(pageCount, p + 1))}
+                  disabled={page >= pageCount}
+                  className="btn btn-secondary btn-sm disabled:opacity-40"
+                >
+                  Next <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* ── Report ───────────────────────────────────────────────────────── */}
+      <TicketReportModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        params={queryParams}
+        filterSummary={filterSummary}
+      />
 
       {/* ── Add Ticket Modal ─────────────────────────────────────────────── */}
       <Modal
