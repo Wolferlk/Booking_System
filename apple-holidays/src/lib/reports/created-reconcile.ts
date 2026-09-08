@@ -76,6 +76,43 @@ function spacedRef(key: string): string {
 }
 
 /**
+ * The bookings held here for a set of cohort keys — one row per confirmation,
+ * as this system actually stores it.
+ *
+ * Asked for in both spellings because this system stores "VN 41054" and the
+ * ledger keys it "VN41054"; the match itself is made on the normalised key, so
+ * a row that came back only because of the LIKE-free `in` on the other spelling
+ * is still checked against the cohort before it counts.
+ *
+ * This is `reportTotal` in set form: the same rows the report's headline
+ * counts, which is what lets the list show them rather than only their number.
+ */
+async function heldForCohort(
+  keys: Set<string>,
+): Promise<Map<string, { bookingRef: string; createdAt: Date }>> {
+  const refs = Array.from(keys)
+  const rows = refs.length
+    ? await prisma.booking.findMany({
+        where: {
+          OR: [
+            { bookingRef: { in: refs } },
+            { bookingRef: { in: refs.map(spacedRef) } },
+          ],
+        },
+        select: { bookingRef: true, createdAt: true },
+      })
+    : []
+
+  const held = new Map<string, { bookingRef: string; createdAt: Date }>()
+  for (const row of rows) {
+    const key = cohortKey(row.bookingRef)
+    if (!key || !keys.has(key) || held.has(key)) continue
+    held.set(key, { bookingRef: row.bookingRef, createdAt: row.createdAt })
+  }
+  return held
+}
+
+/**
  * Reconcile one window's intake against the report's cohort.
  *
  * `from`/`to` are inclusive `yyyy-mm-dd` operations-timezone dates — the same
@@ -113,29 +150,7 @@ export async function reconcileCreated(from: string, to: string): Promise<Create
     return { ...base, error: cohort.error, reportTotal: base.opsIntake, sweptAt: cohort.sweptAt }
   }
 
-  const refs = Array.from(cohort.keys)
-
-  // Confirmations in this window that are held here under *some* createdAt —
-  // asked for in both spellings because this system stores "VN 41054" and the
-  // ledger keys it "VN41054"; the match itself is made on the normalised key.
-  const cohortRows = refs.length
-    ? await prisma.booking.findMany({
-        where: {
-          OR: [
-            { bookingRef: { in: refs } },
-            { bookingRef: { in: refs.map(spacedRef) } },
-          ],
-        },
-        select: { bookingRef: true, createdAt: true },
-      })
-    : []
-
-  const held = new Map<string, { inWindow: boolean }>()
-  for (const row of cohortRows) {
-    const key = cohortKey(row.bookingRef)
-    if (!key || !cohort.keys.has(key) || held.has(key)) continue
-    held.set(key, { inWindow: row.createdAt >= window.gte && row.createdAt < window.lt })
-  }
+  const held = await heldForCohort(cohort.keys)
 
   return {
     ...base,
@@ -143,7 +158,8 @@ export async function reconcileCreated(from: string, to: string): Promise<Create
     upstream: cohort.total,
     cancelledUpstream: cohort.cancelled,
     reportTotal: held.size,
-    enteredLater: Array.from(held.values()).filter(h => !h.inWindow).length,
+    enteredLater: Array.from(held.values())
+      .filter(h => !(h.createdAt >= window.gte && h.createdAt < window.lt)).length,
     earlierConfirmations: b2b.filter(r => {
       const key = cohortKey(r.bookingRef)
       return !key || !cohort.keys.has(key)
@@ -171,4 +187,42 @@ export function reconcilableWindow(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) return null
   if (dateFrom > dateTo) return null
   return { from: dateFrom, to: dateTo }
+}
+
+/** The refs behind the report's figure, ready to hand to a `bookingRef in (…)`. */
+export interface CohortRefs {
+  /** False when the accounts ledger could not be read — then `refs` means nothing. */
+  available: boolean
+  error: string | null
+  /** `bookingRef` as this system stores it, one per confirmation held here. */
+  refs: string[]
+}
+
+/**
+ * The bookings behind the daily report's figure for a window.
+ *
+ * The chip prints the report's number next to the list's; this is what lets
+ * somebody then *open* that number. The set returned is exactly the one
+ * `reconcileCreated` counts as `reportTotal`, resolved through the same
+ * key-matching, so the list the button opens cannot disagree with the figure
+ * the button was printed under.
+ *
+ * Confirmations upstream has raised but nothing here holds (`missing`) are not
+ * in this set and cannot be — there is no row to show. That is the one number
+ * on the panel the list can never account for, and the panel says so.
+ *
+ * Never throws for a ledger problem: an unreadable ledger comes back
+ * `available: false` so the caller can decline rather than filter to nothing,
+ * which would read as "the report's bookings are gone".
+ */
+export async function cohortBookingRefs(from: string, to: string): Promise<CohortRefs> {
+  const cohort = await collectAppleCohort({ fromDate: from, toDate: to })
+  if (!cohort.available) return { available: false, error: cohort.error, refs: [] }
+
+  const held = await heldForCohort(cohort.keys)
+  return {
+    available: true,
+    error: null,
+    refs: Array.from(held.values(), h => h.bookingRef),
+  }
 }

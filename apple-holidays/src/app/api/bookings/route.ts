@@ -11,6 +11,7 @@ import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
 import { explicitDateRange, isBookingDateFilter, periodDateRange } from '@/lib/booking-date-window'
 import { fetchDetailedPnlAvailability, normaliseRef } from '@/lib/detailed-pnl'
 import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
+import { cohortBookingRefs } from '@/lib/reports/created-reconcile'
 import type { UserRole } from '@prisma/client'
 import type { OperationCountry } from '@/lib/country-detection'
 
@@ -22,6 +23,9 @@ export const dynamic = 'force-dynamic'
  * still bounding the query if the data ever grows past expectation.
  */
 const DETAILED_PNL_SCAN_CAP = 20_000
+
+/** `yyyy-mm-dd`, the only spelling the report cohort window is accepted in. */
+const COHORT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * How long the *decorative* Detailed P&L lookup may take before the list gives
@@ -293,6 +297,45 @@ export async function GET(req: NextRequest) {
     // An empty list must still filter — `{ in: [] }` matches nothing, which is
     // the correct answer, where omitting the clause would show everything.
     andClauses.push({ bookingRef: { in: refs } })
+  }
+
+  /**
+   * Report cohort filter — "show me the bookings behind the daily report's
+   * figure", asked for from the count-check panel on the bookings list.
+   *
+   * It is not a date range on this database: the window belongs to the accounts
+   * ledger, and the population is the confirmations AppleSystem raised inside
+   * it, wherever their `createdAt` happens to fall. So it resolves upstream to
+   * a ref set and narrows on that — the same shape as the Detailed P&L filter
+   * above, and for the same reason.
+   *
+   * The whole point of the filter is to show rows the window's own date filter
+   * would exclude, so a caller that sets it must not also send a created-date
+   * filter; the list clears one when it applies the other.
+   */
+  const cohortFrom = searchParams.get('cohortFrom')
+  const cohortTo   = searchParams.get('cohortTo')
+
+  if (cohortFrom || cohortTo) {
+    if (session.user.role === 'CLIENT') return buildApiError('Forbidden', 403)
+    if (!cohortFrom || !cohortTo || !COHORT_DATE_RE.test(cohortFrom) || !COHORT_DATE_RE.test(cohortTo)) {
+      return buildApiError('The report cohort needs a from and to date (yyyy-mm-dd)', 400)
+    }
+    const [cFrom, cTo] = cohortFrom <= cohortTo ? [cohortFrom, cohortTo] : [cohortTo, cohortFrom]
+
+    let cohort
+    try {
+      cohort = await cohortBookingRefs(cFrom, cTo)
+    } catch (err) {
+      console.error('[bookings] Report cohort lookup failed:', err)
+      return buildApiError('Could not reach the Accounts ledger to open the daily report’s bookings', 503)
+    }
+    // An unreadable ledger is not "the report had no bookings". Filtering to
+    // nothing would say exactly that, so it declines instead.
+    if (!cohort.available) {
+      return buildApiError(cohort.error ?? 'The Accounts ledger could not be read, so the daily report’s bookings cannot be listed', 503)
+    }
+    andClauses.push({ bookingRef: { in: cohort.refs } })
   }
 
   const where: Record<string, unknown> = andClauses.length > 0 ? { AND: andClauses } : {}

@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollText, Loader2, Check, ChevronDown, AlertTriangle } from 'lucide-react'
+import { ScrollText, Loader2, Check, ChevronDown, AlertTriangle, ListFilter, X } from 'lucide-react'
 import { readApiResponse } from '@/lib/utils'
 
 interface Reconcile {
@@ -50,6 +50,14 @@ export interface ReportCountChipProps {
   to: string | null
   /** True when other filters (country, source, search…) narrow the list further. */
   narrowed: boolean
+  /**
+   * Open the report's own bookings in the list — the number made walkable.
+   * Given the window the panel is describing, since that is the one the figure
+   * was computed for, not whatever the filters may have moved on to.
+   */
+  onViewCohort?: (from: string, to: string) => void
+  /** True while the list is already showing that cohort, so the button offers the way back. */
+  cohortActive?: boolean
 }
 
 function fmtDate(date: string): string {
@@ -59,7 +67,7 @@ function fmtDate(date: string): string {
 }
 
 export default function ReportCountChip({
-  listTotal, preset, from, to, narrowed,
+  listTotal, preset, from, to, narrowed, onViewCohort, cohortActive = false,
 }: ReportCountChipProps) {
   const [data, setData]       = useState<Reconcile | null>(null)
   const [loading, setLoading] = useState(false)
@@ -198,6 +206,37 @@ export default function ReportCountChip({
                 the report with no booking here at all. That one is worth chasing —
                 the rest of this panel is not.
               </span>
+            </p>
+          )}
+
+          {/* The figure, opened. Everything above explains why the two numbers
+              differ; this is what lets somebody go and look, instead of
+              rebuilding the report's window out of list filters by hand — which
+              cannot be done at all, since half the cohort sits outside it. */}
+          {onViewCohort && (
+            <button
+              onClick={() => { onViewCohort(data.from, data.to); setOpen(false) }}
+              className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                cohortActive
+                  ? 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                  : 'bg-brand-600 text-white border-brand-600 hover:bg-brand-700'
+              }`}
+              title={
+                cohortActive
+                  ? 'Go back to the list as you had it filtered'
+                  : 'List exactly the bookings this figure counts, whichever day they were filed here'
+              }
+            >
+              {cohortActive
+                ? <><X className="w-3.5 h-3.5" /> Stop showing the report’s bookings</>
+                : <><ListFilter className="w-3.5 h-3.5" /> View these {data.reportTotal} booking{data.reportTotal === 1 ? '' : 's'}</>}
+            </button>
+          )}
+
+          {onViewCohort && data.missing > 0 && !cohortActive && (
+            <p className="text-[10px] text-slate-400 leading-relaxed -mt-1">
+              That list can only hold {data.reportTotal} of the {data.upstream} — the {data.missing} with
+              no booking here have no row to show.
             </p>
           )}
 

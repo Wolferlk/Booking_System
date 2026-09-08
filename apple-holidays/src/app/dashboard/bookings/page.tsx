@@ -9,7 +9,7 @@ import {
   Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
   Download, ChevronDown, Table2,
   Cloud, FolderOpen, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
-  Hotel, Receipt, Filter,
+  Hotel, Receipt, Filter, ScrollText,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -325,6 +325,18 @@ function BookingsPageInner() {
   const [quick, setQuick] = useState<QuickFilter | null>(
     initialQuick && isQuickFilter(initialQuick) ? initialQuick : null,
   )
+  /**
+   * The daily report's own window, when the list has been asked to show the
+   * bookings behind that figure rather than the ones filed in the day.
+   *
+   * It deliberately does not clear the date filters that produced it: those are
+   * what keep the count-check chip on screen, and the chip is where the way
+   * back lives. While this is set the query ignores them instead — see
+   * `fetchBookings` — and the banner above the table says which question the
+   * rows are answering.
+   */
+  const [cohort, setCohort] = useState<{ from: string; to: string } | null>(null)
+
   const [quickStats, setQuickStats]     = useState<QuickStats | null>(null)
   const [quickLoading, setQuickLoading] = useState(true)
 
@@ -367,12 +379,21 @@ function BookingsPageInner() {
     if (source)                                         params.set('source',        source)
     if (hotelOnlyFilter)                                params.set('hotelOnly',     '1')
     if (detailedPnlFilter)                              params.set('detailedPnl',   '1')
-    if (dateFilter)                                     params.set('dateFilter',    dateFilter)
-    if (dateFilter || dateFrom || dateTo)               params.set('dateField',     dateBasis)
-    if (dateFrom)                                       params.set('dateFrom',      dateFrom)
-    if (dateTo)                                         params.set('dateTo',        dateTo)
     if (countryFilter && countryFilter !== 'ALL')       params.set('country',       countryFilter)
-    if (quick)                                          params.set('quick',         quick)
+    // The cohort *is* a date question, asked of the accounts ledger rather than
+    // of this column — so it replaces the date filters instead of intersecting
+    // with them. Intersecting would drop the bookings entered on a later day,
+    // which are the whole reason somebody opened this list.
+    if (cohort) {
+      params.set('cohortFrom', cohort.from)
+      params.set('cohortTo',   cohort.to)
+    } else {
+      if (dateFilter)                                   params.set('dateFilter',    dateFilter)
+      if (dateFilter || dateFrom || dateTo)             params.set('dateField',     dateBasis)
+      if (dateFrom)                                     params.set('dateFrom',      dateFrom)
+      if (dateTo)                                       params.set('dateTo',        dateTo)
+      if (quick)                                        params.set('quick',         quick)
+    }
     params.set('sortBy',  sortBy)
     params.set('sortDir', sortDir)
     params.set('page',    String(page))
@@ -393,7 +414,7 @@ function BookingsPageInner() {
     } finally {
       setLoading(false)
     }
-  }, [search, refSearch, contentSearch, status, source, hotelOnlyFilter, detailedPnlFilter, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, page, limit])
+  }, [search, refSearch, contentSearch, status, source, hotelOnlyFilter, detailedPnlFilter, dateFilter, dateBasis, dateFrom, dateTo, sortBy, sortDir, countryFilter, quick, cohort, page, limit])
 
   // Card counts follow the scope filters only (country + channel) — never the
   // search box — so the row of numbers stays a steady operational readout.
@@ -422,6 +443,7 @@ function BookingsPageInner() {
    */
   function selectQuick(next: QuickFilter | null) {
     setQuick(next)
+    setCohort(null)
     setPage(1)
     if (next) {
       setDateFilter('')
@@ -442,6 +464,10 @@ function BookingsPageInner() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+  // Touching the date filters is asking the list's own question again, so the
+  // report's window steps aside rather than silently outranking them.
+  useEffect(() => { setCohort(null) }, [dateFilter, dateFrom, dateTo, dateBasis])
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
@@ -989,6 +1015,13 @@ function BookingsPageInner() {
                 from={!quick && dateBasis === 'createdAt' ? (dateFrom || null) : null}
                 to={!quick && dateBasis === 'createdAt' ? (dateTo || dateFrom || null) : null}
                 narrowed={!!(search || refSearch || contentSearch || status || source || hotelOnlyFilter || detailedPnlFilter || (countryFilter && countryFilter !== 'ALL'))}
+                cohortActive={!!cohort}
+                onViewCohort={(from, to) => {
+                  setCohort(prev => (prev && prev.from === from && prev.to === to ? null : { from, to }))
+                  setSortBy('createdAt')
+                  setSortDir('desc')
+                  setPage(1)
+                }}
               />
             </span>
 
@@ -1009,6 +1042,31 @@ function BookingsPageInner() {
               )}
             </span>
           </div>
+
+          {/* The list is answering the report's question, not its own. Said
+              plainly, because the date pills above still show the filter that
+              was set — they are what keeps the count-check chip on screen — and
+              a row filed on another day would otherwise look like a bug. */}
+          {cohort && (
+            <div className="flex items-start gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs text-brand-800">
+              <ScrollText className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span className="flex-1">
+                Showing the bookings behind the <strong>daily report</strong> for{' '}
+                {cohort.from === cohort.to
+                  ? new Date(`${cohort.from}T00:00:00.000Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', day: '2-digit', month: 'short' })
+                  : `${cohort.from} → ${cohort.to}`}
+                {' '}— every confirmation Apple System raised that day, whenever it was filed here.
+                The date pills below are not being applied.
+              </span>
+              <button
+                onClick={() => { setCohort(null); setPage(1) }}
+                className="shrink-0 text-brand-500 hover:text-brand-700 transition-colors"
+                title="Back to the list as you had it filtered"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {/* Row 4 — Date period pills + Sort controls */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
