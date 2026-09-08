@@ -29,6 +29,7 @@ import QuickStatCards, { type QuickStats } from '@/components/bookings/quick-sta
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
 import AsFetchNow from '@/components/bookings/as-fetch-now'
 import PaymentStateCell from '@/components/bookings/payment-state-cell'
+import ReportCountChip from '@/components/bookings/report-count-chip'
 import type { InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import {
   BAR_QUICK_FILTER_LABELS, BAR_QUICK_FILTERS, isQuickFilter, QUICK_FILTER_LABELS,
@@ -977,9 +978,23 @@ function BookingsPageInner() {
               </button>
             ))}
 
+            {/* The daily report's figure for the same window, when the filters
+                are asking a question the report also answers. Printed here
+                rather than left for somebody to find the gap later and assume
+                one of the two systems is broken. */}
+            <span className="sm:ml-auto flex items-center gap-1.5">
+              <ReportCountChip
+                listTotal={total}
+                preset={quick === 'created_today' ? 'today' : quick === 'created_yesterday' ? 'yesterday' : null}
+                from={!quick && dateBasis === 'createdAt' ? (dateFrom || null) : null}
+                to={!quick && dateBasis === 'createdAt' ? (dateTo || dateFrom || null) : null}
+                narrowed={!!(search || refSearch || contentSearch || status || source || hotelOnlyFilter || detailedPnlFilter || (countryFilter && countryFilter !== 'ALL'))}
+              />
+            </span>
+
             {/* How many rows the filters above actually match. */}
             <span
-              className="sm:ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-semibold text-slate-600"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-semibold text-slate-600"
               title="Bookings matching every filter on this panel"
             >
               {loading ? (
