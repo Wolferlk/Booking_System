@@ -639,7 +639,7 @@ const CLOSED_STATUSES: BookingStatus[] = ['CANCELLED', 'PENDING_CANCELLATION', '
  * "Imported from AppleSystem (quotation …)". Its presence is the proof; its
  * absence means this module keeps its hands off and lets a person decide.
  */
-async function wasImportedFromAppleSystem(bookingId: string): Promise<boolean> {
+export async function wasImportedFromAppleSystem(bookingId: string): Promise<boolean> {
   const event = await prisma.statusEvent.findFirst({
     where: { bookingId, note: { startsWith: 'Imported from AppleSystem' } },
     select: { id: true },

@@ -29,6 +29,12 @@
  * only. A quiet tick therefore costs exactly **one** AppleSystem list call and
  * one indexed local SELECT, so a 5-minute interval is entirely affordable.
  *
+ * ── The mirror question ──────────────────────────────────────────────────────
+ * The same list call also answers *what has AppleSystem cancelled?* — the rows
+ * come back in one request, so asking costs nothing extra. Those are handed to
+ * `as-watch-cancel.ts`, which never cancels anything: it puts the booking in
+ * front of the accounts desk for approval. See that module for the argument.
+ *
  * ── Storage ──────────────────────────────────────────────────────────────────
  * Settings, the last-check marker and the check log all live in `system_settings`
  * (KV), matching `as-import.ts`. **No schema change, no migration** — deliberate,
@@ -48,6 +54,15 @@ import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-impor
 import { detectCountryFromRef } from '@/lib/country-detection'
 import { getCancellationDeadline } from '@/lib/utils'
 import { raiseAsImportAlert } from '@/lib/as-import-alerts'
+import {
+  sweepCancellations,
+  emptyCancelSummary,
+  getCancelActionEnabled,
+  listCancelEntries,
+  AS_CANCELLED_STATUSES,
+  type CancelSweepSummary,
+  type CancelEntry,
+} from '@/lib/as-watch-cancel'
 import {
   recordCreated,
   recordFailure,
@@ -166,6 +181,12 @@ export interface WatchCheck {
    * (reason, attempts, first seen) lives in the import ledger.
    */
   failedQuotations?: string[]
+  /**
+   * What the same sweep found *withdrawn* upstream. Optional because every check
+   * logged before the cancellation watch existed has none, and a missing field
+   * must read as "not looked for", not as "nothing found".
+   */
+  cancel?: CancelSweepSummary
 }
 
 async function readLog(): Promise<WatchCheck[]> {
@@ -339,14 +360,23 @@ export async function runAsWatch(
     const triggeredById = params.triggeredById ?? (await getAutomationUserId())
 
     await withAsRetryBudget(WATCH_RETRY_BUDGET_MS, async () => {
+      // One call, both questions. Asking for the confirmed and the cancelled
+      // statuses together costs the same single request as asking for status 2
+      // alone did, and the two populations are partitioned here rather than by
+      // a second sweep that could see a different moment upstream.
       const { items } = await listByCreateDate({
         fromCreateDate: from,
         toCreateDate: to,
-        statuses: ['2'],
+        statuses: ['2', ...AS_CANCELLED_STATUSES],
       })
-      check.found = items.length
 
-      const candidates = await selectCandidates(items)
+      const confirmed = items.filter((it) => String(it.status ?? '') === '2')
+      const cancelled = items.filter((it) =>
+        (AS_CANCELLED_STATUSES as readonly string[]).includes(String(it.status ?? '')))
+
+      check.found = confirmed.length
+
+      const candidates = await selectCandidates(confirmed)
       check.candidates = candidates.length
 
       for (const it of candidates) {
@@ -410,6 +440,20 @@ export async function runAsWatch(
           await fail(msg)
         }
       }
+
+      // Withdrawals last: an import that failed must not cost the tick its
+      // cancellations, and a cancellation must not pre-empt an import — a
+      // quotation confirmed and cancelled in the same window is imported first
+      // so the file exists to be withdrawn.
+      try {
+        check.cancel = await sweepCancellations(cancelled, triggeredById)
+      } catch (err) {
+        // The watch's first duty is importing. A cancellation sweep that cannot
+        // read its own ledger is reported and retried, never allowed to fail the
+        // tick that has just imported bookings successfully.
+        console.error('[AsWatch] cancellation sweep failed:', err instanceof Error ? err.message : err)
+        check.cancel = { ...emptyCancelSummary(), upstream: cancelled.length }
+      }
     })
   } catch (err) {
     check.error = err instanceof Error ? err.message : String(err)
@@ -429,10 +473,11 @@ export async function runAsWatch(
     console.error('[AsWatch] could not write check log:', err instanceof Error ? err.message : err)
   })
 
-  if (check.created || check.errors || check.error) {
+  if (check.created || check.errors || check.error || check.cancel?.requested) {
     console.log(
       `[AsWatch] ${params.trigger} ${from}→${to}: found=${check.found} new=${check.candidates} ` +
-      `created=${check.created} errors=${check.errors} (${check.durationMs}ms)`,
+      `created=${check.created} errors=${check.errors} ` +
+      `cancelled=${check.cancel?.matched ?? 0}/${check.cancel?.requested ?? 0} (${check.durationMs}ms)`,
     )
   }
 
@@ -536,16 +581,25 @@ export interface WatchStatus {
    * one row per booking rather than a count repeated on every check.
    */
   ledger: ImportLedger
+  /**
+   * The cancellation side of the same sweep: what AppleSystem has withdrawn,
+   * and where each one has got to. `actionEnabled` is the gate on acting — when
+   * it is off every detection waits in the list for a person.
+   */
+  cancellations: { actionEnabled: boolean; entries: CancelEntry[] }
 }
 
 export async function getWatchStatus(logLimit = 12): Promise<WatchStatus> {
-  const [settings, lastAtRow, log, running, ledger] = await Promise.all([
-    getWatchSettings(),
-    prisma.systemSetting.findUnique({ where: { key: WATCH_LAST_AT } }),
-    readLog(),
-    isWatchRunning(),
-    getImportLedger(),
-  ])
+  const [settings, lastAtRow, log, running, ledger, cancelActionEnabled, cancelEntries] =
+    await Promise.all([
+      getWatchSettings(),
+      prisma.systemSetting.findUnique({ where: { key: WATCH_LAST_AT } }),
+      readLog(),
+      isWatchRunning(),
+      getImportLedger(),
+      getCancelActionEnabled(),
+      listCancelEntries(25),
+    ])
 
   const lastCheckAt = lastAtRow?.value || null
   const nextCheckAt = settings.enabled && lastCheckAt
@@ -571,5 +625,6 @@ export async function getWatchStatus(logLimit = 12): Promise<WatchStatus> {
                + log.filter((c) => c.error).length,
     },
     ledger,
+    cancellations: { actionEnabled: cancelActionEnabled, entries: cancelEntries },
   }
 }

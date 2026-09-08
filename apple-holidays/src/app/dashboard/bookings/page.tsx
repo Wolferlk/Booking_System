@@ -1055,8 +1055,7 @@ function BookingsPageInner() {
                 {cohort.from === cohort.to
                   ? new Date(`${cohort.from}T00:00:00.000Z`).toLocaleDateString('en-GB', { timeZone: 'UTC', day: '2-digit', month: 'short' })
                   : `${cohort.from} → ${cohort.to}`}
-                {' '}— every confirmation Apple System raised that day, whenever it was filed here.
-                The date pills below are not being applied.
+                {' '}— every confirmation Apple System raised that day.
               </span>
               <button
                 onClick={() => { setCohort(null); setPage(1) }}

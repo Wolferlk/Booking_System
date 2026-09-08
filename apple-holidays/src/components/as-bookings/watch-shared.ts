@@ -26,6 +26,85 @@ export interface WatchCheck {
   refs: string[]
   error?: string
   failedQuotations?: string[]
+  cancel?: CancelSweepSummary
+}
+
+/** Mirrors `CancelSweepSummary` in `src/lib/as-watch-cancel.ts`. */
+export interface CancelSweepSummary {
+  upstream: number
+  matched: number
+  requested: number
+  awaiting: number
+  skipped: number
+  failed: number
+  refs: string[]
+}
+
+/** Mirrors `CancelState` — where a detected upstream cancellation has got to. */
+export type CancelState =
+  | 'awaiting' | 'requested' | 'approved' | 'declined' | 'skipped' | 'failed'
+
+/** Mirrors `CancelEntry` in `src/lib/as-watch-cancel.ts`. */
+export interface CancelEntry {
+  ref: string
+  bookingId: string | null
+  quotationNo: string
+  country: string | null
+  guestName: string | null
+  arrivalDate: string | null
+  upstreamStatus: string
+  upstreamClass: string | null
+  state: CancelState
+  note: string | null
+  prevStatus: string | null
+  detectedAt: string
+  requestedAt: string | null
+  actedBy: string | null
+  decidedAt: string | null
+}
+
+/**
+ * How each state reads on the page.
+ *
+ * `label` is what happened; `blurb` is what it means for the reader — the two
+ * are kept apart because "declined" is the one state that looks like a closed
+ * item and is in fact an open disagreement nobody is going to raise again.
+ */
+export const CANCEL_STATE_META: Record<CancelState, {
+  label: string
+  blurb: string
+  tone: 'wait' | 'sent' | 'done' | 'clash' | 'muted'
+}> = {
+  awaiting: {
+    label: 'Waiting for a person',
+    blurb: 'Cancelled in AppleSystem. Nothing has changed on the booking yet.',
+    tone: 'wait',
+  },
+  requested: {
+    label: 'Waiting for accounts approval',
+    blurb: 'The booking is held at Pending Approval — Accounts Team (Cancelling).',
+    tone: 'sent',
+  },
+  approved: {
+    label: 'Cancelled by accounts',
+    blurb: 'Approved and closed. Nothing further is owed here.',
+    tone: 'done',
+  },
+  declined: {
+    label: 'Accounts said no',
+    blurb: 'AppleSystem still shows it cancelled — the two systems disagree, and this will not ask again.',
+    tone: 'clash',
+  },
+  skipped: {
+    label: 'Left alone',
+    blurb: 'Nothing to ask for on this booking.',
+    tone: 'muted',
+  },
+  failed: {
+    label: 'Could not be sent',
+    blurb: 'The request itself failed. It is retried on the next sweep.',
+    tone: 'clash',
+  },
 }
 
 /** Mirrors `FailureReason` in `src/lib/as-import-ledger.ts`. */
@@ -109,6 +188,7 @@ export interface WatchStatus {
   checks: WatchCheck[]
   totals: { checks: number; created: number; errors: number }
   ledger: ImportLedger
+  cancellations: { actionEnabled: boolean; entries: CancelEntry[] }
 }
 
 /** Compact relative duration — "just now", "45s", "4m 12s", "3h 5m", "2d". */

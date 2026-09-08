@@ -11,6 +11,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import type { UserRole } from '@prisma/client'
 import { getWatchStatus, getWatchSettings, saveWatchSettings } from '@/lib/as-watch'
+import { getCancelActionEnabled, setCancelActionEnabled } from '@/lib/as-watch-cancel'
 
 export const dynamic = 'force-dynamic'
 
@@ -35,7 +36,13 @@ export async function POST(req: NextRequest) {
   if (!session?.user) return buildApiError('Unauthorized', 401)
   if (!guardRole(session.user.role)) return buildApiError('Forbidden', 403)
 
-  let body: { enabled?: boolean; intervalMinutes?: number; lookbackDays?: number }
+  let body: {
+    enabled?: boolean
+    intervalMinutes?: number
+    lookbackDays?: number
+    /** Whether a detected upstream cancellation is sent for accounts approval. */
+    cancelActionEnabled?: boolean
+  }
   try {
     body = await req.json()
   } catch {
@@ -49,6 +56,13 @@ export async function POST(req: NextRequest) {
     lookbackDays:    Number.isFinite(body.lookbackDays)    ? Number(body.lookbackDays)    : current.lookbackDays,
   })
 
+  // Kept out of `WatchSettings` on purpose: it gates an action on *existing*
+  // bookings, not the sweep, and conflating the two would let a change of
+  // polling interval quietly switch cancellations on.
+  const cancelActionEnabled = typeof body.cancelActionEnabled === 'boolean'
+    ? await setCancelActionEnabled(body.cancelActionEnabled)
+    : await getCancelActionEnabled()
+
   // Re-arm the in-process loop so a changed interval takes effect now rather
   // than after the pending delay expires. Best-effort: on serverless there is no
   // long-lived process to re-arm and the cron route drives the watch instead.
@@ -59,5 +73,5 @@ export async function POST(req: NextRequest) {
     console.error('[watch settings] reschedule failed:', err instanceof Error ? err.message : err)
   }
 
-  return buildApiSuccess({ settings: saved }, 'Watch settings saved')
+  return buildApiSuccess({ settings: saved, cancelActionEnabled }, 'Watch settings saved')
 }

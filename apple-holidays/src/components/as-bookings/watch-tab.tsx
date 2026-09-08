@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Radar, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Clock,
   CalendarRange, Activity, Gauge, Sparkles, PackageCheck, XCircle,
-  BellOff, ExternalLink, Repeat, MailCheck,
+  BellOff, ExternalLink, Repeat, MailCheck, Ban, ShieldAlert, Send, Trash2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { toast } from 'sonner'
@@ -12,9 +12,9 @@ import { Card } from '@/components/ui/card'
 import { readApiResponse } from '@/lib/utils'
 import { fmtDateTime } from './shared'
 import {
-  relTime, REASON_LABEL, REASON_ACTION, isTransient,
+  relTime, REASON_LABEL, REASON_ACTION, isTransient, CANCEL_STATE_META,
   type WatchCheck, type WatchStatus, type WatchSettings,
-  type CreatedEntry, type FailedEntry, type LedgerSource,
+  type CreatedEntry, type FailedEntry, type LedgerSource, type CancelEntry,
 } from './watch-shared'
 
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60] as const
@@ -92,14 +92,85 @@ export default function WatchTab() {
       const json = await readApiResponse<{ ran: boolean; check?: WatchCheck; status: WatchStatus }>(res)
       if (!json.success) { toast.error(json.error ?? 'Fetch failed'); return }
       if (json.data?.status) setStatus(json.data.status)
-      const created = json.data?.check?.created ?? 0
+      const created  = json.data?.check?.created ?? 0
+      const cancel   = json.data?.check?.cancel
+      const withdrawn = (cancel?.requested ?? 0) + (cancel?.awaiting ?? 0)
       if (json.data?.check?.error) toast.error(json.message ?? 'AppleSystem unreachable')
       else if (created > 0) toast.success(json.message ?? `${created} imported`)
       else toast.info(json.message ?? 'No new confirmations')
+      // Said separately: a sweep that imported nothing and found a cancellation
+      // is not a quiet sweep, and the import toast would have called it one.
+      if (withdrawn > 0) {
+        toast.warning(
+          cancel?.requested
+            ? `${cancel.requested} booking${cancel.requested === 1 ? '' : 's'} sent for cancellation approval`
+            : `${withdrawn} booking${withdrawn === 1 ? '' : 's'} cancelled in AppleSystem — waiting for you below`,
+        )
+      }
     } catch {
       toast.error('Network error during fetch')
     } finally {
       setFetching(false)
+    }
+  }, [])
+
+  /**
+   * The cancellation switch is saved through the same settings endpoint but is
+   * deliberately not part of `WatchSettings` — it gates an action on existing
+   * bookings rather than the sweep, so it is sent and echoed on its own.
+   */
+  const saveCancelAction = useCallback(async (on: boolean) => {
+    if (!status) return
+    setSaving(true)
+    setStatus({ ...status, cancellations: { ...status.cancellations, actionEnabled: on } })
+    try {
+      const res = await fetch('/api/as-bookings-v2/watch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cancelActionEnabled: on }),
+      })
+      const json = await readApiResponse<{ cancelActionEnabled: boolean }>(res)
+      if (!json.success) toast.error(json.error ?? 'Could not save')
+      else toast.success(on
+        ? 'Upstream cancellations will now be sent for accounts approval'
+        : 'Cancellations will be detected and listed only')
+    } catch {
+      toast.error('Network error saving settings')
+    } finally {
+      setSaving(false)
+      await load(true)
+    }
+  }, [status, load])
+
+  /** Send one detected cancellation to accounts, under this user's name. */
+  const requestCancel = useCallback(async (ref: string) => {
+    try {
+      const res = await fetch('/api/as-bookings-v2/watch/cancellations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref }),
+      })
+      const json = await readApiResponse<{ status: WatchStatus }>(res)
+      if (!json.success) { toast.error(json.error ?? 'Could not send for approval'); return }
+      if (json.data?.status) setStatus(json.data.status)
+      toast.success(json.message ?? `${ref} sent for approval`)
+    } catch {
+      toast.error('Network error sending the cancellation')
+    }
+  }, [])
+
+  /** Clear a settled row from the panel. The booking is never touched. */
+  const clearCancel = useCallback(async (ref: string) => {
+    try {
+      const res = await fetch(
+        `/api/as-bookings-v2/watch/cancellations?ref=${encodeURIComponent(ref)}`,
+        { method: 'DELETE' },
+      )
+      const json = await readApiResponse<{ status: WatchStatus }>(res)
+      if (!json.success) { toast.error(json.error ?? 'Could not clear the row'); return }
+      if (json.data?.status) setStatus(json.data.status)
+    } catch {
+      toast.error('Network error clearing the row')
     }
   }, [])
 
@@ -124,6 +195,11 @@ export default function WatchTab() {
 
   const s = status?.settings
   const enabled = !!s?.enabled
+
+  // "Open" is anything nobody has settled: waiting on a person, waiting on
+  // accounts, or a request that failed. Approved and declined rows are history.
+  const openCancellations = (status?.cancellations?.entries ?? [])
+    .filter((e) => e.state === 'awaiting' || e.state === 'requested' || e.state === 'failed').length
 
   const countdown = useMemo(() => {
     if (!status?.nextCheckAt || !enabled) return null
@@ -192,8 +268,9 @@ export default function WatchTab() {
                 <p className="text-xs text-slate-500 mt-1 max-w-lg leading-relaxed">
                   Keeps asking AppleSystem for newly <span className="font-medium">confirmed (Status&nbsp;2)</span>{' '}
                   quotations and creates the booking here within minutes — instead of waiting for the
-                  6&nbsp;AM job to pick it up the next morning. Runs on the server, so it works with
-                  nobody logged in.
+                  6&nbsp;AM job to pick it up the next morning. The same call also catches the ones
+                  AppleSystem has <span className="font-medium">cancelled</span>, and puts those in
+                  front of accounts. Runs on the server, so it works with nobody logged in.
                 </p>
               </div>
             </div>
@@ -226,7 +303,7 @@ export default function WatchTab() {
           </div>
 
           {/* ── Pulse row ───────────────────────────────────────────────── */}
-          <div className="relative grid grid-cols-2 lg:grid-cols-4 gap-3 mt-5 pt-5 border-t border-slate-100">
+          <div className="relative grid grid-cols-2 lg:grid-cols-5 gap-3 mt-5 pt-5 border-t border-slate-100">
             <Metric
               icon={<Clock className="w-3.5 h-3.5" />}
               label="Last checked"
@@ -246,6 +323,15 @@ export default function WatchTab() {
               value={String(status?.totals.created ?? 0)}
               hint={`Across the last ${status?.totals.checks ?? 0} checks`}
               tone={(status?.totals.created ?? 0) > 0 ? 'good' : 'muted'}
+            />
+            <Metric
+              icon={<Ban className="w-3.5 h-3.5" />}
+              label="Cancelled upstream"
+              value={String(openCancellations)}
+              hint={openCancellations > 0
+                ? 'Open in the cancellation panel below'
+                : 'Nothing withdrawn in this window'}
+              tone={openCancellations > 0 ? 'bad' : 'muted'}
             />
             <Metric
               icon={<AlertTriangle className="w-3.5 h-3.5" />}
@@ -360,6 +446,17 @@ export default function WatchTab() {
         <FailedPanel entries={status?.ledger?.failed ?? []} now={now} onDismiss={dismiss} />
       </div>
 
+      {/* ── Cancelled in AppleSystem ─────────────────────────────────────── */}
+      <CancellationPanel
+        entries={status?.cancellations?.entries ?? []}
+        actionEnabled={!!status?.cancellations?.actionEnabled}
+        saving={saving}
+        now={now}
+        onToggleAction={saveCancelAction}
+        onRequest={requestCancel}
+        onClear={clearCancel}
+      />
+
       {/* ── Activity ─────────────────────────────────────────────────────── */}
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -461,6 +558,211 @@ function CreatedPanel({ entries, now }: { entries: CreatedEntry[]; now: number }
               </p>
             </li>
           ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+const CANCEL_TONE: Record<string, { chip: string; card: string }> = {
+  wait:  { chip: 'bg-amber-100 text-amber-800',     card: 'border-amber-200 bg-amber-50/50' },
+  sent:  { chip: 'bg-orange-100 text-orange-800',   card: 'border-orange-200 bg-orange-50/50' },
+  done:  { chip: 'bg-slate-100 text-slate-600',     card: 'border-slate-200 bg-white' },
+  clash: { chip: 'bg-rose-100 text-rose-700',       card: 'border-rose-200 bg-rose-50/50' },
+  muted: { chip: 'bg-slate-100 text-slate-500',     card: 'border-slate-200 bg-white' },
+}
+
+/**
+ * What AppleSystem has withdrawn, and what became of it here.
+ *
+ * The panel is built around one fact: **nothing on it cancels a booking.** A
+ * detection moves the file to "Pending Approval — Accounts Team (Cancelling)"
+ * and emails the desk, exactly as a person's cancellation does — so every row
+ * reads as a request with a decision still outstanding, and the states that are
+ * *finished* (approved, declined) are visually quieter than the ones that are
+ * not.
+ *
+ * The switch at the top is the whole safety argument in one control: detection
+ * always runs, so the list is complete either way; only the sending is gated.
+ * That is what makes it safe to turn on against a live book — the first sweep
+ * shows you the backlog instead of mailing it to accounts.
+ */
+function CancellationPanel({
+  entries, actionEnabled, saving, now, onToggleAction, onRequest, onClear,
+}: {
+  entries: CancelEntry[]
+  actionEnabled: boolean
+  saving: boolean
+  now: number
+  onToggleAction: (on: boolean) => void
+  onRequest: (ref: string) => Promise<void>
+  onClear: (ref: string) => Promise<void>
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const open   = entries.filter((e) => e.state === 'awaiting' || e.state === 'requested' || e.state === 'failed')
+  const closed = entries.filter((e) => e.state === 'approved' || e.state === 'declined' || e.state === 'skipped')
+  const waiting = entries.filter((e) => e.state === 'awaiting').length
+
+  const run = async (ref: string, fn: (r: string) => Promise<void>) => {
+    setBusy(ref)
+    try { await fn(ref) } finally { setBusy(null) }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Ban className="w-4 h-4 text-rose-500" />
+            <h4 className="text-sm font-semibold text-slate-900">Cancelled in AppleSystem</h4>
+            {open.length > 0 && (
+              <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-bold text-rose-700 tabular-nums">
+                {open.length}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-1.5 leading-relaxed max-w-2xl">
+            The same sweep that imports confirmations also spots the quotations AppleSystem has
+            withdrawn. A booking we hold for one of them is <span className="font-medium">never
+            cancelled automatically</span> — money has usually moved by then. It is moved to{' '}
+            <span className="font-medium">Pending Approval — Accounts Team (Cancelling)</span>,
+            attributed to AppleSystem, and the accounts desk decides.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3 shrink-0">
+          <div className="text-right">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              Send for approval
+            </p>
+            <p className="text-[11px] text-slate-400">
+              {actionEnabled ? 'Automatic' : 'Detect and list only'}
+            </p>
+          </div>
+          <button
+            role="switch"
+            aria-checked={actionEnabled}
+            aria-label="Automatically send upstream cancellations for accounts approval"
+            disabled={saving}
+            onClick={() => onToggleAction(!actionEnabled)}
+            className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-60 ${
+              actionEnabled ? 'bg-rose-500' : 'bg-slate-300'
+            }`}
+          >
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+              actionEnabled ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
+        </div>
+      </div>
+
+      {!actionEnabled && waiting > 0 && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+          <ShieldAlert className="w-4 h-4 shrink-0 mt-px" />
+          <span>
+            {waiting} booking{waiting === 1 ? ' is' : 's are'} cancelled upstream and still live here.
+            Send them one at a time with the button on each row, or switch the control above on and the
+            next sweep will send them all.
+          </span>
+        </div>
+      )}
+
+      {entries.length === 0 ? (
+        <p className="text-sm text-slate-400 mt-4">
+          Nothing withdrawn. Every confirmation in the window is still confirmed upstream.
+        </p>
+      ) : (
+        <ul className="mt-4 space-y-1.5 max-h-[26rem] overflow-y-auto pr-1">
+          {[...open, ...closed].map((e) => {
+            const meta = CANCEL_STATE_META[e.state]
+            const tone = CANCEL_TONE[meta.tone] ?? CANCEL_TONE.muted
+            const canSend = e.state === 'awaiting' || e.state === 'failed'
+            const settled = e.state === 'approved' || e.state === 'declined' || e.state === 'skipped'
+            return (
+              <li key={e.ref} className={`rounded-xl border px-3.5 py-2.5 ${tone.card}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Link
+                        href={`/dashboard/bookings/${encodeURIComponent(e.ref)}`}
+                        className="inline-flex items-center gap-1 text-sm font-semibold text-slate-800 hover:underline tabular-nums"
+                      >
+                        {e.ref}
+                        <ExternalLink className="w-3 h-3 opacity-60" />
+                      </Link>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${tone.chip}`}>
+                        {meta.label}
+                      </span>
+                      {e.country && (
+                        <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                          {e.country}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-[11px] text-slate-500 mt-1 truncate">
+                      {e.guestName ? `${e.guestName} · ` : ''}
+                      {e.arrivalDate ? `arrives ${e.arrivalDate} · ` : ''}
+                      quotation {e.quotationNo || '—'} · upstream status {e.upstreamStatus}
+                      {e.upstreamClass ? ` (${e.upstreamClass})` : ''}
+                      {e.prevStatus ? ` · was ${e.prevStatus.replace(/_/g, ' ').toLowerCase()}` : ''}
+                    </p>
+
+                    <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                      {e.note ?? meta.blurb}
+                    </p>
+
+                    {e.actedBy && e.requestedAt && (
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Sent by {e.actedBy} · {fmtDateTime(e.requestedAt)}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className="text-[11px] text-slate-400 tabular-nums" title={fmtDateTime(e.detectedAt)}>
+                      {relTime(now - Date.parse(e.detectedAt))} ago
+                    </span>
+
+                    {canSend && (
+                      <button
+                        onClick={() => void run(e.ref, onRequest)}
+                        disabled={busy === e.ref}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 transition-colors hover:bg-rose-50 disabled:opacity-50"
+                        title="Move this booking to Pending Approval — Accounts Team (Cancelling) and email the desk"
+                      >
+                        {busy === e.ref
+                          ? <Loader2 className="w-3 h-3 animate-spin" />
+                          : <Send className="w-3 h-3" />}
+                        Send for approval
+                      </button>
+                    )}
+
+                    {e.state === 'requested' && (
+                      <Link
+                        href="/dashboard/accounts/cancellations"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-orange-700 transition-colors hover:bg-orange-50"
+                      >
+                        <MailCheck className="w-3 h-3" /> Accounts queue
+                      </Link>
+                    )}
+
+                    {settled && (
+                      <button
+                        onClick={() => void run(e.ref, onClear)}
+                        disabled={busy === e.ref}
+                        className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 disabled:opacity-50"
+                        title="Clear this row from the list — the booking is not touched"
+                      >
+                        <Trash2 className="w-3 h-3" /> Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            )
+          })}
         </ul>
       )}
     </Card>
@@ -702,6 +1004,16 @@ function CheckRow({ check: c, now }: { check: WatchCheck; now: number }) {
               {c.failedQuotations?.length
                 ? ` (q${Array.from(new Set(c.failedQuotations)).join(', q')})`
                 : ''}
+            </span>
+          )}
+          {/* The withdrawal side of the same tick. Only ever shown when it
+              found something — a check that cancelled nothing should read
+              exactly as it always did. */}
+          {!!c.cancel && (c.cancel.requested > 0 || c.cancel.awaiting > 0) && (
+            <span className="ml-1.5 text-rose-700">
+              · {c.cancel.requested > 0
+                  ? `${c.cancel.requested} sent for cancel approval${c.cancel.refs.length ? ` (${c.cancel.refs.join(', ')})` : ''}`
+                  : `${c.cancel.awaiting} cancelled upstream, waiting for a person`}
             </span>
           )}
         </p>
