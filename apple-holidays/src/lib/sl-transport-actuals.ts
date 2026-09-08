@@ -56,6 +56,43 @@ import { advanceBaseKey, advanceKey } from './accounts-driver-advance-db'
  */
 export type ActualsStatus = 'draft' | 'pending' | 'recorded' | 'rejected' | 'cancelled'
 
+/**
+ * What the driver is being settled for.
+ *
+ * The workbook has carried this as a free-typed word for years and the three
+ * values below are every one it has ever held. Kept closed so the register can
+ * group and total by it; anything unrecognised is stored as null rather than
+ * invented, because a mis-typed cost type silently in the wrong subtotal is
+ * worse than an empty cell.
+ */
+export type SettlementCostType = 'transport' | 'transport_entrance' | 'transfer'
+
+export const COST_TYPES: SettlementCostType[] = ['transport', 'transport_entrance', 'transfer']
+
+export const COST_TYPE_LABEL: Record<SettlementCostType, string> = {
+  transport:          'Transport',
+  transport_entrance: 'Transport + Entrance',
+  transfer:           'Transfer',
+}
+
+/** The stored value for a cost type, or null when it is not one we know. */
+export function toCostType(value: string | null | undefined): SettlementCostType | null {
+  const v = String(value ?? '').trim().toLowerCase().replace(/[\s+]+/g, '_')
+  return (COST_TYPES as string[]).includes(v) ? (v as SettlementCostType) : null
+}
+
+/**
+ * A bulk number, normalised.
+ *
+ * Upper-cased and stripped of everything but letters, digits and a dash, so
+ * "503", " 503 " and "503 " are one bulk rather than three. Empty means the
+ * booking is not in a bulk, which is a normal state and not an error.
+ */
+export function toBulkNo(value: string | null | undefined): string | null {
+  const v = String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '')
+  return v === '' ? null : v.slice(0, 32)
+}
+
 /** The states in which the desk may still change its figures. */
 export const EDITABLE_STATUSES: ActualsStatus[] = ['draft', 'rejected', 'cancelled']
 
@@ -70,6 +107,23 @@ export interface TransportActuals {
   /** What the desk says is really owed to the driver after the advance, in LKR. */
   actualBalancePayable: number | null
   note: string | null
+
+  /**
+   * The settlement register's own three columns.
+   *
+   * A bulk is a payment run: the desk gathers a batch of finished tours under
+   * one number ("503") and hands the whole batch to accounts as a unit, exactly
+   * as the settlement workbook has always been kept. `costType` says what the
+   * driver is being paid for — the package alone, the package with entrance
+   * tickets, or a single transfer — and `budgetedCost` is the figure the tour
+   * was costed at, which is what the excess/(shortage) column is measured
+   * against. All three are the desk's, and all three are optional: a booking
+   * settled one-off carries none of them.
+   */
+  bulkNo: string | null
+  costType: SettlementCostType | null
+  budgetedCost: number | null
+  remarks: string | null
 
   /** The derived figures as they stood when the desk last saved — the comparison it saw. */
   computedTotalCost: number | null
@@ -107,6 +161,12 @@ export interface ActualsInput {
   actualBalancePayable: number | null
   note: string | null
 
+  /** The register's columns. Undefined leaves whatever is already stored alone. */
+  bulkNo?: string | null
+  costType?: SettlementCostType | null
+  budgetedCost?: number | null
+  remarks?: string | null
+
   computedTotalCost: number | null
   computedAdvance: number | null
   computedBalancePayable: number | null
@@ -119,6 +179,7 @@ export interface ActualsInput {
 const COLUMNS = `
   id, ops_booking_id, booking_ref, is_number, cntl_number, status,
   actual_package_cost_lkr, actual_balance_payable_lkr, request_note,
+  bulk_no, cost_type, budgeted_cost_lkr, settlement_remark,
   computed_total_cost_lkr, computed_advance_lkr, computed_balance_payable_lkr, advance_paid_lkr,
   saved_by, saved_at, submitted_by, submitted_at, submit_count,
   decided_by, decided_at, decision_note,
@@ -135,6 +196,10 @@ interface ActualsRow extends RowDataPacket {
   actual_package_cost_lkr: string | null
   actual_balance_payable_lkr: string | null
   request_note: string | null
+  bulk_no: string | null
+  cost_type: string | null
+  budgeted_cost_lkr: string | null
+  settlement_remark: string | null
   computed_total_cost_lkr: string | null
   computed_advance_lkr: string | null
   computed_balance_payable_lkr: string | null
@@ -175,6 +240,11 @@ function toActuals(r: ActualsRow): TransportActuals {
     actualPackageCost:    num(r.actual_package_cost_lkr),
     actualBalancePayable: num(r.actual_balance_payable_lkr),
     note: r.request_note,
+
+    bulkNo:       r.bulk_no,
+    costType:     toCostType(r.cost_type),
+    budgetedCost: num(r.budgeted_cost_lkr),
+    remarks:      r.settlement_remark,
 
     computedTotalCost:      num(r.computed_total_cost_lkr),
     computedAdvance:        num(r.computed_advance_lkr),
@@ -240,6 +310,39 @@ function money(v: number | null | undefined): number | null {
 }
 
 /**
+ * The register columns a save is actually changing.
+ *
+ * Built from the keys *present* on the input rather than from their values, so
+ * the Drive Log — which knows nothing about bulks or cost types and sends
+ * neither — can go on saving a booking's figures without blanking the register
+ * entries somebody else made on the same row. An explicit `null` still clears
+ * the column; that is how a booking is taken out of a bulk.
+ */
+function metaClause(input: ActualsInput): { sql: string; params: unknown[] } {
+  const sets: string[] = []
+  const params: unknown[] = []
+
+  if ('bulkNo' in input) {
+    sets.push('bulk_no = ?')
+    params.push(toBulkNo(input.bulkNo))
+  }
+  if ('costType' in input) {
+    sets.push('cost_type = ?')
+    params.push(toCostType(input.costType))
+  }
+  if ('budgetedCost' in input) {
+    sets.push('budgeted_cost_lkr = ?')
+    params.push(money(input.budgetedCost))
+  }
+  if ('remarks' in input) {
+    sets.push('settlement_remark = ?')
+    params.push(input.remarks?.trim().slice(0, 500) || null)
+  }
+
+  return { sql: sets.length ? `${sets.join(', ')}, ` : '', params }
+}
+
+/**
  * Save a booking's actual figures without sending them anywhere.
  *
  * Upserts one row per booking: the desk revises its figure across a week, and a
@@ -265,6 +368,8 @@ export async function saveTransportActuals(
   const balance = money(input.actualBalancePayable)
   const note    = input.note?.trim().slice(0, 1000) || null
 
+  const meta = metaClause(input)
+
   if (existing) {
     // Re-saving after a rejection clears the accounts side's answer: leaving
     // last week's "sent back" note on a figure that has since changed is how a
@@ -274,7 +379,7 @@ export async function saveTransportActuals(
           SET booking_ref = ?, is_number = ?, cntl_number = ?, is_key = ?, control_key = ?,
               pnl_record_id = ?, travel_start_date = ?, driver_name = ?,
               actual_package_cost_lkr = ?, actual_balance_payable_lkr = ?, request_note = ?,
-              computed_total_cost_lkr = ?, computed_advance_lkr = ?,
+              ${meta.sql}computed_total_cost_lkr = ?, computed_advance_lkr = ?,
               computed_balance_payable_lkr = ?, advance_paid_lkr = ?, rate = ?,
               status = 'draft',
               saved_by = ?, saved_at = NOW(),
@@ -286,6 +391,7 @@ export async function saveTransportActuals(
         keyOf(input.isNumber ?? input.bookingRef), keyOf(input.cntlNumber),
         input.pnlRecordId, input.travelStartDate, input.driverName,
         pkg, balance, note,
+        ...meta.params,
         input.computedTotalCost, input.computedAdvance,
         input.computedBalancePayable, input.advancePaid, input.rate,
         actor,
@@ -298,15 +404,18 @@ export async function saveTransportActuals(
          (ops_booking_id, booking_ref, is_number, cntl_number, is_key, control_key,
           pnl_record_id, travel_start_date, driver_name,
           actual_package_cost_lkr, actual_balance_payable_lkr, request_note,
+          bulk_no, cost_type, budgeted_cost_lkr, settlement_remark,
           computed_total_cost_lkr, computed_advance_lkr,
           computed_balance_payable_lkr, advance_paid_lkr, rate,
           status, saved_by, saved_at, submit_count, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, NOW(), 0, NOW(), NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, NOW(), 0, NOW(), NOW())`,
       [
         input.bookingId, input.bookingRef, input.isNumber, input.cntlNumber,
         keyOf(input.isNumber ?? input.bookingRef), keyOf(input.cntlNumber),
         input.pnlRecordId, input.travelStartDate, input.driverName,
         pkg, balance, note,
+        toBulkNo(input.bulkNo), toCostType(input.costType),
+        money(input.budgetedCost ?? null), input.remarks?.trim().slice(0, 500) || null,
         input.computedTotalCost, input.computedAdvance,
         input.computedBalancePayable, input.advancePaid, input.rate,
         actor,
@@ -391,6 +500,68 @@ export async function withdrawTransportActuals(
 
   const after = await fetchTransportActual(bookingId)
   if (!after) throw new Error('The withdrawal was written but could not be read back.')
+  return after
+}
+
+/**
+ * Set the register's own columns on a booking, and nothing else.
+ *
+ * Separate from `saveTransportActuals` on purpose. Putting a finished tour into
+ * a bulk, naming what it is being paid for, or writing a remark against it is
+ * bookkeeping about a settlement, not an assertion about what it cost — so it
+ * must not reset the status to `draft`, must not clear an accounts decision,
+ * and is allowed on a row that has already been settled, where the money is
+ * closed but the paperwork is still being filed.
+ *
+ * A booking with no row yet gets one, carrying the identity the accounts side
+ * matches on and no figures at all: an entry in a bulk is a perfectly good
+ * thing to record before anybody has costed the tour.
+ */
+export async function applySettlementMeta(
+  input: ActualsInput,
+  actor: string,
+): Promise<TransportActuals> {
+  const existing = await fetchTransportActual(input.bookingId)
+  const meta = metaClause(input)
+
+  if (!meta.sql) {
+    if (existing) return existing
+    throw new Error('Nothing to record against this booking.')
+  }
+
+  // `metaClause` ends its fragment with a comma so it can sit in front of the
+  // save statement's own columns; here it is the whole SET list, so the comma
+  // has to come off.
+  const sets = meta.sql.replace(/,\s*$/, '')
+
+  if (existing) {
+    await accountsWrite(
+      `UPDATE sl_transport_settlement_requests
+          SET ${sets}, saved_by = ?, saved_at = NOW(), updated_at = NOW()
+        WHERE id = ?`,
+      [...meta.params, actor, existing.id],
+    )
+  } else {
+    await accountsWrite(
+      `INSERT INTO sl_transport_settlement_requests
+         (ops_booking_id, booking_ref, is_number, cntl_number, is_key, control_key,
+          pnl_record_id, travel_start_date, driver_name,
+          bulk_no, cost_type, budgeted_cost_lkr, settlement_remark,
+          status, saved_by, saved_at, submit_count, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, NOW(), 0, NOW(), NOW())`,
+      [
+        input.bookingId, input.bookingRef, input.isNumber, input.cntlNumber,
+        keyOf(input.isNumber ?? input.bookingRef), keyOf(input.cntlNumber),
+        input.pnlRecordId, input.travelStartDate, input.driverName,
+        toBulkNo(input.bulkNo), toCostType(input.costType),
+        money(input.budgetedCost ?? null), input.remarks?.trim().slice(0, 500) || null,
+        actor,
+      ],
+    )
+  }
+
+  const after = await fetchTransportActual(input.bookingId)
+  if (!after) throw new Error('The entry was written but could not be read back.')
   return after
 }
 

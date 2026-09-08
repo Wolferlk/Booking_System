@@ -19,6 +19,8 @@ import { DriverChatDock, type DriverChatTarget } from '../drive-log/DriverChatDo
 import DriverBriefModal from '@/components/bookings/driver-brief-modal'
 import DriverBriefReadiness from '@/components/ground/driver-brief-readiness'
 import { cn } from '@/lib/utils'
+import { hasPermission } from '@/lib/rbac'
+import type { UserRole } from '@prisma/client'
 import {
   HOTEL_ONLY_VEHICLE, bookingNeedsDriver, movementNeedsDriver, resolveIsHotelOnly,
 } from '@/lib/driver-requirement'
@@ -1644,6 +1646,23 @@ export default function SriLankaDriverAllocationPage() {
               )} />
             </button>
           </div>
+
+          {/* ── Through to the settlement register ──
+              Allocation ends where settlement begins: the same tours, once
+              they have run, are what the Driver Settlement Register pays out
+              on. Offered only to the roles that may see money — a Ground user
+              sent to a screen that would refuse them is worse than no link. */}
+          {session?.user?.role && hasPermission(session.user.role as UserRole, 'pnl:read') ? (
+            <Link
+              href="/dashboard/srilanka/driver-settlements"
+              title="Rest payments for these drivers — bulks, budgets and what is still owed"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20 hover:text-emerald-200 transition-all text-sm font-semibold whitespace-nowrap"
+            >
+              <Banknote className="w-4 h-4" />
+              Driver Settlements
+              <ArrowRight className="w-3.5 h-3.5 opacity-70" />
+            </Link>
+          ) : null}
 
           {/* Refresh re-reads the advances too — a payment released in Payable
               1.0 a moment ago should show here without a page reload, and this

@@ -33,6 +33,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import {
   saveTransportActuals, submitTransportActuals, withdrawTransportActuals,
+  toBulkNo, toCostType,
 } from '@/lib/sl-transport-actuals'
 import type { UserRole } from '@prisma/client'
 
@@ -47,6 +48,18 @@ interface Body {
   actualPackageCost?: number | string | null
   actualBalancePayable?: number | string | null
   note?: string | null
+  /**
+   * The settlement register's own columns.
+   *
+   * Optional, and absent from every Drive Log save: a key that is not sent
+   * leaves its column exactly as it stands, so the two screens can edit the
+   * same row without overwriting each other's half of it. See `metaClause()`
+   * in `sl-transport-actuals.ts`.
+   */
+  bulkNo?: string | null
+  costType?: string | null
+  budgetedCost?: number | string | null
+  remarks?: string | null
   /** The derived figures the browser was showing — see below. */
   computed?: {
     totalCost?: number | null
@@ -144,6 +157,13 @@ export async function POST(req: NextRequest) {
       actualPackageCost:    figure(body.actualPackageCost, 'Actual transport package cost'),
       actualBalancePayable: figure(body.actualBalancePayable, 'Actual balance payable'),
       note: body.note ?? null,
+
+      // Spread rather than listed, so a key the caller did not send stays
+      // absent all the way down to the SQL and leaves its column alone.
+      ...('bulkNo'       in body ? { bulkNo: toBulkNo(body.bulkNo) } : {}),
+      ...('costType'     in body ? { costType: toCostType(body.costType) } : {}),
+      ...('budgetedCost' in body ? { budgetedCost: figure(body.budgetedCost, 'Budgeted cost') } : {}),
+      ...('remarks'      in body ? { remarks: body.remarks ?? null } : {}),
 
       // What the screen was comparing against, frozen onto the row. Taken from
       // the browser because it is a *record of what the person saw*, not a
