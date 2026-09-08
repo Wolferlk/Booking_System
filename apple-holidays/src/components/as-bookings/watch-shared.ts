@@ -25,6 +25,77 @@ export interface WatchCheck {
   errors: number
   refs: string[]
   error?: string
+  failedQuotations?: string[]
+}
+
+/** Mirrors `FailureReason` in `src/lib/as-import-ledger.ts`. */
+export type FailureReason =
+  | 'no-is-number'
+  | 'no-country'
+  | 'no-itinerary'
+  | 'missing-ids'
+  | 'upstream'
+  | 'other'
+
+export type LedgerSource = 'watch' | 'reconcile' | 'import'
+
+export interface CreatedEntry {
+  ref: string
+  bookingId: string
+  quotationNo: string
+  country: string | null
+  at: string
+  source: LedgerSource
+  arrivalDate: string | null
+  guestName: string | null
+}
+
+export interface FailedEntry {
+  quotationNo: string
+  ref: string | null
+  country: string | null
+  reason: FailureReason
+  message: string
+  firstAt: string
+  lastAt: string
+  attempts: number
+  source: LedgerSource
+  notifiedAt: string | null
+  dismissedAt: string | null
+  dismissedBy: string | null
+}
+
+export interface ImportLedger {
+  created: CreatedEntry[]
+  failed: FailedEntry[]
+}
+
+/** Plain-English reason labels — mirrors `REASON_LABEL` on the server. */
+export const REASON_LABEL: Record<FailureReason, string> = {
+  'no-is-number': 'No IS number in AppleSystem',
+  'no-country':   'Destination country could not be determined',
+  'no-itinerary': 'No dated itinerary',
+  'missing-ids':  'Quotation is missing its identifiers',
+  'upstream':     'AppleSystem did not respond',
+  'other':        'Could not be imported',
+}
+
+/**
+ * What the operator should actually do about each reason. A retryable blip and a
+ * quotation that will never import look identical in a tally, which is how two
+ * stuck bookings came to be re-announced forever — so the panel says which it is.
+ */
+export const REASON_ACTION: Record<FailureReason, string> = {
+  'no-is-number': 'Assign an IS number to the quotation in AppleSystem — it imports on the next sweep.',
+  'no-country':   'The IS number carries no VN / IS / SG / MY prefix. Correct it in AppleSystem.',
+  'no-itinerary': 'Add the dated day-by-day itinerary in AppleSystem, then it can import.',
+  'missing-ids':  'The AppleSystem row is incomplete — raise it with AppleSystem support.',
+  'upstream':     'A transient AppleSystem outage. It retries automatically; no action needed.',
+  'other':        'Open the quotation in AppleSystem and check it against the message below.',
+}
+
+export function isTransient(reason: FailureReason): boolean {
+  return reason === 'upstream'
 }
 
 export interface WatchStatus {
@@ -37,6 +108,7 @@ export interface WatchStatus {
   lastCheck: WatchCheck | null
   checks: WatchCheck[]
   totals: { checks: number; created: number; errors: number }
+  ledger: ImportLedger
 }
 
 /** Compact relative duration — "just now", "45s", "4m 12s", "3h 5m", "2d". */

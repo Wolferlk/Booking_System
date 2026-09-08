@@ -3,13 +3,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Radar, Loader2, RefreshCw, AlertTriangle, CheckCircle2, Clock,
-  CalendarRange, Activity, Gauge, Sparkles,
+  CalendarRange, Activity, Gauge, Sparkles, PackageCheck, XCircle,
+  BellOff, ExternalLink, Repeat, MailCheck,
 } from 'lucide-react'
+import Link from 'next/link'
 import { toast } from 'sonner'
 import { Card } from '@/components/ui/card'
 import { readApiResponse } from '@/lib/utils'
 import { fmtDateTime } from './shared'
-import { relTime, type WatchCheck, type WatchStatus, type WatchSettings } from './watch-shared'
+import {
+  relTime, REASON_LABEL, REASON_ACTION, isTransient,
+  type WatchCheck, type WatchStatus, type WatchSettings,
+  type CreatedEntry, type FailedEntry, type LedgerSource,
+} from './watch-shared'
 
 const INTERVAL_PRESETS = [5, 10, 15, 30, 60] as const
 const LOOKBACK_PRESETS = [1, 2, 3, 7, 14] as const
@@ -96,6 +102,25 @@ export default function WatchTab() {
       setFetching(false)
     }
   }, [])
+
+  /**
+   * Stop a quotation being re-announced. It keeps being retried — dismissing is
+   * a statement about notifications, not about the import.
+   */
+  const dismiss = useCallback(async (quotationNo: string) => {
+    try {
+      const res = await fetch(
+        `/api/as-bookings-v2/watch/ledger?quotation_no=${encodeURIComponent(quotationNo)}`,
+        { method: 'DELETE' },
+      )
+      const json = await readApiResponse<{ dismissed: boolean }>(res)
+      if (!json.success) { toast.error(json.error ?? 'Could not dismiss'); return }
+      toast.success(json.message ?? `Quotation ${quotationNo} dismissed`)
+      await load(true)
+    } catch {
+      toast.error('Network error dismissing the quotation')
+    }
+  }, [load])
 
   const s = status?.settings
   const enabled = !!s?.enabled
@@ -226,7 +251,9 @@ export default function WatchTab() {
               icon={<AlertTriangle className="w-3.5 h-3.5" />}
               label="Problems"
               value={String(status?.totals.errors ?? 0)}
-              hint={(status?.totals.errors ?? 0) > 0 ? 'Retried on the next check' : 'No failures recorded'}
+              hint={(status?.totals.errors ?? 0) > 0
+                ? 'Distinct bookings stuck — see "Could not import"'
+                : 'No failures recorded'}
               tone={(status?.totals.errors ?? 0) > 0 ? 'bad' : 'muted'}
             />
           </div>
@@ -327,6 +354,12 @@ export default function WatchTab() {
         </Card>
       </div>
 
+      {/* ── What the importer actually did ───────────────────────────────── */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <CreatedPanel entries={status?.ledger?.created ?? []} now={now} />
+        <FailedPanel entries={status?.ledger?.failed ?? []} now={now} onDismiss={dismiss} />
+      </div>
+
       {/* ── Activity ─────────────────────────────────────────────────────── */}
       <Card className="p-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -354,6 +387,222 @@ export default function WatchTab() {
 }
 
 // ── Pieces ────────────────────────────────────────────────────────────────────
+
+const SOURCE_LABEL: Record<LedgerSource, string> = {
+  watch:     'Live watch',
+  reconcile: 'Reconciliation',
+  import:    'Daily import',
+}
+
+/**
+ * Bookings the importer created, one row each.
+ *
+ * The check log above says "3 bookings created" and lists bare refs; this says
+ * *which* bookings, for whom, arriving when, and from which quotation — so the
+ * page answers "did my confirmation come through?" without a second lookup.
+ */
+function CreatedPanel({ entries, now }: { entries: CreatedEntry[]; now: number }) {
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <PackageCheck className="w-4 h-4 text-emerald-500" />
+          <h4 className="text-sm font-semibold text-slate-900">Bookings created</h4>
+        </div>
+        {entries.length > 0 && (
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700 tabular-nums">
+            {entries.length}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+        Every booking any AppleSystem import path has created here, newest first.
+      </p>
+
+      {entries.length === 0 ? (
+        <p className="text-sm text-slate-400 mt-4">
+          Nothing created yet. New confirmations appear here the moment they import.
+        </p>
+      ) : (
+        <ul className="mt-4 space-y-1.5 max-h-[22rem] overflow-y-auto pr-1">
+          {entries.map((e) => (
+            <li
+              key={e.ref}
+              className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Link
+                      href={`/dashboard/bookings/${encodeURIComponent(e.ref)}`}
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-800 hover:underline tabular-nums"
+                    >
+                      {e.ref}
+                      <ExternalLink className="w-3 h-3 opacity-60" />
+                    </Link>
+                    {e.country && (
+                      <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                        {e.country}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                    {e.guestName ? `${e.guestName} · ` : ''}
+                    {e.arrivalDate ? `arrives ${e.arrivalDate} · ` : ''}
+                    quotation {e.quotationNo}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[11px] text-slate-400 tabular-nums" title={fmtDateTime(e.at)}>
+                  {relTime(now - Date.parse(e.at))} ago
+                </span>
+              </div>
+              <p className="text-[10px] uppercase tracking-wider text-slate-400 mt-1">
+                {SOURCE_LABEL[e.source] ?? e.source}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+/**
+ * Quotations that could not be imported — **one row per booking, not per retry**.
+ *
+ * This is the panel the page was missing. Previously a stuck confirmation showed
+ * up only as "2 failed, will retry" on every check row and as a repeating alert
+ * in everyone's inbox, with the quotation number nowhere on screen. Here each
+ * problem quotation appears once, with the reason, what to do about it, how many
+ * times it has been retried, and whether anyone has already been told.
+ */
+function FailedPanel({
+  entries, now, onDismiss,
+}: {
+  entries: FailedEntry[]
+  now: number
+  onDismiss: (quotationNo: string) => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const open = entries.filter((e) => !e.dismissedAt)
+  const dismissed = entries.filter((e) => e.dismissedAt)
+
+  const handle = async (q: string) => {
+    setBusy(q)
+    try { await onDismiss(q) } finally { setBusy(null) }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <XCircle className="w-4 h-4 text-amber-500" />
+          <h4 className="text-sm font-semibold text-slate-900">Could not import</h4>
+        </div>
+        {open.length > 0 && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700 tabular-nums">
+            {open.length}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+        One row per quotation, however many times it has been retried. Each is
+        emailed <span className="font-medium">once</span> — repeats are listed here and nowhere else.
+      </p>
+
+      {entries.length === 0 ? (
+        <p className="text-sm text-slate-400 mt-4">
+          Nothing is stuck. Every confirmation in the window imported cleanly.
+        </p>
+      ) : (
+        <ul className="mt-4 space-y-1.5 max-h-[22rem] overflow-y-auto pr-1">
+          {[...open, ...dismissed].map((e) => {
+            const transient = isTransient(e.reason)
+            const done = !!e.dismissedAt
+            return (
+              <li
+                key={`${e.quotationNo}:${e.reason}`}
+                className={`rounded-xl border px-3 py-2 ${
+                  done       ? 'border-slate-100 bg-slate-50/60 opacity-70'
+                  : transient ? 'border-slate-200 bg-white'
+                              : 'border-amber-100 bg-amber-50/50'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-slate-800 tabular-nums">
+                        Quotation {e.quotationNo}
+                      </span>
+                      {e.ref && (
+                        <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 tabular-nums">
+                          {e.ref}
+                        </span>
+                      )}
+                      {e.country && (
+                        <span className="rounded-full bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">
+                          {e.country}
+                        </span>
+                      )}
+                    </div>
+                    <p className={`text-xs font-medium mt-1 ${done ? 'text-slate-500' : transient ? 'text-slate-600' : 'text-amber-800'}`}>
+                      {REASON_LABEL[e.reason] ?? 'Could not be imported'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+                      {REASON_ACTION[e.reason]}
+                    </p>
+                    {e.message && (
+                      <p className="text-[11px] text-slate-400 mt-1 italic break-words">{e.message}</p>
+                    )}
+                  </div>
+
+                  {!done && (
+                    <button
+                      onClick={() => void handle(e.quotationNo)}
+                      disabled={busy === e.quotationNo}
+                      title="Stop listing and announcing this quotation. It keeps being retried."
+                      className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      {busy === e.quotationNo
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <BellOff className="w-3 h-3" />}
+                      Dismiss
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap mt-1.5 text-[11px] text-slate-400 tabular-nums">
+                  <span className="inline-flex items-center gap-1">
+                    <Repeat className="w-3 h-3" />
+                    {e.attempts} attempt{e.attempts === 1 ? '' : 's'}
+                  </span>
+                  <span title={fmtDateTime(e.firstAt)}>
+                    first {relTime(now - Date.parse(e.firstAt))} ago
+                  </span>
+                  <span title={fmtDateTime(e.lastAt)}>
+                    last {relTime(now - Date.parse(e.lastAt))} ago
+                  </span>
+                  <span>{SOURCE_LABEL[e.source] ?? e.source}</span>
+                  {e.notifiedAt && (
+                    <span className="inline-flex items-center gap-1 text-slate-400" title={`Emailed ${fmtDateTime(e.notifiedAt)}`}>
+                      <MailCheck className="w-3 h-3" /> emailed once
+                    </span>
+                  )}
+                  {done && (
+                    <span className="text-slate-400">
+                      dismissed{e.dismissedBy ? ` by ${e.dismissedBy}` : ''}
+                    </span>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
 
 function Metric({
   icon, label, value, hint, tone = 'muted',
@@ -448,7 +697,12 @@ function CheckRow({ check: c, now }: { check: WatchCheck; now: number }) {
                   Nothing new — {c.found} confirmation{c.found === 1 ? '' : 's'} in window, all already imported
                 </span>}
           {partial && (
-            <span className="ml-1.5 text-amber-700">· {c.errors} failed, will retry</span>
+            <span className="ml-1.5 text-amber-700">
+              · {c.errors} failed
+              {c.failedQuotations?.length
+                ? ` (q${Array.from(new Set(c.failedQuotations)).join(', q')})`
+                : ''}
+            </span>
           )}
         </p>
         <p className="text-[11px] text-slate-400 mt-0.5 tabular-nums">

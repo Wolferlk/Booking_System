@@ -40,6 +40,7 @@ import {
   listByCreateDate,
   getQuoteTemplate,
   withAsRetryBudget,
+  resolveCountryName,
   type ASBookingListItem,
 } from '@/lib/applesystem'
 import { mapQuoteToBooking, normalizeIsNumber, ASMappingError } from '@/lib/as-booking-map'
@@ -47,6 +48,16 @@ import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-impor
 import { detectCountryFromRef } from '@/lib/country-detection'
 import { getCancellationDeadline } from '@/lib/utils'
 import { raiseAsImportAlert } from '@/lib/as-import-alerts'
+import {
+  recordCreated,
+  recordFailure,
+  clearFailure,
+  markNotified,
+  listFailed,
+  getImportLedger,
+  REASON_LABEL,
+  type ImportLedger,
+} from '@/lib/as-import-ledger'
 
 // ── Settings / state keys (system_settings) ───────────────────────────────────
 export const WATCH_ENABLED   = 'as_watch_enabled'
@@ -149,6 +160,12 @@ export interface WatchCheck {
   errors: number
   refs: string[]                  // refs created by this check (capped)
   error?: string                  // run-level failure (nothing was imported)
+  /**
+   * Quotation numbers that failed on this check. Kept so a row can name what it
+   * could not import instead of only counting it; the full per-quotation detail
+   * (reason, attempts, first seen) lives in the import ledger.
+   */
+  failedQuotations?: string[]
 }
 
 async function readLog(): Promise<WatchCheck[]> {
@@ -312,7 +329,11 @@ export async function runAsWatch(
     created: 0,
     errors: 0,
     refs: [],
+    failedQuotations: [],
   }
+
+  /** Quotations failing for the first time on this tick — the only ones worth an alert. */
+  const newlyFailed: string[] = []
 
   try {
     const triggeredById = params.triggeredById ?? (await getAutomationUserId())
@@ -333,26 +354,60 @@ export async function runAsWatch(
         // The template endpoint keys on the row's `id`; its `reference_id` field
         // is just the quotation number and returns an empty "NA" stub here.
         const referenceId = String(it.id ?? it.reference_id ?? '').trim()
-        if (!quotationNo || !referenceId) { check.errors++; continue }
+
+        /** Record one failure against the ledger and this check, uniformly. */
+        const fail = async (message: string, ref: string | null = null) => {
+          check.errors++
+          check.failedQuotations?.push(quotationNo || '—')
+          console.error(`[AsWatch] q${quotationNo} failed:`, message)
+          if (!quotationNo) return
+          const { isNew } = await recordFailure({
+            quotationNo,
+            ref,
+            country: resolveCountryName(it),
+            message,
+            source: 'watch',
+          })
+          if (isNew) newlyFailed.push(quotationNo)
+        }
+
+        if (!quotationNo || !referenceId) {
+          await fail('Missing quotation/reference id on the AppleSystem list row')
+          continue
+        }
 
         try {
           const quote = (await getQuoteTemplate(quotationNo, referenceId)) as unknown as Record<string, unknown>
           const mapped = mapQuoteToBooking(quote, { fallbackIsNumber: it.is_number })
           const country = mapped.operationCountry ?? detectCountryFromRef(mapped.bookingRef)
-          if (!country) { check.errors++; continue }
+          if (!country) {
+            await fail('Could not determine the destination country from the IS number.', mapped.bookingRef)
+            continue
+          }
 
           const { booking, alreadyExists } = await importMappedBooking(mapped, country, {
             createdById: triggeredById,
             cancellationDeadline: getCancellationDeadline(mapped.arrivalDate),
           })
+          // Whether it was created now or already present, this quotation is no
+          // longer a problem — drop any open failure so a future one is heard.
+          await clearFailure(quotationNo)
           if (alreadyExists) continue
 
           check.created++
           if (check.refs.length < MAX_REFS_PER_CHECK) check.refs.push(booking.bookingRef)
+          await recordCreated({
+            ref: booking.bookingRef,
+            bookingId: booking.id,
+            quotationNo,
+            country,
+            source: 'watch',
+            arrivalDate: mapped.arrivalDate ?? null,
+            guestName: mapped.passengers[0]?.name ?? null,
+          })
         } catch (err) {
-          check.errors++
           const msg = err instanceof ASMappingError || err instanceof Error ? err.message : String(err)
-          console.error(`[AsWatch] q${quotationNo} failed:`, msg)
+          await fail(msg)
         }
       }
     })
@@ -381,19 +436,26 @@ export async function runAsWatch(
     )
   }
 
-  await notifyOnFailure(check)
+  await notifyOnFailure(check, newlyFailed)
   return { ran: true, check }
 }
 
 /**
- * Alert only on a *sustained* problem.
+ * Alert only on a *sustained*, and *unreported*, problem.
  *
  * The watcher runs many times an hour against an upstream that occasionally
  * blips, so alerting on a single failed tick would be pure noise — the next tick
  * usually recovers on its own. Three consecutive failures is a real outage, and
  * the dedup signature keeps it to one alert per outage rather than one per tick.
+ *
+ * Per-booking failures are governed by the import ledger rather than by time:
+ * `newlyFailed` holds only the quotations that had never failed this way before,
+ * so a quotation AppleSystem will never let us import — no IS number, say — is
+ * announced exactly once instead of on every sweep for as long as it sits in the
+ * rolling window. It keeps being retried, and keeps being listed on the Live
+ * Watch page; it just stops mailing anyone about it.
  */
-async function notifyOnFailure(check: WatchCheck): Promise<void> {
+async function notifyOnFailure(check: WatchCheck, newlyFailed: string[]): Promise<void> {
   if (!check.error && check.errors === 0) return
 
   if (check.error) {
@@ -416,14 +478,34 @@ async function notifyOnFailure(check: WatchCheck): Promise<void> {
     return
   }
 
+  // Everything that failed here has already been reported (or dismissed). Retries
+  // continue; nobody needs telling again.
+  if (newlyFailed.length === 0) {
+    console.log(
+      `[AsWatch] ${check.errors} failed, all previously reported — alert and email suppressed`,
+    )
+    return
+  }
+
+  const failed = await listFailed()
+  const detail = newlyFailed
+    .map((q) => {
+      const e = failed.find((f) => f.quotationNo === q)
+      return e ? `q${q} — ${REASON_LABEL[e.reason]}` : `q${q}`
+    })
+    .join(' · ')
+
   await raiseAsImportAlert({
     severity: 'warning',
-    title: `Live watch could not import ${check.errors} confirmation${check.errors === 1 ? '' : 's'}`,
+    title: `Live watch could not import ${newlyFailed.length} new confirmation${newlyFailed.length === 1 ? '' : 's'}`,
     message:
-      `${check.created} created, ${check.errors} failed while sweeping create dates ` +
-      `${check.windowFrom} → ${check.windowTo}. They will be retried on the next check.`,
-    // One alert per window per day, not one per tick.
-    signature: `watch-items-failed::${check.windowFrom}::${check.windowTo}`,
+      `${detail}. ` +
+      `Swept create dates ${check.windowFrom} → ${check.windowTo}; ${check.created} created, ` +
+      `${check.errors} failed in total (the rest were already reported). ` +
+      `Open the Live Watch page for the full list — you will not be emailed about these again.`,
+    // Identity is the set of newly-failing quotations, so a different booking
+    // failing later still gets through while a repeat of these never does.
+    signature: `watch-items-failed::${[...newlyFailed].sort().join(',')}`,
     jobMode: 'auto',
     dateFrom: check.windowFrom,
     dateTo: check.windowTo,
@@ -431,6 +513,8 @@ async function notifyOnFailure(check: WatchCheck): Promise<void> {
     totalCreated: check.created,
     totalErrors: check.errors,
   })
+
+  await markNotified(newlyFailed)
 }
 
 // ── Status for the UI ─────────────────────────────────────────────────────────
@@ -447,14 +531,20 @@ export interface WatchStatus {
   checks: WatchCheck[]
   /** Rolled-up totals across the retained log — the "since" is `checks[last].at`. */
   totals: { checks: number; created: number; errors: number }
+  /**
+   * Which bookings were actually created, and which quotations could not be —
+   * one row per booking rather than a count repeated on every check.
+   */
+  ledger: ImportLedger
 }
 
 export async function getWatchStatus(logLimit = 12): Promise<WatchStatus> {
-  const [settings, lastAtRow, log, running] = await Promise.all([
+  const [settings, lastAtRow, log, running, ledger] = await Promise.all([
     getWatchSettings(),
     prisma.systemSetting.findUnique({ where: { key: WATCH_LAST_AT } }),
     readLog(),
     isWatchRunning(),
+    getImportLedger(),
   ])
 
   const lastCheckAt = lastAtRow?.value || null
@@ -474,7 +564,12 @@ export async function getWatchStatus(logLimit = 12): Promise<WatchStatus> {
     totals: {
       checks:  log.length,
       created: log.reduce((n, c) => n + c.created, 0),
-      errors:  log.reduce((n, c) => n + c.errors + (c.error ? 1 : 0), 0),
+      // Count *distinct* problem quotations, not one per retry: the old sum
+      // grew by two on every sweep for the same two stuck bookings, which is
+      // how "Problems: 80" came to mean "2 bookings, 40 checks".
+      errors:  ledger.failed.filter((f) => !f.dismissedAt).length
+               + log.filter((c) => c.error).length,
     },
+    ledger,
   }
 }

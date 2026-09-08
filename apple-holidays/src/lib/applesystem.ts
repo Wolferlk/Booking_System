@@ -488,6 +488,17 @@ const AS_PAGE_CONCURRENCY = Math.max(1, Number(process.env.AS_PAGE_CONCURRENCY |
 /** Hard stop so a runaway `last_page` can never loop forever. */
 const AS_MAX_PAGES = 50
 
+/**
+ * Page cap for a *scoped* search (one IS or quotation number).
+ *
+ * Such a search is expected to match a handful of rows. If the upstream ignores
+ * the filter it answers with the whole archive instead — 200k+ rows, 8000+
+ * pages — and paging that is both hopeless and abusive. Stopping at two pages
+ * turns the failure into an immediate, legible error rather than a request that
+ * hangs until the route's `maxDuration` kills it.
+ */
+const SEARCH_MAX_PAGES = 2
+
 /** One page of a `/api/quotation/list` query, with what it says about the rest. */
 async function fetchListPage(
   qs: URLSearchParams,
@@ -522,16 +533,21 @@ async function fetchListPage(
  * twice. (It can still slip out of the tail unseen, exactly as it could when
  * the pages were fetched one after another.)
  */
-async function listAllPages(qs: URLSearchParams, label: string): Promise<ASListResult> {
+async function listAllPages(
+  qs: URLSearchParams,
+  label: string,
+  opts: { maxPages?: number } = {},
+): Promise<ASListResult> {
   const byId = new Map<string, ASBookingListItem>()
+  const maxPages = Math.min(opts.maxPages ?? AS_MAX_PAGES, AS_MAX_PAGES)
   let upstreamTotal = 0
-  let lastPage = AS_MAX_PAGES
+  let lastPage = maxPages
 
-  for (let next = 1; next <= Math.min(lastPage, AS_MAX_PAGES); ) {
+  for (let next = 1; next <= Math.min(lastPage, maxPages); ) {
     const batch: number[] = []
     for (
       let page = next;
-      page < next + AS_PAGE_CONCURRENCY && page <= Math.min(lastPage, AS_MAX_PAGES);
+      page < next + AS_PAGE_CONCURRENCY && page <= Math.min(lastPage, maxPages);
       page++
     ) {
       batch.push(page)
@@ -552,6 +568,16 @@ async function listAllPages(qs: URLSearchParams, label: string): Promise<ASListR
     // An empty page means we have run past the end — whatever `last_page` said.
     if (sawEmptyPage) break
     next += batch.length
+
+    // A scoped search that comes back with far more than it asked for means the
+    // upstream dropped the filter and is serving the whole archive. Say so
+    // instead of paging into a timeout.
+    if (next > maxPages && lastPage > maxPages) {
+      throw new Error(
+        `AppleSystem ${label} returned ${upstreamTotal} rows across ${lastPage} pages — ` +
+        `the filter was not applied upstream, so the result cannot be trusted.`,
+      )
+    }
   }
 
   const items = Array.from(byId.values())
@@ -609,20 +635,37 @@ export interface ASSearchParams {
 /**
  * Search quotations by IS number and/or quotation number — the fast, scoped path.
  *
- * Unlike {@link listBookings}, this passes AppleSystem's own `is_number` /
- * `quotation_no` filters straight through, so the upstream returns only the few
- * matching rows instead of a multi-year window. This is what the "New Booking
- * from AppleSystem" flow uses, and it avoids the timeouts the wide list can hit.
+ * Unlike {@link listBookings}, this passes AppleSystem's own filters straight
+ * through, so the upstream returns only the few matching rows instead of a
+ * multi-year window. This is what the "New Booking from AppleSystem" flow uses,
+ * and it avoids the timeouts the wide list can hit.
+ *
+ * The quotation number goes out as **`id`**, not `quotation_no`. `/api/quotation/list`
+ * silently *ignores* a `quotation_no` parameter: it answers 200 with the entire
+ * unfiltered archive (200k+ rows over 8000+ pages), so every quotation-number
+ * search degenerated into a full scan and timed out before returning a row —
+ * which is what made importing by quotation number fail. `id` is the parameter
+ * the upstream actually matches against the quotation number, and it answers
+ * with the single row in a few seconds. (`id` matches the quotation number, not
+ * the row's own `id` — a quotation whose latest revision has a higher row id is
+ * still found by its quotation number, and the row that comes back carries that
+ * latest revision id, which is what `getQuoteTemplate` needs.)
+ *
+ * `quotation_no` is still sent alongside so the query stays correct if the
+ * upstream ever starts honouring it.
  */
 export async function searchBookings(params: ASSearchParams): Promise<ASListResult> {
   const qs = new URLSearchParams()
   const isNum = params.isNumber?.trim()
   const quo = params.quotationNo?.trim()
   if (isNum) qs.set('is_number', isNum)
-  if (quo) qs.set('quotation_no', quo)
+  if (quo) {
+    qs.set('id', quo)
+    qs.set('quotation_no', quo)
+  }
   for (const s of params.statuses ?? []) qs.append('status[]', s)
 
-  return listAllPages(qs, 'search')
+  return listAllPages(qs, 'search', { maxPages: SEARCH_MAX_PAGES })
 }
 
 /** Fetch the full P&L / cost breakdown for one booking. Returns the raw `data` object. */

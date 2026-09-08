@@ -84,6 +84,7 @@ import {
   listByCreateDate,
   getQuoteTemplate,
   withAsRetryBudget,
+  resolveCountryName,
   type ASBookingListItem,
 } from '@/lib/applesystem'
 import { mapQuoteToBooking, normalizeIsNumber, ASMappingError } from '@/lib/as-booking-map'
@@ -92,6 +93,14 @@ import { syncBookingFromAs, getSyncStates, AsSyncError } from '@/lib/as-booking-
 import { detectCountryFromRef } from '@/lib/country-detection'
 import { getCancellationDeadline } from '@/lib/utils'
 import { raiseAsImportAlert } from '@/lib/as-import-alerts'
+import {
+  recordCreated,
+  recordFailure,
+  clearFailure,
+  markNotified,
+  listFailed,
+  REASON_LABEL,
+} from '@/lib/as-import-ledger'
 import { logActivity, ACTION } from '@/lib/activity'
 
 // ── Settings / state keys (system_settings) ───────────────────────────────────
@@ -295,6 +304,11 @@ export interface ReconcileRun {
   /** Still missing when the run finished (import failed, or past the cap). */
   unresolved: number
   unresolvedRefs: string[]
+  /**
+   * Quotations that failed for the first time on this run. Only these are worth
+   * alerting on; everything else in `unresolvedRefs` has already been reported.
+   */
+  newlyFailedQuotations?: string[]
 
   actions: ReconcileAction[]
   /** Run-level failure — the window could not be reconciled at all. */
@@ -671,6 +685,7 @@ function newRun(trigger: 'auto' | 'manual', from: string, to: string): Reconcile
     inParity: true,
     unresolved: 0,
     unresolvedRefs: [],
+    newlyFailedQuotations: [],
     actions: [],
   }
 }
@@ -763,20 +778,47 @@ async function executeRun(
   // tried and failed on, which is the case worth alerting about.
   const stillMissing: ASBookingListItem[] = missingRows.slice(MAX_IMPORTS_PER_RUN)
 
+  /** Quotations failing here for the first time — the only ones worth an alert. */
+  const newlyFailed: string[] = []
+
   for (const row of missingRows.slice(0, MAX_IMPORTS_PER_RUN)) {
+    const quotationNo = String(row.quotation_no ?? '').trim()
     const outcome = await importRow(row, actorId)
     if (outcome.ok) {
       if (outcome.created) {
         run.created++
         act(run, { ref: outcome.ref, kind: 'created', detail: `Imported from quotation ${outcome.quotationNo}` })
+        await recordCreated({
+          ref: outcome.ref,
+          bookingId: outcome.bookingId,
+          quotationNo: outcome.quotationNo,
+          country: resolveCountryName(row),
+          source: 'reconcile',
+          arrivalDate: outcome.arrivalDate,
+          guestName: outcome.guestName,
+        })
       }
+      // Imported (or already here) — it is no longer a problem, so a future
+      // failure of the same quotation is heard rather than suppressed.
+      if (quotationNo) await clearFailure(quotationNo)
       createdRefs.add(outcome.ref)
     } else {
       run.importErrors++
       stillMissing.push(row)
       act(run, { ref: refOf(row) ?? `q${row.quotation_no}`, kind: 'error', detail: outcome.detail })
+      if (quotationNo) {
+        const { isNew } = await recordFailure({
+          quotationNo,
+          ref: refOf(row),
+          country: resolveCountryName(row),
+          message: outcome.detail,
+          source: 'reconcile',
+        })
+        if (isNew) newlyFailed.push(quotationNo)
+      }
     }
   }
+  run.newlyFailedQuotations = newlyFailed
 
   // ── 2. Stale content ────────────────────────────────────────────────────────
   const prints = await readPrints()
@@ -881,7 +923,15 @@ async function executeRun(
 // ── Importing one missing confirmation ────────────────────────────────────────
 
 type ImportOutcome =
-  | { ok: true; ref: string; created: boolean; quotationNo: string }
+  | {
+      ok: true
+      ref: string
+      bookingId: string
+      created: boolean
+      quotationNo: string
+      arrivalDate: string | null
+      guestName: string | null
+    }
   | { ok: false; detail: string }
 
 async function importRow(row: ASBookingListItem, actorId: string): Promise<ImportOutcome> {
@@ -903,7 +953,15 @@ async function importRow(row: ASBookingListItem, actorId: string): Promise<Impor
       createdById: actorId,
       cancellationDeadline: getCancellationDeadline(mapped.arrivalDate),
     })
-    return { ok: true, ref: booking.bookingRef, created: !alreadyExists, quotationNo }
+    return {
+      ok: true,
+      ref: booking.bookingRef,
+      bookingId: booking.id,
+      created: !alreadyExists,
+      quotationNo,
+      arrivalDate: mapped.arrivalDate ?? null,
+      guestName: mapped.passengers[0]?.name ?? null,
+    }
   } catch (err) {
     const detail = err instanceof ASMappingError
       ? `Could not map quotation ${quotationNo}: ${err.message}`
@@ -1237,24 +1295,51 @@ async function notifyOnProblem(run: ReconcileRun): Promise<void> {
     return
   }
 
-  if (run.unresolved > 0) {
-    await raiseAsImportAlert({
-      severity: 'error',
-      title: `${run.unresolved} AppleSystem confirmation${run.unresolved === 1 ? '' : 's'} still missing after reconciliation`,
-      message:
-        `AppleSystem shows ${run.upstreamConfirmed} confirmation(s) created ${run.windowFrom} → ${run.windowTo}; ` +
-        `${run.unresolved} could not be imported: ${run.unresolvedRefs.join(', ') || '—'}. ` +
-        `The next run retries them automatically — if this repeats, the quotations need looking at by hand.`,
-      // One alert per window per dedup period, not one per tick.
-      signature: `reconcile-unresolved::${run.windowFrom}::${run.windowTo}`,
-      jobMode: 'auto',
-      dateFrom: run.windowFrom,
-      dateTo: run.windowTo,
-      totalFound: run.upstreamConfirmed,
-      totalCreated: run.created,
-      totalErrors: run.importErrors + run.syncErrors,
-    })
+  if (run.unresolved === 0) return
+
+  // Only quotations nobody has been told about yet. A confirmation that cannot
+  // ever import — AppleSystem has issued it no IS number, say — stays in the
+  // window and stays unresolved on every single run; alerting on the window
+  // meant re-raising it and re-mailing IT every time, which is precisely the
+  // noise that trained people to ignore the alert. It is still retried, and it
+  // is still listed on the Live Watch page; it is simply announced once.
+  const newlyFailed = run.newlyFailedQuotations ?? []
+  if (newlyFailed.length === 0) {
+    console.log(
+      `[AsReconcile] ${run.unresolved} still missing, all previously reported — alert and email suppressed`,
+    )
+    return
   }
+
+  const failed = await listFailed()
+  const detail = newlyFailed
+    .map((q) => {
+      const e = failed.find((f) => f.quotationNo === q)
+      return e ? `q${q} — ${REASON_LABEL[e.reason]}` : `q${q}`
+    })
+    .join(' · ')
+
+  await raiseAsImportAlert({
+    severity: 'error',
+    title: `${newlyFailed.length} new AppleSystem confirmation${newlyFailed.length === 1 ? '' : 's'} could not be imported`,
+    message:
+      `${detail}. ` +
+      `AppleSystem shows ${run.upstreamConfirmed} confirmation(s) created ${run.windowFrom} → ${run.windowTo}; ` +
+      `${run.unresolved} still missing in total (the rest were already reported). ` +
+      `They keep being retried — open the Live Watch page for the full list. ` +
+      `You will not be emailed about these same quotations again.`,
+    // Identity is the set of newly-failing quotations, so a different booking
+    // failing tomorrow still gets through while a repeat of these never does.
+    signature: `reconcile-unresolved::${[...newlyFailed].sort().join(',')}`,
+    jobMode: 'auto',
+    dateFrom: run.windowFrom,
+    dateTo: run.windowTo,
+    totalFound: run.upstreamConfirmed,
+    totalCreated: run.created,
+    totalErrors: run.importErrors + run.syncErrors,
+  })
+
+  await markNotified(newlyFailed)
 }
 
 // ── Status for the UI ─────────────────────────────────────────────────────────

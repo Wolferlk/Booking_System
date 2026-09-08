@@ -30,6 +30,14 @@ import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-impor
 import { detectCountryFromRef, type OperationCountry } from '@/lib/country-detection'
 import { getCancellationDeadline } from '@/lib/utils'
 import { raiseAsImportAlert } from '@/lib/as-import-alerts'
+import {
+  recordCreated,
+  recordFailure,
+  clearFailure,
+  markNotified,
+  listFailed,
+  REASON_LABEL,
+} from '@/lib/as-import-ledger'
 
 // ── Settings keys (system_settings) ───────────────────────────────────────────
 export const SETTING_ENABLED       = 'as_auto_import_enabled'
@@ -127,6 +135,11 @@ export interface ImportJob {
   countryCounts: Record<string, CountryTally>
   events: ImportEvent[]
   errorMessage?: string
+  /**
+   * Quotations that failed for the first time on this run — the only ones the
+   * failure notification names. Repeats are retried but never re-announced.
+   */
+  newlyFailedQuotations?: string[]
 }
 
 async function readJobs(): Promise<ImportJob[]> {
@@ -260,6 +273,21 @@ function pushEvent(job: ImportJob, ev: ImportEvent): void {
   )
 }
 
+/**
+ * Record one failed quotation in the shared import ledger and remember whether it
+ * is newly failing — the notification names only those.
+ */
+async function noteFailure(
+  job: ImportJob,
+  quotationNo: string,
+  message: string,
+  ref?: string | null,
+): Promise<void> {
+  if (!quotationNo) return
+  const { isNew } = await recordFailure({ quotationNo, ref: ref ?? null, message, source: 'import' })
+  if (isNew) (job.newlyFailedQuotations ??= []).push(quotationNo)
+}
+
 function newJob(params: RunAsImportParams): ImportJob {
   return {
     id: randomUUID(),
@@ -277,6 +305,7 @@ function newJob(params: RunAsImportParams): ImportJob {
     totalErrors: 0,
     countryCounts: {},
     events: [],
+    newlyFailedQuotations: [],
   }
 }
 
@@ -318,6 +347,7 @@ async function executeJobInner(job: ImportJob, triggeredById: string): Promise<v
       if (!quotationNo || !referenceId) {
         job.totalErrors++
         pushEvent(job, { ref: null, quotationNo, country: null, result: 'error', message: 'Missing quotation/reference id' })
+        await noteFailure(job, quotationNo, 'Missing quotation/reference id')
         continue
       }
 
@@ -329,6 +359,7 @@ async function executeJobInner(job: ImportJob, triggeredById: string): Promise<v
           job.totalErrors++
           tally(job, null).errors++
           pushEvent(job, { ref: mapped.bookingRef, quotationNo, country: null, result: 'error', message: 'Could not determine destination country' })
+          await noteFailure(job, quotationNo, 'Could not determine destination country', mapped.bookingRef)
           continue
         }
 
@@ -336,6 +367,10 @@ async function executeJobInner(job: ImportJob, triggeredById: string): Promise<v
           createdById: triggeredById,
           cancellationDeadline: getCancellationDeadline(mapped.arrivalDate),
         })
+
+        // Imported or already here — either way it is no longer a problem, so a
+        // future failure of this quotation is announced rather than suppressed.
+        await clearFailure(quotationNo)
 
         if (alreadyExists) {
           job.totalSkipped++
@@ -345,11 +380,21 @@ async function executeJobInner(job: ImportJob, triggeredById: string): Promise<v
           job.totalCreated++
           tally(job, country).created++
           pushEvent(job, { ref: booking.bookingRef, quotationNo, country: countryKey(country), result: 'created' })
+          await recordCreated({
+            ref: booking.bookingRef,
+            bookingId: booking.id,
+            quotationNo,
+            country,
+            source: 'import',
+            arrivalDate: mapped.arrivalDate ?? null,
+            guestName: mapped.passengers[0]?.name ?? null,
+          })
         }
       } catch (err) {
         job.totalErrors++
         const msg = err instanceof ASMappingError ? err.message : err instanceof Error ? err.message : String(err)
         pushEvent(job, { ref: null, quotationNo, country: null, result: 'error', message: msg })
+        await noteFailure(job, quotationNo, msg)
       }
 
       // Persist progress periodically so the poller shows a live count.
@@ -409,28 +454,47 @@ async function notifyOnFailure(job: ImportJob): Promise<void> {
     return
   }
 
-  if (job.totalErrors > 0) {
-    const samples = job.events
-      .filter((e) => e.result === 'error')
-      .slice(0, 5)
-      .map((e) => `${e.ref ?? `q${e.quotationNo}`}: ${e.message ?? 'unknown error'}`)
-      .join(' · ')
-    await raiseAsImportAlert({
-      severity: 'warning',
-      title: `${label} finished with ${job.totalErrors} failed booking${job.totalErrors === 1 ? '' : 's'} (${window})`,
-      message:
-        `${job.totalCreated} created, ${job.totalSkipped} already present, ${job.totalErrors} could not be imported. ` +
-        (samples ? `First failures — ${samples}` : ''),
-      signature: `items-failed::${job.mode}::${job.dateFrom}::${job.dateTo}`,
-      jobId: job.id,
-      jobMode: job.mode,
-      dateFrom: job.dateFrom,
-      dateTo: job.dateTo,
-      totalFound: job.totalFound,
-      totalCreated: job.totalCreated,
-      totalErrors: job.totalErrors,
-    })
+  if (job.totalErrors === 0) return
+
+  // Only quotations nobody has been told about yet. A confirmation that can never
+  // import — no IS number upstream, say — fails on every single run; keying the
+  // alert on the date window meant re-raising and re-mailing it each time. It is
+  // still retried and still listed on the Live Watch page, just announced once.
+  const newlyFailed = job.newlyFailedQuotations ?? []
+  if (newlyFailed.length === 0) {
+    console.log(`[AsImport] ${job.totalErrors} failed, all previously reported — alert and email suppressed`)
+    return
   }
+
+  const failed = await listFailed()
+  const detail = newlyFailed
+    .map((q) => {
+      const e = failed.find((f) => f.quotationNo === q)
+      return e ? `q${q} — ${REASON_LABEL[e.reason]}` : `q${q}`
+    })
+    .slice(0, 8)
+    .join(' · ')
+
+  await raiseAsImportAlert({
+    severity: 'warning',
+    title: `${label} hit ${newlyFailed.length} new failed booking${newlyFailed.length === 1 ? '' : 's'} (${window})`,
+    message:
+      `${detail}. ` +
+      `${job.totalCreated} created, ${job.totalSkipped} already present, ${job.totalErrors} failed in total ` +
+      `(the rest were already reported). ` +
+      `Open the Live Watch page for the full list — these same quotations will not be emailed again.`,
+    // Identity is the set of newly-failing quotations, not the date window.
+    signature: `items-failed::${job.mode}::${[...newlyFailed].sort().join(',')}`,
+    jobId: job.id,
+    jobMode: job.mode,
+    dateFrom: job.dateFrom,
+    dateTo: job.dateTo,
+    totalFound: job.totalFound,
+    totalCreated: job.totalCreated,
+    totalErrors: job.totalErrors,
+  })
+
+  await markNotified(newlyFailed)
 }
 
 /**
