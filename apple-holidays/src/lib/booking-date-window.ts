@@ -53,6 +53,11 @@ export function createdDayStart(date: string): Date {
   return zonedDayStart(date, OPS_TZ)
 }
 
+/** The operations-timezone day an instant falls on, `yyyy-mm-dd`. */
+export function opsDayOf(at: Date): string {
+  return dateInTz(at, OPS_TZ)
+}
+
 /** Today's `yyyy-mm-dd` in the operations timezone — never the server's. */
 export function opsToday(now: Date = new Date()): string {
   return dateInTz(now, OPS_TZ)
