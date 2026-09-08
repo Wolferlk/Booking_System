@@ -8,6 +8,7 @@ import { detectCountryFromRef, countryScope, userCountryScope, isInCountryScope 
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
 import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
+import { explicitDateRange, isBookingDateFilter, periodDateRange } from '@/lib/booking-date-window'
 import { fetchDetailedPnlAvailability, normaliseRef } from '@/lib/detailed-pnl'
 import { fetchInvoicePaymentSummaries, type InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import type { UserRole } from '@prisma/client'
@@ -15,11 +16,6 @@ import type { OperationCountry } from '@/lib/country-detection'
 
 export const dynamic = 'force-dynamic'
 
-// Calendar inputs are date-only values. Build explicit UTC boundaries so the
-// inclusive end date does not depend on the server's local timezone.
-function calendarBoundary(value: string, endOfDay = false): Date {
-  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`)
-}
 /**
  * How many bookings the Detailed P&L filter will consider in one pass. Sized
  * well above the whole book so the filter is exhaustive in practice, while
@@ -221,43 +217,17 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // Explicit date range on the chosen date column (arrivalDate or createdAt)
+  // Explicit date range on the chosen date column (arrivalDate or createdAt).
+  // Created dates are bounded on operations-timezone days so this list counts
+  // the same bookings the daily report does — see `booking-date-window.ts`.
   if (dateFrom || dateTo) {
-    const range: Record<string, Date> = {}
-    if (dateFrom) range.gte = calendarBoundary(dateFrom)
-    if (dateTo) {
-      const end = calendarBoundary(dateTo, true)
-      range.lte = end
-    }
-    andClauses.push({ [dateField]: range })
+    const range = explicitDateRange(dateField, dateFrom, dateTo)
+    if (range) andClauses.push({ [dateField]: range })
   }
 
   // Date period filter applied to the chosen date column (arrivalDate or createdAt)
-  if (dateFilter) {
-    const now = new Date()
-    const todayStart = new Date(now)
-    todayStart.setUTCHours(0, 0, 0, 0)
-    if (dateFilter === 'today') {
-      andClauses.push({
-        [dateField]: {
-          gte: todayStart,
-          lt: new Date(todayStart.getTime() + 86_400_000),
-        },
-      })
-    } else if (dateFilter === 'this_week') {
-      const startOfWeek = new Date(todayStart)
-      startOfWeek.setUTCDate(todayStart.getUTCDate() - todayStart.getUTCDay())
-      const endOfWeek = new Date(startOfWeek)
-      endOfWeek.setUTCDate(startOfWeek.getUTCDate() + 7)
-      andClauses.push({ [dateField]: { gte: startOfWeek, lt: endOfWeek } })
-    } else if (dateFilter === 'this_month') {
-      andClauses.push({
-        [dateField]: {
-          gte: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
-          lt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)),
-        },
-      })
-    }
+  if (dateFilter && isBookingDateFilter(dateFilter)) {
+    andClauses.push({ [dateField]: periodDateRange(dateField, dateFilter) })
   }
 
   // Operational quick filter (on ground / arriving today / …) from the stat cards.

@@ -8,6 +8,7 @@ import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { isTripState, tripStateWhere } from '@/lib/trip-state'
 import { bookingSourceWhere } from '@/lib/booking-source'
 import { isQuickFilter, quickFilterWhere } from '@/lib/booking-quick-filters'
+import { explicitDateRange, isBookingDateFilter, periodDateRange } from '@/lib/booking-date-window'
 import * as XLSX from 'xlsx'
 import type { UserRole } from '@prisma/client'
 
@@ -130,34 +131,15 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  // Same window the list uses, on the same column it was asked for — the export
+  // must contain exactly the rows the screen counted.
   if (dateFrom || dateTo) {
-    const createdRange: Record<string, Date> = {}
-    if (dateFrom) createdRange.gte = new Date(dateFrom)
-    if (dateTo) {
-      const end = new Date(dateTo)
-      end.setHours(23, 59, 59, 999)
-      createdRange.lte = end
-    }
-    andClauses.push({ createdAt: createdRange })
+    const range = explicitDateRange(dateField, dateFrom, dateTo)
+    if (range) andClauses.push({ [dateField]: range })
   }
 
-  if (dateFilter) {
-    const now = new Date()
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    if (dateFilter === 'today') {
-      andClauses.push({ [dateField]: { gte: todayStart, lt: new Date(todayStart.getTime() + 86_400_000) } })
-    } else if (dateFilter === 'this_week') {
-      const startOfWeek = new Date(todayStart)
-      startOfWeek.setDate(todayStart.getDate() - todayStart.getDay())
-      andClauses.push({ [dateField]: { gte: startOfWeek, lt: new Date(startOfWeek.getTime() + 7 * 86_400_000) } })
-    } else if (dateFilter === 'this_month') {
-      andClauses.push({
-        [dateField]: {
-          gte: new Date(now.getFullYear(), now.getMonth(), 1),
-          lt:  new Date(now.getFullYear(), now.getMonth() + 1, 1),
-        },
-      })
-    }
+  if (dateFilter && isBookingDateFilter(dateFilter)) {
+    andClauses.push({ [dateField]: periodDateRange(dateField, dateFilter) })
   }
 
   // Operational quick filter (on ground / arriving today / …) from the stat cards.
