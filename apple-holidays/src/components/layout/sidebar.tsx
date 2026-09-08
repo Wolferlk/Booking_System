@@ -489,7 +489,9 @@ function NavRow({
     <Link
       href={item.href}
       onClick={onNavigate}
-      title={item.label}
+      // Only the icon-only rail needs a tooltip; when the sidebar is open the
+      // label is already on screen and the native bubble covers the rows below.
+      title={isCollapsed ? item.label : undefined}
       {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
       className={cn(
         'relative flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all group',
@@ -1039,7 +1041,7 @@ export default function Sidebar() {
                       type="button"
                       onClick={() => toggleGroup(group.id, groupDefaultOpen(group.id))}
                       aria-expanded={open}
-                      title={`${meta.label} · ${group.items.length}`}
+                      title={isCollapsed ? `${meta.label} · ${group.items.length}` : undefined}
                       className={cn(
                         'w-full flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors group/head',
                         'hover:bg-slate-800/60',
