@@ -40,16 +40,38 @@ function isInstantColumn(field: BookingDateField): boolean {
   return field === 'createdAt'
 }
 
-/** UTC instant that starts the local day `yyyy-mm-dd` for this column. */
-function dayStart(date: string, field: BookingDateField): Date {
-  return isInstantColumn(field)
-    ? zonedDayStart(date, OPS_TZ)
-    : new Date(`${date}T00:00:00.000Z`)
+/**
+ * UTC instant that starts the calendar day `yyyy-mm-dd` for a date-only column
+ * (`arrivalDate`, `departureDate`) — those are written as midnight UTC.
+ */
+export function calendarDayStart(date: string): Date {
+  return new Date(`${date}T00:00:00.000Z`)
 }
 
-/** Today's `yyyy-mm-dd` as this column would read it. */
-function todayFor(field: BookingDateField, now: Date): string {
-  return isInstantColumn(field) ? dateInTz(now, OPS_TZ) : now.toISOString().slice(0, 10)
+/** UTC instant that starts the operations-timezone day `yyyy-mm-dd`. */
+export function createdDayStart(date: string): Date {
+  return zonedDayStart(date, OPS_TZ)
+}
+
+/** Today's `yyyy-mm-dd` in the operations timezone — never the server's. */
+export function opsToday(now: Date = new Date()): string {
+  return dateInTz(now, OPS_TZ)
+}
+
+/** UTC instant that starts the local day `yyyy-mm-dd` for this column. */
+function dayStart(date: string, field: BookingDateField): Date {
+  return isInstantColumn(field) ? createdDayStart(date) : calendarDayStart(date)
+}
+
+/**
+ * Which calendar day "today" is — always read in the operations timezone, for
+ * every column. The *boundaries* differ per column (an instant vs a stored
+ * midnight), but the day being asked for is the same one the office is having:
+ * at 02:00 in Colombo the server's UTC clock still says yesterday, and the
+ * Today pill would have shown the wrong day's arrivals for that whole window.
+ */
+function todayFor(_field: BookingDateField, now: Date): string {
+  return opsToday(now)
 }
 
 /**

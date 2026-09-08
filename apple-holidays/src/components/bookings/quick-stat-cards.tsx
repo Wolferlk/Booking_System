@@ -16,10 +16,10 @@ import {
   CalendarRange, CalendarClock, CheckCircle2, Users, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { QUICK_FILTERS, type QuickFilter } from '@/lib/booking-quick-filters'
+import { QUICK_FILTERS, type CardQuickFilter, type QuickFilter } from '@/lib/booking-quick-filters'
 
 export interface QuickBucket { count: number; pax: number }
-export type QuickStats = Record<QuickFilter, QuickBucket>
+export type QuickStats = Record<CardQuickFilter, QuickBucket>
 
 interface Tone {
   /** Accent strip + icon tile gradient */
@@ -33,7 +33,7 @@ interface Tone {
   watermark: string
 }
 
-const TONES: Record<QuickFilter, Tone> = {
+const TONES: Record<CardQuickFilter, Tone> = {
   on_ground: {
     strip: 'from-emerald-400 to-teal-500',
     tile: 'bg-emerald-50 text-emerald-600 group-hover:bg-emerald-100',
@@ -101,7 +101,7 @@ const TONES: Record<QuickFilter, Tone> = {
 
 interface CardMeta { title: string; hint: string; icon: LucideIcon; live?: boolean }
 
-const META: Record<QuickFilter, CardMeta> = {
+const META: Record<CardQuickFilter, CardMeta> = {
   on_ground:           { title: 'On Ground',    hint: 'In country now',     icon: MapPin,        live: true },
   arrivals_today:      { title: 'Arrivals',     hint: 'Landing today',      icon: PlaneLanding },
   arrivals_tomorrow:   { title: 'Tomorrow',     hint: 'Arriving tomorrow',  icon: Sunrise },
@@ -141,12 +141,12 @@ function useCountUp(target: number, enabled: boolean) {
 function QuickCard({
   filter, bucket, active, dimmed, loading, onSelect,
 }: {
-  filter: QuickFilter
+  filter: CardQuickFilter
   bucket: QuickBucket
   active: boolean
   dimmed: boolean
   loading: boolean
-  onSelect: (f: QuickFilter) => void
+  onSelect: (f: CardQuickFilter) => void
 }) {
   const tone = TONES[filter]
   const meta = META[filter]

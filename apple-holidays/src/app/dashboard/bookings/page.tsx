@@ -9,7 +9,7 @@ import {
   Hash, Trash2, AlertTriangle, ChevronLeft, ChevronRight, X,
   Download, ChevronDown, Table2,
   Cloud, FolderOpen, CheckCircle2, AlertCircle, Sparkles, RefreshCw,
-  Hotel, Receipt,
+  Hotel, Receipt, Filter,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Header from '@/components/layout/header'
@@ -31,7 +31,9 @@ import AsFetchNow from '@/components/bookings/as-fetch-now'
 import PaymentStateCell from '@/components/bookings/payment-state-cell'
 import type { InvoicePaymentSummary } from '@/lib/accounts-invoice-db'
 import {
-  isQuickFilter, QUICK_FILTER_LABELS, QUICK_FILTER_SORT, type QuickFilter,
+  BAR_QUICK_FILTER_LABELS, BAR_QUICK_FILTERS, isQuickFilter, QUICK_FILTER_LABELS,
+  QUICK_FILTER_SORT,
+  type QuickFilter,
 } from '@/lib/booking-quick-filters'
 import type { BookingStatus } from '@prisma/client'
 
@@ -949,6 +951,49 @@ function BookingsPageInner() {
               </span>
             </div>
           )}
+
+          {/* Row 3b — The four views ops asks for by name, and the count they
+              produce. The count is the *filtered* total, not the page: without
+              it the only number on screen was the header's, which reads as the
+              size of the whole book rather than the answer to this filter. */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+            <Filter className="w-3.5 h-3.5 text-slate-400 shrink-0 mr-0.5" />
+            {BAR_QUICK_FILTERS.map(f => (
+              <button
+                key={f}
+                onClick={() => selectQuick(quick === f ? null : f)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border ${
+                  quick === f
+                    ? 'bg-brand-600 text-white border-brand-600'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+                title={
+                  f === 'created_yesterday' || f === 'created_today'
+                    ? 'Bookings filed on that day — the same day the daily report counts'
+                    : 'Guests in the country on that day'
+                }
+              >
+                {BAR_QUICK_FILTER_LABELS[f]}
+              </button>
+            ))}
+
+            {/* How many rows the filters above actually match. */}
+            <span
+              className="sm:ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-xs font-semibold text-slate-600"
+              title="Bookings matching every filter on this panel"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Counting…
+                </>
+              ) : (
+                <>
+                  {total.toLocaleString()} match{total === 1 ? '' : 'es'}
+                </>
+              )}
+            </span>
+          </div>
 
           {/* Row 4 — Date period pills + Sort controls */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">

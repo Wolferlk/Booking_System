@@ -6,7 +6,9 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { bookingSourceWhere } from '@/lib/booking-source'
-import { QUICK_FILTERS, quickFilterWhere, type QuickFilter } from '@/lib/booking-quick-filters'
+import { QUICK_FILTERS, quickFilterWhere, type CardQuickFilter } from '@/lib/booking-quick-filters'
+import { calendarDayStart, opsToday } from '@/lib/booking-date-window'
+import { shiftDate } from '@/lib/reports/report-window'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -68,12 +70,12 @@ export async function GET(req: NextRequest) {
 
   // Re-apply each fragment's date logic in memory. Kept in lockstep with
   // `quickFilterWhere` by deriving both from the same day boundaries.
-  const today     = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const day = (n: number) => { const d = new Date(today); d.setDate(d.getDate() + n); return d }
-  const tomorrow = day(1), dayAfter = day(2), yesterday = day(-1), horizon = day(8)
+  const opsDay = opsToday(now)
+  const day = (n: number) => calendarDayStart(shiftDate(opsDay, n))
+  const today = day(0), tomorrow = day(1), dayAfter = day(2), yesterday = day(-1), horizon = day(8)
 
   const empty = (): Bucket => ({ count: 0, pax: 0 })
-  const stats: Record<QuickFilter, Bucket> = {
+  const stats: Record<CardQuickFilter, Bucket> = {
     on_ground:           empty(),
     arrivals_today:      empty(),
     arrivals_tomorrow:   empty(),
@@ -89,7 +91,7 @@ export async function GET(req: NextRequest) {
     const arr = new Date(b.arrivalDate)
     const dep = new Date(b.departureDate)
     const pax = (b.paxAdults ?? 0) + (b.paxChildren ?? 0)
-    const hit = (k: QuickFilter) => { stats[k].count += 1; stats[k].pax += pax }
+    const hit = (k: CardQuickFilter) => { stats[k].count += 1; stats[k].pax += pax }
 
     if (arr < tomorrow && dep >= today)          hit('on_ground')
     if (inRange(arr, today, tomorrow))           hit('arrivals_today')
