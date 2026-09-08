@@ -43,7 +43,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
-import { COST_TYPES, COST_TYPE_LABEL, type SettlementCostType } from '@/lib/sl-transport-actuals'
+import { COST_TYPES, COST_TYPE_LABEL, type SettlementCostType } from '@/lib/sl-settlement-costs'
 import {
   EMPTY_FILTERS, REGISTER_STATE_LABEL, REGISTER_STATE_TONE,
   amount, bracketed, percent, registerSearchParams, workbookDate,

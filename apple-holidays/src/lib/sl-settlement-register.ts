@@ -40,7 +40,7 @@
 import { dayKey, daysBetween, shiftDay, type DriveLogQuery, type DriveLogRow } from './sl-drive-log'
 import {
   COST_TYPE_LABEL, type ActualsStatus, type SettlementCostType,
-} from './sl-transport-actuals'
+} from './sl-settlement-costs'
 
 // ── Row ───────────────────────────────────────────────────────────────────────
 
