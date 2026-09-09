@@ -63,16 +63,14 @@ export interface FlightLink {
 }
 
 /**
- * Check-in buffer. A sector that crosses a border needs the full three hours;
- * a domestic hop between two airports in the same country needs two.
+ * Check-in buffer. Every departure — international or domestic — is timed three
+ * hours before the flight leaves.
  *
- * Whether it crosses a border is decided from the gazetteer in ops-geo, not
- * from a list of "international" airports — DAD and PQC are both international
- * fields, but Da Nang to Phu Quoc is a domestic flight, and sending a guest to
- * the terminal an hour early for it wastes an hour of their holiday.
+ * Whether a sector crosses a border is still decided from the gazetteer in
+ * ops-geo (see `isInternational`), because the wording of the agenda note
+ * differs (passports vs. photo ID); only the pickup buffer is now uniform.
  */
-const INTERNATIONAL_BUFFER_H = 3
-const DOMESTIC_BUFFER_H = 2
+const PICKUP_BUFFER_H = 3
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}/
 
@@ -167,7 +165,7 @@ export function linkFlight(item: LinkableAgendaItem, flights: LinkableFlight[]):
 
   const build = (flight: LinkableFlight, role: FlightRole): FlightLink => {
     const international = isInternational(flight)
-    const bufferHours = international ? INTERNATIONAL_BUFFER_H : DOMESTIC_BUFFER_H
+    const bufferHours = PICKUP_BUFFER_H
     return {
       flight,
       role,
