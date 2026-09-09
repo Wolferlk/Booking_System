@@ -166,6 +166,11 @@ const VEHICLE_GLYPH: Record<string, string> = {
 // nothing here can reach the booking journey map or any other Leaflet instance.
 
 const MAP_CSS = `
+/* Leaflet's panes run to z-index 700 and its controls to 1000. Without a
+   stacking context of its own the map paints straight over the fixed sidebar
+   (z-40) and the header, so the box is isolated here rather than trusted to
+   sit still. */
+.lom-wrap{isolation:isolate}
 .lom-wrap .leaflet-container{background:#070c1a;font-family:inherit}
 .lom-wrap .leaflet-control-attribution{font-size:9px;background:rgba(2,6,23,.6);color:#94a3b8;border-radius:6px 0 0 0;padding:1px 6px}
 .lom-wrap .leaflet-control-attribution a{color:#cbd5e1}
