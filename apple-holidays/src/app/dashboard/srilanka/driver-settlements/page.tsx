@@ -94,20 +94,79 @@ function presets(today: string): { label: string; from: string; to: string }[] {
 
 // ── Small pieces ──────────────────────────────────────────────────────────────
 
-function Kpi({
-  label, value, sub, icon: Icon, tone,
+/**
+ * Each figure on this screen means a different thing, and the eye should be
+ * able to tell them apart before it has read a word: what it cost is neutral,
+ * what has already been handed over is violet, what is still owed is sky, the
+ * budget indigo, and the variance takes the colour of its own sign.
+ */
+const TONE = {
+  slate:   { wash: 'from-slate-400/[0.10]',   chip: 'bg-slate-400/15 text-slate-200',     bar: 'bg-slate-300',   edge: 'via-slate-400/50' },
+  violet:  { wash: 'from-violet-500/[0.14]',  chip: 'bg-violet-500/20 text-violet-200',   bar: 'bg-violet-400',  edge: 'via-violet-400/60' },
+  sky:     { wash: 'from-sky-500/[0.18]',     chip: 'bg-sky-500/20 text-sky-200',         bar: 'bg-sky-400',     edge: 'via-sky-400/70' },
+  indigo:  { wash: 'from-indigo-500/[0.14]',  chip: 'bg-indigo-500/20 text-indigo-200',   bar: 'bg-indigo-400',  edge: 'via-indigo-400/60' },
+  emerald: { wash: 'from-emerald-500/[0.14]', chip: 'bg-emerald-500/20 text-emerald-200', bar: 'bg-emerald-400', edge: 'via-emerald-400/60' },
+  rose:    { wash: 'from-rose-500/[0.14]',    chip: 'bg-rose-500/20 text-rose-200',       bar: 'bg-rose-400',    edge: 'via-rose-400/60' },
+} as const
+
+type Tone = keyof typeof TONE
+
+/**
+ * One headline figure.
+ *
+ * `meter` is the share of the figure that is already accounted for — advances
+ * against cost, tours settled against tours in view — drawn as a hairline rail
+ * so the proportion reads without a second number to compare against.
+ */
+function Stat({
+  label, value, sub, icon: Icon, tone, meter, lead,
 }: {
   label: string; value: string; sub?: string
-  icon: React.ComponentType<{ className?: string }>; tone: string
+  icon: React.ComponentType<{ className?: string }>
+  tone: Tone
+  meter?: number | null
+  lead?: boolean
 }) {
+  const t = TONE[tone]
+  const pct = meter === null || meter === undefined || !Number.isFinite(meter)
+    ? null
+    : Math.max(0, Math.min(1, meter)) * 100
+
   return (
-    <div className={cn('flex-1 min-w-[190px] rounded-xl border px-4 py-3', tone)}>
-      <div className="flex items-center gap-2">
-        <Icon className="w-3.5 h-3.5 opacity-80" />
-        <p className="text-[10px] uppercase tracking-wider font-black opacity-80">{label}</p>
+    <div
+      className={cn(
+        'group relative overflow-hidden rounded-2xl border border-white/[0.07] bg-slate-900/60',
+        'px-4 py-3.5 transition duration-300 hover:-translate-y-0.5 hover:border-white/[0.14]',
+        'hover:shadow-lg hover:shadow-black/30',
+        lead && 'col-span-2',
+      )}
+    >
+      <div className={cn('pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent opacity-80 transition-opacity group-hover:opacity-100', t.wash)} />
+      <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent to-transparent', t.edge)} />
+
+      <div className="relative">
+        <div className="flex items-center gap-2">
+          <span className={cn('grid h-6 w-6 flex-shrink-0 place-items-center rounded-lg', t.chip)}>
+            <Icon className="h-3.5 w-3.5" />
+          </span>
+          <p className="truncate text-[10px] font-black uppercase tracking-[0.13em] text-slate-400">{label}</p>
+        </div>
+
+        <p className={cn('mt-2 font-black tabular-nums leading-none text-white', lead ? 'text-2xl' : 'text-lg')}>
+          {value}
+        </p>
+
+        {pct !== null ? (
+          <div className="mt-2.5 h-1 w-full overflow-hidden rounded-full bg-white/[0.07]">
+            <div
+              className={cn('h-full rounded-full transition-[width] duration-700 ease-out', t.bar)}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        ) : null}
+
+        {sub ? <p className="mt-1.5 truncate text-[10px] font-medium text-slate-500">{sub}</p> : null}
       </div>
-      <p className="mt-1.5 text-lg font-black tabular-nums text-white">{value}</p>
-      {sub ? <p className="text-[10px] opacity-70 mt-0.5">{sub}</p> : null}
     </div>
   )
 }
@@ -121,10 +180,11 @@ function Chip({
     <button
       type="button" onClick={onClick} title={title}
       className={cn(
-        'px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-colors',
+        'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-bold',
+        'border transition duration-200 active:scale-[0.97]',
         active
-          ? 'bg-sky-500/15 border-sky-500/40 text-sky-200'
-          : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600',
+          ? 'border-sky-400/50 bg-sky-500/20 text-sky-100 shadow-[0_0_0_3px_rgba(56,189,248,0.08)]'
+          : 'border-white/[0.08] bg-white/[0.03] text-slate-400 hover:border-white/[0.16] hover:bg-white/[0.06] hover:text-slate-100',
       )}
     >
       {children}
@@ -133,22 +193,47 @@ function Chip({
 }
 
 const fieldCls =
-  'w-full bg-slate-900/70 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-100 ' +
-  'placeholder:text-slate-600 focus:outline-none focus:border-sky-500/60'
+  'w-full rounded-lg border border-white/[0.08] bg-slate-950/60 px-2.5 py-1.5 text-xs text-slate-100 ' +
+  'transition duration-200 placeholder:text-slate-600 hover:border-white/[0.16] ' +
+  'focus:border-sky-400/60 focus:outline-none focus:ring-2 focus:ring-sky-500/20 ' +
+  '[color-scheme:dark]'
+
+/** A quiet button, for everything that is not the action of the page. */
+const ghostBtn =
+  'inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 ' +
+  'text-xs font-bold text-slate-300 transition duration-200 hover:border-white/[0.18] hover:bg-white/[0.07] ' +
+  'hover:text-white active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40'
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] uppercase tracking-wider text-slate-500 font-black mb-1">{label}</span>
+      <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.13em] text-slate-500">{label}</span>
       {children}
     </label>
   )
 }
 
+/** A banner for something the desk has to know before it reads the figures. */
+function Notice({ tone, children }: { tone: 'orange' | 'amber'; children: React.ReactNode }) {
+  const c = tone === 'orange'
+    ? 'border-orange-400/25 bg-orange-500/[0.09] text-orange-100'
+    : 'border-amber-400/25 bg-amber-500/[0.09] text-amber-100'
+  return (
+    <div className={cn('flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-xs leading-relaxed', c)}>
+      <AlertTriangle className="mt-px h-4 w-4 flex-shrink-0 opacity-80" />
+      <span>{children}</span>
+    </div>
+  )
+}
+
+/** Nothing to show. Visible enough to be read as "empty", quiet enough to ignore. */
+const Empty = () => <span className="text-slate-600">—</span>
+
 /** A money cell. Negative in brackets, the workbook's convention throughout. */
 function Num({
   value, bold, tone, bracket,
 }: { value: number | null; bold?: boolean; tone?: string; bracket?: boolean }) {
+  if (value === null) return <Empty />
   return (
     <span className={cn('tabular-nums', bold && 'font-bold', tone ?? 'text-slate-200')}>
       {bracket ? bracketed(value) : amount(value)}
@@ -208,6 +293,18 @@ function RowEditor({
   const [error, setError] = useState<string | null>(null)
 
   const set = (patch: Partial<EditorState>) => setForm(f => ({ ...f, ...patch }))
+
+  // Escape closes it, and the page behind stops scrolling while it is open.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [onClose])
 
   const parse = (v: string): number | null => {
     if (v.trim() === '') return null
@@ -270,25 +367,40 @@ function RowEditor({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 sm:p-8">
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-800 px-5 py-4">
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-slate-500 font-black">Settle tour</p>
-            <h2 className="text-lg font-black text-white">{row.tour}</h2>
-            <p className="text-xs text-slate-400 mt-0.5">
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm sm:p-8"
+      onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-white/[0.1] bg-slate-900 shadow-2xl shadow-black/60">
+        <div className="relative flex items-start justify-between gap-4 border-b border-white/[0.07] px-5 py-4">
+          <div className="pointer-events-none absolute -left-16 -top-20 h-44 w-44 rounded-full bg-sky-500/[0.12] blur-3xl" />
+          <div className="relative">
+            <p className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.13em] text-slate-500">
+              Settle tour
+              <span className={cn(
+                'rounded-full border px-2 py-0.5 tracking-[0.1em]',
+                REGISTER_STATE_TONE[row.state],
+              )}>
+                {REGISTER_STATE_LABEL[row.state]}
+              </span>
+            </p>
+            <h2 className="mt-1 text-lg font-black tracking-tight text-white">{row.tour}</h2>
+            <p className="mt-0.5 text-xs text-slate-400">
               {workbookDate(row.date)} · {row.chauffeur ?? 'no chauffeur allocated'}
               {row.acName ? ` · ${row.acName}` : ''}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-slate-500 hover:text-slate-200">
-            <X className="w-5 h-5" />
+          <button
+            type="button" onClick={onClose} title="Close (Esc)"
+            className="relative rounded-lg border border-white/[0.08] p-1.5 text-slate-500 transition hover:border-white/[0.2] hover:text-slate-100"
+          >
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         <div className="px-5 py-4 space-y-4">
           {/* What the accounts system says, before anybody corrects it. */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+          <div className="grid grid-cols-2 gap-3 rounded-xl border border-white/[0.07] bg-slate-950/60 p-3 sm:grid-cols-4">
             {[
               ['Costed total', row.derivedTotalCost],
               ['Advance paid', row.advancePaid],
@@ -296,7 +408,7 @@ function RowEditor({
               ['Rest paid', row.restPaid],
             ].map(([label, value]) => (
               <div key={String(label)}>
-                <p className="text-[9px] uppercase tracking-wider text-slate-500 font-black">{String(label)}</p>
+                <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500">{String(label)}</p>
                 <p className="text-sm font-bold tabular-nums text-slate-200">{amount(value as number | null)}</p>
               </div>
             ))}
@@ -403,20 +515,22 @@ function RowEditor({
           ) : null}
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-800 px-5 py-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-white/[0.07] bg-slate-950/40 px-5 py-3">
           {row.state === 'pending' ? (
             <button
               type="button" disabled={busy !== null} onClick={() => post('withdraw')}
-              className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-300 hover:text-white disabled:opacity-50"
+              className={ghostBtn}
             >
-              {busy === 'withdraw' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <>Withdraw</>}
+              {busy === 'withdraw' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+              Withdraw
             </button>
           ) : null}
           <button
             type="button" disabled={busy !== null} onClick={() => post('save')}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-200 hover:text-white disabled:opacity-50"
+            className={ghostBtn}
           >
-            {busy === 'save' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Save'}
+            {busy === 'save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            Save
           </button>
           <button
             type="button"
@@ -427,9 +541,9 @@ function RowEditor({
                 : row.state === 'recorded' ? 'Already settled'
                 : 'Save and send the balance payable to the accounts team'
             }
-            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-500/20 border border-sky-500/40 text-sky-200 hover:bg-sky-500/30 disabled:opacity-40 flex items-center gap-1.5"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 transition duration-200 hover:bg-sky-500/30 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
           >
-            {busy === 'submit' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            {busy === 'submit' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
             Save &amp; submit
           </button>
         </div>
@@ -439,6 +553,19 @@ function RowEditor({
 }
 
 // ── The page ──────────────────────────────────────────────────────────────────
+
+const VARIANCE_LABEL: Record<string, string> = {
+  excess: 'Under budget', shortage: 'Over budget',
+  on_budget: 'On budget', unbudgeted: 'No budget entered',
+}
+
+const PAYMENT_LABEL: Record<string, string> = {
+  rest_due: 'Rest payment due', settled: 'Fully settled', overpaid: 'Overpaid',
+}
+
+const GROUP_LABEL: Record<RegisterGroupBy, string> = {
+  none: '', bulk: 'bulk', chauffeur: 'chauffeur', agent: 'agent', month: 'month',
+}
 
 const COLUMNS: { key: RegisterSortField | null; label: string; title?: string; align?: 'left' | 'right' }[] = [
   { key: 'bulk',      label: 'Bulk',      title: 'The payment run this tour is settled in' },
@@ -522,6 +649,42 @@ export default function DriverSettlementsPage() {
     [selected, byId],
   )
 
+  /**
+   * Everything narrowing the view right now, each with the patch that undoes
+   * it. The drawer can be shut and the person can still see — and lift — what
+   * is being held back.
+   */
+  const activeFilters = useMemo(() => {
+    const out: { label: string; clear: Partial<RegisterQuery> }[] = []
+    if (query.search) out.push({ label: `“${query.search}”`, clear: { search: '' } })
+    if (query.bulkNo) out.push({ label: `Bulk ${query.bulkNo}`, clear: { bulkNo: '' } })
+    if (query.bulk !== 'all') {
+      out.push({ label: query.bulk === 'in_bulk' ? 'In a bulk' : 'Not in a bulk', clear: { bulk: 'all' } })
+    }
+    if (query.costType !== 'all') {
+      out.push({
+        label: query.costType === 'unset' ? 'Cost type not set' : COST_TYPE_LABEL[query.costType as SettlementCostType],
+        clear: { costType: 'all' },
+      })
+    }
+    if (query.state !== 'all') {
+      out.push({
+        label: REGISTER_STATE_LABEL[query.state as keyof typeof REGISTER_STATE_LABEL],
+        clear: { state: 'all' },
+      })
+    }
+    if (query.variance !== 'all') out.push({ label: VARIANCE_LABEL[query.variance], clear: { variance: 'all' } })
+    if (query.payment !== 'all') out.push({ label: PAYMENT_LABEL[query.payment], clear: { payment: 'all' } })
+    if (query.chauffeur) out.push({ label: `Chauffeur “${query.chauffeur}”`, clear: { chauffeur: '' } })
+    if (query.agent) out.push({ label: `Agent “${query.agent}”`, clear: { agent: '' } })
+    if (query.minBalance !== null) out.push({ label: `Balance from ${amount(query.minBalance)}`, clear: { minBalance: null } })
+    if (query.maxBalance !== null) out.push({ label: `Balance to ${amount(query.maxBalance)}`, clear: { maxBalance: null } })
+    if (query.openOnly) out.push({ label: 'Only what is still owed', clear: { openOnly: false } })
+    if (query.approvedOnly) out.push({ label: 'P&L approved only', clear: { approvedOnly: false } })
+    if (query.groupBy !== 'none') out.push({ label: `Grouped by ${GROUP_LABEL[query.groupBy]}`, clear: { groupBy: 'none' } })
+    return out
+  }, [query])
+
   const toggle = (id: string) => setSelected(prev => {
     const next = new Set(prev)
     if (next.has(id)) next.delete(id); else next.add(id)
@@ -575,179 +738,211 @@ export default function DriverSettlementsPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4">
+    <div className="space-y-4 p-4 sm:p-6">
       {/* ── Header ── */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <Banknote className="w-5 h-5 text-emerald-400" />
-            <h1 className="text-xl font-black text-white">Driver Settlement Register</h1>
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
-              Sri Lanka
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1 max-w-3xl">
-            Finished tours, gathered into bulks and settled: what the transport cost, what was advanced,
-            what is still payable and how it landed against budget. Recording here raises a request —
-            the rest payment itself is released by the accounts team on Payable 1.0.
-          </p>
-        </div>
+      <header className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-slate-900/60 px-5 py-4">
+        {/* Two soft lights, so the top of the page has somewhere to look. */}
+        <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-emerald-500/[0.13] blur-3xl" />
+        <div className="pointer-events-none absolute -right-24 -top-28 h-56 w-56 rounded-full bg-sky-500/[0.10] blur-3xl" />
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/dashboard/srilanka/driver-allocation"
-            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-300 hover:text-white flex items-center gap-1.5"
-          >
-            <Navigation2 className="w-3.5 h-3.5" /> Driver allocation
-          </Link>
-          <Link
-            href="/dashboard/srilanka/drive-log"
-            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-300 hover:text-white flex items-center gap-1.5"
-          >
-            <Wallet className="w-3.5 h-3.5" /> Drive Log
-          </Link>
-          <button
-            type="button" onClick={exportCsv} disabled={rows.length === 0}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-300 hover:text-white disabled:opacity-40 flex items-center gap-1.5"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Export
-          </button>
-          <button
-            type="button" onClick={reload}
-            className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-300 hover:text-white flex items-center gap-1.5"
-          >
-            <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} /> Refresh
-          </button>
+        <div className="relative flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-[280px] flex-1">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl border border-emerald-400/25 bg-emerald-500/15 text-emerald-300">
+                <Banknote className="h-4 w-4" />
+              </span>
+              <h1 className="text-xl font-black tracking-tight text-white sm:text-2xl">
+                Driver Settlement Register
+              </h1>
+              <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-[0.13em] text-emerald-200">
+                Sri Lanka
+              </span>
+              {loading ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/25 bg-sky-500/10 px-2.5 py-0.5 text-[10px] font-black uppercase tracking-[0.13em] text-sky-200">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Reading
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-2 max-w-3xl text-xs leading-relaxed text-slate-400">
+              Finished tours, gathered into bulks and settled: what the transport cost, what was advanced,
+              what is still payable and how it landed against budget. Recording here raises a request —
+              the rest payment itself is released by the accounts team on Payable 1.0.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/dashboard/srilanka/driver-allocation" className={ghostBtn}>
+              <Navigation2 className="h-3.5 w-3.5" /> Driver allocation
+            </Link>
+            <Link href="/dashboard/srilanka/drive-log" className={ghostBtn}>
+              <Wallet className="h-3.5 w-3.5" /> Drive Log
+            </Link>
+            <button type="button" onClick={exportCsv} disabled={rows.length === 0} className={ghostBtn}>
+              <FileSpreadsheet className="h-3.5 w-3.5" /> Export
+            </button>
+            <button
+              type="button" onClick={reload} disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 transition duration-200 hover:bg-sky-500/30 active:scale-[0.97] disabled:opacity-50"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /> Refresh
+            </button>
+          </div>
         </div>
-      </div>
+      </header>
 
       {/* ── Degradation notices ── */}
       {data && !data.advancesAvailable ? (
-        <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 px-4 py-2.5 text-xs text-orange-200 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        <Notice tone="orange">
           The accounts database could not be read, so no costed figures are shown. The tour, chauffeur and
           bulk columns are still live.
-        </div>
+        </Notice>
       ) : null}
       {data && data.advancesAvailable && !data.actualsAvailable ? (
-        <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 px-4 py-2.5 text-xs text-orange-200 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        <Notice tone="orange">
           The saved settlement entries could not be read, so every row shows the costed figures alone.
           Do not record anything until this clears — a save would not see what is already there.
-        </div>
+        </Notice>
       ) : null}
       {data?.truncated ? (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-200 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        <Notice tone="amber">
           This window holds {data.matched} tours; only the first {data.windowTotals.rows} are loaded. Narrow the
           dates — every total below counts only what is shown.
-        </div>
+        </Notice>
       ) : null}
 
-      {/* ── KPIs ── */}
+      {/* ── The figures ── */}
       {totals ? (
-        <div className="flex flex-wrap gap-3">
-          <Kpi
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 xl:grid-cols-7">
+          <Stat
+            lead tone="sky" icon={Banknote}
+            label="Balance payable" value={amount(totals.balancePayable)}
+            meter={totals.balancePayable > 0 ? 1 - totals.restOutstanding / totals.balancePayable : null}
+            sub={`still to release ${amount(totals.restOutstanding)}`}
+          />
+          <Stat
+            tone="slate" icon={Layers}
             label="Total transport cost" value={amount(totals.totalCost)}
             sub={`${totals.rows} tour${totals.rows === 1 ? '' : 's'} in view`}
-            icon={Layers} tone="bg-slate-500/10 border-slate-500/30 text-slate-300"
           />
-          <Kpi
+          <Stat
+            tone="violet" icon={Wallet}
             label="Advance paid" value={amount(totals.advancePaid)}
+            meter={totals.totalCost > 0 ? totals.advancePaid / totals.totalCost : null}
             sub="already handed to drivers"
-            icon={Wallet} tone="bg-violet-500/10 border-violet-500/30 text-violet-300"
           />
-          <Kpi
-            label="Balance payable" value={amount(totals.balancePayable)}
-            sub={`still to release ${amount(totals.restOutstanding)}`}
-            icon={Banknote} tone="bg-sky-500/10 border-sky-500/30 text-sky-300"
-          />
-          <Kpi
+          <Stat
+            tone="indigo" icon={Target}
             label="Budgeted cost" value={amount(totals.budgetedCost)}
+            meter={totals.rows > 0 ? totals.budgeted / totals.rows : null}
             sub={`${totals.budgeted} of ${totals.rows} tours budgeted`}
-            icon={Target} tone="bg-indigo-500/10 border-indigo-500/30 text-indigo-300"
           />
-          <Kpi
-            label="Excess / (shortage)" value={bracketed(totals.excess)}
+          <Stat
+            // With nothing budgeted there is no variance to be pleased about,
+            // so the card stays neutral rather than showing a green zero.
+            tone={totals.budgeted === 0 ? 'slate' : totals.excess >= 0 ? 'emerald' : 'rose'}
+            icon={totals.budgeted === 0 ? Target : totals.excess >= 0 ? TrendingUp : TrendingDown}
+            label="Excess / (shortage)"
+            value={totals.budgeted === 0 ? '—' : bracketed(totals.excess)}
             sub={totals.variancePct !== null ? `${percent(totals.variancePct)} of budget` : 'no budget entered'}
-            icon={totals.excess >= 0 ? TrendingUp : TrendingDown}
-            tone={totals.excess >= 0
-              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-              : 'bg-rose-500/10 border-rose-500/30 text-rose-300'}
           />
-          <Kpi
+          <Stat
+            tone="emerald" icon={BadgeCheck}
             label="Settled" value={`${totals.settled} / ${totals.rows}`}
+            meter={totals.rows > 0 ? totals.settled / totals.rows : null}
             sub={`${totals.pending} with accounts`}
-            icon={BadgeCheck} tone="bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
           />
         </div>
       ) : null}
 
       {/* ── Filters ── */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3 space-y-3">
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-600" />
+      <div className="rounded-2xl border border-white/[0.07] bg-slate-900/60 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[240px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
             <input
-              className={cn(fieldCls, 'pl-8')}
+              className={cn(fieldCls, 'h-9 rounded-xl pl-9 pr-8 text-[13px]')}
               placeholder="Tour, control no, guest, chauffeur, agent, bulk, batch…"
               value={query.search}
               onChange={e => set({ search: e.target.value })}
             />
+            {query.search ? (
+              <button
+                type="button" onClick={() => set({ search: '' })} title="Clear the search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 transition hover:text-slate-200"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
           </div>
 
-          <div className="flex items-end gap-1.5">
-            <Field label="From">
-              <input
-                type="date" className={fieldCls} value={query.from}
-                onChange={e => set({ from: e.target.value })}
-              />
-            </Field>
-            <Field label="To">
-              <input
-                type="date" className={fieldCls} value={query.to}
-                onChange={e => set({ to: e.target.value })}
-              />
-            </Field>
-            <Field label="On">
-              <select
-                className={fieldCls} value={query.dateField}
-                onChange={e => set({ dateField: e.target.value as RegisterQuery['dateField'] })}
-              >
-                <option value="arrivalDate">Arrival</option>
-                <option value="departureDate">Departure</option>
-              </select>
-            </Field>
+          {/* The date window, as one control rather than three loose boxes. */}
+          <div className="flex h-9 items-center gap-1 rounded-xl border border-white/[0.08] bg-slate-950/60 px-1.5">
+            <CalendarDays className="ml-1 h-3.5 w-3.5 flex-shrink-0 text-slate-500" />
+            <input
+              type="date" aria-label="From" title="From"
+              className="w-[112px] bg-transparent px-1 text-xs text-slate-100 focus:outline-none [color-scheme:dark]"
+              value={query.from} onChange={e => set({ from: e.target.value })}
+            />
+            <span className="text-slate-600">→</span>
+            <input
+              type="date" aria-label="To" title="To"
+              className="w-[112px] bg-transparent px-1 text-xs text-slate-100 focus:outline-none [color-scheme:dark]"
+              value={query.to} onChange={e => set({ to: e.target.value })}
+            />
+            <span className="mx-1 h-4 w-px bg-white/[0.1]" />
+            <select
+              aria-label="Date measured on" title="Which date the window is measured on"
+              className="bg-transparent pr-1 text-xs font-bold text-slate-300 focus:outline-none [color-scheme:dark]"
+              value={query.dateField}
+              onChange={e => set({ dateField: e.target.value as RegisterQuery['dateField'] })}
+            >
+              <option value="arrivalDate">Arrival</option>
+              <option value="departureDate">Departure</option>
+            </select>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {presets(today).map(p => (
-              <Chip
-                key={p.label}
-                active={query.from === p.from && query.to === p.to}
-                onClick={() => set({ from: p.from, to: p.to })}
-              >
-                <CalendarDays className="inline w-3 h-3 mr-1 -mt-0.5" />{p.label}
-              </Chip>
-            ))}
+          {/* The windows the desk actually asks for. */}
+          <div className="flex items-center gap-1 rounded-xl border border-white/[0.06] bg-slate-950/40 p-1">
+            {presets(today).map(p => {
+              const on = query.from === p.from && query.to === p.to
+              return (
+                <button
+                  key={p.label} type="button"
+                  onClick={() => set({ from: p.from, to: p.to })}
+                  className={cn(
+                    'rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition duration-200',
+                    on
+                      ? 'bg-sky-500/20 text-sky-100 shadow-[0_0_0_1px_rgba(56,189,248,0.35)]'
+                      : 'text-slate-400 hover:bg-white/[0.05] hover:text-slate-100',
+                  )}
+                >
+                  {p.label}
+                </button>
+              )
+            })}
           </div>
 
           <button
             type="button" onClick={() => setAdvanced(a => !a)}
             className={cn(
-              'px-3 py-1.5 rounded-lg text-xs font-bold border flex items-center gap-1.5',
-              advanced
-                ? 'bg-sky-500/15 border-sky-500/40 text-sky-200'
-                : 'border-slate-700 text-slate-300 hover:text-white',
+              'inline-flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition duration-200',
+              advanced || activeFilters.length > 0
+                ? 'border-sky-400/40 bg-sky-500/15 text-sky-100'
+                : 'border-white/[0.08] bg-white/[0.03] text-slate-300 hover:border-white/[0.18] hover:text-white',
             )}
           >
-            <SlidersHorizontal className="w-3.5 h-3.5" /> Filters
-            {advanced ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            <SlidersHorizontal className="h-3.5 w-3.5" /> Filters
+            {activeFilters.length > 0 ? (
+              <span className="grid h-4 min-w-[16px] place-items-center rounded-full bg-sky-400/25 px-1 text-[10px] font-black text-sky-100">
+                {activeFilters.length}
+              </span>
+            ) : null}
+            <ChevronDown className={cn('h-3 w-3 transition-transform duration-200', advanced && 'rotate-180')} />
           </button>
         </div>
 
         {advanced ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 border-t border-slate-800 pt-3">
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/[0.07] pt-3 sm:grid-cols-3 lg:grid-cols-6">
             <Field label="Bulk">
               <select
                 className={fieldCls} value={query.bulkNo || query.bulk}
@@ -855,27 +1050,46 @@ export default function DriverSettlementsPage() {
               />
             </Field>
 
-            <div className="flex items-end gap-2 col-span-2">
+            <div className="col-span-2 flex flex-wrap items-end gap-2 sm:col-span-3 lg:col-span-2">
               <Chip active={query.openOnly} onClick={() => set({ openOnly: !query.openOnly })}>
-                Only what is still owed
+                <Banknote className="h-3 w-3" />Only what is still owed
               </Chip>
               <Chip active={query.approvedOnly} onClick={() => set({ approvedOnly: !query.approvedOnly })}>
-                P&amp;L approved only
-              </Chip>
-              <Chip
-                active={false}
-                onClick={() => set({ ...EMPTY_FILTERS, dateField: query.dateField, from: query.from, to: query.to })}
-              >
-                <X className="inline w-3 h-3 mr-1 -mt-0.5" />Clear
+                <BadgeCheck className="h-3 w-3" />P&amp;L approved only
               </Chip>
             </div>
           </div>
         ) : null}
 
+        {activeFilters.length > 0 ? (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-white/[0.07] pt-3">
+            <Filter className="h-3 w-3 flex-shrink-0 text-slate-600" />
+            {activeFilters.map(f => (
+              <button
+                key={f.label} type="button" onClick={() => set(f.clear)}
+                title="Remove this filter"
+                className="group inline-flex max-w-[240px] items-center gap-1 rounded-full border border-sky-400/25 bg-sky-500/10 py-1 pl-2.5 pr-1.5 text-[11px] font-bold text-sky-100 transition duration-200 hover:border-sky-400/50 hover:bg-sky-500/20"
+              >
+                <span className="truncate">{f.label}</span>
+                <X className="h-3 w-3 flex-shrink-0 text-sky-300/70 group-hover:text-sky-100" />
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => set({ ...EMPTY_FILTERS, dateField: query.dateField, from: query.from, to: query.to })}
+              className="ml-1 rounded-full px-2 py-1 text-[11px] font-bold text-slate-500 underline-offset-2 transition hover:text-slate-200 hover:underline"
+            >
+              Clear all
+            </button>
+          </div>
+        ) : null}
+
         {data ? (
-          <p className="text-[11px] text-slate-500 flex items-center gap-1.5">
-            <Filter className="w-3 h-3" />
-            Showing {totals?.rows ?? 0} of {data.windowTotals.rows} tours in this window
+          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-500">
+            <span className="font-bold text-slate-300 tabular-nums">{totals?.rows ?? 0}</span>
+            of
+            <span className="tabular-nums">{data.windowTotals.rows}</span>
+            tours in this window
             {totals && totals.noRate > 0
               ? ` · ${totals.noRate} have no rupee rate and are shown in their costed currency`
               : ''}
@@ -893,12 +1107,12 @@ export default function DriverSettlementsPage() {
       ) : null}
 
       {/* ── The register ── */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-slate-900/60 shadow-xl shadow-black/20">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs min-w-[1500px]">
-            <thead className="bg-slate-950/70 sticky top-0 z-10">
-              <tr>
-                <th className="px-2 py-2.5 w-8">
+          <table className="w-full min-w-[1500px] text-xs">
+            <thead className="sticky top-0 z-10 bg-slate-950/85 backdrop-blur supports-[backdrop-filter]:bg-slate-950/70">
+              <tr className="border-b border-white/[0.08]">
+                <th className="w-8 px-2 py-2.5">
                   <input
                     type="checkbox" className="accent-sky-500"
                     checked={rows.length > 0 && selected.size === rows.length}
@@ -912,9 +1126,10 @@ export default function DriverSettlementsPage() {
                     key={c.label} title={c.title}
                     onClick={() => sortBy(c.key)}
                     className={cn(
-                      'px-2.5 py-2.5 text-[10px] uppercase tracking-wider text-slate-500 font-black whitespace-nowrap',
+                      'whitespace-nowrap px-2.5 py-2.5 text-[10px] font-black uppercase tracking-[0.12em] transition-colors',
                       c.align === 'right' ? 'text-right' : 'text-left',
-                      c.key && 'cursor-pointer hover:text-slate-300',
+                      c.key && 'cursor-pointer select-none hover:text-slate-100',
+                      c.key && query.sortBy === c.key ? 'text-sky-200' : 'text-slate-500',
                     )}
                   >
                     <span className="inline-flex items-center gap-1">
@@ -934,15 +1149,19 @@ export default function DriverSettlementsPage() {
             <tbody>
               {loading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 2} className="px-4 py-16 text-center text-slate-500">
-                    <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+                  <td colSpan={COLUMNS.length + 2} className="px-4 py-20 text-center text-slate-500">
+                    <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-sky-400/70" />
                     Reading the register…
                   </td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={COLUMNS.length + 2} className="px-4 py-16 text-center text-slate-500">
-                    No tours match these filters in this window.
+                  <td colSpan={COLUMNS.length + 2} className="px-4 py-20 text-center">
+                    <span className="mx-auto mb-3 grid h-11 w-11 place-items-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-slate-600">
+                      <Search className="h-5 w-5" />
+                    </span>
+                    <p className="text-sm font-bold text-slate-300">No tours match these filters</p>
+                    <p className="mt-1 text-xs text-slate-500">Widen the dates, or clear a filter above.</p>
                   </td>
                 </tr>
               ) : (
@@ -970,11 +1189,14 @@ export default function DriverSettlementsPage() {
             </tbody>
 
             {totals && rows.length > 0 ? (
-              <tfoot className="bg-slate-950/80 border-t-2 border-slate-700">
+              <tfoot className="sticky bottom-0 z-10 border-t border-white/[0.12] bg-slate-950/90 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
                 <tr className="font-black text-slate-200">
                   <td className="px-2 py-3" />
-                  <td className="px-2.5 py-3" colSpan={8}>
-                    Total · {totals.rows} tours · {totals.pax} pax
+                  <td className="px-2.5 py-3 uppercase tracking-[0.1em] text-[11px]" colSpan={8}>
+                    Total
+                    <span className="ml-2 text-[10px] font-bold normal-case tracking-normal text-slate-500">
+                      {totals.rows} tours · {totals.pax} pax
+                    </span>
                   </td>
                   <td className="px-2.5 py-3 text-right"><Num value={totals.totalCost} bold /></td>
                   <td className="px-2.5 py-3 text-right"><Num value={totals.advancePaid} bold /></td>
@@ -1022,13 +1244,18 @@ function GroupBlock({
   return (
     <>
       {grouped ? (
-        <tr className="bg-slate-800/50 border-y border-slate-700/60">
-          <td className="px-2 py-2">
-            <button type="button" onClick={onToggle} className="text-slate-400 hover:text-white">
-              {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        <tr className="border-y border-white/[0.08] bg-indigo-500/[0.07]">
+          <td className="relative px-2 py-2">
+            <span className="absolute inset-y-0 left-0 w-[3px] bg-indigo-400/70" />
+            <button
+              type="button" onClick={onToggle}
+              title={collapsed ? 'Show these tours' : 'Hide these tours'}
+              className="rounded-md p-0.5 text-slate-400 transition hover:bg-white/[0.08] hover:text-white"
+            >
+              {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
           </td>
-          <td className="px-2.5 py-2 font-black text-slate-200" colSpan={8}>
+          <td className="px-2.5 py-2 font-black text-slate-100" colSpan={8}>
             {group.label}
             <span className="ml-2 text-[10px] font-bold text-slate-500">
               {group.totals.rows} tour{group.totals.rows === 1 ? '' : 's'} · {group.totals.pax} pax
@@ -1075,10 +1302,11 @@ function Row({
 }) {
   return (
     <tr className={cn(
-      'border-b border-slate-800/60 hover:bg-slate-800/30',
-      checked && 'bg-sky-500/5',
+      'group border-b border-white/[0.05] transition-colors duration-150',
+      checked ? 'bg-sky-500/[0.09]' : 'odd:bg-white/[0.015] hover:bg-white/[0.045]',
     )}>
-      <td className="px-2 py-2">
+      <td className="relative px-2 py-2">
+        {checked ? <span className="absolute inset-y-0 left-0 w-[3px] bg-sky-400" /> : null}
         <input
           type="checkbox" className="accent-sky-500" checked={checked}
           onChange={onSelect} disabled={!mayRecord}
@@ -1087,19 +1315,19 @@ function Row({
 
       <td className="px-2.5 py-2">
         {row.bulkNo ? (
-          <span className="px-1.5 py-0.5 rounded-md text-[10px] font-black bg-indigo-500/15 border border-indigo-500/30 text-indigo-200">
+          <span className="rounded-md border border-indigo-400/30 bg-indigo-500/15 px-1.5 py-0.5 text-[10px] font-black text-indigo-200">
             {row.bulkNo}
           </span>
-        ) : <span className="text-slate-700">—</span>}
+        ) : <Empty />}
       </td>
 
       <td className="px-2.5 py-2">
         <Link
           href={`/dashboard/bookings/${row.bookingRef}`}
-          className="font-bold text-slate-100 hover:text-sky-300 inline-flex items-center gap-1"
+          className="inline-flex items-center gap-1 font-bold text-slate-100 transition-colors hover:text-sky-300"
         >
           {row.tour}
-          <ExternalLink className="w-3 h-3 opacity-50" />
+          <ExternalLink className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-60" />
         </Link>
         {row.clientName ? (
           <p className="text-[10px] text-slate-500 truncate max-w-[160px]">{row.clientName}</p>
@@ -1107,9 +1335,9 @@ function Row({
       </td>
 
       <td className="px-2.5 py-2 whitespace-nowrap text-slate-300">{workbookDate(row.date)}</td>
-      <td className="px-2.5 py-2 text-right tabular-nums text-slate-500">{row.year ?? '—'}</td>
-      <td className="px-2.5 py-2 text-right tabular-nums text-slate-500">{row.month ?? '—'}</td>
-      <td className="px-2.5 py-2 text-right tabular-nums text-slate-500">{row.day ?? '—'}</td>
+      <td className="px-2.5 py-2 text-right tabular-nums text-slate-500">{row.year ?? <Empty />}</td>
+      <td className="px-2.5 py-2 text-right tabular-nums text-slate-500">{row.month ?? <Empty />}</td>
+      <td className="px-2.5 py-2 text-right tabular-nums text-slate-500">{row.day ?? <Empty />}</td>
 
       <td className="px-2.5 py-2">
         {row.chauffeur ? (
@@ -1117,18 +1345,20 @@ function Row({
         ) : row.vendorName ? (
           <span className="text-slate-400 italic">{row.vendorName}</span>
         ) : (
-          <span className="text-amber-400/80 text-[10px] font-bold uppercase tracking-wide">Unallocated</span>
+          <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-300">
+            <AlertTriangle className="h-2.5 w-2.5" />Unallocated
+          </span>
         )}
       </td>
 
       <td className="px-2.5 py-2 max-w-[200px] truncate text-slate-300" title={row.acName ?? undefined}>
-        {row.acName ?? '—'}
+        {row.acName ?? <Empty />}
       </td>
 
       <td className="px-2.5 py-2 whitespace-nowrap">
         {row.costTypeLabel
-          ? <span className="text-[10px] font-bold text-slate-300">{row.costTypeLabel}</span>
-          : <span className="text-slate-700">—</span>}
+          ? <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-bold text-slate-300">{row.costTypeLabel}</span>
+          : <Empty />}
       </td>
 
       <td className="px-2.5 py-2 text-right">
@@ -1157,7 +1387,7 @@ function Row({
 
       <td className="px-2.5 py-2 whitespace-nowrap">
         <span className={cn(
-          'px-1.5 py-0.5 rounded-md border text-[9px] font-black uppercase tracking-wide',
+          'inline-block rounded-full border px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.1em]',
           REGISTER_STATE_TONE[row.state],
         )}>
           {REGISTER_STATE_LABEL[row.state]}
@@ -1170,7 +1400,7 @@ function Row({
       </td>
 
       <td className="px-2.5 py-2 max-w-[180px] truncate text-slate-400" title={row.remarks ?? undefined}>
-        {row.remarks ?? '—'}
+        {row.remarks ?? <Empty />}
       </td>
 
       <td className="px-2 py-2 text-right">
@@ -1178,9 +1408,9 @@ function Row({
           type="button" onClick={onEdit}
           disabled={!mayRecord}
           title={mayRecord ? 'Record this settlement' : 'Only the accounts team and admins may record settlements'}
-          className="p-1.5 rounded-lg border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 disabled:opacity-30"
+          className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-1.5 text-slate-400 opacity-60 transition duration-200 hover:border-sky-400/40 hover:bg-sky-500/15 hover:text-sky-100 group-hover:opacity-100 disabled:pointer-events-none disabled:opacity-20"
         >
-          <Pencil className="w-3.5 h-3.5" />
+          <Pencil className="h-3.5 w-3.5" />
         </button>
       </td>
     </tr>
@@ -1263,13 +1493,15 @@ function BulkBar({
   }
 
   return (
-    <div className="sticky top-2 z-20 rounded-xl border border-sky-500/40 bg-slate-900/95 backdrop-blur p-3 space-y-2 shadow-xl">
+    <div className="sticky top-2 z-30 space-y-2 rounded-2xl border border-sky-400/40 bg-slate-900/95 p-3 shadow-2xl shadow-sky-950/40 backdrop-blur">
       <div className="flex flex-wrap items-end gap-2">
-        <div className="flex items-center gap-2 pr-2">
-          <Users className="w-4 h-4 text-sky-300" />
+        <div className="flex items-center gap-2.5 pr-2">
+          <span className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-xl border border-sky-400/30 bg-sky-500/20 text-sky-200">
+            <Users className="h-4 w-4" />
+          </span>
           <div>
             <p className="text-xs font-black text-white">{rows.length} selected</p>
-            <p className="text-[10px] text-slate-400">{amount(owed)} still to release</p>
+            <p className="text-[10px] tabular-nums text-slate-400">{amount(owed)} still to release</p>
           </div>
         </div>
 
@@ -1297,37 +1529,37 @@ function BulkBar({
 
         <button
           type="button" disabled={busy !== null} onClick={() => run('assign')}
-          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 hover:bg-indigo-500/30 disabled:opacity-50 flex items-center gap-1.5"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/40 bg-indigo-500/20 px-3 py-1.5 text-xs font-bold text-indigo-100 transition duration-200 hover:bg-indigo-500/30 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50"
         >
-          {busy === 'assign' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+          {busy === 'assign' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
           Apply
         </button>
         <button
           type="button" disabled={busy !== null} onClick={() => run('submit')}
           title="Send each selected tour's saved balance payable to the accounts team"
-          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-sky-500/20 border border-sky-500/40 text-sky-200 hover:bg-sky-500/30 disabled:opacity-50 flex items-center gap-1.5"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-sky-400/40 bg-sky-500/20 px-3 py-1.5 text-xs font-bold text-sky-100 transition duration-200 hover:bg-sky-500/30 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50"
         >
-          {busy === 'submit' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+          {busy === 'submit' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           Submit to accounts
         </button>
         <button
           type="button" disabled={busy !== null} onClick={() => run('withdraw')}
-          className="px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-700 text-slate-300 hover:text-white disabled:opacity-50 flex items-center gap-1.5"
+          className={ghostBtn}
         >
-          {busy === 'withdraw' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+          {busy === 'withdraw' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
           Withdraw
         </button>
         <button
-          type="button" onClick={onClear}
-          className="p-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-white"
+          type="button" onClick={onClear} title="Clear the selection"
+          className="rounded-lg border border-white/[0.08] bg-white/[0.03] p-1.5 text-slate-500 transition hover:border-white/[0.2] hover:text-white"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {failures.length > 0 ? (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 space-y-0.5 max-h-32 overflow-y-auto">
-          <p className="text-[10px] uppercase tracking-wider text-rose-300 font-black">
+        <div className="max-h-32 space-y-0.5 overflow-y-auto rounded-xl border border-rose-400/25 bg-rose-500/[0.09] px-3 py-2">
+          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-rose-300">
             {failures.length} could not be updated
           </p>
           {failures.map(f => (
