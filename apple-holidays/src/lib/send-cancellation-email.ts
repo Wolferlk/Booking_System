@@ -297,3 +297,58 @@ export async function sendCancellationRejectedEmail(
     bodyHtml,
   })
 }
+
+/**
+ * A cancelled booking has been pulled back into the live pipeline.
+ *
+ * This one matters more than it looks: everyone downstream was told the trip
+ * was off and stopped working the file. Going quiet about the reversal is how
+ * a recovered booking reaches its arrival date with nobody on it — so the
+ * notice goes to the person who asked for the cancellation and to the same
+ * operations list that was told about it in the first place.
+ */
+export async function sendCancellationRecoveredEmail(
+  i: CancellationMailInput & { restoredStatus: string; recoveredByName: string; recoveredAt: Date },
+): Promise<void> {
+  const to = i.cancelledByEmail?.includes('@') ? i.cancelledByEmail : CANCELLATION_APPROVAL_FALLBACK
+
+  const bodyHtml = `
+<div style="background:#f1f5f9;padding:28px 0;font-family:Segoe UI,Arial,sans-serif;">
+  <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08);">
+    <div style="background:linear-gradient(135deg,#047857 0%,#059669 55%,#10b981 100%);padding:26px 30px;">
+      <div style="font:600 11px/1 Segoe UI,Arial,sans-serif;color:#d1fae5;letter-spacing:2px;text-transform:uppercase;">Apple Holidays — Booking Reinstated</div>
+      <div style="font:700 26px/1.25 Segoe UI,Arial,sans-serif;color:#ffffff;margin-top:8px;">Cancellation Reversed</div>
+      <div style="font:500 15px/1.4 Segoe UI,Arial,sans-serif;color:#d1fae5;margin-top:6px;">${esc(i.bookingRef)}</div>
+    </div>
+    <div style="padding:26px 30px;">
+      <p style="margin:0 0 20px;font:400 15px/1.65 Segoe UI,Arial,sans-serif;color:#334155;">
+        <strong style="color:#0f172a;">${esc(i.bookingRef)}</strong> was cancelled and has now been
+        <strong>recovered by ${esc(i.recoveredByName)}</strong>. It is back at
+        <strong>${esc(i.restoredStatus.replace(/_/g, ' '))}</strong> and is a live booking again —
+        please pick the file back up.
+      </p>
+      <div style="margin:0 0 22px;padding:16px 18px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;">
+        <div style="font:700 11px/1 Segoe UI,Arial,sans-serif;color:#047857;letter-spacing:1.2px;text-transform:uppercase;margin-bottom:8px;">Why it came back</div>
+        <div style="font:400 15px/1.6 Segoe UI,Arial,sans-serif;color:#064e3b;white-space:pre-wrap;">${esc(i.approvalNote ?? '—')}</div>
+      </div>
+      <table cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;">
+        ${row('Booking Ref', esc(i.bookingRef))}
+        ${row('Lead Passenger', esc(i.leadPassenger ?? '—'))}
+        ${row('Travel Dates', `${esc(fmtDate(i.arrivalDate))} &rarr; ${esc(fmtDate(i.departureDate))}`)}
+        ${row('Restored To', esc(i.restoredStatus.replace(/_/g, ' ')))}
+        ${row('Originally Cancelled By', esc(i.cancelledByName))}
+        ${row('Original Reason', esc(i.reason))}
+        ${row('Recovered By', esc(i.recoveredByName))}
+        ${row('Recovered On', esc(fmtDateTime(i.recoveredAt)))}
+      </table>
+    </div>
+  </div>
+</div>`
+
+  await sendMailViaGraph({
+    to,
+    cc: CANCELLATION_NOTIFY_LIST,
+    subject: `BOOKING RECOVERED — ${i.bookingRef} is live again at ${i.restoredStatus.replace(/_/g, ' ')}`,
+    bodyHtml,
+  })
+}

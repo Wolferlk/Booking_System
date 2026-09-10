@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -12,9 +12,11 @@ import AiUsageMonitor from '@/components/settings/ai-usage-monitor'
 import LastMinuteAlertSettings from '@/components/settings/last-minute-alert-settings'
 import JourneyMapCard from '@/components/settings/journey-map-card'
 import FileHandlerResolveSettings from '@/components/settings/file-handler-resolve-settings'
+import CancellationRecoveryCard from '@/components/settings/cancellation-recovery-card'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
+import { parseCancellationPolicy, windowLabel } from '@/lib/cancellation-policy'
 
 const DEFAULT_TEST_EMAIL_1 = 'sasiofficial25@gmail.com'
 const DEFAULT_TEST_EMAIL_2 = 'sasindu@aahaas.com'
@@ -54,6 +56,15 @@ interface Settings {
   journey_map_cinematic?: string
   journey_map_auto_open?: string
   journey_map_portal_fullscreen?: string
+  // Cancellation recovery & full (sealed) cancel — see lib/cancellation-policy
+  cancel_recovery_enabled?: string
+  cancel_recovery_window_days?: string
+  cancel_recovery_audience?: string
+  cancel_recovery_require_reason?: string
+  cancel_recovery_notify?: string
+  cancel_full_enabled?: string
+  cancel_full_audience?: string
+  cancel_full_confirm_ref?: string
 }
 
 /**
@@ -305,6 +316,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
   { id: 'last-minute',    title: 'Last-Minute Booking Alerts',   group: 'Operations',      icon: BellRing,     keywords: 'd-4 alarm sound browser notification late file acknowledge' },
   { id: 'file-handler',   title: 'File Handler Resolution',      group: 'Operations',      icon: FolderSync,   keywords: '30 sundays placeholder onedrive handler mapping resolve' },
+  { id: 'cancel-recovery',title: 'Cancellation Recovery',        group: 'Operations',      icon: RotateCcw,    keywords: 'recover restore reinstate undo reverse revive cancelled booking full cancel permanent sealed irreversible window days audience' },
 
   { id: 'automation',     title: 'Automation Settings',          group: 'Automation & AI', icon: Zap,          keywords: 'auto mail inbox polling onedrive scheduled background critical password pause' },
   { id: 'ai-feedback-cc', title: 'AI Call Bot Summary Email',    group: 'Automation & AI', icon: Bot,          keywords: 'feedback cc recipients agent summary transcript sentiment' },
@@ -689,6 +701,7 @@ export default function ConfigPage() {
   const aiOnCount = [aiAgendaEnabled, aiPnlExtractEnabled, aiPnlClassifyEnabled, !onedriveNewOnly].filter(Boolean).length
   const automationOn = [autoMailEnabled, autoOnedriveEnabled].filter(Boolean).length
   const partnerCount = parseCountryList(settings.guide_countries).length + parseCountryList(settings.tour_vendor_countries).length
+  const cancelPolicy = parseCancellationPolicy(settings)
 
   const sectionStatuses: Record<string, SectionStatus | undefined> = {
     'data-mode':      useTestData      ? { label: 'Test', tone: 'warn' }   : { label: 'Live',  tone: 'on' },
@@ -698,6 +711,12 @@ export default function ConfigPage() {
     'automation':     automationOn === 2 ? { label: 'On', tone: 'on' } : automationOn === 1 ? { label: '1/2', tone: 'warn' } : { label: 'Off', tone: 'off' },
     'ai-tokens':      { label: `${aiOnCount}/4`, tone: aiOnCount === 4 ? 'on' : aiOnCount === 0 ? 'off' : 'warn' },
     'partners':       { label: String(partnerCount), tone: partnerCount > 0 ? 'on' : 'off' },
+    // Sealed cancellation is the louder fact, so it wins the pill when it is live.
+    'cancel-recovery': cancelPolicy.fullEnabled
+      ? { label: 'Sealed', tone: 'warn' }
+      : cancelPolicy.recoveryEnabled
+        ? { label: windowLabel(cancelPolicy.recoveryWindowDays), tone: 'on' }
+        : { label: 'Final', tone: 'off' },
   }
 
   if (loading) {
@@ -1434,6 +1453,11 @@ export default function ConfigPage() {
             <Section id="file-handler" visible={show('file-handler')} flashed={flashId === 'file-handler'}>
               {/* 30 Sundays placeholder file handler → real handler */}
               <FileHandlerResolveSettings />
+            </Section>
+
+            <Section id="cancel-recovery" visible={show('cancel-recovery')} flashed={flashId === 'cancel-recovery'}>
+              {/* Whether a cancelled booking can come back, and for how long */}
+              <CancellationRecoveryCard settings={settings} saving={saving} onSave={saveSetting} />
             </Section>
 
             <Section id="pnl-sync" visible={show('pnl-sync')} flashed={flashId === 'pnl-sync'}>

@@ -25,6 +25,7 @@ import { getAvailableTransitions, STATUS_LABELS } from '@/lib/state-machine'
 import type { UserRole, BookingStatus } from '@prisma/client'
 import Link from 'next/link'
 import WhatsAppMiniChat from '@/components/bookings/whatsapp-mini-chat'
+import { CancellationRecoveryPanel, FullCancelButton } from '@/components/bookings/cancellation-actions'
 import BookingQCPanel from '@/components/bookings/booking-qc-panel'
 import SectionNav from '@/components/bookings/section-nav'
 import OneDriveFiles from '@/components/bookings/onedrive-files'
@@ -1376,6 +1377,10 @@ Wishing you a wonderful trip! ✈️
                   {(booking as any).cancelledAt ? ` on ${formatDateTime((booking as any).cancelledAt)}` : ''}
                   {' '}· This booking is view-only and hidden from active operations lists.
                 </p>
+
+                {/* Whether this cancellation can still be reversed — or sealed
+                    so it never can. The server decides; this only draws it. */}
+                <CancellationRecoveryPanel bookingRef={ref} role={role} onDone={load} />
               </div>
             </div>
           </div>
@@ -1651,6 +1656,13 @@ Wishing you a wonderful trip! ✈️
                   onClick={() => { setCancelReason(DEFAULT_CANCEL_REASON); setCancelModal(true) }}>
                   <XCircle className="w-4 h-4 mr-1" /> Cancel Booking
                 </Button>
+              )}
+
+              {/* Full cancel — skips the accounts queue and seals the booking
+                  against recovery. Draws itself only when Settings offers it
+                  and this role is in the audience. */}
+              {!['COMPLETED', 'CANCELLED', 'PENDING_CANCELLATION'].includes(status) && (
+                <FullCancelButton bookingRef={ref} role={role} onDone={load} />
               )}
 
               {/* OneDrive folder link + assignment */}
