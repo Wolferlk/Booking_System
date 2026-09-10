@@ -26,15 +26,22 @@
  *
  * ---- The variance, precisely ----
  *
- *   balance payable      total transport cost − advance already handed over
- *   excess / (shortage)  budgeted cost − total transport cost
- *   variance %           excess ÷ budgeted cost
+ *   balance payable      package cost − advance already handed over
+ *   excess / (shortage)  package cost − total transport cost
+ *   variance %           excess ÷ package cost
+ *
+ * The package cost is the figure the driver was actually agreed at, so it is
+ * what the balance is owed against and what the costed total is measured
+ * against. A tour with no settlement sheet saved yet has no package figure at
+ * all; those rows fall back to the costed total for the balance, and carry no
+ * variance, rather than showing a payable of nothing.
  *
  * A positive excess is money the tour did not spend. A negative one — printed
  * in brackets, as the workbook prints it — is an overrun the desk has to answer
- * for. Where no budget was entered the row has no variance at all rather than a
- * variance against zero, which would read as a 100% overrun on every untouched
- * booking.
+ * for. Where no package cost was saved the row has no variance at all rather
+ * than a variance against zero, which would read as a 100% overrun on every
+ * untouched booking. The budgeted cost is still carried and still totalled; it
+ * is what the desk planned, beside what it agreed and what it cost.
  */
 
 import { dayKey, daysBetween, shiftDay, type DriveLogQuery, type DriveLogRow } from './sl-drive-log'
@@ -115,8 +122,9 @@ export interface RegisterRow {
    * figure the driver is actually being paid the package on. Null until
    * somebody has saved that sheet — this is never derived, because the derived
    * figure is the accounts system's transport total and that is already the
-   * `totalCost` column. Filled in by the register's API, not by
-   * `toRegisterRow()`, which has no database of its own.
+   * `totalCost` column. `toRegisterRow()` has no database of its own, so the
+   * register's API reads these sheets first and hands the figure in — the
+   * balance payable and the variance are both drawn from it.
    */
   packageCost: number | null
 
@@ -124,7 +132,7 @@ export interface RegisterRow {
   totalCost: number | null
   /** Of the advance, what has actually been handed over. */
   advancePaid: number | null
-  /** Total cost − advance paid. What the driver is still owed. */
+  /** Package cost − advance paid. What the driver is still owed. */
   balancePayable: number | null
   /** Of that, what accounts has already released. */
   restPaid: number | null
@@ -132,9 +140,9 @@ export interface RegisterRow {
   restOutstanding: number | null
 
   budgetedCost: number | null
-  /** Budget − total. Positive is a saving, negative an overrun. */
+  /** Package − costed total. Positive is a saving, negative an overrun. */
   excess: number | null
-  /** Excess ÷ budget, as a percentage. Null when there is no budget. */
+  /** Excess ÷ package cost, as a percentage. Null when there is no package. */
   variancePct: number | null
 
   /** True when the total cost is the desk's assertion rather than the derivation. */
@@ -171,9 +179,10 @@ const round2 = (n: number) => Math.round(n * 100) / 100
  * Pure rearrangement: not one figure below is computed from a rate, a
  * percentage or a P&L line. `effective` has already decided whether the desk's
  * correction or the accounts system's derivation is the total, and this only
- * subtracts what has been paid from it and measures it against the budget.
+ * subtracts what has been paid from the agreed package and measures the costed
+ * total against it.
  */
-export function toRegisterRow(row: DriveLogRow): RegisterRow {
+export function toRegisterRow(row: DriveLogRow, packageCost: number | null = null): RegisterRow {
   const a = row.actuals
   const s = row.settlement
 
@@ -181,12 +190,18 @@ export function toRegisterRow(row: DriveLogRow): RegisterRow {
   const advancePaid = s.advancePaid
   const restPaid    = s.restPaid
 
+  // What the balance is owed against: the package the desk agreed with the
+  // driver, not the accounts system's costing of the trip. Until that sheet is
+  // saved there is no package figure, and the costed total stands in — a row
+  // that showed nothing payable would send the driver away short.
+  const payableBase = isNum(packageCost) ? packageCost : totalCost
+
   // The workbook's balance is measured against what actually left the building,
   // not against the advance the rule says was due: a driver who was handed less
   // than his envelope is still owed the difference, and a row that hid that
   // would send him away short.
-  const balancePayable = isNum(totalCost)
-    ? round2(totalCost - (advancePaid ?? 0))
+  const balancePayable = isNum(payableBase)
+    ? round2(payableBase - (advancePaid ?? 0))
     : null
 
   const restOutstanding = isNum(balancePayable)
@@ -194,9 +209,9 @@ export function toRegisterRow(row: DriveLogRow): RegisterRow {
     : null
 
   const budgetedCost = a?.budgetedCost ?? null
-  const excess = isNum(budgetedCost) && isNum(totalCost) ? round2(budgetedCost - totalCost) : null
-  const variancePct = isNum(excess) && isNum(budgetedCost) && budgetedCost !== 0
-    ? round2((excess / budgetedCost) * 100)
+  const excess = isNum(packageCost) && isNum(totalCost) ? round2(packageCost - totalCost) : null
+  const variancePct = isNum(excess) && isNum(packageCost) && packageCost !== 0
+    ? round2((excess / packageCost) * 100)
     : null
 
   const [year, month, day] = splitDay(row.arrivalDate)
@@ -228,7 +243,7 @@ export function toRegisterRow(row: DriveLogRow): RegisterRow {
     currency:     s.currency,
     lkrAvailable: s.lkrAvailable,
 
-    packageCost: null,
+    packageCost,
 
     totalCost,
     advancePaid,
@@ -425,10 +440,12 @@ export interface RegisterTotals {
   restOutstanding: number
   budgetedCost: number
   excess: number
-  /** Excess ÷ budget over the rows that carry a budget. */
+  /** Excess ÷ package cost over the rows that carry a package figure. */
   variancePct: number | null
   /** How many rows carry a budget at all — a total is only honest if it says so. */
   budgeted: number
+  /** How many rows carry a package cost, which is what the variance is drawn from. */
+  packaged: number
   settled: number
   pending: number
   /** Rows whose figures are in the costed currency because no rupee rate resolved. */
@@ -440,13 +457,13 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
     rows: rows.length, pax: 0,
     packageCost: 0,
     totalCost: 0, advancePaid: 0, balancePayable: 0, restPaid: 0, restOutstanding: 0,
-    budgetedCost: 0, excess: 0, variancePct: null, budgeted: 0,
+    budgetedCost: 0, excess: 0, variancePct: null, budgeted: 0, packaged: 0,
     settled: 0, pending: 0, noRate: 0,
   }
 
   for (const r of rows) {
     t.pax += r.pax
-    if (isNum(r.packageCost))     t.packageCost += r.packageCost
+    if (isNum(r.packageCost))   { t.packageCost += r.packageCost; t.packaged += 1 }
     if (isNum(r.totalCost))       t.totalCost += r.totalCost
     if (isNum(r.advancePaid))     t.advancePaid += r.advancePaid
     if (isNum(r.balancePayable))  t.balancePayable += r.balancePayable
@@ -464,7 +481,7 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
     t[k] = round2(t[k])
   }
 
-  t.variancePct = t.budgetedCost !== 0 ? round2((t.excess / t.budgetedCost) * 100) : null
+  t.variancePct = t.packageCost !== 0 ? round2((t.excess / t.packageCost) * 100) : null
   return t
 }
 

@@ -314,7 +314,9 @@ function RowEditor({
 
   const budget = parse(form.budgetedCost)
   const cost   = parse(form.actualPackageCost) ?? row.totalCost
-  const excess = budget !== null && cost !== null ? budget - cost : null
+  // The variance the register prints: the package agreed with the driver less
+  // what the transport actually came to. The budget is planning, not the base.
+  const excess = row.packageCost !== null && cost !== null ? row.packageCost - cost : null
 
   const post = async (action: 'save' | 'submit' | 'withdraw') => {
     setBusy(action); setError(null)
@@ -453,8 +455,8 @@ function RowEditor({
               />
               <span className={cn('block mt-1 text-[10px] font-bold', varianceTone(excess))}>
                 {excess === null
-                  ? 'No budget — the register shows no variance for this tour.'
-                  : `Excess / (shortage) ${bracketed(excess)}`}
+                  ? 'No package cost saved — the register shows no variance for this tour.'
+                  : `Excess / (shortage) ${bracketed(excess)} against the package`}
               </span>
             </Field>
 
@@ -555,8 +557,8 @@ function RowEditor({
 // ── The page ──────────────────────────────────────────────────────────────────
 
 const VARIANCE_LABEL: Record<string, string> = {
-  excess: 'Under budget', shortage: 'Over budget',
-  on_budget: 'On budget', unbudgeted: 'No budget entered',
+  excess: 'Under the package', shortage: 'Over the package',
+  on_budget: 'On the package', unbudgeted: 'No package cost saved',
 }
 
 const PAYMENT_LABEL: Record<string, string> = {
@@ -576,14 +578,13 @@ const COLUMNS: { key: RegisterSortField | null; label: string; title?: string; a
   { key: null,        label: 'D',         title: 'Arrival day', align: 'right' },
   { key: 'chauffeur', label: 'Chauffeur' },
   { key: 'agent',     label: 'A/C Name',  title: 'The agent the tour was sold through' },
-  { key: null,        label: 'Cost' },
   { key: 'package',   label: 'Package cost', title: 'The package figure typed on the transport settlement sheet in the Drive Log', align: 'right' },
   { key: 'cost',      label: 'Total transport cost', align: 'right' },
   { key: 'advance',   label: 'Advance paid', align: 'right' },
-  { key: 'balance',   label: 'Balance payable', title: 'Total cost less the advance already handed over', align: 'right' },
+  { key: 'balance',   label: 'Balance payable', title: 'Package cost less the advance already handed over', align: 'right' },
   { key: 'budget',    label: 'Budgeted cost', align: 'right' },
-  { key: 'excess',    label: 'Excess / (shortage)', title: 'Budget less what it actually cost', align: 'right' },
-  { key: 'variancePct', label: '%', title: 'Excess as a share of the budget', align: 'right' },
+  { key: 'excess',    label: 'Excess / (shortage)', title: 'Package cost less what the transport actually cost', align: 'right' },
+  { key: 'variancePct', label: '%', title: 'Excess as a share of the package cost', align: 'right' },
   { key: null,        label: 'Status' },
   { key: null,        label: 'Remark' },
 ]
@@ -711,7 +712,7 @@ export default function DriverSettlementsPage() {
    */
   const exportCsv = () => {
     const head = [
-      'Bulk No', 'Tour', 'Date', 'Y', 'M', 'D', 'Chauffeur', 'A/C Name', 'Cost',
+      'Bulk No', 'Tour', 'Date', 'Y', 'M', 'D', 'Chauffeur', 'A/C Name',
       'Package Cost', 'Total Transport Cost', 'Advance Paid', 'Balance Payable', 'Budgeted Cost',
       'Excess / (Shortage)', '%', 'Status', 'Remark',
     ]
@@ -723,7 +724,7 @@ export default function DriverSettlementsPage() {
     for (const r of rows) {
       lines.push([
         r.bulkNo, r.tour, workbookDate(r.date), r.year, r.month, r.day,
-        r.chauffeur, r.acName, r.costTypeLabel,
+        r.chauffeur, r.acName,
         r.packageCost, r.totalCost, r.advancePaid, r.balancePayable, r.budgetedCost,
         r.excess, r.variancePct, REGISTER_STATE_LABEL[r.state], r.remarks,
       ].map(cell).join(','))
@@ -838,13 +839,16 @@ export default function DriverSettlementsPage() {
             sub={`${totals.budgeted} of ${totals.rows} tours budgeted`}
           />
           <Stat
-            // With nothing budgeted there is no variance to be pleased about,
-            // so the card stays neutral rather than showing a green zero.
-            tone={totals.budgeted === 0 ? 'slate' : totals.excess >= 0 ? 'emerald' : 'rose'}
-            icon={totals.budgeted === 0 ? Target : totals.excess >= 0 ? TrendingUp : TrendingDown}
+            // With no package cost saved anywhere there is no variance to be
+            // pleased about, so the card stays neutral rather than showing a
+            // green zero.
+            tone={totals.packaged === 0 ? 'slate' : totals.excess >= 0 ? 'emerald' : 'rose'}
+            icon={totals.packaged === 0 ? Target : totals.excess >= 0 ? TrendingUp : TrendingDown}
             label="Excess / (shortage)"
-            value={totals.budgeted === 0 ? '—' : bracketed(totals.excess)}
-            sub={totals.variancePct !== null ? `${percent(totals.variancePct)} of budget` : 'no budget entered'}
+            value={totals.packaged === 0 ? '—' : bracketed(totals.excess)}
+            sub={totals.variancePct !== null
+              ? `${percent(totals.variancePct)} of the package`
+              : 'no package cost saved'}
           />
           <Stat
             tone="emerald" icon={BadgeCheck}
@@ -989,10 +993,10 @@ export default function DriverSettlementsPage() {
                 onChange={e => set({ variance: e.target.value as RegisterQuery['variance'] })}
               >
                 <option value="all">All</option>
-                <option value="excess">Under budget (excess)</option>
-                <option value="shortage">Over budget (shortage)</option>
-                <option value="on_budget">On budget</option>
-                <option value="unbudgeted">No budget entered</option>
+                <option value="excess">Under the package (excess)</option>
+                <option value="shortage">Over the package (shortage)</option>
+                <option value="on_budget">On the package</option>
+                <option value="unbudgeted">No package cost saved</option>
               </select>
             </Field>
 
@@ -1193,7 +1197,7 @@ export default function DriverSettlementsPage() {
               <tfoot className="sticky bottom-0 z-10 border-t border-white/[0.12] bg-slate-950/90 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
                 <tr className="font-black text-slate-200">
                   <td className="px-2 py-3" />
-                  <td className="px-2.5 py-3 uppercase tracking-[0.1em] text-[11px]" colSpan={9}>
+                  <td className="px-2.5 py-3 uppercase tracking-[0.1em] text-[11px]" colSpan={8}>
                     Total
                     <span className="ml-2 text-[10px] font-bold normal-case tracking-normal text-slate-500">
                       {totals.rows} tours · {totals.pax} pax
@@ -1257,7 +1261,7 @@ function GroupBlock({
               {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
           </td>
-          <td className="px-2.5 py-2 font-black text-slate-100" colSpan={9}>
+          <td className="px-2.5 py-2 font-black text-slate-100" colSpan={8}>
             {group.label}
             <span className="ml-2 text-[10px] font-bold text-slate-500">
               {group.totals.rows} tour{group.totals.rows === 1 ? '' : 's'} · {group.totals.pax} pax
@@ -1356,12 +1360,6 @@ function Row({
 
       <td className="px-2.5 py-2 max-w-[200px] truncate text-slate-300" title={row.acName ?? undefined}>
         {row.acName ?? <Empty />}
-      </td>
-
-      <td className="px-2.5 py-2 whitespace-nowrap">
-        {row.costTypeLabel
-          ? <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-bold text-slate-300">{row.costTypeLabel}</span>
-          : <Empty />}
       </td>
 
       <td className="px-2.5 py-2 text-right">
