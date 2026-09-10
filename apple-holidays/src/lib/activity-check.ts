@@ -612,7 +612,11 @@ export async function fetchActivityRows(
   const today = startOfDay(now).getTime()
 
   const wantAgenda = q.source !== 'ITINERARY'
-  const wantItinerary = q.source !== 'AGENDA'
+  // "No driver yet" is a question only the movement chart can answer — an
+  // itinerary day has no assignment to be missing — so that filter narrows the
+  // search to the agenda rather than quietly returning every itinerary row
+  // alongside it.
+  const wantItinerary = q.source !== 'AGENDA' && !q.unassignedOnly
 
   const agendaPrefilter = keywordPrefilter(q, ['toPoint', 'details', 'location', 'fromPoint'])
   const itineraryPrefilter = keywordPrefilter(q, ['title', 'description'])
@@ -624,7 +628,20 @@ export async function fetchActivityRows(
             AND: [
               { date: { gte: start, lte: end } },
               ...(q.serviceTypes.length ? [{ serviceType: { in: q.serviceTypes as never[] } }] : []),
-              ...(q.unassignedOnly ? [{ assignment: null }] : []),
+              // Leisure and own-transport days have no driver *by design*, so
+              // they are not what "still needs a driver" means — the same rule
+              // the readiness badge and the `unassigned` stat use.
+              // NULL means "never decided" on both flags (see the schema), and a
+              // file nobody has ruled on still needs a driver — so the clause is
+              // spelled out as null-or-false rather than left to how `not`
+              // treats NULL.
+              ...(q.unassignedOnly
+                ? [
+                    { assignment: null },
+                    { OR: [{ isLeisure: null }, { isLeisure: false }] },
+                    { OR: [{ isHotelOnly: null }, { isHotelOnly: false }] },
+                  ]
+                : []),
               ...(agendaPrefilter ? [agendaPrefilter as Prisma.AgendaItemWhereInput] : []),
               { agenda: { booking: booking } },
             ],
