@@ -29,6 +29,8 @@ import { prisma } from '@/lib/prisma'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
 import { SERVICE_TYPE_LABELS, SERVICE_TYPE_VALUES } from '@/lib/service-types'
+import { ACTIVITY_FIELDS as FIELDS } from '@/lib/activity-check-shared'
+import type { ActivityField, RangePreset } from '@/lib/activity-check-shared'
 import type { Prisma, UserRole } from '@prisma/client'
 
 /**
@@ -52,23 +54,15 @@ export type SourceFilter = 'BOTH' | 'AGENDA' | 'ITINERARY'
 export type MatchMode = 'any' | 'all'
 
 /**
- * The text a keyword is matched against.
+ * The text a keyword is matched against — see `activity-check-shared.ts`.
  *
  * Selectable because the same word means different things in different columns:
  * "Hanoi" in `location` is the city the movement belongs to, in `route` it is a
  * pickup point, and in `activity` it is part of a tour name. A desk chasing a
  * *product* wants `activity` only; a desk chasing a *region* wants `location`.
  */
-export type ActivityField = 'activity' | 'details' | 'location' | 'route'
-
-export const ACTIVITY_FIELDS: ActivityField[] = ['activity', 'details', 'location', 'route']
-
-export const ACTIVITY_FIELD_LABELS: Record<ActivityField, string> = {
-  activity: 'Activity / tour name',
-  details:  'Details & description',
-  location: 'Location / city',
-  route:    'Pickup & drop points',
-}
+export { ACTIVITY_FIELDS, ACTIVITY_FIELD_LABELS, RANGE_PRESET_LABELS } from '@/lib/activity-check-shared'
+export type { ActivityField, RangePreset } from '@/lib/activity-check-shared'
 
 export type SortBy = 'date' | 'booking' | 'activity' | 'location' | 'relevance'
 
@@ -113,30 +107,7 @@ export function endOfDay(d: Date): Date {
   return new Date(startOfDay(d).getTime() + DAY_MS - 1)
 }
 
-/**
- * Named windows, so "last week" is one click rather than two date pickers.
- * Weeks are Monday-based, matching how the operations desk reads a roster.
- */
-export type RangePreset =
-  | 'today' | 'tomorrow' | 'thisWeek' | 'lastWeek' | 'nextWeek'
-  | 'next7' | 'next14' | 'next30' | 'last30'
-  | 'thisMonth' | 'lastMonth' | 'nextMonth' | 'custom'
-
-export const RANGE_PRESET_LABELS: Record<RangePreset, string> = {
-  today:     'Today',
-  tomorrow:  'Tomorrow',
-  thisWeek:  'This week',
-  lastWeek:  'Last week',
-  nextWeek:  'Next week',
-  next7:     'Next 7 days',
-  next14:    'Next 14 days',
-  next30:    'Next 30 days',
-  last30:    'Last 30 days',
-  thisMonth: 'This month',
-  lastMonth: 'Last month',
-  nextMonth: 'Next month',
-  custom:    'Custom range',
-}
+// Weeks are Monday-based below, matching how the operations desk reads a roster.
 
 /** Monday of the week containing `d`. */
 function startOfWeek(d: Date): Date {
@@ -415,7 +386,7 @@ export function parseActivityCheckQuery(sp: URLSearchParams, now = new Date()): 
   const presetRange = preset && preset !== 'custom' ? resolvePreset(preset, now) : null
 
   const rawFields = (sp.get('fields') ?? '').split(',').map(s => s.trim()).filter(Boolean)
-  const fields = rawFields.filter((f): f is ActivityField => (ACTIVITY_FIELDS as string[]).includes(f))
+  const fields = rawFields.filter((f): f is ActivityField => (FIELDS as string[]).includes(f))
 
   const serviceTypes = (sp.get('serviceTypes') ?? '')
     .split(',').map(s => s.trim()).filter(s => (SERVICE_TYPE_VALUES as readonly string[]).includes(s))
@@ -428,7 +399,7 @@ export function parseActivityCheckQuery(sp: URLSearchParams, now = new Date()): 
     // On by default: the whole point of a keyword search over free text typed
     // by a dozen people is that it survives how they each spelled it.
     fuzzy:    sp.get('fuzzy') !== '0',
-    fields:   fields.length ? fields : [...ACTIVITY_FIELDS],
+    fields:   fields.length ? fields : [...FIELDS],
     from:     presetRange ? presetRange.from : parseDate(sp.get('from')),
     to:       presetRange ? presetRange.to   : parseDate(sp.get('to')),
     source:   SOURCES.includes(sp.get('source') as SourceFilter) ? sp.get('source') as SourceFilter : 'BOTH',

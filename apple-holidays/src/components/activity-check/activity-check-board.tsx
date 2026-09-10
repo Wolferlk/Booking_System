@@ -31,7 +31,7 @@ import { SERVICE_TYPE_VALUES, SERVICE_TYPE_LABELS } from '@/lib/service-types'
 import {
   ACTIVITY_FIELDS, ACTIVITY_FIELD_LABELS, RANGE_PRESET_LABELS,
   type ActivityField, type RangePreset,
-} from '@/lib/activity-check'
+} from '@/lib/activity-check-shared'
 import {
   DEFAULT_COLUMNS, COLUMNS, type ColumnKey,
 } from '@/lib/activity-check-columns'
