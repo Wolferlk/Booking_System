@@ -886,10 +886,15 @@ export default function DriverSettlementsPage() {
   return (
     <div className="space-y-4 p-4 sm:p-6">
       {/* ── Header ── */}
-      <header className="relative overflow-hidden rounded-2xl border border-white/[0.07] bg-slate-900/60 px-5 py-4">
-        {/* Two soft lights, so the top of the page has somewhere to look. */}
-        <div className="pointer-events-none absolute -left-20 -top-24 h-56 w-56 rounded-full bg-emerald-500/[0.13] blur-3xl" />
-        <div className="pointer-events-none absolute -right-24 -top-28 h-56 w-56 rounded-full bg-sky-500/[0.10] blur-3xl" />
+      <header className="relative rounded-2xl border border-white/[0.07] bg-slate-900/60 px-5 py-4">
+        {/* Two soft lights, so the top of the page has somewhere to look.
+            They are clipped by their own layer rather than by the header: the
+            Views and Export menus open downwards out of this header, and an
+            `overflow-hidden` here sliced them off at its bottom edge. */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl">
+          <div className="absolute -left-20 -top-24 h-56 w-56 rounded-full bg-emerald-500/[0.13] blur-3xl" />
+          <div className="absolute -right-24 -top-28 h-56 w-56 rounded-full bg-sky-500/[0.10] blur-3xl" />
+        </div>
 
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-[280px] flex-1">
