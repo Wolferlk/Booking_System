@@ -104,6 +104,22 @@ export interface RegisterRow {
   /** "A/C Name" — the agent the tour was sold through. */
   acName: string | null
 
+  /**
+   * Where the rest payment actually goes — the bank details as the chauffeur
+   * (or, on a vendor-run file, the vendor) registered them. Carried on the row
+   * because the register is the sheet the transfer is typed from: a desk that
+   * has to leave the settlement screen to look an account number up is a desk
+   * that types it from memory. Read-only here, and read-only everywhere else on
+   * this screen — the driver register owns these fields and this page only
+   * shows them. Null throughout for a file driven by a name typed onto a
+   * movement, which has no driver record to hold a bank account.
+   */
+  bankAccountNo: string | null
+  bankHolder: string | null
+  bankName: string | null
+  bankBranch: string | null
+  bankCode: string | null
+
   pax: number
   nights: number | null
   fileHandler: string | null
@@ -249,6 +265,12 @@ export function toRegisterRow(row: DriveLogRow, packageCost: number | null = nul
     vendorName:     row.driver?.vendorName ?? null,
     acName:         row.agent,
 
+    bankAccountNo: row.driver?.bank?.accountNo ?? null,
+    bankHolder:    row.driver?.bank?.holder ?? null,
+    bankName:      row.driver?.bank?.name ?? null,
+    bankBranch:    row.driver?.bank?.branch ?? null,
+    bankCode:      row.driver?.bank?.code ?? null,
+
     pax:         row.pax,
     nights:      row.nights,
     fileHandler: row.fileHandler,
@@ -366,7 +388,10 @@ export function applyRegisterFilters(rows: RegisterRow[], f: RegisterFilters): R
     if (q && !(
       has(r.tour, q) || has(r.bookingRef, q) || has(r.cntlNumber, q) ||
       has(r.clientName, q) || has(r.chauffeur, q) || has(r.acName, q) ||
-      has(r.bulkNo, q) || has(r.remarks, q) || has(r.recordedBatchRef, q)
+      has(r.bulkNo, q) || has(r.remarks, q) || has(r.recordedBatchRef, q) ||
+      // An account number is a thing a desk pastes in from a bank statement to
+      // find out which tour a transfer belonged to.
+      has(r.bankAccountNo, q) || has(r.bankHolder, q)
     )) return false
 
     if (f.bulk === 'in_bulk' && !r.bulkNo) return false

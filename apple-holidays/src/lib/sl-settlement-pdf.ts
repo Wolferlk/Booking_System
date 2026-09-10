@@ -81,6 +81,15 @@ function cellHtml(row: RegisterRow, col: RegisterColumnDef): string {
   if (col.id === 'tour') {
     return `<td><b>${esc(text)}</b>${row.clientName ? `<span class="sub">${esc(row.clientName)}</span>` : ''}</td>`
   }
+  /* An account number is copied off the printed sheet by hand, so it is set in
+   * figures that do not wrap and never abbreviated. A driver with none gets
+   * the same "not allocated" treatment the unallocated chauffeur gets — on
+   * paper, a blank cell there reads as an oversight in the printing. */
+  if (col.id === 'bankAccountNo') {
+    return row.bankAccountNo
+      ? `<td class="acct">${esc(row.bankAccountNo)}</td>`
+      : '<td class="muted">no account registered</td>'
+  }
   if (col.id === 'chauffeur' && !row.chauffeur) {
     return `<td class="muted">${row.vendorName ? esc(row.vendorName) : 'not allocated'}</td>`
   }
@@ -188,6 +197,7 @@ export function buildSettlementPdfHtml(
   .over { color: #b91c1c; font-weight: 700; }
   .ok   { color: #15803d; }
   .st { white-space: nowrap; }
+  .acct { white-space: nowrap; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
   tr.band td { background: #f2f4f8; font-weight: 700; border-top: 1px solid #ced4de;
                border-bottom: 1px solid #ced4de; }
   tr.grand td { background: #eef1f6; font-weight: 800; border-top: 1.5px solid #12151c;

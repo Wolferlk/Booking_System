@@ -117,6 +117,19 @@ export const REGISTER_COLUMNS: RegisterColumnDef[] = [
   { id: 'clientName',     label: 'Client',      kind: 'text', group: 'People', width: 22 },
   { id: 'fileHandler',    label: 'File handler', kind: 'text', group: 'People', width: 16 },
 
+  // ── The bank the rest payment is transferred to ──
+  //
+  // As the chauffeur registered them, and read-only here: the driver register
+  // owns these fields, the settlement register only prints them. They sit under
+  // People rather than Money because none of them is a figure — nothing here
+  // totals, sorts as an amount, or affects a single balance on the sheet.
+  { id: 'bankAccountNo', label: 'Bank a/c no',  title: 'The account the rest payment is transferred to, as the chauffeur registered it', kind: 'text', group: 'People', width: 18 },
+  { id: 'bankHolder',    label: 'A/C holder',   title: 'The name the account is held in — often not the chauffeur’s own', kind: 'text', group: 'People', width: 22 },
+  { id: 'bankName',      label: 'Bank',         kind: 'text', group: 'People', width: 18 },
+  { id: 'bankBranch',    label: 'Branch',       kind: 'text', group: 'People', width: 16 },
+  { id: 'bankCode',      label: 'Bank code',    title: 'The bank / branch code the transfer is keyed on', kind: 'text', group: 'People', width: 10 },
+  { id: 'bankDetails',   label: 'Bank details', title: 'Account number, holder, bank and branch on one line — what a transfer needs, in one cell', kind: 'text', group: 'People', width: 40, derived: true },
+
   // ── Money ──
   { id: 'packageCost',      label: 'Package cost',        title: 'The package figure typed on the transport settlement sheet in the Drive Log', kind: 'money', group: 'Money', sort: 'package', total: 'packageCost', width: 15 },
   { id: 'totalCost',        label: 'Total transport cost', title: 'What the transport actually came to', kind: 'money', group: 'Money', sort: 'cost', total: 'totalCost', width: 16 },
@@ -150,12 +163,38 @@ export const REGISTER_COLUMNS: RegisterColumnDef[] = [
 export const COLUMN_BY_ID: Record<string, RegisterColumnDef> =
   Object.fromEntries(REGISTER_COLUMNS.map(c => [c.id, c]))
 
-/** The register as it ships — the old fixed table, in its old order. */
+/**
+ * The register as it ships.
+ *
+ * The old fixed table in its old order, plus the account the money is
+ * transferred to: a settlement sheet that names the chauffeur and the balance
+ * but not the account is a sheet somebody has to leave to act on. The account
+ * number and the holder are the two a transfer cannot be keyed without; the
+ * bank, the branch and the code are in the catalogue for the desks that key on
+ * them, and the combined `bankDetails` line for the desks that would rather
+ * have one cell.
+ */
 export const DEFAULT_COLUMN_IDS: string[] = [
   'bulk', 'tour', 'date', 'year', 'month', 'day', 'chauffeur', 'acName',
+  'bankAccountNo', 'bankHolder',
   'packageCost', 'totalCost', 'advancePaid', 'balancePayable', 'budgetedCost',
   'excess', 'variancePct', 'status', 'remarks',
 ]
+
+/**
+ * The transfer instruction on one line: "1234567890 · W A Perera · BOC ·
+ * Kandy". Every part is optional and the separators collapse around whatever is
+ * missing, because a half-registered account is still worth printing — the desk
+ * can chase the rest of it.
+ */
+export function bankLine(row: RegisterRow): string {
+  return [
+    row.bankAccountNo,
+    row.bankHolder,
+    [row.bankName, row.bankBranch].filter(Boolean).join(' '),
+    row.bankCode ? `(${row.bankCode})` : '',
+  ].map(v => (v ?? '').trim()).filter(Boolean).join(' · ')
+}
 
 // ── Views ─────────────────────────────────────────────────────────────────────
 
@@ -308,6 +347,16 @@ export function columnValue(row: RegisterRow, id: string): string | number | nul
     case 'acName':         return row.acName
     case 'clientName':     return row.clientName
     case 'fileHandler':    return row.fileHandler
+
+    case 'bankAccountNo':  return row.bankAccountNo
+    case 'bankHolder':     return row.bankHolder
+    case 'bankName':       return row.bankName
+    case 'bankBranch':     return row.bankBranch
+    case 'bankCode':       return row.bankCode
+    // The whole transfer instruction in one cell, the way the settlement sheet
+    // writes it. Null rather than an empty string when the driver registered
+    // nothing, so the cell reads as "not known" and not as "no bank".
+    case 'bankDetails':    return bankLine(row) || null
 
     case 'packageCost':      return row.packageCost
     case 'totalCost':        return row.totalCost

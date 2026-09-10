@@ -38,7 +38,7 @@ import { toast } from 'sonner'
 import {
   AlertTriangle, ArrowDown, ArrowUp, BadgeCheck, Banknote, CalendarDays, Check, ChevronDown,
   ChevronRight, Columns3, Download, ExternalLink, EyeOff, FileSpreadsheet, FileText, Filter,
-  GripVertical, Layers, Loader2, Navigation2, Pencil, Plus, RefreshCw, RotateCcw, Save, Search,
+  GripVertical, Landmark, Layers, Loader2, Navigation2, Pencil, Plus, RefreshCw, RotateCcw, Save, Search,
   Send, SlidersHorizontal, Star, Target, Trash2, TrendingDown, TrendingUp, Undo2, Users,
   Wallet, X,
 } from 'lucide-react'
@@ -52,7 +52,7 @@ import {
   type RegisterSortField, type RegisterTotals,
 } from '@/lib/sl-settlement-register'
 import {
-  COLUMN_BY_ID, REGISTER_COLUMNS, columnText, columnTotal, columnValue, defaultView,
+  COLUMN_BY_ID, REGISTER_COLUMNS, bankLine, columnText, columnTotal, columnValue, defaultView,
   isNumericKind, normaliseViews, resolveColumns,
   type RegisterColumnDef, type RegisterColumnGroup, type RegisterView,
 } from '@/lib/sl-settlement-columns'
@@ -420,6 +420,48 @@ function RowEditor({
                 <p className="text-sm font-bold tabular-nums text-slate-200">{amount(value as number | null)}</p>
               </div>
             ))}
+          </div>
+
+          {/* Where the balance actually goes. Read-only: these fields belong to
+            * the driver register, and a settlement screen that let them be
+            * edited would be a settlement screen that could redirect a payment.
+            * Shown here because this drawer is where the desk decides to
+            * release, and that decision is worth making with the account in
+            * front of it. */}
+          <div className="rounded-xl border border-white/[0.07] bg-slate-950/60 p-3">
+            <p className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.12em] text-slate-500">
+              <Landmark className="h-3 w-3" />
+              Pay to
+              {row.vendorName && !row.chauffeur ? (
+                <span className="tracking-normal text-slate-600">· vendor account</span>
+              ) : null}
+            </p>
+            {row.bankAccountNo || row.bankHolder || row.bankName ? (
+              <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {[
+                  ['Account no', row.bankAccountNo],
+                  ['Holder', row.bankHolder],
+                  ['Bank', row.bankName],
+                  ['Branch', [row.bankBranch, row.bankCode ? `(${row.bankCode})` : ''].filter(Boolean).join(' ')],
+                ].map(([label, value]) => (
+                  <div key={String(label)}>
+                    <p className="text-[9px] font-black uppercase tracking-[0.12em] text-slate-500">{String(label)}</p>
+                    <p className={cn(
+                      'text-xs font-bold text-slate-200',
+                      label === 'Account no' && 'font-mono tabular-nums',
+                    )}>
+                      {value || <Empty />}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1.5 text-[11px] text-amber-200">
+                No bank details on {row.chauffeur ?? row.vendorName ?? 'this driver'}&apos;s record. The
+                rest payment cannot be transferred until the driver register carries an account —
+                submitting this row will still send the figures to accounts.
+              </p>
+            )}
           </div>
 
           {row.message ? (
@@ -1734,6 +1776,29 @@ function BodyCell({ row, col }: { row: RegisterRow; col: RegisterColumnDef }) {
           ) : (
             <span className="inline-flex items-center gap-1 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-300">
               <AlertTriangle className="h-2.5 w-2.5" />Unallocated
+            </span>
+          )}
+        </td>
+      )
+
+    /* The account the money is transferred to. Set in figures rather than
+     * prose, and never truncated: a bank account with three digits hidden
+     * behind an ellipsis is worse than no bank account at all. A driver with
+     * none registered gets the same amber the unallocated chauffeur gets —
+     * it is the one thing that stops a settled row from being paid. */
+    case 'bankAccountNo':
+      return (
+        <td className={cn(pad, 'whitespace-nowrap')}>
+          {row.bankAccountNo ? (
+            <span className="font-mono text-[11px] tabular-nums text-slate-200" title={bankLine(row)}>
+              {row.bankAccountNo}
+            </span>
+          ) : (
+            <span
+              title="No bank account on the driver's record — the transfer cannot be keyed until the driver register has one"
+              className="inline-flex items-center gap-1 rounded-md border border-amber-400/25 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-amber-300"
+            >
+              <AlertTriangle className="h-2.5 w-2.5" />No account
             </span>
           )}
         </td>
