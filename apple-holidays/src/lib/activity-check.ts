@@ -433,13 +433,24 @@ export function resolveRange(q: ActivityCheckQuery, now = new Date()): { start: 
 
 // ─── Booking scope ────────────────────────────────────────────────────────────
 
+/** The countries the enum actually has. Anything else is not a narrowing. */
+const OPERATION_COUNTRIES = [
+  'ALL', 'VIETNAM', 'SRILANKA', 'SINGAPORE_MALAYSIA', 'SINGAPORE', 'MALAYSIA',
+] as const
+
 /** Country scoping, identical in shape to every other list route in the app. */
 export function countryClause(scope: SessionScope, override: string): Prisma.BookingWhereInput | null {
   if (!canSeeAllCountries(scope.role, (scope.country ?? 'ALL') as never)) {
     const allowed = userCountryScope(scope.country, scope.countries)
     return allowed ? { operationCountry: { in: allowed as never } } : null
   }
-  if (!override || override === 'ALL') return null
+  /* A country this enum has never heard of is dropped rather than handed to
+   * Prisma, which answers an unknown enum value by throwing the whole query
+   * back — and a mistyped filter in a URL should narrow nothing, not take the
+   * search down with a wall of red. The user still sees every country they are
+   * entitled to, which is what an absent filter means anyway. */
+  if (!override || !OPERATION_COUNTRIES.includes(override as typeof OPERATION_COUNTRIES[number])) return null
+  if (override === 'ALL') return null
   const expanded = countryScope(override)
   return expanded && expanded.length > 1
     ? { operationCountry: { in: expanded as never } }

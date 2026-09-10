@@ -223,7 +223,13 @@ function Highlight({ text, terms }: { text: string; terms: string[] }) {
 // ─── The board ────────────────────────────────────────────────────────────────
 
 export default function ActivityCheckBoard() {
-  const { countryParam } = useCountryFilter()
+  /* The *value*, not the hook's `countryParam` — that one is a ready-made query
+   * fragment ("country=VIETNAM") meant to be pasted into a URL string, and
+   * putting it through `sp.set('country', …)` sends `country=country%3DVIETNAM`,
+   * which Prisma rejects as an invalid enum. 'ALL' means "everything in my own
+   * scope": the param is dropped and the server falls back to the session. */
+  const { countryFilter } = useCountryFilter()
+  const country = countryFilter && countryFilter !== 'ALL' ? countryFilter : ''
 
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS)
   const [draft, setDraft] = useState('')
@@ -281,9 +287,9 @@ export default function ActivityCheckBoard() {
     if (filters.unassignedOnly) sp.set('unassignedOnly', '1')
     sp.set('sortBy', filters.sortBy)
     sp.set('sortDir', filters.sortDir)
-    if (countryParam) sp.set('country', countryParam)
+    if (country) sp.set('country', country)
     return sp.toString()
-  }, [filters, countryParam])
+  }, [filters, country])
 
   const exportQuery = useMemo(
     () => `${queryString}&cols=${columns.join(',')}`,
@@ -1035,7 +1041,7 @@ export default function ActivityCheckBoard() {
       <ActivityExplorer
         open={showExplorer}
         onClose={() => setShowExplorer(false)}
-        country={countryParam}
+        country={country}
         activeTerms={filters.terms}
         onPick={term => addTerm(term)}
       />

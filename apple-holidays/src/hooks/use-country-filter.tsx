@@ -16,6 +16,15 @@ interface CountryFilterContextValue {
   canFilter: boolean
   /** The values `setCountryFilter` will accept. Empty when `canFilter` is false. */
   allowedCountries: CountryFilter[]
+  /**
+   * The filter as a ready-made query *fragment* — "country=VIETNAM", or "" for
+   * ALL — for appending to a URL string: `/api/x?a=1&${countryParam}`.
+   *
+   * It is not a value. Passing it to `URLSearchParams.set('country', …)` sends
+   * `country=country%3DVIETNAM`, which Prisma rejects as an invalid enum and
+   * which takes the whole page down with it. Use `countryFilter` (skipping
+   * 'ALL') anywhere a value is wanted.
+   */
   countryParam: string
 }
 
