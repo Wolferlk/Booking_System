@@ -23,7 +23,8 @@
     "reports:dedupe": "tsx scripts/complaint-dedupe-check.mts",
     "feedbacks:render": "tsx scripts/fb-render-check.mts",
     "countcheck:render": "tsx scripts/count-check-render.mts",
-    "period:render": "tsx scripts/period-report-render.mts"
+    "period:render": "tsx scripts/period-report-render.mts",
+    "activity:match": "tsx scripts/activity-match-check.mts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1086.0",

@@ -13,7 +13,7 @@ import {
   HardDrive, FolderOpen, X, XCircle, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2, PackagePlus, CalendarClock,
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, MailPlus, Inbox,
   ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
-  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp,
+  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -39,7 +39,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   ShieldAlert, Table2, Radio, HardDrive, FolderOpen, Bot, Navigation2, Trash2, Cloud, MessageCircle, FileCheck2,
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, MailPlus, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
-  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp,
+  Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -68,6 +68,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'MC Report',      href: '/dashboard/mc-report',                 icon: 'Table2' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'New Booking',    href: '/dashboard/bookings/new',              icon: 'PlusCircle' },
     { label: 'Change Requests',href: '/dashboard/change-requests',           icon: 'AlertCircle' },
     { label: 'P&L Management', href: '/dashboard/accounts/pnl',             icon: 'BarChart2' },
@@ -86,6 +87,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'MC Report',      href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'Tickets',        href: '/dashboard/ground/tickets',           icon: 'Ticket' },
     { label: 'Ticket Portals', href: '/dashboard/admin/portals',            icon: 'Store' },
     { label: 'Drivers',        href: '/dashboard/ground/drivers',           icon: 'Car' },
@@ -107,6 +109,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Vietnam Dashboard', href: '/dashboard',                  icon: 'LayoutDashboard' },
     { label: 'All Bookings',      href: '/dashboard/bookings',         icon: 'FileText' },
     { label: 'MC Report',         href: '/dashboard/mc-report',        icon: 'Table2' },
+    { label: 'Activity Check',    href: '/dashboard/activity-check',   icon: 'Compass' },
     { label: 'Ops Board',         href: '/dashboard/accounts/reports', icon: 'ClipboardCheck' },
     { label: 'Drivers',           href: '/dashboard/ground/drivers',   icon: 'Car' },
     { label: 'Vendors',           href: '/dashboard/ground/vendors',   icon: 'Truck' },
@@ -130,6 +133,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Aahaas B2B (Flights)', href: '/dashboard/b2b-flights',          icon: 'PlaneTakeoff' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'Contact Log',        href: '/dashboard/te/contacts',              icon: 'Phone' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',           icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',       icon: 'BarChart2' },
@@ -157,6 +161,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'MC Report',       href: '/dashboard/mc-report',                icon: 'Table2' },
     { label: 'Feedbacks',          href: '/dashboard/feedbacks',                icon: 'ThumbsUp' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'P&L Management',  href: '/dashboard/accounts/pnl',            icon: 'BarChart2' },
     { label: 'Profit Dashboard',href: '/dashboard/accounts/profit',          icon: 'TrendingUp' },
     { label: 'Credit Agents',   href: '/dashboard/accounts/credit-agents',   icon: 'CreditCard' },
@@ -184,6 +189,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Hotels & Rates',   href: '/dashboard/reservations/hotels',       icon: 'Building2' },
     { label: 'Proforma Invoice', href: '/dashboard/proforma',                  icon: 'ReceiptText' },
     { label: 'All Bookings',     href: '/dashboard/bookings',                  icon: 'FileText' },
+    { label: 'Activity Check',   href: '/dashboard/activity-check',            icon: 'Compass' },
   ],
   CLIENT: [
     { label: 'My Trip', href: '/portal', icon: 'Globe' },
@@ -211,6 +217,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Assignments',        href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'AI Call Bot',        href: '/dashboard/te/ai-call-bot',              icon: 'Bot' },
     { label: 'AI Call Report',     href: '/dashboard/te/ai-call-report',          icon: 'BarChart2' },
     { label: 'Experience Reports', href: '/dashboard/te/experience-reports',      icon: 'MailCheck' },
@@ -258,6 +265,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'My Assignments',     href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     // { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
     { label: 'Drivers',            href: '/dashboard/ground/drivers',              icon: 'Car' },
     { label: 'Vendors',            href: '/dashboard/ground/vendors',              icon: 'Truck' },
@@ -295,6 +303,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Analytics',          href: '/dashboard/te/analytics',                icon: 'BarChart2' },
     { label: 'MC Report',          href: '/dashboard/mc-report',                   icon: 'Table2' },
     { label: 'Daily Update',  href: '/dashboard/daily-update',              icon: 'CalendarDays' },
+    { label: 'Activity Check', href: '/dashboard/activity-check',          icon: 'Compass' },
     { label: 'Assignments',        href: '/dashboard/ground/assignments',          icon: 'MapPin' },
     { label: 'Ground Review',      href: '/dashboard/ground/review',               icon: 'ClipboardCheck' },
     { label: 'Tickets & Vouchers', href: '/dashboard/te/tickets',                  icon: 'Ticket' },
