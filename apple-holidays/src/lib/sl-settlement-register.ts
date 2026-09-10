@@ -130,8 +130,17 @@ export interface RegisterRow {
 
   /** What the whole transport package comes to. The desk's figure wins. */
   totalCost: number | null
+  /** The advance envelope the tour was due — what should have been handed over. */
+  advanceDue: number | null
   /** Of the advance, what has actually been handed over. */
   advancePaid: number | null
+  /**
+   * Advance due − advance handed over, never below zero. The envelope that was
+   * promised and has not left the building: a different debt from the balance
+   * payable, owed at the *start* of the tour rather than the end, and the one
+   * figure the register could previously not show at all.
+   */
+  advancePending: number | null
   /** Package cost − advance paid. What the driver is still owed. */
   balancePayable: number | null
   /** Of that, what accounts has already released. */
@@ -187,8 +196,16 @@ export function toRegisterRow(row: DriveLogRow, packageCost: number | null = nul
   const s = row.settlement
 
   const totalCost   = row.effective.totalCost
+  const advanceDue  = s.advance
   const advancePaid = s.advancePaid
   const restPaid    = s.restPaid
+
+  // What is still owed on the *advance*. Floored at zero: a driver handed more
+  // than his envelope has no pending advance, he has an overpayment, and that
+  // is the transport P/L's business rather than this column's.
+  const advancePending = isNum(advanceDue)
+    ? round2(Math.max(0, advanceDue - (advancePaid ?? 0)))
+    : null
 
   // What the balance is owed against: the package the desk agreed with the
   // driver, not the accounts system's costing of the trip. Until that sheet is
@@ -246,7 +263,9 @@ export function toRegisterRow(row: DriveLogRow, packageCost: number | null = nul
     packageCost,
 
     totalCost,
+    advanceDue,
     advancePaid,
+    advancePending,
     balancePayable,
     restPaid,
     restOutstanding,
@@ -434,7 +453,10 @@ export interface RegisterTotals {
   /** Sum of the package costs typed on the transport settlement sheets. */
   packageCost: number
   totalCost: number
+  advanceDue: number
   advancePaid: number
+  /** Advance promised and not yet handed over, summed over the rows in view. */
+  advancePending: number
   balancePayable: number
   restPaid: number
   restOutstanding: number
@@ -456,7 +478,8 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
   const t: RegisterTotals = {
     rows: rows.length, pax: 0,
     packageCost: 0,
-    totalCost: 0, advancePaid: 0, balancePayable: 0, restPaid: 0, restOutstanding: 0,
+    totalCost: 0, advanceDue: 0, advancePaid: 0, advancePending: 0,
+    balancePayable: 0, restPaid: 0, restOutstanding: 0,
     budgetedCost: 0, excess: 0, variancePct: null, budgeted: 0, packaged: 0,
     settled: 0, pending: 0, noRate: 0,
   }
@@ -465,7 +488,9 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
     t.pax += r.pax
     if (isNum(r.packageCost))   { t.packageCost += r.packageCost; t.packaged += 1 }
     if (isNum(r.totalCost))       t.totalCost += r.totalCost
+    if (isNum(r.advanceDue))      t.advanceDue += r.advanceDue
     if (isNum(r.advancePaid))     t.advancePaid += r.advancePaid
+    if (isNum(r.advancePending))  t.advancePending += r.advancePending
     if (isNum(r.balancePayable))  t.balancePayable += r.balancePayable
     if (isNum(r.restPaid))        t.restPaid += r.restPaid
     if (isNum(r.restOutstanding)) t.restOutstanding += r.restOutstanding
@@ -476,8 +501,8 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
     if (!r.lkrAvailable)          t.noRate += 1
   }
 
-  for (const k of ['packageCost', 'totalCost', 'advancePaid', 'balancePayable', 'restPaid',
-                   'restOutstanding', 'budgetedCost', 'excess'] as const) {
+  for (const k of ['packageCost', 'totalCost', 'advanceDue', 'advancePaid', 'advancePending',
+                   'balancePayable', 'restPaid', 'restOutstanding', 'budgetedCost', 'excess'] as const) {
     t[k] = round2(t[k])
   }
 
