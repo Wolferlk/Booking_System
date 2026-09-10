@@ -15,6 +15,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { fetchDriveLogRows } from '@/lib/sl-drive-log-server'
+import { savedPackageCosts } from '@/lib/sl-settlement-docs-server'
 import {
   applyRegisterFilters, bulkNumbers, groupRegisterRows, parseRegisterQuery,
   registerTotals, sortRegisterRows, toDriveLogQuery, toRegisterRow,
@@ -43,7 +44,22 @@ export async function GET(req: NextRequest) {
   try {
     const result = await fetchDriveLogRows(toDriveLogQuery(q))
 
-    const all      = result.rows.map(toRegisterRow)
+    const all = result.rows.map(toRegisterRow)
+
+    /* The package cost the desk typed on the transport settlement sheet, joined
+     * on afterwards: it lives in this system's own `sl_settlement_docs` and not
+     * in the Drive Log's read, and the register should show the agreed package
+     * figure beside the costed one. Read before sorting and filtering so the
+     * column can be sorted like any other. A failure here is not worth the
+     * screen — the register is a money page that must still open. */
+    let packages = new Map<string, number>()
+    try {
+      packages = await savedPackageCosts(all.map(r => r.bookingRef))
+    } catch (err) {
+      console.error('[srilanka/driver-settlements] package costs', err)
+    }
+    for (const row of all) row.packageCost = packages.get(row.bookingRef) ?? null
+
     const filtered = sortRegisterRows(applyRegisterFilters(all, q), q)
 
     return buildApiSuccess({

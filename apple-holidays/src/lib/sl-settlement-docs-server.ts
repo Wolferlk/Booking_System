@@ -556,3 +556,40 @@ export async function packForPrint(bookingRef: string): Promise<SettlementDocPac
   const state = await loadDocState(bookingRef)
   return state?.pack ?? null
 }
+
+/**
+ * The package cost the desk typed on the transport settlement sheet, for many
+ * bookings at once.
+ *
+ * Only saved packs are read — the derived draft's package cost is the accounts
+ * system's own transport total, which the register already shows in its own
+ * column, so deriving one here would put the same figure in two places and
+ * hide the fact that nobody has agreed it with the driver yet. One SELECT for
+ * the whole window, keyed by booking ref, and the same missing-table tolerance
+ * `findSavedRow()` has: a database without `sl_settlement_docs` simply has no
+ * typed-in package costs.
+ */
+export async function savedPackageCosts(bookingRefs: string[]): Promise<Map<string, number>> {
+  const refs = Array.from(new Set(bookingRefs.filter(Boolean)))
+  const out = new Map<string, number>()
+  if (refs.length === 0) return out
+
+  let rows: { bookingRef: string; pack: Prisma.JsonValue }[]
+  try {
+    rows = await prisma.slSettlementDoc.findMany({
+      where: { bookingRef: { in: refs } },
+      select: { bookingRef: true, pack: true },
+    })
+  } catch (err) {
+    if ((err as { code?: string })?.code === 'P2021') return out
+    throw err
+  }
+
+  for (const row of rows) {
+    const transport = (row.pack as { transport?: { packageCost?: unknown } } | null)?.transport
+    const v = transport?.packageCost
+    if (typeof v === 'number' && Number.isFinite(v)) out.set(row.bookingRef, Math.round(v * 100) / 100)
+  }
+
+  return out
+}

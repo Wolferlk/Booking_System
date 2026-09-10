@@ -577,6 +577,7 @@ const COLUMNS: { key: RegisterSortField | null; label: string; title?: string; a
   { key: 'chauffeur', label: 'Chauffeur' },
   { key: 'agent',     label: 'A/C Name',  title: 'The agent the tour was sold through' },
   { key: null,        label: 'Cost' },
+  { key: 'package',   label: 'Package cost', title: 'The package figure typed on the transport settlement sheet in the Drive Log', align: 'right' },
   { key: 'cost',      label: 'Total transport cost', align: 'right' },
   { key: 'advance',   label: 'Advance paid', align: 'right' },
   { key: 'balance',   label: 'Balance payable', title: 'Total cost less the advance already handed over', align: 'right' },
@@ -711,7 +712,7 @@ export default function DriverSettlementsPage() {
   const exportCsv = () => {
     const head = [
       'Bulk No', 'Tour', 'Date', 'Y', 'M', 'D', 'Chauffeur', 'A/C Name', 'Cost',
-      'Total Transport Cost', 'Advance Paid', 'Balance Payable', 'Budgeted Cost',
+      'Package Cost', 'Total Transport Cost', 'Advance Paid', 'Balance Payable', 'Budgeted Cost',
       'Excess / (Shortage)', '%', 'Status', 'Remark',
     ]
     const cell = (v: unknown) => {
@@ -723,7 +724,7 @@ export default function DriverSettlementsPage() {
       lines.push([
         r.bulkNo, r.tour, workbookDate(r.date), r.year, r.month, r.day,
         r.chauffeur, r.acName, r.costTypeLabel,
-        r.totalCost, r.advancePaid, r.balancePayable, r.budgetedCost,
+        r.packageCost, r.totalCost, r.advancePaid, r.balancePayable, r.budgetedCost,
         r.excess, r.variancePct, REGISTER_STATE_LABEL[r.state], r.remarks,
       ].map(cell).join(','))
     }
@@ -1109,7 +1110,7 @@ export default function DriverSettlementsPage() {
       {/* ── The register ── */}
       <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-slate-900/60 shadow-xl shadow-black/20">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1500px] text-xs">
+          <table className="w-full min-w-[1600px] text-xs">
             <thead className="sticky top-0 z-10 bg-slate-950/85 backdrop-blur supports-[backdrop-filter]:bg-slate-950/70">
               <tr className="border-b border-white/[0.08]">
                 <th className="w-8 px-2 py-2.5">
@@ -1192,12 +1193,13 @@ export default function DriverSettlementsPage() {
               <tfoot className="sticky bottom-0 z-10 border-t border-white/[0.12] bg-slate-950/90 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
                 <tr className="font-black text-slate-200">
                   <td className="px-2 py-3" />
-                  <td className="px-2.5 py-3 uppercase tracking-[0.1em] text-[11px]" colSpan={8}>
+                  <td className="px-2.5 py-3 uppercase tracking-[0.1em] text-[11px]" colSpan={9}>
                     Total
                     <span className="ml-2 text-[10px] font-bold normal-case tracking-normal text-slate-500">
                       {totals.rows} tours · {totals.pax} pax
                     </span>
                   </td>
+                  <td className="px-2.5 py-3 text-right"><Num value={totals.packageCost} bold tone="text-emerald-200" /></td>
                   <td className="px-2.5 py-3 text-right"><Num value={totals.totalCost} bold /></td>
                   <td className="px-2.5 py-3 text-right"><Num value={totals.advancePaid} bold /></td>
                   <td className="px-2.5 py-3 text-right"><Num value={totals.balancePayable} bold /></td>
@@ -1255,12 +1257,13 @@ function GroupBlock({
               {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
             </button>
           </td>
-          <td className="px-2.5 py-2 font-black text-slate-100" colSpan={8}>
+          <td className="px-2.5 py-2 font-black text-slate-100" colSpan={9}>
             {group.label}
             <span className="ml-2 text-[10px] font-bold text-slate-500">
               {group.totals.rows} tour{group.totals.rows === 1 ? '' : 's'} · {group.totals.pax} pax
             </span>
           </td>
+          <td className="px-2.5 py-2 text-right"><Num value={group.totals.packageCost} bold tone="text-emerald-200" /></td>
           <td className="px-2.5 py-2 text-right"><Num value={group.totals.totalCost} bold /></td>
           <td className="px-2.5 py-2 text-right"><Num value={group.totals.advancePaid} bold /></td>
           <td className="px-2.5 py-2 text-right"><Num value={group.totals.balancePayable} bold /></td>
@@ -1359,6 +1362,10 @@ function Row({
         {row.costTypeLabel
           ? <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-bold text-slate-300">{row.costTypeLabel}</span>
           : <Empty />}
+      </td>
+
+      <td className="px-2.5 py-2 text-right">
+        <Num value={row.packageCost} tone="text-emerald-200" />
       </td>
 
       <td className="px-2.5 py-2 text-right">

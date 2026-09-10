@@ -109,6 +109,17 @@ export interface RegisterRow {
   /** False when no LKR rate resolved — the figures are then the costed currency. */
   lkrAvailable: boolean
 
+  /**
+   * The package cost as the desk typed it on the transport settlement sheet
+   * (Drive Log → Settlement documents → Transport settlement), which is the
+   * figure the driver is actually being paid the package on. Null until
+   * somebody has saved that sheet — this is never derived, because the derived
+   * figure is the accounts system's transport total and that is already the
+   * `totalCost` column. Filled in by the register's API, not by
+   * `toRegisterRow()`, which has no database of its own.
+   */
+  packageCost: number | null
+
   /** What the whole transport package comes to. The desk's figure wins. */
   totalCost: number | null
   /** Of the advance, what has actually been handed over. */
@@ -217,6 +228,8 @@ export function toRegisterRow(row: DriveLogRow): RegisterRow {
     currency:     s.currency,
     lkrAvailable: s.lkrAvailable,
 
+    packageCost: null,
+
     totalCost,
     advancePaid,
     balancePayable,
@@ -271,7 +284,7 @@ export type RegisterVarianceFilter = 'all' | 'excess' | 'shortage' | 'on_budget'
 export type RegisterPaymentFilter  = 'all' | 'rest_due' | 'settled' | 'overpaid'
 export type RegisterGroupBy        = 'none' | 'bulk' | 'chauffeur' | 'agent' | 'month'
 export type RegisterSortField =
-  | 'date' | 'tour' | 'bulk' | 'chauffeur' | 'agent' | 'cost' | 'advance'
+  | 'date' | 'tour' | 'bulk' | 'chauffeur' | 'agent' | 'package' | 'cost' | 'advance'
   | 'balance' | 'budget' | 'excess' | 'variancePct'
 export type RegisterSortDir = 'asc' | 'desc'
 
@@ -386,6 +399,7 @@ export function sortRegisterRows(rows: RegisterRow[], f: RegisterFilters): Regis
       case 'bulk':        return cmpText(a.bulkNo, b.bulkNo) * dir
       case 'chauffeur':   return cmpText(a.chauffeur, b.chauffeur) * dir
       case 'agent':       return cmpText(a.acName, b.acName) * dir
+      case 'package':     return cmpNum(a.packageCost, b.packageCost, dir)
       case 'cost':        return cmpNum(a.totalCost, b.totalCost, dir)
       case 'advance':     return cmpNum(a.advancePaid, b.advancePaid, dir)
       case 'balance':     return cmpNum(a.balancePayable, b.balancePayable, dir)
@@ -402,6 +416,8 @@ export function sortRegisterRows(rows: RegisterRow[], f: RegisterFilters): Regis
 export interface RegisterTotals {
   rows: number
   pax: number
+  /** Sum of the package costs typed on the transport settlement sheets. */
+  packageCost: number
   totalCost: number
   advancePaid: number
   balancePayable: number
@@ -422,6 +438,7 @@ export interface RegisterTotals {
 export function registerTotals(rows: RegisterRow[]): RegisterTotals {
   const t: RegisterTotals = {
     rows: rows.length, pax: 0,
+    packageCost: 0,
     totalCost: 0, advancePaid: 0, balancePayable: 0, restPaid: 0, restOutstanding: 0,
     budgetedCost: 0, excess: 0, variancePct: null, budgeted: 0,
     settled: 0, pending: 0, noRate: 0,
@@ -429,6 +446,7 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
 
   for (const r of rows) {
     t.pax += r.pax
+    if (isNum(r.packageCost))     t.packageCost += r.packageCost
     if (isNum(r.totalCost))       t.totalCost += r.totalCost
     if (isNum(r.advancePaid))     t.advancePaid += r.advancePaid
     if (isNum(r.balancePayable))  t.balancePayable += r.balancePayable
@@ -441,7 +459,7 @@ export function registerTotals(rows: RegisterRow[]): RegisterTotals {
     if (!r.lkrAvailable)          t.noRate += 1
   }
 
-  for (const k of ['totalCost', 'advancePaid', 'balancePayable', 'restPaid',
+  for (const k of ['packageCost', 'totalCost', 'advancePaid', 'balancePayable', 'restPaid',
                    'restOutstanding', 'budgetedCost', 'excess'] as const) {
     t[k] = round2(t[k])
   }
@@ -608,7 +626,7 @@ export function parseRegisterQuery(sp: URLSearchParams, now = new Date()): Regis
     groupBy:   pick(sp.get('groupBy'),
       ['none', 'bulk', 'chauffeur', 'agent', 'month'] as const, 'none'),
     sortBy:    pick(sp.get('sortBy'),
-      ['date', 'tour', 'bulk', 'chauffeur', 'agent', 'cost', 'advance',
+      ['date', 'tour', 'bulk', 'chauffeur', 'agent', 'package', 'cost', 'advance',
        'balance', 'budget', 'excess', 'variancePct'] as const, 'date'),
     sortDir:   sp.get('sortDir') === 'desc' ? 'desc' : 'asc',
   }
