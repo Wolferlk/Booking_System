@@ -19,16 +19,9 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { opsToday } from '@/lib/booking-date-window'
-import { shiftDate } from '@/lib/reports/report-window'
-import { reconcileCreated } from '@/lib/reports/created-reconcile'
+import { reconcileCreated, parseReconcileWindow } from '@/lib/reports/created-reconcile'
 
 export const dynamic = 'force-dynamic'
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-
-/** A month is already far wider than anything anybody reconciles by eye. */
-const MAX_SPAN_DAYS = 31
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -37,30 +30,9 @@ export async function GET(req: NextRequest) {
   // is not shown to a client-scoped session that may not see all of it.
   if (session.user.role === 'CLIENT') return buildApiError('Forbidden', 403)
 
-  const { searchParams } = req.nextUrl
-  const preset = searchParams.get('preset')
-
-  let from: string
-  let to: string
-
-  if (preset === 'today' || preset === 'yesterday') {
-    from = to = preset === 'today' ? opsToday() : shiftDate(opsToday(), -1)
-  } else {
-    const rawFrom = searchParams.get('from')
-    const rawTo   = searchParams.get('to')
-    if (!rawFrom || !rawTo || !DATE_RE.test(rawFrom) || !DATE_RE.test(rawTo)) {
-      return buildApiError('A from and to date are required (yyyy-mm-dd)', 400)
-    }
-    from = rawFrom <= rawTo ? rawFrom : rawTo
-    to   = rawFrom <= rawTo ? rawTo   : rawFrom
-  }
-
-  let span = 1
-  for (let d = from; d < to; d = shiftDate(d, 1)) {
-    if (++span > MAX_SPAN_DAYS) {
-      return buildApiError(`That range is wider than ${MAX_SPAN_DAYS} days — narrow it to compare against the report`, 400)
-    }
-  }
+  const window = parseReconcileWindow(req.nextUrl.searchParams)
+  if ('error' in window) return buildApiError(window.error, 400)
+  const { from, to } = window
 
   try {
     return buildApiSuccess(await reconcileCreated(from, to))

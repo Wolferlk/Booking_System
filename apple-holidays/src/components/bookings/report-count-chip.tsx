@@ -20,8 +20,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollText, Loader2, Check, ChevronDown, AlertTriangle, ListFilter, X } from 'lucide-react'
+import { ScrollText, Loader2, Check, ChevronDown, AlertTriangle, ListFilter, X, Table2, Download } from 'lucide-react'
 import { readApiResponse } from '@/lib/utils'
+import ReconcileDetailModal from './reconcile-detail-modal'
 
 interface Reconcile {
   from: string
@@ -73,9 +74,17 @@ export default function ReportCountChip({
   const [loading, setLoading] = useState(false)
   const [failed, setFailed]   = useState<string | null>(null)
   const [open, setOpen]       = useState(false)
+  // The rows behind the three lines below — opened in its own window, since the
+  // answer to "which ones?" is a table and this panel is a paragraph.
+  const [detail, setDetail]   = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
 
   const active = !!preset || !!(from && to)
+
+  // The same window the figure was computed for, in the spelling both the
+  // detail route and the workbook route parse — so the file somebody downloads
+  // cannot be cut for a different day from the number they downloaded it under.
+  const windowQuery = preset ? `preset=${preset}` : `from=${from}&to=${to}`
 
   const load = useCallback(async () => {
     if (!active) { setData(null); return }
@@ -233,6 +242,26 @@ export default function ReportCountChip({
             </button>
           )}
 
+          {/* The number, and then the names. "View these bookings" re-filters the
+              list; these two answer the question the panel raises but cannot
+              itself hold — which bookings are on each side, and why. */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => { setDetail(true); setOpen(false) }}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
+              title="Every booking behind every line above, bucketed, with the reason it counts on one side and not the other"
+            >
+              <Table2 className="w-3.5 h-3.5" /> View reconcile
+            </button>
+            <a
+              href={`/api/bookings/report-count/workbook?${windowQuery}`}
+              className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 text-slate-700 hover:bg-slate-50 transition-colors"
+              title="The same reconciliation as an Excel file — one tab per population, plus two tabs explaining the arithmetic"
+            >
+              <Download className="w-3.5 h-3.5" /> Excel
+            </a>
+          </div>
+
           {onViewCohort && data.missing > 0 && !cohortActive && (
             <p className="text-[10px] text-slate-400 leading-relaxed -mt-1">
               That list can only hold {data.reportTotal} of the {data.upstream} — the {data.missing} with
@@ -272,6 +301,15 @@ export default function ReportCountChip({
             {data.sweptAt && ` Ledger last swept ${new Date(data.sweptAt).toLocaleString('en-GB')}.`}
           </p>
         </div>
+      )}
+
+      {detail && (
+        <ReconcileDetailModal
+          preset={preset}
+          from={from}
+          to={to}
+          onClose={() => setDetail(false)}
+        />
       )}
     </div>
   )

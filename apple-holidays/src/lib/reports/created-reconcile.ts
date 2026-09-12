@@ -38,7 +38,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { isB2cBooking } from '@/lib/booking-source'
-import { createdDayStart } from '@/lib/booking-date-window'
+import { createdDayStart, opsToday } from '@/lib/booking-date-window'
 import { collectAppleCohort, cohortKey } from './apple-cohort'
 import { shiftDate, DEFAULT_REPORT_TZ } from './report-window'
 
@@ -225,4 +225,46 @@ export async function cohortBookingRefs(from: string, to: string): Promise<Cohor
     error: null,
     refs: Array.from(held.values(), h => h.bookingRef),
   }
+}
+
+/**
+ * The window a request is asking about — `preset=today|yesterday`, or an
+ * explicit `from`/`to` pair.
+ *
+ * Shared by the comparison route and the workbook route so the figure on the
+ * panel and the file downloaded from it can never be cut for different days,
+ * which would be the one failure this whole reconciliation exists to prevent.
+ *
+ * Presets resolve against the operations timezone rather than the browser's, so
+ * "yesterday" here and "yesterday" on the list name the same day.
+ */
+export function parseReconcileWindow(
+  params: URLSearchParams,
+  maxSpanDays = 31,
+): { from: string; to: string } | { error: string } {
+  const preset = params.get('preset')
+
+  if (preset === 'today' || preset === 'yesterday') {
+    const day = preset === 'today' ? opsToday() : shiftDate(opsToday(), -1)
+    return { from: day, to: day }
+  }
+
+  const rawFrom = params.get('from')
+  const rawTo   = params.get('to')
+  if (!rawFrom || !rawTo || !/^\d{4}-\d{2}-\d{2}$/.test(rawFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(rawTo)) {
+    return { error: 'A from and to date are required (yyyy-mm-dd)' }
+  }
+
+  const from = rawFrom <= rawTo ? rawFrom : rawTo
+  const to   = rawFrom <= rawTo ? rawTo   : rawFrom
+
+  // A month is already far wider than anything anybody reconciles by eye.
+  let span = 1
+  for (let d = from; d < to; d = shiftDate(d, 1)) {
+    if (++span > maxSpanDays) {
+      return { error: `That range is wider than ${maxSpanDays} days — narrow it to compare against the report` }
+    }
+  }
+
+  return { from, to }
 }
