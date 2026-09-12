@@ -36,6 +36,8 @@ import { listByCreateDate } from '@/lib/applesystem'
 import { normalizeIsNumber } from '@/lib/as-booking-map'
 import { getReconcileDays, type ReconcileDay } from '@/lib/as-reconcile'
 import { collectCountCheck, type CountCheckSection } from './count-check'
+import { collectActivitySplit, bookingKey, type ActivitySplit } from './activity-split'
+import { resolveBookingOriginChannels, type OriginChannel } from '@/lib/booking-origin'
 import { collectAppleCohort, cohortKey, type AppleCohort } from './apple-cohort'
 import { groupByAgent } from './agent-names'
 import { dedupeComplaints, type ComplaintOccurrence } from './complaint-dedupe'
@@ -141,6 +143,57 @@ export interface CreatedSection {
   allOutside: BookingLine[]
   /** ISO instant the accounts ledger last swept these dates; null = never. */
   sweptAt: string | null
+}
+
+/**
+ * The day in the two passes the desk works it in, and where its own new
+ * business came in from.
+ *
+ * ## Why the strip changed
+ *
+ * The ribbon used to lead with `Created` (this period's confirmations),
+ * `AS parity` and the accounts `Count check`. Those three answered "is the
+ * integration whole?", which is a question about plumbing; the answer to it now
+ * lives on /sync-ledger and in the reconciliation mail, and it was crowding out
+ * the two figures the desk actually opens the mail for.
+ *
+ * Both accounts mails for the same day now lead with this split, and so does
+ * this one — read from the same rows, so three reports cannot describe one day
+ * three ways. See `activity-split.ts`.
+ *
+ * ## The origin split
+ *
+ * `origins` breaks **Today new & updated** down by how each of those bookings
+ * actually reached this system — the AppleSystem importer, a OneDrive drop, the
+ * confirmation mailbox, a person typing it. The parts sum to `todayCount`;
+ * bookings this system does not hold at all are the `missing` line, which is
+ * the one to act on. See `resolveBookingOriginChannels()`.
+ */
+export interface ActivityOriginRow {
+  channel: OriginChannel | 'MISSING'
+  label: string
+  bookings: number
+}
+
+export interface ActivitySplitSection {
+  available: boolean
+  error?: string
+  /** Bookings whose ledger chain opened inside the window. One per booking. */
+  todayCount: number
+  /** Revisions raised in the window against a booking opened before it. */
+  oldCount: number
+  /** Distinct bookings behind `oldCount`. */
+  oldBookings: number
+  /** The oldest confirmation re-opened, in days. */
+  oldest: number | null
+  /** The confirmations AppleSystem raised — what the two are checked against. */
+  appleCount: number
+  /** `todayCount`, split by how the booking reached this system. Sums to it. */
+  origins: ActivityOriginRow[]
+  /** Of `todayCount`, how many this system holds a booking for. */
+  held: number
+  /** Booking key → which table it belongs to, for marking the detail rows. */
+  index: Record<string, 'today' | 'old'>
 }
 
 export interface OnGroundSection {
@@ -371,6 +424,8 @@ export interface ReportData {
   generatedAt: string
   countries: string[]
   created: CreatedSection
+  /** The two-pass split all three daily mails lead with. See above. */
+  split: ActivitySplitSection
   /** AppleSystem ↔ this system confirmation parity. Never scoped by country. */
   parity: ParitySection
   /**
@@ -1238,13 +1293,139 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
   const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
   const window = buildReportWindow(opts.period, opts.timezone, now, opts.anchorDate)
 
+/** The labels the mail prints for each intake channel. */
+const ORIGIN_LABELS: Record<OriginChannel | 'MISSING', string> = {
+  APPLESYSTEM: 'Apple System',
+  ONEDRIVE: 'OneDrive',
+  EMAIL: 'Confirmation mail',
+  OPS_AI: 'OPS AI',
+  API: 'Public API',
+  MANUAL: 'Entered by hand',
+  UNKNOWN: 'Not recorded',
+  MISSING: 'Not filed here',
+}
+
+/** The order they are printed in — biggest intake paths first. */
+const ORIGIN_ORDER: (OriginChannel | 'MISSING')[] =
+  ['APPLESYSTEM', 'ONEDRIVE', 'EMAIL', 'API', 'OPS_AI', 'MANUAL', 'UNKNOWN', 'MISSING']
+
+/**
+ * The split, plus where this system's own new business came in from.
+ *
+ * The accounts ledger decides *which* bookings are this period's own — it is
+ * the only place that holds every revision and can therefore date a booking —
+ * and this system then says how each of them arrived here. Two systems, one
+ * population, neither re-deciding the other's half.
+ *
+ * Never fatal: an unreachable accounts database, or an OPS query that fails,
+ * leaves the section marked unavailable and the mail renders without the tiles.
+ */
+async function collectActivitySplitSection(
+  window: ReportWindow,
+  appleCount: number,
+): Promise<ActivitySplitSection> {
+  const empty: ActivitySplitSection = {
+    available: false, todayCount: 0, oldCount: 0, oldBookings: 0, oldest: null,
+    appleCount, origins: [], held: 0, index: {},
+  }
+
+  let split: ActivitySplit
+  try {
+    split = await collectActivitySplit(window)
+  } catch (error) {
+    return { ...empty, error: error instanceof Error ? error.message : String(error) }
+  }
+
+  if (!split.available) return { ...empty, error: split.error }
+
+  const base: ActivitySplitSection = {
+    available: true,
+    todayCount: split.today.count,
+    oldCount: split.old.count,
+    oldBookings: split.old.bookings,
+    oldest: split.old.lines.reduce<number | null>(
+      (max, l) => (l.ageDays !== null && (max === null || l.ageDays > max) ? l.ageDays : max), null),
+    appleCount,
+    origins: [],
+    held: 0,
+    index: split.index,
+  }
+
+  const keys = split.today.keys
+  if (keys.length === 0) return base
+
+  try {
+    // Matched on the ledger's own key rule rather than on the reference as
+    // either system happens to spell it: "VN 40499" here is "VN40499" there.
+    // The lookup itself cannot use that rule — it is a SQL `IN` on a stored
+    // column — so it asks for both spellings and the filter below decides.
+    const spellings = Array.from(new Set(keys.flatMap(k => {
+      const parts = /^([A-Z]+)(\d+)$/.exec(k)
+      return parts ? [k, `${parts[1]} ${parts[2]}`] : [k]
+    })))
+
+    const candidates = await prisma.booking.findMany({
+      where: {
+        OR: [
+          { createdAt: { gte: window.start, lt: window.end } },
+          { bookingRef: { in: spellings } },
+          { isNumber: { in: spellings } },
+        ],
+      },
+      select: { id: true, bookingRef: true, isNumber: true, sourceDocUrl: true },
+    })
+
+    const wanted = new Set(keys)
+    // One booking per key: a reference filed twice is one booking to the
+    // accounts ledger, and counting both here would push the parts past the
+    // headline they are supposed to add up to.
+    const seen = new Set<string>()
+    const held = candidates.filter(b => {
+      const key = wanted.has(bookingKey(b.bookingRef))
+        ? bookingKey(b.bookingRef)
+        : wanted.has(bookingKey(b.isNumber)) ? bookingKey(b.isNumber) : ''
+
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    const channels = await resolveBookingOriginChannels(held)
+
+    const counts = new Map<OriginChannel | 'MISSING', number>()
+    for (const booking of held) {
+      const channel = channels.get(booking.id) ?? 'UNKNOWN'
+      counts.set(channel, (counts.get(channel) ?? 0) + 1)
+    }
+
+    // Confirmed and dated to this period by accounts, with no booking here at
+    // all. Counted into the split so the parts still add up to the whole.
+    const missing = Math.max(0, split.today.count - held.length)
+    if (missing > 0) counts.set('MISSING', missing)
+
+    base.held = held.length
+    base.origins = ORIGIN_ORDER
+      .filter(c => (counts.get(c) ?? 0) > 0)
+      .map(c => ({ channel: c, label: ORIGIN_LABELS[c], bookings: counts.get(c) ?? 0 }))
+
+    return base
+  } catch (error) {
+    console.warn('[Reports] intake origins unavailable:', error instanceof Error ? error.message : error)
+    return base
+  }
+}
+
   // Read first, because the "bookings created" section is now a cut of it: the
   // report counts the confirmations AppleSystem raised in the window, not this
   // system's own intake. See apple-cohort.ts.
   const cohort = await collectAppleCohort(window)
 
-  const [created, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
+  const [created, split, parity, countCheck, onGround, readiness, reconfirm, complaints, upcoming] = await Promise.all([
+    // The two figures this mail now leads with, read from the accounts ledger
+    // so all three daily mails describe the day with one set of numbers.
+    // `cohort.total` is the Apple System count they are checked against.
     collectCreated(window, countries, maxRows, cohort),
+    collectActivitySplitSection(window, cohort.available ? cohort.total : 0),
     // Deliberately unscoped by country: parity is a question about the integration
     // as a whole, and a per-country view of it would hide a gap in whichever
     // market the reader was not looking at.
@@ -1286,6 +1467,7 @@ export async function collectReportData(opts: CollectOptions): Promise<ReportDat
     generatedAt: now.toISOString(),
     countries,
     created,
+    split,
     parity,
     countCheck,
     onGround,

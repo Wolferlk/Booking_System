@@ -91,12 +91,49 @@ function createdSection(d: ReportData): string {
     ? c.byCurrency.slice(0, 3).map(x => money(x.total, x.currency)).join(' · ')
     : 'No quoted value recorded'
 
+  // "New bookings" is this period's own new business — the bookings whose
+  // ledger chain opened inside the window — which is the figure both accounts
+  // mails lead with for the same day. It used to be the confirmation count,
+  // which is a different question and is now its own tile beside it.
+  const sp = d.split
+  const newBookings = sp.available ? sp.todayCount : c.total
+
   const kpis = kpiRow([
-    { label: 'New bookings', value: num(c.total), note: trend(c.total, c.previousTotal) },
-    { label: 'B2B', value: num(c.channel.b2b), note: `${c.total ? Math.round((c.channel.b2b / c.total) * 100) : 0}% of intake`, color: C.b2b },
-    { label: 'B2C', value: num(c.channel.b2c), note: `${c.total ? Math.round((c.channel.b2c / c.total) * 100) : 0}% of intake`, color: C.b2c },
+    {
+      label: 'New bookings',
+      value: num(newBookings),
+      note: sp.available ? 'today new &amp; updated' : trend(c.total, c.previousTotal),
+      color: C.brand,
+    },
+    { label: 'B2B', value: num(c.channel.b2b), note: `${c.total ? Math.round((c.channel.b2b / c.total) * 100) : 0}% of confirmations`, color: C.b2b },
+    { label: 'B2C', value: num(c.channel.b2c), note: `${c.total ? Math.round((c.channel.b2c / c.total) * 100) : 0}% of confirmations`, color: C.b2c },
     { label: 'Pax booked', value: num(c.pax) },
   ])
+
+  // Where those new bookings actually came in from — the AppleSystem importer,
+  // a OneDrive drop, the confirmation mailbox, a person typing it. The parts
+  // sum to the headline above, so the tile can be checked against the rows
+  // rather than taken on trust; "Not filed here" is the line to act on.
+  const originsMax = sp.origins.length ? Math.max(...sp.origins.map(o => o.bookings)) : 0
+  const origins = sp.available && sp.origins.length
+    ? `<div style="padding-top:4px;padding-bottom:14px;">
+         <div class="h3">Where these ${num(newBookings)} came in from</div>` +
+      tableOpen([
+        { text: 'Intake channel' },
+        { text: 'Bookings', align: 'right', width: '70' },
+        { text: 'Share', width: '140' },
+      ]) +
+      sp.origins.map(o => `<tr>
+        ${td(esc(o.label), { bold: true, color: o.channel === 'MISSING' ? C.bad : C.ink })}
+        ${td(num(o.bookings), { align: 'right', bold: true, color: o.channel === 'MISSING' ? C.bad : C.ink })}
+        ${td(bar(o.bookings, originsMax, o.channel === 'MISSING' ? C.bad : C.brand))}
+      </tr>`).join('') + TABLE_CLOSE +
+      `<div style="font:400 11.5px/1.6 ${FONT};color:${C.muted};padding-top:6px;">
+         Read from how each booking reached this system — the creation log first, then the import trail,
+         the confirmation mail and the Drive event. The parts add up to ${num(newBookings)}.
+       </div>
+       </div>`
+    : ''
 
   const value = `<div style="font:400 12px/1.6 ${FONT};color:${C.muted};padding:0 0 14px 0;"><strong style="color:${C.ink};">Quoted value</strong> &nbsp;${currencyNote}</div>`
 
@@ -136,6 +173,14 @@ function createdSection(d: ReportData): string {
          ${c.cancelledUpstream ? `${num(c.cancelledUpstream)} further confirmation${c.cancelledUpstream === 1 ? ' was' : 's were'} withdrawn upstream. ` : ''}
          The same population the accounts invoice and P&amp;L mails report, so the three figures line up.
          Bookings filed here in this period against an earlier confirmation are listed below, uncounted.
+         ${sp.available ? `<br><strong style="color:${C.ink};">New bookings above is ${num(sp.todayCount)}</strong>, not ${num(c.total)}:
+           it is this period's own new business as the accounts ledger dates it — a booking whose first invoice
+           document was raised inside the window. ${sp.oldCount
+             ? `A further ${num(sp.oldCount)} document${sp.oldCount === 1 ? '' : 's'} raised in this period re-opened
+                confirmations from earlier days (Old amendments${sp.oldest ? `, the oldest ${num(sp.oldest)} days back` : ''});
+                that is another day's business and is not in the table below.`
+             : 'No confirmation from an earlier day was re-opened in this period.'}
+           Both accounts mails for this day lead with the same two figures.` : ''}
        </div>`
     : `<div style="background:${C.wash};border:1px solid ${C.line};border-radius:10px;padding:11px 13px;margin-bottom:14px;font:400 12px/1.6 ${FONT};color:${C.muted};">
          <strong style="color:${C.ink};">Counted: bookings filed in this system.</strong>
@@ -179,7 +224,7 @@ function createdSection(d: ReportData): string {
     'Bookings created',
     `${d.window.label} · confirmed by AppleSystem in this period`,
     C.brand,
-    basisNote + kpis + value +
+    basisNote + kpis + origins + value +
       `<div class="h3">Country-wise</div>${countryTable(c.byCountry)}` +
       `<div style="padding-top:18px;"><div class="h3">Booking detail</div>${list}</div>` +
       missing + alsoFiled +
@@ -1028,25 +1073,30 @@ function headerBlock(w: ReportWindow, opts: RenderOptions): string {
 }
 
 function summaryStrip(d: ReportData): string {
+  const sp = d.split
+
   const cells = [
-    { label: 'Created', value: num(d.created.total), sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C` },
-    // The parity pair earns a place in the strip because it is the one figure
-    // that says whether every other figure in the mail is complete.
-    { label: 'AS parity', value: `${num(d.parity.systemHeld)}/${num(d.parity.upstreamConfirmed)}`, sub: d.parity.available ? (d.parity.inParity ? 'all imported' : `${num(d.parity.missing)} missing`) : 'not checked' },
-    // The count check tile is the accounts mail's headline, carried here so the
-    // two can be compared from the preview pane without opening either.
+    // The strip used to open with Created / AS parity / Count check — three
+    // answers to "is the integration whole?", a question that now lives on
+    // /sync-ledger and in the reconciliation mail. What opens the day instead
+    // is the split both accounts mails for the same day lead with, so the
+    // three reports state one set of figures from one set of rows.
     {
-      label: 'Count check',
-      value: d.countCheck.available && d.countCheck.sweptAt
-        ? `${num(d.countCheck.overall.upstream)}/${num(d.countCheck.overall.pnls)}/${num(d.countCheck.overall.invoices)}`
-        : '—',
-      sub: !d.countCheck.available
-        ? 'accounts unreachable'
-        : d.countCheck.sweptAt === null
-          ? 'not swept'
-          : d.countCheck.balanced
-            ? 'AS / P&L / invoice'
-            : `${num(d.countCheck.overall.pnlShort + d.countCheck.overall.invoiceShort + d.countCheck.overall.bookingShort)} short`,
+      label: 'Today new & updated',
+      value: sp.available ? num(sp.todayCount) : '—',
+      sub: sp.available ? 'this period\u2019s own business' : 'accounts unreachable',
+    },
+    {
+      label: 'Old amendments',
+      value: sp.available ? num(sp.oldCount) : '—',
+      sub: sp.available
+        ? (sp.oldCount ? (sp.oldest ? `oldest ${num(sp.oldest)}d back` : 'older files re-opened') : 'none re-opened')
+        : 'accounts unreachable',
+    },
+    {
+      label: 'Apple System',
+      value: num(sp.appleCount || d.created.total),
+      sub: `${num(d.created.channel.b2b)} B2B / ${num(d.created.channel.b2c)} B2C`,
     },
     { label: 'On ground', value: num(d.onGround.total), sub: `${num(d.onGround.pax)} guests` },
     { label: 'Next 3 days', value: num(d.readiness.total), sub: `${num(d.readiness.notReady)} not ready` },
@@ -1093,11 +1143,13 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
     : ''
 
   const body = [
-    // First, above intake: it is the sentence that says whether every other
-    // number in this mail — and in the accounts mail sitting beside it in the
-    // same inbox — describes a whole day. Gated with parity because the two are
-    // one integrity block; a schedule that wants a lean mail drops both.
-    want.parity ? countCheckSection(d) : '',
+    // The count check used to open the mail — "90 bookings · 90 P&Ls · 90
+    // invoices — balanced", the accounts headline carried over so the two mails
+    // could be reconciled from one inbox. It is off the mail at the desk's
+    // request: the check still runs (`collectCountCheck` above, and it still
+    // feeds the periodic insights), the reconciliation mail still leads with it,
+    // and it is read on /sync-ledger. `renderCountCheckBlock()` is kept for the
+    // render-check script, so nothing about the block itself has been lost.
     want.created ? createdSection(d) : '',
     // Immediately after intake, because it qualifies it: the created count above
     // is only trustworthy if the two systems agree on what was confirmed.
@@ -1153,8 +1205,13 @@ export function renderReportEmail(d: ReportData, opts: RenderOptions = {}): stri
 
 /** Subject line: informative enough to triage from the inbox list alone. */
 export function renderReportSubject(d: ReportData, opts: { prefix?: string; testSend?: boolean } = {}): string {
+  // "new" in the subject is the same figure the mail's New bookings tile shows
+  // — this period's own new business — so the inbox line and the first card
+  // cannot say two different things about one day.
   const parts = [
-    `${d.created.total} new`,
+    d.split.available
+      ? `${d.split.todayCount} new${d.split.oldCount ? ` + ${d.split.oldCount} amended` : ''}`
+      : `${d.created.total} new`,
     `${d.onGround.total} on ground`,
   ]
   // A parity gap outranks everything else in the subject: it means the mail's
@@ -1189,6 +1246,31 @@ export function renderReportCsv(d: ReportData): string {
   const rows: string[] = []
   const block = (title: string, header: string[], lines: string[][]) =>
     csvBlock(rows, title, header, lines)
+
+  // The day in two lines, first, before any booking row.
+  //
+  // The file is opened by people reading it beside the two accounts mails for
+  // the same day, and those lead with exactly these three figures. Putting them
+  // in A1 means the comparison is made before anyone scrolls — and a reader who
+  // pivots the rows below can see at once which population they are pivoting.
+  if (d.split.available) {
+    block('Today new & updated / Old amendments — the day in two passes',
+      ['Figure', 'Count', 'What it counts'],
+      [
+        ['Today new & updated', d.split.todayCount,
+          "This period's own new business — a booking whose first invoice document was raised inside the window, counted once on its latest document. The figure both accounts mails lead with."],
+        ['Old amendments', d.split.oldCount,
+          `Revisions raised in this period against confirmations from earlier days${d.split.oldest ? `, the oldest ${d.split.oldest} days back` : ''} — ${d.split.oldBookings} booking${d.split.oldBookings === 1 ? '' : 's'}. Another day's business; not in the rows below.`],
+        ['Apple System count', d.split.appleCount,
+          'Confirmations AppleSystem raised in this period — the population the rows below carry, and the figure the two above are checked against.'],
+      ].map(r => r.map(String)))
+
+    if (d.split.origins.length) {
+      block(`Where those ${d.split.todayCount} new bookings came in from`,
+        ['Intake channel', 'Bookings'],
+        d.split.origins.map(o => [o.label, o.bookings].map(String)))
+    }
+  }
 
   const bookingHeader = ['Ref', 'Source', 'Country', 'Agent', 'Status', 'Arrival', 'Departure', 'Adults', 'Children', 'Infants', 'Currency', 'Quoted total', 'Created at']
   const bookingLine = (b: BookingLine) => [b.bookingRef, b.source, b.countryLabel, b.agent ?? '', b.status, b.arrivalDate, b.departureDate, b.paxAdults, b.paxChildren, b.paxInfants, b.currency, b.quotedTotal ?? '', b.createdAt].map(String)

@@ -158,6 +158,103 @@ function channelFromLog(details: Record<string, unknown>): OriginChannel | null 
 }
 
 /**
+ * How a *set* of bookings came to exist — the same precedence, five queries.
+ *
+ * `resolveBookingOrigin()` answers one booking with seven round trips, which is
+ * the right shape for a panel a person opened and the wrong one for a daily
+ * report that has to classify sixty of them inside a serverless request. This
+ * takes the same evidence in the same order — activity log, version 1, the
+ * AppleSystem import trail, the confirmation mail, the Drive event, then the
+ * shape of the booking — and answers the whole set at once.
+ *
+ * Only the channel is returned, because that is all a count needs. Anything a
+ * person is going to read a sentence off should still go through
+ * `resolveBookingOrigin()`, which carries the evidence and the confidence with
+ * it.
+ *
+ * Read-only, and individually tolerant: a failing side query costs one line of
+ * evidence, not the answer.
+ *
+ * @returns booking id → channel, for every booking passed in.
+ */
+export async function resolveBookingOriginChannels(
+  bookings: { id: string; bookingRef: string; isNumber?: string | null; sourceDocUrl?: string | null }[],
+): Promise<Map<string, OriginChannel>> {
+  const out = new Map<string, OriginChannel>()
+
+  if (bookings.length === 0) return out
+
+  const ids = bookings.map(b => b.id)
+  const refs = Array.from(new Set(bookings.map(b => b.bookingRef).filter(Boolean)))
+
+  const [logs, versions, handlerLogs, mails, driveEvents] = await Promise.all([
+    prisma.activityLog.findMany({
+      where: { entityType: 'Booking', entityId: { in: ids }, action: 'BOOKING_CREATED' },
+      orderBy: { createdAt: 'asc' },
+      select: { entityId: true, details: true },
+    }).catch(() => []),
+
+    prisma.bookingVersion.findMany({
+      where: { bookingId: { in: ids }, versionNo: 1 },
+      select: { bookingId: true, source: true },
+    }).catch(() => []),
+
+    prisma.fileHandlerLog.findMany({
+      where: { bookingRef: { in: refs } },
+      orderBy: { createdAt: 'asc' },
+      select: { bookingRef: true, action: true },
+    }).catch(() => []),
+
+    prisma.mailMessage.findMany({
+      where: { bookingRef: { in: refs }, mailboxKind: 'TOUR_CONFIRMATION' },
+      select: { bookingRef: true },
+    }).catch(() => []),
+
+    prisma.oneDriveEvent.findMany({
+      where: { bookingRef: { in: refs }, eventType: { in: ['TC_PROCESSED', 'FOLDER_DETECTED', 'FILE_DETECTED'] } },
+      select: { bookingRef: true },
+    }).catch(() => []),
+  ])
+
+  // First row wins per booking — the queries are ordered oldest first, which is
+  // the creation-time record.
+  const logChannel = new Map<string, OriginChannel | null>()
+  for (const row of logs) {
+    const id = String(row.entityId ?? '')
+    if (id && !logChannel.has(id)) logChannel.set(id, channelFromLog(parseDetails(row.details ?? null)))
+  }
+
+  const versionSource = new Map<string, string | null>()
+  for (const row of versions) if (!versionSource.has(row.bookingId)) versionSource.set(row.bookingId, row.source ?? null)
+
+  const asImported = new Set<string>()
+  for (const row of handlerLogs) if (/AS_IMPORT/i.test(row.action ?? '')) asImported.add(String(row.bookingRef ?? ''))
+
+  const mailed = new Set(mails.map(m => String(m.bookingRef ?? '')))
+  const droppedOnDrive = new Set(driveEvents.map(d => String(d.bookingRef ?? '')))
+
+  for (const booking of bookings) {
+    const fromLog = logChannel.get(booking.id) ?? null
+    const source = versionSource.get(booking.id) ?? null
+
+    let channel: OriginChannel = 'UNKNOWN'
+
+    if (fromLog) channel = fromLog
+    else if (source === 'mail') channel = 'EMAIL'
+    else if (source === 'onedrive') channel = 'ONEDRIVE'
+    else if (source === 'manual') channel = 'MANUAL'
+    else if (asImported.has(booking.bookingRef)) channel = 'APPLESYSTEM'
+    else if (mailed.has(booking.bookingRef)) channel = 'EMAIL'
+    else if (droppedOnDrive.has(booking.bookingRef) || /sharepoint|onedrive/i.test(booking.sourceDocUrl ?? '')) channel = 'ONEDRIVE'
+    else if (booking.isNumber) channel = 'APPLESYSTEM'
+
+    out.set(booking.id, channel)
+  }
+
+  return out
+}
+
+/**
  * Everything known about how one booking came to exist.
  *
  * `bookingId` and `bookingRef` are both taken because the evidence is keyed
