@@ -53,6 +53,7 @@ import {
   HotelOnlyBanner, HotelOnlyButton, HotelOnlyChip,
 } from '@/components/bookings/hotel-only-control'
 import LastMinuteBadge from '@/components/bookings/last-minute-badge'
+import BookingOriginChip from '@/components/bookings/booking-origin-chip'
 import JourneyMap from '@/components/bookings/journey-map'
 import DriverBriefModal from '@/components/bookings/driver-brief-modal'
 import MailBoxModal from '@/components/bookings/mail-box-modal'
@@ -1573,6 +1574,11 @@ Wishing you a wonderful trip! ✈️
                     T−{daysUntil} days
                   </span>
                 )}
+                {/* Who filed this, when, and where it came in from. Derived
+                    rather than read off `createdBy`, because most files here
+                    are written by a pipeline under an automation account —
+                    see `lib/booking-origin.ts`. */}
+                <BookingOriginChip bookingRef={booking.bookingRef as string} />
               </div>
               {daysUntil <= 21 && daysUntil > 0 && (
                 <p className="mt-2 text-xs text-red-600 font-medium">
