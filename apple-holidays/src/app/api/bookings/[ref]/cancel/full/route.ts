@@ -9,6 +9,7 @@ import { sanitizeCancellationFees, totalCancellationFee } from '@/lib/cancellati
 import {
   parseCancellationPolicy, roleInAudience, isSealed, FULL_CANCEL_MARKER,
 } from '@/lib/cancellation-policy'
+import { requireVerification, bookingTarget, VERIFY_ACTION } from '@/lib/action-verification'
 import type { UserRole, BookingStatus, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -74,6 +75,15 @@ export async function POST(
   if (!alreadyCancelled && !CANCELLABLE_STATES.includes(booking.status as BookingStatus)) {
     return buildApiError(`Cannot cancel a booking in ${booking.status.replace(/_/g, ' ')}`)
   }
+
+  // Two-step verification, checked after every other guard so a valid code is
+  // never spent on a request that was going to be refused anyway.
+  const unverified = await requireVerification(body, {
+    userId: session.user.id,
+    action: VERIFY_ACTION.BOOKING_FULL_CANCEL,
+    target: bookingTarget(params.ref),
+  })
+  if (unverified) return unverified
 
   const existing = await prisma.statusEvent.findMany({
     where: { bookingId: booking.id, toState: 'CANCELLED' },

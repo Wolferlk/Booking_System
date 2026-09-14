@@ -18,6 +18,7 @@ import { Card, CardHeader, CardBody } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/badge'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
+import VerificationModal from '@/components/security/verification-modal'
 import { formatDate, formatDateTime, formatCurrency, getDaysUntilTrip, readApiResponse, cn } from '@/lib/utils'
 import { CountryFlag, FlagByCode } from '@/components/ui/country-flag'
 import { countryLabel } from '@/lib/country-detection'
@@ -141,6 +142,11 @@ export default function BookingDetailPage() {
   const [cancelReason, setCancelReason] = useState('')
   // Cancellation fee lines entered on the request form — { note, amount } as strings for the inputs.
   const [cancelFees, setCancelFees] = useState<{ note: string; amount: string }[]>([{ note: '', amount: '' }])
+  // Set once the cancellation form is filled in and the user has asked to go
+  // ahead — holds the payload while the emailed code is being confirmed. The
+  // booking is untouched until that code comes back.
+  const [cancelVerify, setCancelVerify] = useState<{ reason: string; fees: { note: string; amount: number }[] } | null>(null)
+  const [deleteVerify, setDeleteVerify] = useState(false)
   const [pendingAction, setPendingAction] = useState<string>('')
   const [editAccomModal, setEditAccomModal] = useState(false)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1840,13 +1846,7 @@ Wishing you a wonderful trip! ✈️
               )}
               {['SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role) && !['COMPLETED'].includes(status) && (
                 <button
-                  onClick={async () => {
-                    if (!confirm(`Permanently delete booking ${ref}? This cannot be undone.`)) return
-                    const res = await fetch(`/api/bookings/${ref}`, { method: 'DELETE' })
-                    const json = await res.json()
-                    if (json.success) { toast.success('Booking deleted'); router.push('/dashboard/bookings') }
-                    else toast.error(json.error ?? 'Delete failed')
-                  }}
+                  onClick={() => setDeleteVerify(true)}
                   className="btn btn-sm bg-red-50 text-red-600 border border-red-200 hover:bg-red-100"
                 >
                   Delete
@@ -3506,10 +3506,8 @@ Wishing you a wonderful trip! ✈️
                 const fees = cancelFees
                   .map(f => ({ note: f.note.trim(), amount: Number(f.amount) || 0 }))
                   .filter(f => f.note || f.amount > 0)
-                doTransition('cancel', { reason, fees }).then(() => {
-                  setCancelModal(false); setCancelReason('')
-                  setCancelFees([{ note: '', amount: '' }])
-                })
+                // Nothing is sent yet — the emailed code has to be confirmed first.
+                setCancelVerify({ reason, fees })
               }}
             >
               Send for Accounts Approval
@@ -3630,6 +3628,71 @@ Wishing you a wonderful trip! ✈️
           </p>
         </div>
       </Modal>
+
+      {/* ── Step two for a cancellation: the code emailed to the requester ──
+          Rendered over the cancellation form, which stays filled in behind it,
+          so backing out here loses nothing and changes nothing. */}
+      {cancelVerify && (
+        <VerificationModal
+          open
+          action="BOOKING_CANCEL"
+          bookingRef={ref}
+          confirmLabel="Confirm & Send for Approval"
+          summary={
+            <>
+              Booking <strong>{ref}</strong> will be sent to the accounts team as a cancellation
+              request. When they approve it, the booking is cancelled and the cancellation notice
+              goes out to the agent and the operations desk automatically.
+            </>
+          }
+          onClose={() => setCancelVerify(null)}
+          onVerified={async cred => {
+            const res = await fetch(`/api/bookings/${ref}/cancel`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...cancelVerify, ...cred }),
+            })
+            const json = await res.json()
+            if (!json.success) throw new Error(json.error ?? 'Cancellation failed')
+            toast.success(json.message ?? 'Cancellation sent to the accounts team for approval')
+            setCancelVerify(null)
+            setCancelModal(false)
+            setCancelReason('')
+            setCancelFees([{ note: '', amount: '' }])
+            await load()
+          }}
+        />
+      )}
+
+      {/* ── Step two for a delete ─────────────────────────────────────── */}
+      {deleteVerify && (
+        <VerificationModal
+          open
+          action="BOOKING_DELETE"
+          bookingRef={ref}
+          confirmLabel="Delete Permanently"
+          summary={
+            <>
+              Booking <strong>{ref}</strong> and everything attached to it — passengers, flights,
+              hotels, agenda and PNL — will be erased. This cannot be undone and the booking cannot
+              be recovered afterwards. If there is any chance it comes back, cancel it instead.
+            </>
+          }
+          onClose={() => setDeleteVerify(false)}
+          onVerified={async cred => {
+            const res = await fetch(`/api/bookings/${ref}`, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(cred),
+            })
+            const json = await res.json()
+            if (!json.success) throw new Error(json.error ?? 'Delete failed')
+            toast.success(json.message ?? 'Booking deleted')
+            setDeleteVerify(false)
+            router.push('/dashboard/bookings')
+          }}
+        />
+      )}
 
       {/* ── Customer Feedback Modal (Complete Trip) ─────────────────── */}
       <Modal

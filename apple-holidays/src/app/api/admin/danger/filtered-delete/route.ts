@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { requireVerification, bookingFilterTarget, VERIFY_ACTION } from '@/lib/action-verification'
 import type { Prisma, BookingStatus, OperationCountry } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +25,8 @@ type Body = {
   mode: 'preview' | 'delete'
   filters?: Filters
   password?: string
+  verificationId?: string
+  verificationCode?: string
 }
 
 /** Turn the incoming filters into a Prisma `where` clause. Returns null if no
@@ -108,6 +111,17 @@ export async function POST(req: NextRequest) {
   if (!body.password || body.password !== criticalPassword) {
     return buildApiError('Incorrect critical services password', 403)
   }
+
+  // Second factor: a code emailed to the signed-in admin, bound to this exact
+  // filter. The critical services password above proves they know the shared
+  // secret; this proves the request is coming from the person whose mailbox it
+  // is. Checked after the password so a code is not spent on a wrong password.
+  const unverified = await requireVerification(body, {
+    userId: session.user.id,
+    action: VERIFY_ACTION.BOOKING_FILTERED_DELETE,
+    target: bookingFilterTarget(body.filters ?? {}),
+  })
+  if (unverified) return unverified
 
   const matches = await prisma.booking.findMany({
     where,

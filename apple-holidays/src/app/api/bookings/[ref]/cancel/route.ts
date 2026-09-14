@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { CANCELLABLE_STATES } from '@/lib/state-machine'
 import { sendCancellationApprovalEmail } from '@/lib/send-cancellation-email'
 import { sanitizeCancellationFees, totalCancellationFee } from '@/lib/cancellation-fees'
+import { requireVerification, bookingTarget, VERIFY_ACTION } from '@/lib/action-verification'
 import type { UserRole, BookingStatus, Prisma } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -42,8 +43,19 @@ export async function POST(
     return buildApiError(`Cannot cancel booking in ${booking.status} state`)
   }
 
-  const { reason, fees } = await req.json()
+  const body = await req.json().catch(() => ({}))
+  const { reason, fees } = body
   if (!reason || !String(reason).trim()) return buildApiError('Cancellation reason is required')
+
+  // Two-step verification. Checked last, after everything that could fail on its
+  // own, so a valid code is never burned on a request that was going to be
+  // rejected anyway — and never before, so nothing is written unverified.
+  const unverified = await requireVerification(body, {
+    userId: session.user.id,
+    action: VERIFY_ACTION.BOOKING_CANCEL,
+    target: bookingTarget(params.ref),
+  })
+  if (unverified) return unverified
 
   // Fees are optional. The total is always recomputed here — never trusted from the client.
   const feeLines = sanitizeCancellationFees(fees)

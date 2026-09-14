@@ -6,6 +6,7 @@ import { buildApiError, buildApiSuccess, computePNLTotals } from '@/lib/utils'
 import { hasPermission, canSeeAllCountries } from '@/lib/rbac'
 import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { requireVerification, bookingTarget, VERIFY_ACTION } from '@/lib/action-verification'
 import { isInCountryScope } from '@/lib/country-detection'
 import type { UserRole } from '@prisma/client'
 
@@ -444,6 +445,17 @@ export async function DELETE(
 
   const booking = await prisma.booking.findUnique({ where: { bookingRef: params.ref } })
   if (!booking) return buildApiError('Booking not found', 404)
+
+  // Two-step verification. A delete takes the passengers, flights, hotels,
+  // agenda and PNL with it, so the code emailed to the signed-in user has to
+  // come back here before a single row is touched.
+  const body = await req.json().catch(() => ({}))
+  const unverified = await requireVerification(body, {
+    userId: session.user.id,
+    action: VERIFY_ACTION.BOOKING_DELETE,
+    target: bookingTarget(params.ref),
+  })
+  if (unverified) return unverified
 
   await prisma.booking.delete({ where: { bookingRef: params.ref } })
 

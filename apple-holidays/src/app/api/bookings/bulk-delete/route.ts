@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
+import { requireVerification, bookingSetTarget, VERIFY_ACTION } from '@/lib/action-verification'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -26,6 +27,16 @@ export async function POST(req: NextRequest) {
   })
 
   if (bookings.length === 0) return buildApiError('No matching bookings found', 404)
+
+  // Two-step verification. The target is a digest of this exact set of
+  // references, so a code approved for one selection cannot be replayed against
+  // a different — or larger — one.
+  const unverified = await requireVerification(body, {
+    userId: session.user.id,
+    action: VERIFY_ACTION.BOOKING_BULK_DELETE,
+    target: bookingSetTarget(refs),
+  })
+  if (unverified) return unverified
 
   await prisma.booking.deleteMany({ where: { bookingRef: { in: refs } } })
 

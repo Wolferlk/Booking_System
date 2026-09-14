@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { RotateCcw, ShieldX, Lock, Clock, Loader2, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 import Modal from '@/components/ui/modal'
+import VerificationModal from '@/components/security/verification-modal'
 import Button from '@/components/ui/button'
 import {
   roleInAudience, type CancellationPolicy, type RecoveryBlock,
@@ -72,6 +73,9 @@ export function CancellationRecoveryPanel({
   const [reason, setReason] = useState('')
   const [confirmRef, setConfirmRef] = useState('')
   const [busy, setBusy] = useState<'recover' | 'seal' | null>(null)
+  // Sealing is irreversible, so it waits behind an emailed code. Recovery does
+  // not — it puts a booking back rather than taking one away.
+  const [sealVerify, setSealVerify] = useState<{ reason: string; confirmRef: string } | null>(null)
 
   if (!verdict) return null
 
@@ -232,8 +236,39 @@ export function CancellationRecoveryPanel({
         setConfirmRef={setConfirmRef}
         busy={busy === 'seal'}
         alreadyCancelled
-        onConfirm={() => void post('full', { reason: reason.trim(), confirmRef: confirmRef.trim() }, 'seal')}
+        onConfirm={() => setSealVerify({ reason: reason.trim(), confirmRef: confirmRef.trim() })}
       />
+
+      {sealVerify && (
+        <VerificationModal
+          open
+          action="BOOKING_FULL_CANCEL"
+          bookingRef={bookingRef}
+          confirmLabel="Seal Permanently"
+          summary={
+            <>
+              The recovery window on <strong>{bookingRef}</strong> closes immediately and for good.
+              No role — including an admin — will be able to bring this booking back, and turning
+              recovery back on in Settings will not reopen it.
+            </>
+          }
+          onClose={() => setSealVerify(null)}
+          onVerified={async cred => {
+            const res = await fetch(`/api/bookings/${bookingRef}/cancel/full`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...sealVerify, ...cred }),
+            })
+            const json = await res.json()
+            if (!json.success) throw new Error(json.error ?? 'Action failed')
+            toast.success(json.message ?? 'Cancellation sealed')
+            setSealVerify(null); setSealOpen(false)
+            setReason(''); setConfirmRef('')
+            await reload()
+            await onDone()
+          }}
+        />
+      )}
     </>
   )
 }
@@ -252,26 +287,26 @@ export function FullCancelButton({
   const [reason, setReason] = useState('')
   const [confirmRef, setConfirmRef] = useState('')
   const [busy, setBusy] = useState(false)
+  const [verify, setVerify] = useState<{ reason: string; confirmRef: string } | null>(null)
 
   if (!verdict) return null
   const { policy } = verdict
   if (!policy.fullEnabled || !roleInAudience(role, policy.fullAudience)) return null
 
-  async function confirm() {
+  /** Runs only after the emailed code is entered; throws so the prompt can say why. */
+  async function confirm(credentials: { verificationId: string; verificationCode: string }) {
     setBusy(true)
     try {
       const res = await fetch(`/api/bookings/${bookingRef}/cancel/full`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: reason.trim(), confirmRef: confirmRef.trim() }),
+        body: JSON.stringify({ ...verify, ...credentials }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error)
       toast.success(json.message ?? 'Booking fully cancelled')
-      setOpen(false); setReason(''); setConfirmRef('')
+      setVerify(null); setOpen(false); setReason(''); setConfirmRef('')
       await onDone()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Action failed')
     } finally {
       setBusy(false)
     }
@@ -298,8 +333,26 @@ export function FullCancelButton({
         setConfirmRef={setConfirmRef}
         busy={busy}
         alreadyCancelled={false}
-        onConfirm={() => void confirm()}
+        onConfirm={() => setVerify({ reason: reason.trim(), confirmRef: confirmRef.trim() })}
       />
+
+      {verify && (
+        <VerificationModal
+          open
+          action="BOOKING_FULL_CANCEL"
+          bookingRef={bookingRef}
+          confirmLabel="Cancel Permanently"
+          summary={
+            <>
+              <strong>{bookingRef}</strong> is cancelled outright — not sent to the accounts queue —
+              and sealed against recovery in the same step. The cancellation notice is emailed
+              automatically and no role will ever be able to reinstate it.
+            </>
+          }
+          onClose={() => setVerify(null)}
+          onVerified={confirm}
+        />
+      )}
     </>
   )
 }

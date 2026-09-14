@@ -3078,3 +3078,41 @@ model MailThreadMessage {
   @@index([direction])
   @@map("mail_thread_messages")
 }
+
+/// Step-up verification for the two irreversible things that can be done to a
+/// booking: cancelling it and deleting it. Before either runs, a six-digit code
+/// is mailed to the signed-in user's own address; the destructive route refuses
+/// to act unless the request carries a live, unused challenge belonging to that
+/// same user, for that same action, on that same target.
+///
+/// Deliberately no FK to `users`: this is an append-only security trail and it
+/// must survive — and keep reading correctly — even if the actor's row is later
+/// removed. Rows are disposable; a consumed or expired challenge is dead weight
+/// and can be pruned at any time without touching a booking.
+model ActionVerification {
+  id         String    @id @default(cuid())
+  userId     String    @db.VarChar(191)
+  /// Where the code was sent. Snapshotted so the trail still reads correctly
+  /// after a user changes their address.
+  email      String    @db.VarChar(320)
+  /// One of the ACTION_VERIFICATION kinds in `src/lib/action-verification.ts`.
+  action     String    @db.VarChar(60)
+  /// What the code unlocks. A booking reference for a single booking, or a
+  /// digest of the exact set of references for a bulk delete — so a code
+  /// issued for one selection cannot be replayed against another.
+  target     String    @db.VarChar(191)
+  /// What the user was told they were approving, kept for the audit trail.
+  label      String?   @db.VarChar(255)
+  /// SHA-256 of the code salted with this row's id. The code itself is never
+  /// stored, so a database read cannot approve a cancellation.
+  codeHash   String    @db.VarChar(64)
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  ipAddress  String?   @db.VarChar(64)
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, action, target])
+  @@index([expiresAt])
+  @@map("action_verifications")
+}

@@ -7,6 +7,7 @@ import {
   Search, CheckCircle2, AlertTriangle,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
+import VerificationModal from '@/components/security/verification-modal'
 import { Card } from '@/components/ui/card'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
@@ -127,6 +128,9 @@ export default function BookingsCleanupPage() {
   const [confirm, setConfirm] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [done, setDone] = useState(false)
+  // Filled when the password and the confirmation phrase are in — nothing is
+  // deleted until the code emailed to this admin comes back as well.
+  const [verifyOpen, setVerifyOpen] = useState(false)
 
   const canSubmit = password.trim().length > 0 && confirm.trim() === CONFIRM_PHRASE && !deleting
 
@@ -134,22 +138,22 @@ export default function BookingsCleanupPage() {
     setPassword(''); setConfirm(''); setShowPw(false); setDone(false); setShowModal(true)
   }
 
-  async function handleDelete() {
-    if (!canSubmit) return
+  /** Runs only once the emailed code is entered. Throws so the verification
+   *  prompt can say why nothing was deleted. */
+  async function handleDelete(credentials: { verificationId: string; verificationCode: string }) {
     setDeleting(true)
     try {
       const res = await fetch('/api/admin/danger/filtered-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'delete', filters, password }),
+        body: JSON.stringify({ mode: 'delete', filters, password, ...credentials }),
       })
       const json = await res.json()
       if (!json.success) throw new Error(json.error ?? 'Delete failed')
+      setVerifyOpen(false)
       setDone(true)
       toast.success(json.message ?? 'Bookings deleted')
       resetPreview()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Delete failed')
     } finally {
       setDeleting(false)
     }
@@ -427,7 +431,7 @@ export default function BookingsCleanupPage() {
                       Cancel
                     </button>
                     <button
-                      onClick={handleDelete}
+                      onClick={() => { if (canSubmit) setVerifyOpen(true) }}
                       disabled={!canSubmit}
                       className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed active:scale-95 transition-all"
                     >
@@ -443,6 +447,29 @@ export default function BookingsCleanupPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Step two: a code emailed to this admin, bound to this exact filter ──
+          The password proves the shared secret is known; the code proves the
+          request is coming from the person whose mailbox it is. Nothing is
+          deleted until both are in. */}
+      {verifyOpen && (
+        <VerificationModal
+          open
+          action="BOOKING_FILTERED_DELETE"
+          requestPayload={{ filters, matchCount: count }}
+          confirmLabel="Delete Permanently"
+          summary={
+            <>
+              Every booking matching this filter{count !== null && <> — <strong>{count}</strong> at
+              the last preview</> } will be permanently deleted, along with its passengers, flights,
+              hotels, agenda and PNL. This cannot be undone. The match is evaluated again at the
+              moment of deletion, so re-run the preview if the filter has changed.
+            </>
+          }
+          onClose={() => setVerifyOpen(false)}
+          onVerified={handleDelete}
+        />
       )}
     </div>
   )

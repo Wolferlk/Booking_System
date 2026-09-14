@@ -21,6 +21,7 @@ import { CountryFlag } from '@/components/ui/country-flag'
 import { isB2cBooking } from '@/lib/booking-source'
 import { HOTEL_ONLY_LABEL } from '@/lib/hotel-only'
 import Modal from '@/components/ui/modal'
+import VerificationModal from '@/components/security/verification-modal'
 import { STATUS_LABELS } from '@/lib/state-machine'
 import { TRIP_STATES, TRIP_STATE_LABELS } from '@/lib/trip-state'
 import { useSession } from 'next-auth/react'
@@ -345,6 +346,10 @@ function BookingsPageInner() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting]       = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  // The exact selection the emailed code will be bound to. Frozen when the user
+  // asks to delete, so changing the selection behind the prompt cannot widen
+  // what the code approves — the server rejects it if the sets differ.
+  const [deleteVerifyRefs, setDeleteVerifyRefs] = useState<string[] | null>(null)
 
   // ── OneDrive auto-scan state ──────────────────────────────────────────────
   const [scanState, setScanState]           = useState<ScanState>('idle')
@@ -609,25 +614,23 @@ function BookingsPageInner() {
     })
   }
 
-  async function handleBulkDelete() {
+  /** Runs only once the code emailed to this user has been entered. Throws on
+   *  failure so the verification prompt can show why nothing was deleted. */
+  async function handleBulkDelete(credentials: { verificationId: string; verificationCode: string }) {
     setDeleting(true)
     setDeleteError(null)
     try {
       const res  = await fetch('/api/bookings/bulk-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bookingRefs: Array.from(selected) }),
+        body: JSON.stringify({ bookingRefs: deleteVerifyRefs ?? Array.from(selected), ...credentials }),
       })
       const json = await res.json()
-      if (!json.success) {
-        setDeleteError(json.error ?? 'Delete failed')
-        return
-      }
+      if (!json.success) throw new Error(json.error ?? 'Delete failed')
+      setDeleteVerifyRefs(null)
       setConfirmOpen(false)
       setSelected(new Set())
       await fetchBookings()
-    } catch {
-      setDeleteError('Network error — please try again')
     } finally {
       setDeleting(false)
     }
@@ -1721,8 +1724,8 @@ function BookingsPageInner() {
               Cancel
             </button>
             <button
-              onClick={handleBulkDelete}
-              disabled={deleting}
+              onClick={() => { setDeleteError(null); setDeleteVerifyRefs(Array.from(selected)) }}
+              disabled={deleting || selectedCount === 0}
               className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-xl disabled:opacity-60 transition-colors"
             >
               {deleting
@@ -1760,6 +1763,26 @@ function BookingsPageInner() {
           </div>
         </div>
       </Modal>
+
+      {/* ── Step two: the code emailed to whoever is doing the deleting ────
+          The list above stays exactly as it was until this is confirmed. */}
+      {deleteVerifyRefs && (
+        <VerificationModal
+          open
+          action="BOOKING_BULK_DELETE"
+          bookingRefs={deleteVerifyRefs}
+          confirmLabel={`Delete ${deleteVerifyRefs.length} Permanently`}
+          summary={
+            <>
+              <strong>{deleteVerifyRefs.length} booking{deleteVerifyRefs.length !== 1 ? 's' : ''}</strong>{' '}
+              and everything attached to them — passengers, flights, hotels, agenda and PNL — will be
+              erased. This cannot be undone. The code below only works for this exact selection.
+            </>
+          }
+          onClose={() => setDeleteVerifyRefs(null)}
+          onVerified={handleBulkDelete}
+        />
+      )}
     </div>
   )
 }
