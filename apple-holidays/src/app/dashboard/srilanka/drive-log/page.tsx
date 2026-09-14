@@ -906,7 +906,9 @@ interface DeliverySummary {
 }
 
 const DELIVERY_TONE: Record<string, string> = {
-  pending:   'text-slate-500',
+  pending:   'text-amber-400',
+  accepted:  'text-amber-400',
+  held:      'text-amber-400',
   sent:      'text-slate-400',
   delivered: 'text-emerald-400',
   read:      'text-sky-400',
@@ -915,11 +917,16 @@ const DELIVERY_TONE: Record<string, string> = {
 
 const DELIVERY_WORD: Record<string, string> = {
   pending:   'handed to WhatsApp, nothing reported back yet',
+  accepted:  'were handed to WhatsApp — no delivery has been confirmed',
+  held:      'are being held by WhatsApp for review and have not been sent',
   sent:      'sent — WhatsApp has not confirmed it reached the phone',
   delivered: 'delivered to the driver’s phone',
   read:      'opened by the driver',
   failed:    'never arrived',
 }
+
+/** Statuses this system wrote itself — nothing has confirmed a delivery. */
+const UNCONFIRMED = new Set(['pending', 'accepted', 'held'])
 
 /**
  * The row's one-glance answer to "has he got his paperwork".
@@ -948,11 +955,15 @@ function DeliveryBadge({ delivery }: { delivery: DeliverySummary | null }) {
       title={title}
       className={cn('flex items-center gap-0.5 flex-shrink-0', DELIVERY_TONE[delivery.status] ?? 'text-slate-500')}
     >
-      {delivery.status === 'failed'
+      {delivery.status === 'failed' || delivery.status === 'held'
         ? <AlertTriangle className="w-3 h-3" />
-        : delivery.status === 'sent' || delivery.status === 'pending'
-          ? <Check className="w-3 h-3" />
-          : <CheckCheck className="w-3 h-3" />}
+        : UNCONFIRMED.has(delivery.status)
+          // A clock, not a tick: until a receipt arrives nobody knows whether
+          // the driver has his paperwork, and a tick said he did.
+          ? <Clock className="w-3 h-3" />
+          : delivery.status === 'sent'
+            ? <Check className="w-3 h-3" />
+            : <CheckCheck className="w-3 h-3" />}
       {delivery.copies ? <Copy className="w-2.5 h-2.5 opacity-60" /> : null}
     </span>
   )

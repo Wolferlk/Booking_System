@@ -30,11 +30,18 @@
  *
  * A 200 from Meta is not a delivery. The number may never have been on
  * WhatsApp; the template may be unapproved; the window may have shut between
- * the check and the send. Meta reports the truth minutes later as a delivery
- * receipt against the message id, so every send writes a `DriverDocSend` row
- * and the webhook moves it through sent → delivered → read, or to failed with
- * Meta's own reason. That row is what the Drive Log shows the desk, and it is
- * why "I sent it" and "he has it" are finally two different statements here.
+ * the check and the send. So a send writes a `DriverDocSend` row carrying only
+ * what Meta's own answer supports — `accepted`, or `held` when Meta says it is
+ * holding the message — and nothing in this file may write `sent`, `delivered`
+ * or `read`. Those arrive minutes later as delivery receipts against the
+ * message id and are applied by `whatsapp-delivery-status.ts`. That row is what
+ * the Drive Log shows the desk, and it is why "I sent it" and "he has it" are
+ * finally two different statements here.
+ *
+ * The corollary matters as much: if the receipt webhook is not forwarding into
+ * this system, every send stops at `accepted` — which the screen reports as
+ * unconfirmed, because an unconfirmed document that looks delivered is the
+ * failure this whole arrangement exists to prevent.
  *
  * ---- The standing copy ----
  *
@@ -292,8 +299,22 @@ async function deliver(opts: {
       channel = 'template'
     }
 
-    const waMessageId =
-      (result as { messages?: Array<{ id?: string }> })?.messages?.[0]?.id ?? null
+    const message =
+      (result as { messages?: Array<{ id?: string; message_status?: string }> })?.messages?.[0] ?? null
+    const waMessageId = message?.id ?? null
+
+    // What Meta actually said, rather than what a 200 tempts us to assume.
+    //
+    // The Graph API answers `accepted` — "we have taken this message" — and
+    // nothing more. It is not `sent`: the number may not be on WhatsApp, the
+    // template may be paused, the window may have shut. Writing `sent` here was
+    // the bug that let the Drive Log show a green SENT for a document no driver
+    // ever received, because the only thing that could have corrected it is a
+    // delivery receipt, and a receipt that never arrives never corrects
+    // anything. So the row now carries Meta's own word, and only the webhook in
+    // `whatsapp-delivery-status.ts` may write `sent`, `delivered` or `read`.
+    const accepted = String(message?.message_status ?? 'accepted').toLowerCase()
+    const held     = accepted === 'held_for_quality_assessment'
 
     // The chat log, so the document appears in the thread the desk chats in.
     await prisma.whatsAppMessage.create({
@@ -311,11 +332,20 @@ async function deliver(opts: {
           opts.driverName || 'Driver'}${opts.sentBy ? ` · ${opts.sentBy}` : ''}`,
       },
     }).catch(err => {
-      // The document has arrived; failing the call now would invite a resend.
+      // WhatsApp has the message; failing the call now would invite a resend.
       console.warn('[SettlementDocs] message log failed:', err instanceof Error ? err.message : err)
     })
 
-    const row = await openReceipt({ ...base, channel, waMessageId, status: 'sent', sentAt: new Date() })
+    const row = await openReceipt({
+      ...base, channel, waMessageId,
+      status: held ? 'held' : 'accepted',
+      // `sentAt` stays empty until Meta says the message left. `createdAt`
+      // already records when the desk pressed send, which is the only thing
+      // this system witnessed.
+      failureReason: held
+        ? 'WhatsApp is holding this message for a quality review and has not sent it. It may be delivered late, or not at all.'
+        : null,
+    })
     return { ok: true, sendId: row, kind: opts.kind, audience: opts.audience, phone: opts.msisdn, channel, preview, filename: opts.pdf.filename }
   } catch (err) {
     const reason = explainSendError(err, 'The document could not be sent.')

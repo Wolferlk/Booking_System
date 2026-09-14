@@ -53,7 +53,12 @@ export interface MetaDeliveryStatus {
  * a message that failed after appearing to be sent is precisely the news the
  * desk needs and the one a rank comparison would throw away.
  */
-const RANK: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: 4 }
+const RANK: Record<string, number> = {
+  // Ours, not Meta's: what we know before any receipt has arrived.
+  pending: 0, accepted: 1, held: 1,
+  // Meta's.
+  sent: 2, delivered: 3, read: 4, failed: 5,
+}
 
 /** Meta's error blob, flattened into a sentence an operator can act on. */
 function reasonOf(status: MetaDeliveryStatus): string | null {
@@ -187,7 +192,10 @@ export async function applyDeliveryStatuses(statuses: MetaDeliveryStatus[]): Pro
           ...(status === 'read'      ? { readAt: at }      : {}),
           ...(status === 'failed'
             ? { failedAt: at, failureReason: reason ?? 'WhatsApp could not deliver this message.' }
-            : {}),
+            // A message held for review and then released carries a warning
+            // that is no longer true; a receipt that moves the row forward
+            // clears it.
+            : { failureReason: null }),
         },
       })
       result.documents += 1

@@ -46,12 +46,15 @@ export async function GET(req: NextRequest) {
 
   try {
     if (ref) {
-      const rows = await prisma.driverDocSend.findMany({
-        where:   { bookingRef: ref },
-        orderBy: { createdAt: 'desc' },
-        take:    MAX_ROWS,
-      })
-      return buildApiSuccess({ ref, sends: rows.map(shape) })
+      const [rows, receipts] = await Promise.all([
+        prisma.driverDocSend.findMany({
+          where:   { bookingRef: ref },
+          orderBy: { createdAt: 'desc' },
+          take:    MAX_ROWS,
+        }),
+        receiptHealth(),
+      ])
+      return buildApiSuccess({ ref, sends: rows.map(shape), receipts })
     }
 
     // The row badges. Only driver-facing sends decide a booking's state — a copy
@@ -102,7 +105,39 @@ export async function GET(req: NextRequest) {
     // Before it is applied this screen should read "no deliveries recorded",
     // not fall over — the documents themselves are unaffected.
     console.error('[drive-log/documents/deliveries]', err)
-    return buildApiSuccess(ref ? { ref, sends: [] } : { summary: {} })
+    return buildApiSuccess(ref ? { ref, sends: [], receipts: { everReceived: true, lastReceiptAt: null } } : { summary: {} })
+  }
+}
+
+/**
+ * Is anybody actually telling us what happened?
+ *
+ * A send only ever learns its fate from a Meta delivery receipt, and a WhatsApp
+ * number posts its webhook to exactly one endpoint. On the Operations number
+ * that endpoint is n8n's, which must forward the `statuses` array on to
+ * `/api/webhooks/whatsapp-status-signal`. When that forwarding is not in place
+ * no receipt ever arrives, every send sits on the state it was born in, and the
+ * screen quietly reports a document nobody received as though it had gone.
+ *
+ * The tell is simple and needs no configuration to read: `deliveredAt` and
+ * `readAt` are written by the receipt handler and by nothing else in this
+ * system. If no send has ever carried one, the receipt channel is not wired,
+ * and the desk is owed that sentence instead of a spinner.
+ */
+async function receiptHealth(): Promise<{ everReceived: boolean; lastReceiptAt: string | null }> {
+  try {
+    const last = await prisma.driverDocSend.findFirst({
+      where:   { OR: [{ deliveredAt: { not: null } }, { readAt: { not: null } }] },
+      orderBy: { createdAt: 'desc' },
+      select:  { deliveredAt: true, readAt: true },
+    })
+    if (!last) return { everReceived: false, lastReceiptAt: null }
+    const at = last.readAt ?? last.deliveredAt
+    return { everReceived: true, lastReceiptAt: at?.toISOString() ?? null }
+  } catch {
+    // Unknown is not the same as broken: say nothing rather than accuse a
+    // working pipeline because one query failed.
+    return { everReceived: true, lastReceiptAt: null }
   }
 }
 

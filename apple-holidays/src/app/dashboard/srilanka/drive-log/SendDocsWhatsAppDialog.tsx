@@ -40,7 +40,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  AlertTriangle, ArrowRight, Check, CheckCheck, Copy, Loader2, MessageCircle,
+  AlertTriangle, ArrowRight, Check, CheckCheck, Clock, Copy, Loader2, MessageCircle,
   Phone, Send, Settings2, ShieldCheck, X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -92,9 +92,31 @@ interface SendOutcome {
   copyContact?: CopyContact
 }
 
+/**
+ * Whether delivery receipts reach this system at all.
+ *
+ * Meta reports a delivery to one webhook, and on the Operations number that
+ * webhook belongs to n8n. If n8n is not forwarding the `statuses` array on, no
+ * send in this system ever moves past the state it was born in — and a screen
+ * that keeps saying “waiting for WhatsApp” about a message that was never
+ * going to be reported on is a screen that lies by omission.
+ */
+interface ReceiptHealth {
+  everReceived: boolean
+  lastReceiptAt: string | null
+}
+
 /** How long the board keeps asking. Meta is usually done inside ten seconds. */
 const RECEIPT_POLL_MS  = 3500
 const RECEIPT_STOP_MS  = 3 * 60 * 1000
+/**
+ * How long an unconfirmed send is still “normal”.
+ *
+ * Meta answers within seconds when the pipeline is healthy. Past this, the desk
+ * is told plainly that nothing has been confirmed, rather than being left to
+ * read a grey tick as a delivery.
+ */
+const RECEIPT_SLOW_MS  = 45 * 1000
 
 export function SendDocsWhatsAppDialog({
   bookingRef, title, pack, driverId, onClose, onOpenChat,
@@ -119,6 +141,8 @@ export function SendDocsWhatsAppDialog({
   const [sent, setSent]       = useState<SendOutcome | null>(null)
   const [sentAt, setSentAt]   = useState<number | null>(null)
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
+  const [receipts, setReceipts] = useState<ReceiptHealth | null>(null)
+  const [slow, setSlow] = useState(false)
   const [editingCopy, setEditingCopy] = useState(false)
 
   useEffect(() => {
@@ -154,6 +178,7 @@ export function SendDocsWhatsAppDialog({
       const json = await res.json().catch(() => null)
       if (!res.ok) return
       setDeliveries((json.data?.sends ?? []) as Delivery[])
+      if (json.data?.receipts) setReceipts(json.data.receipts as ReceiptHealth)
     } catch {
       /* A receipt that cannot be read is not a send that failed. */
     }
@@ -161,6 +186,7 @@ export function SendDocsWhatsAppDialog({
 
   useEffect(() => {
     if (!sentAt) return
+    setSlow(false)
     void readReceipts()
     pollRef.current = setInterval(() => {
       if (Date.now() - sentAt > RECEIPT_STOP_MS) {
@@ -169,8 +195,27 @@ export function SendDocsWhatsAppDialog({
       }
       void readReceipts()
     }, RECEIPT_POLL_MS)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+    // The moment silence stops being normal.
+    const slowAt = setTimeout(() => setSlow(true), RECEIPT_SLOW_MS)
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+      clearTimeout(slowAt)
+    }
   }, [sentAt, readReceipts])
+
+  /**
+   * The sends that are still nobody's word but our own.
+   *
+   * `accepted` and `held` are what this system writes when the Graph API takes
+   * a message; `sent`, `delivered`, `read` and `failed` can only come from a
+   * Meta receipt. So anything still sitting in the first group is a document we
+   * cannot claim was delivered — and the driver-facing ones are the ones that
+   * matter, because a copy nobody received is a filing problem.
+   */
+  const unconfirmed = useMemo(
+    () => deliveries.filter(d => d.audience === 'driver' && (d.status === 'accepted' || d.status === 'held' || d.status === 'pending')),
+    [deliveries],
+  )
 
   const send = async () => {
     if (!reading.ok || !kinds.length) return
@@ -258,6 +303,10 @@ export function SendDocsWhatsAppDialog({
                     ? 'Sent as the approved template — the driver had not messaged us in the last 24 hours.'
                     : 'Sent as a normal message — the driver’s 24-hour window was open.'}
                 </p>
+                <p className="mt-1 text-emerald-300/60">
+                  WhatsApp accepting the message is not the same as the driver receiving it. The board
+                  below is the only thing that can say it arrived.
+                </p>
               </div>
             ) : (
               <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
@@ -267,6 +316,30 @@ export function SendDocsWhatsAppDialog({
             )}
 
             <ReceiptBoard deliveries={deliveries} onRefresh={() => void readReceipts()} />
+
+            {/* Silence, explained. */}
+            {sent && slow && unconfirmed.length ? (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-200">
+                <p className="font-bold flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" /> WhatsApp has not confirmed this reached the driver
+                </p>
+                {receipts && !receipts.everReceived ? (
+                  <p className="mt-1 leading-snug text-amber-300/90">
+                    No delivery receipt has <span className="font-bold">ever</span> been recorded on this system,
+                    so nothing here can confirm a delivery — not this send, and not any earlier one that reads
+                    as sent. Meta posts receipts to a single webhook, which on the operations number belongs to
+                    n8n: it has to forward the <span className="font-mono">statuses</span> array on to{' '}
+                    <span className="font-mono">/api/webhooks/whatsapp-status-signal</span> before this board can
+                    tell delivered from never-arrived. Until then, confirm with the driver directly.
+                  </p>
+                ) : (
+                  <p className="mt-1 leading-snug text-amber-300/90">
+                    Meta usually reports back within seconds. Treat the document as unconfirmed and ask the
+                    driver to acknowledge it — the board keeps updating if a receipt arrives later.
+                  </p>
+                )}
+              </div>
+            ) : null}
 
             {sent?.bookingSheet && !sent.bookingSheet.ok ? (
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-200">
@@ -461,17 +534,37 @@ export function SendDocsWhatsAppDialog({
 
 // ── The receipt board ────────────────────────────────────────────────────────
 
+/**
+ * Two families of state, and the board must never blur them.
+ *
+ * `pending`, `accepted` and `held` are this system's own word: WhatsApp took
+ * the call, and that is all anybody knows. `sent`, `delivered`, `read` and
+ * `failed` are Meta's word, arriving by receipt against the message id. Only
+ * the second family may look like good news — the first is amber, because a
+ * document nobody has confirmed is a document to go and check.
+ */
 const STATUS_TONE: Record<string, string> = {
-  pending:   'border-slate-700 bg-slate-800/60 text-slate-300',
+  pending:   'border-amber-500/30 bg-amber-500/10 text-amber-200',
+  accepted:  'border-amber-500/30 bg-amber-500/10 text-amber-200',
+  held:      'border-amber-500/40 bg-amber-500/10 text-amber-200',
   sent:      'border-slate-600 bg-slate-800/60 text-slate-200',
   delivered: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200',
   read:      'border-sky-500/30 bg-sky-500/10 text-sky-200',
   failed:    'border-rose-500/40 bg-rose-500/10 text-rose-200',
 }
 
+/** The label the badge shows, when the raw status is not a word for a desk. */
+const STATUS_LABEL: Record<string, string> = {
+  accepted: 'unconfirmed',
+  held:     'held',
+  pending:  'unconfirmed',
+}
+
 const STATUS_WORD: Record<string, string> = {
-  pending:   'waiting',
-  sent:      'sent — not yet on the phone',
+  pending:   'handed to WhatsApp — nothing confirmed',
+  accepted:  'WhatsApp took it — no delivery confirmation yet',
+  held:      'WhatsApp is holding this for review — not sent',
+  sent:      'left WhatsApp — not yet on the phone',
   delivered: 'on the driver’s phone',
   read:      'opened',
   failed:    'never arrived',
@@ -522,7 +615,7 @@ function ReceiptBoard({ deliveries, onRefresh }: { deliveries: Delivery[]; onRef
               </p>
               <span className={cn('px-1.5 py-0.5 rounded border text-[9px] font-black uppercase tracking-wide flex items-center gap-1', STATUS_TONE[d.status] ?? STATUS_TONE.pending)}>
                 <StatusIcon status={d.status} />
-                {d.status}
+                {STATUS_LABEL[d.status] ?? d.status}
               </span>
             </div>
             <p className="text-[10px] text-slate-500 mt-0.5 ml-5">
@@ -545,7 +638,10 @@ function StatusIcon({ status }: { status: string }) {
   if (status === 'read')      return <CheckCheck className="w-2.5 h-2.5" />
   if (status === 'delivered') return <CheckCheck className="w-2.5 h-2.5" />
   if (status === 'sent')      return <Check className="w-2.5 h-2.5" />
-  return <Loader2 className="w-2.5 h-2.5 animate-spin" />
+  // No tick before a receipt. A tick is the whole reason the old board was
+  // believed about documents that never arrived.
+  if (status === 'held')      return <AlertTriangle className="w-2.5 h-2.5" />
+  return <Clock className="w-2.5 h-2.5" />
 }
 
 // ── The standing copy ────────────────────────────────────────────────────────

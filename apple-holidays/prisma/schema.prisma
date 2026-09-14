@@ -2263,7 +2263,11 @@ model DriverDocSend {
 
   waMessageId String?
 
-  /// pending → sent → delivered → read, or failed at any point.
+  /// Two families. `pending`, `accepted` and `held` are this system's own word:
+  /// the Graph API took the call and nothing has confirmed a delivery. `sent`,
+  /// `delivered`, `read` and `failed` come only from a Meta delivery receipt —
+  /// never from the send path — so a row stuck on `accepted` means no receipt
+  /// ever arrived, not that the driver has his documents.
   status        String  @default("pending") @db.VarChar(24)
   failureReason String? @db.Text
 
