@@ -58,7 +58,23 @@ interface CopyContact {
   phone?: string
 }
 
+/**
+ * What Meta says about the line we send FROM.
+ *
+ * A number rated RED keeps accepting messages over the API and delivering
+ * fewer of them, and nothing in a successful send says so. Shown on the
+ * compose step, because it is a fact about every send the desk is about to
+ * make rather than about this one booking.
+ */
+interface NumberHealth {
+  canSend: 'AVAILABLE' | 'LIMITED' | 'BLOCKED' | null
+  quality: string | null
+  displayNumber: string | null
+  notes: string[]
+}
+
 interface Contact {
+  numberHealth?: NumberHealth
   driverName: string | null
   vehicle: string | null
   storedPhone: string | null
@@ -338,6 +354,16 @@ export function SendDocsWhatsAppDialog({
                     driver to acknowledge it — the board keeps updating if a receipt arrives later.
                   </p>
                 )}
+                {contact?.numberHealth?.quality === 'RED'
+                  || contact?.numberHealth?.canSend === 'LIMITED'
+                  || contact?.numberHealth?.canSend === 'BLOCKED' ? (
+                  <p className="mt-1.5 leading-snug text-amber-300/90">
+                    The operations line is also rated{' '}
+                    <span className="font-bold">{contact.numberHealth?.quality ?? contact.numberHealth?.canSend}</span>{' '}
+                    by Meta, which throttles delivery from it without reporting an error. That is the more
+                    likely reason this did not arrive.
+                  </p>
+                ) : null}
               </div>
             ) : null}
 
@@ -506,6 +532,8 @@ export function SendDocsWhatsAppDialog({
               </span>
             </button>
 
+            <SendingNumberNotice health={contact?.numberHealth} />
+
             {!contact?.canSend ? (
               <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-300">
                 Sending documents to a driver is for the operations desk, Accounts and admins.
@@ -529,6 +557,51 @@ export function SendDocsWhatsAppDialog({
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * The line this message leaves from, when Meta is unhappy about it.
+ *
+ * Silent when the number is healthy — a warning shown on every send is a
+ * warning nobody reads. It appears only when Meta itself reports the number as
+ * LIMITED or BLOCKED, or rates it RED, which is the state in which documents
+ * are accepted by the API and then quietly not delivered.
+ */
+function SendingNumberNotice({ health }: { health: NumberHealth | undefined }) {
+  if (!health) return null
+  const limited = health.canSend === 'LIMITED' || health.canSend === 'BLOCKED'
+  const red     = health.quality === 'RED'
+  if (!limited && !red) return null
+
+  const blocked = health.canSend === 'BLOCKED'
+
+  return (
+    <div className={cn(
+      'rounded-xl border px-3 py-2.5 text-[11px]',
+      blocked ? 'border-rose-500/40 bg-rose-500/10 text-rose-200'
+              : 'border-amber-500/40 bg-amber-500/10 text-amber-200',
+    )}>
+      <p className="font-bold flex items-center gap-1.5">
+        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+        {blocked
+          ? 'WhatsApp has blocked sending from this number'
+          : 'WhatsApp is limiting what this number can deliver'}
+      </p>
+      <p className="mt-1 leading-snug opacity-90">
+        The operations line{health.displayNumber ? ` (${health.displayNumber})` : ''} is rated{' '}
+        <span className="font-bold">{health.quality ?? health.canSend}</span> by Meta
+        {red ? ' — too many recipients blocked or reported it' : ''}. Messages from a
+        {blocked ? ' blocked' : ' limited'} number are still accepted by the API and then delivered
+        to fewer and fewer people, with no error to show for it. A document that never arrives is
+        more likely this than anything wrong with the booking, so confirm with the driver directly.
+      </p>
+      {health.notes.length ? (
+        <ul className="mt-1.5 space-y-0.5 opacity-80">
+          {health.notes.map(n => <li key={n}>· {n}</li>)}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 

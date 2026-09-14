@@ -438,6 +438,87 @@ export async function createMetaTemplate(params: {
 }
 
 /**
+ * Can the number we send FROM actually send?
+ *
+ * A send is refused in one obvious way and throttled in one invisible one. The
+ * obvious way is an error: an unapproved template, a malformed number, and the
+ * call fails loudly. The invisible one is quality — Meta rates the sending
+ * number on how recipients react to it, and a number rated RED keeps accepting
+ * messages over the API while delivering fewer and fewer of them. Nothing in a
+ * 200 response says so. `health_status` is where Meta says it out loud:
+ * `can_send_message` reads AVAILABLE, LIMITED or BLOCKED, per entity.
+ *
+ * This is the difference between "the template is broken" and "this number is
+ * being throttled", which are the two explanations a desk will otherwise guess
+ * between while re-sending documents that were never going to arrive.
+ *
+ * Never throws: an unreachable Graph API is not a reason to block a send, only
+ * a reason to say nothing about the number's health.
+ */
+export interface SendingNumberHealth {
+  /** AVAILABLE | LIMITED | BLOCKED, or null when Meta could not be asked. */
+  canSend: 'AVAILABLE' | 'LIMITED' | 'BLOCKED' | null
+  /** GREEN | YELLOW | RED | UNKNOWN. */
+  quality: string | null
+  /** The number as WhatsApp displays it, so the desk knows which line this is. */
+  displayNumber: string | null
+  /** Meta's own sentences about why, ready to show an operator. */
+  notes: string[]
+}
+
+/** Meta's answer changes on the hour, not the second; a dialog need not re-ask. */
+const HEALTH_TTL_MS = 5 * 60 * 1000
+let healthCache: { at: number; value: SendingNumberHealth } | null = null
+
+export async function readSendingNumberHealth(): Promise<SendingNumberHealth> {
+  const empty: SendingNumberHealth = { canSend: null, quality: null, displayNumber: null, notes: [] }
+
+  if (healthCache && Date.now() - healthCache.at < HEALTH_TTL_MS) return healthCache.value
+
+  const { accessToken, phoneNumberId } = getMetaCreds()
+  if (!accessToken || !phoneNumberId) return empty
+
+  try {
+    const res = await fetch(
+      `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}` +
+        `?fields=${encodeURIComponent('display_phone_number,quality_rating,health_status')}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    )
+    if (!res.ok) return empty
+    const json = await res.json() as {
+      display_phone_number?: string
+      quality_rating?: string
+      health_status?: {
+        can_send_message?: string
+        entities?: Array<{ entity_type?: string; can_send_message?: string; additional_info?: string[] }>
+      }
+    }
+
+    const entities = json.health_status?.entities ?? []
+    // The overall verdict, and the reasons behind it. A WABA that is fine and a
+    // phone number that is not still adds up to messages that do not arrive, so
+    // the worst entity decides.
+    const notes = entities
+      .flatMap(e => (e.additional_info ?? []).map(t => String(t)))
+      .filter(Boolean)
+
+    const raw = String(json.health_status?.can_send_message ?? '').toUpperCase()
+    const canSend = raw === 'AVAILABLE' || raw === 'LIMITED' || raw === 'BLOCKED' ? raw : null
+
+    const value: SendingNumberHealth = {
+      canSend,
+      quality: json.quality_rating ? String(json.quality_rating).toUpperCase() : null,
+      displayNumber: json.display_phone_number ?? null,
+      notes: notes.filter((n, i) => notes.indexOf(n) === i),
+    }
+    healthCache = { at: Date.now(), value }
+    return value
+  } catch {
+    return empty
+  }
+}
+
+/**
  * Is this phone inside WhatsApp's 24h customer-service window (free-form text
  * allowed) or not (only an approved template will deliver)? Computed LOCALLY
  * from our own whatsapp_messages table — no Meta/n8n call needed, since inbound

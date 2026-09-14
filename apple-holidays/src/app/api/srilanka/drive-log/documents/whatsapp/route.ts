@@ -29,6 +29,7 @@ import { authOptions } from '@/lib/auth'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { normaliseSriLankanPhone } from '@/lib/sl-phone'
+import { readSendingNumberHealth } from '@/lib/whatsapp'
 import { readDriverDocCopy } from '@/lib/sl-driver-doc-copy'
 import { sendSettlementDocs } from '@/lib/sl-settlement-docs-notify'
 import { derivePack, packForPrint } from '@/lib/sl-settlement-docs-server'
@@ -77,9 +78,16 @@ export async function GET(req: NextRequest) {
     // Where the second copy goes. Shown before the send, not after: a desk that
     // learns about the audit copy from someone else's chat has been surprised
     // by its own system.
-    const copy = await readDriverDocCopy()
+    // What Meta says about the line we send FROM. Read here rather than after a
+    // failed send, because a throttled number is a fact about every send the
+    // desk is about to make, not about this one booking.
+    const [copy, numberHealth] = await Promise.all([
+      readDriverDocCopy(),
+      readSendingNumberHealth(),
+    ])
 
     return buildApiSuccess({
+      numberHealth,
       driverName: pack.header.driverName || null,
       vehicle:    [pack.header.vehicleType, pack.header.vehiclePlate].filter(Boolean).join(' · ') || null,
       /** Exactly as it is written on the driver record — the desk should see the raw value. */
