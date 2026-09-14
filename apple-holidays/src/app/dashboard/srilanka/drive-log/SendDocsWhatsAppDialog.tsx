@@ -358,10 +358,11 @@ export function SendDocsWhatsAppDialog({
                   || contact?.numberHealth?.canSend === 'LIMITED'
                   || contact?.numberHealth?.canSend === 'BLOCKED' ? (
                   <p className="mt-1.5 leading-snug text-amber-300/90">
-                    The operations line is also rated{' '}
+                    Separately, the operations line is rated{' '}
                     <span className="font-bold">{contact.numberHealth?.quality ?? contact.numberHealth?.canSend}</span>{' '}
-                    by Meta, which throttles delivery from it without reporting an error. That is the more
-                    likely reason this did not arrive.
+                    by Meta, which reduces how much it may send. That is a standing risk to every send from
+                    this number — not a diagnosis of this one, which nothing here can make until receipts
+                    arrive.
                   </p>
                 ) : null}
               </div>
