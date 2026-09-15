@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import { readDb } from '@/lib/prisma-read'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope, userCountryScope } from '@/lib/country-detection'
@@ -14,6 +14,11 @@ export async function GET(req: NextRequest) {
   try {
   const session = await getServerSession(authOptions)
   if (!session) return buildApiError('Unauthorized', 401)
+
+  // Read-only aggregate screen — served from a read replica so the dashboard's
+  // scans do not compete with the live app's writes on the primary. Falls back
+  // to the primary when no replica is configured.
+  const db = await readDb()
 
   const role = session.user.role as UserRole
   const userCountry = (session.user as any).country as string | undefined
@@ -59,32 +64,32 @@ export async function GET(req: NextRequest) {
     tripPendingReview,
     tripCompleted,
   ] = await Promise.all([
-    prisma.booking.count({ where: countryWhere }),
-    prisma.booking.count({
+    db.booking.count({ where: countryWhere }),
+    db.booking.count({
       where: { ...countryWhere, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
     }),
-    prisma.booking.count({ where: { ...countryWhere, status: 'GT_REVIEW' } }),
-    prisma.booking.count({ where: { ...countryWhere, status: 'AWAITING_PAYMENT_CONFIRM' } }),
-    prisma.booking.count({
+    db.booking.count({ where: { ...countryWhere, status: 'GT_REVIEW' } }),
+    db.booking.count({ where: { ...countryWhere, status: 'AWAITING_PAYMENT_CONFIRM' } }),
+    db.booking.count({
       where: {
         ...countryWhere,
         arrivalDate: { gte: now, lte: next7Days },
         status: { notIn: ['CANCELLED'] },
       },
     }),
-    prisma.booking.groupBy({
+    db.booking.groupBy({
       by: ['status'],
       where: countryWhere,
       _count: { _all: true },
     }),
-    prisma.booking.count({
+    db.booking.count({
       where: { ...countryWhere, arrivalDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
     }),
-    prisma.booking.count({
+    db.booking.count({
       where: { ...countryWhere, departureDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
     }),
-    prisma.flight.count({ where: flightDateWhere }),
-    prisma.booking.findMany({
+    db.flight.count({ where: flightDateWhere }),
+    db.booking.findMany({
       where: { ...countryWhere, arrivalDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
       select: {
         bookingRef: true,
@@ -96,7 +101,7 @@ export async function GET(req: NextRequest) {
       orderBy: { arrivalDate: 'asc' },
       take: 10,
     }),
-    prisma.flight.findMany({
+    db.flight.findMany({
       where: flightDateWhere,
       select: {
         id: true,
@@ -112,8 +117,8 @@ export async function GET(req: NextRequest) {
       take: 10,
     }),
     // Derived post-travel buckets — see src/lib/trip-state.ts
-    prisma.booking.count({ where: { ...countryWhere, ...tripStateWhere(TRIP_PENDING_REVIEW, now) } }),
-    prisma.booking.count({ where: { ...countryWhere, ...tripStateWhere(TRIP_COMPLETED, now) } }),
+    db.booking.count({ where: { ...countryWhere, ...tripStateWhere(TRIP_PENDING_REVIEW, now) } }),
+    db.booking.count({ where: { ...countryWhere, ...tripStateWhere(TRIP_COMPLETED, now) } }),
   ])
 
   const byStatus: Record<string, number> = {}
@@ -124,7 +129,7 @@ export async function GET(req: NextRequest) {
   byStatus[TRIP_COMPLETED] = tripCompleted
 
   // Profit calculation scoped to filtered bookings
-  const filteredBookings = await prisma.booking.findMany({
+  const filteredBookings = await db.booking.findMany({
     where: countryWhere,
     select: { id: true },
   })
@@ -134,7 +139,7 @@ export async function GET(req: NextRequest) {
   let totalCost = 0
 
   if (filteredIds.length > 0) {
-    const allPnl = await prisma.pNL.findMany({
+    const allPnl = await db.pNL.findMany({
       where: { bookingId: { in: filteredIds } },
       include: { lineItems: true },
     })

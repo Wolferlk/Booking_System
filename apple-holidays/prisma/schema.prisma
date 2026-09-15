@@ -204,6 +204,14 @@ model Booking {
   @@index([hotelOnly])
   @@index([clientUserId], map: "bookings_clientUserId_fkey")
   @@index([createdById], map: "bookings_createdById_fkey")
+  // Scheduler performance indexes — applied to live with
+  // `npm run db:indexes -- --apply`, NOT with `prisma db push` (live has drifted
+  // from this schema; a push would try to reconcile all of it). Declared here so
+  // the model and the database agree.
+  @@index([createdAt], map: "idx_bookings_createdAt")
+  @@index([status, createdAt], map: "idx_bookings_status_createdAt")
+  @@index([status, arrivalDate], map: "idx_bookings_status_arrivalDate")
+  @@index([isNumber], map: "idx_bookings_isNumber")
   @@map("bookings")
 }
 
@@ -250,6 +258,8 @@ model Flight {
   booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([bookingId], map: "flights_bookingId_fkey")
+  // Today's-flights range scan on /api/overview and /api/dashboard/stats.
+  @@index([date], map: "idx_flights_date")
   @@map("flights")
 }
 

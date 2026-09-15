@@ -14,6 +14,7 @@ import {
   PlaneTakeoff, Search, CornerDownLeft, SearchX, ShoppingBag, MailCheck, MailPlus, Inbox,
   ChevronDown, Zap, Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
+  Database,
 } from 'lucide-react'
 import { cn, getInitials } from '@/lib/utils'
 import { ROLE_LABELS } from '@/lib/rbac'
@@ -40,6 +41,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   XCircle, PackagePlus, CalendarClock, PlaneTakeoff, ShoppingBag, MailCheck, MailPlus, Inbox,
   Sparkles, Store, BedDouble, MessagesSquare, CalendarDays, Wallet, Banknote,
   Gauge, ReceiptText, FileMinus2, FileSpreadsheet, Building2, CalendarCheck2, ThumbsUp, Compass,
+  Database,
 }
 
 // The WhatsApp inbox is its own full-screen portal (no persistent sidebar), so
@@ -242,6 +244,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Database Health',    href: '/dashboard/admin/db-health',             icon: 'Database' },
     { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
   ],
@@ -332,6 +335,7 @@ const NAV_ITEMS: Record<UserRole, { label: string; href: string; icon: string; b
     { label: 'Auto Reports',       href: '/dashboard/reports/auto',                icon: 'MailCheck' },
     { label: 'Schedules',          href: '/dashboard/admin/schedules',             icon: 'CalendarClock' },
     { label: 'Settings',           href: '/dashboard/admin/config',                icon: 'Settings' },
+    { label: 'Database Health',    href: '/dashboard/admin/db-health',             icon: 'Database' },
     { label: 'Bookings Cleanup',   href: '/dashboard/admin/bookings-cleanup',      icon: 'Trash2',      danger: true },
     { label: 'Danger Zone',        href: '/dashboard/admin/danger',                icon: 'ShieldAlert', danger: true },
   ],

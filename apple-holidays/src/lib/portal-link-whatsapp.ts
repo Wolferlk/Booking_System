@@ -22,6 +22,7 @@
  * and per-booking from the Customer WhatsApp panel on the booking page.
  */
 import { prisma } from '@/lib/prisma'
+import { readDb } from '@/lib/prisma-read'
 import { normalisePhone, sendViaMetaTemplate } from '@/lib/whatsapp'
 import { portalLinkPath } from '@/lib/portal-link'
 
@@ -305,7 +306,11 @@ export async function runPortalWelcome(): Promise<PortalRunResult> {
   const { start, end } = dayBounds(targetDate)
   console.log(`[PortalLink:welcome] Running for bookings created on ${targetDate}`)
 
-  const candidates = await prisma.booking.findMany({
+  // Replica read — this is a shortlist over a closed past day (bookings created
+  // WELCOME_DAYS_AFTER days ago), so replica lag cannot change who is in it, and
+  // sendPortalLinkForBooking() re-reads the booking on the primary before it
+  // sends anything.
+  const candidates = await (await readDb()).booking.findMany({
     where: {
       status:        { notIn: [...SKIP_STATUSES] },
       createdAt:     { gte: start, lte: end },
@@ -330,7 +335,9 @@ export async function runPortalReminder(): Promise<PortalRunResult> {
   const { start, end } = dayBounds(targetDate)
   console.log(`[PortalLink:reminder] Running for arrivals on ${targetDate}`)
 
-  const candidates = await prisma.booking.findMany({
+  // Replica read — same reasoning as the welcome sweep: a fixed arrival-date
+  // window three days out, and the per-booking send re-reads on the primary.
+  const candidates = await (await readDb()).booking.findMany({
     where: {
       status:      { notIn: [...SKIP_STATUSES] },
       arrivalDate: { gte: start, lte: end },

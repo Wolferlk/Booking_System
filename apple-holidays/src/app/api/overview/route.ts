@@ -1,9 +1,14 @@
-import { prisma } from '@/lib/prisma'
+import { readDb } from '@/lib/prisma-read'
 import { buildApiSuccess } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  // Read-only aggregate screen — served from a read replica so the dashboard's
+  // scans do not compete with the live app's writes on the primary. Falls back
+  // to the primary when no replica is configured.
+  const db = await readDb()
+
 
   const now = new Date()
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
@@ -19,13 +24,13 @@ export async function GET() {
     todayPax,
     recentBookings,
   ] = await Promise.all([
-    prisma.booking.count({
+    db.booking.count({
       where: { arrivalDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
     }),
-    prisma.booking.count({
+    db.booking.count({
       where: { departureDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
     }),
-    prisma.flight.findMany({
+    db.flight.findMany({
       where: { date: { gte: todayStart, lt: todayEnd } },
       include: {
         booking: {
@@ -41,20 +46,20 @@ export async function GET() {
       },
       orderBy: { depTime: 'asc' },
     }),
-    prisma.booking.count(),
-    prisma.booking.groupBy({
+    db.booking.count(),
+    db.booking.groupBy({
       by: ['status'],
       _count: { id: true },
     }),
-    prisma.booking.groupBy({
+    db.booking.groupBy({
       by: ['operationCountry'],
       _count: { id: true },
     }),
-    prisma.booking.aggregate({
+    db.booking.aggregate({
       where: { arrivalDate: { gte: todayStart, lt: todayEnd }, status: { notIn: ['CANCELLED'] } },
       _sum: { paxAdults: true, paxChildren: true },
     }),
-    prisma.booking.findMany({
+    db.booking.findMany({
       take: 8,
       orderBy: { createdAt: 'desc' },
       select: {

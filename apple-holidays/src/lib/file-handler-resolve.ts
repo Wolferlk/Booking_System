@@ -24,6 +24,7 @@
  */
 import type { RowDataPacket } from 'mysql2/promise'
 import { prisma } from './prisma'
+import { readDb } from './prisma-read'
 import { quoteAiQuery, isQuoteAiConfigured } from './quote-ai-db'
 import { logActivity } from './activity'
 import { PLACEHOLDER_FILE_HANDLER, isPlaceholderFileHandler } from './file-handler-placeholder'
@@ -181,7 +182,12 @@ async function applyToCandidates(candidates: Candidate[], userId?: string): Prom
 
 /** Bookings still carrying the placeholder, newest first. */
 async function placeholderBookings(opts: { createdBefore?: Date; createdAfter?: Date } = {}): Promise<Candidate[]> {
-  const rows = await prisma.booking.findMany({
+  // Replica read. Safe here for two reasons: the sweep only ever considers
+  // bookings created at least AUTO_RESOLVE_DELAY_MINUTES ago, so replica lag
+  // cannot hide a row this pass was meant to see; and the write below is a
+  // guarded updateMany that re-asserts the placeholder it read, so a stale
+  // candidate simply updates nothing.
+  const rows = await (await readDb()).booking.findMany({
     where: {
       // MySQL's collation makes this case-insensitive; the exact spelling is
       // pinned by the fileHandlerKey() filter below, which also rules out the

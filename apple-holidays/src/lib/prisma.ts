@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 import { loadEnvConfig } from '@next/env'
+import { applyPoolSettings, poolSettings } from './db-tuning'
 
 loadEnvConfig(process.cwd())
 
@@ -30,13 +31,30 @@ function resolveDatabaseUrl() {
   const mysqlUrl = buildMysqlUrlFromParts()
   const envUrl = process.env.DATABASE_URL?.trim()
 
-  if (mysqlUrl) return mysqlUrl
-  if (directUrl) return directUrl
+  if (mysqlUrl) return withPool(mysqlUrl)
+  if (directUrl) return withPool(directUrl)
   if (envUrl && !envUrl.startsWith('prisma://') && !envUrl.startsWith('prisma+postgres://')) {
-    return envUrl
+    return withPool(envUrl)
   }
 
   return envUrl ?? undefined
+}
+
+/**
+ * Cap the pool on whichever URL form won above.
+ *
+ * Doing it here rather than in the .env is deliberate: this app resolves its
+ * connection string from four different sources (DB_* parts, DIRECT_DATABASE_URL,
+ * MYSQL_URL, DATABASE_URL), and only one of them is the .env line an operator
+ * would think to edit. Capping at the resolver means every path is capped —
+ * including Amplify, where the environment is set separately and has drifted
+ * from local .env before.
+ *
+ * `applyPoolSettings` never overwrites a parameter the URL already carries, so
+ * an explicit `?connection_limit=` in the environment still wins.
+ */
+function withPool(url: string): string {
+  return applyPoolSettings(url, poolSettings())
 }
 
 // Always cache on globalThis — prevents multiple PrismaClient instances across
