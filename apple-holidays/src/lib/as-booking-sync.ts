@@ -33,6 +33,9 @@
  *     never applied. Locally-entered columns AppleSystem does not know about
  *     (itinerary inclusions/exclusions, hotel address/contact) are carried
  *     across onto the matching new row.
+ *   • Package/notes text that a human edited on the booking page is never
+ *     overwritten silently. A differing upstream value is parked as a pending
+ *     conflict for someone to accept or reject — see `booking-field-edits.ts`.
  *   • Passengers and emergency contacts are only *seeded* when the booking has
  *     none. AppleSystem sends the lead guest name alone, so overwriting a
  *     manually-built pax list with one name would be pure data loss.
@@ -48,6 +51,12 @@ import { prisma } from '@/lib/prisma'
 import { mapQuoteToBooking, ASMappingError, type MappedBookingInput } from '@/lib/as-booking-map'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
 import { logActivity, ACTION } from '@/lib/activity'
+import {
+  getFieldEdits,
+  writePendingConflicts,
+  type PackageNoteField,
+  type SyncConflict,
+} from '@/lib/booking-field-edits'
 
 // ── Sync state (system_settings KV, one row per booking) ─────────────────────
 
@@ -67,6 +76,8 @@ export interface AsSyncState {
   revision: number | null
   /** Field / section names that actually changed on that run. */
   changed: string[]
+  /** Hand-edited fields that run left alone, pending a replace/skip decision. */
+  pending?: string[]
 }
 
 /** Last successful sync for one booking, or null if it has never been synced. */
@@ -175,6 +186,11 @@ export interface AsSyncResult {
   fields: FieldChange[]
   /** Child-collection outcomes. */
   sections: SectionChange[]
+  /**
+   * Hand-edited package/notes fields this run refused to overwrite. Nothing was
+   * written for these — each one is waiting for a replace/skip decision.
+   */
+  conflicts: SyncConflict[]
   /** True when nothing at all differed from what we already had. */
   unchanged: boolean
   syncedAt: string
@@ -283,8 +299,13 @@ export async function syncBookingFromAs(
     )
   }
 
+  // Which package/notes fields a human has edited by hand. These are the only
+  // fields a sync is not allowed to decide on its own — see `setGuardedText`.
+  const fieldEdits = await getFieldEdits(booking.bookingRef)
+
   // ── Scalars: only overwrite when upstream actually sent something ──────────
   const fields: FieldChange[] = []
+  const conflicts: SyncConflict[] = []
   // Built dynamically — only the fields upstream actually sent land in here, so
   // it is assembled untyped and asserted into the update shape at the call site.
   const data: Record<string, unknown> = {}
@@ -311,6 +332,35 @@ export async function syncBookingFromAs(
     if (next === null) return
     data[field] = next
     fields.push({ field, from: null, to: next })
+  }
+
+  /**
+   * A package/notes field, which ops may have corrected by hand.
+   *
+   * Unedited, it behaves exactly like {@link setText}. Once someone has saved
+   * it on the booking page it is never silently overwritten again: a differing
+   * upstream value is recorded as a conflict and left for a human to resolve,
+   * because the two authors disagree and only one of them is in the room.
+   */
+  function setGuardedText(field: PackageNoteField, current: string | null, incoming: string | null) {
+    const next = nonEmpty(incoming)
+    if (next === null) return                       // upstream blank → keep ours
+    if (norm(current) === norm(next)) return        // already agrees → nothing to ask
+
+    const edit = fieldEdits[field]
+    if (edit) {
+      conflicts.push({
+        field,
+        stored: nonEmpty(current),
+        incoming: next,
+        editedAt: edit.at,
+        editedBy: edit.by,
+      })
+      return                                        // nothing written for this field
+    }
+
+    data[field] = next
+    fields.push({ field, from: nonEmpty(current), to: next })
   }
 
   function setDate(field: string, current: Date, incoming: string) {
@@ -354,10 +404,10 @@ export async function syncBookingFromAs(
     }
   }
   setText('currency', booking.currency, mapped.currency)
-  setText('terms', booking.terms, mapped.terms)
-  setText('packageIncludes', booking.packageIncludes, mapped.packageIncludes)
-  setText('packageExcludes', booking.packageExcludes, mapped.packageExcludes)
-  setText('valueAddedServices', booking.valueAddedServices, mapped.valueAddedServices)
+  setGuardedText('terms', booking.terms, mapped.terms)
+  setGuardedText('packageIncludes', booking.packageIncludes, mapped.packageIncludes)
+  setGuardedText('packageExcludes', booking.packageExcludes, mapped.packageExcludes)
+  setGuardedText('valueAddedServices', booking.valueAddedServices, mapped.valueAddedServices)
   setText('contactEmail', booking.contactEmail, mapped.contactEmail)
 
   // ── Itinerary ─────────────────────────────────────────────────────────────
@@ -583,6 +633,22 @@ export async function syncBookingFromAs(
   ]
   const syncedAt = new Date().toISOString()
 
+  // Park the conflicts for a human to decide on. This is a replace, not a
+  // merge: it always reflects the latest upstream snapshot, and a run that
+  // raised none clears whatever an earlier run had parked — those values are
+  // stale, and one of them may well have just been applied cleanly above.
+  await writePendingConflicts(
+    booking.bookingRef,
+    conflicts.length > 0
+      ? {
+          at: syncedAt,
+          quotationNo: nonEmpty(row.quotation_no),
+          revision: mapped.source.revision,
+          items: conflicts,
+        }
+      : null,
+  )
+
   await writeSyncState(booking.bookingRef, {
     at: syncedAt,
     by: opts.actorName,
@@ -590,11 +656,12 @@ export async function syncBookingFromAs(
     quotationNo: nonEmpty(row.quotation_no),
     revision: mapped.source.revision,
     changed,
+    ...(conflicts.length > 0 && { pending: conflicts.map((c) => c.field) }),
   })
 
   // Activity log, never a StatusEvent — the status timeline is the append-only
   // record of workflow transitions, and a content refresh is not one.
-  if (changed.length > 0 && opts.actorId) {
+  if ((changed.length > 0 || conflicts.length > 0) && opts.actorId) {
     await logActivity({
       userId: opts.actorId,
       action: ACTION.BOOKING_UPDATED,
@@ -606,6 +673,7 @@ export async function syncBookingFromAs(
         bookingRef: booking.bookingRef,
         quotationNo: row.quotation_no,
         fields,
+        conflicts: conflicts.map((c) => ({ field: c.field, editedBy: c.editedBy, editedAt: c.editedAt })),
         itinerary: itinChanged ? { previous: prevItin, created: mapped.itineraryItems.length } : null,
         accommodations: accChanged ? { previous: prevAcc, created: mapped.accommodations.length } : null,
         seededPassengers: seedPassengers ? mapped.passengers.length : 0,
@@ -622,7 +690,8 @@ export async function syncBookingFromAs(
     revision: mapped.source.revision,
     fields,
     sections,
-    unchanged: changed.length === 0,
+    conflicts,
+    unchanged: changed.length === 0 && conflicts.length === 0,
     syncedAt,
   }
 }

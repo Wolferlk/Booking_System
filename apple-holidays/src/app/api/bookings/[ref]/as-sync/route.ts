@@ -17,6 +17,7 @@ import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { syncBookingFromAs, getSyncState, AsSyncError } from '@/lib/as-booking-sync'
+import { getPendingConflicts } from '@/lib/booking-field-edits'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -49,9 +50,17 @@ export async function GET(_req: NextRequest, { params }: { params: { ref: string
   )
   if (error) return error
 
+  const [lastSync, pendingConflicts] = await Promise.all([
+    getSyncState(booking!.bookingRef),
+    getPendingConflicts(booking!.bookingRef),
+  ])
+
   return buildApiSuccess({
     bookingRef: booking!.bookingRef,
-    lastSync: await getSyncState(booking!.bookingRef),
+    lastSync,
+    // Raised by an earlier run — including the automatic pre-arrival one, which
+    // has nobody to ask — so the page can prompt for a decision on load.
+    pendingConflicts,
   })
 }
 
@@ -78,9 +87,15 @@ export async function POST(_req: NextRequest, { params }: { params: { ref: strin
     })
 
     const changedCount = result.fields.length
+    const conflictCount = result.conflicts.length
+    const conflictNote = conflictCount
+      ? ` ${conflictCount} hand-edited field(s) were left alone and need a replace/skip decision.`
+      : ''
     const message = result.unchanged
       ? 'Already up to date — AppleSystem has nothing newer for this booking.'
-      : `Booking updated from AppleSystem — ${changedCount} field(s) changed. Workflow status, tickets, drivers and confirmations were not touched.`
+      : changedCount === 0 && conflictCount > 0
+        ? `Nothing was written — ${conflictCount} hand-edited field(s) differ from AppleSystem and need a replace/skip decision.`
+        : `Booking updated from AppleSystem — ${changedCount} field(s) changed. Workflow status, tickets, drivers and confirmations were not touched.${conflictNote}`
 
     return buildApiSuccess(result, message)
   } catch (err) {

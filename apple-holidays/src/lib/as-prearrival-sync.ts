@@ -154,6 +154,12 @@ export interface PreSyncDetail {
   status: 'updated' | 'unchanged' | 'failed'
   /** Field / section names that changed, for an `updated` row. */
   changed?: string[]
+  /**
+   * Hand-edited package/notes fields this run refused to overwrite. An
+   * automatic run has nobody to ask, so it parks them and someone answers on
+   * the booking page — see `booking-field-edits.ts`.
+   */
+  pending?: string[]
   error?: string
 }
 
@@ -310,7 +316,12 @@ export async function runPreArrivalSync(opts: RunPreSyncOptions): Promise<PreSyn
             ...result.fields.map((f) => f.field),
             ...result.sections.filter((s) => !s.skipped).map((s) => s.section),
           ]
-          details.push({ bookingRef: b.bookingRef, status: 'updated', changed })
+          details.push({
+            bookingRef: b.bookingRef,
+            status: 'updated',
+            changed,
+            ...(result.conflicts.length > 0 && { pending: result.conflicts.map((c) => c.field) }),
+          })
         }
       } catch (err) {
         failed++

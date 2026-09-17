@@ -117,6 +117,28 @@ type ExtractedAccommodation = {
   roomType: string; mealType: string; contact: string; address: string
 }
 
+/**
+ * The "Package Details & Notes" card, in display order.
+ *
+ * `fromApi` marks the four AppleSystem actually sends (see `as-booking-map.ts`).
+ * Editing one of those is what a later "Fetch Data from API" has to ask about
+ * before overwriting — the marks and the prompt live in
+ * `src/lib/booking-field-edits.ts`. The other six exist only in this system, so
+ * a sync has no opinion about them and never touches them.
+ */
+const PACKAGE_NOTE_FIELDS: { key: string; label: string; fromApi?: boolean }[] = [
+  { key: 'valueAddedServices', label: 'Value Added Services',       fromApi: true },
+  { key: 'packageIncludes',    label: 'Above Package Includes',     fromApi: true },
+  { key: 'packageExcludes',    label: 'The Above Package Excludes', fromApi: true },
+  { key: 'terms',              label: 'Terms & Conditions',         fromApi: true },
+  { key: 'exclusions',         label: 'Exclusions' },
+  { key: 'policyNotes',        label: 'Policy Notes' },
+  { key: 'importantNotes',     label: 'Important Notes' },
+  { key: 'tips',               label: 'Tips' },
+  { key: 'otherNote',          label: 'Other Note' },
+  { key: 'clientRequest',      label: 'Client Request' },
+]
+
 /** Pre-filled reason when the file handler cancels without typing their own. */
 const DEFAULT_CANCEL_REASON = 'File handler cancelled this booking'
 
@@ -260,6 +282,11 @@ export default function BookingDetailPage() {
   const [contactForm, setContactForm] = useState({ agentEmail: '', agentPhone: '', agentWhatsapp: '', agentAddress: '', contactEmail: '', contactPhone: '', contactWhatsapp: '', contactAddress: '' })
   const [savingContact, setSavingContact] = useState(false)
 
+  // Package Details & Notes inline editing
+  const [pkgEditing, setPkgEditing] = useState(false)
+  const [pkgForm, setPkgForm] = useState<Record<string, string>>({})
+  const [savingPkg, setSavingPkg] = useState(false)
+
   // OneDrive folder assignment
   const [folderEditOpen, setFolderEditOpen] = useState(false)
   const [savingFolder, setSavingFolder] = useState(false)
@@ -298,6 +325,48 @@ export default function BookingDetailPage() {
       toast.error(err instanceof Error ? err.message : 'Save failed')
     } finally {
       setTcEditSaving(false)
+    }
+  }
+
+  function openPkgEdit() {
+    const form: Record<string, string> = {}
+    for (const f of PACKAGE_NOTE_FIELDS) form[f.key] = (booking?.[f.key] as string | null) ?? ''
+    setPkgForm(form)
+    setPkgEditing(true)
+  }
+
+  /**
+   * Save the package/notes text.
+   *
+   * Only fields that actually changed are sent: the API marks whatever it
+   * receives as hand-edited, and re-sending an untouched field would claim an
+   * edit nobody made — which would then make the next AppleSystem fetch stop
+   * and ask about a field it could have updated cleanly.
+   */
+  async function savePackageNotes() {
+    setSavingPkg(true)
+    try {
+      const body: Record<string, string | null> = {}
+      for (const f of PACKAGE_NOTE_FIELDS) {
+        const next = (pkgForm[f.key] ?? '').trim()
+        const prev = ((booking?.[f.key] as string | null) ?? '').trim()
+        if (next !== prev) body[f.key] = next || null
+      }
+      if (Object.keys(body).length === 0) { setPkgEditing(false); return }
+      const res = await fetch(`/api/bookings/${ref}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      toast.success(`Saved — ${Object.keys(body).length} field(s) updated`)
+      await load()
+      setPkgEditing(false)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSavingPkg(false)
     }
   }
 
@@ -568,6 +637,15 @@ export default function BookingDetailPage() {
 
   const canViewClientDetails = ['BT_USER', 'GT_USER', 'GT_VN_USER', 'TE_USER', 'GT_TE_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
   const canEditBooking = ['GT_USER', 'GT_TE_USER', 'BT_USER', 'TE_USER', 'AC_USER', 'SUPER_ADMIN', 'ULTRA_SUPER_ADMIN'].includes(role)
+
+  // Provenance for the package/notes text: which fields were typed here, and
+  // which ones an AppleSystem fetch is waiting on a replace/skip answer for.
+  // Both come from the booking GET (`booking-field-edits.ts`), so the badges
+  // never need a second round trip.
+  const noteFieldEdits = (booking.noteFieldEdits ?? {}) as Record<string, { at: string; by: string }>
+  const pendingNoteConflicts = (
+    (booking.notePendingConflicts?.items ?? []) as { field: string }[]
+  ).map(i => i.field)
 
   // Vietnam Ground (Limited) sees a cut-down booking page: Overview & Status,
   // Tour Confirmation, QC, Passengers/Flights/Hotels, Contacts, Itinerary and
@@ -2880,35 +2958,108 @@ Wishing you a wonderful trip! ✈️
           </section>
         )}
 
-        {/* Package & Notes sections — show if any are populated */}
-        {(booking.valueAddedServices || booking.packageIncludes || booking.packageExcludes ||
+        {/* Package & Notes sections — shown when any are populated, and always
+            for an editor, who may be adding the first note to a booking that
+            arrived without one. */}
+        {(canEditBooking || booking.valueAddedServices || booking.packageIncludes || booking.packageExcludes ||
           booking.importantNotes || booking.tips || booking.otherNote || booking.clientRequest ||
           booking.terms || booking.exclusions || booking.policyNotes) && (
           <section data-nav="Package & Notes" data-nav-icon="notes">
           <Card>
-            <CardHeader>
+            <CardHeader
+              action={canEditBooking && (
+                pkgEditing ? (
+                  <div className="flex items-center gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => setPkgEditing(false)} disabled={savingPkg}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" loading={savingPkg} onClick={savePackageNotes} icon={<Save className="w-3.5 h-3.5" />}>
+                      Save
+                    </Button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={openPkgEdit}
+                    className="text-xs text-brand-600 hover:underline flex items-center gap-1"
+                  >
+                    <Edit2 className="w-3 h-3" /> Edit
+                  </button>
+                )
+              )}
+            >
               <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
                 <FileText className="w-4 h-4 text-slate-400" /> Package Details &amp; Notes
               </h3>
             </CardHeader>
             <CardBody className="space-y-4">
-              {[
-                { label: 'Value Added Services',      value: booking.valueAddedServices },
-                { label: 'Above Package Includes',    value: booking.packageIncludes },
-                { label: 'The Above Package Excludes',value: booking.packageExcludes },
-                { label: 'Terms & Conditions',        value: booking.terms },
-                { label: 'Exclusions',                value: booking.exclusions },
-                { label: 'Policy Notes',              value: booking.policyNotes },
-                { label: 'Important Notes',           value: booking.importantNotes },
-                { label: 'Tips',                      value: booking.tips },
-                { label: 'Other Note',                value: booking.otherNote },
-                { label: 'Client Request',            value: booking.clientRequest },
-              ].filter(f => f.value).map(f => (
-                <div key={f.label}>
-                  <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1">{f.label}</p>
-                  <p className="text-sm text-slate-700 whitespace-pre-line">{f.value as string}</p>
+              {/* A fetch from AppleSystem that disagreed with an edit here stops
+                  rather than overwriting it. The decision is made on the
+                  "Fetch Data from API" control at the top of the page — this is
+                  only the pointer to it, so it cannot be missed by someone who
+                  is reading the text rather than syncing it. */}
+              {pendingNoteConflicts.length > 0 && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+                  <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    AppleSystem has different text for{' '}
+                    {pendingNoteConflicts
+                      .map((f: string) => PACKAGE_NOTE_FIELDS.find(p => p.key === f)?.label ?? f)
+                      .join(', ')}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-amber-900">
+                    Nothing was overwritten. Use <strong>Fetch Data from API</strong> at the top of this
+                    page to replace or skip each one.
+                  </p>
                 </div>
-              ))}
+              )}
+
+              {pkgEditing ? (
+                <>
+                  <p className="text-xs text-slate-500">
+                    Editing a field marks it as yours. The next fetch from AppleSystem will ask before
+                    replacing it instead of overwriting it silently.
+                  </p>
+                  {PACKAGE_NOTE_FIELDS.map(f => (
+                    <div key={f.key}>
+                      <label className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 flex items-center gap-2">
+                        {f.label}
+                        {f.fromApi && <span className="normal-case tracking-normal text-slate-400">· from AppleSystem</span>}
+                      </label>
+                      <textarea
+                        className="form-textarea text-sm w-full"
+                        rows={Math.min(12, Math.max(3, (pkgForm[f.key] ?? '').split('\n').length + 1))}
+                        placeholder={`One line per item — ${f.label.toLowerCase()}`}
+                        value={pkgForm[f.key] ?? ''}
+                        onChange={e => setPkgForm(v => ({ ...v, [f.key]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <>
+                  {PACKAGE_NOTE_FIELDS.filter(f => booking[f.key]).map(f => (
+                    <div key={f.key}>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold mb-1 flex items-center gap-2">
+                        {f.label}
+                        {noteFieldEdits[f.key] && (
+                          <span
+                            className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold normal-case tracking-normal text-slate-500"
+                            title={`Edited here by ${noteFieldEdits[f.key].by} on ${formatDateTime(noteFieldEdits[f.key].at)} — a sync will ask before replacing it`}
+                          >
+                            <Edit2 className="w-2.5 h-2.5" /> edited
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-sm text-slate-700 whitespace-pre-line">{booking[f.key] as string}</p>
+                    </div>
+                  ))}
+                  {PACKAGE_NOTE_FIELDS.every(f => !booking[f.key]) && (
+                    <p className="text-xs text-slate-400 italic">
+                      No package details or notes recorded yet.
+                    </p>
+                  )}
+                </>
+              )}
             </CardBody>
           </Card>
           </section>

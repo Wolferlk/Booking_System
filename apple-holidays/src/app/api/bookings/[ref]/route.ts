@@ -8,6 +8,13 @@ import { isClientPortalUnlocked } from '@/lib/utils'
 import { logActivity, ACTION } from '@/lib/activity'
 import { requireVerification, bookingTarget, VERIFY_ACTION } from '@/lib/action-verification'
 import { isInCountryScope } from '@/lib/country-detection'
+import {
+  PACKAGE_NOTE_FIELDS,
+  recordFieldEdits,
+  getFieldEdits,
+  getPendingConflicts,
+  type PackageNoteField,
+} from '@/lib/booking-field-edits'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -111,6 +118,18 @@ export async function GET(
     }
   }
   responseData.pnlSource = pnlSource
+
+  // Which package/notes fields were edited by hand, and whether a sync is
+  // waiting on a replace/skip decision for any of them. Staff-only — a client
+  // has no use for the provenance of the text and never resolves a conflict.
+  if (role !== 'CLIENT') {
+    const [noteFieldEdits, notePendingConflicts] = await Promise.all([
+      getFieldEdits(params.ref),
+      getPendingConflicts(params.ref),
+    ])
+    responseData.noteFieldEdits = noteFieldEdits
+    responseData.notePendingConflicts = notePendingConflicts
+  }
 
   return buildApiSuccess(responseData)
 }
@@ -253,6 +272,30 @@ export async function PUT(
       ...(isSuperAdmin && { version: { increment: 1 } }),
     },
   })
+
+  // Mark whichever package/notes fields this save actually changed as
+  // hand-edited, so the next AppleSystem sync asks before overwriting them
+  // instead of silently winning. Marks live in `system_settings` (no schema
+  // change), and a failure here must never lose the save that already
+  // succeeded — it only costs the overwrite protection on that field.
+  const noteEdits = PACKAGE_NOTE_FIELDS.flatMap((field) => {
+    const next = (body as Record<string, unknown>)[field]
+    if (next === undefined) return []
+    const value = next === null || next === '' ? null : String(next)
+    const before = (booking as unknown as Record<string, unknown>)[field]
+    const prev = before === null || before === undefined || before === '' ? null : String(before)
+    if (value === prev) return []
+    return [{ field: field as PackageNoteField, value }]
+  })
+  if (noteEdits.length > 0) {
+    await recordFieldEdits(
+      params.ref,
+      noteEdits,
+      session.user.name || session.user.email || 'Unknown user',
+    ).catch((err) => {
+      console.error('[booking PUT] could not record note field edits:', err instanceof Error ? err.message : err)
+    })
+  }
 
   // Super Admin bulk replace passengers/flights/accommodations
   if (isSuperAdmin && passengers) {

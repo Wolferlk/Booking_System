@@ -21,6 +21,13 @@
  *
  *    The time of the last successful full sync is shown next to the button.
  *
+ *    A package/notes field that somebody edited on the booking page is never
+ *    overwritten silently: the sync parks AppleSystem's version and this
+ *    component asks, field by field, whether to replace the edit or skip it.
+ *    Nothing is written for those fields until that answer comes back. The
+ *    prompt also appears on load for conflicts raised by the automatic
+ *    pre-arrival sync, which has nobody to ask at the time it runs.
+ *
  *  • "Raw API Response" — read-only popup of the untouched
  *    `POST /api/quotation/template/quote` payload for this booking's IS number,
  *    for checking what AppleSystem actually sent.
@@ -28,7 +35,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { RefreshCw, Code2, Copy, Check, Plane, Hotel, Map, Lock, ShieldCheck } from 'lucide-react'
+import { RefreshCw, Code2, Copy, Check, Plane, Hotel, Map, Lock, ShieldCheck, AlertTriangle, PenLine } from 'lucide-react'
 import Button from '@/components/ui/button'
 import Modal from '@/components/ui/modal'
 import { readApiResponse, cn } from '@/lib/utils'
@@ -82,12 +89,31 @@ interface SectionChange {
   skipped?: string
 }
 
+interface SyncConflict {
+  field: string
+  stored: string | null
+  incoming: string
+  editedAt: string
+  editedBy: string
+}
+
+interface PendingConflicts {
+  at: string
+  quotationNo: string | null
+  revision: number | null
+  items: SyncConflict[]
+}
+
+type Decision = 'replace' | 'skip'
+
 interface FullSyncResult {
   bookingRef: string
   quotationNo: string | null
   revision: number | null
   fields: FieldChange[]
   sections: SectionChange[]
+  /** Hand-edited fields the sync refused to overwrite, awaiting a decision. */
+  conflicts: SyncConflict[]
   unchanged: boolean
   syncedAt: string
 }
@@ -99,6 +125,7 @@ interface LastSync {
   quotationNo: string | null
   revision: number | null
   changed: string[]
+  pending?: string[]
 }
 
 interface RawResult {
@@ -163,6 +190,14 @@ export default function AppleSystemActions({
 
   const [lastSync, setLastSync] = useState<LastSync | null>(null)
 
+  // Hand-edited fields AppleSystem disagrees with. Held separately from the
+  // sync result because the pre-arrival sync raises them too, with nobody in
+  // front of the screen — those are waiting here on the next page load.
+  const [pending, setPending] = useState<PendingConflicts | null>(null)
+  const [conflictOpen, setConflictOpen] = useState(false)
+  const [decisions, setDecisions] = useState<Record<string, Decision>>({})
+  const [resolving, setResolving] = useState(false)
+
   const [rawOpen, setRawOpen] = useState(false)
   const [rawLoading, setRawLoading] = useState(false)
   const [raw, setRaw] = useState<RawResult | null>(null)
@@ -174,8 +209,11 @@ export default function AppleSystemActions({
   const loadLastSync = useCallback(async () => {
     try {
       const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/as-sync`)
-      const json = await readApiResponse<{ lastSync: LastSync | null }>(res)
-      if (json.success) setLastSync(json.data?.lastSync ?? null)
+      const json = await readApiResponse<{ lastSync: LastSync | null; pendingConflicts: PendingConflicts | null }>(res)
+      if (json.success) {
+        setLastSync(json.data?.lastSync ?? null)
+        setPending(json.data?.pendingConflicts ?? null)
+      }
     } catch {
       /* the pill is informational — a failed load just leaves it hidden */
     }
@@ -206,7 +244,18 @@ export default function AppleSystemActions({
         const json = await readApiResponse<FullSyncResult>(res)
         if (!json.success) throw new Error(json.error || 'Sync failed')
         setFullResult(json.data ?? null)
+        const raised = json.data?.conflicts ?? []
+        if (raised.length > 0) {
+          setPending({
+            at: json.data?.syncedAt ?? new Date().toISOString(),
+            quotationNo: json.data?.quotationNo ?? null,
+            revision: json.data?.revision ?? null,
+            items: raised,
+          })
+          setDecisions({})
+        }
         if (json.data?.unchanged) toast.info(json.message || 'Already up to date')
+        else if (raised.length > 0) toast.warning(json.message || `${raised.length} edited field(s) need a decision`)
         else toast.success(json.message || 'Booking updated from AppleSystem')
       } else if (confirmType === 'itinerary') {
         const json = await readApiResponse<ItinRefetchResult>(res)
@@ -226,6 +275,37 @@ export default function AppleSystemActions({
       setConfirmType(null)
     } finally {
       setRefetching(false)
+    }
+  }
+
+  function openConflicts() {
+    // Nothing is preselected: each field is an explicit answer, so a stray
+    // "Apply" can never silently overwrite an edit nobody looked at.
+    setDecisions({})
+    setConflictOpen(true)
+  }
+
+  async function applyDecisions() {
+    if (!pending) return
+    setResolving(true)
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(bookingRef)}/as-sync/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decisions }),
+      })
+      const json = await readApiResponse<{ pending: PendingConflicts | null }>(res)
+      if (!json.success) throw new Error(json.error || 'Could not apply those decisions')
+      setPending(json.data?.pending ?? null)
+      setDecisions({})
+      setConflictOpen(false)
+      toast.success(json.message || 'Decisions applied')
+      onRefetched?.()
+      void loadLastSync()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not apply those decisions')
+    } finally {
+      setResolving(false)
     }
   }
 
@@ -299,6 +379,17 @@ export default function AppleSystemActions({
         </span>
       )}
 
+      {canRefetch && pending && pending.items.length > 0 && (
+        <button
+          onClick={openConflicts}
+          className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100"
+          title="AppleSystem sent different text for fields that were edited here — choose replace or skip"
+        >
+          <AlertTriangle className="w-3 h-3" />
+          {pending.items.length} edited field{pending.items.length === 1 ? '' : 's'} need a decision
+        </button>
+      )}
+
       {canViewRaw && (
         <button
           onClick={openRaw}
@@ -362,7 +453,18 @@ export default function AppleSystemActions({
         size={result ? '4xl' : 'lg'}
         footer={
           result ? (
-            <Button onClick={closeConfirm}>Done</Button>
+            <>
+              {confirmType === 'full' && (fullResult?.conflicts.length ?? 0) > 0 && (
+                <Button
+                  variant="secondary"
+                  onClick={() => { closeConfirm(); openConflicts() }}
+                  icon={<AlertTriangle className="w-3.5 h-3.5" />}
+                >
+                  Resolve {fullResult!.conflicts.length} edited field{fullResult!.conflicts.length === 1 ? '' : 's'}
+                </Button>
+              )}
+              <Button onClick={closeConfirm}>Done</Button>
+            </>
           ) : (
             <>
               <Button variant="secondary" onClick={closeConfirm} disabled={refetching}>Cancel</Button>
@@ -438,7 +540,7 @@ export default function AppleSystemActions({
             )}
           </div>
         ) : confirmType === 'full' && fullResult ? (
-          <FullSyncSummary result={fullResult} />
+          <FullSyncSummary result={fullResult} onResolve={() => { closeConfirm(); openConflicts() }} />
         ) : confirmType === 'itinerary' && itinResult ? (
           <div className="space-y-4">
             <p className="text-sm text-slate-700">
@@ -464,6 +566,99 @@ export default function AppleSystemActions({
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      {/* ── Replace or skip: fields edited here that AppleSystem disagrees with ── */}
+      <Modal
+        open={conflictOpen}
+        onClose={() => setConflictOpen(false)}
+        title="Edited fields — replace or skip?"
+        size="4xl"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setConflictOpen(false)} disabled={resolving}>
+              Decide later
+            </Button>
+            <Button
+              loading={resolving}
+              disabled={!pending || pending.items.some((i) => !decisions[i.field])}
+              onClick={applyDecisions}
+            >
+              Apply {Object.keys(decisions).length || ''} decision{Object.keys(decisions).length === 1 ? '' : 's'}
+            </Button>
+          </>
+        }
+      >
+        {pending && pending.items.length > 0 ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              These fields were edited here after they came from AppleSystem, and quotation{' '}
+              <span className="font-mono">{pending.quotationNo || '—'}</span> now says something different.
+              <strong> Nothing has been written for them.</strong> Choose one per field — skipping keeps the
+              edit and asks again on the next fetch.
+            </p>
+
+            {pending.items.map((item) => {
+              const choice = decisions[item.field]
+              return (
+                <div key={item.field} className="rounded-lg border border-slate-200">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
+                    <p className="text-sm font-semibold text-slate-800">
+                      {FIELD_LABELS[item.field] ?? item.field}
+                    </p>
+                    <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                      <PenLine className="w-3 h-3" />
+                      Edited by {item.editedBy} · {fmtDateTime(item.editedAt)}
+                    </p>
+                  </div>
+                  <div className="grid gap-3 p-3 md:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={() => setDecisions((d) => ({ ...d, [item.field]: 'skip' }))}
+                      className={cn(
+                        'rounded-lg border px-3 py-2 text-left transition-colors',
+                        choice === 'skip'
+                          ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-500'
+                          : 'border-slate-200 hover:border-brand-300 hover:bg-slate-50',
+                      )}
+                    >
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Skip — keep this (edited here)
+                      </p>
+                      <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-slate-700">
+                        {item.stored ?? <em className="text-slate-400">empty</em>}
+                      </p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDecisions((d) => ({ ...d, [item.field]: 'replace' }))}
+                      className={cn(
+                        'rounded-lg border px-3 py-2 text-left transition-colors',
+                        choice === 'replace'
+                          ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
+                          : 'border-slate-200 hover:border-emerald-300 hover:bg-slate-50',
+                      )}
+                    >
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        Replace — take AppleSystem&apos;s version
+                      </p>
+                      <p className="max-h-40 overflow-y-auto whitespace-pre-wrap text-xs text-slate-700">
+                        {item.incoming}
+                      </p>
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+              Replacing also hands the field back to AppleSystem — later syncs will update it without
+              asking, until somebody edits it here again.
+            </p>
+          </div>
+        ) : (
+          <p className="py-8 text-center text-sm text-slate-500">Nothing is waiting for a decision.</p>
+        )}
       </Modal>
 
       {/* ── Raw API response ───────────────────────────────────────────────── */}
@@ -562,7 +757,7 @@ function relTimeAgo(iso: string): string {
  * before/after), then one line per child collection — including the ones it
  * deliberately left alone and why.
  */
-function FullSyncSummary({ result }: { result: FullSyncResult }) {
+function FullSyncSummary({ result, onResolve }: { result: FullSyncResult; onResolve: () => void }) {
   const longValue = (v: string | null) => (v ?? '').length > 60
 
   return (
@@ -575,6 +770,26 @@ function FullSyncSummary({ result }: { result: FullSyncResult }) {
           ? 'this booking already matched AppleSystem. Nothing was changed.'
           : `${result.fields.length} field(s) updated.`}
       </p>
+
+      {result.conflicts.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5">
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {result.conflicts.length} field(s) edited here were left untouched
+          </p>
+          <p className="mt-1 text-[11px] text-amber-900">
+            AppleSystem sent different text for{' '}
+            {result.conflicts.map((c) => FIELD_LABELS[c.field] ?? c.field).join(', ')}. Nothing was
+            written for them — each one needs a replace or skip.
+          </p>
+          <button
+            onClick={onResolve}
+            className="mt-2 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+          >
+            Review them now
+          </button>
+        </div>
+      )}
 
       {result.fields.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-slate-200">

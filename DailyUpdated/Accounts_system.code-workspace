@@ -1,0 +1,21 @@
+{
+	"folders": [
+		{
+			"name": "Accounts_system",
+			"path": "../../Accounts_system"
+		},
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../Aahaas_TaskManager"
+		},
+		{
+			"path": "../../AHS"
+		},
+		{
+			"path": "../../AahaasAdmin(FrontAndBack)"
+		}
+	],
+	"settings": {}
+}
