@@ -22,7 +22,7 @@ import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
   PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
   Sparkles, Info, Maximize2, Hotel, XCircle, Ban, Clock, ExternalLink,
-  Briefcase, ShoppingBag,
+  Briefcase, ShoppingBag, FlaskConical, Eye, EyeOff,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -170,6 +170,86 @@ const CHECK_FILTERS: { key: CheckFilter; label: string }[] = [
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/**
+ * A boolean the desk sets once and expects to stay set — the include switches.
+ * Kept per browser; storage can be missing (private window) and that is fine,
+ * the board just opens on the default.
+ */
+function usePersistedFlag(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
+  const [value, setValue] = useState(fallback)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(key)
+      if (raw === '1' || raw === '0') setValue(raw === '1')
+    } catch { /* storage blocked — keep the default */ }
+  }, [key])
+  const set = useCallback((v: boolean) => {
+    setValue(v)
+    try { localStorage.setItem(key, v ? '1' : '0') } catch { /* ignore */ }
+  }, [key])
+  return [value, set]
+}
+
+/**
+ * One include switch: the label says what it counts, the knob says whether it
+ * does, and when it is off a badge says how much it is keeping off the board —
+ * so a hidden file is never silently missing.
+ */
+function IncludeSwitch({
+  on, onChange, icon: Icon, label, hint, hiddenCount, tone, reduce,
+}: {
+  on: boolean
+  onChange: (v: boolean) => void
+  icon: typeof Users
+  label: string
+  hint: string
+  hiddenCount: number
+  tone: { track: string; icon: string }
+  reduce: boolean | null
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      onClick={() => onChange(!on)}
+      title={`${on ? 'Included' : 'Left out'} — ${hint}. Click to ${on ? 'leave them out' : 'include them'}.`}
+      className={cn(
+        'group inline-flex items-center gap-2 pl-2 pr-1.5 py-1 rounded-full border text-[11px] font-semibold transition-colors',
+        on ? 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+          : 'bg-slate-50 border-dashed border-slate-300 text-slate-500 hover:bg-slate-100',
+      )}
+    >
+      <Icon className={cn('w-3.5 h-3.5 transition-colors', on ? tone.icon : 'text-slate-400')} />
+      <span className={cn(!on && 'line-through decoration-slate-400/70')}>{label}</span>
+      <AnimatePresence initial={false}>
+        {!on && hiddenCount > 0 && (
+          <motion.span
+            initial={reduce ? false : { opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={reduce ? undefined : { opacity: 0, scale: 0.6 }}
+            className="inline-flex items-center gap-0.5 px-1.5 rounded-full bg-slate-800 text-white text-[10px] tabular-nums"
+          >
+            <EyeOff className="w-2.5 h-2.5" />{hiddenCount}
+          </motion.span>
+        )}
+      </AnimatePresence>
+      <span
+        className={cn(
+          'relative inline-flex h-4 w-7 flex-shrink-0 items-center rounded-full transition-colors',
+          on ? tone.track : 'bg-slate-300',
+        )}
+      >
+        <motion.span
+          layout
+          transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 700, damping: 35 }}
+          className={cn('h-3 w-3 rounded-full bg-white shadow-sm', on ? 'ml-3.5' : 'ml-0.5')}
+        />
+      </span>
+    </button>
+  )
+}
+
 export default function OperationsBoardPage() {
   const { countryFilter } = useCountryFilter()
   const reduce = useReducedMotion()
@@ -191,6 +271,9 @@ export default function OperationsBoardPage() {
   const [facets, setFacets] = useState<Set<ReconfirmFacet>>(new Set())
   const [countryRowFilter, setCountryRowFilter] = useState('ALL')
   const [channel, setChannel] = useState<ChannelFilter>('ALL')
+  /** Board-wide include switches — applied server-side, so every count honours them. */
+  const [includeCancelled, setIncludeCancelled] = usePersistedFlag('ops-board:include-cancelled', true)
+  const [includeTest, setIncludeTest] = usePersistedFlag('ops-board:include-test', true)
   /** Narrow the whole board to files whose cancellation accounts has not decided. */
   const [cancelOnly, setCancelOnly] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -209,6 +292,8 @@ export default function OperationsBoardPage() {
       const params = new URLSearchParams({ from, to })
       if (search.trim()) params.set('search', search.trim())
       if (countryFilter && countryFilter !== 'ALL') params.set('country', countryFilter)
+      if (!includeCancelled) params.set('cancelled', 'exclude')
+      if (!includeTest) params.set('test', 'exclude')
 
       const res = await fetch(`/api/accounts/report/ops?${params}`)
       const json = await res.json()
@@ -219,7 +304,7 @@ export default function OperationsBoardPage() {
     } finally {
       setLoading(false)
     }
-  }, [from, to, search, countryFilter])
+  }, [from, to, search, countryFilter, includeCancelled, includeTest])
 
   // Date and country reload immediately; the search box is debounced so typing a
   // booking ref does not fire a query per keystroke.
@@ -471,7 +556,7 @@ export default function OperationsBoardPage() {
   function exportCSV() {
     if (!visible.length) { toast.error('Nothing to export'); return }
     const headers = [
-      'Booking Ref', 'Booking Type', 'Channel', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
+      'Booking Ref', 'Booking Type', 'Channel', 'Test File', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
       'Status', 'Arrival', 'Departure', 'Day', 'Pax',
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
@@ -484,6 +569,7 @@ export default function OperationsBoardPage() {
       r.bookingRef,
       r.cancelled ? 'CANCELLED' : r.hotelOnly ? 'Hotel Only' : 'Full tour',
       bookingSourceOf(r.agent),
+      r.testFile ? `Yes — ${r.testFile.field}` : '',
       r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
       r.countryLabel, r.destination ?? '', r.statusLabel,
       r.arrivalDate, r.departureDate, `${r.dayNo}/${r.totalDays}`, r.pax,
@@ -745,6 +831,42 @@ export default function OperationsBoardPage() {
             )}
           </CardBody>
         </Card>
+
+        {/* ── What the numbers count ──────────────────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1">
+            <Eye className="w-3 h-3" /> In the numbers
+          </span>
+          <IncludeSwitch
+            on={includeCancelled}
+            onChange={setIncludeCancelled}
+            icon={Ban}
+            label="Cancelled"
+            hint="cancelled files and ones waiting on accounts approval"
+            hiddenCount={board?.hidden?.cancelled ?? 0}
+            tone={{ track: 'bg-rose-500', icon: 'text-rose-500' }}
+            reduce={reduce}
+          />
+          <IncludeSwitch
+            on={includeTest}
+            onChange={setIncludeTest}
+            icon={FlaskConical}
+            label="Test files"
+            hint='files with "test" in a note, the cancellation reason or the lead guest name'
+            hiddenCount={board?.hidden?.test ?? 0}
+            tone={{ track: 'bg-indigo-500', icon: 'text-indigo-500' }}
+            reduce={reduce}
+          />
+          {(!includeCancelled || !includeTest) && (
+            <button
+              type="button"
+              onClick={() => { setIncludeCancelled(true); setIncludeTest(true) }}
+              className="text-[11px] font-semibold text-slate-400 hover:text-slate-700 underline-offset-2 hover:underline"
+            >
+              Show everything
+            </button>
+          )}
+        </div>
 
         {/* ── Hero counts ─────────────────────────────────────────────────── */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -1436,6 +1558,14 @@ export default function OperationsBoardPage() {
                                   >
                                     <Ban className="w-2.5 h-2.5" /> Cancel Pending
                                     {r.cancellation?.waitingDays ? ` · ${r.cancellation.waitingDays}d` : ''}
+                                  </span>
+                                )}
+                                {r.testFile && (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 px-1.5 py-px rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] font-bold uppercase tracking-wide"
+                                    title={`Marked as a test in ${r.testFile.field}: "${r.testFile.snippet}". Switch "Test files" off above to leave these out.`}
+                                  >
+                                    <FlaskConical className="w-2.5 h-2.5" /> Test
                                   </span>
                                 )}
                                 {r.hotelOnly && (

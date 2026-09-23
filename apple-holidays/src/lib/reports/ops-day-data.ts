@@ -175,6 +175,13 @@ export interface OpsDayRow {
    */
   cancelPending: boolean
   /**
+   * Why this looks like a test file, or null. A booking is a test when "test"
+   * appears as a word in one of its notes, its cancellation reason or the lead
+   * guest's name — that is where the desk marks them. `field` names the place
+   * it was found so a false positive can be spotted and fixed at the source.
+   */
+  testFile: { field: string; snippet: string } | null
+  /**
    * The cancellation request behind `cancelPending` (and behind a `cancelled`
    * row that went through the approval queue). Null when nobody has asked.
    */
@@ -258,6 +265,13 @@ export interface OpsDaySummary {
   byCountry: { country: string; label: string; bookings: number; pax: number }[]
 }
 
+/** Rows the board's include switches took out of the window, by kind. */
+export interface OpsDayHidden {
+  /** Cancelled outright or waiting on accounts — together, since the switch is one. */
+  cancelled: number
+  test: number
+}
+
 export interface OpsDayBoard {
   /** First local date of the window, `yyyy-mm-dd`. Equals `to` for a single day. */
   from: string
@@ -278,6 +292,8 @@ export interface OpsDayBoard {
   approvalDataAvailable: boolean
   summary: OpsDaySummary
   rows: OpsDayRow[]
+  /** What the include switches hid. Everything above is counted without them. */
+  hidden: OpsDayHidden
   /** True when the row cap was hit and the window is showing a partial picture. */
   truncated: boolean
 }
@@ -546,6 +562,10 @@ export interface OpsDayOptions {
   country?: string | null
   /** Free-text match on booking ref, agent, file handler or passenger name. */
   search?: string | null
+  /** Keep cancelled files and ones awaiting cancellation approval. Default true. */
+  includeCancelled?: boolean
+  /** Keep files marked as tests. Default true. */
+  includeTest?: boolean
   timezone?: string
 }
 
@@ -554,6 +574,23 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 /** A valid `yyyy-mm-dd` from the input, or null. */
 function asDate(v: string | null | undefined): string | null {
   return v && ISO_DATE.test(v) ? v : null
+}
+
+/** "test", "testing", "test file", "TEST-BOOKING" — but not "latest" or "contest". */
+const TEST_WORD = /\btest(?:ing)?\b/i
+
+/** The first labelled field that marks this booking as a test, with the text around the match. */
+function detectTestFile(fields: [string, string | null | undefined][]): OpsDayRow['testFile'] {
+  for (const [field, raw] of fields) {
+    const text = (raw ?? '').replace(/\s+/g, ' ').trim()
+    const m = TEST_WORD.exec(text)
+    if (!m) continue
+    const start = Math.max(0, m.index - 24)
+    const end = Math.min(text.length, m.index + m[0].length + 32)
+    const snippet = `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`
+    return { field, snippet }
+  }
+  return null
 }
 
 export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoard> {
@@ -614,6 +651,9 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       currency: true, cancelPrevStatus: true, cancelRequestedAt: true,
       cancelledByName: true, cancellationReason: true,
       cancellationFeeTotal: true, cancelDecidedAt: true,
+      // Where the desk writes "test" on a dummy file — read for test detection.
+      importantNotes: true, otherNote: true, clientRequest: true, policyNotes: true,
+      tips: true, amendmentNote: true, cancelDecisionNote: true,
       passengers: { where: { isLead: true }, select: { name: true }, take: 1 },
       tourAgenda: {
         select: {
@@ -644,7 +684,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
   // reads as "nobody has explained these" — the honest answer either way.
   const delays = await loadReconfirmDelays(refs)
 
-  const rows: OpsDayRow[] = bookings.map(b => {
+  const allRows: OpsDayRow[] = bookings.map(b => {
     const cancelled = DEAD_STATUSES.includes(b.status)
     const readiness = computeReadiness({
       status: b.status,
@@ -722,6 +762,17 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       hotelOnly: b.hotelOnly,
       cancelled,
       cancelPending: b.status === 'PENDING_CANCELLATION',
+      testFile: detectTestFile([
+        ['Lead guest', b.passengers[0]?.name],
+        ['Cancellation reason', b.cancellationReason],
+        ['Cancel decision note', b.cancelDecisionNote],
+        ['Other note', b.otherNote],
+        ['Important notes', b.importantNotes],
+        ['Client request', b.clientRequest],
+        ['Policy notes', b.policyNotes],
+        ['Tips', b.tips],
+        ['Amendment note', b.amendmentNote],
+      ]),
       cancellation: buildCancellation(b, today),
       clientConfirmed: readiness.client.state === 'DONE',
       preTourCall,
@@ -736,6 +787,24 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
       outstanding,
     }
   })
+
+  // ── Include switches ─────────────────────────────────────────────────────
+  // Applied before the summary, so a hidden file leaves every number on the
+  // board — not just the list. "Cancelled" covers both an approved cancellation
+  // and one still waiting on accounts: either way the desk has said this file is
+  // not worth looking at today.
+  const isCancelledish = (r: OpsDayRow) => r.cancelled || r.cancelPending
+  const hidden: OpsDayHidden = {
+    cancelled: opts.includeCancelled === false ? allRows.filter(isCancelledish).length : 0,
+    // A test file that is also cancelled is counted under cancelled when both are
+    // off, so the two badges add up to the rows actually removed.
+    test: opts.includeTest === false
+      ? allRows.filter(r => r.testFile && !(opts.includeCancelled === false && isCancelledish(r))).length
+      : 0,
+  }
+  const rows = allRows.filter(r =>
+    !(opts.includeCancelled === false && isCancelledish(r))
+    && !(opts.includeTest === false && r.testFile))
 
   // ── Summary ────────────────────────────────────────────────────────────────
   // Every number below is counted over the live rows only. Cancellations are
@@ -816,6 +885,7 @@ export async function collectOpsDay(opts: OpsDayOptions = {}): Promise<OpsDayBoa
     approvalDataAvailable,
     summary,
     rows,
+    hidden,
     truncated: bookings.length >= MAX_ROWS,
   }
 }

@@ -48,6 +48,8 @@ export async function GET(req: NextRequest) {
       to: req.nextUrl.searchParams.get('to'),
       country,
       search: req.nextUrl.searchParams.get('search'),
+      includeCancelled: req.nextUrl.searchParams.get('cancelled') !== 'exclude',
+      includeTest: req.nextUrl.searchParams.get('test') !== 'exclude',
     })
     return buildApiSuccess(board)
   } catch (err) {
