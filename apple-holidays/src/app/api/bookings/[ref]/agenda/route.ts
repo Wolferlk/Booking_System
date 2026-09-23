@@ -18,6 +18,8 @@ import {
   type DriverSendResult,
 } from '@/lib/driver-assignment-whatsapp'
 import { upsertManualPartner } from '@/lib/partner-directory-server'
+import { loadIncludes, saveIncludes } from '@/lib/vn-includes/includes'
+import type { AgendaInclude } from '@/lib/vn-includes/shared'
 import type { UserRole, ServiceType } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -105,6 +107,23 @@ export async function GET(
 
   if (!booking) return buildApiError('Booking not found', 404)
 
+  // Vietnam movements carry the products they include (see lib/vn-includes).
+  // Attached here rather than joined, because the includes outlive the agenda
+  // row ids a chart save recreates. Never fatal: the chart reads without them.
+  if (booking.tourAgenda && booking.operationCountry === 'VIETNAM') {
+    try {
+      const { byItem, unplaced, installed } = await loadIncludes(booking.bookingRef, booking.tourAgenda.items)
+      return buildApiSuccess({
+        ...booking.tourAgenda,
+        items: booking.tourAgenda.items.map(i => ({ ...i, includes: byItem[i.id] ?? [] })),
+        unplacedIncludes: unplaced,
+        includesInstalled: installed,
+      })
+    } catch (err) {
+      console.error('[agenda GET] loading includes failed (non-fatal):', err)
+    }
+  }
+
   return buildApiSuccess(booking.tourAgenda)
 }
 
@@ -129,7 +148,7 @@ export async function POST(
   })
   if (!booking) return buildApiError('Booking not found', 404)
 
-  const { items = [] } = await req.json()
+  const { items = [], keepIncludeIds = [] } = await req.json()
 
   // Every date is validated before anything is deleted — the save below wipes
   // the existing chart, so a bad row must fail here, while the old items are
@@ -276,6 +295,36 @@ export async function POST(
     }),
   )
 
+  // Vietnam includes — rewritten only when the chart sent them. A regenerated
+  // chart (AI / upload) arrives without the key, and its includes are left
+  // alone to re-attach by date and activity on the next read instead of being
+  // wiped. Separate from the chart transaction on purpose: if the includes
+  // tables are missing or the write fails, the chart save above still stands.
+  let includesWarning: string | null = null
+  const sentIncludes = (items as Record<string, unknown>[]).some(i => Array.isArray(i.includes))
+  if (sentIncludes && booking.operationCountry === 'VIETNAM') {
+    const res = await saveIncludes(
+      booking.bookingRef,
+      booking.operationCountry,
+      (items as Record<string, unknown>[]).map((item, index) => ({
+        id:          createdItems[index]?.id,
+        date:        dates[index],
+        location:    (item.location as string) ?? null,
+        toPoint:     (item.toPoint as string) ?? null,
+        serviceType: (item.serviceType as string) ?? null,
+        sortOrder:   index,
+        includes:    Array.isArray(item.includes) ? item.includes as AgendaInclude[] : [],
+      })).filter((i): i is typeof i & { id: string } => Boolean(i.id)),
+      { id: session.user.id, name: session.user.name },
+      Array.isArray(keepIncludeIds) ? (keepIncludeIds as unknown[]).filter((x): x is string => typeof x === 'string') : [],
+    )
+    if (!res.ok) {
+      includesWarning = res.reason === 'not_installed'
+        ? 'Includes were not saved — the includes tables are not set up on this database yet'
+        : `Includes were not saved: ${res.error ?? 'unknown error'}`
+    }
+  }
+
   // Drivers set on the chart must also show on the Sri Lanka Driver Allocation
   // board, which reads the booking-level allocation row. Non-fatal.
   try {
@@ -356,7 +405,7 @@ export async function POST(
     console.error('[Agenda] Driver WhatsApp notification error (non-fatal):', waErr)
   }
 
-  return buildApiSuccess({ agenda, items: createdItems }, 'Agenda saved')
+  return buildApiSuccess({ agenda, items: createdItems, includesWarning }, 'Agenda saved')
 }
 
 export async function PUT(

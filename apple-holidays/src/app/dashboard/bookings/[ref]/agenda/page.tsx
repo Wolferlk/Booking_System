@@ -34,6 +34,8 @@ import { TimeInput } from '@/components/ui/time-input'
 import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions } from '@/lib/agenda-suggestions'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
+import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
+import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
 const MEAL_ABBREV: Record<string, string> = {
   'B':   'Breakfast',
@@ -164,6 +166,12 @@ interface AgendaItem {
    * as allocated rather than pending. Mutually exclusive with `isLeisure`.
    */
   isHotelOnly: boolean
+  /**
+   * Vietnam SIC Transfer / Private Tour only — the products this movement is
+   * made of, each paid separately in Accounts. Undefined when the chart was not
+   * loaded with includes (so a save can never wipe ones it never showed).
+   */
+  includes?: AgendaInclude[]
   assignment?: {
     driverId?: string | null
     vendorId?: string | null
@@ -300,6 +308,11 @@ export default function AgendaPage() {
 
   const [items,          setItems]          = useState<AgendaItem[]>([])
   const [booking,        setBooking]        = useState<BookingDetails | null>(null)
+  // Vietnam includes: whether the server delivered them (tables present), and
+  // any a rebuilt chart could not re-attach to a movement.
+  const [includesReady,   setIncludesReady]   = useState(false)
+  const [unplacedIncludes, setUnplacedIncludes] = useState<(AgendaInclude & { itemDate: string; itemActivity: string | null })[]>([])
+  const [discardIncludeIds, setDiscardIncludeIds] = useState<Set<string>>(new Set())
   const [drivers,        setDrivers]        = useState<Driver[]>([])
   const [vendors,        setVendors]        = useState<Vendor[]>([])
   const [loading,        setLoading]        = useState(true)
@@ -446,7 +459,7 @@ export default function AgendaPage() {
       // The server may return an empty/non-JSON body on a hard failure (timeout, crash) —
       // read the text first and only then attempt to parse, so we surface a real message.
       const raw = await res.text()
-      let json: { success?: boolean; error?: string } = {}
+      let json: { success?: boolean; error?: string; data?: { includesWarning?: string | null } } = {}
       if (raw) { try { json = JSON.parse(raw) } catch { /* non-JSON body */ } }
 
       if (!res.ok || !json.success) {
@@ -492,6 +505,7 @@ export default function AgendaPage() {
             meetingTime: string; timeFrom: string; timeTo: string
             serviceType: string; isLeisure: boolean | null; isHotelOnly: boolean | null
             assignment: AgendaItem['assignment']
+            includes: AgendaInclude[]
           }>
           const serviceType = i.serviceType ?? 'PVT_TRANSFER'
           return {
@@ -508,8 +522,12 @@ export default function AgendaPage() {
             }),
             isHotelOnly: resolveIsHotelOnly({ isHotelOnly: i.isHotelOnly }),
             assignment: i.assignment,
+            includes: Array.isArray(i.includes) ? i.includes : undefined,
           }
         }))
+        setIncludesReady(agendaJson.data.includesInstalled === true)
+        setUnplacedIncludes(Array.isArray(agendaJson.data.unplacedIncludes) ? agendaJson.data.unplacedIncludes : [])
+        setDiscardIncludeIds(new Set())
       }
       if (bookingJson.success && bookingJson.data) setBooking(bookingJson.data)
     } finally {
@@ -625,14 +643,25 @@ export default function AgendaPage() {
       throw new Error(`Movement ${badDate + 1} has a missing or invalid date (${itemsToSave[badDate].date || 'blank'}) — fix it and save again`)
     }
 
+    // Includes travel only when the chart was loaded with them — otherwise a
+    // save could replace includes this screen never showed with nothing. A
+    // freshly generated chart carries none at all, and the server then leaves
+    // the stored ones to re-attach by date and activity rather than wiping them.
+    const payloadItems = includesReady
+      ? itemsToSave
+      : itemsToSave.map(({ includes: _omit, ...it }) => it)
+    const keepIncludeIds = unplacedIncludes
+      .map(u => u.id)
+      .filter((id): id is string => Boolean(id) && !discardIncludeIds.has(id as string))
+
     const res  = await fetch(`/api/bookings/${ref}/agenda`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: itemsToSave }),
+      body: JSON.stringify({ items: payloadItems, keepIncludeIds }),
     })
     // A server crash returns an empty or HTML body; parsing it blindly surfaces
     // the useless "Unexpected end of JSON input" instead of the real failure.
     const raw  = await res.text()
-    let json: { success?: boolean; error?: string }
+    let json: { success?: boolean; error?: string; data?: { includesWarning?: string | null } }
     try {
       json = raw ? JSON.parse(raw) : {}
     } catch {
@@ -640,6 +669,7 @@ export default function AgendaPage() {
     }
     if (!res.ok || !json.success) throw new Error(json.error || `Save failed (${res.status})`)
     if (!silent) toast.success('Movement chart saved!')
+    if (json.data?.includesWarning) toast.warning(json.data.includesWarning)
     await loadAgenda()
   }
 
@@ -1530,6 +1560,14 @@ export default function AgendaPage() {
           </Card>
         )}
 
+        {/* Includes an amendment / regenerate left without a movement. */}
+        {!generating && unplacedIncludes.length > 0 && (
+          <UnplacedIncludesNotice
+            items={unplacedIncludes.filter(u => !u.id || !discardIncludeIds.has(u.id))}
+            onDiscard={canEdit ? id => setDiscardIncludeIds(prev => new Set(prev).add(id)) : undefined}
+          />
+        )}
+
         {/* ── MOVEMENT ITEMS ── */}
         {!generating && items.map((item, i) => {
           const svcType    = SERVICE_TYPES.find(s => s.value === item.serviceType)
@@ -1758,6 +1796,26 @@ export default function AgendaPage() {
                           })()}
                         </div>
 
+                        {/* Includes — Vietnam SIC Transfer / Private Tour only. Sits in
+                            the two columns the Details box leaves free on a wide
+                            screen; each include is paid separately in Accounts. */}
+                        {takesIncludes(item.serviceType, booking?.operationCountry) && (
+                          <div className="col-span-2 sm:col-span-3 lg:col-span-2">
+                            {includesReady ? (
+                              <IncludePicker
+                                value={item.includes ?? []}
+                                onChange={next => setItems(is => is.map((x, j) => j === i ? { ...x, includes: next } : x))}
+                                activity={item.toPoint}
+                                bookingRef={ref}
+                              />
+                            ) : (
+                              <p className="rounded-lg border border-dashed border-slate-200 px-3 py-2 text-[11px] text-slate-400">
+                                Includes are not available yet — the includes tables have not been set up on this database.
+                              </p>
+                            )}
+                          </div>
+                        )}
+
                         <div className="flex items-start gap-2 justify-end col-span-full mt-1">
                           <button onClick={() => setItems(is => is.filter((_, j) => j !== i))}
                             className="text-red-400 hover:text-red-600 mb-1">
@@ -1891,6 +1949,10 @@ export default function AgendaPage() {
                             {item.fromPoint && <span className="text-slate-400">{item.fromPoint} → </span>}
                             {item.toPoint}
                           </p>
+                        )}
+
+                        {takesIncludes(item.serviceType, booking?.operationCountry) && (
+                          <IncludeChips value={item.includes ?? []} />
                         )}
 
                         {/* Same derived flight link the editor shows, read-only. */}

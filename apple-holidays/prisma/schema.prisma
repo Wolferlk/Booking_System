@@ -340,6 +340,75 @@ model AgendaItem {
   @@map("agenda_items")
 }
 
+/// The Vietnam product sheet, cached — what an agenda include is picked from.
+/// SHEET rows are refreshed by a sync and never deleted (a product that leaves
+/// the sheet goes inactive); MANUAL rows are typed in by an operator and pushed
+/// to the workbook's "Manual Products" tab. See src/lib/vn-includes/.
+/// Created by prisma/sql/2026-09-23-vn-agenda-includes.sql — never `db push`.
+model VnIncludeProduct {
+  id            String    @id @default(cuid())
+  productKey    String    @unique(map: "vn_include_products_productKey_key")
+  code          String    @db.VarChar(64)
+  name          String    @db.Text
+  rawName       String?   @db.Text
+  searchText    String    @db.Text
+  usageCount    Int       @default(0)
+  minPriceVnd   Decimal?  @db.Decimal(16, 2)
+  /// 'SHEET' | 'MANUAL'
+  source        String    @default("SHEET") @db.VarChar(16)
+  sheetTab      String?
+  sheetRow      Int?
+  isActive      Boolean   @default(true)
+  /// MANUAL only — 'PENDING' | 'SYNCED' | 'FAILED'
+  syncStatus    String?   @db.VarChar(16)
+  syncError     String?   @db.Text
+  syncedAt      DateTime?
+  bookingRef    String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([code], map: "vn_include_products_code_idx")
+  @@index([source, syncStatus], map: "vn_include_products_source_idx")
+  @@index([isActive], map: "vn_include_products_active_idx")
+  @@map("vn_include_products")
+}
+
+/// A product a Vietnam movement includes — the parts a bundled P&L line is paid
+/// out in. Keyed by bookingRef with a snapshot of the movement, because the
+/// chart's rows are recreated on every save; the Accounts payables board reads
+/// this table (read-only) to split the line. No FK by design — see the SQL file.
+model AgendaItemInclude {
+  id              String    @id @default(cuid())
+  bookingRef      String
+  agendaItemId    String?
+  itemDate        DateTime  @db.Date
+  itemServiceType String?   @db.VarChar(64)
+  itemLocation    String?
+  itemActivity    String?   @db.Text
+  itemSortOrder   Int       @default(0)
+  productId       String?
+  productKey      String
+  code            String    @db.VarChar(64)
+  name            String    @db.Text
+  unitPriceVnd    Decimal?  @db.Decimal(16, 2)
+  quantity        Int       @default(1)
+  note            String?   @db.VarChar(500)
+  /// 'SHEET' | 'MANUAL'
+  source          String    @default("SHEET") @db.VarChar(16)
+  position        Int       @default(0)
+  createdById     String?
+  createdByName   String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([bookingRef, itemDate], map: "agenda_item_includes_bookingRef_idx")
+  @@index([agendaItemId], map: "agenda_item_includes_agendaItemId_idx")
+  @@index([productKey], map: "agenda_item_includes_productKey_idx")
+  @@map("agenda_item_includes")
+}
+
 model Assignment {
   id              String         @id @default(cuid())
   agendaItemId    String         @unique

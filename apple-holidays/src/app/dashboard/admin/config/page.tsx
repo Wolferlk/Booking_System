@@ -13,6 +13,7 @@ import LastMinuteAlertSettings from '@/components/settings/last-minute-alert-set
 import JourneyMapCard from '@/components/settings/journey-map-card'
 import FileHandlerResolveSettings from '@/components/settings/file-handler-resolve-settings'
 import CancellationRecoveryCard from '@/components/settings/cancellation-recovery-card'
+import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
@@ -316,6 +317,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'driver-advance', title: 'Driver Advance Sheet',         group: 'Operations',      icon: Truck,        keywords: 'sri lanka fuel tour percentage lunch entrance water accommodation whatsapp auto send 6pm' },
   { id: 'last-minute',    title: 'Last-Minute Booking Alerts',   group: 'Operations',      icon: BellRing,     keywords: 'd-4 alarm sound browser notification late file acknowledge' },
   { id: 'file-handler',   title: 'File Handler Resolution',      group: 'Operations',      icon: FolderSync,   keywords: '30 sundays placeholder onedrive handler mapping resolve' },
+  { id: 'vn-products',    title: 'Vietnam Product Sheet',        group: 'Operations',      icon: Store,        keywords: 'includes agenda sic transfer private tour product list sharepoint excel link manual payable split vietnam' },
   { id: 'cancel-recovery',title: 'Cancellation Recovery',        group: 'Operations',      icon: RotateCcw,    keywords: 'recover restore reinstate undo reverse revive cancelled booking full cancel permanent sealed irreversible window days audience' },
 
   { id: 'automation',     title: 'Automation Settings',          group: 'Automation & AI', icon: Zap,          keywords: 'auto mail inbox polling onedrive scheduled background critical password pause' },
@@ -1453,6 +1455,11 @@ export default function ConfigPage() {
             <Section id="file-handler" visible={show('file-handler')} flashed={flashId === 'file-handler'}>
               {/* 30 Sundays placeholder file handler → real handler */}
               <FileHandlerResolveSettings />
+            </Section>
+
+            <Section id="vn-products" visible={show('vn-products')} flashed={flashId === 'vn-products'}>
+              {/* Where the agenda's Vietnam "Includes" picker reads its products */}
+              <VnProductSheetCard />
             </Section>
 
             <Section id="cancel-recovery" visible={show('cancel-recovery')} flashed={flashId === 'cancel-recovery'}>
