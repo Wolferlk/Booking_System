@@ -713,7 +713,6 @@ export default function BookingDetailPage() {
   }
 
   async function saveFlightEdits() {
-    if (!flightChangeReason.trim()) { toast.error('Please provide a reason for the change'); return }
     setSavingFlights(true)
     try {
       const active = flightEditList.filter(f => !f._deleted)
@@ -734,7 +733,7 @@ export default function BookingDetailPage() {
           flightUpdates,
           flightAdds,
           flightDeletes,
-          amendmentNote: flightChangeReason,
+          amendmentNote: flightChangeReason.trim() || undefined,
         }),
       })
       const json = await res.json()
@@ -3932,7 +3931,7 @@ Wishing you a wonderful trip! ✈️
           </div>
 
           <div>
-            <label className="form-label">Reason for change *</label>
+            <label className="form-label">Reason for change <span className="text-slate-400 font-normal">(optional)</span></label>
             <textarea
               className="form-textarea"
               rows={2}
