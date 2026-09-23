@@ -98,6 +98,29 @@ export interface MappedAccommodation {
   ownArrangement: boolean
 }
 
+/**
+ * Carry stored hotel names onto freshly mapped accommodations.
+ *
+ * AppleSystem sends no `name` for own-arrangement stays (`budget.hotel` is empty
+ * too — the guest's hotel simply isn't recorded upstream), so the only place that
+ * name ever lives is what ops typed in here. Any path that rewrites accommodations
+ * from AppleSystem must run this first, or it silently blanks those names again.
+ * Matched on city + check-in date; an upstream name always wins.
+ */
+export function carryForwardHotelNames<T extends { city: string; hotel: string; checkIn: string }>(
+  fresh: T[],
+  previous: { city: string; hotel: string; checkIn: Date | string }[],
+): T[] {
+  const key = (city: string, checkIn: Date | string) =>
+    `${city.trim().toLowerCase()}|${(checkIn instanceof Date ? checkIn.toISOString() : checkIn).slice(0, 10)}`
+  const byStay = new Map<string, string>()
+  for (const p of previous) {
+    const k = key(p.city, p.checkIn)
+    if (p.hotel.trim() && !byStay.has(k)) byStay.set(k, p.hotel.trim())
+  }
+  return fresh.map((a) => (a.hotel.trim() ? a : { ...a, hotel: byStay.get(key(a.city, a.checkIn)) ?? '' }))
+}
+
 export interface MappedItineraryItem {
   dayNo: number
   date: string

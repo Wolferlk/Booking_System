@@ -11,7 +11,7 @@
 import { prisma } from '@/lib/prisma'
 import { getCancellationDeadline } from '@/lib/utils'
 import { getQuoteTemplate } from '@/lib/applesystem'
-import { mapQuoteToBooking, normalizeIsNumber, type MappedBookingInput } from '@/lib/as-booking-map'
+import { mapQuoteToBooking, normalizeIsNumber, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
 import { importMappedBooking, getAutomationUserId } from '@/lib/as-booking-import'
 import { detectCountryFromRef, isInCountryScope, type OperationCountry } from '@/lib/country-detection'
 import { sanitizeCancellationFees, totalCancellationFee, type CancellationFeeLine } from '@/lib/cancellation-fees'
@@ -385,6 +385,12 @@ export async function updateQuotationBooking(input: UpdateInput, caller: AuthedC
 
     const replaceOk = input.force_replace_details === true || EARLY_STATES.includes(existing.status)
     if (replaceOk) {
+      // AppleSystem has no name for own-arrangement stays — keep what ops entered.
+      const previousAcc = await prisma.accommodation.findMany({
+        where: { bookingId: existing.id },
+        select: { city: true, hotel: true, checkIn: true },
+      })
+      const accommodations = carryForwardHotelNames(mapped.accommodations, previousAcc)
       // Child rows are owned by the quotation, so a revision replaces them.
       await prisma.$transaction([
         prisma.passenger.deleteMany({ where: { bookingId: existing.id } }),
@@ -404,7 +410,7 @@ export async function updateQuotationBooking(input: UpdateInput, caller: AuthedC
           })),
         },
         accommodations: {
-          create: mapped.accommodations.map((a) => ({
+          create: accommodations.map((a) => ({
             city: a.city,
             hotel: a.hotel,
             checkIn: new Date(a.checkIn),

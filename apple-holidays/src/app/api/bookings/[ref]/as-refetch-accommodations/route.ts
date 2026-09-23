@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
 import { hasPermission } from '@/lib/rbac'
 import { isInCountryScope, type OperationCountry } from '@/lib/country-detection'
-import { mapQuoteToBooking, ASMappingError } from '@/lib/as-booking-map'
+import { mapQuoteToBooking, ASMappingError, carryForwardHotelNames } from '@/lib/as-booking-map'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
 import { logActivity, ACTION } from '@/lib/activity'
 
@@ -101,23 +101,16 @@ export async function POST(
   }))
 
   // AppleSystem sends no hotel name for own-arrangement stays. Refetching must not
-  // blank out (or rename) a hotel someone already filled in here, so carry the stored
-  // name over whenever the fresh payload has none for the same city + check-in date.
-  const previousNameByStay = new Map<string, string>()
-  for (const p of previous) {
-    const key = `${p.city.trim().toLowerCase()}|${p.checkIn}`
-    if (p.hotel.trim() && !previousNameByStay.has(key)) previousNameByStay.set(key, p.hotel.trim())
-  }
-  const resolveHotel = (a: { city: string; hotel: string; checkIn: string }) =>
-    a.hotel.trim() || previousNameByStay.get(`${a.city.trim().toLowerCase()}|${a.checkIn.slice(0, 10)}`) || ''
+  // blank out (or rename) a hotel someone already filled in here.
+  const accommodations = carryForwardHotelNames(mapped.accommodations, previous)
 
   await prisma.$transaction([
     prisma.accommodation.deleteMany({ where: { bookingId: booking.id } }),
     prisma.accommodation.createMany({
-      data: mapped.accommodations.map((a) => ({
+      data: accommodations.map((a) => ({
         bookingId: booking.id,
         city: a.city,
-        hotel: resolveHotel(a),
+        hotel: a.hotel,
         checkIn: new Date(a.checkIn),
         checkOut: new Date(a.checkOut),
         nights: a.nights,
@@ -151,7 +144,7 @@ export async function POST(
       previousCount: previous.length,
       newCount: mapped.accommodations.length,
       previous,
-      accommodations: mapped.accommodations.map((a) => ({ ...a, hotel: resolveHotel(a) })),
+      accommodations,
     },
     `Accommodations refetched — ${previous.length} item(s) replaced with ${mapped.accommodations.length}.`,
   )

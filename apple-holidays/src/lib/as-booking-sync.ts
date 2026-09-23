@@ -48,7 +48,7 @@
 
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { mapQuoteToBooking, ASMappingError, type MappedBookingInput } from '@/lib/as-booking-map'
+import { mapQuoteToBooking, ASMappingError, carryForwardHotelNames, type MappedBookingInput } from '@/lib/as-booking-map'
 import { fetchQuoteForRef, ASLookupError } from '@/lib/as-quote-lookup'
 import { logActivity, ACTION } from '@/lib/activity'
 import {
@@ -469,6 +469,10 @@ export async function syncBookingFromAs(
     contact: a.contact,
     ownArrangement: a.ownArrangement,
   }))
+
+  // Own-arrangement stays come back with no hotel name; keep the one ops typed in,
+  // otherwise it reads as a change and every sync blanks it (and its address).
+  mapped.accommodations = carryForwardHotelNames(mapped.accommodations, prevAcc)
 
   // Same idea as the itinerary: address/contact are ops-entered, keep them.
   const accExtras = new Map<string, { address: string | null; contact: string | null }>()
