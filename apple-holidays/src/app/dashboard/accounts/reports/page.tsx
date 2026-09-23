@@ -22,6 +22,7 @@ import {
   Loader2, Download, Search, RefreshCw, CalendarDays, ChevronLeft, ChevronRight,
   PlaneLanding, PlaneTakeoff, Users, ChevronDown, MapPin, CircleAlert,
   Sparkles, Info, Maximize2, Hotel, XCircle, Ban, Clock, ExternalLink,
+  Briefcase, ShoppingBag,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCountryFilter } from '@/hooks/use-country-filter'
@@ -40,6 +41,7 @@ import {
   APPROVAL_LABEL, countFacets, matchesFacets, type ReconfirmFacet,
 } from '@/lib/reports/reconfirm-filters'
 import { RECONFIRM_DUE_DAYS } from '@/lib/reconfirm-delay-shared'
+import { bookingSourceOf, type BookingSource } from '@/lib/booking-source'
 import OpsDrilldown from './ops-drilldown'
 
 // ─── Local helpers ────────────────────────────────────────────────────────────
@@ -94,12 +96,40 @@ function startOfMonth(date: string): string {
 /** Mirrors MAX_WINDOW_DAYS in ops-day-data — the server clamps past this. */
 const MAX_RANGE_DAYS = 92
 
-const RANGE_PRESETS: { label: string; build: (today: string) => [string, string] }[] = [
-  { label: 'Today',      build: t => [t, t] },
-  { label: 'Next 7 days', build: t => [t, shift(t, 6)] },
-  { label: 'This month',  build: t => [startOfMonth(t), endOfMonth(t)] },
-  { label: 'Next 30 days', build: t => [t, shift(t, 29)] },
+/**
+ * Range shortcuts. The D-n presets are the look-ahead windows ops chases files
+ * by: tomorrow through day n, *excluding today* — today's files are already on
+ * the ground and live on the Today view. On the 22nd, D-7 is the 23rd–29th and
+ * D-10 is the 23rd–2nd.
+ */
+const RANGE_PRESETS: {
+  label: string
+  hint: string
+  build: (today: string) => [string, string]
+  /** Show the resolved dates under the label — only where they are not obvious. */
+  showDates?: boolean
+}[] = [
+  { label: 'Today',        hint: 'Files on the ground today', build: t => [t, t] },
+  { label: 'D-7',          hint: 'Tomorrow to 7 days out — today excluded', build: t => [shift(t, 1), shift(t, 7)], showDates: true },
+  { label: 'D-10',         hint: 'Tomorrow to 10 days out — today excluded', build: t => [shift(t, 1), shift(t, 10)], showDates: true },
+  { label: 'This month',   hint: 'The whole calendar month', build: t => [startOfMonth(t), endOfMonth(t)] },
+  { label: 'Next 30 days', hint: 'Today and the 29 days after', build: t => [t, shift(t, 29)] },
 ]
+
+/** "23–29 Sep" / "23 Sep–2 Oct" — a preset's window, short enough for a chip. */
+function shortSpan(from: string, to: string): string {
+  const fmt = (d: string, month: boolean) => {
+    const [y, m, day] = d.split('-').map(Number)
+    return new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: 'numeric', ...(month ? { month: 'short' } : {}) })
+      .format(new Date(Date.UTC(y, m - 1, day)))
+  }
+  return from.slice(0, 7) === to.slice(0, 7)
+    ? `${fmt(from, false)}–${fmt(to, true)}`
+    : `${fmt(from, true)}–${fmt(to, true)}`
+}
+
+/** Sales channel filter — B2C is the Aahaas storefront, everything else is agent (B2B) work. */
+type ChannelFilter = 'ALL' | BookingSource
 
 /**
  * How loud a waiting cancellation request is allowed to be.
@@ -147,8 +177,9 @@ export default function OperationsBoardPage() {
   const [date, setDate] = useState(todayLocal())
   /** Range mode keeps its own pair so switching modes does not lose either one. */
   const [mode, setMode] = useState<'DAY' | 'RANGE'>('DAY')
-  const [rangeFrom, setRangeFrom] = useState(todayLocal())
-  const [rangeTo, setRangeTo] = useState(() => shift(todayLocal(), 6))
+  // Range mode opens on D-7 — the window the desk chases reconfirmations in.
+  const [rangeFrom, setRangeFrom] = useState(() => shift(todayLocal(), 1))
+  const [rangeTo, setRangeTo] = useState(() => shift(todayLocal(), 7))
   const [search, setSearch] = useState('')
   const [board, setBoard] = useState<OpsDayBoard | null>(null)
   const [loading, setLoading] = useState(true)
@@ -159,6 +190,7 @@ export default function OperationsBoardPage() {
   /** Reconfirmation chips: OR inside a group, AND across groups. */
   const [facets, setFacets] = useState<Set<ReconfirmFacet>>(new Set())
   const [countryRowFilter, setCountryRowFilter] = useState('ALL')
+  const [channel, setChannel] = useState<ChannelFilter>('ALL')
   /** Narrow the whole board to files whose cancellation accounts has not decided. */
   const [cancelOnly, setCancelOnly] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -249,8 +281,22 @@ export default function OperationsBoardPage() {
     if (cancelOnly && !r.cancelPending) return false
     if (statusFilter !== 'ALL' && r.status !== statusFilter) return false
     if (countryRowFilter !== 'ALL' && r.country !== countryRowFilter) return false
+    if (channel !== 'ALL' && bookingSourceOf(r.agent) !== channel) return false
     return outstandingCheck(r)
-  }), [board, segment, onlyOutstanding, cancelOnly, statusFilter, countryRowFilter, outstandingCheck])
+  }), [board, segment, onlyOutstanding, cancelOnly, statusFilter, countryRowFilter, channel, outstandingCheck])
+
+  /** Per-channel counts for the toggle, over the current tab only — so the
+   *  numbers match what clicking each option would actually show. */
+  const channelCounts = useMemo(() => {
+    const c = { ALL: 0, B2B: 0, B2C: 0 }
+    for (const r of board?.rows ?? []) {
+      if (segment === 'ARRIVALS' && !r.isArrival) continue
+      if (segment === 'DEPARTURES' && !r.isDeparture) continue
+      c.ALL++
+      c[bookingSourceOf(r.agent)]++
+    }
+    return c
+  }, [board, segment])
 
   const facetCounts = useMemo(() => countFacets(preFacet), [preFacet])
 
@@ -261,7 +307,7 @@ export default function OperationsBoardPage() {
 
   const filtersActive =
     onlyOutstanding || cancelOnly || checkFilter !== 'ALL' || statusFilter !== 'ALL'
-    || countryRowFilter !== 'ALL' || search.trim().length > 0 || facets.size > 0
+    || countryRowFilter !== 'ALL' || channel !== 'ALL' || search.trim().length > 0 || facets.size > 0
 
   function clearFilters() {
     setOnlyOutstanding(false)
@@ -269,6 +315,7 @@ export default function OperationsBoardPage() {
     setCheckFilter('ALL')
     setStatusFilter('ALL')
     setCountryRowFilter('ALL')
+    setChannel('ALL')
     setSearch('')
     setFacets(new Set())
   }
@@ -424,7 +471,7 @@ export default function OperationsBoardPage() {
   function exportCSV() {
     if (!visible.length) { toast.error('Nothing to export'); return }
     const headers = [
-      'Booking Ref', 'Booking Type', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
+      'Booking Ref', 'Booking Type', 'Channel', 'Lead Passenger', 'Agent', 'File Handler', 'Country', 'Destination',
       'Status', 'Arrival', 'Departure', 'Day', 'Pax',
       'On Board Date', 'Client Confirmed', 'Pre-Tour Call', 'Call Outcome',
       'WhatsApp Call Request', 'Request Sent', 'Accepted On', 'Call Scheduled', 'Call Schedule Status',
@@ -436,6 +483,7 @@ export default function OperationsBoardPage() {
     const lines = visible.map(r => [
       r.bookingRef,
       r.cancelled ? 'CANCELLED' : r.hotelOnly ? 'Hotel Only' : 'Full tour',
+      bookingSourceOf(r.agent),
       r.leadPassenger ?? '', r.agent ?? '', r.fileHandler ?? '',
       r.countryLabel, r.destination ?? '', r.statusLabel,
       r.arrivalDate, r.departureDate, `${r.dayNo}/${r.totalDays}`, r.pax,
@@ -603,14 +651,20 @@ export default function OperationsBoardPage() {
                       <button
                         key={p.label}
                         onClick={() => applyPreset(p.build)}
+                        title={`${p.hint} · ${formatDate(pf)} → ${formatDate(pt)}`}
                         className={cn(
-                          'px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors',
+                          'px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors leading-tight',
                           active
                             ? 'bg-slate-900 text-white'
                             : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
                         )}
                       >
                         {p.label}
+                        {p.showDates && (
+                          <span className={cn('ml-1.5 font-medium', active ? 'text-slate-300' : 'text-slate-400')}>
+                            {shortSpan(pf, pt)}
+                          </span>
+                        )}
                       </button>
                     )
                   })}
@@ -1123,6 +1177,56 @@ export default function OperationsBoardPage() {
           <CardHeader
             action={
               <div className="flex flex-wrap items-center gap-2">
+                <div
+                  role="radiogroup"
+                  aria-label="Sales channel"
+                  className="relative flex items-center rounded-lg bg-slate-100 p-0.5"
+                >
+                  {([
+                    { key: 'ALL', label: 'All', icon: null, tint: 'text-slate-900' },
+                    { key: 'B2B', label: 'B2B', icon: Briefcase, tint: 'text-sky-700' },
+                    { key: 'B2C', label: 'B2C', icon: ShoppingBag, tint: 'text-violet-700' },
+                  ] as const).map(o => {
+                    const active = channel === o.key
+                    const Icon = o.icon
+                    return (
+                      <button
+                        key={o.key}
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setChannel(o.key)}
+                        title={
+                          o.key === 'B2C' ? 'Aahaas storefront orders'
+                            : o.key === 'B2B' ? 'Agent / tour-operator files'
+                              : 'Every channel'
+                        }
+                        className={cn(
+                          'relative flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors',
+                          active ? o.tint : 'text-slate-500 hover:text-slate-800',
+                        )}
+                      >
+                        {active && (
+                          <motion.span
+                            layoutId="ops-channel-pill"
+                            className="absolute inset-0 rounded-md bg-white shadow-sm"
+                            transition={reduce ? { duration: 0 } : { type: 'spring', stiffness: 500, damping: 38 }}
+                          />
+                        )}
+                        {Icon && <Icon className="relative w-3 h-3" />}
+                        <span className="relative">{o.label}</span>
+                        <span
+                          className={cn(
+                            'relative tabular-nums rounded px-1 text-[10px]',
+                            active ? 'bg-slate-100 text-slate-600' : 'text-slate-400',
+                          )}
+                        >
+                          {channelCounts[o.key]}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+
                 <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none">
                   <input
                     type="checkbox"
