@@ -409,6 +409,66 @@ model AgendaItemInclude {
   @@map("agenda_item_includes")
 }
 
+/// Vietnam booking checklist — the desk's per-booking costing sheet. One row per
+/// booking; NULL revenue / rate mean "use the live value". Keyed by bookingRef,
+/// no FK by design — see prisma/sql/2026-09-23-vn-booking-checklist.sql.
+model VnBookingChecklist {
+  id            String    @id @default(cuid())
+  bookingRef    String    @unique(map: "vn_booking_checklists_bookingRef_key")
+  revenueUsd    Decimal?  @db.Decimal(14, 2)
+  exchangeRate  Decimal?  @db.Decimal(14, 4)
+  /// 'DRAFT' | 'CHECKED' | 'FINAL'
+  status        String    @default("DRAFT") @db.VarChar(16)
+  note          String?   @db.Text
+  checkedById   String?
+  checkedByName String?
+  checkedAt     DateTime?
+  createdById   String?
+  createdByName String?
+  updatedByName String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status], map: "vn_booking_checklists_status_idx")
+  @@map("vn_booking_checklists")
+}
+
+/// One payable on a Vietnam booking checklist. Total estimate is computed
+/// (unit x quan1 x quan2); totalOverrideVnd only holds a typed total that differs.
+model VnBookingChecklistItem {
+  id               String    @id @default(cuid())
+  bookingRef       String
+  position         Int       @default(0)
+  serviceDate      DateTime? @db.Date
+  description      String    @db.Text
+  vendor           String?
+  code             String?   @db.VarChar(64)
+  unitPrice        Decimal   @default(0) @db.Decimal(18, 4)
+  /// 'VND' | 'USD'
+  unitCurrency     String    @default("VND") @db.VarChar(8)
+  quan1            Decimal   @default(1) @db.Decimal(10, 2)
+  quan2            Decimal   @default(1) @db.Decimal(10, 2)
+  totalOverrideVnd Decimal?  @db.Decimal(18, 2)
+  /// 'UNPAID' | 'PARTIAL' | 'PAID'
+  paidStatus       String    @default("UNPAID") @db.VarChar(16)
+  paidVnd          Decimal?  @db.Decimal(18, 2)
+  paidAt           DateTime?
+  paidByName       String?
+  /// 'MANUAL' | 'CATALOG' | 'INCLUDE'
+  source           String    @default("MANUAL") @db.VarChar(16)
+  productKey       String?
+  note             String?   @db.VarChar(500)
+  createdByName    String?
+  updatedByName    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([bookingRef, position], map: "vn_booking_checklist_items_bookingRef_idx")
+  @@index([paidStatus], map: "vn_booking_checklist_items_paid_idx")
+  @@index([vendor], map: "vn_booking_checklist_items_vendor_idx")
+  @@map("vn_booking_checklist_items")
+}
+
 model Assignment {
   id              String         @id @default(cuid())
   agendaItemId    String         @unique

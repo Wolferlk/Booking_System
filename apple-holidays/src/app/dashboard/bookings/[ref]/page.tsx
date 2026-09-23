@@ -11,7 +11,7 @@ import {
   ChevronRight, Calendar, ArrowLeft, TrendingUp, Ticket,
   Phone, Shield, Edit2, UserCheck, MessageCircle, Send, Plus, Trash2, Mail, Copy,
   FlaskConical, Globe, Sparkles, PlaneLanding,
-  History, ChevronDown, RotateCcw, Wand2, ShieldCheck, Headphones,
+  History, ChevronDown, RotateCcw, Wand2, ShieldCheck, Headphones, ListChecks,
 } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -58,6 +58,8 @@ import BookingOriginChip from '@/components/bookings/booking-origin-chip'
 import JourneyMap from '@/components/bookings/journey-map'
 import DriverBriefModal from '@/components/bookings/driver-brief-modal'
 import MailBoxModal from '@/components/bookings/mail-box-modal'
+import VnChecklistModal from '@/components/bookings/vn-checklist-modal'
+import { canViewChecklist } from '@/lib/vn-checklist/shared'
 import { canManageMailbox, canUseMailbox } from '@/lib/mailbox/access'
 
 /**
@@ -270,6 +272,7 @@ export default function BookingDetailPage() {
   // Driver Brief — the slide deck an officer reads to the allocated driver
   const [driverBriefOpen, setDriverBriefOpen] = useState(false)
   const [mailBoxOpen, setMailBoxOpen] = useState(false)
+  const [checklistOpen, setChecklistOpen] = useState(false)
 
   // Customer feedback modal (triggered on Complete Trip)
   const [feedbackModal, setFeedbackModal] = useState(false)
@@ -1828,6 +1831,16 @@ Wishing you a wonderful trip! ✈️
                 <Link href={`/dashboard/bookings/${ref}/pnl`} className="btn btn-secondary btn-sm">
                   <TrendingUp className="w-3.5 h-3.5" /> P&amp;L
                 </Link>
+              )}
+              {/* Check List — the Vietnam desk's costing sheet (vendors, unit price x qty, paid, margin) */}
+              {booking.operationCountry === 'VIETNAM' && canViewChecklist(role) && (
+                <button
+                  onClick={() => setChecklistOpen(true)}
+                  className="btn btn-sm bg-gradient-to-r from-rose-600 to-amber-500 text-white border border-rose-700 hover:from-rose-700 hover:to-amber-600 flex items-center gap-1.5 shadow-sm"
+                  title="Open the Vietnam costing checklist — payables, vendors, totals, PNL and margin"
+                >
+                  <ListChecks className="w-3.5 h-3.5" /> Check List
+                </button>
               )}
               {canEditBooking && (
                 <button onClick={openEditBooking} className="btn btn-secondary btn-sm">
@@ -4400,6 +4413,16 @@ Wishing you a wonderful trip! ✈️
           onClose={() => setMailBoxOpen(false)}
           bookingRef={ref}
           canManage={canManageMailbox(role)}
+        />
+      )}
+
+      {/* ── Vietnam Check List ─────────────────────────────────────────── */}
+      {checklistOpen && (
+        <VnChecklistModal
+          open={checklistOpen}
+          bookingRef={ref}
+          role={role}
+          onClose={() => setChecklistOpen(false)}
         />
       )}
 
