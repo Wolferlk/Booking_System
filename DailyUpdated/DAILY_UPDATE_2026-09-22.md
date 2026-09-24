@@ -1,7 +1,7 @@
 # Daily Work Update — 22 September 2026 (Tuesday)
 
 **From:** Sasindu Diluranga  
-**Subject:** Daily Development Update — 22 Sep 2026 (Accounts: payments on B2C, B2B Flights and B2B Tickets, Receive from agency, Page Master, old-amendment de-duplication, cancellation fix; Online Work: Leave requests, departments, web check-in, Mail & Teams panel, sign-in security code; Task Manager: paste-a-write-up import)
+**Subject:** Daily Development Update — 22 Sep 2026 (Accounts: payments on B2C, B2B Flights and B2B Tickets, Receive from agency, B2B Flight Tickets P&L, commission-passed-back switch, sidebar search, Page Master, old-amendment de-duplication, cancellation fix; Online Work: Leave requests, departments, web check-in, Mail & Teams panel, sign-in security code; Task Manager: paste-a-write-up import)
 
 ---
 
@@ -19,9 +19,13 @@ In **Online Work**, the largest single feature of the day is **Leave requests** 
 
 In the **Task Manager**, pasting a write-up now yields one task per `TASK n:` block instead of dozens of fragments.
 
+**The evening went back to the Accounts System.** `/b2b/pnl` — the flights twin of the B2C P&L — was built on an **exact identity rather than an approximation**: `sell − cost ≡ profit` holds per row and in every total by construction, and the board never adds across currencies. It gained a redesigned detail popup, a per-ticket PDF, a five-sheet designed workbook, and a **commission passed back to the agency** switch that reframes every figure on the board at once — on the current LKR window that turns a 667,104 profit into roughly nil earning, which is the point you were making. `/b2b/tickets` gained a **"What the mail said" panel** that puts the sent report beside the live board and will **name the 7 documents** behind the 54-vs-47 gap. Last in was **sidebar search** (`⌘K`), indexed per user so a page can only surface for someone who already holds it.
+
+> **A note on this file:** it was first written at 18:00 and has since been extended with §8 and §9, the five Accounts commits made between 19:58 and 21:00.
+
 | Project | Today's commits | Branch | Worktree |
 |---|---:|---|---|
-| Accounts System | 7 commits | `REV1` | Clean |
+| Accounts System | 12 commits | `REV1` | Clean |
 | Aahaas Online Work | 12 commits | `main` | Clean |
 | Aahaas Task Manager | 2 commits | `main` | Clean |
 | Booking System / OPS | No work today | `LIVE-1.0.0v` | Clean |
@@ -155,11 +159,100 @@ There's an **agency statement PDF**: every confirmed booking for that agency wit
 
 ---
 
-## 8. Online Work — Leave requests, end to end
+## 8. Accounts System — B2B Flight Tickets P&L (`/b2b/pnl`)
+
+`5d70480` `0d287a3` · the flights twin of `/b2c/pnl`, wired into the sidebar (Profit & Loss), `config/access.php` and the tab rail on both B2B boards
+
+### 8.1 An identity, not an approximation
+
+* **Sell** = ticket cost + markup − markup reversed. It reuses `B2bTicketService::PAYABLE_SQL`, so **the P&L's sell can never drift from what the Pay workspace bills**.
+* **Net cost** = ticket cost − airline commission. Commission is a rebate and is never invoiced, so booking it as revenue would inflate turnover.
+* **Profit** = markup + commission − reversed, and **sell − cost ≡ profit holds per row and in every total by construction**.
+* **Voided tickets are zero on all three lines and still counted.**
+
+The board is scoped to **one currency at a time** (picker across the top, defaulting to the busiest), because the ticket board deliberately never adds across currencies — so every number on the page is honestly addable.
+
+Beyond the B2C page: a **waterfall** of where profit came from, a **clickable margin-health bar** (loss / no-earning / thin / fair / strong / voided), a daily profit-and-margin chart, profit-ranked cuts by airline / agency / agent / route / cabin, a per-ticket drawer showing the workings, and XLSX + PDF exports.
+
+**Not verified against real data** — the RDS host times out from this machine on both the `b2b` and `mysql` connections, so **not a single query was run**. Lint and Blade compilation pass; the numbers need one look on the production box.
+
+### 8.2 The 54-vs-47 gap: the board now shows the mail beside itself
+
+I could not query to diagnose it, but the two screenshots agree on something striking — **every delta is exactly 7**:
+
+| | Board | Mail |
+|---|---:|---:|
+| Tickets | 54 | 47 |
+| Keyed by hand | 21 | 14 |
+| Exceptions | 10 | 3 |
+| Reissues | 7 | 0 |
+
+That points at **one set of 7 documents: hand-keyed reissues recorded in the portal after the mail was built.** A report is a photograph taken once; the board re-reads the portal every request. Under the issue-day rule, a ticket issued on the 21st but keyed in later still belongs to the 21st — so it joins the board's 21st long after the 21st's mail went out. **If that is what happened, the mail was right when sent and the board is right now, and forcing the page down to 47 would hide 7 real tickets.**
+
+Rather than guess, I built the thing that answers it on the box where the data lives — a **"What the mail said" panel** on `/b2b/tickets`:
+
+* The sent report's figures (tickets, value per currency, earning, exceptions) beside the board's live figures, with the delta and a verdict chip: *Agrees* or *+7 on the board since the send*.
+* **Both sides are re-cut on the mail's own rule** — its date field, its saved filters, its timezone, its stored period, never the URL's — so the panel cannot manufacture a difference.
+* **"Name the 7 documents"** reads the ticket numbers back out of **the workbook that was actually emailed** and diffs them against the live set, listing what has been added (with why — *"Recorded in the portal after the mail was sent"*), what has gone, and what changed value or status.
+* Links straight to the sent workbook, its download, and the schedule.
+
+**Please open `/b2b/tickets?from=2026-09-21&to=2026-09-21&date_field=issue_or_created` and click through.** The panel will either confirm the late-keying theory by name, or show me 7 documents that don't fit it — in which case there is a real rule difference and I'll fix the rule.
+
+### 8.3 The detailed P&L popup, the per-ticket PDF and a rebuilt workbook
+
+`bfe877b`
+
+* **The popup** is now a **centred modal up to 1060px** (it was a narrow side drawer), two columns on a desk and one on a phone: a dark banner with profit, margin, health band and a split bar showing what share of the sale is the airline's versus ours; the workings redrawn as a **mini waterfall** with bars scaled against the largest figure, green for additions and red for reversals; document facts, money received with a progress bar, and the reissue / PNR chain beside it. A voided ticket says so in its own notice. Esc and backdrop close it, and focus returns to the button.
+* **Download that P&L:** `GET /b2b/pnl/{ticket}/pdf` renders a one-page A4 filing copy **from the same `detail()` record the popup shows**, so paper and screen cannot disagree. Reachable from the popup footer and from a download icon on every row.
+* **The filtered Excel now writes five designed sheets** instead of four plain ones: **Dashboard** (green masthead, six KPI tiles, the statement with banded totals, a colour-coded margin-health table); **Tickets** (autofilter, frozen panes, real number and percent formats, in-cell data bars on profit and sell, band cells colour-filled, loss rows tinted pink, voids greyed, and a totals band using **live `=SUM()` formulas so the figures stay right when the recipient filters it**); **Days** (with a native clustered bar chart of sell against profit); **Cuts**; and **Method** — the three expressions every figure was built from, the band thresholds, the currency rule and the provenance, **so the file is checkable by whoever receives it**.
+
+### 8.4 Commission passed back to the agency
+
+`a025253`
+
+A switch that changes the basis of the whole board: commission treated as ours, or **passed back to the agency**. **`sell − cost ≡ profit` still holds exactly, per row and in every total**, so nothing stops reconciling.
+
+> On the current LKR window this matters a lot: **the 667,104 profit is 700,511 of commission against zero markup** — flip the switch and the real earning shows as roughly nil, which is the point you were making.
+
+Every figure comes from **one pair of expressions** (`profitSql()` / `costSql()` in `B2bTicketPnlService.php`), so the tiles, statement, waterfall, margin bands, day chart, cuts, the row list and its sorting all move together. The switch rides in the query string like every other filter, so the popup, the per-ticket PDF and both exports follow the board — and **each says which basis produced it**: the statement gains a *Passed back to the agency −X* line, the waterfall draws the commission arriving and leaving so the bars still land on the profit tile, the popup shows an amber note with the amount passed back, the workbook's Method sheet writes down the switched identity, and the net-cost tile reads *"the airline's price in full"*.
+
+**Verified** by running both expression sets as real SQL over sample rows: the identity holds per row and in aggregate in **both** modes, the profit difference equals the live commission **to the cent**, voided tickets stay at zero, and the waterfall sums to the profit tile. Both PDFs and the workbook were rendered in the new mode.
+
+> **Two things worth your call:**
+> 1. **It is per-view, not a saved default** — someone opening `/b2b/pnl` fresh gets the old basis. Say the word and I'll make *passed* the default, or make it a setting.
+> 2. **Scope is the P&L board only.** `/b2b/tickets`' earning column and the ticket payment ledger still treat commission as ours — that is what the agency is billed against, so **I left it alone deliberately**.
+
+---
+
+## 9. Accounts System — Sidebar search
+
+`2aeeaad`
+
+A search box at the top of the sidebar, under the brand. Results open as a **palette over the app**, so the collapsed rail never crops them.
+
+**How it finds things.** The index is built **per user** in `SiteSearch.php` from the existing `config/access.php` catalogue, so **a page can only appear for someone who already holds it** — `PageAccess::allows()` decides every row, exactly as the sidebar does. Three sources:
+
+* every page in the catalogue (53), **including ones with no sidebar link of their own**;
+* non-grantable links — Chat, Page Master, Last-Minute Live;
+* **named spots inside a page** — *"Commission passed back to the agency"* jumps straight to `/b2b/pnl?commission_mode=passed`, plus *Re-check corrected P&Ls*, *Missing Vietnam products*, *Agent rate sheet*, *My profile*. Each inherits its page's permission and is **dropped silently if the route doesn't exist**.
+
+Labels alone aren't enough, so each page carries **keywords people actually type**: `fx` / `cbsl` / `usd` finds Exchange Rates, `driver` finds Driver Settlements, `vietnam` finds all four VN screens.
+
+**Behaviour.** `Ctrl/⌘+K` from anywhere, or `/` when not typing in a field. `↑↓` to move, `↵` to open, `⌘/Ctrl+↵` for a new tab, `Esc` to close. An empty box shows your **5 most recent jumps** (localStorage, wrapped so a private window can't break it). Matching text is highlighted. **Every term you type must hit something**, so *"b2b pnl"* gives the flight P&L rather than every B2B page. It is ~15 KB of JSON inlined and searched in the browser — **no request per keystroke**.
+
+**A page hidden in Page Master still appears, tagged *hidden*.** Hiding declutters a sidebar; search is how you get back to it.
+
+**Verified:** ranking tested against the real index — `pnl`, `b2b pnl`, `commission`, `fx`, `vietnam`, `driver`, `cancel`, `payment`, `rate sheet`, `count check` all return the right page first. Permission filtering tested with a super admin (62 entries) and a three-page clerk (11): Data Editor, User Management, Payable 1.0 and Invoice Payments were all correctly withheld, and the hidden-page flag works. Blade compiles, the palette JS parses, and there are no id or class collisions with existing views. **Not verified: the live look and feel of the palette** — the production database times out from this machine, so I couldn't open the app. Worth one click.
+
+**To extend it later,** both lists are in one file: `SiteSearch::KEYWORDS` for search terms, `DESTINATIONS` for in-page spots.
+
+---
+
+## 10. Online Work — Leave requests, end to end
 
 `8a0642f` · 29 files · +3,144 / −46
 
-### 8.1 For employees (`/me/leave`, new menu item)
+### 10.1 For employees (`/me/leave`, new menu item)
 
 * **Four leave types:** full day, half day (morning or afternoon), short leave (**exactly 2 hours** from a chosen start time), and medical.
 * **Backdated leave** up to 60 days.
@@ -168,11 +261,11 @@ There's an **agency statement PDF**: every confirmed booking for that agency wit
 * **Year view:** the whole year as a calendar, coloured by leave type, with totals.
 * **Approved leave marks the day as leave (or half day) in Daily filing automatically.**
 
-### 8.2 For admins (`/approvals`)
+### 10.2 For admins (`/approvals`)
 
 Leave joins shift and work-from-home in one queue, with a filter by kind and an **Away this week** band at the top. Each leave shows the days, the documents, who else is off then, and the person's leave so far this year. **Every email attempt is recorded, including why it failed**, with a *Send the email again* button.
 
-### 8.3 The emails
+### 10.3 The emails
 
 | Step | What is sent |
 |---|---|
@@ -190,7 +283,7 @@ The one-tap `admin1@aahaas.com` account has no mailbox; when it approves, the de
 
 ---
 
-## 9. Online Work — the rest of the day
+## 11. Online Work — the rest of the day
 
 | Commit | What landed |
 |---|---|
@@ -207,7 +300,7 @@ The one-tap `admin1@aahaas.com` account has no mailbox; when it approves, the de
 
 ---
 
-## 10. Task Manager — pasting a write-up gives tasks, not fragments
+## 12. Task Manager — pasting a write-up gives tasks, not fragments
 
 `1af93c0` `def08f4` · ~930 lines
 
@@ -215,15 +308,15 @@ Pasting the sample now gives **10 tasks, one per `TASK n:` block**, in both *Pas
 
 ---
 
-## 11. Verification summary
+## 13. Verification summary
 
-- **Accounts System:** PHP syntax checks pass, Blade views compile, routes register. **16 payment tests (8 B2B new, 8 B2C existing) pass on in-memory SQLite.** The activity-split and old-amendment changes were run on made-up rows with no database. **No new board has been opened against real data from my machine** — the production and B2B databases both time out from here.
+- **Accounts System:** PHP syntax checks pass, Blade views compile, routes register. **16 payment tests (8 B2B new, 8 B2C existing) pass on in-memory SQLite.** The activity-split and old-amendment changes were run on made-up rows with no database. The P&L identity was checked by running both commission expression sets as **real SQL over sample rows** — it holds per row and in aggregate in both modes. Sidebar search ranking and permission filtering were tested against the real index, with a super admin (62 entries) and a three-page clerk (11). **No new board has been opened against real data from my machine** — the production and B2B databases both time out from here.
 - **Online Work:** type-check and production build pass throughout. Leave was exercised against the real routes on a local build of the app, with test data deleted after. New database statements were checked against the live schema **without any writes**. Several screens (Mail & Teams, departments, avatars, web check-in, the task-import popup) have **not been clicked through in a browser**.
 - **Task Manager:** both readers tested on the real sample text; type-check passes.
 
 ---
 
-## 12. Follow-Up Items
+## 14. Follow-Up Items
 
 1. **Run the three migrations, in this order, with a backup and a `--pretend` preview first:** `2026_09_22_100000_create_user_page_preferences_table`, `2026_09_22_120000_create_b2b_booking_payments_table`, `2026_09_22_160000_create_b2b_ticket_payments_table`. **None have been run.** Until each runs, its board works as before and says payments aren't set up.
 2. **Open `/b2c/invoices`, `/b2b/bookings` and `/b2b/tickets` once on the server** and check a few rows against what you know is true. None have met real data.
@@ -237,5 +330,9 @@ Pasting the sample now gives **10 tasks, one per `TASK n:` block**, in both *Pas
 10. **Check the monitoring roster write** on production: if the server cannot write `.data/monitoring.json`, the Mail & Teams panel shows that error instead of data.
 11. **Click through in a browser once:** Mail & Teams, departments, avatars, web check-in and the Daily-filing import popup. None have been opened in a browser against your data.
 12. **When a sidebar link is added, add its key to the sidebar list in `config/access.php`**, or it gets no Page Master switch.
-13. **Still open from 21 Sep:** the `/pnl/db` wide-window timing, whether the P&L strip needs a *sweep this window* button, the Online Work production `.env` clean-up, the passwordless-Admin decision (now partly answered by the security code), audit row id 19, and the Task Manager department scoping for Leader-created projects.
-14. **Still open from 19 and 15 Sep:** the `admin@aahaas.com` password decision, `AUTH_SECRET` in the deployment environment, the five live indexes, `DB_READ_HOST` in Amplify, Checklist VN's tables on live, and the Task Manager team backfill.
+13. **Open `/b2b/pnl` on the production box and look at the numbers.** Not one query was run from here. Check the tiles, the waterfall landing on the profit tile, and the margin bands.
+14. **Click through the "What the mail said" panel:** `/b2b/tickets?from=2026-09-21&to=2026-09-21&date_field=issue_or_created`, then *Name the 7 documents*. Either it confirms the late-keying theory by name, or it shows 7 documents that don't fit — in which case there is a real rule difference and I'll fix the rule.
+15. **Decide on the commission switch:** keep it per-view, make *passed back* the default, or make it a saved setting. And confirm that leaving `/b2b/tickets`' earning column and the ticket ledger on the old basis is right — that is what the agency is billed against.
+16. **Open the sidebar search palette once** to check its live look and feel; it has never been seen in a browser. When you add a new in-page destination, both lists live in `SiteSearch.php` (`KEYWORDS`, `DESTINATIONS`).
+17. **Still open from 21 Sep:** the `/pnl/db` wide-window timing, whether the P&L strip needs a *sweep this window* button, the Online Work production `.env` clean-up, the passwordless-Admin decision (now partly answered by the security code), audit row id 19, and the Task Manager department scoping for Leader-created projects.
+18. **Still open from 19 and 15 Sep:** the `admin@aahaas.com` password decision, `AUTH_SECRET` in the deployment environment, the five live indexes, `DB_READ_HOST` in Amplify, Checklist VN's tables on live, and the Task Manager team backfill.

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw } from 'lucide-react'
+import { Settings, FlaskConical, Users, Loader2, Mail, MessageCircle, ShieldAlert, HardDrive, Zap, Power, Lock, Unlock, Eye, EyeOff, BrainCircuit, FileSearch, Tags, FolderSync, TrendingUp, Bot, BarChart3, Database, RefreshCw, CheckCircle2, Pencil, Truck, Ticket, Fuel, Send, MonitorPlay, Copy, Link2, ExternalLink, Sparkles, Store, Search, X, BellRing, SearchX, Map as MapIcon, RotateCcw, FileSpreadsheet } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import Header from '@/components/layout/header'
 import { Card, CardHeader, CardBody } from '@/components/ui/card'
@@ -14,6 +14,7 @@ import JourneyMapCard from '@/components/settings/journey-map-card'
 import FileHandlerResolveSettings from '@/components/settings/file-handler-resolve-settings'
 import CancellationRecoveryCard from '@/components/settings/cancellation-recovery-card'
 import VnProductSheetCard from '@/components/settings/vn-product-sheet-card'
+import VnChecklistSheetCard from '@/components/settings/vn-checklist-sheet-card'
 import {
   PARTNER_CONFIG, PARTNER_COUNTRIES, COUNTRY_FLAGS, COUNTRY_LABELS, parseCountryList,
 } from '@/lib/partner-directory'
@@ -318,6 +319,7 @@ const SECTIONS: SectionMeta[] = [
   { id: 'last-minute',    title: 'Last-Minute Booking Alerts',   group: 'Operations',      icon: BellRing,     keywords: 'd-4 alarm sound browser notification late file acknowledge' },
   { id: 'file-handler',   title: 'File Handler Resolution',      group: 'Operations',      icon: FolderSync,   keywords: '30 sundays placeholder onedrive handler mapping resolve' },
   { id: 'vn-products',    title: 'Vietnam Product Sheet',        group: 'Operations',      icon: Store,        keywords: 'includes agenda sic transfer private tour product list sharepoint excel link manual payable split vietnam' },
+  { id: 'vn-checklist21', title: 'Checklist VN 2.1v (Excel)',   group: 'Operations',      icon: FileSpreadsheet, keywords: 'checklist vietnam excel sharepoint sync mirror 2 hours download tour payment paid act tina link' },
   { id: 'cancel-recovery',title: 'Cancellation Recovery',        group: 'Operations',      icon: RotateCcw,    keywords: 'recover restore reinstate undo reverse revive cancelled booking full cancel permanent sealed irreversible window days audience' },
 
   { id: 'automation',     title: 'Automation Settings',          group: 'Automation & AI', icon: Zap,          keywords: 'auto mail inbox polling onedrive scheduled background critical password pause' },
@@ -1460,6 +1462,11 @@ export default function ConfigPage() {
             <Section id="vn-products" visible={show('vn-products')} flashed={flashId === 'vn-products'}>
               {/* Where the agenda's Vietnam "Includes" picker reads its products */}
               <VnProductSheetCard />
+            </Section>
+
+            <Section id="vn-checklist21" visible={show('vn-checklist21')} flashed={flashId === 'vn-checklist21'}>
+              {/* The VN desk's Excel checklist mirrored into OPS — link, sync, downloads */}
+              <VnChecklistSheetCard />
             </Section>
 
             <Section id="cancel-recovery" visible={show('cancel-recovery')} flashed={flashId === 'cancel-recovery'}>

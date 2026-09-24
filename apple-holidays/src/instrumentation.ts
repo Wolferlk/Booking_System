@@ -39,6 +39,12 @@ export async function register() {
       // job, and ships OFF, so booting this only arms the timer.
       const { startPreArrivalSyncScheduler } = await import('@/lib/as-prearrival-scheduler')
       void startPreArrivalSyncScheduler()
+
+      // Checklist VN 2.1v — mirrors the VN desk's Excel checklist into OPS every
+      // 2 hours (a setting). Read-only towards the workbook; a no-op until the
+      // vn_sheet_checklist_* tables exist.
+      const { startVnChecklistSheetScheduler } = await import('@/lib/vn-checklist-sheet/scheduler')
+      startVnChecklistSheetScheduler()
     }
   }
 }

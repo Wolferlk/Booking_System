@@ -59,6 +59,7 @@ import JourneyMap from '@/components/bookings/journey-map'
 import DriverBriefModal from '@/components/bookings/driver-brief-modal'
 import MailBoxModal from '@/components/bookings/mail-box-modal'
 import VnChecklistModal from '@/components/bookings/vn-checklist-modal'
+import VnSheetChecklistPanel from '@/components/bookings/vn-sheet-checklist-panel'
 import { canViewChecklist } from '@/lib/vn-checklist/shared'
 import { canManageMailbox, canUseMailbox } from '@/lib/mailbox/access'
 
@@ -3161,6 +3162,13 @@ Wishing you a wonderful trip! ✈️
           </CardBody>
         </Card>
         </section>
+        )}
+
+        {/* Checklist VN 2.1v — this tour's block from the VN desk's live Excel
+            checklist, mirrored every 2 hours. Read-only; the panel carries its
+            own data-nav section. */}
+        {booking.operationCountry === 'VIETNAM' && canViewChecklist(role) && (
+          <VnSheetChecklistPanel bookingRef={ref} />
         )}
       </div>
 

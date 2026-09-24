@@ -33,6 +33,7 @@ const GT_VN_ALLOWED_PAGES = [
   '/dashboard/bookings',          // list + booking detail (and its agenda/tickets sub-pages)
   '/dashboard/accounts/reports',  // Ops Board
   '/dashboard/mc-report',         // MC Report
+  '/dashboard/checklist-vn',      // Check List VN — costing sheets (also opened per booking)
   '/dashboard/ground/drivers',    // Driver management
   '/dashboard/ground/vendors',    // Vehicle vendor management
   '/dashboard/ground/analytics',  // Partner performance (read-only analytics)

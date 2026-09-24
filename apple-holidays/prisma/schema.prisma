@@ -469,6 +469,123 @@ model VnBookingChecklistItem {
   @@map("vn_booking_checklist_items")
 }
 
+/// Checklist VN 2.1v — one tour (TOUR CODE header row) mirrored from the desk's
+/// live Excel checklist. Read-only copy; the workbook is never written to.
+/// See src/lib/vn-checklist-sheet/ and prisma/sql/2026-09-24-vn-checklist-sheet.sql.
+model VnSheetTour {
+  id               String    @id @default(cuid())
+  tourCode         String    @unique(map: "vn_sheet_checklist_tours_tourCode_key")
+  refKey           String    @default("") @db.VarChar(500)
+  primaryRef       String?   @db.VarChar(64)
+  agent            String?
+  agentRef         String?
+  pax              Int?
+  monthLabel       String?   @db.VarChar(64)
+  arrivalDate      DateTime? @db.Date
+  departureDate    DateTime? @db.Date
+  days             Int?
+  itinerary        String?   @db.VarChar(500)
+  quotedUsd        Decimal?  @db.Decimal(16, 2)
+  revenueUsd       Decimal?  @db.Decimal(16, 2)
+  totalVnd         Decimal?  @db.Decimal(18, 2)
+  totalEstimateVnd Decimal?  @db.Decimal(18, 2)
+  pnlIncurredVnd   Decimal?  @db.Decimal(18, 2)
+  profitMargin     Decimal?  @db.Decimal(12, 6)
+  exchangeRate     Decimal?  @db.Decimal(14, 4)
+  lineCount        Int       @default(0)
+  linesTotalVnd    Decimal   @default(0) @db.Decimal(18, 2)
+  paidLineCount    Int       @default(0)
+  checkLineCount   Int       @default(0)
+  openLineCount    Int       @default(0)
+  sheetTab         String?
+  sheetRow         Int?
+  contentHash      String    @db.VarChar(64)
+  isActive         Boolean   @default(true)
+  firstSeenAt      DateTime  @default(now())
+  changedAt        DateTime  @default(now())
+  removedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([primaryRef], map: "vn_sheet_checklist_tours_primaryRef_idx")
+  @@index([arrivalDate], map: "vn_sheet_checklist_tours_arrival_idx")
+  @@index([isActive], map: "vn_sheet_checklist_tours_active_idx")
+  @@map("vn_sheet_checklist_tours")
+}
+
+/// One payment line under a mirrored tour. Rewritten per tour when it changes.
+model VnSheetLine {
+  id               String   @id @default(cuid())
+  tourCode         String
+  position         Int      @default(0)
+  sheetTab         String?
+  sheetRow         Int?
+  details          String   @db.Text
+  vendor           String?
+  code             String?  @db.VarChar(64)
+  dates            String?
+  qcStatus         String?
+  unitPrice        Decimal? @db.Decimal(18, 4)
+  quan1            Decimal? @db.Decimal(12, 2)
+  quan2            Decimal? @db.Decimal(12, 2)
+  totalEstimateVnd Decimal? @db.Decimal(18, 2)
+  paidRaw          String?
+  /// ACT_PAID | TINA_PAID | INDIA_PAID | OTHER_PAID | CHECK | OPEN
+  paidBucket       String   @default("OPEN") @db.VarChar(16)
+  incurred         String?
+  note             String?  @db.Text
+  createdAt        DateTime @default(now())
+
+  @@index([tourCode, position], map: "vn_sheet_checklist_lines_tour_idx")
+  @@index([paidBucket], map: "vn_sheet_checklist_lines_bucket_idx")
+  @@index([vendor], map: "vn_sheet_checklist_lines_vendor_idx")
+  @@map("vn_sheet_checklist_lines")
+}
+
+/// One sync run of the Excel mirror.
+model VnSheetSync {
+  id             String    @id @default(cuid())
+  /// CRON | MANUAL | STALE | SETTINGS
+  trigger        String    @db.VarChar(16)
+  /// RUNNING | SUCCESS | UNCHANGED | FAILED
+  status         String    @default("RUNNING") @db.VarChar(16)
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+  durationMs     Int?
+  fileName       String?
+  fileETag       String?
+  fileModifiedAt DateTime?
+  fileSize       Int?
+  tabs           String?   @db.VarChar(500)
+  tours          Int       @default(0)
+  lines          Int       @default(0)
+  added          Int       @default(0)
+  changed        Int       @default(0)
+  removed        Int       @default(0)
+  warnings       String?   @db.Text
+  error          String?   @db.Text
+  triggeredBy    String?
+
+  @@index([startedAt], map: "vn_sheet_checklist_syncs_started_idx")
+  @@index([status], map: "vn_sheet_checklist_syncs_status_idx")
+  @@map("vn_sheet_checklist_syncs")
+}
+
+/// What changed on a mirrored tour between two syncs.
+model VnSheetEvent {
+  id        String   @id @default(cuid())
+  tourCode  String
+  syncId    String?
+  /// ADDED | CHANGED | REMOVED | RESTORED
+  kind      String   @db.VarChar(16)
+  summary   String   @db.VarChar(500)
+  changes   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([tourCode, createdAt], map: "vn_sheet_checklist_events_tour_idx")
+  @@map("vn_sheet_checklist_events")
+}
+
 model Assignment {
   id              String         @id @default(cuid())
   agendaItemId    String         @unique
