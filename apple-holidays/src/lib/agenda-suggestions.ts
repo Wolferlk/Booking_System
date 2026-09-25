@@ -13,37 +13,57 @@
  */
 
 /**
- * Meal plan codes — used for every operation country.
+ * Meal plans — used for every operation country.
+ *
+ * Saved as the full name ("Lunch", "Breakfast, Lunch"), not the old one-letter
+ * code: the editor already expanded stored codes on load (B → Breakfast, BL →
+ * "Breakfast, Lunch"), so those full names are what charts hold once re-saved,
+ * and every export passes an unrecognised value straight through. The codes
+ * stay as `keywords`, so typing "BL" still finds "Breakfast, Lunch".
  *
  * The list is a shortcut, not a constraint: the field stays free text, so a
- * meal arrangement nobody anticipated is still typed in and saved verbatim.
+ * meal arrangement nobody anticipated is still typed in and saved verbatim —
+ * and offered in the dropdown from then on (see /api/agenda/suggestions).
  */
-export const MEAL_PLAN_OPTIONS: { value: string; label: string }[] = [
-  { value: 'B',   label: 'B — Breakfast' },
-  { value: 'L',   label: 'L — Lunch' },
-  { value: 'D',   label: 'D — Dinner' },
-  { value: 'BL',  label: 'BL — Breakfast + Lunch' },
-  { value: 'BD',  label: 'BD — Breakfast + Dinner' },
-  { value: 'LD',  label: 'LD — Lunch + Dinner' },
-  { value: 'BLD', label: 'BLD — Breakfast + Lunch + Dinner' },
-  { value: 'HB',  label: 'HB — Half Board' },
-  { value: 'FB',  label: 'FB — Full Board' },
-  { value: 'AI',  label: 'AI — All Inclusive' },
-  { value: 'RO',  label: 'RO — Room Only / No Meals' },
-  // Cuisine-specific meals. Stored as the readable phrase rather than a code:
-  // `mealPlan` is a free-text column and every renderer passes an unrecognised
-  // value straight through, so the phrase reaches the PDF, the Word file and
-  // the guest portal exactly as it reads here. A short code would have needed a
-  // map entry in four separate normalisers to avoid printing as gibberish.
-  { value: 'Local Lunch',           label: 'Local Lunch' },
-  { value: 'Local Dinner',          label: 'Local Dinner' },
-  { value: 'Local Lunch + Dinner',  label: 'Local Lunch + Dinner' },
-  { value: 'Indian Lunch',          label: 'Indian Lunch' },
-  { value: 'Indian Dinner',         label: 'Indian Dinner' },
-  { value: 'Indian Lunch + Dinner', label: 'Indian Lunch + Dinner' },
+export const MEAL_PLAN_OPTIONS: { value: string; label: string; keywords?: string }[] = [
+  { value: 'Breakfast',                label: 'Breakfast',                keywords: 'B' },
+  { value: 'Lunch',                    label: 'Lunch',                    keywords: 'L' },
+  { value: 'Dinner',                   label: 'Dinner',                   keywords: 'D' },
+  { value: 'Breakfast, Lunch',         label: 'Breakfast, Lunch',         keywords: 'BL' },
+  { value: 'Breakfast, Dinner',        label: 'Breakfast, Dinner',        keywords: 'BD' },
+  { value: 'Lunch, Dinner',            label: 'Lunch, Dinner',            keywords: 'LD' },
+  { value: 'Breakfast, Lunch, Dinner', label: 'Breakfast, Lunch, Dinner', keywords: 'BLD' },
+  { value: 'Half Board',               label: 'Half Board',               keywords: 'HB' },
+  { value: 'Full Board',               label: 'Full Board',               keywords: 'FB' },
+  { value: 'All Inclusive',            label: 'All Inclusive',            keywords: 'AI' },
+  { value: 'Room Only / No Meals',     label: 'Room Only / No Meals',     keywords: 'RO' },
+  { value: 'Local Lunch',              label: 'Local Lunch' },
+  { value: 'Local Dinner',             label: 'Local Dinner' },
+  { value: 'Local Lunch + Dinner',     label: 'Local Lunch + Dinner' },
+  { value: 'Indian Lunch',             label: 'Indian Lunch' },
+  { value: 'Indian Dinner',            label: 'Indian Dinner' },
+  { value: 'Indian Lunch + Dinner',    label: 'Indian Lunch + Dinner' },
   { value: 'Breakfast + Local Lunch',  label: 'Breakfast + Local Lunch' },
   { value: 'Breakfast + Indian Lunch', label: 'Breakfast + Indian Lunch' },
 ]
+
+/**
+ * Expand a stored meal-plan code to its full name ("B" → "Breakfast", "L/D" →
+ * "Lunch, Dinner", "HB" → "Half Board"); anything else comes back trimmed.
+ */
+export function mealPlanFullName(raw: string | null | undefined): string {
+  const text = String(raw ?? '').trim()
+  if (!text) return ''
+  const letters = text.toUpperCase().replace(/[\s,/+]+/g, '')
+  if (/^[BLD]{1,3}$/.test(letters) && new Set(letters).size === letters.length) {
+    return (['B', 'L', 'D'] as const)
+      .filter(c => letters.includes(c))
+      .map(c => ({ B: 'Breakfast', L: 'Lunch', D: 'Dinner' })[c])
+      .join(', ')
+  }
+  const byCode = MEAL_PLAN_OPTIONS.find(o => o.keywords && o.keywords === letters)
+  return byCode ? byCode.value : text
+}
 
 /** Cities / regions a Vietnam movement is centred on. */
 export const VIETNAM_LOCATIONS: string[] = [

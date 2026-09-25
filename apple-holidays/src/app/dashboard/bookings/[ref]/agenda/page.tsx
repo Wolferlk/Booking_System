@@ -31,26 +31,15 @@ import LogoSpinner from '@/components/shared/logo-spinner'
 import JourneyMap from '@/components/bookings/journey-map'
 import { ComboInput } from '@/components/ui/combo-input'
 import { TimeInput } from '@/components/ui/time-input'
-import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions } from '@/lib/agenda-suggestions'
+import { MEAL_PLAN_OPTIONS, seedSuggestions, mergeSuggestions, mealPlanFullName } from '@/lib/agenda-suggestions'
 import { range12h, to12h } from '@/lib/clock-time'
 import { flightLine, linkFlight, transferDescription, type LinkableFlight } from '@/lib/agenda-flight-link'
 import IncludePicker, { IncludeChips, UnplacedIncludesNotice } from '@/components/agenda/include-picker'
 import { takesIncludes, type AgendaInclude } from '@/lib/vn-includes/shared'
 
-const MEAL_ABBREV: Record<string, string> = {
-  'B':   'Breakfast',
-  'L':   'Lunch',
-  'D':   'Dinner',
-  'BL':  'Breakfast, Lunch',  'LB':  'Breakfast, Lunch',
-  'BD':  'Breakfast, Dinner', 'DB':  'Breakfast, Dinner',
-  'LD':  'Lunch, Dinner',     'DL':  'Lunch, Dinner',
-  'BLD': 'Breakfast, Lunch, Dinner', 'BDL': 'Breakfast, Lunch, Dinner',
-  'LBD': 'Breakfast, Lunch, Dinner',
-}
+/** Stored codes ("B", "BL") read as their full name — see mealPlanFullName. */
 function normalizeMealPlan(raw: string | null | undefined): string {
-  if (!raw || !raw.trim()) return ''
-  const upper = raw.trim().toUpperCase().replace(/[\s,/]+/g, '')
-  return MEAL_ABBREV[upper] ?? raw.trim()
+  return mealPlanFullName(raw)
 }
 
 /** Strip everything except digits so numbers are WhatsApp-ready: "+91 7715805191" → "917715805191". */
@@ -408,6 +397,8 @@ export default function AgendaPage() {
   })
   /** Service types the desk has typed in on past agendas (any country). */
   const [savedCustomServiceTypes, setSavedCustomServiceTypes] = useState<string[]>([])
+  /** Meal plans used on past agendas (any country), as full names. */
+  const [savedMealPlans, setSavedMealPlans] = useState<string[]>([])
 
   /**
    * Service Type dropdown: the built-in list, then custom types saved on past
@@ -419,6 +410,19 @@ export default function AgendaPage() {
     ...savedCustomServiceTypes,
     ...items.map(x => (x.serviceType ?? '').trim()).filter(v => v && !isBuiltInServiceType(v)),
   ]))
+
+  /**
+   * Meal Plan dropdown, same idea: the built-in list, then meal plans typed on
+   * past agendas, then ones typed on this chart — a new one is offered at once.
+   */
+  const builtInMealPlans = new Set(MEAL_PLAN_OPTIONS.map(o => o.value.toLowerCase()))
+  const extraMealPlans = mergeSuggestions(
+    savedMealPlans,
+    items.map(x => (x.mealPlan ?? '').trim()),
+  ).filter(v => !builtInMealPlans.has(v.toLowerCase()))
+  const isNewMealPlan = (v: string) => !!v.trim()
+    && !builtInMealPlans.has(v.trim().toLowerCase())
+    && !savedMealPlans.some(m => m.toLowerCase() === v.trim().toLowerCase())
 
   useEffect(() => {
     const country = booking?.operationCountry
@@ -435,6 +439,7 @@ export default function AgendaPage() {
       .then(json => {
         if (!live || !json.success) return
         setSavedCustomServiceTypes(Array.isArray(json.data.serviceTypes) ? json.data.serviceTypes : [])
+        setSavedMealPlans(Array.isArray(json.data.mealPlans) ? json.data.mealPlans : [])
         setRouteOptions(o => ({
           location:  mergeSuggestions(json.data.location,  o.location),
           fromPoint: mergeSuggestions(json.data.fromPoint, o.fromPoint),
@@ -1705,13 +1710,24 @@ export default function AgendaPage() {
                         )}
                         <div>
                           <label className="form-label text-xs">Meal Plan</label>
+                          {/* Type to search (full name or code — "BL" finds
+                              "Breakfast, Lunch"), or type a new one: it is saved
+                              as typed and offered in this list from then on. */}
                           <ComboInput
                             className="form-input text-sm py-1.5"
+                            selectOnFocus
                             value={item.mealPlan}
                             onChange={v => setItems(is => is.map((x, j) => j === i ? { ...x, mealPlan: v } : x))}
-                            options={MEAL_PLAN_OPTIONS}
-                            placeholder="B / L / D / BL / BD / LD"
+                            // This row's own half-typed text is not a suggestion.
+                            options={[
+                              ...MEAL_PLAN_OPTIONS,
+                              ...extraMealPlans.filter(o => o !== item.mealPlan.trim() || !isNewMealPlan(o)),
+                            ]}
+                            placeholder="Breakfast / Lunch / Dinner"
                           />
+                          {isNewMealPlan(item.mealPlan) && (
+                            <p className="mt-0.5 text-[10px] text-amber-600">New meal plan — saved as typed and added to the list</p>
+                          )}
                         </div>
 
                         {/* Route & activity — given their own full-width band because

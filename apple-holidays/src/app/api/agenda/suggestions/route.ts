@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { buildApiError, buildApiSuccess } from '@/lib/utils'
-import { mergeSuggestions, seedSuggestions, isVietnamCountry } from '@/lib/agenda-suggestions'
+import { mergeSuggestions, seedSuggestions, isVietnamCountry, mealPlanFullName } from '@/lib/agenda-suggestions'
 import { SERVICE_TYPE_VALUES } from '@/lib/service-types'
 
 export const dynamic = 'force-dynamic'
@@ -84,8 +84,30 @@ export async function GET(req: NextRequest) {
     // Convenience only — the built-in list still works.
   }
 
+  // Meal plans the desk has typed — every country, most used first. Stored
+  // codes ("BL") come back as their full name, so they fold into the built-in
+  // entries on the page instead of listing twice.
+  let mealPlans: string[] = []
+  try {
+    const rows = await prisma.$queryRawUnsafe<Row[]>(
+      `SELECT TRIM(mealPlan) AS value
+         FROM agenda_items
+        WHERE mealPlan IS NOT NULL
+          AND TRIM(mealPlan) <> ''
+          AND CHAR_LENGTH(TRIM(mealPlan)) <= 60
+        GROUP BY value
+        ORDER BY COUNT(*) DESC
+        LIMIT ?`,
+      PER_FIELD,
+    )
+    mealPlans = mergeSuggestions(rows.map(r => mealPlanFullName(String(r.value))))
+  } catch {
+    // Convenience only — the built-in list still works.
+  }
+
   return buildApiSuccess({
     serviceTypes,
+    mealPlans,
     location:  mergeSuggestions(past.location,  seedSuggestions('location',  country)),
     fromPoint: mergeSuggestions(past.fromPoint, seedSuggestions('fromPoint', country)),
     toPoint:   mergeSuggestions(past.toPoint,   seedSuggestions('toPoint',   country)),

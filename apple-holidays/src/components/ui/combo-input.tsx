@@ -36,7 +36,12 @@ export function AutoGrowTextarea({
 }
 
 /** A suggestion whose dropdown label reads differently from the saved value. */
-export interface ComboOption { value: string; label: string }
+export interface ComboOption {
+  value: string
+  label: string
+  /** Extra search terms not shown in the list, e.g. "BL" for "Breakfast, Lunch". */
+  keywords?: string
+}
 
 interface ComboInputProps {
   value: string
@@ -83,7 +88,8 @@ export function ComboInput({
   // Both halves are searched, so "breakfast" finds the "B" meal plan.
   const matches = (showAll || !query
     ? all
-    : all.filter(o => `${o.value} ${o.label}`.toLowerCase().includes(query))
+    : all.filter(o => o.keywords?.toLowerCase().split(/\s+/).includes(query)
+        || `${o.value} ${o.label}`.toLowerCase().includes(query))
   ).slice(0, limit)
 
   // An exact single match means the user already has that value — no point
