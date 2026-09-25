@@ -21,6 +21,7 @@ import { upsertManualPartner } from '@/lib/partner-directory-server'
 import { loadIncludes, saveIncludes } from '@/lib/vn-includes/includes'
 import type { AgendaInclude } from '@/lib/vn-includes/shared'
 import { normaliseServiceType } from '@/lib/service-types'
+import { carryTicketsControl } from '@/lib/tickets-control'
 import type { UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -310,6 +311,17 @@ export async function POST(
       })
     }),
   )
+
+  // MC Report "Tickets Control" notes are keyed by agenda item id, and every
+  // movement above was recreated under a new one — move each note across.
+  if (booking.operationCountry === 'VIETNAM') {
+    await carryTicketsControl(
+      booking.bookingRef,
+      (items as Record<string, unknown>[])
+        .map((item, index): [unknown, string | undefined] => [item.id, createdItems[index]?.id])
+        .filter((p): p is [string, string] => typeof p[0] === 'string' && Boolean(p[0]) && Boolean(p[1])),
+    )
+  }
 
   // Vietnam includes — rewritten only when the chart sent them. A regenerated
   // chart (AI / upload) arrives without the key, and its includes are left

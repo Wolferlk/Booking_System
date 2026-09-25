@@ -343,6 +343,22 @@ model AgendaItem {
   @@map("agenda_items")
 }
 
+/// MC Report "Tickets Control" — a short note per Vietnam movement. Keyed by
+/// agenda item id and carried to the new id on every chart save (the chart's
+/// rows are recreated). No relation by design — see the SQL file.
+/// Created by prisma/sql/2026-09-25-agenda-tickets-control.sql — never `db push`.
+model AgendaTicketsControl {
+  agendaItemId  String   @id
+  bookingRef    String
+  value         String   @db.VarChar(255)
+  updatedById   String?
+  updatedByName String?
+  updatedAt     DateTime @default(now()) @updatedAt
+
+  @@index([bookingRef], map: "agenda_tickets_control_bookingRef_idx")
+  @@map("agenda_tickets_control")
+}
+
 /// The Vietnam product sheet, cached — what an agenda include is picked from.
 /// SHEET rows are refreshed by a sync and never deleted (a product that leaves
 /// the sheet goes inactive); MANUAL rows are typed in by an operator and pushed

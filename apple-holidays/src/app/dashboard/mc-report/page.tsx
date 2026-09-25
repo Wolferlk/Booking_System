@@ -23,6 +23,7 @@ import {
   isPrivateTransferType, isSicType, type ServiceTypeValue,
 } from '@/lib/service-types'
 import { to12h } from '@/lib/clock-time'
+import { hasPermission } from '@/lib/rbac'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,8 @@ type MCRow = {
   tourVendorPhone: string | null
   /** Booking's operation country — decides which partner columns apply. */
   operationCountry: string | null
+  /** Vietnam only — the desk's short "Tickets Control" note on this movement. */
+  ticketsControl?: string | null
   agent:          string | null
   bookingStatus:  string
   /** Cancellation-approval trail — set once a cancellation has been requested. */
@@ -377,6 +380,70 @@ function isAssignable(row: MCRow): boolean {
  * use this partner kind at all — which reads as "not applicable" rather than
  * "missing", so nobody chases a guide for a country that never books one.
  */
+/**
+ * Tickets Control — a short free-text note, edited in place on the chart.
+ * Saves on Enter or when the field loses focus; Escape puts it back.
+ */
+function TicketsControlCell({
+  rowId, value, canEdit, onSaved,
+}: {
+  rowId: string
+  value: string | null
+  canEdit: boolean
+  onSaved: (rowId: string, value: string) => void
+}) {
+  const [draft,  setDraft]  = useState(value ?? '')
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setDraft(value ?? '') }, [value])
+
+  if (!canEdit) {
+    return value
+      ? <span className="text-slate-700">{value}</span>
+      : <span className="text-slate-300 text-[10px]">—</span>
+  }
+
+  async function save() {
+    const next = draft.trim()
+    if (next === (value ?? '')) { setDraft(next); return }
+    setSaving(true)
+    try {
+      const res  = await fetch('/api/mc-report/tickets-control', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agendaItemId: rowId, value: next }),
+      })
+      const json = await res.json()
+      if (!json.success) throw new Error(json.error)
+      onSaved(rowId, json.data.value)
+      toast.success(json.data.value ? 'Tickets Control saved' : 'Tickets Control cleared')
+    } catch (err: unknown) {
+      setDraft(value ?? '')
+      toast.error(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="relative" onClick={e => e.stopPropagation()}>
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') { setDraft(value ?? ''); (e.target as HTMLInputElement).blur() }
+        }}
+        maxLength={255}
+        disabled={saving}
+        placeholder="Add…"
+        title={draft || 'Tickets Control'}
+        className="w-full min-w-[120px] rounded border border-transparent bg-transparent px-1.5 py-1 text-xs text-slate-700 placeholder:text-slate-300 hover:border-slate-200 focus:border-brand-300 focus:bg-white focus:outline-none focus:ring-1 focus:ring-brand-200 disabled:opacity-60"
+      />
+      {saving && <Loader2 className="absolute right-1 top-1.5 w-3 h-3 animate-spin text-slate-400" />}
+    </div>
+  )
+}
+
 function PartnerCell({
   kind, name, phone, enabled, canAssign, onAssign, query,
 }: {
@@ -620,6 +687,17 @@ export default function MCReportPage() {
     [displayedRows, tourVendorEnabledFor],
   )
 
+  // Tickets Control is a Vietnam-only column: shown when a Vietnam movement is in view.
+  const showTicketsControlCol = useMemo(
+    () => displayedRows.some(r => r.operationCountry === 'VIETNAM' && !r.isHotelOnlyBooking),
+    [displayedRows],
+  )
+  const canEditTicketsControl = hasPermission(session?.user?.role as UserRole, 'agenda:edit')
+
+  function applyTicketsControl(rowId: string, value: string) {
+    setRows(rs => rs.map(r => r.id === rowId ? { ...r, ticketsControl: value || null } : r))
+  }
+
   /** Fold a saved assignment back into the row, so the chart updates in place. */
   function applyAssignment(rowId: string, next: MovementAssignment | null) {
     setRows(rs => rs.map(r => r.id !== rowId ? r : {
@@ -738,6 +816,7 @@ export default function MCReportPage() {
       'Service Type', 'Leisure Day', 'Hotel Only', 'Hotel Only Booking', 'Nights', 'Check Out',
       'Vendor', 'Driver', 'Vehicle Type', 'Plate',
       'Guide', 'Guide Phone', 'Tour Vendor', 'Tour Vendor Phone', 'Agent',
+      'Tickets Control',
     ]
 
     const csvRows = displayedRows.map(r => [
@@ -764,6 +843,7 @@ export default function MCReportPage() {
       r.guideName ?? '', r.guidePhone ?? '',
       r.tourVendorName ?? '', r.tourVendorPhone ?? '',
       r.agent ?? '',
+      r.ticketsControl ?? '',
     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
 
     const csv  = [headers.join(','), ...csvRows].join('\n')
@@ -800,6 +880,7 @@ export default function MCReportPage() {
         'Agent', 'Booking Status',
         'Cancel Approval', 'Cancel Requested On', 'Cancel Requested By',
         'Days Awaiting Approval', 'Cancel Reason', 'Cancellation Fee',
+        'Tickets Control',
       ]
 
       const dataRows = displayedRows.map(r => [
@@ -823,6 +904,7 @@ export default function MCReportPage() {
         isCancelPendingRow(r) ? waitingDays(r.cancelRequestedAt) ?? '' : '',
         r.cancelReason ?? '',
         r.cancelFeeTotal ?? '',
+        r.ticketsControl ?? '',
       ])
 
       const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
@@ -835,6 +917,7 @@ export default function MCReportPage() {
         { wch: 20 }, { wch: 16 }, { wch: 20 }, { wch: 16 },
         { wch: 18 }, { wch: 16 },
         { wch: 20 }, { wch: 18 }, { wch: 20 }, { wch: 12 }, { wch: 40 }, { wch: 14 },
+        { wch: 24 },
       ]
       XLSX.utils.book_append_sheet(wb, ws, 'Movements')
 
@@ -1342,6 +1425,9 @@ export default function MCReportPage() {
                         </th>
                       )}
                       <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Driver / Vendor</th>
+                      {showTicketsControlCol && (
+                        <th className="text-left px-3 py-2.5 font-semibold text-slate-500 uppercase tracking-wide text-[10px] whitespace-nowrap">Tickets Control</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1652,12 +1738,26 @@ export default function MCReportPage() {
                                 </button>
                               ) : <span className="text-slate-300 text-[10px]">—</span>}
                             </td>
+
+                            {/* Tickets Control — Vietnam movements only */}
+                            {showTicketsControlCol && (
+                              <td className="px-3 py-2 text-slate-600 max-w-[200px]">
+                                {row.operationCountry === 'VIETNAM' && !row.isHotelOnlyBooking ? (
+                                  <TicketsControlCell
+                                    rowId={row.id}
+                                    value={row.ticketsControl ?? null}
+                                    canEdit={canEditTicketsControl}
+                                    onSaved={applyTicketsControl}
+                                  />
+                                ) : <span className="text-slate-300 text-[10px]">—</span>}
+                              </td>
+                            )}
                           </tr>
 
                           {/* Expanded detail row */}
                           {isExpanded && (
                             <tr key={`${row.id}-detail`} className="bg-brand-50/40 border-l-2 border-l-brand-400">
-                              <td colSpan={13 + (showGuideCol ? 1 : 0) + (showTourVendorCol ? 1 : 0)} className="px-4 py-3">
+                              <td colSpan={13 + (showGuideCol ? 1 : 0) + (showTourVendorCol ? 1 : 0) + (showTicketsControlCol ? 1 : 0)} className="px-4 py-3">
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
                                   {[
                                     { label: 'Tour Ref',       value: row.vnCode },

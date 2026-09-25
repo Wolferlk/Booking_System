@@ -7,6 +7,7 @@ import { canSeeAllCountries } from '@/lib/rbac'
 import { countryScope } from '@/lib/country-detection'
 import { resolveIsLeisure } from '@/lib/leisure-day'
 import { resolveIsHotelOnly } from '@/lib/driver-requirement'
+import { loadTicketsControl } from '@/lib/tickets-control'
 import type { Prisma, UserRole } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
@@ -284,6 +285,11 @@ export async function GET(req: NextRequest) {
     orderBy: [{ date: 'asc' }, { sortOrder: 'asc' }],
   })
 
+  // Tickets Control — a Vietnam-only note per movement (own table, may not exist yet).
+  const ticketsControl = await loadTicketsControl(
+    items.filter(i => i.agenda.booking.operationCountry === 'VIETNAM').map(i => i.id),
+  )
+
   const data: Record<string, unknown>[] = items.map(item => ({
     id:             item.id,
     date:           item.date.toISOString().slice(0, 10),
@@ -337,6 +343,7 @@ export async function GET(req: NextRequest) {
     // Which partner kinds this row's country operates with is a Settings
     // question the page answers per row, so it needs the booking's country.
     operationCountry: item.agenda.booking.operationCountry ?? null,
+    ticketsControl: ticketsControl[item.id] ?? null,
     agent:          item.agenda.booking.agent    ?? null,
     bookingStatus:  item.agenda.booking.status,
     ...cancellationFields(item.agenda.booking),
